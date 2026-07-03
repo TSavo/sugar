@@ -22,14 +22,18 @@ use syn::{Expr, Item};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "raw_addr_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "raw address term needs pointer-provenance facts before verdict pair",
+        ),
         recognize,
     );
 
 pub(crate) const PTR_EQ_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "ptr_eq_term",
     &["call"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pinned_catch(
+        "#3415 family h: pointer identity semantic lie remains SAT",
+    ),
     recognize_ptr_eq_term,
 );
 

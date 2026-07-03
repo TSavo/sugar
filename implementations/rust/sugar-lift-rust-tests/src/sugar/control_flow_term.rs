@@ -65,7 +65,9 @@ pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "control_flow_composite",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "control-flow composite effect surface needs statement-position assertion anchoring",
+        ),
         recognize_composite,
     );
 

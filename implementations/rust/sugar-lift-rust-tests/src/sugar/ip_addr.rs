@@ -25,7 +25,9 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "literal_ip_addr",
     &["const_path", "path", "call", "method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pinned_catch(
+        "#3415 family c: literal IP address value relation lie remains SAT",
+    ),
     recognize_term,
 );
 

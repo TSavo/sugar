@@ -59,7 +59,9 @@ use crate::{make_var, Desugared, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term(
         "path",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "owner-mismatch fallback path row; witnesses dispatch to const/bound/term owners",
+        ),
         recognize,
     );
 

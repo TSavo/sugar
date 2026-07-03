@@ -21,7 +21,9 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
             "closure_tls_accessor",
             "closure_runtime_receiver",
         ],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "closure adaptor mutates captured state; needs mutable closure-state witness machinery",
+        ),
         recognize,
     );
 

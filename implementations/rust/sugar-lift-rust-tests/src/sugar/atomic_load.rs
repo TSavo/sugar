@@ -10,7 +10,9 @@ use crate::{Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "atomic_load",
     &["method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "observable atomic memory read; no stable witness value source yet",
+    ),
     recognize,
 );
 

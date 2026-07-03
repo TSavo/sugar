@@ -16,7 +16,9 @@ use crate::{token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCt
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
     "cycle_take",
     &["take"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_campaign(
+        "S5 adapter family: cycle/take finite standing",
+    ),
     recognize_composite,
 );
 

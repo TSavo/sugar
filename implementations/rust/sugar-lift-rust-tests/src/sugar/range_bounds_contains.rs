@@ -24,7 +24,9 @@ use crate::{strip_refs_groups, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "range_bounds_contains",
     &["method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_campaign(
+        "family-j temporal quantifier cross-chain: RangeBounds contains facts",
+    ),
     recognize,
 );
 

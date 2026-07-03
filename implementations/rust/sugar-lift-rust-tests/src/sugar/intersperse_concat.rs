@@ -17,7 +17,9 @@ use crate::{strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCt
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "intersperse_concat",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "unstable-feature bucket: iter_intersperse concat witness blocked",
+        ),
         recognize,
     );
 

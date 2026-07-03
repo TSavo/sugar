@@ -10,563 +10,142 @@ use sugar_lift_rust_tests::{
     AssertionFactEmission, AssertionFactKind,
 };
 
-const EXPECTED_SEED_CLAIMS: usize = 107;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 98;
-const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
-const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 4;
-const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
+// This harness verifies Rust sugar SOURCE-witness pairs: minimal source snippets
+// owned by a Sugar claim. It is unrelated to the cargo-test WitnessPackageMemento
+// produced by `sugar-lift-rust-cargo-test-witness`.
+//
+// Assertion 2 currently targets `sugar_ir_symbolic::ContractDecl`; when #3240
+// lands the typed `sugar_ir_types::Declaration` surface, this file should only
+// need to change the emitted-node assertion target, not the ownership/verdict
+// composition law.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum PendingResidualClass {
-    ReasonedBucket,
-    PinnedCatch,
-    TemporalCampaign,
+fn non_empty(value: &str) -> bool {
+    !value.trim().is_empty()
 }
-
-impl PendingResidualClass {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::ReasonedBucket => "reasoned-bucket",
-            Self::PinnedCatch => "pinned-catch",
-            Self::TemporalCampaign => "temporal-campaign",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PendingResidual {
-    claim: &'static str,
-    class: PendingResidualClass,
-    detail: &'static str,
-}
-
-const EXPECTED_PENDING_RESIDUALS: &[PendingResidual] = &[
-    PendingResidual {
-        claim: "addr_of_mut",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "unsafe address-of expression; needs pointer-provenance floor before a verdict pair",
-    },
-    PendingResidual {
-        claim: "array_chunks",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: array_chunks literal-iterator standing",
-    },
-    PendingResidual {
-        claim: "array_term",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch aggregate row: witnesses dispatch through aggregate_decomp/term_literal",
-    },
-    PendingResidual {
-        claim: "assertion_surface_infinity_eq",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family e: float/infinity semantics lie remains SAT",
-    },
-    PendingResidual {
-        claim: "atomic_load",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "observable atomic memory read; no stable witness value source yet",
-    },
-    PendingResidual {
-        claim: "await_term",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "async await runtime handoff; verdict pair needs executor/future witness machinery",
-    },
-    PendingResidual {
-        claim: "bound_path",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch path row: witnesses dispatch through assertion surfaces or term_literal",
-    },
-    PendingResidual {
-        claim: "bound_path_composite",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch bound composite row; pair needs source-owner alignment",
-    },
-    PendingResidual {
-        claim: "call",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family i: generic call EUF semantic lie remains SAT",
-    },
-    PendingResidual {
-        claim: "char_range_collect_string",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: char range collection-to-string",
-    },
-    PendingResidual {
-        claim: "char_range_filter_map_eq",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: char range filter_map equality",
-    },
-    PendingResidual {
-        claim: "char_range_filter_map_eq_assertion_surface",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: assertion-surface char range filter_map equality",
-    },
-    PendingResidual {
-        claim: "closure_iter_advance_body",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "closure adaptor runtime iterator advance; needs closure-state witness machinery",
-    },
-    PendingResidual {
-        claim: "closure_mutating_body",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "closure adaptor mutates captured state; needs mutable closure-state witness machinery",
-    },
-    PendingResidual {
-        claim: "closure_opaque_accessor",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "closure adaptor opaque accessor; no deterministic verdict source",
-    },
-    PendingResidual {
-        claim: "closure_runtime_receiver",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "closure adaptor runtime receiver; no literal standing for witness pair",
-    },
-    PendingResidual {
-        claim: "closure_term",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "closure term identity needs callable/closure witness machinery",
-    },
-    PendingResidual {
-        claim: "closure_tls_accessor",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "thread-local closure accessor; runtime TLS state is not verdict-bearing yet",
-    },
-    PendingResidual {
-        claim: "collect",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5/S6 collection terminal family: collect materialization",
-    },
-    PendingResidual {
-        claim: "collection_literal",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch collection row: aggregate literal witnesses dispatch elsewhere",
-    },
-    PendingResidual {
-        claim: "compute_float",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family e: compute_float wrapper remains EUF and lying SAT",
-    },
-    PendingResidual {
-        claim: "constraint_assert_macro",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch macro row: assertion witnesses dispatch to assertion-surface macro owners",
-    },
-    PendingResidual {
-        claim: "constraint_bounded_literal_macro",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch macro row: bounded literal assertion witnesses dispatch to assertion surface",
-    },
-    PendingResidual {
-        claim: "constraint_cfg_macro",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "configuration fact surface missing; target-cfg facts need a typed witness source",
-    },
-    PendingResidual {
-        claim: "constraint_float_refinement",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family e: float refinement semantic lie remains SAT",
-    },
-    PendingResidual {
-        claim: "constraint_if_panic",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family g: panic/guard implication semantic lie remains SAT",
-    },
-    PendingResidual {
-        claim: "constraint_infinity_eq",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family e: infinity equality needs the float semantics drain",
-    },
-    PendingResidual {
-        claim: "constraint_literal_iterator_quantifier",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "#3415 family j / temporal quantifier cross-chain: finite literal iterator curry facts",
-    },
-    PendingResidual {
-        claim: "constraint_match_scrutinee",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "match-scrutinee carrier facts need owner-aligned pattern witness machinery",
-    },
-    PendingResidual {
-        claim: "constraint_relation_macro",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch macro row: relation witnesses dispatch through assertion-surface owners",
-    },
-    PendingResidual {
-        claim: "constraint_runtime_expr",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "runtime-expression constraint; needs runtime value witness machinery",
-    },
-    PendingResidual {
-        claim: "control_flow_composite",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "control-flow composite effect surface needs statement-position assertion anchoring",
-    },
-    PendingResidual {
-        claim: "cycle_take",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: cycle/take finite standing",
-    },
-    PendingResidual {
-        claim: "dormant_mut_ref",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "mutable alias state; needs temporal/mutable-reference witness machinery",
-    },
-    PendingResidual {
-        claim: "flat_map",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: flat_map expansion",
-    },
-    PendingResidual {
-        claim: "flatten",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: flatten expansion",
-    },
-    PendingResidual {
-        claim: "for_each",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter/effect family: for_each closure effects",
-    },
-    PendingResidual {
-        claim: "for_loop_mutation",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "loop mutation state; needs guarded temporal statement anchoring",
-    },
-    PendingResidual {
-        claim: "for_replay",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "family-j temporal quantifier cross-chain: replayed loop members",
-    },
-    PendingResidual {
-        claim: "forall_loop",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "family-j temporal quantifier cross-chain: forall loop facts",
-    },
-    PendingResidual {
-        claim: "format_args_estimated_capacity",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "unstable-feature bucket: fmt_internals capacity is not stable Rust witness ground",
-    },
-    PendingResidual {
-        claim: "function_map",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: named function map composition",
-    },
-    PendingResidual {
-        claim: "function_map_term",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: named function map as term",
-    },
-    PendingResidual {
-        claim: "future_join",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "async future join runtime handoff; no stable verdict witness yet",
-    },
-    PendingResidual {
-        claim: "identity_map",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: identity map standing",
-    },
-    PendingResidual {
-        claim: "intersperse",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: intersperse sequence expansion",
-    },
-    PendingResidual {
-        claim: "intersperse_collect_string",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "unstable-feature bucket: iter_intersperse collection string witness blocked",
-    },
-    PendingResidual {
-        claim: "intersperse_concat",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "unstable-feature bucket: iter_intersperse concat witness blocked",
-    },
-    PendingResidual {
-        claim: "iter_next",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5/S6 iterator state family: next() consumption",
-    },
-    PendingResidual {
-        claim: "iter_terminal",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5/S6 iterator terminal family",
-    },
-    PendingResidual {
-        claim: "iterator",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: base iterator standing",
-    },
-    PendingResidual {
-        claim: "kmerge",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: k-way merge standing",
-    },
-    PendingResidual {
-        claim: "literal_ip_addr",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family c: literal IP address value relation lie remains SAT",
-    },
-    PendingResidual {
-        claim: "map_term",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: map term projection",
-    },
-    PendingResidual {
-        claim: "match_scrutinee",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "match scrutinee verdict needs owner-aligned pattern witness machinery",
-    },
-    PendingResidual {
-        claim: "match_scrutinee_term",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "match scrutinee term needs owner-aligned pattern witness machinery",
-    },
-    PendingResidual {
-        claim: "method",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family i: generic method EUF semantic lie remains SAT",
-    },
-    PendingResidual {
-        claim: "monadic_composite",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S6 Option-Result family: monadic composite routing",
-    },
-    PendingResidual {
-        claim: "panic_macro",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "effect-router surface; needs statement-position handler witness before verdict pair",
-    },
-    PendingResidual {
-        claim: "path",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch fallback path row; witnesses dispatch to const/bound/term owners",
-    },
-    PendingResidual {
-        claim: "peekable",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5/S6 iterator state family: peekable adaptor",
-    },
-    PendingResidual {
-        claim: "peekable_runtime_assertion_surface",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5/S6 iterator state family: peekable assertion surface",
-    },
-    PendingResidual {
-        claim: "ptr_eq_term",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family h: pointer identity semantic lie remains SAT",
-    },
-    PendingResidual {
-        claim: "ptr_metadata",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "unstable pointer metadata facts need typed pointer-provenance machinery",
-    },
-    PendingResidual {
-        claim: "range_bounds_contains",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "family-j temporal quantifier cross-chain: RangeBounds contains facts",
-    },
-    PendingResidual {
-        claim: "range_construct",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch range row: probes dispatch to range_term/struct_term/aggregate surfaces",
-    },
-    PendingResidual {
-        claim: "raw_addr_term",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "raw address term needs pointer-provenance facts before verdict pair",
-    },
-    PendingResidual {
-        claim: "raw_pointer_arithmetic",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "unsafe pointer arithmetic; no stable proof relation yet",
-    },
-    PendingResidual {
-        claim: "reference_sequence",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5/S6 iterator/reference sequence standing",
-    },
-    PendingResidual {
-        claim: "repeat_term",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch aggregate row: repeat witnesses dispatch through aggregate_decomp/term_literal",
-    },
-    PendingResidual {
-        claim: "result_inspect",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S6 Option-Result family: inspect on Result",
-    },
-    PendingResidual {
-        claim: "result_transpose_collect",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family f: Result transpose/collect collection-shape lie remains SAT",
-    },
-    PendingResidual {
-        claim: "rev",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: rev ordering",
-    },
-    PendingResidual {
-        claim: "runtime_iterator_source",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5/S6 iterator standing: runtime source remains effectful",
-    },
-    PendingResidual {
-        claim: "scan",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: scan stateful composition",
-    },
-    PendingResidual {
-        claim: "slice_chunk_window",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: slice chunks/windows",
-    },
-    PendingResidual {
-        claim: "slice_index",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "unstable-feature bucket: slice_index_methods is not stable Rust witness ground",
-    },
-    PendingResidual {
-        claim: "source_location",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "source-location value is compile-context metadata, not a semantic witness yet",
-    },
-    PendingResidual {
-        claim: "statement_async_future",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "async statement/future handoff; no verdict-bearing runtime witness",
-    },
-    PendingResidual {
-        claim: "statement_control_flow",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "statement control-flow effect needs statement-position assertion anchoring",
-    },
-    PendingResidual {
-        claim: "statement_future_handoff",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "future handoff statement effect; no deterministic verdict source",
-    },
-    PendingResidual {
-        claim: "statement_future_handoff_composite",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "future handoff composite; no deterministic verdict source",
-    },
-    PendingResidual {
-        claim: "statement_loop_advance",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5/S6 iterator-state family: statement loop advance",
-    },
-    PendingResidual {
-        claim: "statement_nested_assertion",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "nested assertion statement needs statement-position assertion anchoring",
-    },
-    PendingResidual {
-        claim: "statement_reflection",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "reflection statement; no stable semantic witness relation yet",
-    },
-    PendingResidual {
-        claim: "statement_runtime_expr",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "runtime expression statement; no stable value source in witness harness",
-    },
-    PendingResidual {
-        claim: "statement_unsafe_memory",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "unsafe-memory statement effect; no stable proof relation yet",
-    },
-    PendingResidual {
-        claim: "step_by",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S5 adapter family: step_by standing",
-    },
-    PendingResidual {
-        claim: "str_table_select",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family k: bv/table-select/string conversion lie remains SAT",
-    },
-    PendingResidual {
-        claim: "struct_term",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch aggregate row: struct witnesses dispatch through aggregate_decomp/term_literal",
-    },
-    PendingResidual {
-        claim: "transparent_composite",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch transparent composite row; witnesses dispatch to transparent_term",
-    },
-    PendingResidual {
-        claim: "try_from_fn",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S6 Option-Result family: try_from_fn fallible iteration",
-    },
-    PendingResidual {
-        claim: "try_map",
-        class: PendingResidualClass::TemporalCampaign,
-        detail: "S6 Option-Result family: try_map fallible adaptor",
-    },
-    PendingResidual {
-        claim: "tuple_term",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "owner-mismatch aggregate row: tuple witnesses dispatch through tuple_decomp/term_literal",
-    },
-    PendingResidual {
-        claim: "unsafe_memory",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "unsafe-memory expression effect; no stable proof relation yet",
-    },
-    PendingResidual {
-        claim: "vec_literal",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "production-panic bucket: vector literal term production still panics/unsupported",
-    },
-    PendingResidual {
-        claim: "vec_macro",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family b/f: direct vec equality lie fixed via aggregate decomposition (#3430); nested/non-direct vec shapes still SAT; enrollment blocked on owner-correct Pair shape",
-    },
-    PendingResidual {
-        claim: "write_macro",
-        class: PendingResidualClass::ReasonedBucket,
-        detail: "formatting/write side effect; no deterministic verdict-bearing output witness",
-    },
-];
 
 #[test]
-fn s9_batch5_residual_pending_map_covers_every_row() {
-    let actual = catalog_claims()
+fn witness_catalog_vectors_are_recomputed_from_typed_dispositions() {
+    let catalog = catalog_claims();
+    let seeded = seed_witnesses()
         .into_iter()
-        .filter(|claim| claim.witnesses.is_pending())
-        .map(|claim| claim.name)
+        .map(|pair| pair.claim)
         .collect::<BTreeSet<_>>();
-    let mut expected = BTreeSet::new();
+    let mut claim_names = BTreeSet::new();
+    let mut pair_names = BTreeSet::new();
     let mut counts = BTreeMap::<&'static str, usize>::new();
-    for row in EXPECTED_PENDING_RESIDUALS {
+
+    for claim in &catalog {
         assert!(
-            !row.detail.trim().is_empty(),
-            "residual row `{}` must name the blocker or owner",
-            row.claim
+            claim_names.insert(claim.name),
+            "duplicate claim `{}`",
+            claim.name
         );
-        assert!(
-            expected.insert(row.claim),
-            "duplicate residual row `{}`",
-            row.claim
-        );
-        *counts.entry(row.class.as_str()).or_default() += 1;
+        match claim.witnesses {
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::Pair { truthful, lying } => {
+                assert!(
+                    non_empty(truthful),
+                    "Pair claim `{}` must carry truthful source",
+                    claim.name
+                );
+                assert!(
+                    non_empty(lying),
+                    "Pair claim `{}` must carry lying source",
+                    claim.name
+                );
+                assert!(
+                    seeded.contains(claim.name),
+                    "Pair claim `{}` must be exercised by seed_witnesses",
+                    claim.name
+                );
+                pair_names.insert(claim.name);
+                *counts.entry("pair").or_default() += 1;
+            }
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::NotVerdictBearing {
+                floor,
+                reason,
+            } => {
+                assert!(
+                    non_empty(floor),
+                    "NotVerdictBearing claim `{}` must name its floor",
+                    claim.name
+                );
+                assert!(
+                    non_empty(reason),
+                    "NotVerdictBearing claim `{}` must justify the opt-out",
+                    claim.name
+                );
+                *counts.entry("not-verdict-bearing").or_default() += 1;
+            }
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::TemporalOptOut {
+                floor,
+                reason,
+                retirement,
+            } => {
+                assert!(
+                    non_empty(floor),
+                    "TemporalOptOut claim `{}` must name its floor",
+                    claim.name
+                );
+                assert!(
+                    non_empty(reason),
+                    "TemporalOptOut claim `{}` must justify the opt-out",
+                    claim.name
+                );
+                assert!(
+                    non_empty(retirement),
+                    "TemporalOptOut claim `{}` must name its retirement condition",
+                    claim.name
+                );
+                *counts.entry("temporal-opt-out").or_default() += 1;
+            }
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::ReasonedBucket { blocker } => {
+                assert!(
+                    non_empty(blocker),
+                    "ReasonedBucket claim `{}` must name its blocker",
+                    claim.name
+                );
+                *counts.entry("reasoned-bucket").or_default() += 1;
+            }
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::PinnedCatch { family } => {
+                assert!(
+                    non_empty(family),
+                    "PinnedCatch claim `{}` must name its #3415 family",
+                    claim.name
+                );
+                *counts.entry("pinned-catch").or_default() += 1;
+            }
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::TemporalCampaign { slice } => {
+                assert!(
+                    non_empty(slice),
+                    "TemporalCampaign claim `{}` must name its owning temporal slice",
+                    claim.name
+                );
+                *counts.entry("temporal-campaign").or_default() += 1;
+            }
+        }
     }
-    let missing = actual.difference(&expected).copied().collect::<Vec<_>>();
-    let stale = expected.difference(&actual).copied().collect::<Vec<_>>();
+
+    let residual_frontier = counts.get("reasoned-bucket").copied().unwrap_or(0)
+        + counts.get("pinned-catch").copied().unwrap_or(0)
+        + counts.get("temporal-campaign").copied().unwrap_or(0);
     println!(
-        "R(rust-witness-residual-map)={} class_counts={:?}",
-        EXPECTED_PENDING_RESIDUALS.len(),
+        "R(witness-seed-claims)={} R(rust-witness-enrollment-frontier)={} R(rust-witness-not-verdict-bearing)={} R(rust-temporal-opt-outs)={} R(rust-witness-residual-map)={} class_counts={:?}",
+        counts.get("pair").copied().unwrap_or(0),
+        residual_frontier,
+        counts.get("not-verdict-bearing").copied().unwrap_or(0),
+        counts.get("temporal-opt-out").copied().unwrap_or(0),
+        residual_frontier,
         counts
     );
-    assert!(
-        missing.is_empty() && stale.is_empty(),
-        "S9 batch 5 residual map must classify every Pending claim exactly once; missing={missing:?}; stale={stale:?}"
+    assert_eq!(
+        seeded, pair_names,
+        "seed_witnesses must be exactly the Pair catalog claims"
     );
-    assert_eq!(actual.len(), EXPECTED_ENROLLMENT_FRONTIER);
+    assert_eq!(
+        counts.values().sum::<usize>(),
+        catalog.len(),
+        "every catalog claim must have exactly one typed witness disposition"
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -636,10 +215,19 @@ fn single_warranted_decl(out: &AdapterOutput) -> &sugar_ir_symbolic::ContractDec
     decls[0]
 }
 
-fn inv_json(decl: &sugar_ir_symbolic::ContractDecl) -> serde_json::Value {
+fn assertion_formula_json(decl: &sugar_ir_symbolic::ContractDecl) -> serde_json::Value {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-    parsed[0]["inv"].clone()
+    let contract = parsed
+        .get(0)
+        .and_then(serde_json::Value::as_object)
+        .expect("serialized ContractDecl must be a JSON object");
+    for slot in ["inv", "pre", "post"] {
+        if let Some(formula) = contract.get(slot).filter(|value| !value.is_null()) {
+            return formula.clone();
+        }
+    }
+    panic!("claim-bearing ContractDecl emitted no pre/post/inv formula: {doc}");
 }
 
 fn resolve_z3_from(z3_env: Option<&str>, path_env: &str) -> Result<String, String> {
@@ -757,7 +345,7 @@ fn phase2_question_mark_ok_path_has_solver_bad_twin() {
     ] {
         let out = lift_file(&parse(src), &format!("sugar-witness/{label}.rs"));
         let decl = single_warranted_decl(&out);
-        let got_sat = z3_verdict(&inv_json(decl), label, &z3);
+        let got_sat = z3_verdict(&assertion_formula_json(decl), label, &z3);
         verdict_receipt.push(format!("{label}={}", if got_sat { "SAT" } else { "UNSAT" }));
         assert_eq!(
             got_sat, expected_sat,
@@ -766,7 +354,7 @@ fn phase2_question_mark_ok_path_has_solver_bad_twin() {
         );
     }
     println!(
-        "phase2 TrySugar acceptance via lift_file -> inv_json -> z3_verdict: {}",
+        "phase2 TrySugar acceptance via lift_file -> assertion_formula_json -> z3_verdict: {}",
         verdict_receipt.join(", ")
     );
 }
@@ -824,7 +412,7 @@ fn phase2_early_return_branch_has_solver_bad_twin() {
             &[("flag", Rc::clone(&flag_true))],
             num(expected_out),
         );
-        let got_sat = z3_verdict(&inv_json(&conjoined), label, &z3);
+        let got_sat = z3_verdict(&assertion_formula_json(&conjoined), label, &z3);
         assert_eq!(
             got_sat, expected_sat,
             "{label}: expected SAT={expected_sat} got SAT={got_sat}; decl={conjoined:?}"
@@ -851,7 +439,7 @@ fn return_sugar_value_contract_verdict(
         .expect("return_sugar witness must emit through the value-contract route spine");
     let conjoined =
         warrant_conjoined_with_vendor_terms(&decl, &[("flag", bool_term(true))], num(expected_out));
-    z3_verdict(&inv_json(&conjoined), label, z3)
+    z3_verdict(&assertion_formula_json(&conjoined), label, z3)
 }
 
 fn run_rust_test_source(claim: &str, kind: &str, src: &str) -> bool {
@@ -918,7 +506,7 @@ fn phase2_guarded_panic_branch_has_solver_bad_twin() {
             &[("flag", Rc::clone(&flag_false))],
             num(expected_out),
         );
-        let got_sat = z3_verdict(&inv_json(&conjoined), label, &z3);
+        let got_sat = z3_verdict(&assertion_formula_json(&conjoined), label, &z3);
         assert_eq!(
             got_sat, expected_sat,
             "{label}: expected SAT={expected_sat} got SAT={got_sat}; decl={conjoined:?}"
@@ -976,8 +564,8 @@ fn phase2_noop_drop_does_not_perturb_assertion_emission() {
     );
 
     assert_eq!(
-        inv_json(single_warranted_decl(&with_drop)),
-        inv_json(single_warranted_decl(&without_drop)),
+        assertion_formula_json(single_warranted_decl(&with_drop)),
+        assertion_formula_json(single_warranted_decl(&without_drop)),
         "a no-op Drop must not perturb the emitted assertion invariant; with_drop facts={:?}; skips={:?}",
         with_drop.assertion_facts,
         with_drop.skip_reasons
@@ -991,114 +579,161 @@ fn bool_term(value: bool) -> Rc<Term> {
     })
 }
 
-#[test]
-fn witness_catalog_seed_frontier_is_pinned() {
-    let catalog = catalog_claims();
-    let seeded: BTreeSet<_> = seed_witnesses()
-        .into_iter()
-        .map(|pair| pair.claim)
-        .collect();
-    let claim_names: BTreeSet<_> = catalog.iter().map(|claim| claim.name).collect();
-    for seed in &seeded {
-        assert!(
-            claim_names.contains(seed),
-            "seed witness names non-catalog claim `{seed}`"
+const S7_SEED_PAIR_CLAIMS: &[&str] = &[
+    "assertion_surface_aggregate_decomp",
+    "assertion_surface_tuple_decomp",
+    "bool_literal_method",
+    "char_literal_method",
+    "const_if",
+    "duration_accessor",
+    "from_bool",
+    "int_midpoint",
+    "len",
+    "match_value_term",
+    "monadic",
+    "primitive_int",
+    "range_contains",
+];
+
+const CORRECTED_S8_PAIR_CLAIMS: &[&str] = &["const_item", "fold", "map", "return_sugar"];
+
+const S9_BATCH1_PAIR_CLAIMS: &[&str] = &[
+    "term_literal",
+    "const_block",
+    "const",
+    "binop",
+    "bv_binop",
+    "constraint_bool_bitwise",
+    "unary",
+    "wrapping_neg",
+    "int_pow",
+    "int_sqrt",
+    "cast_term",
+    "option_predicate",
+    "result_predicate",
+    "option_unwrap",
+    "is_empty",
+    "is_sorted",
+    "str_method",
+    "to_string",
+    "constraint_string_predicate",
+    "constraint_char_literal_method",
+    "slice_accessor",
+    "slice_search",
+    "range_accessor",
+    "range_term",
+    "sizeof",
+    "offset_of",
+    "duration_value",
+    "into",
+    "nonzero_new",
+    "nonzero_assoc_const",
+    "nonzero_get",
+    "float_literal_method",
+];
+
+const S9_BATCH2_PAIR_CLAIMS: &[&str] = &[
+    "concat_macro",
+    "assertion_surface_relation_macro",
+    "assertion_surface_bounded_literal_macro",
+    "macro_assertion_surface",
+    "assertion_surface_assert_macro",
+    "constraint_bool_expr",
+    "constraint_tuple_decomp",
+    "string_add",
+    "index",
+    "maybe_uninit_new",
+    "maybe_uninit_zeroed",
+    "mem_zeroed",
+    "try_from",
+    "constraint_literal_ip_addr_property",
+    "dyn_any",
+    "cstr",
+    "array_try_from",
+    "literal_tuple_producer",
+    "array_repeat",
+    "field_term",
+    "format_macro",
+    "block_term",
+    "partition_point",
+    "option_adaptor",
+    "transparent_term",
+    "value_if",
+    "cell_refcell",
+    "literal",
+    "const_composite",
+    "primitive_int_tuple_producer",
+    "slice_search_assertion_surface",
+];
+
+const S9_BATCH3_PAIR_CLAIMS: &[&str] = &[
+    "cfg_select_assertion_surface",
+    "integer_decode_tuple_producer",
+    "memchr",
+    "macro_term",
+    "constraint_matches_macro",
+    "control_flow_term",
+    "conditional",
+    "match_node",
+    "constraint_closed_match",
+    "constraint_regex_match",
+    "constraint_no_panic_call",
+    "size_hint_tuple_producer",
+];
+
+const S9_BATCH4_PAIR_CLAIMS: &[&str] = &[
+    "bound_constraint",
+    "bound_path_tuple_producer",
+    "reference_term",
+    "literal_slice",
+    "loop_break_term",
+];
+
+const S5_ADAPTER_PAIR_CLAIMS: &[&str] = &[
+    "filter",
+    "filter_map",
+    "take",
+    "take_while",
+    "skip",
+    "skip_while",
+    "chain",
+    "zip",
+    "enumerate",
+    "inspect",
+];
+
+fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
+    [
+        S7_SEED_PAIR_CLAIMS,
+        CORRECTED_S8_PAIR_CLAIMS,
+        S9_BATCH1_PAIR_CLAIMS,
+        S9_BATCH2_PAIR_CLAIMS,
+        S9_BATCH3_PAIR_CLAIMS,
+        S9_BATCH4_PAIR_CLAIMS,
+        S5_ADAPTER_PAIR_CLAIMS,
+    ]
+    .into_iter()
+    .flat_map(|claims| claims.iter().copied())
+    .collect()
+}
+
+fn assert_pairs_match_real_rust_semantics(claims: &[&str]) {
+    let witnesses = seed_witnesses();
+    for claim in claims {
+        let witness = witnesses
+            .iter()
+            .find(|witness| witness.claim == *claim)
+            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
+        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
+        let lying = run_rust_test_source(claim, "lying", witness.lying);
+        println!(
+            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
+            if truthful { "PASS" } else { "FAIL" },
+            if lying { "PASS" } else { "FAIL" }
         );
+        assert!(truthful, "{claim} truthful witness must pass as real Rust");
+        assert!(!lying, "{claim} lying witness must fail as real Rust");
     }
-    let pending: Vec<_> = catalog
-        .iter()
-        .filter(|claim| claim.witnesses.is_pending())
-        .collect();
-    let not_verdict_bearing = catalog
-        .iter()
-        .filter(|claim| {
-            matches!(
-                claim.witnesses,
-                sugar_lift_rust_tests::sugar::claim::SugarWitnesses::NotVerdictBearing { .. }
-            )
-        })
-        .count();
-    let temporal_opt_outs = catalog
-        .iter()
-        .filter(|claim| {
-            matches!(
-                claim.witnesses,
-                sugar_lift_rust_tests::sugar::claim::SugarWitnesses::TemporalOptOut { .. }
-            )
-        })
-        .count();
-    for claim in catalog.iter().filter(|claim| {
-        matches!(
-            claim.witnesses,
-            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::NotVerdictBearing { .. }
-        )
-    }) {
-        match claim.witnesses {
-            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::NotVerdictBearing {
-                floor,
-                reason,
-            } => {
-                assert!(
-                    !floor.trim().is_empty(),
-                    "NotVerdictBearing claim `{}` must name its floor",
-                    claim.name
-                );
-                assert!(
-                    !reason.trim().is_empty(),
-                    "NotVerdictBearing claim `{}` must justify the opt-out",
-                    claim.name
-                );
-            }
-            _ => unreachable!(),
-        }
-    }
-    for claim in catalog.iter().filter(|claim| {
-        matches!(
-            claim.witnesses,
-            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::TemporalOptOut { .. }
-        )
-    }) {
-        match claim.witnesses {
-            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::TemporalOptOut {
-                floor,
-                reason,
-                retirement,
-            } => {
-                assert!(
-                    !floor.trim().is_empty(),
-                    "TemporalOptOut claim `{}` must name its floor",
-                    claim.name
-                );
-                assert!(
-                    !reason.trim().is_empty(),
-                    "TemporalOptOut claim `{}` must justify the opt-out",
-                    claim.name
-                );
-                assert!(
-                    !retirement.trim().is_empty(),
-                    "TemporalOptOut claim `{}` must name its retirement condition",
-                    claim.name
-                );
-            }
-            _ => unreachable!(),
-        }
-    }
-    println!(
-        "R(witness-seed-claims)={} R(rust-witness-enrollment-frontier)={} R(rust-witness-not-verdict-bearing)={} R(rust-temporal-opt-outs)={}",
-        seeded.len(),
-        pending.len(),
-        not_verdict_bearing,
-        temporal_opt_outs
-    );
-    assert_eq!(seeded.len(), EXPECTED_SEED_CLAIMS);
-    assert_eq!(pending.len(), EXPECTED_ENROLLMENT_FRONTIER);
-    assert_eq!(not_verdict_bearing, EXPECTED_NOT_VERDICT_BEARING_CLAIMS);
-    assert_eq!(temporal_opt_outs, EXPECTED_TEMPORAL_OPT_OUT_CLAIMS);
-    assert_eq!(
-        seeded.len() + pending.len() + not_verdict_bearing + temporal_opt_outs,
-        catalog.len(),
-        "every catalog claim must be exactly Pair, Pending, NotVerdictBearing, or TemporalOptOut"
-    );
 }
 
 #[test]
@@ -1136,7 +771,30 @@ fn phase2_router_witness_bad_twin_registry_is_armed_at_zero() {
             .map(|slot| format!("{}:{}", slot.owner_slice, slot.router))
             .collect::<Vec<_>>()
     );
-    assert_eq!(slots.len(), EXPECTED_PENDING_ROUTER_WITNESS_SLOTS);
+}
+
+#[test]
+fn every_pair_claim_has_a_standing_ground_truth_gate() {
+    let pairs = seed_witnesses()
+        .into_iter()
+        .map(|witness| witness.claim)
+        .collect::<BTreeSet<_>>();
+    let gated = standing_ground_truth_gate_claims();
+    let pair_without_gate = pairs.difference(&gated).copied().collect::<Vec<_>>();
+    let gate_without_pair = gated.difference(&pairs).copied().collect::<Vec<_>>();
+    println!(
+        "R(pair-without-standing-gate)={} R(standing-gate-without-pair)={}",
+        pair_without_gate.len(),
+        gate_without_pair.len()
+    );
+    assert!(
+        pair_without_gate.is_empty(),
+        "Pair enrollment must join a standing ground-truth gate; missing gate rows: {pair_without_gate:?}"
+    );
+    assert!(
+        gate_without_pair.is_empty(),
+        "Standing ground-truth gates must name only Pair claims; stale gate rows: {gate_without_pair:?}"
+    );
 }
 
 #[test]
@@ -1171,7 +829,7 @@ fn seed_witnesses_satisfy_the_triple() {
                 continue;
             }
             let decl = single_warranted_decl(&out);
-            let got_sat = z3_verdict(&inv_json(decl), &label, &z3);
+            let got_sat = z3_verdict(&assertion_formula_json(decl), &label, &z3);
             if got_sat != expected_sat {
                 failures.push(format!(
                     "{label}: expected SAT={expected_sat} got SAT={got_sat}"
@@ -1190,222 +848,32 @@ fn seed_witnesses_satisfy_the_triple() {
 
 #[test]
 fn corrected_s8_pairs_match_real_rust_semantics() {
-    let witnesses = seed_witnesses();
-    for claim in ["const_item", "fold", "map", "return_sugar"] {
-        let witness = witnesses
-            .iter()
-            .find(|witness| witness.claim == claim)
-            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
-        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
-        let lying = run_rust_test_source(claim, "lying", witness.lying);
-        println!(
-            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
-            if truthful { "PASS" } else { "FAIL" },
-            if lying { "PASS" } else { "FAIL" }
-        );
-        assert!(truthful, "{claim} truthful witness must pass as real Rust");
-        assert!(!lying, "{claim} lying witness must fail as real Rust");
-    }
+    assert_pairs_match_real_rust_semantics(CORRECTED_S8_PAIR_CLAIMS);
 }
 
 #[test]
 fn s9_batch1_pairs_match_real_rust_semantics() {
-    let witnesses = seed_witnesses();
-    let claims = [
-        "term_literal",
-        "const_block",
-        "const",
-        "binop",
-        "bv_binop",
-        "constraint_bool_bitwise",
-        "unary",
-        "wrapping_neg",
-        "int_pow",
-        "int_sqrt",
-        "cast_term",
-        "option_predicate",
-        "result_predicate",
-        "option_unwrap",
-        "is_empty",
-        "is_sorted",
-        "str_method",
-        "to_string",
-        "constraint_string_predicate",
-        "constraint_char_literal_method",
-        "slice_accessor",
-        "slice_search",
-        "range_accessor",
-        "range_term",
-        "sizeof",
-        "offset_of",
-        "duration_value",
-        "into",
-        "nonzero_new",
-        "nonzero_assoc_const",
-        "nonzero_get",
-        "float_literal_method",
-    ];
-    for claim in claims {
-        let witness = witnesses
-            .iter()
-            .find(|witness| witness.claim == claim)
-            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
-        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
-        let lying = run_rust_test_source(claim, "lying", witness.lying);
-        println!(
-            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
-            if truthful { "PASS" } else { "FAIL" },
-            if lying { "PASS" } else { "FAIL" }
-        );
-        assert!(truthful, "{claim} truthful witness must pass as real Rust");
-        assert!(!lying, "{claim} lying witness must fail as real Rust");
-    }
+    assert_pairs_match_real_rust_semantics(S9_BATCH1_PAIR_CLAIMS);
 }
 
 #[test]
 fn s9_batch2_pairs_match_real_rust_semantics() {
-    let witnesses = seed_witnesses();
-    let claims = [
-        "concat_macro",
-        "assertion_surface_relation_macro",
-        "assertion_surface_bounded_literal_macro",
-        "macro_assertion_surface",
-        "assertion_surface_assert_macro",
-        "constraint_bool_expr",
-        "constraint_tuple_decomp",
-        "string_add",
-        "index",
-        "maybe_uninit_new",
-        "maybe_uninit_zeroed",
-        "mem_zeroed",
-        "try_from",
-        "constraint_literal_ip_addr_property",
-        "dyn_any",
-        "cstr",
-        "array_try_from",
-        "literal_tuple_producer",
-        "array_repeat",
-        "field_term",
-        "format_macro",
-        "block_term",
-        "partition_point",
-        "option_adaptor",
-        "transparent_term",
-        "value_if",
-        "cell_refcell",
-        "literal",
-        "const_composite",
-        "primitive_int_tuple_producer",
-        "slice_search_assertion_surface",
-    ];
-    for claim in claims {
-        let witness = witnesses
-            .iter()
-            .find(|witness| witness.claim == claim)
-            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
-        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
-        let lying = run_rust_test_source(claim, "lying", witness.lying);
-        println!(
-            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
-            if truthful { "PASS" } else { "FAIL" },
-            if lying { "PASS" } else { "FAIL" }
-        );
-        assert!(truthful, "{claim} truthful witness must pass as real Rust");
-        assert!(!lying, "{claim} lying witness must fail as real Rust");
-    }
+    assert_pairs_match_real_rust_semantics(S9_BATCH2_PAIR_CLAIMS);
 }
 
 #[test]
 fn s9_batch3_pairs_match_real_rust_semantics() {
-    let witnesses = seed_witnesses();
-    let claims = [
-        "cfg_select_assertion_surface",
-        "integer_decode_tuple_producer",
-        "memchr",
-        "macro_term",
-        "constraint_matches_macro",
-        "control_flow_term",
-        "conditional",
-        "match_node",
-        "constraint_closed_match",
-        "constraint_regex_match",
-        "constraint_no_panic_call",
-        "size_hint_tuple_producer",
-    ];
-    for claim in claims {
-        let witness = witnesses
-            .iter()
-            .find(|witness| witness.claim == claim)
-            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
-        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
-        let lying = run_rust_test_source(claim, "lying", witness.lying);
-        println!(
-            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
-            if truthful { "PASS" } else { "FAIL" },
-            if lying { "PASS" } else { "FAIL" }
-        );
-        assert!(truthful, "{claim} truthful witness must pass as real Rust");
-        assert!(!lying, "{claim} lying witness must fail as real Rust");
-    }
+    assert_pairs_match_real_rust_semantics(S9_BATCH3_PAIR_CLAIMS);
 }
 
 #[test]
 fn s9_batch4_pairs_match_real_rust_semantics() {
-    let witnesses = seed_witnesses();
-    let claims = [
-        "bound_constraint",
-        "bound_path_tuple_producer",
-        "reference_term",
-        "literal_slice",
-        "loop_break_term",
-    ];
-    for claim in claims {
-        let witness = witnesses
-            .iter()
-            .find(|witness| witness.claim == claim)
-            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
-        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
-        let lying = run_rust_test_source(claim, "lying", witness.lying);
-        println!(
-            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
-            if truthful { "PASS" } else { "FAIL" },
-            if lying { "PASS" } else { "FAIL" }
-        );
-        assert!(truthful, "{claim} truthful witness must pass as real Rust");
-        assert!(!lying, "{claim} lying witness must fail as real Rust");
-    }
+    assert_pairs_match_real_rust_semantics(S9_BATCH4_PAIR_CLAIMS);
 }
 
 #[test]
 fn s5_adapter_pairs_match_real_rust_semantics() {
-    let witnesses = seed_witnesses();
-    let claims = [
-        "filter",
-        "filter_map",
-        "take",
-        "take_while",
-        "skip",
-        "skip_while",
-        "chain",
-        "zip",
-        "enumerate",
-        "inspect",
-    ];
-    for claim in claims {
-        let witness = witnesses
-            .iter()
-            .find(|witness| witness.claim == claim)
-            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
-        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
-        let lying = run_rust_test_source(claim, "lying", witness.lying);
-        println!(
-            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
-            if truthful { "PASS" } else { "FAIL" },
-            if lying { "PASS" } else { "FAIL" }
-        );
-        assert!(truthful, "{claim} truthful witness must pass as real Rust");
-        assert!(!lying, "{claim} lying witness must fail as real Rust");
-    }
+    assert_pairs_match_real_rust_semantics(S5_ADAPTER_PAIR_CLAIMS);
 }
 
 #[test]

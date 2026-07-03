@@ -18,7 +18,9 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "intersperse_collect_string",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "unstable-feature bucket: iter_intersperse collection string witness blocked",
+        ),
         recognize,
     );
 

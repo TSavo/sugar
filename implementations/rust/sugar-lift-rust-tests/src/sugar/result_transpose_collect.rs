@@ -28,7 +28,9 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "result_transpose_collect",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pinned_catch(
+        "#3415 family f: Result transpose/collect collection-shape lie remains SAT",
+    ),
     recognize,
 );
 

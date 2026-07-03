@@ -14,7 +14,9 @@ use crate::{Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "write_macro",
     &["macro_term", "method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "formatting/write side effect; no deterministic verdict-bearing output witness",
+    ),
     recognize,
 );
 

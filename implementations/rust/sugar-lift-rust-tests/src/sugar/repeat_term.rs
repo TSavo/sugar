@@ -17,7 +17,7 @@ use crate::Sugar;
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "repeat_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket("owner-mismatch aggregate row: repeat witnesses dispatch through aggregate_decomp/term_literal"),
         recognize,
     );
 

@@ -15,7 +15,9 @@ use crate::{Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
     "for_loop_mutation",
     &["forall_loop"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "loop mutation state; needs guarded temporal statement anchoring",
+    ),
     recognize,
 );
 

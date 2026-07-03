@@ -15,7 +15,9 @@ use crate::{Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "future_join",
     &["macro_term"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "async future join runtime handoff; no stable verdict witness yet",
+    ),
     recognize,
 );
 

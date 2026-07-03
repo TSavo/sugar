@@ -23,13 +23,17 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "function_map",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::temporal_campaign(
+            "S5 adapter family: named function map composition",
+        ),
         recognize_composite,
     );
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "function_map_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::temporal_campaign(
+            "S5 adapter family: named function map as term",
+        ),
         recognize_term,
     );
 

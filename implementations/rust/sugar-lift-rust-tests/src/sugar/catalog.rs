@@ -968,45 +968,59 @@ mod tests {
     static FIRST: ExprSugarClaim = ExprSugarClaim::new(
         "first",
         SugarRole::Term,
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "test-only catalog ordering fixture; not a registered source-witness row",
+        ),
         recognize,
     );
     static SECOND: ExprSugarClaim = ExprSugarClaim::new(
         "second",
         SugarRole::Term,
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "test-only catalog ordering fixture; not a registered source-witness row",
+        ),
         recognize,
     );
     static FIRST_BEFORE_SECOND: ExprSugarClaim = ExprSugarClaim::with_ordering(
         "first",
         SugarRole::Term,
         &["second"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "test-only catalog ordering fixture; not a registered source-witness row",
+        ),
         recognize,
     );
     static SECOND_BEFORE_FIRST: ExprSugarClaim = ExprSugarClaim::with_ordering(
         "second",
         SugarRole::Term,
         &["first"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "test-only catalog ordering fixture; not a registered source-witness row",
+        ),
         recognize,
     );
     static SECOND_BEFORE_THIRD: ExprSugarClaim = ExprSugarClaim::with_ordering(
         "second",
         SugarRole::Term,
         &["third"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "test-only catalog ordering fixture; not a registered source-witness row",
+        ),
         recognize,
     );
     static THIRD: ExprSugarClaim = ExprSugarClaim::new(
         "third",
         SugarRole::Term,
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "test-only catalog ordering fixture; not a registered source-witness row",
+        ),
         recognize,
     );
     static FALLBACK: ExprSugarClaim = ExprSugarClaim::fallback_term(
         "fallback",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "test-only catalog ordering fixture; not a registered source-witness row",
+        ),
         recognize,
     );
 
@@ -1095,7 +1109,9 @@ mod tests {
     fn same_role_fallback_wells_still_need_an_ordering_relation() {
         static OTHER_FALLBACK: ExprSugarClaim = ExprSugarClaim::fallback_term(
             "other_fallback",
-            crate::sugar::claim::SugarWitnesses::Pending,
+            crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+                "test-only catalog ordering fixture; not a registered source-witness row",
+            ),
             recognize,
         );
 

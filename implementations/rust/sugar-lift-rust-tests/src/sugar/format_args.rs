@@ -20,7 +20,9 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const ESTIMATED_CAPACITY_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "format_args_estimated_capacity",
     &["method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "unstable-feature bucket: fmt_internals capacity is not stable Rust witness ground",
+    ),
     recognize_estimated_capacity,
 );
 

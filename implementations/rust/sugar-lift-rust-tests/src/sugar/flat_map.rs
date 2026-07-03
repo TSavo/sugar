@@ -29,7 +29,9 @@ use syn::{Expr, Pat, Stmt};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "flat_map",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::temporal_campaign(
+            "S5 adapter family: flat_map expansion",
+        ),
         recognize_composite,
     );
 

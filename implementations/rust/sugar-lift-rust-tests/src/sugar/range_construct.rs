@@ -21,7 +21,7 @@ use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "range_construct",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket("owner-mismatch range row: probes dispatch to range_term/struct_term/aggregate surfaces"),
         recognize,
     );
 

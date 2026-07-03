@@ -13,7 +13,7 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "tuple_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket("owner-mismatch aggregate row: tuple witnesses dispatch through tuple_decomp/term_literal"),
         recognize,
     );
 

@@ -26,7 +26,9 @@ use syn::{Expr, ExprLit, ExprMethodCall, Lit};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_float_refinement",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pinned_catch(
+        "#3415 family e: float refinement semantic lie remains SAT",
+    ),
     recognize,
 );
 

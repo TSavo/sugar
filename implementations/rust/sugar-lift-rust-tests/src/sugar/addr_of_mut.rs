@@ -22,7 +22,9 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "addr_of_mut",
     &["macro_term"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "unsafe address-of expression; needs pointer-provenance floor before a verdict pair",
+    ),
     recognize,
 );
 

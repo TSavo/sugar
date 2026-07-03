@@ -25,14 +25,18 @@ use syn::{BinOp, Expr, ExprBinary, ExprMacro};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_infinity_eq",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pinned_catch(
+        "#3415 family e catch #34: infinity equality semantic lie remains SAT",
+    ),
     recognize,
 );
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "assertion_surface_infinity_eq",
     SugarRole::AssertionSurface,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pinned_catch(
+        "#3415 family e: float/infinity semantics lie remains SAT",
+    ),
     recognize,
 );
 

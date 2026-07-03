@@ -27,7 +27,9 @@ use crate::{strip_refs_groups, Sugar};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "collection_literal",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "owner-mismatch collection row: aggregate literal witnesses dispatch elsewhere",
+        ),
         recognize_composite,
     );
 

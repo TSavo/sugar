@@ -45,7 +45,15 @@ pub enum SugarWitnesses {
         reason: &'static str,
         retirement: &'static str,
     },
-    Pending,
+    ReasonedBucket {
+        blocker: &'static str,
+    },
+    PinnedCatch {
+        family: &'static str,
+    },
+    TemporalCampaign {
+        slice: &'static str,
+    },
 }
 
 impl SugarWitnesses {
@@ -69,8 +77,16 @@ impl SugarWitnesses {
         }
     }
 
-    pub const fn is_pending(self) -> bool {
-        matches!(self, Self::Pending)
+    pub const fn reasoned_bucket(blocker: &'static str) -> Self {
+        Self::ReasonedBucket { blocker }
+    }
+
+    pub const fn pinned_catch(family: &'static str) -> Self {
+        Self::PinnedCatch { family }
+    }
+
+    pub const fn temporal_campaign(slice: &'static str) -> Self {
+        Self::TemporalCampaign { slice }
     }
 }
 

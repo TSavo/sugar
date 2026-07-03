@@ -46,7 +46,9 @@ pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "result_inspect",
         &["method"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::temporal_campaign(
+            "S6 Option-Result family: inspect on Result",
+        ),
         recognize_term,
     );
 
