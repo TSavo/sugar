@@ -24,7 +24,22 @@ use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_term(
     "reference_term",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_reference_term_good() {
+                let x = 5_i32;
+                assert_eq!(&x, &5_i32);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_reference_term_bad() {
+                let x = 5_i32;
+                assert_eq!(&x, &6_i32);
+            }
+        "#,
+    ),
     recognize,
 );
 

@@ -23,7 +23,22 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite_before(
         "literal_slice",
         &["reference_sequence"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_literal_slice_good() {
+                    let xs = [1_i32, 2_i32, 3_i32];
+                    assert_eq!(xs[1..][0], 2);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_literal_slice_bad() {
+                    let xs = [1_i32, 2_i32, 3_i32];
+                    assert_eq!(xs[1..][0], 3);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 

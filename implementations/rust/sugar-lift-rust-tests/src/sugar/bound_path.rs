@@ -28,7 +28,22 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "bound_constraint",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_bound_constraint_good() {
+                let ok = 1_i32 < 2_i32;
+                assert!(ok);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_bound_constraint_bad() {
+                let ok = 1_i32 > 2_i32;
+                assert!(ok);
+            }
+        "#,
+    ),
     recognize_constraint,
 );
 
@@ -41,7 +56,22 @@ pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composit
 
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::tuple_producer(
     "bound_path_tuple_producer",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_bound_path_tuple_producer_good() {
+                let pair = (5_i32, 6_i32);
+                assert_eq!(pair.0, 5);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_bound_path_tuple_producer_bad() {
+                let pair = (5_i32, 6_i32);
+                assert_eq!(pair.0, 6);
+            }
+        "#,
+    ),
     recognize_tuple_producer,
 );
 
