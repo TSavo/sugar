@@ -9054,6 +9054,7 @@ enum RaiseEffect {
     Panic { boundary: String },
     ResultErr { boundary: String },
     EarlyReturn { boundary: String },
+    EarlyReturnValue { boundary: String, value: Rc<Term> },
 }
 
 impl RaiseEffect {
@@ -9061,7 +9062,8 @@ impl RaiseEffect {
         match self {
             RaiseEffect::Panic { boundary }
             | RaiseEffect::ResultErr { boundary }
-            | RaiseEffect::EarlyReturn { boundary } => boundary,
+            | RaiseEffect::EarlyReturn { boundary }
+            | RaiseEffect::EarlyReturnValue { boundary, .. } => boundary,
         }
     }
 
@@ -9075,7 +9077,8 @@ impl RaiseEffect {
                 "result error raise effect `{boundary}` exits the current block and may be \
                  routed by a matching handler; refused"
             ),
-            RaiseEffect::EarlyReturn { boundary } => format!(
+            RaiseEffect::EarlyReturn { boundary }
+            | RaiseEffect::EarlyReturnValue { boundary, .. } => format!(
                 "early return raise effect `{boundary}` exits the current block and may be \
                  routed by a matching handler; refused"
             ),

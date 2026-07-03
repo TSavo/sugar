@@ -50,6 +50,7 @@ pub(crate) fn is_raise_like_effect(effect: &Effect) -> bool {
 mod tests {
     use super::*;
     use crate::RaiseEffect;
+    use sugar_ir_symbolic::num;
 
     #[test]
     fn typed_raise_effect_family_is_raise_like_but_coverage_gap_is_not() {
@@ -60,8 +61,9 @@ mod tests {
             Effect::Raise(RaiseEffect::ResultErr {
                 boundary: "fallible()?".to_string(),
             }),
-            Effect::Raise(RaiseEffect::EarlyReturn {
+            Effect::Raise(RaiseEffect::EarlyReturnValue {
                 boundary: "return Err(e)".to_string(),
+                value: num(7),
             }),
         ] {
             assert!(is_raise_like_effect(&effect));

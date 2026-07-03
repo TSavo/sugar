@@ -1,14 +1,17 @@
 use std::collections::BTreeSet;
 use std::process::Command;
+use std::rc::Rc;
 
+use sugar_ir_symbolic::{num, ConstValue, Sort, Term};
 use sugar_lift_rust_tests::sugar::catalog::catalog_claims;
 use sugar_lift_rust_tests::{
-    lift_file, AdapterOutput, AssertionFactEmission, AssertionFactKind, FactoryDisposition,
+    emit_value_contract, lift_file, warrant_conjoined_with_vendor_terms, AdapterOutput,
+    AssertionFactEmission, AssertionFactKind, FactoryDisposition,
 };
 
 const EXPECTED_SEED_CLAIMS: usize = 13;
 const EXPECTED_ENROLLMENT_FRONTIER: usize = 198;
-const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 3;
+const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 1;
 
 #[derive(Clone, Copy)]
 struct WitnessPair {
@@ -26,26 +29,12 @@ struct PendingRouterWitnessSlot {
 }
 
 fn pending_router_witness_slots() -> Vec<PendingRouterWitnessSlot> {
-    vec![
-        PendingRouterWitnessSlot {
-            router: "panic",
-            owner_slice: "Phase2-S5",
-            truthful_slot: "handled panic route preserves the panic-freedom fact",
-            lying_slot: "uncaught panic remains a residual raise/refusal, never a fabricated fact",
-        },
-        PendingRouterWitnessSlot {
-            router: "early_return",
-            owner_slice: "Phase2-S5",
-            truthful_slot: "early return in a branch routes to the handler's value",
-            lying_slot: "wrong early-return value refutes through the real solver",
-        },
-        PendingRouterWitnessSlot {
-            router: "drop",
-            owner_slice: "Phase2-S6",
-            truthful_slot: "no-op Drop does not perturb emitted bytes or verdict",
-            lying_slot: "effectful Drop enters the effect algebra and refuses/routes explicitly",
-        },
-    ]
+    vec![PendingRouterWitnessSlot {
+        router: "drop",
+        owner_slice: "Phase2-S6",
+        truthful_slot: "no-op Drop does not perturb emitted bytes or verdict",
+        lying_slot: "effectful Drop enters the effect algebra and refuses/routes explicitly",
+    }]
 }
 
 fn seed_witnesses() -> Vec<WitnessPair> {
@@ -423,6 +412,100 @@ fn phase2_question_mark_err_path_remains_uncaught_boundary() {
         rendered.contains("result error raise effect") || rendered.contains("ResultErr"),
         "uncaught Err(_)? should surface the typed ResultErr boundary, got {rendered}"
     );
+}
+
+#[test]
+fn phase2_early_return_branch_has_solver_bad_twin() {
+    let z3 = z3_path_or_panic();
+    let function: syn::ItemFn = syn::parse_str(
+        r#"
+        fn pick(flag: bool) -> i32 {
+            if flag {
+                return 5;
+            }
+            7
+        }
+    "#,
+    )
+    .expect("early-return source parses");
+    let decl = emit_value_contract("pick", &function.block)
+        .expect("early-return source contract emits through the route spine");
+    let flag_true = bool_term(true);
+
+    for (label, expected_out, expected_sat) in [
+        ("phase2_early_return_good", 5, true),
+        ("phase2_early_return_bad", 6, false),
+    ] {
+        let conjoined = warrant_conjoined_with_vendor_terms(
+            &decl,
+            &[("flag", Rc::clone(&flag_true))],
+            num(expected_out),
+        );
+        let got_sat = z3_verdict(&inv_json(&conjoined), label, &z3);
+        assert_eq!(
+            got_sat, expected_sat,
+            "{label}: expected SAT={expected_sat} got SAT={got_sat}; decl={conjoined:?}"
+        );
+    }
+}
+
+#[test]
+fn phase2_guarded_panic_branch_has_solver_bad_twin() {
+    let z3 = z3_path_or_panic();
+    let function: syn::ItemFn = syn::parse_str(
+        r#"
+        fn guarded(flag: bool) -> i32 {
+            if flag {
+                panic!()
+            }
+            7
+        }
+    "#,
+    )
+    .expect("guarded panic source parses");
+    let decl = emit_value_contract("guarded", &function.block)
+        .expect("guarded panic source contract emits through the route spine");
+    let flag_false = bool_term(false);
+
+    for (label, expected_out, expected_sat) in [
+        ("phase2_guarded_panic_good", 7, true),
+        ("phase2_guarded_panic_bad", 8, false),
+    ] {
+        let conjoined = warrant_conjoined_with_vendor_terms(
+            &decl,
+            &[("flag", Rc::clone(&flag_false))],
+            num(expected_out),
+        );
+        let got_sat = z3_verdict(&inv_json(&conjoined), label, &z3);
+        assert_eq!(
+            got_sat, expected_sat,
+            "{label}: expected SAT={expected_sat} got SAT={got_sat}; decl={conjoined:?}"
+        );
+    }
+}
+
+#[test]
+fn phase2_uncaught_panic_remains_residual_refusal() {
+    let function: syn::ItemFn = syn::parse_str(
+        r#"
+        fn explode() -> i32 {
+            panic!()
+        }
+    "#,
+    )
+    .expect("uncaught panic source parses");
+    let decl = emit_value_contract("explode", &function.block);
+    assert!(
+        decl.is_none(),
+        "a bare panic has no normal return formula to fabricate: {decl:?}"
+    );
+}
+
+fn bool_term(value: bool) -> Rc<Term> {
+    Rc::new(Term::Const {
+        value: ConstValue::Bool(value),
+        sort: Sort::bool(),
+    })
 }
 
 #[test]

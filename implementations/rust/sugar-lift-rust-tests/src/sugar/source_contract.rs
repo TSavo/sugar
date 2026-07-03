@@ -18,11 +18,14 @@ use crate::sugar::block_sugar::block_stmt_to_formula;
 use crate::sugar::catalog::build_stmt_role;
 use crate::sugar::claim::SugarRole;
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::route_raises_operation::{
+    RouteRaiseHandler, RouteRaisesAccept, RouteRaisesOperation,
+};
 use crate::{
     bool_const, parse_int_lit, path_to_variant_string, source_assertion_entries_in_stmts,
     subst_var_in_formula, subst_var_in_term, sugar_ctx_with_factory_audits,
     temporal_plan_for_stmts, translate_term_in_scope, Desugared, FloatWidthScope, LiftOptions,
-    Outcome, ReductionCtx, TemporalScope,
+    Outcome, RaiseEffect, ReductionCtx, TemporalScope,
 };
 
 // ── Source-audit value-contract emission ────────────────────────────────────
@@ -377,8 +380,70 @@ fn block_stmt_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formul
     match block_node.reduce(&ctx) {
         Outcome::Complete(Desugared::StmtBlock {
             guarded, raises, ..
+        }) => route_source_block_exits(guarded, raises),
+        _ => None,
+    }
+}
+
+fn route_source_block_exits(
+    guarded: Vec<crate::sugar::guarded_return::GuardedReturn>,
+    raises: Vec<crate::sugar::guarded_raise::GuardedRaise>,
+) -> Option<Rc<Formula>> {
+    let early_return = SourceEarlyReturnHandler;
+    let panic = SourcePanicNoNormalExitHandler;
+    let routed = Desugared::StmtBlock {
+        guarded,
+        raises,
+        fall_through: Vec::new(),
+    }
+    .accept_route_raises(RouteRaisesOperation::new(
+        vec![&early_return, &panic],
+        "SourceContract",
+    ));
+    match routed {
+        Outcome::Complete(Desugared::StmtBlock {
+            guarded, raises, ..
         }) => block_stmt_to_formula(guarded, raises),
         _ => None,
+    }
+}
+
+struct SourceEarlyReturnHandler;
+
+impl RouteRaiseHandler for SourceEarlyReturnHandler {
+    fn matches(&self, effect: &crate::Effect) -> bool {
+        matches!(
+            effect,
+            crate::Effect::Raise(RaiseEffect::EarlyReturnValue { .. })
+        )
+    }
+
+    fn reduce(&self, _scope: &TemporalScope, effect: &crate::Effect) -> Outcome {
+        let crate::Effect::Raise(RaiseEffect::EarlyReturnValue { value, .. }) = effect else {
+            return Outcome::Incomplete(effect.clone());
+        };
+        Outcome::Complete(Desugared::StmtReturn(Rc::clone(value)))
+    }
+}
+
+struct SourcePanicNoNormalExitHandler;
+
+impl RouteRaiseHandler for SourcePanicNoNormalExitHandler {
+    fn matches(&self, effect: &crate::Effect) -> bool {
+        matches!(
+            effect,
+            crate::Effect::PanicMacro { .. }
+                | crate::Effect::LiteralPanic { .. }
+                | crate::Effect::Raise(RaiseEffect::Panic { .. })
+        )
+    }
+
+    fn reduce(&self, _scope: &TemporalScope, _effect: &crate::Effect) -> Outcome {
+        Outcome::Complete(Desugared::StmtBlock {
+            guarded: Vec::new(),
+            raises: Vec::new(),
+            fall_through: Vec::new(),
+        })
     }
 }
 

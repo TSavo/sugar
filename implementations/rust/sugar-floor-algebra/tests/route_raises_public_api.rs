@@ -39,7 +39,7 @@ fn assert_incomplete_effect(outcome: Outcome, expected: Effect) {
     let Outcome::Incomplete(got) = outcome else {
         panic!("expected incomplete effect");
     };
-    assert_eq!(got, expected);
+    assert_eq!(format!("{got:?}"), format!("{expected:?}"));
 }
 
 struct ResultErrHandler;

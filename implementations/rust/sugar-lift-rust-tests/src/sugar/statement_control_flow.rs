@@ -8,6 +8,7 @@
 //   * `StatementControlFlowSugar` holds `boundary: String` -- zero raw-syn fields.
 
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::route_raises_operation::RouteRaisesOperation;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Effect, Outcome, Sugar, SugarCtx};
 
@@ -30,10 +31,12 @@ struct StatementControlFlowSugar {
 }
 
 impl Sugar for StatementControlFlowSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Incomplete(Effect::ControlFlow {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let outcome = Outcome::Incomplete(Effect::ControlFlow {
             boundary: self.boundary.clone(),
-        })
+        });
+        RouteRaisesOperation::new(Vec::new(), "StatementControlFlow")
+            .route_incomplete_with_scope(outcome, ctx.scope)
     }
 }
 
