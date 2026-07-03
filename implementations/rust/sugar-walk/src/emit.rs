@@ -3260,7 +3260,9 @@ mod tests {
         assert_eq!(decision.owner, "function-boundary");
         assert_eq!(decision.handlers_at_emit, 0);
         assert!(
-            decision.reason.contains("propagates to the caller boundary"),
+            decision
+                .reason
+                .contains("propagates to the caller boundary"),
             "decision must argue why emit uses an empty handler set: {}",
             decision.reason
         );

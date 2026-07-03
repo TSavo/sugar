@@ -31,8 +31,8 @@ use std::rc::Rc;
 use libsugar::panic_freedom;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use sugar_floor_algebra::{
-    guard_exit, Desugared, PredicateValue, PredicateValueFloorAccept, RequiredPredicateValueVisitor,
-    SymbolicValue,
+    guard_exit, Desugared, PredicateValue, PredicateValueFloorAccept,
+    RequiredPredicateValueVisitor, SymbolicValue,
 };
 use sugar_ir_symbolic::Term as AlgebraTerm;
 use sugar_ir_types::{IrFormula, IrTerm, LetBinding};
@@ -772,7 +772,9 @@ fn find_next_partial_receiver_expr(
     let mut collector = PartialReceiverCollector::default();
     collector.visit_expr(expr);
     for receiver in collector.receivers {
-        if next_into_iter_receiver_key_expr(&receiver, ctx).as_deref() == Some(collection_receiver_key) {
+        if next_into_iter_receiver_key_expr(&receiver, ctx).as_deref()
+            == Some(collection_receiver_key)
+        {
             return lift_expr_to_term_inner(&receiver, ctx);
         }
     }
