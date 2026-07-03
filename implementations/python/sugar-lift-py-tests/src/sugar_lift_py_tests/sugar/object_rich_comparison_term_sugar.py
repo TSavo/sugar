@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import ObjectValue, SymbolicValue
+from sugar_lift_py_tests.floor import BoolValue, ObjectValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.operations.object_method_call import call_object_method_value
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
@@ -75,15 +75,19 @@ class ObjectRichComparisonTermSugar(Sugar, role=SugarRole.TERM):
                 (right,),
                 owner="ObjectRichComparisonTermSugar",
                 blame=self.blame,
+                ctx=ctx,
+            )
+        if (term_pair := _term_pair(left, right)) is not None:
+            left_term, right_term = term_pair
+            return Complete(
+                BoolValue(_concrete_rich_compare(self.operator, left_term, right_term))
             )
         return Complete(
             SymbolicValue(
                 ctor(
                     f"py.compare:{self.operator}",
                     [
-                        floor_to_term(
-                            left, owner="ObjectRichComparisonTermSugar left"
-                        ),
+                        floor_to_term(left, owner="ObjectRichComparisonTermSugar left"),
                         floor_to_term(
                             right, owner="ObjectRichComparisonTermSugar right"
                         ),
@@ -91,3 +95,23 @@ class ObjectRichComparisonTermSugar(Sugar, role=SugarRole.TERM):
                 )
             )
         )
+
+
+def _term_pair(left: object, right: object) -> tuple[TermValue, TermValue] | None:
+    if isinstance(left, TermValue) and isinstance(right, TermValue):
+        return left, right
+    return None
+
+
+def _concrete_rich_compare(operator: str, left: TermValue, right: TermValue) -> bool:
+    if operator == "Lt":
+        return left.value < right.value
+    if operator == "LtE":
+        return left.value <= right.value
+    if operator == "Gt":
+        return left.value > right.value
+    if operator == "GtE":
+        return left.value >= right.value
+    if operator == "NotEq":
+        return left.value != right.value
+    raise TypeError(f"write more rich-comparison floor for `{operator}`")

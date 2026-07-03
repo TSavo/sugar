@@ -17,5 +17,8 @@ class BuilderState(FloorValue):
     def add_with(self, operation: Any, ctx: Any) -> Any:
         return operation.add_builder(self, ctx)
 
+    def call_method_with(self, operation: Any, ctx: Any) -> Any:
+        return self.current.call_method_with(operation, ctx)
+
     def materialize_with(self, operation: Any, ctx: Any) -> Any:
         return operation.materialize_builder(self, ctx)

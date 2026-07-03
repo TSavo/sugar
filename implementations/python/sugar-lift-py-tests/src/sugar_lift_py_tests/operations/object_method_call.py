@@ -13,10 +13,11 @@ def call_object_method_value(
     *,
     owner: str,
     blame: str,
+    ctx: object | None = None,
 ) -> Outcome:
     return cast(
         Outcome,
-        receiver.call_method_value(name, arguments, owner=owner, blame=blame),
+        receiver.call_method_value(name, arguments, owner=owner, blame=blame, ctx=ctx),
     )
 
 

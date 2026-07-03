@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ObjectValue
-from sugar_lift_py_tests.ir import Formula, Term, atomic
+from sugar_lift_py_tests.ir import Formula, Term, atomic, bool_const, eq
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.object_truthiness import object_truth_formula
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -19,6 +19,7 @@ class CallTruthAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
     call: Term
     call_body: SugarBody | None
+    boolean_call: bool
     blame: str
 
     @classmethod
@@ -49,10 +50,13 @@ class CallTruthAssertionSugar(Sugar, role=SugarRole.ASSERTION):
                 external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
             ),
             call_body=_local_constructor_body(test, ctx),
+            boolean_call=_local_boolean_function_call(test, ctx),
             blame=site.blame,
         )
 
     def assertion_formula(self) -> Formula:
+        if self.boolean_call:
+            return eq(self.call, bool_const(True))
         return atomic("py.truthy", [self.call])
 
     def desugar(self, ctx):
@@ -91,3 +95,35 @@ def _local_constructor_body(test, ctx) -> SugarBody | None:
     if SourceFragment.from_node(function_node, ctx.filename).observed != "ClassDef":
         return None
     return ctx.build_body(test, SugarRole.TERM)
+
+
+def _local_boolean_function_call(test, ctx) -> bool:
+    target = test.call_target_name()
+    if target is None:
+        return False
+    import_target = test.call_import_target_name(
+        getattr(ctx, "import_aliases", {}) or {},
+        getattr(ctx, "from_imports", {}) or {},
+    )
+    if import_target is not None:
+        return False
+    function_node = (getattr(ctx, "name_resolver", None) or {}).get(target)
+    if function_node is None:
+        return False
+
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    function = SourceFragment.from_node(function_node, ctx.filename)
+    if function.observed != "FunctionDef":
+        return False
+    body = function.function_body()
+    if len(body) != 1 or body[0].observed != "Return":
+        return False
+    value = body[0].return_value()
+    if value is None:
+        return False
+    if value.observed in {"Compare", "BoolOp"}:
+        return True
+    if value.observed == "PrimitiveLiteral":
+        return isinstance(value.literal_value(), bool)
+    return False

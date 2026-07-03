@@ -14,10 +14,10 @@ class ReduceContext:
     report_sink: Any = None
     factory_audit_sink: Any = None
     operation_log: list[tuple[str, str, str]] = field(default_factory=list)
-    # The DIG QUEUE. When BridgeStrategy.emit emits a bridge `call:h(args)`, it appends
-    # `(callee_name, arg_value)` here -- a bridge OBLIGATES the dig of the tower it points at
-    # (h now needs a universe). A bridge without its enqueued dig is a dangling uninterpreted
-    # symbol, a false discharge. None when no driver is draining (a plain reduce).
+    # The DIG QUEUE. When a bridge emits `call:h(args)`, it appends the actual
+    # CallSiteValue here -- a bridge OBLIGATES the dig of the tower it points at.
+    # A bridge without its enqueued dig is a dangling uninterpreted symbol, a false
+    # discharge. None when no driver is draining (a plain reduce).
     dig_sink: Any = None
 
     @classmethod

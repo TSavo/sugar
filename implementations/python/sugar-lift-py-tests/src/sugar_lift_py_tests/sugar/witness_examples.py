@@ -230,20 +230,38 @@ def format_int_return_witness() -> SugarWitnessPair:
     )
 
 
-def object_equality_return_witness() -> SugarWitnessPair:
+def object_equality_return_witness() -> tuple[SugarWitnessPair, SugarWitnessPair]:
     prefix = (
         "class C:\n"
         "    def __init__(self, x):\n"
         "        self.x = x\n"
         "\n"
     )
-    return _call_return_pair(
-        name="object_equality_return",
-        owner_sugar="ObjectEqualityTermSugar",
-        body="C(z) == C(z)",
-        truthful="True",
-        lying="False",
-        prefix=prefix,
+    explicit_eq_prefix = (
+        "class C:\n"
+        "    def __init__(self, x):\n"
+        "        self.x = x\n"
+        "    def __eq__(self, other):\n"
+        "        return self.x == other.x\n"
+        "\n"
+    )
+    return (
+        _call_return_pair(
+            name="object_equality_identity_return",
+            owner_sugar="ObjectEqualityTermSugar",
+            body="C(z) == C(z)",
+            truthful="False",
+            lying="True",
+            prefix=prefix,
+        ),
+        _call_return_pair(
+            name="object_equality_return",
+            owner_sugar="ObjectEqualityTermSugar",
+            body="C(z) == C(z)",
+            truthful="True",
+            lying="False",
+            prefix=explicit_eq_prefix,
+        ),
     )
 
 

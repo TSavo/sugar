@@ -3,7 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.ir import Formula, Term, atomic, str_const
+from sugar_lift_py_tests.ir import (
+    Formula,
+    Term,
+    _ConstBool,
+    _ConstInt,
+    _ConstStr,
+    atomic,
+    bool_const,
+    eq,
+    str_const,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import isinstance_assertion_witness
 from sugar_lift_py_tests.sugar.symbolic_term import symbolic_term
@@ -49,6 +59,9 @@ class IsInstanceAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         )
 
     def assertion_formula(self) -> Formula:
+        concrete = _concrete_isinstance(self.subject, self.type_name)
+        if concrete is not None:
+            return eq(bool_const(concrete), bool_const(True))
         return atomic("is_type", [self.subject, str_const(self.type_name)])
 
     def desugar(self, ctx):
@@ -65,3 +78,13 @@ def _type_expr_name(site) -> str:
         f"write more Sugar for isinstance type `{site.observed}`: "
         "add a builtin type-expression shape"
     )
+
+
+def _concrete_isinstance(subject: Term, type_name: str) -> bool | None:
+    if isinstance(subject, _ConstBool):
+        return type_name in {"bool", "int"}
+    if isinstance(subject, _ConstInt):
+        return type_name == "int"
+    if isinstance(subject, _ConstStr):
+        return type_name == "str"
+    return None

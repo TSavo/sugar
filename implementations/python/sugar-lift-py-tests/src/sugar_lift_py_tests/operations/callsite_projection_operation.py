@@ -5,7 +5,7 @@ from typing import Any, ClassVar, NoReturn, cast
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import FloorValue
-from sugar_lift_py_tests.ir import Formula, Term, eq
+from sugar_lift_py_tests.ir import _ConstStr, _Ctor, Formula, Term, eq
 
 
 @dataclass(frozen=True)
@@ -24,8 +24,10 @@ class CallsiteProjectionOperation:
         del ctx
         return eq(self.call_term(), receiver.term)
 
-    def project_symbolic(self, receiver, ctx: Any) -> None:
-        del receiver, ctx
+    def project_symbolic(self, receiver, ctx: Any) -> Formula | None:
+        del ctx
+        if _is_concrete_python_bytes_term(receiver.term):
+            return eq(self.call_term(), receiver.term)
         return None
 
     def project_return(self, receiver, ctx: Any) -> Formula | None:
@@ -81,3 +83,12 @@ class CallsiteProjectionOperation:
                 message=info.message,
             ),
         )
+
+
+def _is_concrete_python_bytes_term(term: Term) -> bool:
+    return (
+        isinstance(term, _Ctor)
+        and term.name == "python:bytes"
+        and len(term.args) == 1
+        and isinstance(term.args[0], _ConstStr)
+    )

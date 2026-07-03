@@ -15,6 +15,7 @@ from sugar_lift_py_tests.ir import (
     _ConstStr,
     _Ctor,
     eq,
+    bool_const,
     forall,
     implies,
     make_var,
@@ -42,7 +43,6 @@ from . import (
     _truthful_source,
     _witness_provenance,
 )
-
 
 SourceWarrant = SourceMementoDto | dict[str, Any]
 
@@ -86,7 +86,9 @@ class FunctionContract(ProofIRNode):
             raise TypeError("FunctionContract pre must be PreCondition")
         normalized_formals = tuple(formals)
         normalized_warrants = tuple(warrants)
-        normalized_out_sort = _normalize_sort(out_sort) if out_sort is not None else post.out_sort
+        normalized_out_sort = (
+            _normalize_sort(out_sort) if out_sort is not None else post.out_sort
+        )
         _validate_contract(
             symbol=symbol,
             formals=normalized_formals,
@@ -131,8 +133,10 @@ class FunctionContract(ProofIRNode):
         )
 
     def denotation(self) -> IrFormula:
-        body = self.post.ir_formula if self.pre is None else implies(
-            self.pre.ir_formula, self.post.ir_formula
+        body = (
+            self.post.ir_formula
+            if self.pre is None
+            else implies(self.pre.ir_formula, self.post.ir_formula)
         )
         for formal in reversed(self.formals):
             body = forall(formal.name, formal.sort.ir_sort, body)
@@ -454,6 +458,53 @@ def _normalize_ir_term(term: IrTerm, env: dict[str, IrTerm]) -> IrTerm | None:
 
 
 def _fold_numeric_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
+    if (
+        name == "py.subscript"
+        and len(args) == 2
+        and isinstance(args[0], _Ctor)
+        and args[0].name in {"array", "tuple"}
+        and isinstance(args[1], _ConstInt)
+    ):
+        index = args[1].value
+        if 0 <= index < len(args[0].args):
+            return args[0].args[index]
+        return None
+    if (
+        name == "divmod"
+        and len(args) == 2
+        and all(isinstance(arg, _ConstInt) for arg in args)
+    ):
+        left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
+        if right == 0:
+            return None
+        quotient, remainder = divmod(left, right)
+        return _Ctor("tuple", (num(quotient), num(remainder)))
+    if (
+        name.startswith("py.compare:")
+        and len(args) == 2
+        and all(isinstance(arg, _ConstInt) for arg in args)
+    ):
+        left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
+        operator = name.removeprefix("py.compare:")
+        if operator == "Lt":
+            return bool_const(left < right)
+        if operator == "LtE":
+            return bool_const(left <= right)
+        if operator == "Gt":
+            return bool_const(left > right)
+        if operator == "GtE":
+            return bool_const(left >= right)
+        if operator == "NotEq":
+            return bool_const(left != right)
+        if operator == "Eq":
+            return bool_const(left == right)
+    if name in {"==", "!="} and len(args) == 2:
+        left, right = args
+        if type(left) is type(right) and isinstance(
+            left, (_ConstBool, _ConstInt, _ConstReal, _ConstStr)
+        ):
+            equal = left == right
+            return bool_const(equal if name == "==" else not equal)
     if name not in {"+", "-", "*"}:
         return None
     if not all(isinstance(arg, _ConstInt) for arg in args):

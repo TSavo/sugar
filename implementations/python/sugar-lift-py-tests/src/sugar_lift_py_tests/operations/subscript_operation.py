@@ -15,6 +15,7 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     SymbolicValue,
     TermValue,
+    TupleLiteralValue,
 )
 from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import ctor, num
@@ -54,24 +55,26 @@ class SubscriptOperation:
             ctx,
             owner=f"{self.owner} array index",
         )
-        if isinstance(index, BoolValue):
-            index = TermValue(1 if index.value else 0)
-        if isinstance(index, TermValue) and type(index.value) is int:
-            if 0 <= index.value < len(receiver.items):
-                return Complete(receiver.items[index.value])
-            _raise_subscript_gap(
-                owner=self.owner,
-                blame=self.blame,
-                observed=f"ArrayLiteral[{index.value}]",
-                requested="bounds-safe array subscript",
-                fix="add bounds-safe projection support for ArrayLiteral",
-            )
-        _raise_subscript_gap(
+        return _subscript_sequence(
+            receiver.items,
+            index,
             owner=self.owner,
             blame=self.blame,
-            observed=type(index).__name__,
-            requested="concrete array index",
-            fix=f"add array index floor for {type(index).__name__}",
+            observed_name="ArrayLiteral",
+        )
+
+    def subscript_tuple(self, receiver: TupleLiteralValue, ctx: object) -> Outcome:
+        index = force_floor(
+            self.index,
+            ctx,
+            owner=f"{self.owner} tuple index",
+        )
+        return _subscript_sequence(
+            receiver.items,
+            index,
+            owner=self.owner,
+            blame=self.blame,
+            observed_name="TupleLiteralValue",
         )
 
     def subscript_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
@@ -97,6 +100,35 @@ class SubscriptOperation:
                 )
             )
         )
+
+
+def _subscript_sequence(
+    items: tuple[FloorValue, ...],
+    index: FloorValue,
+    *,
+    owner: str,
+    blame: str,
+    observed_name: str,
+) -> Outcome:
+    if isinstance(index, BoolValue):
+        index = TermValue(1 if index.value else 0)
+    if isinstance(index, TermValue) and type(index.value) is int:
+        if 0 <= index.value < len(items):
+            return Complete(items[index.value])
+        _raise_subscript_gap(
+            owner=owner,
+            blame=blame,
+            observed=f"{observed_name}[{index.value}]",
+            requested="bounds-safe sequence subscript",
+            fix=f"add bounds-safe projection support for {observed_name}",
+        )
+    _raise_subscript_gap(
+        owner=owner,
+        blame=blame,
+        observed=type(index).__name__,
+        requested="concrete sequence index",
+        fix=f"add sequence index floor for {type(index).__name__}",
+    )
 
 
 def _string_index_term(value: FloorValue):
