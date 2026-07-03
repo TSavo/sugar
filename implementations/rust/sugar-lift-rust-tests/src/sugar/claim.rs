@@ -40,6 +40,11 @@ pub enum SugarWitnesses {
         floor: &'static str,
         reason: &'static str,
     },
+    TemporalOptOut {
+        floor: &'static str,
+        reason: &'static str,
+        retirement: &'static str,
+    },
     Pending,
 }
 
@@ -50,6 +55,18 @@ impl SugarWitnesses {
 
     pub const fn not_verdict_bearing(floor: &'static str, reason: &'static str) -> Self {
         Self::NotVerdictBearing { floor, reason }
+    }
+
+    pub const fn temporal_opt_out(
+        floor: &'static str,
+        reason: &'static str,
+        retirement: &'static str,
+    ) -> Self {
+        Self::TemporalOptOut {
+            floor,
+            reason,
+            retirement,
+        }
     }
 
     pub const fn is_pending(self) -> bool {

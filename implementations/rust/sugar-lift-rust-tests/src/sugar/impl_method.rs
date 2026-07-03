@@ -31,7 +31,10 @@ use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const ITEM_SUGAR: ItemSugarClaim = ItemSugarClaim::statement_item(
     "impl_method",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+        "ImplMethod",
+        "impl body reachability is runtime; method callsite pairs are owned by Expr `call`/`constraint_no_panic_call` plus assertion-surface claims",
+    ),
     recognize,
 );
 

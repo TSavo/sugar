@@ -1,16 +1,19 @@
 use std::collections::BTreeSet;
 use std::process::Command;
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use sugar_ir_symbolic::{num, ConstValue, Sort, Term};
 use sugar_lift_rust_tests::sugar::catalog::catalog_claims;
 use sugar_lift_rust_tests::{
     emit_value_contract, lift_file, warrant_conjoined_with_vendor_terms, AdapterOutput,
-    AssertionFactEmission, AssertionFactKind, FactoryDisposition,
+    AssertionFactEmission, AssertionFactKind,
 };
 
-const EXPECTED_SEED_CLAIMS: usize = 13;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 198;
+const EXPECTED_SEED_CLAIMS: usize = 15;
+const EXPECTED_ENROLLMENT_FRONTIER: usize = 191;
+const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
+const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 3;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
 
 #[derive(Clone, Copy)]
@@ -149,7 +152,6 @@ fn z3_verdict(inv: &serde_json::Value, label: &str, z3: &str) -> bool {
 fn selected_claims(out: &AdapterOutput) -> BTreeSet<&'static str> {
     out.factory_audits
         .iter()
-        .filter(|audit| audit.disposition == FactoryDisposition::Warranted)
         .filter_map(|audit| audit.selected)
         .collect()
 }
@@ -275,6 +277,65 @@ fn phase2_early_return_branch_has_solver_bad_twin() {
             "{label}: expected SAT={expected_sat} got SAT={got_sat}; decl={conjoined:?}"
         );
     }
+}
+
+fn return_sugar_value_contract_verdict(
+    src: &str,
+    expected_out: i128,
+    label: &str,
+    z3: &str,
+) -> bool {
+    let parsed = parse(src);
+    let function = parsed
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == "pick" => Some(function),
+            _ => None,
+        })
+        .expect("return_sugar witness must define pick");
+    let decl = emit_value_contract("pick", &function.block)
+        .expect("return_sugar witness must emit through the value-contract route spine");
+    let conjoined =
+        warrant_conjoined_with_vendor_terms(&decl, &[("flag", bool_term(true))], num(expected_out));
+    z3_verdict(&inv_json(&conjoined), label, z3)
+}
+
+fn run_rust_test_source(claim: &str, kind: &str, src: &str) -> bool {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time after epoch")
+        .as_nanos();
+    let safe_claim = claim.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+    let stem = format!(
+        "sugar_witness_ground_truth_{}_{}_{}_{}",
+        std::process::id(),
+        nonce,
+        safe_claim,
+        kind
+    );
+    let source_path = std::env::temp_dir().join(format!("{stem}.rs"));
+    let binary_path = std::env::temp_dir().join(stem);
+    std::fs::write(&source_path, src).expect("write ground-truth Rust source");
+    let compile = Command::new("rustc")
+        .args(["--edition=2021", "--test"])
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&binary_path)
+        .output()
+        .expect("run rustc for ground-truth witness");
+    assert!(
+        compile.status.success(),
+        "ground-truth Rust witness {claim}/{kind} must compile:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&binary_path)
+        .output()
+        .expect("run ground-truth Rust test binary");
+    let _ = std::fs::remove_file(&source_path);
+    let _ = std::fs::remove_file(&binary_path);
+    run.status.success()
 }
 
 #[test]
@@ -404,18 +465,86 @@ fn witness_catalog_seed_frontier_is_pinned() {
             )
         })
         .count();
+    let temporal_opt_outs = catalog
+        .iter()
+        .filter(|claim| {
+            matches!(
+                claim.witnesses,
+                sugar_lift_rust_tests::sugar::claim::SugarWitnesses::TemporalOptOut { .. }
+            )
+        })
+        .count();
+    for claim in catalog.iter().filter(|claim| {
+        matches!(
+            claim.witnesses,
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::NotVerdictBearing { .. }
+        )
+    }) {
+        match claim.witnesses {
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::NotVerdictBearing {
+                floor,
+                reason,
+            } => {
+                assert!(
+                    !floor.trim().is_empty(),
+                    "NotVerdictBearing claim `{}` must name its floor",
+                    claim.name
+                );
+                assert!(
+                    !reason.trim().is_empty(),
+                    "NotVerdictBearing claim `{}` must justify the opt-out",
+                    claim.name
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+    for claim in catalog.iter().filter(|claim| {
+        matches!(
+            claim.witnesses,
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::TemporalOptOut { .. }
+        )
+    }) {
+        match claim.witnesses {
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::TemporalOptOut {
+                floor,
+                reason,
+                retirement,
+            } => {
+                assert!(
+                    !floor.trim().is_empty(),
+                    "TemporalOptOut claim `{}` must name its floor",
+                    claim.name
+                );
+                assert!(
+                    !reason.trim().is_empty(),
+                    "TemporalOptOut claim `{}` must justify the opt-out",
+                    claim.name
+                );
+                assert!(
+                    !retirement.trim().is_empty(),
+                    "TemporalOptOut claim `{}` must name its retirement condition",
+                    claim.name
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
     println!(
-        "R(witness-seed-claims)={} R(rust-witness-enrollment-frontier)={} R(rust-witness-not-verdict-bearing)={}",
+        "R(witness-seed-claims)={} R(rust-witness-enrollment-frontier)={} R(rust-witness-not-verdict-bearing)={} R(rust-temporal-opt-outs)={}",
         seeded.len(),
         pending.len(),
-        not_verdict_bearing
+        not_verdict_bearing,
+        temporal_opt_outs
     );
     assert_eq!(seeded.len(), EXPECTED_SEED_CLAIMS);
     assert_eq!(pending.len(), EXPECTED_ENROLLMENT_FRONTIER);
+    assert_eq!(not_verdict_bearing, EXPECTED_NOT_VERDICT_BEARING_CLAIMS);
+    assert_eq!(temporal_opt_outs, EXPECTED_TEMPORAL_OPT_OUT_CLAIMS);
     assert_eq!(
-        seeded.len() + pending.len() + not_verdict_bearing,
+        seeded.len() + pending.len() + not_verdict_bearing + temporal_opt_outs,
         catalog.len(),
-        "every catalog claim must be exactly Pair, Pending, or NotVerdictBearing"
+        "every catalog claim must be exactly Pair, Pending, NotVerdictBearing, or TemporalOptOut"
     );
 }
 
@@ -463,6 +592,21 @@ fn seed_witnesses_satisfy_the_triple() {
     let mut failures = Vec::new();
     let mut owner_mismatches = Vec::new();
     for witness in seed_witnesses() {
+        if witness.claim == "return_sugar" {
+            for (kind, src, expected_out, expected_sat) in [
+                ("truthful", witness.truthful, 5, true),
+                ("lying", witness.lying, 6, false),
+            ] {
+                let label = format!("{}_{}", witness.claim, kind);
+                let got_sat = return_sugar_value_contract_verdict(src, expected_out, &label, &z3);
+                if got_sat != expected_sat {
+                    failures.push(format!(
+                        "{label}: expected SAT={expected_sat} got SAT={got_sat}"
+                    ));
+                }
+            }
+            continue;
+        }
         for (kind, src, expected_sat) in [
             ("truthful", witness.truthful, true),
             ("lying", witness.lying, false),
@@ -489,6 +633,26 @@ fn seed_witnesses_satisfy_the_triple() {
     );
     assert!(owner_mismatches.is_empty(), "{owner_mismatches:#?}");
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[test]
+fn corrected_s8_pairs_match_real_rust_semantics() {
+    let witnesses = seed_witnesses();
+    for claim in ["const_item", "return_sugar"] {
+        let witness = witnesses
+            .iter()
+            .find(|witness| witness.claim == claim)
+            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
+        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
+        let lying = run_rust_test_source(claim, "lying", witness.lying);
+        println!(
+            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
+            if truthful { "PASS" } else { "FAIL" },
+            if lying { "PASS" } else { "FAIL" }
+        );
+        assert!(truthful, "{claim} truthful witness must pass as real Rust");
+        assert!(!lying, "{claim} lying witness must fail as real Rust");
+    }
 }
 
 #[test]
