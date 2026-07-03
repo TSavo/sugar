@@ -1,13 +1,31 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.sugar.truthy_assertion_sugar import TruthyAssertionSugar
+from sugar_lift_py_tests.sugar import truthy_assertion_sugar as truthy_module
+from sugar_lift_py_tests.sugar.truthy_assertion_sugar import (
+    Degraded,
+    Projected,
+    TruthProjectionDegradation,
+    TruthyAssertionSugar,
+    _projectable_truth_body,
+)
+from sugar_lift_py_tests.sugar_body import SugarBody
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class _GapBuildContext:
@@ -40,6 +58,30 @@ class _GapBuildContext:
         )
 
 
+class _BodyBuildContext:
+    import_aliases = {}
+    from_imports = {}
+    name_resolver = {}
+    external_bridge_sink = None
+
+    def __init__(self, body: SugarBody) -> None:
+        self.body = body
+
+    def build_body(self, node, role):
+        return self.body
+
+
+class _DummySugar:
+    pass
+
+
+def _truthy_assert_site() -> SourceFragment:
+    site = SourceFragment.from_source(
+        "def test_flag(flag):\n    assert flag\n", "test_truthy.py"
+    )
+    return next(frag for frag in site.walk() if frag.observed == "Assert")
+
+
 def test_truthy_assertion_lifts_name_fact() -> None:
     report = build_literal_call_report(
         source=("def test_flag(flag):\n" "    assert flag\n"),
@@ -62,15 +104,129 @@ def test_truthy_assertion_lifts_name_fact() -> None:
 
 
 def test_truthy_prebuild_gap_is_recorded_on_the_sugar() -> None:
-    site = SourceFragment.from_source(
-        "def test_flag(flag):\n    assert flag\n", "test_truthy.py"
-    )
-    stmt = next(frag for frag in site.walk() if frag.observed == "Assert")
+    stmt = _truthy_assert_site()
 
     sugar = TruthyAssertionSugar.build(stmt, _GapBuildContext())
 
     assert sugar.term_body is None
     assert sugar.degraded_reason == "write more Floor for truthy body"
+
+
+def test_truthy_projection_degraded_arm_names_crime_owner_shape_replacement() -> None:
+    result = _projectable_truth_body(_truthy_assert_site(), _GapBuildContext())
+
+    assert isinstance(result, Degraded)
+    assert not isinstance(result, tuple)
+    assert result.reason == TruthProjectionDegradation(
+        crime="truthy projection degraded before term-body construction",
+        owner="TruthyAssertionSugar",
+        shape="FactoryGap(owner=test, observed=Name, requested=truthy term body)",
+        replacement="write more Floor for truthy body",
+        audit_reason="write more Floor for truthy body",
+    )
+
+
+def test_truthy_projection_projected_arm_carries_body_without_reason() -> None:
+    body = SugarBody(_DummySugar(), SugarRole.TERM)
+    result = _projectable_truth_body(_truthy_assert_site(), _BodyBuildContext(body))
+
+    assert isinstance(result, Projected)
+    assert not isinstance(result, tuple)
+    assert result.body is body
+
+
+def test_truthy_build_rejects_legacy_tuple_projection(monkeypatch) -> None:
+    monkeypatch.setattr(
+        truthy_module,
+        "_projectable_truth_body",
+        lambda site, ctx: (None, "legacy tuple"),
+    )
+
+    with pytest.raises(TypeError) as raised:
+        TruthyAssertionSugar.build(_truthy_assert_site(), _GapBuildContext())
+
+    assert str(raised.value) == (
+        "truthy projection result must be Projected | Degraded: "
+        "owner=TruthyAssertionSugar shape=tuple "
+        "replacement=return Projected(body) or Degraded(reason)"
+    )
+
+
+def test_truthy_projection_missing_arm_is_a_pyright_error(tmp_path: Path) -> None:
+    planted = tmp_path / "planted_truth_projection.py"
+    planted.write_text(
+        "\n".join(
+            [
+                "from __future__ import annotations",
+                "",
+                "from dataclasses import dataclass",
+                "from typing import Never, NoReturn",
+                "",
+                "from sugar_lift_py_tests.sugar.truthy_assertion_sugar import (",
+                "    Degraded,",
+                "    Projected,",
+                "    TruthProjectionDegradation,",
+                ")",
+                "from sugar_lift_py_tests.sugar_body import SugarBody",
+                "",
+                "@dataclass(frozen=True)",
+                "class Pending:",
+                "    reason: str",
+                "",
+                "Projection = Projected | Degraded | Pending",
+                "",
+                "def consume(result: Projection) -> str:",
+                "    if isinstance(result, Projected):",
+                "        return type(result.body).__name__",
+                "    if isinstance(result, Degraded):",
+                "        return result.reason.audit_reason",
+                "    return _unhandled(result)",
+                "",
+                "def _unhandled(result: Never) -> NoReturn:",
+                "    raise TypeError(type(result).__name__)",
+                "",
+                "def make_reason() -> TruthProjectionDegradation:",
+                "    return TruthProjectionDegradation(",
+                "        crime='planted',",
+                "        owner='test',",
+                "        shape='Pending',",
+                "        replacement='handle Pending',",
+                "        audit_reason='planted',",
+                "    )",
+                "",
+                "def make_projected(body: SugarBody) -> Projected:",
+                "    return Projected(body)",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{ROOT / 'src'}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pyright",
+            "--project",
+            str(ROOT / "pyrightconfig.json"),
+            "--outputjson",
+            str(planted),
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    payload = json.loads(proc.stdout)
+    diagnostics = "\n".join(
+        item["message"] for item in payload.get("generalDiagnostics", ())
+    )
+    assert "Pending" in diagnostics
+    assert "Never" in diagnostics
 
 
 def test_truthy_assertion_lifts_attribute_fact() -> None:

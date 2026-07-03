@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Never, NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryGap
@@ -15,13 +16,77 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
+class TruthProjectionDegradation:
+    crime: str
+    owner: str
+    shape: str
+    replacement: str
+    audit_reason: str
+
+    @property
+    def message(self) -> str:
+        return (
+            f"{self.crime}: owner={self.owner} shape={self.shape} "
+            f"replacement={self.replacement}"
+        )
+
+
+@dataclass(frozen=True)
+class Projected:
+    body: SugarBody
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.body, SugarBody):
+            raise TypeError(
+                "Projected body must be SugarBody: owner=TruthyAssertionSugar "
+                f"shape={type(self.body).__name__} replacement=ctx.build_body(..., "
+                "SugarRole.TERM)"
+            )
+
+
+@dataclass(frozen=True)
+class Degraded:
+    reason: TruthProjectionDegradation
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reason, TruthProjectionDegradation):
+            raise TypeError(
+                "Degraded reason must be TruthProjectionDegradation: "
+                "owner=TruthyAssertionSugar "
+                f"shape={type(self.reason).__name__} "
+                "replacement=TruthProjectionDegradation(crime, owner, shape, "
+                "replacement, audit_reason)"
+            )
+
+
+TruthProjection = Projected | Degraded
+
+
+@dataclass(frozen=True)
 class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     source_role = "python.truthy-assertion-sugar"
 
     term: Term
-    term_body: SugarBody | None
-    degraded_reason: str | None
+    projection: TruthProjection
     blame: str
+
+    @property
+    def term_body(self) -> SugarBody | None:
+        projection = _require_truth_projection(self.projection)
+        if isinstance(projection, Projected):
+            return projection.body
+        if isinstance(projection, Degraded):
+            return None
+        return _unhandled_truth_projection(projection)
+
+    @property
+    def degraded_reason(self) -> str | None:
+        projection = _require_truth_projection(self.projection)
+        if isinstance(projection, Projected):
+            return None
+        if isinstance(projection, Degraded):
+            return projection.reason.audit_reason
+        return _unhandled_truth_projection(projection)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -34,7 +99,7 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
     @classmethod
     def build(cls, site, ctx) -> "TruthyAssertionSugar":
-        term_body, degraded_reason = _projectable_truth_body(site, ctx)
+        projection = _require_truth_projection(_projectable_truth_body(site, ctx))
         return cls(
             term=symbolic_term(
                 site.assert_test(),
@@ -44,8 +109,7 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
                 name_resolver=getattr(ctx, "name_resolver", {}) or {},
                 external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
             ),
-            term_body=term_body,
-            degraded_reason=degraded_reason,
+            projection=projection,
             blame=site.blame,
         )
 
@@ -57,9 +121,12 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         return atomic("py.truthy", [self.term])
 
     def desugar(self, ctx):
-        if self.term_body is None:
+        projection = _require_truth_projection(self.projection)
+        if isinstance(projection, Degraded):
             return self.assertion_formula()
-        outcome = self.term_body.reduce(ctx)
+        if not isinstance(projection, Projected):
+            return _unhandled_truth_projection(projection)
+        outcome = projection.body.reduce(ctx)
         if isinstance(outcome, Incomplete):
             return outcome
         value = complete_value(outcome, owner="TruthyAssertionSugar term")
@@ -75,18 +142,51 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         )
 
 
-def _projectable_truth_body(site, ctx) -> tuple[SugarBody | None, str | None]:
+def _projectable_truth_body(site, ctx) -> TruthProjection:
     try:
-        return ctx.build_body(site.assert_test(), SugarRole.TERM), None
+        return Projected(ctx.build_body(site.assert_test(), SugarRole.TERM))
     except FactoryGap as gap:
-        return None, _truthy_degraded_reason(gap)
+        return Degraded(_truthy_degraded_reason(gap))
     except TypeError as exc:
-        return None, _truthy_type_degraded_reason(exc)
+        return Degraded(_truthy_type_degraded_reason(exc))
 
 
-def _truthy_degraded_reason(gap: FactoryGap) -> str:
-    return gap.info.get("fix", str(gap))
+def _truthy_degraded_reason(gap: FactoryGap) -> TruthProjectionDegradation:
+    owner = str(gap.info.get("owner", "unknown"))
+    observed = str(gap.info.get("observed", "unknown"))
+    requested = str(gap.info.get("requested", "truthy term body"))
+    replacement = str(gap.info.get("fix", str(gap)))
+    return TruthProjectionDegradation(
+        crime="truthy projection degraded before term-body construction",
+        owner="TruthyAssertionSugar",
+        shape=f"FactoryGap(owner={owner}, observed={observed}, requested={requested})",
+        replacement=replacement,
+        audit_reason=replacement,
+    )
 
 
-def _truthy_type_degraded_reason(exc: TypeError) -> str:
-    return f"pre-build type error: {exc}"
+def _truthy_type_degraded_reason(exc: TypeError) -> TruthProjectionDegradation:
+    audit_reason = f"pre-build type error: {exc}"
+    return TruthProjectionDegradation(
+        crime="truthy projection degraded by pre-build type error",
+        owner="TruthyAssertionSugar",
+        shape=f"TypeError({exc})",
+        replacement=(
+            "fix the term-body SugarRole.TERM builder or let FactoryGap name the gap"
+        ),
+        audit_reason=audit_reason,
+    )
+
+
+def _require_truth_projection(projection: object) -> TruthProjection:
+    if isinstance(projection, (Projected, Degraded)):
+        return projection
+    raise TypeError(
+        "truthy projection result must be Projected | Degraded: "
+        f"owner=TruthyAssertionSugar shape={type(projection).__name__} "
+        "replacement=return Projected(body) or Degraded(reason)"
+    )
+
+
+def _unhandled_truth_projection(projection: Never) -> NoReturn:
+    raise TypeError(f"unhandled truth projection arm: {type(projection).__name__}")
