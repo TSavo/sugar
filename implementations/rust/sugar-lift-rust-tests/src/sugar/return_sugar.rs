@@ -23,9 +23,33 @@ use crate::{Desugared, Effect, Outcome, RaiseEffect, Sugar, SugarCtx};
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement(
     "return_sugar",
-    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
-        "StmtReturn/EarlyReturnValue",
-        "return is control-flow data routed by block/source-contract composition",
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            fn pick(flag: bool) -> i32 {
+                if flag {
+                    return 5;
+                }
+                7
+            }
+
+            #[test]
+            fn t_return_sugar_good() {
+                assert_eq!(pick(true), 5);
+            }
+        "#,
+        r#"
+            fn pick(flag: bool) -> i32 {
+                if flag {
+                    return 5;
+                }
+                7
+            }
+
+            #[test]
+            fn t_return_sugar_bad() {
+                assert_eq!(pick(true), 6);
+            }
+        "#,
     ),
     recognize,
 );

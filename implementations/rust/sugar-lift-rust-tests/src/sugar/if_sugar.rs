@@ -43,9 +43,10 @@ use crate::{bool_const, Desugared, Effect, FloatWidthScope, Outcome, Sugar, Suga
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement(
     "if_sugar",
-    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+    crate::sugar::claim::SugarWitnesses::temporal_opt_out(
         "StmtBlock",
-        "if statements compose guarded block outputs; branch assertions own verdicts",
+        "if statements compose guarded block outputs before nested assertions emit facts",
+        "retire when stmt-position assertion anchoring records guarded block ownership for branch-emitted facts",
     ),
     recognize,
 );

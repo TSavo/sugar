@@ -287,9 +287,10 @@ fn block_stmt_gap(reason: &str) -> ! {
 }
 
 const BLOCK_STMT_WITNESSES: crate::sugar::claim::SugarWitnesses =
-    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+    crate::sugar::claim::SugarWitnesses::temporal_opt_out(
         "StmtBlock",
-        "block composes statement floors and guards; nested assertions own verdicts",
+        "block composes statement floors and guards before nested assertions emit facts",
+        "retire when stmt-position assertion anchoring records block ownership for nested assertion facts",
     );
 
 const SUPPORT_STMT_NOT_VERDICT_BEARING_WITNESSES: crate::sugar::claim::SugarWitnesses =

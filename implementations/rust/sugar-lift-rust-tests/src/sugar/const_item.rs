@@ -22,9 +22,24 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const ITEM_SUGAR: ItemSugarClaim = ItemSugarClaim::statement_item(
     "const_item",
-    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
-        "Seq",
-        "const/static item is inert support; it emits no standalone FOL verdict",
+    crate::sugar::claim::SugarWitnesses::pair(
+        // `ConstItemSugar` desugars the declaration itself to `Seq(Vec::new())`;
+        // the value proof is still real because const-eval resolves `X` when the
+        // consuming assertion is lowered.
+        r#"
+            #[test]
+            fn t_const_item_good() {
+                const X: i32 = 5;
+                assert_eq!(X, 5);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_const_item_bad() {
+                const X: i32 = 5;
+                assert_eq!(X, 6);
+            }
+        "#,
     ),
     recognize,
 );

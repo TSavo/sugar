@@ -23,9 +23,10 @@ use crate::{type_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement(
     "assign_sugar",
-    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+    crate::sugar::claim::SugarWitnesses::temporal_opt_out(
         "StmtBound",
-        "let binding captures scope for later statements; consuming assertions own verdicts",
+        "let binding captures scope for later statements before any consuming assertion",
+        "retire when stmt-position assertion anchoring records StmtBound scope threading on the consuming assertion fact",
     ),
     recognize,
 );
