@@ -109,6 +109,24 @@ load-bearing statements, quoted:
    a new literal → every floor it stands on demands its embedding arm — rustc hands
    you the todo list.
 
+7b. **The temporal floor of an if statement: two guarded temporal regions** (T,
+   2026-07-03: *"It's two blocks, if and else, with temporally floored terms."*)
+   Each branch is its own temporal region: every alias minted inside the if-block
+   carries the guard `cond` as context; the else-block mints under `¬cond`. The
+   branches are parallel timelines — renames cannot collide because the guard is
+   part of the alias's identity. Nested ifs stack guard prefixes (the GuardedRaise
+   law was never raise-specific; every temporally floored term in a branch is
+   guarded data). THE JOIN: after the if, the successor occurrence has two guarded
+   definitions — `cond → X_next == X_if` and `¬cond → X_next == X_else`. This is
+   SSA's phi node dissolved into FOL: occurrence-renaming IS the SSA rename pass;
+   the join needs no special instruction because the universe already has
+   implication. **Bearing on the held AST-vs-LLBC decision:** MIR/LLBC is already
+   in SSA-ish guarded-region form — the differential test (same source, both
+   paths, same pinned FOL) is two derivations of the same renaming; the AST-side
+   floor is checkable against LLBC nearly for free, OR LLBC is the cheaper seat
+   with the AST floor as its sugar-facing view. Held for T; the comparison is now
+   precise.
+
 7a. **The doorway choice is a soundness decision — map over a callsite is a CURRY**
    (T, 2026-07-03: *"What's the temporal floor of map over a callsite? It's a
    curry..."*). `xs.map(f)`: `f` is resolved ONCE at the map boundary — captured,
