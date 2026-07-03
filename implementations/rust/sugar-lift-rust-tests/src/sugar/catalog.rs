@@ -788,6 +788,56 @@ mod tests {
     }
 
     #[test]
+    fn by_ref_composite_handoff_is_refusal_not_structural_gap() {
+        let expr: Expr = syn::parse_str("iter.by_ref()").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Composite);
+        assert!(
+            names.contains(&"runtime_iterator_source"),
+            "known `.by_ref()` Composite handoff over an unowned receiver must route to the \
+             iterator-state refusal family instead of the factory structural-gap backstop: \
+             {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Composite),
+            Some("runtime_iterator_source")
+        );
+
+        let audits = run_expr_with_audit(&expr, SugarRole::Composite);
+        let audit = audits
+            .iter()
+            .find(|audit| audit.site == "iter . by_ref ()" && audit.requested_role == "Composite")
+            .unwrap_or_else(|| panic!("by_ref Composite handoff should be audited: {audits:?}"));
+        assert_eq!(audit.selected, Some("runtime_iterator_source"));
+        assert_eq!(audit.disposition, FactoryDisposition::Refused);
+        assert!(
+            audit.reason.as_deref().is_some_and(|reason| {
+                reason.contains("unknown iterator consumption")
+                    && reason.contains("`iter`")
+                    && reason.contains("by_ref")
+            }),
+            "by_ref Composite handoff must name the iterator-state refusal: {audit:?}"
+        );
+    }
+
+    #[test]
+    fn by_ref_over_literal_composite_stays_iterator_sugar() {
+        let expr: Expr = syn::parse_str("xs.iter().by_ref()").unwrap();
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert("xs".to_string(), syn::parse_str("[1i32, 2, 3]").unwrap());
+
+        assert_eq!(
+            selected_candidate_name_for_role_with_let_inits(
+                &expr,
+                SugarRole::Composite,
+                &let_inits
+            ),
+            Some("iterator"),
+            "literal-backed `.by_ref()` remains a timeless identity adaptor; only unowned \
+             by_ref handoffs route to the runtime iterator refusal family"
+        );
+    }
+
+    #[test]
     fn async_future_handoff_owns_composite_before_runtime_iterator_fallback() {
         let expr: Expr = syn::parse_str("block_on(async { assert_eq!(1, 1); })").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Composite);

@@ -10,7 +10,7 @@ use syn::{Expr, ExprCall, ExprMethodCall};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::collection_literal::collection_literal_array;
-use crate::sugar::factory::{CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
+use crate::sugar::factory::{has_composite, CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     closure_body_is_side_effecting, closure_constructs_drop_side_effect_value, const_int,
@@ -46,6 +46,12 @@ fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box
                 producer: call.method.to_string(),
             }))
         }
+        Expr::MethodCall(call) if by_ref_unknown_composite_handoff(call, fcx) => {
+            Some(Box::new(RuntimeIteratorByRefHandoffSugar {
+                boundary: token_key(expr),
+                receiver: token_key(&call.receiver),
+            }))
+        }
         Expr::MethodCall(call)
             if runtime_iterator_adaptor(call)
                 && runtime_iterator_source_expr(&call.receiver, fcx) =>
@@ -65,6 +71,11 @@ struct RuntimeIteratorBindingSugar {
 struct RuntimeIteratorSourceSugar {
     boundary: String,
     producer: String,
+}
+
+struct RuntimeIteratorByRefHandoffSugar {
+    boundary: String,
+    receiver: String,
 }
 
 impl Sugar for RuntimeIteratorBindingSugar {
@@ -93,6 +104,21 @@ impl Sugar for RuntimeIteratorSourceSugar {
     }
 }
 
+impl Sugar for RuntimeIteratorByRefHandoffSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
+            boundary: self.boundary.clone(),
+            reason: format!(
+                "unknown iterator consumption for `{}` via `by_ref`: `.by_ref()` hands out a \
+                 mutable iterator borrow whose downstream consumption is runtime state, so there \
+                 is no single timeless source sequence to read at this Composite boundary; \
+                 refused",
+                self.receiver
+            ),
+        })
+    }
+}
+
 fn recognize_mutable_source_binding(
     frag: &SourceFragment,
     fcx: &SugarBuildCtx,
@@ -109,6 +135,10 @@ fn recognize_mutable_source_binding(
     Some(Box::new(RuntimeIteratorBindingSugar {
         source: SugarBody::composite(init, fcx),
     }))
+}
+
+fn by_ref_unknown_composite_handoff(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> bool {
+    call.method == "by_ref" && call.args.is_empty() && !has_composite(&call.receiver, fcx)
 }
 
 fn runtime_iterator_source_expr(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
