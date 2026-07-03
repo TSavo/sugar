@@ -84,10 +84,15 @@ run_twin() {
   ( cd "$dir" && "$BIN" verify --project . --json > .verify.json ) || true
   [ -s "$dir/.verify.json" ] || { echo "FAIL: no verify receipt ($twin)"; return 1; }
 
-  EXPECT="$expect" TWIN="$twin" "$PYTHON" - "$dir/.verify.json" <<'PY' || return 1
-import json, os, sys
+  EXPECT="$expect" TWIN="$twin" "$PYTHON" - "$REPO" "$dir/.verify.json" <<'PY' || return 1
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from tools.showcase.json_get import load_receipt
+
 expect, twin = os.environ["EXPECT"], os.environ["TWIN"]
-doc = json.load(open(sys.argv[1]))
+doc = load_receipt(sys.argv[2])
 # The universe atom is a CONJUNCT inside the ::assertion inv (the verifier
 # conjoins by name), so it does not appear as a separate property. The
 # CONTACT/vacuity witness is the verdict FLIP itself: a universe that never

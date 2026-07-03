@@ -45,11 +45,16 @@ def can_symbolic_term(site) -> bool:
             (bool, int, float, str),
         )
     if site.observed == "Constant":
-        return isinstance(site.literal_value(), complex)
+        return isinstance(site.literal_value(), (bytes, complex))
     if site.observed == "List":
         return all(can_symbolic_term(item) for item in site.terms())
     if site.observed == "Tuple":
         return all(can_symbolic_term(item) for item in site.terms())
+    if site.observed == "Dict":
+        return all(
+            (key is None or can_symbolic_term(key)) and can_symbolic_term(value)
+            for key, value in site.dict_entries()
+        )
     if site.observed == "Attribute":
         return can_symbolic_term(site.attr_receiver())
     if site.observed == "Subscript":
@@ -137,6 +142,8 @@ def symbolic_term(
             return ctor("None", [])
     if site.observed == "Constant":
         value = site.literal_value()
+        if isinstance(value, bytes):
+            return ctor("python:bytes", [str_const(value.hex())])
         if isinstance(value, complex):
             return ctor(
                 "py.complex",
@@ -158,6 +165,36 @@ def symbolic_term(
                     external_bridge_sink=external_bridge_sink,
                 )
                 for item in site.terms()
+            ],
+        )
+    if site.observed == "Dict":
+        return ctor(
+            "python:dict",
+            [
+                ctor(
+                    "python:dict_entry",
+                    [
+                        ctor("None", [])
+                        if key is None
+                        else symbolic_term(
+                            key,
+                            owner=owner,
+                            import_aliases=import_aliases,
+                            from_imports=from_imports,
+                            name_resolver=name_resolver,
+                            external_bridge_sink=external_bridge_sink,
+                        ),
+                        symbolic_term(
+                            value,
+                            owner=owner,
+                            import_aliases=import_aliases,
+                            from_imports=from_imports,
+                            name_resolver=name_resolver,
+                            external_bridge_sink=external_bridge_sink,
+                        ),
+                    ],
+                )
+                for key, value in site.dict_entries()
             ],
         )
     if site.observed == "Tuple":

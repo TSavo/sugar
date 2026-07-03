@@ -7,6 +7,7 @@ from .bound_var import BoundVar
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .call_site_value import CallSiteValue
+from .dict_literal_value import DictLiteralValue
 from .encoded_string_value import EncodedStringValue
 from .floor_value import FloorValue
 from .function_callable import FunctionCallable
@@ -36,6 +37,7 @@ __all__ = [
     "BuilderState",
     "Bv32Value",
     "CallSiteValue",
+    "DictLiteralValue",
     "EncodedStringValue",
     "FloorValue",
     "FunctionCallable",

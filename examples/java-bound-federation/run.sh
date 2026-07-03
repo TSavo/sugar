@@ -54,7 +54,7 @@ for suite in good bad; do
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json 2>/dev/null || true
 done
 
-pyget() { python3 -c "import sys,json; d=json.load(open(sys.argv[1])); print($2)" "$1"; }
+pyget() { python3 "$REPO/tools/showcase/json_get.py" "$1" "$2"; }
 
 run_suite() {
   local suite="$1" expect_consistency="$2"
@@ -92,12 +92,18 @@ PY
   ( cd "$dir" && "$SUGAR" prove . --json 2>/dev/null ) > "$prove_json" || true
 
   local consistency_status
-  consistency_status="$(python3 -c "
-import json, sys
-rows = json.load(open('$prove_json')).get('rows', [])
+  consistency_status="$(python3 - "$REPO" "$prove_json" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+rows = load_receipt(sys.argv[2]).get('rows', [])
 c = [r.get('status') for r in rows if 'consistency' in (r.get('property') or '')]
 print(','.join(c) if c else 'MISSING')
-")"
+PY
+)"
   echo "   consistency: $consistency_status"
 
   if [ "$expect_consistency" = "DISCHARGE" ]; then
@@ -117,10 +123,15 @@ print(','.join(c) if c else 'MISSING')
   local verify_json="$dir/.verify.json"
   ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json 2>/dev/null ) > "$verify_json" || true
 
-  python3 - "$suite" "$expect_consistency" "$verify_json" <<'PY'
-import json, sys
-suite, expect_consistency, path = sys.argv[1], sys.argv[2], sys.argv[3]
-receipt = json.load(open(path, encoding="utf-8"))
+  python3 - "$REPO" "$suite" "$expect_consistency" "$verify_json" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+suite, expect_consistency, path = sys.argv[2], sys.argv[3], sys.argv[4]
+receipt = load_receipt(path)
 rows = receipt.get("rows", [])
 consistency = [
     r.get("status")

@@ -263,6 +263,19 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="comments are inert source support",
     ),
     NonFolOptOut(
+        sugar_name="DictSugar",
+        floor_name="DictLiteralValue",
+        reason=(
+            "dict literals are structural term support; the current solver "
+            "path has no standalone dict-constructor verdict witness"
+        ),
+    ),
+    NonFolOptOut(
+        sugar_name="ExprSugar",
+        floor_name="SupportValue",
+        reason="expression statements evaluate for effects and leave no FOL claim",
+    ),
+    NonFolOptOut(
         sugar_name="ListLiteralSugar",
         floor_name="SupportValue",
         reason=(

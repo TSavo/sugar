@@ -64,9 +64,13 @@ PY
 
 echo "== prove: the verifier asks the oracle to reproduce the package (one cid) =="
 PATH="$VENV/bin:$PATH" "$BIN" prove . --json > .prove.json 2>/dev/null || true
-"$VENV/bin/python" - <<'PY'
-import json, sys
-d = json.load(open(".prove.json"))
+"$VENV/bin/python" - "$REPO" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from tools.showcase.json_get import load_receipt
+
+d = load_receipt(".prove.json")
 status = next((r.get("status") for r in d.get("rows", [])
                if "witness-package" in (r.get("property") or "")), "MISSING")
 print(f"  witness-package row status: {status}")
@@ -85,9 +89,13 @@ echo "== prove (LYING DISCHARGE): stdout says DISCHARGED, package body still has
 PATH="$VENV/bin:$PATH" \
   SUGAR_WITNESS_DISCHARGE_PYTEST="$HERE/.sugar/lying-discharge.sh" \
   "$BIN" prove . --json > .prove_lie.json 2>/dev/null || true
-"$VENV/bin/python" - <<'PY'
-import json, sys
-d = json.load(open(".prove_lie.json"))
+"$VENV/bin/python" - "$REPO" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from tools.showcase.json_get import load_receipt
+
+d = load_receipt(".prove_lie.json")
 status = next((r.get("status") for r in d.get("rows", [])
                if "witness-package" in (r.get("property") or "")), "MISSING")
 print(f"  lying-discharge witness-package row status: {status}")

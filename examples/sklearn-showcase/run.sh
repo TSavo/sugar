@@ -112,10 +112,13 @@ if [ "$verify_rc" -eq 0 ]; then
 else
   echo "  ok: durable verify refused the expected contradictory twin (exit $verify_rc)"
 fi
-"$VENV/bin/python" - <<'PY' || fail=1
-import json, sys
+"$VENV/bin/python" - "$REPO" <<'PY' || fail=1
+import sys
 
-receipt = json.load(open(".verify.json", encoding="utf-8"))
+sys.path.insert(0, sys.argv[1])
+from tools.showcase.json_get import load_receipt
+
+receipt = load_receipt(".verify.json")
 rows = receipt.get("rows", [])
 
 def row_status(needle):

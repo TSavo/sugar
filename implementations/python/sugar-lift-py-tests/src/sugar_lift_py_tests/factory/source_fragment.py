@@ -584,6 +584,21 @@ class SourceFragment:
         self._require(ast.BoolOp)
         return [SourceFragment.from_node(v, self.filename) for v in self.node.values]  # type: ignore[attr-defined]
 
+    def dict_entries(self) -> "list[tuple[SourceFragment | None, SourceFragment]]":
+        """Return key/value fragments for a Dict expression.
+
+        A ``None`` key is Python's ``**mapping`` spread form; callers decide whether
+        that shape belongs in their term vocabulary or should refuse.
+        """
+        self._require(ast.Dict)
+        return [
+            (
+                None if key is None else SourceFragment.from_node(key, self.filename),
+                SourceFragment.from_node(value, self.filename),
+            )
+            for key, value in zip(self.node.keys, self.node.values)  # type: ignore[attr-defined]
+        ]
+
     # --- attribute --------------------------------------------------------
 
     def attr_receiver(self) -> "SourceFragment":

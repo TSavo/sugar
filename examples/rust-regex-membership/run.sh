@@ -63,7 +63,7 @@ for suite in good bad nonregular; do
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.mint*.log "$HERE/$suite/Cargo.lock" 2>/dev/null || true
 done
 
-pyget() { python3 -c "import sys,json; d=json.load(open(sys.argv[1])); print($2)" "$1"; }
+pyget() { python3 "$REPO/tools/showcase/json_get.py" "$1" "$2"; }
 
 # A consistency row that is a TEST-assertion row (the regex membership), not the
 # production self-contract (`consistency:rust-source::<fn>`, a trivially-SAT value

@@ -36,7 +36,7 @@ for suite in good bad; do
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json "$HERE/$suite/Cargo.lock" 2>/dev/null || true
 done
 
-pyget() { python3 -c "import sys,json; d=json.load(open(sys.argv[1])); print($2)" "$1"; }
+pyget() { python3 "$REPO/tools/showcase/json_get.py" "$1" "$2"; }
 
 write_lying_discharge() {
   local script="$1"
@@ -106,12 +106,14 @@ next((r.get('status') for r in d.get('rows', []) if 'witness-package' in (r.get(
   echo "-- verify durable artifact --"
   local verify_json="$dir/.verify.json"
   ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json ) > "$verify_json" 2>/dev/null || true
-  python3 - "$suite" "$expect_consistency" "$expect_witness" "$verify_json" <<'PY'
-import json
+  python3 - "$suite" "$expect_consistency" "$expect_witness" "$verify_json" "$REPO" <<'PY'
 import sys
 
-suite, expect_consistency, expect_witness, path = sys.argv[1:]
-receipt = json.load(open(path, encoding="utf-8"))
+suite, expect_consistency, expect_witness, path, repo = sys.argv[1:]
+sys.path.insert(0, repo)
+from tools.showcase.json_get import load_receipt
+
+receipt = load_receipt(path)
 rows = receipt.get("rows", [])
 consistency = [
     r.get("status")
