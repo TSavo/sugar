@@ -29,7 +29,7 @@ from sugar_lift_py_tests.witness_harness import (
 )
 
 ROOT = Path(__file__).resolve().parents[4]
-EXPECTED_UNENROLLED_SUGARS = 8
+EXPECTED_UNENROLLED_SUGARS = 0
 EXPECTED_SEED_CASES = 53
 EXPECTED_SEED_OWNER_COUNT = 41
 # #3333: display-conversion callsites must emit the derived body/floor fact so
@@ -106,7 +106,15 @@ EXPECTED_PINNED_FAILURE_SEED_NAMES = {
 }
 EXPECTED_OPT_OUT_SUGARS = {
     "AliasSugar",
+    "AsyncForSugar",
+    "AsyncWithSugar",
+    "AttributeAssignSugar",
+    "AttributeDeleteSugar",
+    "AwaitSugar",
+    "BitwiseOpSugar",
     "CommentSugar",
+    "ListLiteralSugar",
+    "OrdByteSugar",
     "SubscriptAssignSugar",
     "SubscriptDeleteSugar",
 }
@@ -125,6 +133,7 @@ def test_sugar_witness_enrollment_auditor_pins_catalog_baseline() -> None:
 
     assert len(offenders) == EXPECTED_UNENROLLED_SUGARS
     by_name = {offender.name: offender for offender in offenders}
+    assert by_name == {}
     assert "CallSugar" not in by_name
     assert "ReturnSugar" not in by_name
     assert "TrySugar" not in by_name
@@ -136,14 +145,6 @@ def test_sugar_witness_enrollment_auditor_pins_catalog_baseline() -> None:
     assert "ProjectedEqualityAssertionSugar" not in by_name
     assert "TupleUnpackAssignSugar" not in by_name
     assert not (EXPECTED_OPT_OUT_SUGARS & set(by_name))
-    assert by_name["AsyncForSugar"].role == "statement"
-    assert by_name["AsyncWithSugar"].role == "statement"
-    assert by_name["AttributeAssignSugar"].role == "statement"
-    assert by_name["AttributeDeleteSugar"].role == "statement"
-    assert by_name["AwaitSugar"].role == "term"
-    assert by_name["BitwiseOpSugar"].role == "term"
-    assert by_name["ListLiteralSugar"].role == "term"
-    assert by_name["OrdByteSugar"].role == "term"
 
 
 def test_catalog_witnesses_migrate_s1_seed_surface() -> None:
@@ -483,12 +484,12 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "non_fol_opt_out_drift": 0,
         "total": EXPECTED_UNENROLLED_SUGARS + EXPECTED_TRIPLE_FAILURES,
     }
-    assert "R(unenrolled-sugars): 8" in text
+    assert "R(unenrolled-sugars): 0" in text
     assert "R(witness-triples-failing): 13" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
     assert "seed coverage: 53 seed cases, 41/53 catalog sugars" in text
-    assert "AsyncForSugar (sugar_lift_py_tests.sugar.async_for_sugar)" in text
+    assert "unenrolled sugars:" not in text
 
 
 def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
@@ -503,7 +504,7 @@ def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
 
     assert status == 1
     stdout = capsys.readouterr().out
-    assert "R(unenrolled-sugars): 8" in stdout
+    assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 13" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
 

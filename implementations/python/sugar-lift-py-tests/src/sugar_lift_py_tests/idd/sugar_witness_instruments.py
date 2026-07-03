@@ -194,9 +194,70 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="import aliases record name-binding support, not a FOL claim",
     ),
     NonFolOptOut(
+        sugar_name="AsyncForSugar",
+        floor_name="SupportValue",
+        reason=(
+            "async iteration needs an async execution model before it can carry "
+            "a solver verdict"
+        ),
+    ),
+    NonFolOptOut(
+        sugar_name="AsyncWithSugar",
+        floor_name="SupportValue",
+        reason=(
+            "async context-manager execution is runtime support, not a current "
+            "FOL claim"
+        ),
+    ),
+    NonFolOptOut(
+        sugar_name="AttributeAssignSugar",
+        floor_name="SupportValue",
+        reason=(
+            "attribute mutation is stateful support until object-field updates "
+            "carry a solver verdict"
+        ),
+    ),
+    NonFolOptOut(
+        sugar_name="AttributeDeleteSugar",
+        floor_name="SupportValue",
+        reason=(
+            "attribute deletion is stateful support until object-field deletes "
+            "carry a solver verdict"
+        ),
+    ),
+    NonFolOptOut(
+        sugar_name="AwaitSugar",
+        floor_name="SupportValue",
+        reason="await unwrapping is async runtime support without a sync verdict path",
+    ),
+    NonFolOptOut(
+        sugar_name="BitwiseOpSugar",
+        floor_name="SupportValue",
+        reason=(
+            "bitwise terms are symbolic bitvector support until the production "
+            "solver path yields a SAT/UNSAT verdict"
+        ),
+    ),
+    NonFolOptOut(
         sugar_name="CommentSugar",
         floor_name="SupportValue",
         reason="comments are inert source support",
+    ),
+    NonFolOptOut(
+        sugar_name="ListLiteralSugar",
+        floor_name="SupportValue",
+        reason=(
+            "default-catalog list literals are verdict-bearing through "
+            "ArrayLiteralSugar; this fallback constructor is shadowed support"
+        ),
+    ),
+    NonFolOptOut(
+        sugar_name="OrdByteSugar",
+        floor_name="SupportValue",
+        reason=(
+            "ord-byte terms are symbolic encoder support until the enclosing "
+            "str.eq-bv-blocks universe carries the verdict"
+        ),
     ),
     NonFolOptOut(
         sugar_name="SubscriptAssignSugar",
