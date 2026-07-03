@@ -8,6 +8,9 @@ use vocabulary::{
     SymbolPosition,
 };
 
+use sugar_ir_compiler::{CompilerInput, IrCompiler};
+use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT};
+
 const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("atom", "<predicate>", 1),
     ("atom", "CategoryTheory.Functor.map_id", 0),
@@ -69,6 +72,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "atoi", 0),
     ("ctor", "await", 1),
     ("ctor", "b", 0),
+    ("ctor", "bad token", 0),
     ("ctor", "c", 0),
     ("ctor", "c:callresult_enc_a1", 1),
     ("ctor", "call:BooleanDtype", 0),
@@ -143,7 +147,8 @@ fn report() -> BackendReport {
         .iter()
         .map(|symbol| {
             let ir = formula_json_for(symbol);
-            match sugar_ir_compiler_smt_lib::compile_to_parts(&ir) {
+            let input = CompilerInput::decode_json(ir).expect("vocabulary formula fixture decodes");
+            match SmtLibCompiler::new().compile_typed(&input, DIALECT) {
                 Ok(_) if smt_encoded(symbol) => audit_row(
                     symbol,
                     Disposition::Encoded,

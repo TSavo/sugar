@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{CompileError, IrCompiler};
+use crate::{CompileError, CompilerInput, IrCompiler};
 
 /// Registry of compilers, keyed by dialect identifier. A single
 /// compiler that serves multiple dialects is registered once per
@@ -48,11 +48,11 @@ impl Registry {
     /// compiler is registered for this dialect.
     pub fn compile(
         &self,
-        ir: &serde_json::Value,
+        ir: &CompilerInput,
         dialect: &str,
     ) -> Result<crate::CompiledFormula, CompileError> {
         match self.by_dialect.get(dialect) {
-            Some(c) => c.compile(ir, dialect),
+            Some(c) => c.compile_typed(ir, dialect),
             None => Err(CompileError::UnsupportedDialect(dialect.to_string())),
         }
     }

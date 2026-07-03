@@ -10,7 +10,15 @@
 // `Real` theorem: operands `Real`, `-` infix, the bound an ascribed real literal.
 
 use serde_json::json;
-use sugar_ir_compiler_lean::emit;
+use sugar_ir_compiler::{CompilerInput, IrCompiler};
+use sugar_ir_compiler_lean::{LeanCompiler, DIALECT};
+
+fn emit(ir: &serde_json::Value) -> Result<String, sugar_ir_compiler::CompileError> {
+    let input = CompilerInput::decode_json(ir.clone())?;
+    LeanCompiler::new()
+        .compile_typed(&input, DIALECT)
+        .map(|compiled| compiled.script())
+}
 
 fn tolerance_bound() -> serde_json::Value {
     let diff = json!({

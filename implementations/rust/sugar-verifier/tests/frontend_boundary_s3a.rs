@@ -82,7 +82,10 @@ fn smtlib_compile_typed_term_matches_legacy_term_emitter() {
     let out = SmtLibCompiler::new()
         .compile_typed(&typed, SMT_DIALECT)
         .expect("typed SMT-LIB term compile");
-    let legacy = sugar_ir_compiler_smt_lib::emit(&ir).expect("legacy SMT-LIB term emit");
+    let legacy = SmtLibCompiler::new()
+        .compile(&ir, SMT_DIALECT)
+        .expect("legacy SMT-LIB term compile")
+        .script();
     assert_eq!(out.script(), legacy);
 }
 

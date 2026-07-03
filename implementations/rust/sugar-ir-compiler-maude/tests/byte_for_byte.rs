@@ -1,6 +1,24 @@
 use serde_json::{json, Value as Json};
-use sugar_ir_compiler::IrCompiler;
-use sugar_ir_compiler_maude::{emit, MaudeCompiler, DIALECT};
+use sugar_ir_compiler::{CompileError, CompilerInput, IrCompiler};
+use sugar_ir_compiler_maude::{
+    compile_equational_theory_artifact, CompiledMaude, MaudeCompiler, DIALECT,
+};
+
+fn compile_artifact(ir: &Json) -> Result<CompiledMaude, CompileError> {
+    let CompilerInput::EquationalTheory(obligation) = CompilerInput::decode_json(ir.clone())?
+    else {
+        return Err(CompileError::UnsupportedPredicate(
+            "non-equational_theory compiler input".to_string(),
+        ));
+    };
+    compile_equational_theory_artifact(&obligation)
+}
+
+fn emit(ir: &Json) -> Result<String, String> {
+    compile_artifact(ir)
+        .map(|artifact| artifact.compiled.script())
+        .map_err(|error| error.to_string())
+}
 
 fn nat_obligation() -> Json {
     json!({

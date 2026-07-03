@@ -14,7 +14,16 @@
 // literal rolled into the Int universe (see literal_encoding.rs).
 
 use serde_json::json;
-use sugar_ir_compiler_smt_lib::emit;
+use sugar_ir_compiler::{CompilerInput, IrCompiler};
+use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT};
+
+fn emit(ir: &serde_json::Value) -> Result<String, String> {
+    let input = CompilerInput::decode_json(ir.clone()).map_err(|error| error.to_string())?;
+    SmtLibCompiler::new()
+        .compile_typed(&input, DIALECT)
+        .map(|compiled| compiled.script())
+        .map_err(|error| error.to_string())
+}
 
 fn tolerance_bound() -> serde_json::Value {
     let diff = json!({

@@ -106,24 +106,6 @@ impl IrCompiler for MaudeCompiler {
     }
 }
 
-pub fn emit(ir: &Json) -> Result<String, String> {
-    let artifact = compile_artifact(ir).map_err(|e| e.to_string())?;
-    Ok(format!(
-        "{}{}",
-        artifact.compiled.preamble, artifact.compiled.body
-    ))
-}
-
-pub fn compile_artifact(ir: &Json) -> Result<CompiledMaude, CompileError> {
-    let input = CompilerInput::decode_json(ir.clone())?;
-    let CompilerInput::EquationalTheory(obligation) = input else {
-        return Err(CompileError::UnsupportedPredicate(
-            "non-equational_theory compiler input".to_string(),
-        ));
-    };
-    compile_equational_theory_artifact(&obligation)
-}
-
 pub fn compile_equational_theory_artifact(
     raw: &EquationalTheoryObligation,
 ) -> Result<CompiledMaude, CompileError> {
@@ -540,7 +522,7 @@ mod tests {
                 "rhs": {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
             }
         });
-        let err = compile_artifact(&ir).unwrap_err();
+        let err = MaudeCompiler::new().compile(&ir, DIALECT).unwrap_err();
         assert!(
             matches!(
                 err,

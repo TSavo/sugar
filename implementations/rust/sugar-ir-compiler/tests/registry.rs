@@ -9,6 +9,18 @@ use sugar_ir_compiler::{
     IrCompiler, OpacityManifest, PROTOCOL_VERSION,
 };
 
+fn reflexive_input() -> CompilerInput {
+    CompilerInput::decode_json(json!({
+        "kind": "atomic",
+        "name": "=",
+        "args": [
+            {"kind": "var", "name": "v"},
+            {"kind": "var", "name": "v"}
+        ]
+    }))
+    .expect("registry test fixture decodes")
+}
+
 struct FakeCompiler {
     name: String,
     dialects: Vec<String>,
@@ -16,17 +28,7 @@ struct FakeCompiler {
 
 impl IrCompiler for FakeCompiler {
     fn compile(&self, _ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        self.compile_typed(
-            &CompilerInput::decode_json(json!({
-                "kind": "atomic",
-                "name": "=",
-                "args": [
-                    {"kind": "var", "name": "v"},
-                    {"kind": "var", "name": "v"}
-                ]
-            }))?,
-            dialect,
-        )
+        self.compile_typed(&reflexive_input(), dialect)
     }
 
     fn compile_typed(
@@ -72,14 +74,16 @@ fn registry_dispatches_to_registered_dialect() {
         name: "fake".into(),
         dialects: vec!["smt-lib-v2.6".into()],
     }));
-    let out = r.compile(&json!({}), "smt-lib-v2.6").unwrap();
+    let input = reflexive_input();
+    let out = r.compile(&input, "smt-lib-v2.6").unwrap();
     assert!(out.preamble.contains("; from fake"));
 }
 
 #[test]
 fn registry_returns_unsupported_for_missing_dialect() {
     let r = Registry::new();
-    let err = r.compile(&json!({}), "tptp-fof").unwrap_err();
+    let input = reflexive_input();
+    let err = r.compile(&input, "tptp-fof").unwrap_err();
     assert!(matches!(err, CompileError::UnsupportedDialect(_)));
 }
 

@@ -45,6 +45,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CanonValue};
+use sugar_ir_compiler::{CompilerInput, IrCompiler};
+use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT as SMT_DIALECT};
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
 
@@ -550,7 +552,26 @@ fn discharge_obligation(
         "operands": [post.clone(), pre.clone()],
     });
 
-    let smt_script = match sugar_ir_compiler_smt_lib::emit(&implication) {
+    let implication_input = match CompilerInput::decode_json(implication.clone()) {
+        Ok(input) => input,
+        Err(error) => {
+            return Some(LinkerError {
+                kind: "implication-undecidable".into(),
+                target_symbol: target_symbol.to_string(),
+                source_contract_cid: source_contract_cid.to_string(),
+                reason: format!(
+                    "decode post-implies-pre ProofIR failed for target `{target_cid}`: {}",
+                    error.payload
+                ),
+                file: None,
+                call_site_locus_json: None,
+            });
+        }
+    };
+    let smt_script = match SmtLibCompiler::new()
+        .compile_typed(&implication_input, SMT_DIALECT)
+        .map(|compiled| compiled.script())
+    {
         Ok(s) => s,
         Err(e) => {
             // Compilation failed: cannot ask the solver. Surface as
@@ -568,7 +589,7 @@ fn discharge_obligation(
         }
     };
 
-    let (verdict, reason, _invs) = run_plan(plan, registry, &smt_script, Some(&implication));
+    let (verdict, reason, _invs) = run_plan(plan, registry, &smt_script, Some(&implication_input));
 
     match verdict {
         ObligationVerdict::Discharged => None,

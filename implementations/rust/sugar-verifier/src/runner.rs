@@ -26,6 +26,7 @@ use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value as Json;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
+use sugar_ir_compiler::CompilerInput;
 use tracing::{debug, info, warn};
 
 use crate::body_discharge::callee_post_guard_fact;
@@ -1317,8 +1318,19 @@ fn verify_contract_self_posts(
                 libsugar::wp::substitute_in_formula(post, "result", &value_expr);
             let obligation_json = serde_json::to_value(&obligation_formula).ok()?;
 
+            let obligation_input = match CompilerInput::decode_json(obligation_json.clone()) {
+                Ok(input) => input,
+                Err(error) => {
+                    return Some(SelfPostResult {
+                        contract_cid: cid.to_string(),
+                        verdict: ObligationVerdict::Undecidable,
+                        reason: format!("self-post frontend decode: {}", error.payload),
+                        method: None,
+                    });
+                }
+            };
             let (verdict, reason, _invs) =
-                run_plan_with_compilers(plan, registry, compilers, &obligation_json);
+                run_plan_with_compilers(plan, registry, compilers, &obligation_input);
             let method = if verdict == ObligationVerdict::Discharged {
                 let m = body_discharge::classify_discharge_method(&obligation_json);
                 Some(m)
@@ -1403,8 +1415,21 @@ fn work_one(
                 tier,
             })) => {
                 let body_tier = Some(tier.as_str().to_string());
+                let reduced_input = match CompilerInput::decode_json(reduced.clone()) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        n_residue.fetch_add(1, Ordering::Relaxed);
+                        return (
+                            cs.clone(),
+                            ObligationVerdict::Undecidable,
+                            format!("body-discharge frontend decode: {}", error.payload),
+                            None,
+                            body_tier,
+                        );
+                    }
+                };
                 let (verdict, mut reason, invs) =
-                    run_plan_with_compilers(plan, registry, compilers, &reduced);
+                    run_plan_with_compilers(plan, registry, compilers, &reduced_input);
                 let mut discharge_method = None;
                 n_invoc.fetch_add(invs.len(), Ordering::Relaxed);
                 if verdict == ObligationVerdict::Discharged {
@@ -1829,8 +1854,21 @@ fn work_one(
         bridge = %cs.bridge_ir_name,
         "work_one: invoking solver plan (tier 3)"
     );
+    let formula_input = match CompilerInput::decode_json(formula_for_dispatch.clone()) {
+        Ok(input) => input,
+        Err(error) => {
+            n_residue.fetch_add(1, Ordering::Relaxed);
+            return (
+                cs.clone(),
+                ObligationVerdict::Undecidable,
+                format!("frontend decode: {}", error.payload),
+                None,
+                None,
+            );
+        }
+    };
     let (verdict, reason, invs) =
-        run_plan_with_compilers(plan, registry, compilers, &formula_for_dispatch);
+        run_plan_with_compilers(plan, registry, compilers, &formula_input);
 
     debug!(
         bridge = %cs.bridge_ir_name,
@@ -1861,7 +1899,7 @@ fn work_one(
                     let prover_tag =
                         format!("{}@{}", inv.result.solver_name, inv.result.solver_version);
                     let solver_input = compilers
-                        .compile(&formula_for_dispatch, &inv.compiler)
+                        .compile(&formula_input, &inv.compiler)
                         .map(|compiled| compiled.script())
                         .unwrap_or_default();
                     match mint_and_cache(

@@ -81,16 +81,6 @@ impl IrCompiler for LeanCompiler {
     }
 }
 
-pub fn emit(ir: &Json) -> Result<String, CompileError> {
-    let compiled = compile_to_parts(ir)?;
-    Ok(format!("{}{}", compiled.preamble, compiled.body))
-}
-
-pub fn compile_to_parts(ir: &Json) -> Result<CompiledFormula, CompileError> {
-    let input = CompilerInput::decode_json(ir.clone())?;
-    compile_input_to_parts(&input)
-}
-
 fn compile_input_to_parts(input: &CompilerInput) -> Result<CompiledFormula, CompileError> {
     match input {
         CompilerInput::Formula(formula) => compile_formula_to_parts(formula),
@@ -788,12 +778,16 @@ mod tests {
 
     #[test]
     fn emit_simple_formula() {
-        let out = emit(&json!({
+        let input = CompilerInput::decode_json(json!({
             "kind": "atomic",
             "name": "true",
             "args": []
         }))
-        .expect("emit");
+        .expect("fixture decodes");
+        let out = LeanCompiler::new()
+            .compile_typed(&input, DIALECT)
+            .expect("compile")
+            .script();
         assert!(out.contains("theorem sugar_obligation : True := by"));
     }
 }

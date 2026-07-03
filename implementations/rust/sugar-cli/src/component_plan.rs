@@ -1417,7 +1417,9 @@ mod tests {
     use serde_json::Value as Json;
     use std::ffi::{OsStr, OsString};
     use std::sync::Mutex;
-    use sugar_ir_compiler::{CompileError, CompiledFormula, FreeVar, IrCompiler, OpacityManifest};
+    use sugar_ir_compiler::{
+        CompileError, CompiledFormula, CompilerInput, FreeVar, IrCompiler, OpacityManifest,
+    };
 
     static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1876,8 +1878,17 @@ done
             }],
         );
 
+        let input = CompilerInput::decode_json(json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "var", "name": "v"},
+                {"kind": "var", "name": "v"}
+            ]
+        }))
+        .expect("component-plan registry fixture decodes");
         let compiled = registry
-            .compile(&json!({}), "smt-lib-v2.6")
+            .compile(&input, "smt-lib-v2.6")
             .expect("manifest override compiler should still be registered");
         assert_eq!(compiled.preamble, "; original\n");
     }

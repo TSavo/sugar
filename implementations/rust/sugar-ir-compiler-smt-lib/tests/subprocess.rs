@@ -9,8 +9,15 @@ use std::path::PathBuf;
 
 use serde_json::json;
 
-use sugar_ir_compiler::{subprocess::JsonRpcCompiler, IrCompiler};
-use sugar_ir_compiler_smt_lib::{compile_to_parts, DIALECT};
+use sugar_ir_compiler::{
+    subprocess::JsonRpcCompiler, CompileError, CompiledFormula, CompilerInput, IrCompiler,
+};
+use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT};
+
+fn compile_to_parts(ir: &serde_json::Value) -> Result<CompiledFormula, CompileError> {
+    let input = CompilerInput::decode_json(ir.clone())?;
+    SmtLibCompiler::new().compile_typed(&input, DIALECT)
+}
 
 fn binary_path() -> Option<PathBuf> {
     // Cargo sets CARGO_BIN_EXE_<name> for binaries in this package.

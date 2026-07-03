@@ -73,6 +73,7 @@ use crate::solvers::{
 use crate::types::{MementoCid, MementoPool, ObligationVerdict};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
+use sugar_ir_compiler::CompilerInput;
 
 /// Outcome of a single contract's consistency check.
 #[derive(Debug, Clone)]
@@ -1088,7 +1089,14 @@ fn check_inv_consistency(
     }
     let raw_sat_goal = json!({ "kind": "not", "operands": [inv.clone()] });
     let t_solve = std::time::Instant::now();
-    let (raw, raw_reason, invs) = run_plan_with_compilers(plan, registry, compilers, &raw_sat_goal);
+    let (raw, raw_reason, invs) = match CompilerInput::decode_json(raw_sat_goal.clone()) {
+        Ok(input) => run_plan_with_compilers(plan, registry, compilers, &input),
+        Err(error) => (
+            ObligationVerdict::Undecidable,
+            format!("frontend decode: {}", error.payload),
+            Vec::new(),
+        ),
+    };
     let solve_us = t_solve.elapsed().as_micros();
     // Per-obligation phase split (timestamped): local-forall instantiation vs the
     // compile+solve round. Pairs with the "ambient instantiation hotspot" line

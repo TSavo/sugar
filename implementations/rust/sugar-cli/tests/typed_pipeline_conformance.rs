@@ -17,6 +17,7 @@ const BASELINE_AMBIENT_TESTIMONY_SITES_OPEN: usize = 1;
 const BASELINE_TRANSPORT_JSON_BACKEND_INGRESS_OPEN: usize = 0;
 const BASELINE_BACKEND_FRONTEND_DECODE_CALLS_OPEN: usize = 0;
 const BASELINE_FRONTEND_PROVENANCE_UNADMITTED_OPEN: usize = 0;
+const BASELINE_UNTYPED_VERIFIER_OBLIGATION_PATHS_OPEN: usize = 0;
 
 #[derive(Debug, Deserialize)]
 struct InterfaceManifest {
@@ -43,6 +44,10 @@ struct InterfaceManifest {
     frontend_boundary_allowlist_hatches: Vec<FrontendBoundaryDeclaration>,
     #[serde(default)]
     frontend_boundary_vocabulary: Vec<FrontendBoundaryVocabulary>,
+    #[serde(default)]
+    verifier_obligation_sources: Vec<VerifierObligationSource>,
+    #[serde(default)]
+    verifier_untyped_obligation_paths: Vec<FrontendBoundaryDeclaration>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -61,6 +66,8 @@ struct Ratchet {
     backend_frontend_decode_calls: usize,
     #[serde(default)]
     frontend_provenance_unadmitted: usize,
+    #[serde(default)]
+    untyped_verifier_obligation_paths: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,6 +188,11 @@ struct FrontendBoundaryVocabulary {
     retirement: String,
     #[serde(default)]
     baseline: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct VerifierObligationSource {
+    path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1027,6 +1039,118 @@ path = "{}"
     );
 }
 
+#[test]
+fn frontend_boundary_untyped_verifier_obligation_planted_offender_turns_red() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("plan_like.rs");
+    std::fs::write(
+        &source,
+        r#"
+use serde_json::Value as Json;
+
+pub fn run_plan_with_compilers(formula: &Json) {}
+
+fn solver_input(formula: Option<&Json>) -> Result<String, String> {
+    Ok(formula.map(Json::to_string).unwrap_or_default())
+}
+"#,
+    )
+    .expect("write planted verifier obligation path");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+ambient_testimony_sites = 0
+transport_json_backend_ingress = 0
+backend_frontend_decode_calls = 0
+frontend_provenance_unadmitted = 0
+untyped_verifier_obligation_paths = 0
+
+[[verifier_obligation_sources]]
+path = "{}"
+"#,
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    println!(
+        "untyped verifier-obligation planted-control receipt:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "untyped-verifier-obligation-paths"
+                && finding.item == "run_plan_with_compilers"
+        }),
+        "planted run_plan_with_compilers &Json obligation must red; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "untyped-verifier-obligation-paths"
+                && finding.item == "solver_input"
+                && finding
+                    .message
+                    .contains("silent-json-stringify-solver-input")
+        }),
+        "planted solver_input Json::to_string fallback must red; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
+#[test]
+fn frontend_boundary_typed_verifier_obligation_near_miss_stays_green() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("typed_plan_like.rs");
+    std::fs::write(
+        &source,
+        r#"
+use sugar_ir_compiler::CompilerInput;
+
+pub fn run_plan_with_compilers(formula: &CompilerInput) {}
+
+fn solver_input(formula: Option<&CompilerInput>) -> Result<String, String> {
+    formula
+        .map(|_| "typed obligation routed through compiler registry".to_string())
+        .ok_or_else(|| "no typed ProofIR obligation available".to_string())
+}
+"#,
+    )
+    .expect("write typed verifier obligation path");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+ambient_testimony_sites = 0
+transport_json_backend_ingress = 0
+backend_frontend_decode_calls = 0
+frontend_provenance_unadmitted = 0
+untyped_verifier_obligation_paths = 0
+
+[[verifier_obligation_sources]]
+path = "{}"
+"#,
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.axis != "untyped-verifier-obligation-paths"),
+        "typed verifier obligation path should stay green; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
 fn manifest_from_str(text: &str) -> InterfaceManifest {
     toml::from_str(text).expect("fixture manifest parses")
 }
@@ -1219,6 +1343,10 @@ fn audit_manifest_with_mode(
     for row in &manifest.frontend_boundary_vocabulary {
         validate_frontend_boundary_vocabulary(row, &mut findings);
     }
+    for row in &manifest.verifier_untyped_obligation_paths {
+        validate_frontend_boundary_declaration(row, &mut findings);
+        validate_frontend_boundary_declared_needles_present(root, row, &mut findings);
+    }
 
     for finding in discover_transport_json_backend_ingress(root, manifest, &mut findings) {
         if !frontend_boundary_finding_is_declared(
@@ -1262,10 +1390,33 @@ fn audit_manifest_with_mode(
         }
     }
 
+    for finding in discover_untyped_verifier_obligation_paths(root, manifest) {
+        if !frontend_boundary_finding_is_declared(
+            root,
+            &manifest.verifier_untyped_obligation_paths,
+            &finding,
+        ) {
+            findings.push(Finding {
+                axis: "untyped-verifier-obligation-paths",
+                path: finding.path,
+                line: finding.line,
+                item: finding.item,
+                message: format!(
+                    "undeclared {} in verifier obligation path: `{}`",
+                    finding.shape, finding.text
+                ),
+                replacement: "route verifier obligations as CompilerInput (or a typed Formula if the caller census proves formula-only) and refuse precompiled non-SMT inputs loudly"
+                    .to_string(),
+            });
+        }
+    }
+
     let baseline = manifest_declared_baseline_count(manifest);
     let ambient_baseline = manifest_declared_ambient_count(manifest);
     let transport_baseline = manifest_declared_transport_ingress_count(manifest);
     let decode_baseline = manifest_declared_decode_call_count(manifest);
+    let verifier_obligation_baseline =
+        manifest_declared_untyped_verifier_obligation_count(manifest);
     if enforce_live_ratchet && manifest.ratchet.interfaces_without_declaration != 0 {
         findings.push(Finding {
             axis: "ratchet-vector",
@@ -1435,6 +1586,39 @@ fn audit_manifest_with_mode(
                 manifest.ratchet.frontend_provenance_unadmitted
             ),
             replacement: "the amended S6 provenance policy starts empty; every output difference must be admitted by typed policy"
+                .to_string(),
+        });
+    }
+    if enforce_live_ratchet
+        && manifest.ratchet.untyped_verifier_obligation_paths
+            != BASELINE_UNTYPED_VERIFIER_OBLIGATION_PATHS_OPEN
+    {
+        findings.push(Finding {
+            axis: "ratchet-vector",
+            path: MANIFEST_REL.to_string(),
+            line: 0,
+            item: "R.untyped_verifier_obligation_paths".to_string(),
+            message: format!(
+                "ratchet pins untyped_verifier_obligation_paths at {}, expected {BASELINE_UNTYPED_VERIFIER_OBLIGATION_PATHS_OPEN}",
+                manifest.ratchet.untyped_verifier_obligation_paths
+            ),
+            replacement: "S4 exits with zero untyped registry/verifier obligation paths; future residues require a named row with owner+retirement"
+                .to_string(),
+        });
+    }
+    if enforce_live_ratchet
+        && verifier_obligation_baseline != manifest.ratchet.untyped_verifier_obligation_paths
+    {
+        findings.push(Finding {
+            axis: "ratchet-vector",
+            path: MANIFEST_REL.to_string(),
+            line: 0,
+            item: "R.untyped_verifier_obligation_paths".to_string(),
+            message: format!(
+                "manifest has {verifier_obligation_baseline} baseline untyped verifier-obligation rows, ratchet pins {}",
+                manifest.ratchet.untyped_verifier_obligation_paths
+            ),
+            replacement: "keep S4's verifier-obligation rows synchronized with the live registry/plan census"
                 .to_string(),
         });
     }
@@ -2216,6 +2400,17 @@ fn discover_backend_frontend_decode_calls(
             }
             let line = lines[idx];
             if let Some(item) = parse_rust_function_name(line) {
+                if is_backend_compile_entrypoint(&item)
+                    && function_signature_has_json_arg(&lines, idx, &item)
+                {
+                    out.push(FrontendBoundaryFinding {
+                        path: rel.clone(),
+                        item: item.clone(),
+                        line: idx + 1,
+                        shape: "backend-json-helper-signature".to_string(),
+                        text: signature_text(&lines, idx),
+                    });
+                }
                 let mut depth = 0isize;
                 let mut saw_brace = false;
                 let mut cursor = idx;
@@ -2386,6 +2581,139 @@ fn frontend_boundary_transport_frontend_is_declared(
         })
 }
 
+fn discover_untyped_verifier_obligation_paths(
+    root: &Path,
+    manifest: &InterfaceManifest,
+) -> Vec<FrontendBoundaryFinding> {
+    let mut out = Vec::new();
+    let mut sources = BTreeSet::new();
+    for source in &manifest.verifier_obligation_sources {
+        sources.insert(normalize_manifest_path(root, &source.path));
+    }
+    for row in &manifest.verifier_untyped_obligation_paths {
+        sources.insert(normalize_manifest_path(root, &row.source.path));
+    }
+    for rel in sources {
+        let path = resolve_manifest_path(root, &rel);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if rel.ends_with("registry.rs")
+                && function_signature_has_json_arg(&lines, idx, "compile")
+            {
+                out.push(FrontendBoundaryFinding {
+                    path: rel.clone(),
+                    item: "Registry::compile".to_string(),
+                    line: idx + 1,
+                    shape: "registry-compile-json-obligation".to_string(),
+                    text: trimmed.to_string(),
+                });
+            }
+            if function_signature_has_untyped_obligation(&lines, idx, "run_plan", "run_plan") {
+                out.push(FrontendBoundaryFinding {
+                    path: rel.clone(),
+                    item: "run_plan".to_string(),
+                    line: idx + 1,
+                    shape: "verifier-plan-json-obligation".to_string(),
+                    text: signature_text(&lines, idx),
+                });
+            }
+            if function_signature_has_untyped_obligation(
+                &lines,
+                idx,
+                "run_plan_with_compilers",
+                "run_plan_with_compilers",
+            ) {
+                out.push(FrontendBoundaryFinding {
+                    path: rel.clone(),
+                    item: "run_plan_with_compilers".to_string(),
+                    line: idx + 1,
+                    shape: "verifier-plan-json-obligation".to_string(),
+                    text: signature_text(&lines, idx),
+                });
+            }
+            if function_signature_has_untyped_obligation(
+                &lines,
+                idx,
+                "solver_input",
+                "solver_input",
+            ) {
+                out.push(FrontendBoundaryFinding {
+                    path: rel.clone(),
+                    item: "solver_input".to_string(),
+                    line: idx + 1,
+                    shape: "verifier-plan-json-obligation".to_string(),
+                    text: signature_text(&lines, idx),
+                });
+            }
+            if trimmed.contains("Json::to_string") || trimmed.contains("serde_json::to_string") {
+                out.push(FrontendBoundaryFinding {
+                    path: rel.clone(),
+                    item: enclosing_function_name(&lines, idx)
+                        .unwrap_or_else(|| "verifier-obligation-stringify".to_string()),
+                    line: idx + 1,
+                    shape: "silent-json-stringify-solver-input".to_string(),
+                    text: trimmed.to_string(),
+                });
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn function_signature_has_untyped_obligation(
+    lines: &[&str],
+    idx: usize,
+    fn_name: &str,
+    item_name: &str,
+) -> bool {
+    let trimmed = lines[idx].trim();
+    let starts_function = trimmed.starts_with(&format!("pub fn {fn_name}("))
+        || trimmed.starts_with(&format!("fn {fn_name}("));
+    if !starts_function {
+        return false;
+    }
+    let text = signature_text(lines, idx);
+    text.contains(item_name) && (text.contains("&Json") || text.contains("&serde_json::Value"))
+}
+
+fn function_signature_has_json_arg(lines: &[&str], idx: usize, fn_name: &str) -> bool {
+    let trimmed = lines[idx].trim();
+    let starts_function = trimmed.starts_with(&format!("pub fn {fn_name}("))
+        || trimmed.starts_with(&format!("fn {fn_name}("));
+    starts_function && {
+        let text = signature_text(lines, idx);
+        text.contains("&Json") || text.contains("&serde_json::Value")
+    }
+}
+
+fn signature_text(lines: &[&str], idx: usize) -> String {
+    let mut parts = Vec::new();
+    for line in lines.iter().skip(idx).take(12) {
+        parts.push(line.trim());
+        if line.contains(")") {
+            break;
+        }
+    }
+    parts.join(" ")
+}
+
+fn enclosing_function_name(lines: &[&str], idx: usize) -> Option<String> {
+    for line in lines[..=idx].iter().rev() {
+        if let Some(name) = parse_rust_function_name(line) {
+            return Some(name);
+        }
+    }
+    None
+}
+
 fn manifest_declared_baseline_count(manifest: &InterfaceManifest) -> usize {
     manifest
         .interfaces
@@ -2419,6 +2747,14 @@ fn manifest_declared_decode_call_count(manifest: &InterfaceManifest) -> usize {
         .count()
 }
 
+fn manifest_declared_untyped_verifier_obligation_count(manifest: &InterfaceManifest) -> usize {
+    manifest
+        .verifier_untyped_obligation_paths
+        .iter()
+        .filter(|row| row.baseline)
+        .count()
+}
+
 fn render_findings(findings: &[Finding], declared_baseline: usize) -> String {
     let interfaces_without_declaration = findings
         .iter()
@@ -2444,6 +2780,10 @@ fn render_findings(findings: &[Finding], declared_baseline: usize) -> String {
         .iter()
         .filter(|finding| finding.axis == "frontend-provenance-unadmitted")
         .count();
+    let untyped_verifier_obligation_paths = findings
+        .iter()
+        .filter(|finding| finding.axis == "untyped-verifier-obligation-paths")
+        .count();
     let mut out = format!(
         "R.interfaces_without_declaration = {interfaces_without_declaration}\n\
          R.undeclared_escape_hatches = {undeclared_escape_hatches}\n\
@@ -2451,10 +2791,11 @@ fn render_findings(findings: &[Finding], declared_baseline: usize) -> String {
          R.transport_json_backend_ingress = {transport_json_backend_ingress}\n\
          R.backend_frontend_decode_calls = {backend_frontend_decode_calls}\n\
          R.frontend_provenance_unadmitted = {frontend_provenance_unadmitted}\n\
+         R.untyped_verifier_obligation_paths = {untyped_verifier_obligation_paths}\n\
          R.declared_escape_hatch_rows_open = {declared_baseline} \
          (baseline {BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN})\n\
          Delta R: compare this run to the previous typed-pipeline conformance receipt\n\
-         Epsilon R.predicted = undeclared_escape_hatches=0, interfaces_without_declaration=0, ambient_testimony_sites=0, transport_json_backend_ingress=0, backend_frontend_decode_calls=0, frontend_provenance_unadmitted=0\n"
+         Epsilon R.predicted = undeclared_escape_hatches=0, interfaces_without_declaration=0, ambient_testimony_sites=0, transport_json_backend_ingress=0, backend_frontend_decode_calls=0, frontend_provenance_unadmitted=0, untyped_verifier_obligation_paths=0\n"
     );
     for finding in findings {
         out.push_str(&format!(

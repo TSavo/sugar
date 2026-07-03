@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use rayon::prelude::*;
-use serde_json::Value as Json;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_ir_compiler::CompiledFormula;
+use sugar_ir_compiler::CompilerInput;
 
 use crate::solvers::{
-    dispatch_for_formula, PortfolioMode, SolveResult, Solver, SolverHandle, SolverIdentity,
-    SolverPlan, SolverSeat,
+    dispatch_for_formula, DispatchConfig, PortfolioMode, SolveResult, Solver, SolverHandle,
+    SolverIdentity, SolverPlan, SolverSeat,
 };
 use crate::types::ObligationVerdict;
 
@@ -56,7 +56,7 @@ pub fn run_plan(
     plan: &SolverPlan,
     registry: &Registry,
     smt_script: &str,
-    formula: Option<&Json>,
+    formula: Option<&CompilerInput>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     run_plan_inner(
         plan,
@@ -70,7 +70,7 @@ pub fn run_plan_with_compilers(
     plan: &SolverPlan,
     registry: &Registry,
     compilers: &CompilerRegistry,
-    formula: &Json,
+    formula: &CompilerInput,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     run_plan_inner(
         plan,
@@ -84,14 +84,14 @@ fn run_plan_inner(
     plan: &SolverPlan,
     registry: &Registry,
     source: InputSource<'_>,
-    formula: Option<&Json>,
+    formula: Option<&CompilerInput>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     match plan {
         SolverPlan::Single(name) => single(*name, registry, source, formula),
         SolverPlan::Chain(names) => chain(names, registry, source, formula),
         SolverPlan::Portfolio { names, mode } => portfolio(names, *mode, registry, source, formula),
         SolverPlan::Dispatch(d) => match formula {
-            Some(f) => match dispatch_for_formula(f, d) {
+            Some(f) => match dispatch_for_compiler_input(f, d) {
                 Some(n) => single(n, registry, source, formula),
                 None => (
                     ObligationVerdict::Undecidable,
@@ -118,7 +118,7 @@ fn single(
     name: SolverSeat,
     registry: &Registry,
     source: InputSource<'_>,
-    formula: Option<&Json>,
+    formula: Option<&CompilerInput>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     match lookup(name, registry) {
         Ok(s) => {
@@ -143,7 +143,7 @@ fn chain(
     names: &[SolverSeat],
     registry: &Registry,
     source: InputSource<'_>,
-    formula: Option<&Json>,
+    formula: Option<&CompilerInput>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     let mut history: Vec<SolverInvocation> = vec![];
     let mut last_reason = String::new();
@@ -208,7 +208,7 @@ fn portfolio(
     mode: PortfolioMode,
     registry: &Registry,
     source: InputSource<'_>,
-    formula: Option<&Json>,
+    formula: Option<&CompilerInput>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     // Resolve handles up front; surface lookup misses as Undecidable.
     let mut handles: Vec<&Arc<dyn Solver>> = vec![];
@@ -392,7 +392,7 @@ fn reason_for(r: &SolveResult) -> String {
 fn solve_with_input(
     solver: &dyn Solver,
     source: InputSource<'_>,
-    formula: Option<&Json>,
+    formula: Option<&CompilerInput>,
 ) -> SolveResult {
     match solver_input(solver, source, formula) {
         Ok(PreparedInput::Text(text)) => solver.solve(&text),
@@ -404,24 +404,24 @@ fn solve_with_input(
 fn solver_input(
     solver: &dyn Solver,
     source: InputSource<'_>,
-    formula: Option<&Json>,
+    formula: Option<&CompilerInput>,
 ) -> Result<PreparedInput, String> {
     match source {
         InputSource::Precompiled(smt) => {
             if solver.ir_compiler() == "smt-lib-v2.6" {
                 Ok(PreparedInput::Text(smt.to_string()))
             } else {
-                Ok(PreparedInput::Text(
-                    formula
-                        .map(Json::to_string)
-                        .unwrap_or_else(|| smt.to_string()),
+                Err(format!(
+                    "precompiled solver input is SMT-LIB text, but solver '{}' expects compiler `{}`; route typed ProofIR through run_plan_with_compilers instead",
+                    solver.name(),
+                    solver.ir_compiler()
                 ))
             }
         }
         InputSource::Compilers(compilers) => {
             let formula = formula.ok_or_else(|| {
                 format!(
-                    "no ProofIR formula available for compiler `{}`",
+                    "no typed ProofIR compiler input available for compiler `{}`",
                     solver.ir_compiler()
                 )
             })?;
@@ -430,6 +430,19 @@ fn solver_input(
                 .map(PreparedInput::Compiled)
                 .map_err(|e| format!("ir compiler `{}`: {e}", solver.ir_compiler()))
         }
+    }
+}
+
+fn dispatch_for_compiler_input(
+    input: &CompilerInput,
+    config: &DispatchConfig,
+) -> Option<SolverSeat> {
+    match input {
+        CompilerInput::Formula(formula) => serde_json::to_value(formula)
+            .ok()
+            .and_then(|json| dispatch_for_formula(&json, config)),
+        CompilerInput::EquationalTheory(_) => config.equational_theory.or(config.default),
+        CompilerInput::Term(_) => config.default,
     }
 }
 
@@ -471,6 +484,10 @@ mod tests {
             Arc::new(StubSolver::new("vampire", ObligationVerdict::Undecidable)) as SolverHandle,
         );
         r
+    }
+
+    fn compiler_input(value: serde_json::Value) -> CompilerInput {
+        CompilerInput::decode_json(value).expect("solver plan test fixture decodes")
     }
 
     #[test]
@@ -575,7 +592,7 @@ mod tests {
             categorical_structure: None,
             default: Some(SolverSeat::Z3),
         });
-        let f = serde_json::json!({"kind":"atomic","name":"length","args":[]});
+        let f = compiler_input(serde_json::json!({"kind":"atomic","name":"length","args":[]}));
         let (v, _, invs) = run_plan(&plan, &reg, "x", Some(&f));
         assert_eq!(v, ObligationVerdict::Unsatisfied);
         assert_eq!(invs[0].result.solver_name, "cvc5");
@@ -598,7 +615,7 @@ mod tests {
             categorical_structure: None,
             default: Some(SolverSeat::Z3),
         });
-        let f = serde_json::json!({"kind":"atomic","name":"unknown","args":[]});
+        let f = compiler_input(serde_json::json!({"kind":"atomic","name":"unknown","args":[]}));
         let (v, _, _) = run_plan(&plan, &reg, "x", Some(&f));
         assert_eq!(v, ObligationVerdict::Discharged);
     }

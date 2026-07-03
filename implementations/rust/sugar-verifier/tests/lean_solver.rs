@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-use sugar_ir_compiler::registry::Registry as CompilerRegistry;
+use sugar_ir_compiler::{registry::Registry as CompilerRegistry, CompilerInput};
 use sugar_ir_compiler_lean::LeanCompiler;
 use sugar_verifier::solvers::{
     plan::run_plan_with_compilers, registry, LeanSubprocessSolver, Solver, SolverPlan, SolverSeat,
@@ -111,8 +111,9 @@ ir_compiler = "lean"
     let mut compilers = CompilerRegistry::new();
     compilers.register(Arc::new(LeanCompiler::new()));
     let formula = serde_json::json!({"kind": "atomic", "name": "true", "args": []});
+    let input = CompilerInput::decode_json(formula).expect("Lean solver fixture decodes");
     let (verdict, _reason, invocations) =
-        run_plan_with_compilers(&plan, &registry, &compilers, &formula);
+        run_plan_with_compilers(&plan, &registry, &compilers, &input);
     assert_eq!(verdict, ObligationVerdict::Undecidable);
     let error = &invocations[0].result.error;
     assert!(
