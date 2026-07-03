@@ -138,8 +138,22 @@ class ObjectValue(FloorValue):
             from sugar_lift_py_tests.floor.bool_value import BoolValue
             from sugar_lift_py_tests.outcome import Complete
 
+            if not self.identity or not operation.right.identity:
+                return self._floor_gap(
+                    owner=operation.owner,
+                    blame=operation.blame,
+                    observed=f"{self.class_name}=={operation.right.class_name}",
+                    requested="object identity equality",
+                    fix=(
+                        "construct ObjectValue identities before applying "
+                        "method-less equality"
+                    ),
+                )
             return Complete(
-                BoolValue(_structural_object_equality(self, operation.right))
+                BoolValue(
+                    self.class_name == operation.right.class_name
+                    and self.identity == operation.right.identity
+                )
             )
         return self.call_method_value(
             method_name,
@@ -329,10 +343,6 @@ class ObjectValue(FloorValue):
                 message=info.message,
             ),
         )
-
-
-def _structural_object_equality(left: ObjectValue, right: ObjectValue) -> bool:
-    return left.class_name == right.class_name and left.fields == right.fields
 
 
 _BINARY_DUNDER_METHODS = {

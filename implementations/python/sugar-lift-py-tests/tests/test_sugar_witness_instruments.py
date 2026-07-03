@@ -35,7 +35,7 @@ from sugar_lift_py_tests.witness_harness import (
 
 ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 0
-EXPECTED_SEED_CASES = 53
+EXPECTED_SEED_CASES = 54
 EXPECTED_SEED_OWNER_COUNT = 41
 EXPECTED_TRIPLE_FAILURES = 0
 EXPECTED_MIGRATED_SEED_NAMES = {
@@ -70,6 +70,7 @@ EXPECTED_MIGRATED_SEED_NAMES = {
     "map_method",
     "object_call_slot_callsite",
     "object_display_conversion_callsite",
+    "object_equality_identity_return",
     "object_equality_return",
     "object_getitem_callsite",
     "object_next_callsite",
@@ -454,6 +455,7 @@ def test_effectful_display_conversion_refuses_without_fabricated_derived_fact(
         ("constant_bytes_return", ("python:bytes", "78"), ("python:bytes", "79")),
         ("divmod_subscript_return", 2, 3),
         ("format_int_return", 5, 6),
+        ("object_equality_identity_return", False, True),
         ("object_equality_return", True, False),
         ("object_rich_compare_return", True, False),
         ("to_list_len_return", 2, 3),
@@ -717,7 +719,7 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
     assert "R(temporal-opt-outs): 4" in text
-    assert "seed coverage: 53 seed cases, 41/53 catalog sugars" in text
+    assert "seed coverage: 54 seed cases, 41/53 catalog sugars" in text
     assert "unenrolled sugars:" not in text
     assert "temporal opt-outs:" in text
 

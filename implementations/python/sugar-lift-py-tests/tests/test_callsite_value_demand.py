@@ -14,6 +14,7 @@ from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     BlockValue,
+    BoolValue,
     CallSiteValue,
     GuardedReturn,
     ObjectValue,
@@ -22,6 +23,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import ctor, num, str_const
+from sugar_lift_py_tests.operations import BinaryOperatorOperation, perform_operation
 from sugar_lift_py_tests.outcome import Complete, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.object_equality_term_sugar import ObjectEqualityTermSugar
@@ -355,6 +357,40 @@ class Eq:
             ],
         )
     )
+
+
+def test_methodless_object_equality_uses_identity_not_structure() -> None:
+    source = """\
+class C:
+    def __init__(self, x):
+        self.x = x
+"""
+
+    value = _reduce_expr(source, "C(5) == C(5)")
+
+    assert value == BoolValue(False)
+
+
+def test_methodless_object_equality_refuses_without_identity_testimony() -> None:
+    receiver = ObjectValue(class_name="C", fields=())
+    right = ObjectValue(class_name="C", fields=())
+
+    with pytest.raises(FactoryGap) as raised:
+        perform_operation(
+            owner="object equality identity",
+            blame="t.py:1:0",
+            receiver=receiver,
+            operation=BinaryOperatorOperation(
+                operator="==",
+                right=right,
+                owner="object equality identity",
+                blame="t.py:1:0",
+            ),
+            ctx=ReduceContext.root(owner="object equality identity"),
+        )
+
+    assert raised.value.info["requested"] == "object identity equality"
+    assert "ObjectValue identities" in raised.value.info["fix"]
 
 
 def test_reflected_object_multiply_projects_to_dunder_method_bridge() -> None:
