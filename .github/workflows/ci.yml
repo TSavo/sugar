@@ -48,10 +48,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install system deps (z3)
+      - name: Install system deps (z3, GNU time)
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends z3
+          sudo apt-get install -y --no-install-recommends z3 time
 
       - name: Build RSS smoke binaries
         working-directory: implementations/rust
