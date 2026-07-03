@@ -686,6 +686,17 @@ fn curry_term(
             }
             if literal_predicate_bool(&curried).is_some() {
                 curried
+            } else if name.starts_with("call:") {
+                let Term::Ctor { args, .. } = curried.as_ref() else {
+                    unreachable!("curried runtime call stayed a ctor");
+                };
+                if !args.is_empty() {
+                    return curried;
+                }
+                Rc::new(Term::Ctor {
+                    name: format!("{}{suffix}", name, suffix = occurrence.suffix()),
+                    args: Vec::new(),
+                })
             } else {
                 Rc::new(Term::Ctor {
                     name: format!("{}{suffix}", name, suffix = occurrence.suffix()),
@@ -1115,7 +1126,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_call_curries_to_orderless_occurrence_symbol() {
+    fn runtime_call_curry_freezes_callee_and_splits_application_args() {
         let term = Rc::new(Term::Ctor {
             name: "call:f".to_string(),
             args: vec![var("x")],
@@ -1129,8 +1140,17 @@ mod tests {
 
         match curried.as_ref() {
             Term::Ctor { name, args } => {
-                assert_eq!(name, "call:f#map2");
-                assert!(args.is_empty());
+                assert_eq!(name, "call:f");
+                assert!(matches!(
+                    args.as_slice(),
+                    [arg] if matches!(
+                        arg.as_ref(),
+                        Term::Const {
+                            value: sugar_ir_symbolic::ConstValue::Int(2),
+                            sort
+                        } if sort.name == "Int"
+                    )
+                ));
             }
             other => panic!("expected curried call occurrence, got {other:?}"),
         }
@@ -1354,7 +1374,10 @@ mod tests {
                 ));
                 assert!(matches!(
                     body.as_ref(),
-                    Term::Ctor { name, args } if name == "call:g#map1" && args.is_empty()
+                    Term::Ctor { name, args } if name == "call:g" && matches!(
+                        args.as_slice(),
+                        [term] if matches!(term.as_ref(), Term::Var { name } if name == "y")
+                    )
                 ));
             }
             other => panic!("expected let body floor, got {other:?}"),

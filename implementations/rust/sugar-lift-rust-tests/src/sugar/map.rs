@@ -17,6 +17,9 @@ use crate::sugar::factory::{
 };
 use crate::sugar::sequence_floor::{sequence_elem_term_floor, sequence_value_term_floor};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::temporal_floor::{
+    CollectionIterMember, IterFloor, IterStanding, MapOutputIterMember, TemporalFloorRefusal,
+};
 use crate::sugar::term_dispatch::{CurryVisitor, DesugaredFloorAccept};
 use crate::sugar::{format::stable_let_bindings, method_family};
 use crate::{
@@ -29,7 +32,28 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "map",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                fn x(n: i32) -> i32 { n * 2 }
+
+                #[test]
+                fn t_map_good() {
+                    let _map_owner = [1i32, 1].into_iter().map(|n| x(n));
+                    let got = [1i32, 1].into_iter().map(|n| x(n)).sum::<i32>();
+                    assert_eq!(got, x(1) + x(1));
+                }
+            "#,
+            r#"
+                fn x(n: i32) -> i32 { n * 2 }
+
+                #[test]
+                fn t_map_bad() {
+                    let _map_owner = [1i32, 1].into_iter().map(|n| x(n));
+                    let got = [1i32, 1].into_iter().map(|n| x(n)).sum::<i32>();
+                    assert_eq!(got, x(1) + x(1) + 1);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -98,6 +122,7 @@ pub(crate) fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Opti
 
 pub(crate) struct MapClosure {
     expr: syn::ExprClosure,
+    param: String,
     curry_param: String,
     body: SugarBody<TermFloor>,
     u128_shift_hint: bool,
@@ -120,6 +145,7 @@ impl MapClosure {
         let body = SugarBody::<TermFloor>::term(expr.body.as_ref(), &body_fcx);
         Some(Self {
             expr,
+            param,
             curry_param,
             body,
             u128_shift_hint,
@@ -207,6 +233,67 @@ enum MapReceiverSequence {
     Terms(Vec<Rc<Term>>),
 }
 
+#[derive(Default)]
+struct MapFloor {
+    iter: IterFloor,
+}
+
+struct MapFloorOutput<T> {
+    mapped: Vec<T>,
+    standing: IterStanding,
+}
+
+impl<T> MapFloorOutput<T> {
+    fn into_mapped(self) -> Vec<T> {
+        self.mapped
+    }
+
+    fn standing(&self) -> &IterStanding {
+        &self.standing
+    }
+}
+
+impl MapFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.iter
+            .alias(&CollectionIterMember::derived(count))
+            .map_err(map_floor_refusal)
+    }
+
+    fn desugar<I, T, U, F>(
+        &self,
+        operand: IterStanding,
+        items: I,
+        mut mapper: F,
+    ) -> Result<MapFloorOutput<U>, Outcome>
+    where
+        I: IntoIterator<Item = T>,
+        F: FnMut(usize, T) -> Result<U, Outcome>,
+    {
+        let mapped = items
+            .into_iter()
+            .enumerate()
+            .map(|(idx, item)| mapper(idx, item))
+            .collect::<Result<Vec<_>, _>>()?;
+        if mapped.len() != operand.count() {
+            return Err(Outcome::Incomplete(Effect::CoverageGap {
+                boundary: "Iterator::map".to_string(),
+                reason: format!(
+                    "temporal map floor count mismatch: operand standing had {} tick(s), \
+                     real map produced {} tick(s); refused",
+                    operand.count(),
+                    mapped.len()
+                ),
+            }));
+        }
+        let standing = self
+            .iter
+            .alias(&MapOutputIterMember::new(mapped.len()))
+            .map_err(map_floor_refusal)?;
+        Ok(MapFloorOutput { mapped, standing })
+    }
+}
+
 impl MappedSequence {
     fn into_desugared(self) -> Desugared {
         match self {
@@ -260,9 +347,11 @@ fn reduce_map_sequence(
     mapper: &MapClosure,
     ctx: &SugarCtx,
 ) -> Result<MappedSequence, Outcome> {
+    let floor = MapFloor::default();
     match seq {
         MapReceiverSequence::Values(seq) => {
             if let Some(values) = reduce_map_sequence_to_values(&seq, mapper) {
+                trace_map_output_standing(&floor, values.len())?;
                 tracing::debug!(
                     target: "sugar_lift_rust_tests::sugar::map",
                     len = values.len(),
@@ -272,6 +361,7 @@ fn reduce_map_sequence(
             }
             match reduce_map_sequence_to_nested_values(&seq, mapper, ctx) {
                 Ok(Some(values)) => {
+                    trace_map_output_standing(&floor, values.len())?;
                     tracing::debug!(
                         target: "sugar_lift_rust_tests::sugar::map",
                         len = values.len(),
@@ -282,36 +372,60 @@ fn reduce_map_sequence(
                 Ok(None) => {}
                 Err(outcome) => return Err(outcome),
             }
-            let mut out = Vec::with_capacity(seq.len());
-            for (idx, elem) in seq.into_iter().enumerate() {
-                out.push(curry_map_body_for_elem(mapper, &elem, idx, ctx)?);
-            }
+            let operand = floor.derived_operand(seq.len())?;
+            let out = floor.desugar(operand, seq, |idx, elem| {
+                curry_map_body_for_elem(mapper, &elem, idx, ctx)
+            })?;
+            ctx.record_map_floor_audit(out.standing().count());
+            trace_map_floor_output(out.standing());
             tracing::debug!(
                 target: "sugar_lift_rust_tests::sugar::map",
-                len = out.len(),
+                len = out.standing().count(),
                 "literal closure map curried body terms"
             );
-            Ok(MappedSequence::Terms(out))
+            Ok(MappedSequence::Terms(out.into_mapped()))
         }
         MapReceiverSequence::Terms(terms) => {
-            let mut out = Vec::with_capacity(terms.len());
-            for (idx, term) in terms.into_iter().enumerate() {
-                out.push(curry_map_body_for_term(
-                    mapper,
-                    &term,
-                    idx,
-                    ctx,
-                    canonical_term_sig(&term),
-                )?);
-            }
+            let operand = floor.derived_operand(terms.len())?;
+            let out = floor.desugar(operand, terms, |idx, term| {
+                let label = canonical_term_sig(&term);
+                curry_map_body_for_term(mapper, &term, idx, ctx, label)
+            })?;
+            ctx.record_map_floor_audit(out.standing().count());
+            trace_map_floor_output(out.standing());
             tracing::debug!(
                 target: "sugar_lift_rust_tests::sugar::map",
-                len = out.len(),
+                len = out.standing().count(),
                 "term sequence map curried body terms"
             );
-            Ok(MappedSequence::Terms(out))
+            Ok(MappedSequence::Terms(out.into_mapped()))
         }
     }
+}
+
+fn trace_map_output_standing(floor: &MapFloor, count: usize) -> Result<(), Outcome> {
+    let standing = floor
+        .iter
+        .alias(&MapOutputIterMember::new(count))
+        .map_err(map_floor_refusal)?;
+    trace_map_floor_output(&standing);
+    Ok(())
+}
+
+fn trace_map_floor_output(standing: &IterStanding) {
+    tracing::trace!(
+        target: "sugar_lift_rust_tests::sugar::map",
+        member = standing.member(),
+        count = standing.count(),
+        "map output stands on the iter floor"
+    );
+}
+
+fn map_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::map".to_string(),
+        reason: err.to_string(),
+    })
 }
 
 fn reduce_map_sequence_to_values(
@@ -410,6 +524,11 @@ fn curry_map_body_for_term(
         }),
         Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
     };
+    let curried_floor = curried_floor.accept_desugared_floor(CurryVisitor {
+        param: &mapper.param,
+        arg: elem_term,
+        occurrence: ctx.scope.temporal_curry_occurrence("map", ordinal),
+    });
     let curried = curried_floor
         .into_term()
         .unwrap_or_else(|| map_gap("map closure body reduced to non-Term floor"));
@@ -545,4 +664,38 @@ fn type_is_unsigned_int(ty: &Type) -> bool {
 
 fn is_unsigned_int_name(name: &str) -> bool {
     matches!(name, "u8" | "u16" | "u32" | "u64" | "u128" | "usize")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sugar::temporal_floor::IterProvenance;
+
+    #[test]
+    fn map_floor_counts_real_map_output_as_iter_standing() {
+        let floor = MapFloor::default();
+        let operand = floor
+            .derived_operand(3)
+            .unwrap_or_else(|_| panic!("operand standing"));
+        let output = floor
+            .desugar(operand, [1, 2, 3], |idx, item| Ok(item + idx as i32))
+            .unwrap_or_else(|_| panic!("map floor desugars"));
+
+        assert_eq!(output.mapped, vec![1, 3, 5]);
+        assert_eq!(output.standing().member(), "MapOutput");
+        assert_eq!(output.standing().provenance(), IterProvenance::Derived);
+        assert_eq!(output.standing().count(), 3);
+    }
+
+    #[test]
+    fn map_floor_input_without_standing_refuses_loudly() {
+        let err = IterStanding::new("MapInput", IterProvenance::Derived, None)
+            .expect_err("missing operand standing refuses");
+        let msg = err.to_string();
+
+        assert!(msg.contains("crime=missing standing"));
+        assert!(msg.contains("owner=IterFloor"));
+        assert!(msg.contains("shape=MapInput carried no finite member count"));
+        assert!(msg.contains("replacement=construct IterStanding"));
+    }
 }

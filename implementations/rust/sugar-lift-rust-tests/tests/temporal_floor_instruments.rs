@@ -16,9 +16,9 @@ use toml::Value;
 
 const CATALOG_TOML: &str = include_str!("fixtures/temporal_floor_catalog.toml");
 
-const EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED: usize = 53;
-const EXPECTED_OPERATION_FLOORS_UNLANDED_R: usize = 27;
-const EXPECTED_EMBEDDINGS_R: usize = 1;
+const EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED: usize = 52;
+const EXPECTED_OPERATION_FLOORS_UNLANDED_R: usize = 26;
+const EXPECTED_EMBEDDINGS_R: usize = 0;
 
 const REQUIRED_CATALOG_ROWS: &[&str] = &[
     "iterator-map",
@@ -50,10 +50,10 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "aggregate_decomp.rs:310",
     "aggregate_decomp.rs:312",
     "aggregate_decomp.rs:317",
-    "assign_op.rs:1680",
-    "assign_op.rs:2080",
-    "assign_op.rs:2119",
-    "assign_op.rs:2567",
+    "assign_op.rs:1684",
+    "assign_op.rs:2084",
+    "assign_op.rs:2123",
+    "assign_op.rs:2571",
     "chain.rs:34",
     "char_range_filter_map.rs:87",
     "char_range_filter_map.rs:111",
@@ -93,18 +93,16 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "iter_terminal.rs:572",
     "iter_terminal.rs:713",
     "let_stmt.rs:65",
-    "map.rs:50",
-    "map.rs:77",
     "method_family.rs:484",
     "method_family.rs:650",
     "method_family.rs:663",
-    "option_unwrap.rs:29",
+    "option_unwrap.rs:42",
     "peekable.rs:53",
     "peekable.rs:213",
     "primitive_int.rs:466",
     "primitive_int.rs:2003",
-    "result_predicate.rs:46",
-    "result_predicate.rs:266",
+    "result_predicate.rs:59",
+    "result_predicate.rs:279",
     "rev.rs:29",
     "scan.rs:70",
     "skip.rs:28",
@@ -125,6 +123,7 @@ struct Metrics {
     operation_floors_unlanded_r: usize,
     embeddings_r: usize,
     catalog_methods: BTreeSet<String>,
+    landed_counted_loci: BTreeSet<String>,
     operation_floor_rows: BTreeSet<String>,
     iter_members: BTreeMap<String, String>,
 }
@@ -163,6 +162,24 @@ fn str_field<'a>(row: &'a Value, key: &str, row_name: &str) -> Result<&'a str, S
         .ok_or_else(|| format!("{row_name} missing non-empty `{key}`"))
 }
 
+fn str_array_field<'a>(row: &'a Value, key: &str, row_name: &str) -> Result<Vec<&'a str>, String> {
+    let values = row
+        .get(key)
+        .and_then(Value::as_array)
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| format!("{row_name} missing non-empty `{key}` array"))?;
+    values
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| {
+            value
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| format!("{row_name} `{key}`[{idx}] must be a non-empty string"))
+        })
+        .collect()
+}
+
 fn validate_catalog(text: &str) -> Result<Metrics, String> {
     let doc = parse_catalog(text)?;
     let catalog = table_rows(&doc, "catalog")?;
@@ -171,6 +188,7 @@ fn validate_catalog(text: &str) -> Result<Metrics, String> {
 
     let mut catalog_ids = BTreeSet::new();
     let mut catalog_methods = BTreeSet::new();
+    let mut landed_counted_loci = BTreeSet::new();
     let mut out_rows = Vec::new();
     let mut used_floors = BTreeSet::new();
     let mut stdlib_temporal_surface_unenrolled = 0usize;
@@ -201,6 +219,15 @@ fn validate_catalog(text: &str) -> Result<Metrics, String> {
                 stdlib_temporal_surface_unenrolled += 1;
                 catalog_methods.insert(str_field(row, "method", id)?.to_string());
                 used_floors.insert(str_field(row, "operation_floor", id)?.to_string());
+            }
+            "landed" => {
+                used_floors.insert(str_field(row, "operation_floor", id)?.to_string());
+                str_field(row, "counted_loci_reason", id)?;
+                for locus in str_array_field(row, "counted_loci", id)? {
+                    if !landed_counted_loci.insert(locus.to_string()) {
+                        return Err(format!("duplicate landed counted locus `{locus}`"));
+                    }
+                }
             }
             "out" => {
                 if doorway != "out" {
@@ -295,6 +322,7 @@ fn validate_catalog(text: &str) -> Result<Metrics, String> {
         operation_floors_unlanded_r,
         embeddings_r,
         catalog_methods,
+        landed_counted_loci,
         operation_floor_rows,
         iter_members,
     })
@@ -330,7 +358,11 @@ fn rust_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn detect_uncounted_composition_paths(root: &Path, methods: &BTreeSet<String>) -> Vec<String> {
+fn detect_uncounted_composition_paths(
+    root: &Path,
+    methods: &BTreeSet<String>,
+    landed_counted_loci: &BTreeSet<String>,
+) -> Vec<String> {
     let mut rows = Vec::new();
     for path in rust_files(root) {
         let rel = path
@@ -356,7 +388,11 @@ fn detect_uncounted_composition_paths(root: &Path, methods: &BTreeSet<String>) -
                 .filter(|method| line.contains(&format!("\"{method}\"")))
                 .collect();
             if !hits.is_empty() {
-                rows.push(format!("{rel}:{line_no}"));
+                let row = format!("{rel}:{line_no}");
+                if landed_counted_loci.contains(&row) {
+                    continue;
+                }
+                rows.push(row);
             }
         }
     }
@@ -370,6 +406,7 @@ fn detect_combinator_local_renames(root: &Path) -> Vec<String> {
         "bump_consuming_occurrence",
         "@adv{",
         "format!(\"#",
+        "@def{",
     ];
     let mut rows = Vec::new();
     for path in rust_files(root) {
@@ -481,6 +518,7 @@ fn temporal_catalog_and_membership_vectors_are_pinned() {
     println!("R(embeddings) = {}", metrics.embeddings_r);
     println!("operation floors = {:#?}", metrics.operation_floor_rows);
     println!("iter floor members = {:#?}", metrics.iter_members);
+    println!("landed counted loci = {:#?}", metrics.landed_counted_loci);
     assert_eq!(
         metrics.stdlib_temporal_surface_unenrolled,
         EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED
@@ -503,6 +541,11 @@ fn temporal_catalog_and_membership_vectors_are_pinned() {
             .get("DerivedCollection")
             .map(String::as_str),
         Some("Derived")
+    );
+    assert_eq!(
+        metrics.landed_counted_loci,
+        as_set(&["map.rs:74", "map.rs:101"]),
+        "landed count exemptions must be visible in the temporal catalog"
     );
 }
 
@@ -535,7 +578,11 @@ fn temporal_catalog_bad_twins_red_through_the_catalog_validator() {
 #[test]
 fn uncounted_composition_paths_are_row_pinned_with_planted_control() {
     let metrics = validate_catalog(CATALOG_TOML).expect("catalog");
-    let observed = detect_uncounted_composition_paths(&sugar_src_root(), &metrics.catalog_methods);
+    let observed = detect_uncounted_composition_paths(
+        &sugar_src_root(),
+        &metrics.catalog_methods,
+        &metrics.landed_counted_loci,
+    );
     let expected = as_set(EXPECTED_UNCOUNTED_COMPOSITION_PATHS);
     println!("R(uncounted-composition-paths) = {}", observed.len());
     println!("uncounted composition rows = {observed:#?}");
@@ -552,7 +599,11 @@ fn uncounted_composition_paths_are_row_pinned_with_planted_control() {
         r#"fn planted(call: &Call) { if call.method != "map" || call.args.len() != 1 {} }"#,
     )
     .expect("write planted catalog method");
-    let planted_rows = detect_uncounted_composition_paths(&planted, &metrics.catalog_methods);
+    let planted_rows = detect_uncounted_composition_paths(
+        &planted,
+        &metrics.catalog_methods,
+        &metrics.landed_counted_loci,
+    );
     assert_eq!(
         planted_rows,
         vec!["planted_map.rs:1"],
@@ -560,15 +611,35 @@ fn uncounted_composition_paths_are_row_pinned_with_planted_control() {
     );
 
     fs::write(
+        planted.join("map.rs"),
+        r#"fn planted(call: &Call) { if call.method != "map" || call.args.len() != 1 {} }"#,
+    )
+    .expect("write planted map implementation method");
+    let planted_rows = detect_uncounted_composition_paths(
+        &planted,
+        &metrics.catalog_methods,
+        &metrics.landed_counted_loci,
+    );
+    assert_eq!(
+        planted_rows,
+        vec!["map.rs:1", "planted_map.rs:1"],
+        "planted uncounted map composition inside map.rs must still red; exemptions belong in catalog rows, not file-wide code"
+    );
+
+    fs::write(
         planted.join("tokio_spawn.rs"),
         r#"fn out(call: &Call) { if call.method != "spawn" || call.args.len() != 1 {} }"#,
     )
     .expect("write out-of-catalog method");
-    let planted_rows = detect_uncounted_composition_paths(&planted, &metrics.catalog_methods);
+    let planted_rows = detect_uncounted_composition_paths(
+        &planted,
+        &metrics.catalog_methods,
+        &metrics.landed_counted_loci,
+    );
     assert_eq!(
         planted_rows,
-        vec!["planted_map.rs:1"],
-        "Tokio spawn is in the OUT manifest, not an uncounted stdlib temporal surface row"
+        vec!["map.rs:1", "planted_map.rs:1"],
+        "Tokio spawn is in the OUT manifest, while the planted map composition remains visible"
     );
 }
 
@@ -599,6 +670,18 @@ fn combinator_local_rename_axis_is_row_pinned_with_planted_control() {
         planted_rows,
         vec!["planted_rename.rs:1"],
         "planted combinator-local occurrence mint should red through B-prime"
+    );
+
+    fs::write(
+        planted.join("planted_def.rs"),
+        r#"fn planted(name: &str, v: usize) -> String { format!("{name}@def{v}") }"#,
+    )
+    .expect("write planted @def rename");
+    let planted_rows = detect_combinator_local_renames(&planted);
+    assert_eq!(
+        planted_rows,
+        vec!["planted_def.rs:1", "planted_rename.rs:1"],
+        "planted local @def mint should red through the expanded B-prime needle"
     );
 }
 

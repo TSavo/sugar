@@ -51,7 +51,7 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
                 return Some(Box::new(ClosureAmbiguousCaptureSugar { name }));
             }
             let vname = match scope.version_of(&name) {
-                Some(v) => format!("{name}@def{v}"),
+                Some(v) => scope.temporal_rewrite_alias(&name, v),
                 None => name.clone(),
             };
             args.push(make_var(vname));

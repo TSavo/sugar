@@ -5419,6 +5419,14 @@ impl TemporalScope {
             .unwrap_or_else(|err| panic!("{err}"))
     }
 
+    pub(crate) fn temporal_rewrite_alias(&self, name: &str, version: usize) -> String {
+        self.temporal_floor
+            .alias(sugar::temporal_floor::RewriteDoorway::new(name, version))
+            .unwrap_or_else(|err| panic!("{err}"))
+            .value()
+            .to_string()
+    }
+
     pub(crate) fn temporal_consuming_rewrite_alias(&self, name: &str) -> Option<String> {
         self.temporal_floor
             .alias(sugar::temporal_floor::ConsumingRewriteDoorway::new(name))
@@ -10798,6 +10806,25 @@ impl SugarCtx<'_, '_> {
         if let Some(factory_audits) = self.factory_audits {
             factory_audits.borrow_mut().push(audit);
         }
+    }
+
+    fn record_map_floor_audit(&self, tick_count: usize) {
+        self.record_factory_audit(FactoryAudit {
+            ast_kind: "temporal-floor",
+            site: format!("map floor over {tick_count} tick(s)"),
+            line: 0,
+            span: None,
+            requested_role: "TemporalFloor::Map".to_string(),
+            selected: Some("map"),
+            candidates: Vec::new(),
+            disposition: FactoryDisposition::Warranted,
+            output: "term-sequence",
+            reason: Some(
+                "MapSugar delegated counted composition through TemporalFloor CURRY doorway"
+                    .to_string(),
+            ),
+            emitted_formula: None,
+        });
     }
 }
 

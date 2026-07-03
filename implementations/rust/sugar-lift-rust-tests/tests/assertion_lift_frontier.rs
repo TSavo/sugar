@@ -152,10 +152,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:temporal-closure-adaptor",
     ),
     (
-        "temporal_nested_map_curry_dispatch_reduces_inner_floor_before_materializing",
-        "floor-gap:temporal-closure-adaptor",
-    ),
-    (
         "top_level_scanner_discovers_vendor_surface_by_macro_body_shape",
         "floor-gap:macro-visible-source",
     ),

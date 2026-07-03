@@ -432,6 +432,23 @@ impl IterFloorMember for CollectionIterMember {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MapOutputIterMember {
+    count: usize,
+}
+
+impl MapOutputIterMember {
+    pub(crate) fn new(count: usize) -> Self {
+        Self { count }
+    }
+}
+
+impl IterFloorMember for MapOutputIterMember {
+    fn standing(&self) -> Result<IterStanding, TemporalFloorRefusal> {
+        IterStanding::new("MapOutput", IterProvenance::Derived, Some(self.count))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct IterFloor;
 
@@ -576,6 +593,16 @@ mod tests {
     }
 
     #[test]
+    fn iter_floor_counts_map_output_as_derived() {
+        let floor = IterFloor;
+        let standing = floor.alias(&MapOutputIterMember::new(2)).unwrap();
+
+        assert_eq!(standing.member(), "MapOutput");
+        assert_eq!(standing.provenance(), IterProvenance::Derived);
+        assert_eq!(standing.count(), 2);
+    }
+
+    #[test]
     fn iter_floor_missing_standing_refuses_loudly() {
         let err = IterStanding::new("ArrayLiteral", IterProvenance::Literal, None)
             .expect_err("missing member count refuses");
@@ -597,5 +624,29 @@ mod tests {
         assert_ne!(bound.value(), rewritten.value());
         assert_ne!(bound.value(), curry.suffix());
         assert_ne!(rewritten.value(), curry.suffix());
+    }
+
+    #[test]
+    fn rebind_must_not_freeze_through_curry_doorway() {
+        let floor = TemporalFloor::default();
+        let first_rewrite = floor.alias(RewriteDoorway::new("x", 1)).unwrap();
+        let second_rewrite = floor.alias(RewriteDoorway::new("x", 2)).unwrap();
+
+        assert_ne!(
+            first_rewrite.value(),
+            second_rewrite.value(),
+            "rewrite doorway must split rebinding names so x_1 == x_2 cannot be manufactured"
+        );
+
+        let frozen_first = floor.alias(CurryDoorway::new("x", 0)).unwrap();
+        let frozen_second = floor.alias(CurryDoorway::new("x", 0)).unwrap();
+
+        assert_eq!(
+            frozen_first.suffix(),
+            frozen_second.suffix(),
+            "curry doorway freezes the callee symbol; using it for a rebind would collapse distinct versions"
+        );
+        assert_ne!(first_rewrite.value(), frozen_first.suffix());
+        assert_ne!(second_rewrite.value(), frozen_second.suffix());
     }
 }
