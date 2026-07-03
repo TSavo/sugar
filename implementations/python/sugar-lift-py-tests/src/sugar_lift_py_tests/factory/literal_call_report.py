@@ -126,6 +126,16 @@ class EqualityFactEmission:
     source_warrants: tuple[SourceMementoDto, ...]
 
 
+def _resolver_nodes(
+    functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
+) -> dict[str, Any]:
+    return {
+        **{name: frag.node for name, frag in functions_by_name.items()},
+        **{name: frag.node for name, frag in classes_by_name.items()},
+    }
+
+
 def _is_free_var_definition(formula_value: dict[str, Any], bound: set[str]) -> bool:
     """An `eq(var, _)` whose var is neither a formal nor `out` -- a free-variable
     definition that would leave an exported universe post OPEN, so the verifier's
@@ -388,6 +398,7 @@ def _lift_assert(
             callee_name,
             fn,
             functions_by_name,
+            classes_by_name,
             filename=filename,
             memento_file=memento_file,
             source_lines=source_lines,
@@ -506,10 +517,7 @@ def _assertion_factory_ctx(
     ctx = FactoryBuildContext(
         filename=filename,
         catalog=default_catalog(),
-        name_resolver={
-            **{name: frag.node for name, frag in functions_by_name.items()},
-            **{name: frag.node for name, frag in classes_by_name.items()},
-        },
+        name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
         import_aliases=import_aliases,
         from_imports=from_imports,
         contract_bindings=contract_bindings,
@@ -1086,6 +1094,7 @@ def _construct_callsite_from_factory_term(
     callee_name: str,
     caller_fn: SourceFragment,
     functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
     *,
     filename: str,
     memento_file: str,
@@ -1111,9 +1120,10 @@ def _construct_callsite_from_factory_term(
     )
     from sugar_lift_py_tests.outcome import Complete
 
-    resolver = {name: f.node for name, f in functions_by_name.items()}
     build_ctx = FactoryBuildContext(
-        filename=filename, catalog=default_catalog(), name_resolver=resolver
+        filename=filename,
+        catalog=default_catalog(),
+        name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
     )
     sink: list[tuple[str, FloorValue]] = []
     reduce_ctx = ReduceContext.root(
@@ -1136,6 +1146,7 @@ def _construct_callsite_from_factory_term(
             callee,
             cn,
             functions_by_name=functions_by_name,
+            classes_by_name=classes_by_name,
             filename=filename,
             memento_file=memento_file,
             source_lines=source_lines,
@@ -1428,6 +1439,7 @@ def _function_universe(
     callee_name: str,
     *,
     functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -1450,7 +1462,7 @@ def _function_universe(
     build_ctx = FactoryBuildContext(
         filename=filename,
         catalog=default_catalog(),
-        name_resolver={name: frag.node for name, frag in functions_by_name.items()},
+        name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
     )
     try:
         universe_sugar = build_control_flow_body_sugar(callee, build_ctx)
@@ -1564,6 +1576,7 @@ def _dig_universe(
     call_frag: SourceFragment,
     *,
     functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -1580,7 +1593,7 @@ def _dig_universe(
     factory_ctx = FactoryBuildContext(
         filename=filename,
         catalog=default_catalog(),
-        name_resolver={name: frag.node for name, frag in functions_by_name.items()},
+        name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
     )
     # Route through the CATALOG -- no side door. A resolved call builds a CallSugar whose
     # strategy is a BridgeStrategy carrying the callee's universe (the body walked over its

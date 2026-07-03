@@ -32,15 +32,15 @@ ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 46
 EXPECTED_SEED_CASES = 4
 EXPECTED_SEED_OWNER_COUNT = 3
-# Pinned by #3307: binary-dunder callsites currently emit only the stated
-# assertion; the derived body/floor contradiction is missing.
-EXPECTED_TRIPLE_FAILURES = 1
+# #3307: binary-dunder callsites must emit the derived body/floor fact so a
+# lying vendor assertion contradicts real body testimony through the solver.
+EXPECTED_TRIPLE_FAILURES = 0
 EXPECTED_MIGRATED_SEED_NAMES = {
     "slice_callsite",
     "literal_call_return",
     "try_body",
 }
-EXPECTED_PINNED_FAILURE_SEED_NAMES = {"binary_dunder_callsite"}
+EXPECTED_PINNED_FAILURE_SEED_NAMES: set[str] = set()
 EXPECTED_OPT_OUT_SUGARS = {
     "AliasSugar",
     "CommentSugar",
@@ -99,9 +99,7 @@ def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
 
 def test_non_fol_opt_out_audit_bad_twins() -> None:
     missing_support_pin = tuple(
-        row
-        for row in EXPECTED_NON_FOL_OPT_OUTS
-        if row.floor_name != "SupportValue"
+        row for row in EXPECTED_NON_FOL_OPT_OUTS if row.floor_name != "SupportValue"
     )
     missing_support = non_fol_opt_out_audit(pinned=missing_support_pin)
     assert missing_support.marked_but_unpinned == ("SupportValue",)
@@ -144,13 +142,19 @@ def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
     assert seed_report.witness_triples_failing == EXPECTED_TRIPLE_FAILURES
     assert seed_report.witnesses_not_dispatching_to_owner == 0
     assert [
-        (failure.seed, failure.variant, failure.axis, failure.expected, failure.observed)
+        (
+            failure.seed,
+            failure.variant,
+            failure.axis,
+            failure.expected,
+            failure.observed,
+        )
         for failure in seed_report.triple_failures
-    ] == [("binary_dunder_callsite", "lying", "verdict", "unsat", "sat")]
+    ] == []
     assert seed_report.non_circularity_failures == ()
 
 
-def test_binary_dunder_lying_trace_documents_missing_derived_fact(
+def test_binary_dunder_trace_emits_derived_fact_and_refutes_lie(
     tmp_path: Path,
 ) -> None:
     seed = next(
@@ -159,54 +163,102 @@ def test_binary_dunder_lying_trace_documents_missing_derived_fact(
         if item.name == "binary_dunder_callsite"
     )
 
-    result = run_source_through_real_solver(tmp_path / "lying", seed.lying.source)
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", seed.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", seed.lying.source)
 
-    ir = result.lift_doc["ir"]
-    diagnostics = result.lift_doc["diagnostics"]
     trace = {
         "seed": seed.name,
-        "variant": "lying",
-        "expected": seed.lying.expected,
+        "truthful": {
+            "expected": seed.truthful.expected,
+            "observed": truthful.verdict,
+            "selectedSugars": truthful.selected_sugars,
+            "ir": _binary_dunder_euf_rows(truthful.lift_doc),
+            "rows": truthful.prove_doc.get("rows"),
+        },
+        "lying": {
+            "expected": seed.lying.expected,
+            "observed": lying.verdict,
+            "selectedSugars": lying.selected_sugars,
+            "ir": _binary_dunder_euf_rows(lying.lift_doc),
+            "rows": lying.prove_doc.get("rows"),
+        },
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert "CallSugar" in truthful.selected_sugars
+    assert truthful.verdict == "sat"
+    truthful_rows = _binary_dunder_euf_rows(truthful.lift_doc)
+    assert len(truthful_rows) == 1
+    assert _euf_rhs_values(truthful_rows) == [20]
+    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+
+    assert "CallSugar" in lying.selected_sugars
+    assert lying.verdict == "unsat"
+    lying_rows = _binary_dunder_euf_rows(lying.lift_doc)
+    assert len(lying_rows) == 2
+    assert _euf_rhs_values(lying_rows) == [10, 20]
+    assert {_euf_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
+        10: {"Stated"},
+        20: {"Derived"},
+    }
+
+
+def test_effectful_binary_dunder_body_refuses_without_fabricated_derived_fact(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "class X:\n"
+        "    def __init__(self, y):\n"
+        "        self.x = y\n"
+        "    def __add__(self, other):\n"
+        "        print(other.x)\n"
+        "        return other.x\n"
+        "def A():\n"
+        "    return [10, 20, 30][X(0) + X(1)]\n"
+        "def test_a():\n"
+        "    assert A() == 10\n"
+    )
+
+    result = run_source_through_real_solver(tmp_path / "effectful", source)
+    trace = {
+        "variant": "effectful-dunder",
         "observed": result.verdict,
-        "selectedSugars": result.selected_sugars,
-        "ir": ir,
-        "vendorConjoins": result.lift_doc.get("vendorConjoins"),
-        "callEdges": result.lift_doc.get("callEdges"),
-        "effects": result.lift_doc.get("effects"),
-        "implications": result.lift_doc.get("implications"),
-        "diagnostics": diagnostics,
+        "ir": _binary_dunder_euf_rows(result.lift_doc),
+        "diagnostics": result.lift_doc["diagnostics"],
         "rows": result.prove_doc.get("rows"),
     }
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert result.selected_sugars == ("CallSugar",)
-    assert result.verdict == "sat"
-    assert len(ir) == 1
-    assert ir[0]["proofirProvenance"] == {
-        "kind": "proofir-provenance",
-        "nodeClass": "EqualityFact",
-        "constructionSite": {"path": "test_witness.py", "line": 9, "column": 4},
-        "warrants": [
-            {
-                "kind": "Stated",
-                "locus": {"path": "test_witness.py", "line": 9, "column": 4},
-            }
-        ],
-    }
-    assert result.lift_doc.get("vendorConjoins") == []
-    assert result.lift_doc.get("callEdges") == []
-    assert result.lift_doc.get("effects") == []
-    assert result.lift_doc.get("implications") == []
-    assert any(
-        item.get("kind") == "dig-refusal"
-        and "function universe body walker refused this body" in item.get("reason", "")
-        for item in diagnostics
-    )
+    rows = _binary_dunder_euf_rows(result.lift_doc)
+    assert len(rows) == 1
+    assert _warrant_kinds(rows[0]) == {"Stated"}
     assert any(
         item.get("kind") == "dig-refusal"
         and "callsite floor projection refused this callee" in item.get("reason", "")
-        for item in diagnostics
+        for item in result.lift_doc["diagnostics"]
     )
+
+
+def _binary_dunder_euf_rows(lift_doc: dict) -> list[dict]:
+    return [
+        row
+        for row in lift_doc["ir"]
+        if isinstance(row, dict) and row.get("name") == "A#euf#c:call:A()::assertion"
+    ]
+
+
+def _warrant_kinds(row: dict) -> set[str]:
+    return {warrant["kind"] for warrant in row["proofirProvenance"]["warrants"]}
+
+
+def _euf_rhs_values(rows: list[dict]) -> list[int]:
+    return sorted(_euf_rhs_value(row) for row in rows)
+
+
+def _euf_rhs_value(row: dict) -> int:
+    return row["inv"]["args"][1]["value"]
 
 
 def test_sugar_witness_non_circularity_bad_twin_names_mismatch(
@@ -246,7 +298,7 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "total": EXPECTED_UNENROLLED_SUGARS + EXPECTED_TRIPLE_FAILURES,
     }
     assert "R(unenrolled-sugars): 46" in text
-    assert "R(witness-triples-failing): 1" in text
+    assert "R(witness-triples-failing): 0" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
     assert "seed coverage: 4 seed cases, 3/53 catalog sugars" in text
@@ -266,7 +318,7 @@ def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
     assert status == 1
     stdout = capsys.readouterr().out
     assert "R(unenrolled-sugars): 46" in stdout
-    assert "R(witness-triples-failing): 1" in stdout
+    assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
 
 
