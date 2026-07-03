@@ -5,7 +5,7 @@ interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
 declared_escape_hatch_rows_open = 6
 ambient_testimony_sites = 1
-transport_json_backend_ingress = 2
+transport_json_backend_ingress = 0
 backend_frontend_decode_calls = 0
 frontend_provenance_unadmitted = 0
 
@@ -140,6 +140,7 @@ path = "implementations/rust/sugar-ir-compiler/src/registry.rs"
 path = "implementations/rust/sugar-ir-compiler/src/server.rs"
 ignored_items = [
   { name = "COMPONENT_PLAN_RPC_METHOD", reason = "compat method string, not a typed ProofIR frontend boundary object" },
+  { name = "ServerControl", reason = "private JSON-RPC server loop control, not a typed ProofIR frontend boundary object" },
 ]
 
 [[interface_sources]]
@@ -667,14 +668,16 @@ source = { path = "implementations/rust/sugar-ir-compiler/src/registry.rs", item
 [[interfaces]]
 id = "json-rpc-ir-compiler"
 owner = "sugar-ir-compiler::subprocess"
-input_type = "compiler subprocess command plus JSON-RPC compile request"
+input_type = "compiler subprocess command plus typed CompilerInput encoded into JSON-RPC sugar.ir.compile ir_json transport"
 output_type = "CompiledFormula"
-addressing_rule = "subprocess command and compiler capabilities select the transport frontend"
-failure_type = "CompileError::Transport or backend CompileError encoded by JSON-RPC"
+addressing_rule = "subprocess command and compiler capabilities select the transport frontend; JSON-RPC request id addresses the replayed transport exchange"
+failure_type = "CompileError::Transport, CompileError::Frontend(FrontendErrorPayload), or backend CompileError encoded by JSON-RPC"
 replay_inputs = [
   "compiler command",
   "working directory",
+  "typed CompilerInput before transport encoding",
   "JSON-RPC request payload",
+  "JSON-RPC error.data FrontendErrorPayload when decode fails",
   "target dialect",
 ]
 source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "JsonRpcCompiler", kind = "struct" }
@@ -682,15 +685,17 @@ source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", it
 [[interfaces]]
 id = "lazy-json-rpc-ir-compiler"
 owner = "sugar-ir-compiler::subprocess"
-input_type = "lazy compiler manifest entry plus JSON-RPC compile request"
+input_type = "lazy compiler manifest entry plus typed CompilerInput encoded into JSON-RPC sugar.ir.compile ir_json transport"
 output_type = "CompiledFormula"
-addressing_rule = "lazy compiler id plus manifest capabilities select the per-worker subprocess"
-failure_type = "CompileError::Transport or backend CompileError encoded by JSON-RPC"
+addressing_rule = "lazy compiler id plus manifest capabilities select the per-worker subprocess transport frontend"
+failure_type = "CompileError::Transport, CompileError::Frontend(FrontendErrorPayload), or backend CompileError encoded by JSON-RPC"
 replay_inputs = [
   "compiler manifest capabilities",
   "compiler command",
   "working directory",
+  "typed CompilerInput before transport encoding",
   "JSON-RPC request payload",
+  "JSON-RPC error.data FrontendErrorPayload when decode fails",
 ]
 source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "LazyJsonRpcCompiler", kind = "struct" }
 
@@ -762,21 +767,21 @@ source = { path = "implementations/rust/sugar-verifier/src/consistency.rs", item
 path = "implementations/rust/sugar-ir-compiler/src/frontend.rs"
 frontend_adapter = true
 
-[[frontend_boundary_transport_json_ingress]]
-id = "lazy-json-rpc-ircompiler-json-ingress"
-shape = "transport-json-ircompiler-impl-ingress"
+[[frontend_boundary_allowlist_hatches]]
+id = "lazy-json-rpc-transport-frontend"
+shape = "json-rpc-transport-frontend"
 owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S5 reclassifies this wrapper as JSON-RPC transport frontend glue; S7 deletes backend compile(&Json)"
+retirement = "S7 decides whether the JSON-RPC transport compatibility hatch stays declared or retires with compile(&Json)"
 baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "LazyJsonRpcCompiler", needles = ["fn compile(&self, ir: &Json"] }
+source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "LazyJsonRpcCompiler", needles = ["fn compile(&self, ir: &Json", "\"method\": \"sugar.ir.compile\"", "\"ir_json\": ir"] }
 
-[[frontend_boundary_transport_json_ingress]]
-id = "json-rpc-ircompiler-json-ingress"
-shape = "transport-json-ircompiler-impl-ingress"
+[[frontend_boundary_allowlist_hatches]]
+id = "json-rpc-transport-frontend"
+shape = "json-rpc-transport-frontend"
 owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S5 reclassifies this wrapper as JSON-RPC transport frontend glue; S7 deletes backend compile(&Json)"
+retirement = "S7 decides whether the JSON-RPC transport compatibility hatch stays declared or retires with compile(&Json)"
 baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "JsonRpcCompiler", needles = ["fn compile(&self, ir: &Json"] }
+source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "JsonRpcCompiler", needles = ["fn compile(&self, ir: &Json", "\"method\": \"sugar.ir.compile\"", "\"ir_json\": ir"] }
 
 [[frontend_boundary_allowlist_hatches]]
 id = "compiled-formula-metadata-json"
