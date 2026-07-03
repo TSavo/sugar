@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_ir_compiler::{
     registry::Registry as CompilerRegistry, subprocess::LazyJsonRpcCompiler, Capabilities,
     PROTOCOL_VERSION as IR_COMPILER_PROTOCOL_VERSION,
@@ -82,6 +83,7 @@ pub struct ComponentPlan {
     pub ir_compilers: Vec<PlannedIrCompiler>,
     pub diagnostics: Vec<ComponentDiagnostic>,
     pub census: WorkspaceCensus,
+    pub selected_components: Vec<PlannedComponent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +116,31 @@ pub struct PlannedLiftManifest {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlannedComponent {
+    pub name: String,
+    pub version: Option<String>,
+    pub protocol_version: String,
+    pub command: Vec<String>,
+    pub working_dir: Option<PathBuf>,
+    pub source: PathBuf,
+    pub source_cid: String,
+}
+
+impl PlannedComponent {
+    fn from_registration(component: &ComponentRegistration) -> Self {
+        Self {
+            name: component.name.clone(),
+            version: component.version.clone(),
+            protocol_version: component.protocol_version.clone(),
+            command: component.command.clone(),
+            working_dir: component.working_dir.clone(),
+            source: component.source.clone(),
+            source_cid: component.source_cid.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlannedIrCompiler {
     pub name: String,
     pub version: Option<String>,
@@ -129,9 +156,18 @@ pub struct PlannedIrCompiler {
 struct ComponentRegistration {
     name: String,
     version: Option<String>,
+    protocol_version: String,
     command: Vec<String>,
     working_dir: Option<PathBuf>,
     source: PathBuf,
+    source_cid: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlanArtifactMemento {
+    pub plan_cid: String,
+    pub member_cid: String,
+    pub member_bytes: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,6 +253,8 @@ pub fn plan_workspace_with_options(
                     "component claimed workspace"
                 );
                 claimed_languages.extend(languages);
+                plan.selected_components
+                    .push(PlannedComponent::from_registration(&component));
                 plan.plugins.extend(result.plugins);
                 plan.lift_manifests.extend(result.lift_manifests);
                 plan.ir_compilers.extend(result.ir_compilers);
@@ -717,6 +755,7 @@ fn manifest_paths_under(root: &Path) -> Vec<PathBuf> {
 
 fn parse_component_manifest(path: &Path) -> Result<ComponentRegistration, String> {
     let text = std::fs::read_to_string(path).map_err(|error| format!("read: {error}"))?;
+    let source_cid = blake3_512_of(text.as_bytes());
     let manifest: ComponentManifest =
         toml::from_str(&text).map_err(|error| format!("invalid TOML: {error}"))?;
     if manifest.protocol_version != COMPONENT_PROTOCOL_VERSION {
@@ -735,6 +774,7 @@ fn parse_component_manifest(path: &Path) -> Result<ComponentRegistration, String
     Ok(ComponentRegistration {
         name: manifest.name,
         version: manifest.version,
+        protocol_version: manifest.protocol_version,
         command: manifest.command,
         working_dir: manifest.working_dir.map(|dir| {
             if dir.is_absolute() {
@@ -744,6 +784,7 @@ fn parse_component_manifest(path: &Path) -> Result<ComponentRegistration, String
             }
         }),
         source: path.to_path_buf(),
+        source_cid,
     })
 }
 
@@ -1411,6 +1452,449 @@ pub(crate) fn resolve_project_relative_working_dir(
     })
 }
 
+pub(crate) fn plan_artifact_memento(
+    project_root: &Path,
+    intent: PlanIntent,
+    options: ComponentPlanOptions,
+    plan: &ComponentPlan,
+) -> Option<PlanArtifactMemento> {
+    if !plan_affects_run(plan) {
+        return None;
+    }
+    let body = plan_artifact_body(project_root, intent, options, plan);
+    let plan_cid = jcs_cid(&body);
+    let envelope = json!({
+        "body": body,
+        "header": {
+            "kind": "plan-memento",
+            "planCid": plan_cid,
+        },
+        "schemaVersion": "1",
+    });
+    let member_bytes = jcs_bytes(&envelope).into_bytes();
+    let member_cid = blake3_512_of(&member_bytes);
+    Some(PlanArtifactMemento {
+        plan_cid,
+        member_cid,
+        member_bytes,
+    })
+}
+
+#[allow(dead_code)] // Replay entry for PlanArtifact-aware consumers; current CLI still discovers when no artifact is supplied.
+pub(crate) fn plan_workspace_for_replay(
+    project_root: &Path,
+    intent: PlanIntent,
+    options: ComponentPlanOptions,
+    artifact: Option<&PlanArtifactMemento>,
+) -> Result<ComponentPlan, String> {
+    match artifact {
+        Some(artifact) => component_plan_from_plan_artifact(artifact),
+        None => Ok(plan_workspace_with_options(project_root, intent, options)),
+    }
+}
+
+#[allow(dead_code)] // Used by PlanArtifact construction tests and future replay importers.
+pub(crate) fn file_bytes_cid(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        format!(
+            "PlanArtifact construction refusal: crime=read-selected-component; owner=component-plan seam; shape=component manifest `{}`; replacement=pin only readable selected component manifest bytes; error={error}",
+            path.display()
+        )
+    })?;
+    Ok(blake3_512_of(&bytes))
+}
+
+fn plan_affects_run(plan: &ComponentPlan) -> bool {
+    !(plan.selected_components.is_empty()
+        && plan.plugins.is_empty()
+        && plan.lift_manifests.is_empty()
+        && plan.ir_compilers.is_empty())
+}
+
+fn plan_artifact_body(
+    project_root: &Path,
+    intent: PlanIntent,
+    options: ComponentPlanOptions,
+    plan: &ComponentPlan,
+) -> Value {
+    json!({
+        "kind": "component-plan-artifact",
+        "schemaVersion": "1",
+        "selectionInputs": {
+            "projectRoot": absolute_path(project_root).display().to_string(),
+            "intent": intent.as_str(),
+            "allowFailedComponents": options.allow_failed_components,
+        },
+        "selectedComponents": plan
+            .selected_components
+            .iter()
+            .map(planned_component_to_value)
+            .collect::<Vec<_>>(),
+        "plugins": plan.plugins.iter().map(plugin_entry_to_value).collect::<Vec<_>>(),
+        "liftManifests": plan
+            .lift_manifests
+            .iter()
+            .map(planned_lift_manifest_to_value)
+            .collect::<Vec<_>>(),
+        "irCompilers": plan
+            .ir_compilers
+            .iter()
+            .map(planned_ir_compiler_to_value)
+            .collect::<Vec<_>>(),
+        "diagnostics": plan
+            .diagnostics
+            .iter()
+            .map(component_diagnostic_to_value)
+            .collect::<Vec<_>>(),
+        "census": workspace_census_to_value(&plan.census),
+    })
+}
+
+#[allow(dead_code)]
+fn component_plan_from_plan_artifact(
+    artifact: &PlanArtifactMemento,
+) -> Result<ComponentPlan, String> {
+    let envelope: Value = serde_json::from_slice(&artifact.member_bytes).map_err(|error| {
+        plan_artifact_replay_refusal(
+            "invalid-json",
+            &format!("PlanArtifact member bytes failed JSON decode: {error}"),
+            "use plan_artifact_memento to mint canonical plan-memento bytes",
+        )
+    })?;
+    if envelope.pointer("/header/kind").and_then(Value::as_str) != Some("plan-memento") {
+        return Err(plan_artifact_replay_refusal(
+            "wrong-member-kind",
+            "PlanArtifact replay member header kind is not `plan-memento`",
+            "pass the plan-memento envelope minted by component_plan::plan_artifact_memento",
+        ));
+    }
+    let body = envelope.get("body").ok_or_else(|| {
+        plan_artifact_replay_refusal(
+            "missing-body",
+            "PlanArtifact replay member has no body",
+            "pass the complete plan-memento envelope, not just a header",
+        )
+    })?;
+    if body.get("kind").and_then(Value::as_str) != Some("component-plan-artifact") {
+        return Err(plan_artifact_replay_refusal(
+            "wrong-plan-body-kind",
+            "PlanArtifact body kind is not `component-plan-artifact`",
+            "use a component-plan-artifact body for component-plan replay",
+        ));
+    }
+    let recomputed_plan_cid = jcs_cid(body);
+    let header_plan_cid = envelope
+        .pointer("/header/planCid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            plan_artifact_replay_refusal(
+                "missing-plan-cid",
+                "PlanArtifact header lacks planCid",
+                "mint a plan-memento whose header planCid addresses the body",
+            )
+        })?;
+    if header_plan_cid != recomputed_plan_cid {
+        return Err(plan_artifact_replay_refusal(
+            "plan-cid-mismatch",
+            "PlanArtifact header planCid does not address the JCS body",
+            "re-mint the PlanArtifact from the selected ComponentPlan instead of editing bytes",
+        ));
+    }
+    if artifact.plan_cid != recomputed_plan_cid {
+        return Err(plan_artifact_replay_refusal(
+            "typed-plan-cid-mismatch",
+            "PlanArtifact typed carrier plan_cid disagrees with member body",
+            "thread the PlanArtifactMemento returned by plan_artifact_memento without rewriting fields",
+        ));
+    }
+    let recomputed_member_cid = blake3_512_of(&artifact.member_bytes);
+    if artifact.member_cid != recomputed_member_cid {
+        return Err(plan_artifact_replay_refusal(
+            "member-cid-mismatch",
+            "PlanArtifact typed carrier member_cid disagrees with member bytes",
+            "thread the PlanArtifactMemento returned by plan_artifact_memento without rewriting fields",
+        ));
+    }
+
+    plan_from_artifact_body(body)
+}
+
+#[allow(dead_code)]
+fn plan_from_artifact_body(body: &Value) -> Result<ComponentPlan, String> {
+    let selected_components = array_field(body, "selectedComponents")
+        .iter()
+        .map(planned_component_from_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let plugins = array_field(body, "plugins")
+        .iter()
+        .map(plugin_entry_from_artifact_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let lift_manifests = array_field(body, "liftManifests")
+        .iter()
+        .map(planned_lift_manifest_from_artifact_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let ir_compilers = array_field(body, "irCompilers")
+        .iter()
+        .map(planned_ir_compiler_from_artifact_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let diagnostics = array_field(body, "diagnostics")
+        .iter()
+        .filter_map(diagnostic_from_value)
+        .collect::<Vec<_>>();
+    let census = body
+        .get("census")
+        .map(workspace_census_from_value)
+        .transpose()?
+        .unwrap_or_default();
+    Ok(ComponentPlan {
+        plugins,
+        lift_manifests,
+        ir_compilers,
+        diagnostics,
+        census,
+        selected_components,
+    })
+}
+
+#[allow(dead_code)]
+fn plan_artifact_replay_refusal(crime: &str, shape: &str, replacement: &str) -> String {
+    format!(
+        "PlanArtifact replay refusal: crime={crime}; owner=component-plan seam; shape={shape}; replacement={replacement}"
+    )
+}
+
+fn planned_component_to_value(component: &PlannedComponent) -> Value {
+    json!({
+        "name": component.name,
+        "version": component.version,
+        "protocolVersion": component.protocol_version,
+        "command": component.command,
+        "workingDir": component.working_dir.as_ref().map(|path| path.display().to_string()),
+        "source": component.source.display().to_string(),
+        "sourceCid": component.source_cid,
+    })
+}
+
+#[allow(dead_code)]
+fn planned_component_from_value(value: &Value) -> Result<PlannedComponent, String> {
+    Ok(PlannedComponent {
+        name: required_string(value, "name", "selected component")?,
+        version: string_field(value, "version"),
+        protocol_version: required_string(value, "protocolVersion", "selected component")?,
+        command: string_array_field(value, "command"),
+        working_dir: string_field(value, "workingDir").map(PathBuf::from),
+        source: PathBuf::from(required_string(value, "source", "selected component")?),
+        source_cid: required_string(value, "sourceCid", "selected component")?,
+    })
+}
+
+fn plugin_entry_to_value(plugin: &PluginEntry) -> Value {
+    json!({
+        "name": plugin.name,
+        "kind": plugin.kind,
+        "surface": plugin.surface,
+        "workspaceOverride": plugin.workspace_override,
+        "emit": plugin.emit,
+        "layer": plugin.layer,
+    })
+}
+
+#[allow(dead_code)]
+fn plugin_entry_from_artifact_value(value: &Value) -> Result<PluginEntry, String> {
+    Ok(PluginEntry {
+        name: string_field(value, "name"),
+        kind: string_field(value, "kind"),
+        surface: required_string(value, "surface", "PlanArtifact plugin")?,
+        workspace_override: string_field(value, "workspaceOverride"),
+        emit: string_field(value, "emit"),
+        layer: string_field(value, "layer"),
+    })
+}
+
+fn planned_lift_manifest_to_value(manifest: &PlannedLiftManifest) -> Value {
+    json!({
+        "surface": manifest.surface,
+        "name": manifest.name,
+        "version": manifest.version,
+        "protocolVersion": manifest.protocol_version,
+        "command": manifest.command,
+        "workingDir": manifest.working_dir.as_ref().map(|path| path.display().to_string()),
+        "method": manifest.method,
+        "phase": manifest.phase,
+        "dischargeCommand": manifest.discharge_command,
+        "witnessTool": manifest.witness_tool,
+        "resolveWitnessCommand": manifest.resolve_witness_command,
+        "resolveWitnessMethod": manifest.resolve_witness_method,
+    })
+}
+
+#[allow(dead_code)]
+fn planned_lift_manifest_from_artifact_value(value: &Value) -> Result<PlannedLiftManifest, String> {
+    Ok(PlannedLiftManifest {
+        surface: required_string(value, "surface", "PlanArtifact lift manifest")?,
+        name: required_string(value, "name", "PlanArtifact lift manifest")?,
+        version: string_field(value, "version"),
+        protocol_version: string_field(value, "protocolVersion"),
+        command: string_array_field(value, "command"),
+        working_dir: string_field(value, "workingDir").map(PathBuf::from),
+        method: string_field(value, "method"),
+        phase: string_field(value, "phase"),
+        discharge_command: string_array_field(value, "dischargeCommand"),
+        witness_tool: string_field(value, "witnessTool"),
+        resolve_witness_command: string_array_field(value, "resolveWitnessCommand"),
+        resolve_witness_method: string_field(value, "resolveWitnessMethod"),
+    })
+}
+
+fn planned_ir_compiler_to_value(compiler: &PlannedIrCompiler) -> Value {
+    json!({
+        "name": compiler.name,
+        "version": compiler.version,
+        "protocolVersion": compiler.protocol_version,
+        "command": compiler.command,
+        "workingDir": compiler.working_dir.as_ref().map(|path| path.display().to_string()),
+        "dialects": compiler.dialects,
+        "supportedSorts": compiler.supported_sorts,
+        "supportedPredicates": compiler.supported_predicates,
+    })
+}
+
+#[allow(dead_code)]
+fn planned_ir_compiler_from_artifact_value(value: &Value) -> Result<PlannedIrCompiler, String> {
+    Ok(PlannedIrCompiler {
+        name: required_string(value, "name", "PlanArtifact IR compiler")?,
+        version: string_field(value, "version"),
+        protocol_version: required_string(value, "protocolVersion", "PlanArtifact IR compiler")?,
+        command: string_array_field(value, "command"),
+        working_dir: string_field(value, "workingDir").map(PathBuf::from),
+        dialects: string_array_field(value, "dialects"),
+        supported_sorts: string_array_field(value, "supportedSorts"),
+        supported_predicates: string_array_field(value, "supportedPredicates"),
+    })
+}
+
+fn component_diagnostic_to_value(diagnostic: &ComponentDiagnostic) -> Value {
+    json!({
+        "level": match diagnostic.level {
+            DiagnosticLevel::Info => "info",
+            DiagnosticLevel::Warning => "warning",
+            DiagnosticLevel::Error => "error",
+        },
+        "message": diagnostic.message,
+    })
+}
+
+fn workspace_census_to_value(census: &WorkspaceCensus) -> Value {
+    json!({
+        "languages": census.languages.iter().map(language_evidence_to_value).collect::<Vec<_>>(),
+        "items": census.items.iter().map(forensic_item_to_value).collect::<Vec<_>>(),
+    })
+}
+
+#[allow(dead_code)]
+fn workspace_census_from_value(value: &Value) -> Result<WorkspaceCensus, String> {
+    Ok(WorkspaceCensus {
+        languages: array_field(value, "languages")
+            .iter()
+            .map(language_evidence_from_value)
+            .collect::<Result<Vec<_>, _>>()?,
+        items: array_field(value, "items")
+            .iter()
+            .map(forensic_item_from_value)
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+fn language_evidence_to_value(evidence: &LanguageEvidence) -> Value {
+    json!({
+        "language": evidence.language,
+        "path": evidence.path,
+        "reason": evidence.reason,
+    })
+}
+
+#[allow(dead_code)]
+fn language_evidence_from_value(value: &Value) -> Result<LanguageEvidence, String> {
+    Ok(LanguageEvidence {
+        language: required_string(value, "language", "PlanArtifact census language")?,
+        path: required_string(value, "path", "PlanArtifact census language")?,
+        reason: required_string(value, "reason", "PlanArtifact census language")?,
+    })
+}
+
+fn forensic_item_to_value(item: &ForensicItem) -> Value {
+    json!({
+        "id": item.id,
+        "kind": item.kind,
+        "path": item.path,
+        "languageHint": item.language_hint,
+        "reason": item.reason,
+    })
+}
+
+#[allow(dead_code)]
+fn forensic_item_from_value(value: &Value) -> Result<ForensicItem, String> {
+    Ok(ForensicItem {
+        id: required_string(value, "id", "PlanArtifact census item")?,
+        kind: required_string(value, "kind", "PlanArtifact census item")?,
+        path: required_string(value, "path", "PlanArtifact census item")?,
+        language_hint: string_field(value, "languageHint"),
+        reason: required_string(value, "reason", "PlanArtifact census item")?,
+    })
+}
+
+#[allow(dead_code)]
+fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+#[allow(dead_code)]
+fn required_string(value: &Value, key: &str, shape: &str) -> Result<String, String> {
+    string_field(value, key).ok_or_else(|| {
+        plan_artifact_replay_refusal(
+            "missing-required-field",
+            &format!("{shape} missing `{key}`"),
+            "replay from a complete PlanArtifact minted by component_plan::plan_artifact_memento",
+        )
+    })
+}
+
+fn jcs_cid(value: &Value) -> String {
+    blake3_512_of(jcs_bytes(value).as_bytes())
+}
+
+fn jcs_bytes(value: &Value) -> String {
+    encode_jcs(json_to_cvalue(value).as_ref())
+}
+
+fn json_to_cvalue(value: &Value) -> Arc<CValue> {
+    match value {
+        Value::Null => CValue::null(),
+        Value::Bool(value) => CValue::boolean(*value),
+        Value::Number(number) => {
+            if let Some(value) = number.as_i64() {
+                CValue::integer(i128::from(value))
+            } else if let Some(value) = number.as_u64() {
+                CValue::integer(i128::from(value))
+            } else {
+                CValue::string(number.to_string())
+            }
+        }
+        Value::String(value) => CValue::string(value.clone()),
+        Value::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
+        Value::Object(items) => CValue::object(
+            items
+                .iter()
+                .map(|(key, value)| (key.as_str(), json_to_cvalue(value)))
+                .collect::<Vec<_>>(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1709,9 +2193,11 @@ done
         let component = ComponentRegistration {
             name: "rust-test".to_string(),
             version: None,
+            protocol_version: COMPONENT_PROTOCOL_VERSION.to_string(),
             command: vec!["does-not-run".to_string()],
             working_dir: None,
             source: PathBuf::from("manifest.toml"),
+            source_cid: blake3_512_of(b"test-component"),
         };
         let value = json!({
             "decision": "claim",
@@ -1744,9 +2230,11 @@ done
         let component = ComponentRegistration {
             name: "rust-walk".to_string(),
             version: None,
+            protocol_version: COMPONENT_PROTOCOL_VERSION.to_string(),
             command: vec!["does-not-run".to_string()],
             working_dir: None,
             source: PathBuf::from("manifest.toml"),
+            source_cid: blake3_512_of(b"walk-component"),
         };
         let value = json!({
             "decision": "claim",
@@ -1788,9 +2276,11 @@ done
         let component = ComponentRegistration {
             name: "smt-lib-compiler".to_string(),
             version: None,
+            protocol_version: COMPONENT_PROTOCOL_VERSION.to_string(),
             command: vec!["does-not-run".to_string()],
             working_dir: None,
             source: PathBuf::from("manifest.toml"),
+            source_cid: blake3_512_of(b"compiler-component"),
         };
         let value = json!({
             "decision": "claim",
@@ -1923,6 +2413,141 @@ done
                 "rust-implications",
                 "rust-cargo-test-witness"
             ]
+        );
+    }
+
+    #[test]
+    fn plan_artifact_pins_selected_components_and_replay_uses_pinned_selection() {
+        let project = tempfile::tempdir().unwrap();
+        let component_manifest = project
+            .path()
+            .join(".sugar/components/rust-kit/manifest.toml");
+        std::fs::create_dir_all(component_manifest.parent().unwrap()).unwrap();
+        std::fs::write(
+            &component_manifest,
+            "name = \"rust-kit\"\nversion = \"1.2.3\"\nprotocol_version = \"sugar-component/1\"\ncommand = [\"old-component-rpc\"]\n",
+        )
+        .unwrap();
+
+        let mut plan = ComponentPlan::default();
+        plan.selected_components.push(PlannedComponent {
+            name: "rust-kit".to_string(),
+            version: Some("1.2.3".to_string()),
+            protocol_version: COMPONENT_PROTOCOL_VERSION.to_string(),
+            command: vec!["old-component-rpc".to_string()],
+            working_dir: None,
+            source: component_manifest.clone(),
+            source_cid: file_bytes_cid(&component_manifest).unwrap(),
+        });
+        plan.plugins.push(PluginEntry {
+            name: Some("rust-test-assertions-lift".to_string()),
+            kind: Some("lift".to_string()),
+            surface: "rust-test-assertions".to_string(),
+            emit: Some("ir-document".to_string()),
+            ..Default::default()
+        });
+        plan.lift_manifests.push(PlannedLiftManifest {
+            surface: "rust-test-assertions".to_string(),
+            name: "rust-test-assertions-lift".to_string(),
+            version: Some("9.9.9".to_string()),
+            protocol_version: Some("sugar-lift/1".to_string()),
+            command: vec!["old-lift-rpc".to_string()],
+            working_dir: Some(PathBuf::from("old-workdir")),
+            discharge_command: vec!["old-discharge".to_string()],
+            witness_tool: Some("pytest".to_string()),
+            ..Default::default()
+        });
+
+        std::fs::write(
+            &component_manifest,
+            "name = \"rust-kit\"\nversion = \"2.0.0\"\nprotocol_version = \"sugar-component/1\"\ncommand = [\"new-component-rpc\"]\n",
+        )
+        .unwrap();
+
+        let artifact = plan_artifact_memento(
+            project.path(),
+            PlanIntent::Prove,
+            ComponentPlanOptions {
+                allow_failed_components: true,
+            },
+            &plan,
+        )
+        .expect("non-empty plan mints PlanArtifact");
+        let envelope: Json =
+            serde_json::from_slice(&artifact.member_bytes).expect("PlanArtifact member JSON");
+
+        assert_eq!(
+            envelope.pointer("/header/kind").and_then(Json::as_str),
+            Some("plan-memento")
+        );
+        assert_eq!(
+            envelope.pointer("/body/kind").and_then(Json::as_str),
+            Some("component-plan-artifact")
+        );
+        assert_eq!(
+            envelope
+                .pointer("/body/selectionInputs/intent")
+                .and_then(Json::as_str),
+            Some("prove")
+        );
+        assert_eq!(
+            envelope
+                .pointer("/body/liftManifests/0/command/0")
+                .and_then(Json::as_str),
+            Some("old-lift-rpc"),
+            "the artifact must pin selected manifest bytes, not rediscover after mutation"
+        );
+
+        let replayed = plan_workspace_for_replay(
+            project.path(),
+            PlanIntent::Prove,
+            ComponentPlanOptions::default(),
+            Some(&artifact),
+        )
+        .expect("PlanArtifact replay reconstructs pinned selection");
+
+        assert_eq!(replayed.lift_manifests.len(), 1);
+        assert_eq!(replayed.lift_manifests[0].command, vec!["old-lift-rpc"]);
+        assert_eq!(replayed.selected_components.len(), 1);
+        assert_eq!(
+            replayed.selected_components[0].command,
+            vec!["old-component-rpc"]
+        );
+    }
+
+    #[test]
+    fn replay_without_plan_artifact_uses_current_discovery() {
+        let project = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        write_claiming_component(
+            root.path(),
+            "component",
+            "fresh-kit",
+            "fresh-surface",
+            Some("1.0.0"),
+        );
+        let component_path = std::env::join_paths([root.path()]).unwrap();
+
+        let _env_lock = TEST_ENV_LOCK.lock().unwrap();
+        let _home = EnvGuard::set("HOME", project.path().join("home"));
+        let _component_path = EnvGuard::set("SUGAR_COMPONENT_PATH", component_path);
+        let _timeout = EnvGuard::set("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2");
+
+        let replayed = plan_workspace_for_replay(
+            project.path(),
+            PlanIntent::Lift,
+            ComponentPlanOptions::default(),
+            None,
+        )
+        .expect("pre-PlanArtifact replay keeps current discovery behavior");
+
+        assert!(
+            replayed
+                .plugins
+                .iter()
+                .any(|plugin| plugin.surface == "fresh-surface"),
+            "without a PlanArtifact replay must discover the current component plan: {:?}",
+            replayed.plugins
         );
     }
 }

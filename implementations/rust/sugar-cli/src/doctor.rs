@@ -1452,7 +1452,7 @@ fn pool_diff_evidence(
 /// table. Spawns the plugin command, sends one `initialize` JSON-RPC line, reads
 /// one response line, and parses `result.capabilities.consumer_surfaces`.
 fn plugin_consumer_surfaces(
-    manifest: &crate::lift_plugin::LiftPluginManifest,
+    manifest: &crate::component_plan::PlannedLiftManifest,
     working_dir: Option<&Path>,
 ) -> Result<std::collections::HashMap<String, (String, String)>, String> {
     use std::io::{BufRead, BufReader, Write};

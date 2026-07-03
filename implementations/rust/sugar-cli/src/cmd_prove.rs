@@ -17,7 +17,9 @@ use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json};
 use sugar_proof_envelope::cid_from_proof_stem;
 use walkdir::WalkDir;
 
-use sugar_verifier::{LegacyZ3Fallback, MementoCid, Runner, RunnerConfig};
+use sugar_verifier::{
+    LegacyZ3Fallback, MementoCid, PlanArtifactInput, ProofRunArtifact, Runner, RunnerConfig,
+};
 
 use crate::component_plan::{
     self, ComponentPlan, ComponentPlanOptions, PlanIntent, PlannedLiftManifest,
@@ -30,93 +32,11 @@ use crate::ProveArgs;
 // `<project>/.sugar/lift/<surface>/manifest.toml` to read its
 // `discharge_command` + `witness_tool`. No hardcoded `sugar-lift-<kit>`.
 
-// ---------------------------------------------------------------------------
-// Plugin manifest (mirrors cmd_mint: kept local to avoid coupling)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Default)]
-struct PluginManifest {
-    name: String,
-    command: Vec<String>,
-    working_dir: Option<PathBuf>,
-    /// Execution-witness discharge command the kit ships (recompute entry).
-    /// Declared alongside `command` so witness discharge rides the SAME manifest
-    /// dispatch as lift -- no bespoke config. `prove` exports it as
-    /// `SUGAR_WITNESS_DISCHARGE_<witness_tool>` for the verifier's witness arm.
-    discharge_command: Vec<String>,
-    /// The `tool` value this surface stamps on its witness certificates (e.g.
-    /// `pytest`). Keys the per-tool discharge registry so a proof carrying
-    /// witnesses from multiple kits routes each to its own recompute.
-    witness_tool: Option<String>,
-    resolve_witness_command: Vec<String>,
-    resolve_witness_method: Option<String>,
-}
-
-fn parse_manifest(path: &std::path::Path) -> Result<PluginManifest, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let mut m = PluginManifest::default();
-    let strip = |l: &str| -> String {
-        match l.find('#') {
-            Some(p) => l[..p].to_string(),
-            None => l.to_string(),
-        }
-    };
-    let raw: Vec<String> = text.lines().map(|l| strip(l).trim().to_string()).collect();
-    let mut i = 0;
-    while i < raw.len() {
-        let line = raw[i].clone();
-        i += 1;
-        if line.is_empty() || line.starts_with('[') {
-            continue;
-        }
-        let Some(eq) = line.find('=') else { continue };
-        let key = line[..eq].trim().to_string();
-        let mut val = line[eq + 1..].trim().to_string();
-        // Multi-line array value: accumulate continuation lines until the
-        // closing `]` (TOML allows `key = [` then elements on later lines).
-        if val.starts_with('[') && !val.contains(']') {
-            while i < raw.len() && !val.contains(']') {
-                val.push(' ');
-                val.push_str(&raw[i]);
-                i += 1;
-            }
-        }
-        let key = key.as_str();
-        let val = val.as_str();
-        match key {
-            "name" => m.name = val.trim_matches('"').to_string(),
-            "working_dir" => m.working_dir = Some(PathBuf::from(val.trim_matches('"'))),
-            "witness_tool" => m.witness_tool = Some(val.trim_matches('"').to_string()),
-            "resolve_witness_method" => {
-                m.resolve_witness_method = Some(val.trim_matches('"').to_string())
-            }
-            "command" | "discharge_command" | "resolve_witness_command" => {
-                let inner = val.trim_matches(|c| c == '[' || c == ']');
-                let parsed: Vec<String> = inner
-                    .split(',')
-                    .map(|s| s.trim().trim_matches('"').to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if key == "command" {
-                    m.command = parsed;
-                } else if key == "discharge_command" {
-                    m.discharge_command = parsed;
-                } else {
-                    m.resolve_witness_command = parsed;
-                }
-            }
-            _ => {}
-        }
-    }
-    if m.command.is_empty() {
-        return Err(format!("manifest {} has no `command`", path.display()));
-    }
-    Ok(m)
-}
-
 #[allow(dead_code)] // Kept as the default wrapper for callers without a classified plan.
-fn find_manifest(project_root: &std::path::Path, surface: &str) -> Result<PluginManifest, String> {
+fn find_manifest(
+    project_root: &std::path::Path,
+    surface: &str,
+) -> Result<PlannedLiftManifest, String> {
     find_manifest_with_plan(project_root, surface, None)
 }
 
@@ -124,14 +44,14 @@ fn find_manifest_with_plan(
     project_root: &std::path::Path,
     surface: &str,
     plan: Option<&ComponentPlan>,
-) -> Result<PluginManifest, String> {
+) -> Result<PlannedLiftManifest, String> {
     let project_local = project_root
         .join(".sugar")
         .join("lift")
         .join(surface)
         .join("manifest.toml");
     if project_local.exists() {
-        return parse_manifest(&project_local);
+        return parse_authored_lift_manifest(&project_local, surface);
     }
     if let Some(home) = std::env::var_os("HOME") {
         let user_global = PathBuf::from(home)
@@ -141,7 +61,7 @@ fn find_manifest_with_plan(
             .join(surface)
             .join("manifest.toml");
         if user_global.exists() {
-            return parse_manifest(&user_global);
+            return parse_authored_lift_manifest(&user_global, surface);
         }
     }
     if let Some(plan) = plan {
@@ -150,26 +70,67 @@ fn find_manifest_with_plan(
             .iter()
             .find(|manifest| manifest.surface == surface)
         {
-            return Ok(plugin_manifest_from_planned(planned.clone()));
+            return Ok(planned.clone());
         }
     } else if let Some(planned) = component_plan::planned_lift_manifest(project_root, surface) {
-        return Ok(plugin_manifest_from_planned(planned));
+        return Ok(planned);
     }
     Err(format!(
         "no plugin manifest for surface `{surface}` (looked in .sugar/lift/{surface}/manifest.toml, ~/.config/sugar/lift/{surface}/manifest.toml, and discovered Sugar components)"
     ))
 }
 
-fn plugin_manifest_from_planned(planned: PlannedLiftManifest) -> PluginManifest {
-    PluginManifest {
-        name: planned.name,
-        command: planned.command,
-        working_dir: planned.working_dir,
-        discharge_command: planned.discharge_command,
-        witness_tool: planned.witness_tool,
-        resolve_witness_command: planned.resolve_witness_command,
-        resolve_witness_method: planned.resolve_witness_method,
+fn parse_authored_lift_manifest(path: &Path, surface: &str) -> Result<PlannedLiftManifest, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let toml: toml::Value = text
+        .parse()
+        .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
+    let string_field = |key: &str| -> Option<String> {
+        toml.get(key)
+            .and_then(toml::Value::as_str)
+            .map(str::to_string)
+            .filter(|value| !value.is_empty())
+    };
+    let array_field = |key: &str| -> Vec<String> {
+        toml.get(key)
+            .and_then(toml::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(str::to_string)
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let manifest = PlannedLiftManifest {
+        surface: surface.to_string(),
+        name: string_field("name").unwrap_or_else(|| surface.to_string()),
+        version: string_field("version"),
+        protocol_version: string_field("protocol_version")
+            .or_else(|| string_field("protocolVersion")),
+        command: array_field("command"),
+        working_dir: string_field("working_dir").map(PathBuf::from),
+        method: string_field("method"),
+        phase: string_field("phase"),
+        discharge_command: array_field("discharge_command")
+            .into_iter()
+            .chain(array_field("dischargeCommand"))
+            .collect(),
+        witness_tool: string_field("witness_tool").or_else(|| string_field("witnessTool")),
+        resolve_witness_command: array_field("resolve_witness_command")
+            .into_iter()
+            .chain(array_field("resolveWitnessCommand"))
+            .collect(),
+        resolve_witness_method: string_field("resolve_witness_method")
+            .or_else(|| string_field("resolveWitnessMethod")),
+    };
+    if manifest.command.is_empty() {
+        return Err(format!("manifest {} has no `command`", path.display()));
     }
+    Ok(manifest)
 }
 
 // ---------------------------------------------------------------------------
@@ -195,21 +156,27 @@ pub fn run(args: ProveArgs) -> u8 {
     let component_plan_options = ComponentPlanOptions {
         allow_failed_components: args.allow_failed_components,
     };
-    let report = match build_prove_report_with_options(
+    let artifact = match build_prove_artifact_with_options(
         &project_root,
         &args.z3,
         &args.with,
         component_plan_options,
     ) {
-        Ok(report) => report,
+        Ok(artifact) => artifact,
         Err(error) => {
             eprintln!("{}: {error}", "error".red().bold());
             return crate::EXIT_USER_ERROR;
         }
     };
-    let report_json = report_fmt::report_to_json(&report);
+    let report = &artifact.report;
+    let report_json = report_fmt::report_to_json(report);
     if let Some(witness_dir) = &args.emit_witnesses {
-        match emit_configured_witnesses(&project_root, &report_json, witness_dir) {
+        match emit_configured_witnesses(
+            &project_root,
+            &report_json,
+            witness_dir,
+            artifact.plan_artifact.as_ref(),
+        ) {
             Ok(witnesses) => {
                 if !args.out.quiet {
                     for witness in &witnesses {
@@ -241,10 +208,10 @@ pub fn run(args: ProveArgs) -> u8 {
             }
         }
     } else {
-        report_fmt::print_report_pretty(&report, args.out.quiet);
+        report_fmt::print_report_pretty(report, args.out.quiet);
     }
 
-    report_fmt::report_exit_code(&report)
+    report_fmt::report_exit_code(report)
 }
 
 #[allow(dead_code)] // Kept as the default wrapper for callers without component-plan options.
@@ -262,6 +229,16 @@ pub(crate) fn build_prove_report_with_options(
     with: &[String],
     component_plan_options: ComponentPlanOptions,
 ) -> Result<sugar_verifier::Report, String> {
+    build_prove_artifact_with_options(project_root, z3, with, component_plan_options)
+        .map(|artifact| artifact.report)
+}
+
+pub(crate) fn build_prove_artifact_with_options(
+    project_root: &Path,
+    z3: &str,
+    with: &[String],
+    component_plan_options: ComponentPlanOptions,
+) -> Result<ProofRunArtifact, String> {
     let cfg_doc = read_project_config(project_root);
     let component_plan = component_plan::plan_workspace_with_options(
         project_root,
@@ -274,6 +251,12 @@ pub(crate) fn build_prove_report_with_options(
     }
 
     configure_witness_discharge_env_with_plan(project_root, &cfg_doc, Some(&component_plan));
+    let plan_artifact = component_plan::plan_artifact_memento(
+        project_root,
+        PlanIntent::Prove,
+        component_plan_options,
+        &component_plan,
+    );
 
     // Resolve `--with` paths relative to project_root unless absolute,
     // matching how `[verify].callees` is resolved (project-root-anchored).
@@ -311,12 +294,16 @@ pub(crate) fn build_prove_report_with_options(
         extra_projects,
         extra_proofs: dependency_proofs,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
+        plan_artifact: plan_artifact.as_ref().map(|artifact| PlanArtifactInput {
+            plan_cid: artifact.plan_cid.clone(),
+            member_cid: artifact.member_cid.clone(),
+            member_bytes: artifact.member_bytes.clone(),
+        }),
         ..Default::default()
     };
     let compilers = component_plan::compiler_registry_from_plan(project_root, &component_plan);
     Runner::new_with_compilers(cfg, compilers)
         .run_with_proof_run()
-        .map(|artifact| artifact.report)
         .map_err(|error| error.to_string())
 }
 
@@ -337,10 +324,11 @@ fn emit_configured_witnesses(
     project_root: &Path,
     report_json: &Value,
     out_dir: &Path,
+    plan_artifact: Option<&PlanArtifactInput>,
 ) -> Result<Vec<crate::report_witness::ReportWitnessProof>, String> {
     let mut out = Vec::new();
     let cfg = read_project_config(project_root);
-    let replay_pins = build_replay_pins(project_root, report_json, out_dir, &cfg)?;
+    let replay_pins = build_replay_pins(project_root, report_json, out_dir, &cfg, plan_artifact)?;
     if cfg.witnesses.is_empty() {
         out.push(crate::report_witness::mint_report_witness(
             project_root,
@@ -409,8 +397,9 @@ fn build_replay_pins(
     report_json: &Value,
     out_dir: &Path,
     cfg: &ProjectConfig,
+    plan_artifact: Option<&PlanArtifactInput>,
 ) -> Result<Value, String> {
-    Ok(json!({
+    let mut pins = json!({
         "kind": "sugar-prove-replay-pins",
         "schemaVersion": "1",
         "producer": {
@@ -422,7 +411,22 @@ fn build_replay_pins(
         "solvers": solver_pins_from_report(report_json),
         "proofInputs": proof_input_pins(project_root, out_dir)?,
         "witnessSources": witness_source_pins(cfg),
-    }))
+    });
+    if let Some(plan_artifact) = plan_artifact {
+        pins.as_object_mut()
+            .expect("replay pins object")
+            .insert("planArtifact".to_string(), plan_artifact_pin(plan_artifact));
+    }
+    Ok(pins)
+}
+
+fn plan_artifact_pin(plan_artifact: &PlanArtifactInput) -> Value {
+    json!({
+        "kind": "component-plan-artifact-pin",
+        "schemaVersion": "1",
+        "planCid": plan_artifact.plan_cid,
+        "planMementoCid": plan_artifact.member_cid,
+    })
 }
 
 fn project_config_pin(project_root: &Path) -> Result<Value, String> {
@@ -786,7 +790,7 @@ pub(crate) fn configure_witness_discharge_env_with_plan(
     }
 }
 
-fn manifest_working_dir(project_root: &Path, manifest: &PluginManifest) -> PathBuf {
+fn manifest_working_dir(project_root: &Path, manifest: &PlannedLiftManifest) -> PathBuf {
     manifest
         .working_dir
         .as_ref()
@@ -977,5 +981,55 @@ mod tests {
             .expect_err("bad proof filename hex must refuse");
 
         assert!(err.contains("blake3-512:"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn replay_pins_reference_the_plan_artifact_when_present() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let out_dir = temp.path().join("out");
+        std::fs::create_dir(&out_dir).expect("out dir");
+        let cfg = ProjectConfig::default();
+        let mut plan = ComponentPlan::default();
+        plan.lift_manifests.push(PlannedLiftManifest {
+            surface: "rust-test-assertions".to_string(),
+            name: "rust-test-assertions-lift".to_string(),
+            version: Some("0.1.0".to_string()),
+            command: vec!["rust-test-assertions-rpc".to_string()],
+            ..Default::default()
+        });
+        let artifact = component_plan::plan_artifact_memento(
+            temp.path(),
+            PlanIntent::Prove,
+            ComponentPlanOptions::default(),
+            &plan,
+        )
+        .expect("plan artifact minted");
+        let verifier_artifact = PlanArtifactInput {
+            plan_cid: artifact.plan_cid.clone(),
+            member_cid: artifact.member_cid.clone(),
+            member_bytes: artifact.member_bytes.clone(),
+        };
+
+        let replay_pins = build_replay_pins(
+            temp.path(),
+            &json!({"solvers": []}),
+            &out_dir,
+            &cfg,
+            Some(&verifier_artifact),
+        )
+        .expect("replay pins build");
+
+        assert_eq!(
+            replay_pins
+                .pointer("/planArtifact/planCid")
+                .and_then(Value::as_str),
+            Some(artifact.plan_cid.as_str())
+        );
+        assert_eq!(
+            replay_pins
+                .pointer("/planArtifact/planMementoCid")
+                .and_then(Value::as_str),
+            Some(artifact.member_cid.as_str())
+        );
     }
 }

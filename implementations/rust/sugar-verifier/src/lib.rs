@@ -61,8 +61,8 @@ pub use domain_claim_shape_report::{
     StatedClaimOutcome, TrichotomyError,
 };
 pub use runner::{
-    LegacyZ3Fallback, ProofRunArtifact, ProofRunArtifactError, Runner, RunnerConfig, SolverStats,
-    TierStats, VERIFIER_STAGE_VOCABULARY,
+    LegacyZ3Fallback, PlanArtifactInput, ProofRunArtifact, ProofRunArtifactError, Runner,
+    RunnerConfig, SolverStats, TierStats, VERIFIER_STAGE_VOCABULARY,
 };
 pub use solvers::{
     classify, dispatch_for_formula, run_plan, run_plan_with_compilers, DispatchConfig,

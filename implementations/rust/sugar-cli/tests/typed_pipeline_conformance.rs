@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 const MANIFEST_REL: &str = "conformance/typed_pipeline/interfaces.toml";
-const BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN: usize = 1;
+const BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN: usize = 0;
 const BASELINE_AMBIENT_TESTIMONY_SITES_OPEN: usize = 0;
 const BASELINE_FRONTEND_PROVENANCE_UNADMITTED_OPEN: usize = 0;
 const BASELINE_UNTYPED_VERIFIER_OBLIGATION_PATHS_OPEN: usize = 0;

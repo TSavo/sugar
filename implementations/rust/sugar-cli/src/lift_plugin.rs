@@ -19,22 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sugar_ir_types::CompositionRefusalMemento;
 
-#[derive(Debug, Clone)]
-pub(crate) struct LiftPluginManifest {
-    pub name: String,
-    pub version: Option<String>,
-    pub protocol_version: Option<String>,
-    pub command: Vec<String>,
-    pub working_dir: Option<PathBuf>,
-    /// Optional JSON-RPC method override. Defaults to `lift`.
-    /// Used by a kit binary that owns several lift surfaces, such as
-    /// Rust's `sugar.plugin.lift_implications` consumer surface.
-    pub method: Option<String>,
-    /// Optional lift phase. Defaults to producer. `consumer` surfaces are
-    /// run after producers with producer contract CIDs forwarded as
-    /// top-level `contract_bindings`.
-    pub phase: Option<String>,
-}
+use crate::component_plan::PlannedLiftManifest;
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiftPluginSession {
@@ -463,19 +448,20 @@ fn lift_kit_name(surface: &str) -> String {
 }
 
 /// Parse a manifest.toml at the given path. Exposed pub(crate) for doctor.
-pub(crate) fn parse_manifest_at(path: &Path) -> Result<LiftPluginManifest, String> {
-    parse_manifest(path)
+pub(crate) fn parse_manifest_at(path: &Path) -> Result<PlannedLiftManifest, String> {
+    let surface = surface_from_manifest_path(path);
+    parse_manifest(path, &surface)
 }
 
 /// Resolve the plugin working dir relative to the project root. Exposed pub(crate) for doctor.
 pub(crate) fn resolved_working_dir_for(
     project_root: &Path,
-    manifest: &LiftPluginManifest,
+    manifest: &PlannedLiftManifest,
 ) -> Option<PathBuf> {
     resolved_working_dir(project_root, manifest)
 }
 
-fn parse_manifest(path: &Path) -> Result<LiftPluginManifest, String> {
+fn parse_manifest(path: &Path, surface: &str) -> Result<PlannedLiftManifest, String> {
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     let toml: toml::Value = text
@@ -500,7 +486,8 @@ fn parse_manifest(path: &Path) -> Result<LiftPluginManifest, String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let manifest = LiftPluginManifest {
+    let manifest = PlannedLiftManifest {
+        surface: surface.to_string(),
         name: string_field("name").unwrap_or_default(),
         version: string_field("version"),
         protocol_version: string_field("protocol_version")
@@ -509,6 +496,10 @@ fn parse_manifest(path: &Path) -> Result<LiftPluginManifest, String> {
         working_dir: string_field("working_dir").map(PathBuf::from),
         method: string_field("method"),
         phase: string_field("phase"),
+        discharge_command: Vec::new(),
+        witness_tool: None,
+        resolve_witness_command: Vec::new(),
+        resolve_witness_method: None,
     };
     if manifest.command.is_empty() {
         return Err(format!("manifest {} has no `command`", path.display()));
@@ -524,14 +515,14 @@ pub(crate) fn surface_phase(project_root: &Path, surface: &str) -> String {
         .unwrap_or_else(|| "producer".to_string())
 }
 
-fn find_manifest(project_root: &Path, surface: &str) -> Result<LiftPluginManifest, String> {
+fn find_manifest(project_root: &Path, surface: &str) -> Result<PlannedLiftManifest, String> {
     let project_local = project_root
         .join(".sugar")
         .join("lift")
         .join(surface)
         .join("manifest.toml");
     if project_local.exists() {
-        return parse_manifest(&project_local);
+        return parse_manifest(&project_local, surface);
     }
     if let Some(home) = std::env::var_os("HOME") {
         let user_global = PathBuf::from(home)
@@ -541,19 +532,11 @@ fn find_manifest(project_root: &Path, surface: &str) -> Result<LiftPluginManifes
             .join(surface)
             .join("manifest.toml");
         if user_global.exists() {
-            return parse_manifest(&user_global);
+            return parse_manifest(&user_global, surface);
         }
     }
     if let Some(planned) = crate::component_plan::planned_lift_manifest(project_root, surface) {
-        return Ok(LiftPluginManifest {
-            name: planned.name,
-            version: planned.version,
-            protocol_version: planned.protocol_version,
-            command: planned.command,
-            working_dir: planned.working_dir,
-            method: planned.method,
-            phase: planned.phase,
-        });
+        return Ok(planned);
     }
     Err(format!(
         "no plugin manifest for surface `{surface}` (looked in .sugar/lift/{surface}/manifest.toml, ~/.config/sugar/lift/{surface}/manifest.toml, and discovered Sugar components)"
@@ -563,11 +546,11 @@ fn find_manifest(project_root: &Path, surface: &str) -> Result<LiftPluginManifes
 pub(crate) fn find_manifest_for_surface(
     project_root: &Path,
     surface: &str,
-) -> Result<LiftPluginManifest, String> {
+) -> Result<PlannedLiftManifest, String> {
     find_manifest(project_root, surface)
 }
 
-fn resolved_working_dir(project_root: &Path, manifest: &LiftPluginManifest) -> Option<PathBuf> {
+fn resolved_working_dir(project_root: &Path, manifest: &PlannedLiftManifest) -> Option<PathBuf> {
     manifest.working_dir.as_ref().map(|working_dir| {
         if working_dir.is_absolute() {
             working_dir.clone()
@@ -575,6 +558,14 @@ fn resolved_working_dir(project_root: &Path, manifest: &LiftPluginManifest) -> O
             project_root.join(working_dir)
         }
     })
+}
+
+fn surface_from_manifest_path(path: &Path) -> String {
+    path.parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 pub fn build_lift_params(project_root: &Path, surface: &str, options: LiftPluginOptions) -> Value {

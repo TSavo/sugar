@@ -64,6 +64,14 @@ pub struct ProofRunArtifact {
     pub stage_receipts: Vec<sugar_ir_types::StageReceipt>,
     pub bundle_cid: String,
     pub bundle_path: PathBuf,
+    pub plan_artifact: Option<PlanArtifactInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanArtifactInput {
+    pub plan_cid: String,
+    pub member_cid: String,
+    pub member_bytes: Vec<u8>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -105,6 +113,10 @@ pub struct RunnerConfig {
     /// Additional proof catalogs carried over kit RPC. Package managers and
     /// archive layouts stay kit-owned; the verifier consumes bytes only.
     pub extra_proofs: Vec<ProofBytes>,
+    /// Optional component-plan artifact minted by sugar-cli. The verifier treats
+    /// it as an already-addressed run input and stores the plan-memento bytes in
+    /// the proof-run bundle without reinterpreting component discovery.
+    pub plan_artifact: Option<PlanArtifactInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -534,6 +546,9 @@ impl Runner {
         let mut run_inputs: Vec<String> = input_artifact_cids.into_iter().collect();
         run_inputs.push(link_bundle_cid.clone());
         run_inputs.push(plugin_registry_cid.clone());
+        if let Some(plan_artifact) = &self.cfg.plan_artifact {
+            run_inputs.push(plan_artifact.plan_cid.clone());
+        }
         run_inputs = sorted(run_inputs);
         let run_verdict = if report.violations == 0 && pool.load_errors.is_empty() {
             sugar_ir_types::ProofRunVerdict::Admissible
@@ -551,8 +566,12 @@ impl Runner {
             plugin_registry_cid,
             run_verdict,
         )?;
-        let (bundle_cid, bundle_path) =
-            write_proof_run_bundle(&self.cfg.project_root, &memento, &stages)?;
+        let (bundle_cid, bundle_path) = write_proof_run_bundle(
+            &self.cfg.project_root,
+            &memento,
+            &stages,
+            self.cfg.plan_artifact.as_ref(),
+        )?;
 
         Ok(ProofRunArtifact {
             report,
@@ -561,6 +580,7 @@ impl Runner {
             stage_receipts: stages,
             bundle_cid,
             bundle_path,
+            plan_artifact: self.cfg.plan_artifact.clone(),
         })
     }
 
@@ -997,12 +1017,17 @@ fn write_proof_run_bundle(
     project_root: &Path,
     memento: &sugar_ir_types::ProofRunMemento,
     stages: &[sugar_ir_types::StageReceipt],
+    plan_artifact: Option<&PlanArtifactInput>,
 ) -> Result<(String, PathBuf), ProofRunArtifactError> {
     use sugar_proof_envelope::{
-        build_proof_envelope, ProofEnvelopeInput, ProofGraph, ProofRunMemento, StageReceiptMemento,
+        build_proof_envelope, PlanMemento, ProofEnvelopeInput, ProofGraph, ProofRunMemento,
+        StageReceiptMemento,
     };
 
     let mut graph = ProofGraph::new();
+    if let Some(plan_artifact) = plan_artifact {
+        graph.push_plan(PlanMemento::new(plan_artifact.member_bytes.clone()));
+    }
     graph.push_proof_run(ProofRunMemento::new(
         memento
             .to_jcs_string()
@@ -2623,5 +2648,94 @@ mod consistency_owned_callsite_tests {
         )
         .expect("legacy stage receipt labels remain tstr replay data");
         assert_eq!(legacy.header.stage_name, "smt_emitter");
+    }
+
+    #[test]
+    fn proof_run_bundle_embeds_plan_artifact_and_references_plan_cid() {
+        let plan_body = json!({
+            "kind": "component-plan-artifact",
+            "schemaVersion": "1",
+            "selectionInputs": {
+                "projectRoot": "/tmp/sugar-plan",
+                "intent": "prove",
+                "allowFailedComponents": false
+            },
+            "selectedComponents": [{
+                "name": "fixture-lift",
+                "version": "1.0.0",
+                "protocolVersion": "component-plan.v1",
+                "command": ["fixture-lift"],
+                "workingDir": "/tmp/sugar-plan",
+                "source": "/tmp/sugar-plan/sugar.toml",
+                "sourceCid": cid_string("fixture-lift-manifest")
+            }]
+        });
+        let plan_cid = sugar_canonicalizer::blake3_512_of(jcs(&plan_body).as_bytes());
+        let member = json!({
+            "body": plan_body,
+            "header": {
+                "kind": "plan-memento",
+                "planCid": plan_cid
+            },
+            "schemaVersion": "1"
+        });
+        let member_bytes = jcs(&member).into_bytes();
+        let member_cid = sugar_canonicalizer::blake3_512_of(&member_bytes);
+        let plan_artifact = PlanArtifactInput {
+            plan_cid: plan_cid.clone(),
+            member_cid: member_cid.clone(),
+            member_bytes: member_bytes.clone(),
+        };
+
+        let stage = make_stage_receipt(
+            "load_all_proofs",
+            vec![cid_string("proof-envelope")],
+            vec![cid_string("loaded-proof")],
+            Vec::new(),
+            Vec::new(),
+            "2026-07-02T00:00:00Z".to_string(),
+            "2026-07-02T00:00:01Z".to_string(),
+            sugar_ir_types::StageVerdict::Ok,
+        )
+        .expect("stage receipt");
+        let memento = make_proof_run_memento(
+            vec![stage.header.cid.clone()],
+            vec![cid_string("proof-envelope"), plan_cid.clone()],
+            vec![cid_string("proof-run-output")],
+            cid_string("proof-envelope"),
+            cid_string("link-bundle"),
+            cid_string("plugin-registry"),
+            sugar_ir_types::ProofRunVerdict::Admissible,
+        )
+        .expect("proof-run memento");
+
+        assert!(
+            memento.header.input_artifact_cids.contains(&plan_cid),
+            "proof-run input pins must reference the selected component PlanArtifact"
+        );
+
+        let project_root = make_unique_cache_dir("plan-artifact-bundle");
+        let (_bundle_cid, bundle_path) =
+            write_proof_run_bundle(&project_root, &memento, &[stage], Some(&plan_artifact))
+                .expect("proof-run bundle");
+        let bytes = std::fs::read(&bundle_path).expect("read proof-run bundle");
+        let graph = sugar_proof_envelope::ProofGraph::read(&bytes).expect("read proof graph");
+        let plans = graph.plans().collect::<Vec<_>>();
+        assert_eq!(
+            plans.len(),
+            1,
+            "proof-run bundle must carry exactly the pinned PlanArtifact memento"
+        );
+        assert_eq!(plans[0].cid().as_str(), plan_artifact.member_cid);
+        assert_eq!(plans[0].bytes(), plan_artifact.member_bytes.as_slice());
+        let plan_member: Json = serde_json::from_slice(plans[0].bytes()).expect("plan member JSON");
+        assert_eq!(
+            plan_member
+                .pointer("/header/planCid")
+                .and_then(Json::as_str),
+            Some(plan_artifact.plan_cid.as_str())
+        );
+
+        let _ = std::fs::remove_dir_all(project_root);
     }
 }
