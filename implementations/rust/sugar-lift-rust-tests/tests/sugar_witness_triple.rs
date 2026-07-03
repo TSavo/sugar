@@ -367,6 +367,7 @@ fn phase2_question_mark_ok_path_has_solver_bad_twin() {
             Ok(())
         }
     "#;
+    let mut verdict_receipt = Vec::new();
 
     for (label, src, expected_sat) in [
         ("phase2_question_mark_ok_good", truthful, true),
@@ -375,12 +376,17 @@ fn phase2_question_mark_ok_path_has_solver_bad_twin() {
         let out = lift_file(&parse(src), &format!("sugar-witness/{label}.rs"));
         let decl = single_warranted_decl(&out);
         let got_sat = z3_verdict(&inv_json(decl), label, &z3);
+        verdict_receipt.push(format!("{label}={}", if got_sat { "SAT" } else { "UNSAT" }));
         assert_eq!(
             got_sat, expected_sat,
             "{label}: expected SAT={expected_sat} got SAT={got_sat}; skips={:?}",
             out.skip_reasons
         );
     }
+    println!(
+        "phase2 TrySugar acceptance via lift_file -> inv_json -> z3_verdict: {}",
+        verdict_receipt.join(", ")
+    );
 }
 
 #[test]
@@ -572,7 +578,7 @@ fn witness_catalog_seed_frontier_is_pinned() {
 }
 
 #[test]
-fn phase2_router_witness_bad_twin_slots_are_pinned() {
+fn phase2_router_witness_bad_twin_registry_is_armed_at_zero() {
     let slots = pending_router_witness_slots();
     let names = slots
         .iter()
@@ -593,6 +599,14 @@ fn phase2_router_witness_bad_twin_slots_are_pinned() {
     println!(
         "R(routers-without-witness-bad-twin)={} pending={:?}",
         slots.len(),
+        slots
+            .iter()
+            .map(|slot| format!("{}:{}", slot.owner_slice, slot.router))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        slots.is_empty(),
+        "Phase 2 router witness registry is armed at stable zero; new pending slot(s) must land with truthful+lying bad twins: {:?}",
         slots
             .iter()
             .map(|slot| format!("{}:{}", slot.owner_slice, slot.router))
