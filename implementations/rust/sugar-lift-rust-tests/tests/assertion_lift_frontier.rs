@@ -3,8 +3,9 @@
 // assertion_lift frontier instrument (#3142).
 //
 // This is an IDD instrument, not a drain. The assertion_lift integration target
-// has a known red frontier; this test pins the current red set by mechanism so
-// later slices can ratchet fixed rows down and notice new regressions loudly.
+// has a known red frontier; this test pins the current red set by mechanism and
+// owner so later slices can ratchet fixed rows down and notice new regressions
+// loudly.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -157,6 +158,93 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     ),
 ];
 
+#[derive(Clone, Copy, Debug)]
+struct ClassDisposition {
+    bucket: &'static str,
+    owner: &'static str,
+    follow_up: &'static str,
+    note: &'static str,
+}
+
+const CLASS_DISPOSITIONS: &[(&str, ClassDisposition)] = &[
+    (
+        "floor-gap:iterator-temporal-state",
+        ClassDisposition {
+            bucket: "unlifted-construct",
+            owner: "#3378 temporal-floor S5",
+            follow_up: "iterator terminal/adaptor floors",
+            note: "next/nth/peekable/scan/rev rows need counted temporal-floor standing, not derived-testimony repair",
+        },
+    ),
+    (
+        "floor-gap:literal-domain-edge",
+        ClassDisposition {
+            bucket: "unlifted-construct",
+            owner: "#3378 temporal-floor S5",
+            follow_up: "literal iter standing/refusal",
+            note: "RangeLiteral/ArrayLiteral count/refusal edges; #3407 range-bound derived testimony is no longer in this frontier",
+        },
+    ),
+    (
+        "floor-gap:macro-visible-source",
+        ClassDisposition {
+            bucket: "unlifted-construct",
+            owner: "#3043 rust-kit closure capstone",
+            follow_up: "macro-visible assertion surface ownership",
+            note: "visible macro body/source discovery rows are construction coverage, not missing-derived testimony",
+        },
+    ),
+    (
+        "floor-gap:mutable-alias-state",
+        ClassDisposition {
+            bucket: "unlifted-construct",
+            owner: "#3026 temporal-floor umbrella",
+            follow_up: "rewrite/alias refusal through the temporal floor",
+            note: "mutable alias and stale-read rows need typed temporal ownership or terminal refusal",
+        },
+    ),
+    (
+        "floor-gap:runtime-boundary-refusal",
+        ClassDisposition {
+            bucket: "unlifted-construct",
+            owner: "#3043 rust-kit closure capstone",
+            follow_up: "runtime-boundary refusal coverage",
+            note: "runtime source/body/guard rows must refuse by named boundary instead of warranting or silently dropping",
+        },
+    ),
+    (
+        "floor-gap:slice-chunk-window-terminal",
+        ClassDisposition {
+            bucket: "unlifted-construct",
+            owner: "#3378 temporal-floor S5",
+            follow_up: "iterator terminal floor for chunk/window sources",
+            note: "chunk/window terminal count is an iterator-terminal floor row",
+        },
+    ),
+    (
+        "floor-gap:temporal-closure-adaptor",
+        ClassDisposition {
+            bucket: "unlifted-construct",
+            owner: "#3378 temporal-floor S5",
+            follow_up: "adapter callback/curry rows",
+            note: "closure adaptor rows need the temporal-floor counted/curry path; S3 fixed nested map but not these adapters",
+        },
+    ),
+];
+
+const ZERO_BUCKETS: &[(&str, &str, &str)] = &[
+    (
+        "missing-derived-testimony",
+        "#3407",
+        "range_term/nonzero_assoc_const were witness-enrollment rows and were closed by #3412; no live assertion_lift row has that shape",
+    ),
+    (
+        "genuinely-unknown",
+        "none",
+        "every current assertion_lift red maps to a named mechanism family",
+    ),
+];
+
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct FrontierKey {
     test: String,
@@ -254,6 +342,12 @@ fn expected_class_for(test: &str) -> Option<&'static str> {
     EXPECTED_RED
         .iter()
         .find_map(|(name, class)| (*name == test).then_some(*class))
+}
+
+fn class_disposition(class: &str) -> Option<&'static ClassDisposition> {
+    CLASS_DISPOSITIONS
+        .iter()
+        .find_map(|(name, disposition)| (*name == class).then_some(disposition))
 }
 
 fn observed_keys(rows: &[FrontierRow]) -> Vec<FrontierKey> {
@@ -362,6 +456,30 @@ impl FrontierReport {
         classes
     }
 
+    fn buckets(&self) -> BTreeMap<String, usize> {
+        let mut buckets = BTreeMap::<String, usize>::new();
+        for row in &self.rows {
+            let bucket = class_disposition(&row.key.class)
+                .map(|disposition| disposition.bucket)
+                .unwrap_or("genuinely-unknown");
+            *buckets.entry(bucket.to_string()).or_default() += 1;
+        }
+        buckets
+    }
+
+    fn classes_without_disposition(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .filter_map(|row| {
+                class_disposition(&row.key.class)
+                    .is_none()
+                    .then_some(row.key.class.clone())
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     fn unexpected(&self) -> Vec<FrontierKey> {
         let expected = self.expected.iter().cloned().collect::<BTreeSet<_>>();
         self.observed_keys()
@@ -384,10 +502,36 @@ impl FrontierReport {
             .classes()
             .into_iter()
             .map(|(class, tests)| {
+                let disposition = class_disposition(&class);
                 json!({
                     "class": class,
+                    "bucket": disposition.map(|d| d.bucket).unwrap_or("genuinely-unknown"),
+                    "owner": disposition.map(|d| d.owner).unwrap_or("unowned"),
+                    "follow_up": disposition.map(|d| d.follow_up).unwrap_or("class needs triage"),
+                    "note": disposition.map(|d| d.note).unwrap_or("new class has no retarget disposition"),
                     "count": tests.len(),
                     "tests": tests,
+                })
+            })
+            .collect::<Vec<_>>();
+        let buckets = self
+            .buckets()
+            .into_iter()
+            .map(|(bucket, count)| {
+                json!({
+                    "bucket": bucket,
+                    "count": count,
+                })
+            })
+            .collect::<Vec<_>>();
+        let zero_buckets = ZERO_BUCKETS
+            .iter()
+            .map(|(bucket, owner, reason)| {
+                json!({
+                    "bucket": bucket,
+                    "count": 0,
+                    "owner": owner,
+                    "reason": reason,
                 })
             })
             .collect::<Vec<_>>();
@@ -395,9 +539,13 @@ impl FrontierReport {
             .rows
             .iter()
             .map(|row| {
+                let disposition = class_disposition(&row.key.class);
                 json!({
                     "test": row.key.test,
                     "class": row.key.class,
+                    "bucket": disposition.map(|d| d.bucket).unwrap_or("genuinely-unknown"),
+                    "owner": disposition.map(|d| d.owner).unwrap_or("unowned"),
+                    "follow_up": disposition.map(|d| d.follow_up).unwrap_or("class needs triage"),
                     "excerpt": row.excerpt,
                 })
             })
@@ -408,7 +556,10 @@ impl FrontierReport {
             "is_zero": self.is_zero(),
             "status_code": self.status_code,
             "summary": self.summary,
+            "buckets": buckets,
+            "zero_buckets": zero_buckets,
             "classes": classes,
+            "classes_without_disposition": self.classes_without_disposition(),
             "unexpected": keys_to_json(self.unexpected()),
             "missing": keys_to_json(self.missing()),
             "rows": rows,
@@ -442,6 +593,11 @@ fn keys_to_json(keys: Vec<FrontierKey>) -> Vec<serde_json::Value> {
 #[test]
 fn assertion_lift_frontier_matches_expected_multiset() {
     let report = report();
+    assert!(
+        report.classes_without_disposition().is_empty(),
+        "assertion_lift frontier classes need retarget dispositions\n{}",
+        report.to_json()
+    );
     assert_eq!(
         report.status_code,
         Some(101),
