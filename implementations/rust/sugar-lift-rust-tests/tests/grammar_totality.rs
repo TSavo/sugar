@@ -62,11 +62,11 @@ struct ExpectedGrammarDisposition {
 /// Any future row must choose debt or membrane by name; unclassified stays zero.
 const EXPECTED_NON_LIFTED: &[ExpectedGrammarDisposition] = &[ExpectedGrammarDisposition {
     kind: "Item",
-    shape: "Other:Item",
-    status: GrammarLedgerStatus::Debt,
-    owner: "#3028 syn grammar ledger",
+    shape: "Mod",
+    status: GrammarLedgerStatus::Membrane,
+    owner: "#3450 syn grammar ledger",
     replacement:
-        "name the observed Item::Mod shape in source_fragment::item_kind and route it through an owning sugar or a reasoned membrane row",
+        "Item::Mod is a structural module membrane: the lifter descends into inline module items, but the Mod wrapper itself carries no assertion surface",
 }];
 
 // ─── Corpus definition ────────────────────────────────────────────────────────
@@ -192,6 +192,7 @@ fn item_shape(i: &syn::Item) -> &'static str {
         syn::Item::Struct(_) => "Struct",
         syn::Item::Enum(_) => "Enum",
         syn::Item::Use(_) => "Use",
+        syn::Item::Mod(_) => "Mod",
         _ => "Other:Item",
     }
 }
@@ -240,6 +241,13 @@ fn walk_item(item: &syn::Item, file: &str, map: &mut ShapeMap) {
                     for stmt in &m.block.stmts {
                         walk_stmt(stmt, file, map);
                     }
+                }
+            }
+        }
+        syn::Item::Mod(m) => {
+            if let Some((_, items)) = &m.content {
+                for item in items {
+                    walk_item(item, file, map);
                 }
             }
         }
@@ -674,11 +682,35 @@ fn grammar_totality_exact_ledger_replaces_ceiling() {
     );
     assert_eq!(
         ledger.debt_keys(),
-        vec!["Item:Other:Item"],
-        "the exact debt list is pinned; count-only ceilings must not hide churn"
+        Vec::<String>::new(),
+        "the Item::Mod debt row must drain; count-only ceilings must not hide churn"
+    );
+    assert_eq!(
+        ledger.membrane_keys(),
+        vec!["Item:Mod"],
+        "Item::Mod is the named syn-side structural membrane; its inner items are walked"
+    );
+}
+
+#[test]
+fn planted_item_mod_is_named_membrane_and_inner_items_are_walked() {
+    let mut shape_map = ShapeMap::new();
+    walk_source(
+        "mod planted_mod { fn inner_test() { assert_eq!(1, 1); } }",
+        "<fixture:item-mod>",
+        &mut shape_map,
+    );
+
+    assert!(
+        shape_map.contains_key(&("Item".to_string(), "Mod".to_string())),
+        "planted Item::Mod must classify by name, not collapse into Other:Item: {shape_map:#?}"
     );
     assert!(
-        ledger.membrane_keys().is_empty(),
-        "LLBC/Charon/MIR membrane is excised; syn-source grammar ledger has no membrane rows"
+        !shape_map.contains_key(&("Item".to_string(), "Other:Item".to_string())),
+        "named Item::Mod membrane must not leave an unnamed Other:Item bucket: {shape_map:#?}"
+    );
+    assert!(
+        shape_map.contains_key(&("Item".to_string(), "FunctionDef".to_string())),
+        "module membrane must descend into inline module items: {shape_map:#?}"
     );
 }
