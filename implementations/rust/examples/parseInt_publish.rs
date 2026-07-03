@@ -108,6 +108,7 @@ fn main() -> ExitCode {
             panic_loci: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
+            proofir_provenance: None,
             contract_name: d.name.clone(),
             pre: d.pre.as_deref().map(formula_to_value),
             post: d.post.as_deref().map(formula_to_value),

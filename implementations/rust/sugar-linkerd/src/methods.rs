@@ -1246,6 +1246,7 @@ async fn lift_rust_source(
                 panic_loci: Vec::new(),
                 class_shapes: Vec::new(),
                 source_warrants: Vec::new(),
+                proofir_provenance: None,
                 contract_name: decl.name.clone(),
                 pre: pre_v.clone(),
                 post: post_v.clone(),

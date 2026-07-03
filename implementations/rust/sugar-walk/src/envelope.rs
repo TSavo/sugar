@@ -262,6 +262,7 @@ pub fn mint_args(
         panic_loci,
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
+        proofir_provenance: None,
     })
 }
 

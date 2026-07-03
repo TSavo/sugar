@@ -1552,7 +1552,10 @@ surface = "python"
     let assertion = euf_assertions[0];
     assert_eq!(assertion["inv"]["name"], "=");
     assert_eq!(assertion["inv"]["args"][0]["name"], "call:parse_int");
-    assert_eq!(assertion["inv"]["args"][0]["args"][0]["sort"]["name"], "Int");
+    assert_eq!(
+        assertion["inv"]["args"][0]["args"][0]["sort"]["name"],
+        "Int"
+    );
     assert_eq!(assertion["inv"]["args"][0]["args"][0]["value"], 5);
     assert_eq!(assertion["inv"]["args"][1]["sort"]["name"], "Int");
     assert_eq!(assertion["inv"]["args"][1]["value"], 42);
@@ -1781,7 +1784,10 @@ surface = "python"
     let euf_assertion = euf_assertions[0];
     assert_eq!(euf_assertion["inv"]["name"], "=");
     assert_eq!(euf_assertion["inv"]["args"][0]["name"], "call:checked");
-    assert_eq!(euf_assertion["inv"]["args"][0]["args"][0]["sort"]["name"], "Int");
+    assert_eq!(
+        euf_assertion["inv"]["args"][0]["args"][0]["sort"]["name"],
+        "Int"
+    );
     assert_eq!(euf_assertion["inv"]["args"][0]["args"][0]["value"], 5);
     assert_eq!(euf_assertion["inv"]["args"][1]["sort"]["name"], "Int");
     assert_eq!(euf_assertion["inv"]["args"][1]["value"], 1);

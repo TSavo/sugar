@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import cbor2
 import pytest
 
 from sugar_lift_py_tests.factory.literal_call_report import euf_callsite_name
@@ -377,6 +378,43 @@ def _first_euf_row(prove: dict) -> dict:
     return next(row for row in rows if "#euf#" in row.get("property", ""))
 
 
+def _minted_contract_headers(project: Path, contract_name: str) -> list[dict]:
+    headers: list[dict] = []
+    for proof in project.rglob("*.proof"):
+        catalog = cbor2.loads(proof.read_bytes())
+        for member_bytes in catalog.get("members", {}).values():
+            member = _decode_member(member_bytes)
+            if not isinstance(member, dict):
+                continue
+            header = member.get("header")
+            if not isinstance(header, dict):
+                continue
+            if header.get("kind") != "contract":
+                continue
+            if (
+                header.get("name") == contract_name
+                or header.get("contractName") == contract_name
+            ):
+                headers.append(header)
+    if headers:
+        return headers
+    raise AssertionError(f"contract memento {contract_name!r} not found")
+
+
+def _decode_member(member_bytes: object) -> object:
+    if not isinstance(member_bytes, bytes):
+        return member_bytes
+    try:
+        return cbor2.loads(member_bytes)
+    except Exception:
+        pass
+    decoded = member_bytes.decode("utf-8")
+    try:
+        return json.loads(decoded)
+    except json.JSONDecodeError:
+        return decoded
+
+
 @pytest.mark.parametrize("node_class", REGISTERED_PROOFIR_NODE_CLASSES)
 def test_registered_proofir_witnesses_are_source_programs(node_class) -> None:
     pair = node_class.verdict_witnesses()
@@ -413,6 +451,34 @@ def test_equality_fact_truthful_and_lying_witnesses_hit_real_solver(
 
     assert _run_witness_case(pair.truthful, tmp_path) == "sat"
     assert _run_witness_case(pair.lying, tmp_path) == "unsat"
+
+
+def test_py_minted_equality_fact_memento_carries_provenance_kind(
+    tmp_path: Path,
+) -> None:
+    pair = EqualityFact.verdict_witnesses()
+    assert pair.truthful.source
+    cli_project = tmp_path / "py_minted_equality_fact_provenance" / "cli"
+    _stage_cli_project(cli_project, pair.truthful.source)
+
+    lift_doc, prove = _mint_and_prove(cli_project)
+    assert _first_euf_row(prove)["status"] == "discharged"
+    contract_name = next(
+        row["name"] for row in lift_doc["ir"] if "#euf#" in row.get("name", "")
+    )
+    headers = _minted_contract_headers(cli_project, contract_name)
+    assert len(headers) == 2
+    assert {
+        header["proofirProvenance"]["warrants"][0]["kind"] for header in headers
+    } == {
+        "Derived",
+        "Stated",
+    }
+    for header in headers:
+        provenance = header["proofirProvenance"]
+        assert provenance["nodeClass"] == "EqualityFact"
+        assert len(provenance["warrants"]) == 1
+        assert header["sourceWarrants"][0]["kind"] == "source-memento"
 
 
 def test_equality_fact_semantic_merge_collapses_stated_and_derived_warrants() -> None:

@@ -75,6 +75,7 @@ fn main() {
         panic_loci: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
+        proofir_provenance: None,
         contract_name: "parseInt".into(),
         pre: Some(pre_n_gt_0()),
         post: None,

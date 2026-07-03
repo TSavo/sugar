@@ -46,6 +46,7 @@ fn fixture_proof_bytes() -> (String, Vec<u8>) {
         panic_loci: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
+        proofir_provenance: None,
         contract_name: declaration.name.clone(),
         pre: declaration.pre.as_deref().map(formula_to_value),
         post: declaration.post.as_deref().map(formula_to_value),

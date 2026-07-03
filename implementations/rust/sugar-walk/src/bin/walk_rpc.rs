@@ -13843,6 +13843,7 @@ reason = "scope discipline probe"
             panic_loci: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
+            proofir_provenance: None,
         };
         let mut graph = ProofGraph::new();
         let body = register_test_contract_body_graph(

@@ -2513,6 +2513,52 @@ fn parse_bridge_callsite(
     }))
 }
 
+fn proofir_provenance_memento_variants(
+    provenance: Option<&Value>,
+    split_by_kind: bool,
+) -> Vec<Option<Arc<CValue>>> {
+    let Some(provenance) = provenance else {
+        return vec![None];
+    };
+    if !split_by_kind {
+        return vec![Some(json_to_cvalue(provenance))];
+    }
+    let Some(object) = provenance.as_object() else {
+        return vec![Some(json_to_cvalue(provenance))];
+    };
+    let Some(warrants) = object.get("warrants").and_then(Value::as_array) else {
+        return vec![Some(json_to_cvalue(provenance))];
+    };
+
+    let mut observed_kinds: Vec<&str> = Vec::new();
+    for warrant in warrants {
+        let Some(kind @ ("Stated" | "Derived")) = warrant.get("kind").and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if !observed_kinds.contains(&kind) {
+            observed_kinds.push(kind);
+        }
+    }
+    if observed_kinds.len() <= 1 {
+        return vec![Some(json_to_cvalue(provenance))];
+    }
+
+    observed_kinds
+        .into_iter()
+        .map(|kind| {
+            let filtered_warrants = warrants
+                .iter()
+                .filter(|warrant| warrant.get("kind").and_then(Value::as_str) == Some(kind))
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut narrowed = object.clone();
+            narrowed.insert("warrants".to_string(), Value::Array(filtered_warrants));
+            Some(json_to_cvalue(&Value::Object(narrowed)))
+        })
+        .collect()
+}
+
 fn mint_bridge_from_decl(
     decl: &Value,
     produced_at: &str,
@@ -3084,12 +3130,13 @@ fn mint_ir_document_with_source_and_plan_mementos(
         let source_warrants_value = decl
             .get("sourceWarrants")
             .or_else(|| decl.get("source_warrants"));
-        match source_warrants_value {
+        let source_warrants = match source_warrants_value {
             Some(Value::Array(arr)) => {
                 for source_memento in arr {
                     let (cid, bytes) = mint_source_memento(source_memento, Some(&name))?;
                     push_graph_memento!(SourceMemento, push_source, cid.as_str(), bytes);
                 }
+                arr.iter().map(json_to_cvalue).collect()
             }
             Some(value) => {
                 return Err(format!(
@@ -3097,8 +3144,8 @@ fn mint_ir_document_with_source_and_plan_mementos(
                     json_type_name(value)
                 ));
             }
-            None => {}
-        }
+            None => Vec::new(),
+        };
         let body_policy = body_discharge_policy_from_fields(
             decl.get("bodyDischargeEligible")
                 .or_else(|| decl.get("body_discharge_eligible")),
@@ -3178,126 +3225,138 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 .map(|s| s.to_string())
         });
 
-        let args = MintContractArgs {
-            contract_name: name,
-            pre,
-            post,
-            inv,
-            // Thread the lifted declaration's execution-witness EvidenceTerm (if
-            // any) into the minted contract memento so `prove` can discharge it
-            // by recompute. Omitted when absent -> non-witness contracts unchanged.
-            evidence_term: decl.get("evidence").map(json_to_cvalue),
-            out_binding,
-            produced_by,
-            produced_at: produced_at.clone(),
-            input_cids,
-            authoring: Authoring::Lift {
-                lifter: "ir-document".to_string(),
-                evidence: "minted from ir-document RPC response".to_string(),
-                source_cid: None,
-            },
-            signer_seed,
-            formals,
-            emit_empty_formals,
-            formal_sorts,
-            library: library.clone(),
-            body_discharge_eligible,
-            body_discharge_refusal_reason: body_discharge_refusal_reason.clone(),
-            panic_loci,
-            class_shapes,
-            source_warrants: Vec::new(),
-        };
-
-        let ccid = contract_cid(&args);
-        let pre_hash = args.pre.as_ref().map(formula_hash);
-        let post_hash = args.post.as_ref().map(formula_hash);
-        let inv_hash = args.inv.as_ref().map(formula_hash);
-        content_cids.push(ccid.clone());
-
         let contract_body = register_contract_body_graph(
             &mut proof_graph,
-            args.pre.as_ref(),
-            args.post.as_ref(),
-            args.inv.as_ref(),
+            pre.as_ref(),
+            post.as_ref(),
+            inv.as_ref(),
         )
-        .map_err(|e| format!("contract `{}`: {e}", args.contract_name))?;
+        .map_err(|e| format!("contract `{name}`: {e}"))?;
         let body_cid = contract_body.cid().as_str().to_string();
-        let m = mint_contract_with_body_cid(&args, Some(&body_cid))
-            .map_err(|e| format!("mint contract: {e}"))?;
-
-        // Production bridge-writer (#1436/#1440, PR-23): for a body-derived
-        // function contract, AUTOMATICALLY mint the bridge that points a
-        // harvested call at this contract's body-obligation. This is the
-        // pipeline that was missing -- `bind_function_bridge` existed but no
-        // production verb called it, so verify could only reach the seam via
-        // hand-built test bundles. The bridge's `targetContractCid` is this
-        // contract's ATTESTATION CID (`m.cid`, the member key the verifier
-        // indexes `pool.mementos` by), so `CatalogResolver` resolves the
-        // chain. Language-neutral: it operates on the protocol's fields, not
-        // on any source language.
-        if let Some(source_symbol) = bridge_source_symbol.clone() {
-            let bridge = mint_bridge(&MintBridgeArgs {
-                produced_by: "sugar-cli".to_string(),
+        let proofir_provenance_variants = proofir_provenance_memento_variants(
+            decl.get("proofirProvenance")
+                .or_else(|| decl.get("proofir_provenance")),
+            kind == "contract",
+        );
+        let mut pushed_content_cid = false;
+        for proofir_provenance in proofir_provenance_variants {
+            let args = MintContractArgs {
+                contract_name: name.clone(),
+                pre: pre.clone(),
+                post: post.clone(),
+                inv: inv.clone(),
+                // Thread the lifted declaration's execution-witness EvidenceTerm (if
+                // any) into the minted contract memento so `prove` can discharge it
+                // by recompute. Omitted when absent -> non-witness contracts unchanged.
+                evidence_term: decl.get("evidence").map(json_to_cvalue),
+                out_binding: out_binding.clone(),
+                produced_by: produced_by.clone(),
                 produced_at: produced_at.clone(),
-                source_symbol,
-                source_layer: "source".to_string(),
-                target_contract: ContractMementoRef::new(m.cid.clone()),
-                target_layer: "kit".to_string(),
-                ir_arg_sorts: vec![],
-                ir_return_sort: String::new(),
-                notes: "auto-minted body-discharge bridge (PR-23)".to_string(),
+                input_cids: input_cids.clone(),
+                authoring: Authoring::Lift {
+                    lifter: "ir-document".to_string(),
+                    evidence: "minted from ir-document RPC response".to_string(),
+                    source_cid: None,
+                },
                 signer_seed,
-                // Self-pinned: this contract is a co-member of the very bundle
-                // being minted, so there is no external bundle CID to name
-                // (and it can't reference its own not-yet-computed CID). The
-                // verifier enforces same-bundle co-membership for the None case.
-                target_proof_cid: None,
-                // Function-level body-discharge bridge, not a per-call panic
-                // site: no call-site provenance to carry.
-                callsite: None,
-            });
+                formals: formals.clone(),
+                emit_empty_formals,
+                formal_sorts: formal_sorts.clone(),
+                library: library.clone(),
+                body_discharge_eligible,
+                body_discharge_refusal_reason: body_discharge_refusal_reason.clone(),
+                panic_loci: panic_loci.clone(),
+                class_shapes: class_shapes.clone(),
+                source_warrants: source_warrants.clone(),
+                proofir_provenance,
+            };
+
+            let ccid = contract_cid(&args);
+            let pre_hash = args.pre.as_ref().map(formula_hash);
+            let post_hash = args.post.as_ref().map(formula_hash);
+            let inv_hash = args.inv.as_ref().map(formula_hash);
+            if !pushed_content_cid {
+                content_cids.push(ccid.clone());
+                pushed_content_cid = true;
+            }
+
+            let m = mint_contract_with_body_cid(&args, Some(&body_cid))
+                .map_err(|e| format!("mint contract: {e}"))?;
+
+            // Production bridge-writer (#1436/#1440, PR-23): for a body-derived
+            // function contract, AUTOMATICALLY mint the bridge that points a
+            // harvested call at this contract's body-obligation. This is the
+            // pipeline that was missing -- `bind_function_bridge` existed but no
+            // production verb called it, so verify could only reach the seam via
+            // hand-built test bundles. The bridge's `targetContractCid` is this
+            // contract's ATTESTATION CID (`m.cid`, the member key the verifier
+            // indexes `pool.mementos` by), so `CatalogResolver` resolves the
+            // chain. Language-neutral: it operates on the protocol's fields, not
+            // on any source language.
+            if let Some(source_symbol) = bridge_source_symbol.clone() {
+                let bridge = mint_bridge(&MintBridgeArgs {
+                    produced_by: "sugar-cli".to_string(),
+                    produced_at: produced_at.clone(),
+                    source_symbol,
+                    source_layer: "source".to_string(),
+                    target_contract: ContractMementoRef::new(m.cid.clone()),
+                    target_layer: "kit".to_string(),
+                    ir_arg_sorts: vec![],
+                    ir_return_sort: String::new(),
+                    notes: "auto-minted body-discharge bridge (PR-23)".to_string(),
+                    signer_seed,
+                    // Self-pinned: this contract is a co-member of the very bundle
+                    // being minted, so there is no external bundle CID to name
+                    // (and it can't reference its own not-yet-computed CID). The
+                    // verifier enforces same-bundle co-membership for the None case.
+                    target_proof_cid: None,
+                    // Function-level body-discharge bridge, not a per-call panic
+                    // site: no call-site provenance to carry.
+                    callsite: None,
+                });
+                push_graph_memento!(
+                    BridgeMemento,
+                    push_bridge,
+                    bridge.cid.as_str(),
+                    bridge.canonical_bytes
+                );
+            }
+
+            // Index by CONTENT CID. A re-emission of a byte-identical contract
+            // (same CID) is a genuine no-op dedup, not an error: the merge dedup
+            // already collapses identical shapes, and `members` `or_insert` is
+            // idempotent. Two DIFFERENT shapes sharing a name now both land here
+            // under their distinct CIDs -- which is the whole point.
+            contracts_by_cid
+                .entry(m.cid.clone())
+                .or_insert(MintedContractRef {
+                    contract_name: args.contract_name.clone(),
+                    attestation_cid: m.cid.clone(),
+                    pre_hash,
+                    post_hash,
+                    inv_hash,
+                    pre_body: pre_body.clone(),
+                    post_body: post_body.clone(),
+                    has_nontrivial_pre,
+                    body_discharge_eligible,
+                    body_discharge_refusal_reason: body_discharge_refusal_reason.clone(),
+                    library: library.clone(),
+                    bridge_source_symbol: bridge_source_symbol.clone(),
+                    formals: formals_binding.clone(),
+                    formal_sorts: formal_sorts_binding.clone(),
+                });
+            let name_cids = cids_by_name.entry(args.contract_name.clone()).or_default();
+            if !name_cids.contains(&m.cid) {
+                name_cids.push(m.cid.clone());
+            }
+
             push_graph_memento!(
-                BridgeMemento,
-                push_bridge,
-                bridge.cid.as_str(),
-                bridge.canonical_bytes
+                ClaimContractMemento,
+                push_claim_contract,
+                m.cid.as_str(),
+                m.canonical_bytes
             );
         }
-
-        // Index by CONTENT CID. A re-emission of a byte-identical contract
-        // (same CID) is a genuine no-op dedup, not an error: the merge dedup
-        // already collapses identical shapes, and `members` `or_insert` is
-        // idempotent. Two DIFFERENT shapes sharing a name now both land here
-        // under their distinct CIDs -- which is the whole point.
-        contracts_by_cid
-            .entry(m.cid.clone())
-            .or_insert(MintedContractRef {
-                contract_name: args.contract_name.clone(),
-                attestation_cid: m.cid.clone(),
-                pre_hash,
-                post_hash,
-                inv_hash,
-                pre_body,
-                post_body,
-                has_nontrivial_pre,
-                body_discharge_eligible,
-                body_discharge_refusal_reason,
-                library,
-                bridge_source_symbol,
-                formals: formals_binding,
-                formal_sorts: formal_sorts_binding,
-            });
-        let name_cids = cids_by_name.entry(args.contract_name.clone()).or_default();
-        if !name_cids.contains(&m.cid) {
-            name_cids.push(m.cid.clone());
-        }
-
-        push_graph_memento!(
-            ClaimContractMemento,
-            push_claim_contract,
-            m.cid.as_str(),
-            m.canonical_bytes
-        );
     }
 
     // #1358 / #1355: stamp the project's platform_profile onto each
@@ -4955,6 +5014,21 @@ mod tests {
             .unwrap_or_else(|| panic!("contract header `{name}` not found"))
     }
 
+    fn contract_headers(graph: &ProofGraph, name: &str) -> Vec<Value> {
+        graph
+            .members_view()
+            .filter_map(|view| {
+                let is_contract = view.kind() == Some(MemberKind::Contract);
+                let has_name = view.field("name").as_deref() == Some(name)
+                    || view.field("contractName").as_deref() == Some(name);
+                (is_contract && has_name).then(|| {
+                    let envelope = view.json();
+                    envelope.get("header").expect("contract header").clone()
+                })
+            })
+            .collect()
+    }
+
     fn source_memento_members(graph: &ProofGraph) -> Vec<Value> {
         graph.sources().map(|view| view.json()).collect()
     }
@@ -5577,11 +5651,26 @@ mod tests {
     }
 
     #[test]
-    fn mint_ir_document_mints_contract_source_warrants_as_envelope_members() {
+    fn mint_ir_document_mints_contract_provenance_fields_on_contract_member() {
         let root = temp_workspace("mint_contract_source_warrants_envelope");
         let out_dir = root.join("out");
         std::fs::create_dir_all(&out_dir).expect("create out dir");
         let contract_name = "Codec.encode#euf#c:callresult_encode_a1(s:bar)::assertion";
+        let proofir_provenance = json!({
+            "kind": "proofir-provenance",
+            "nodeClass": "EqualityFact",
+            "constructionSite": {"path": "src/Codec.java", "line": 12, "column": 8},
+            "warrants": [
+                {
+                    "kind": "Derived",
+                    "floorChain": ["literal_call_report.callsite_floor", "Codec.encode"]
+                },
+                {
+                    "kind": "Stated",
+                    "locus": {"path": "src/Codec.java", "line": 12, "column": 8}
+                }
+            ]
+        });
         let source_warrant = json!({
             "kind": "source-memento",
             "role": "java.strong-universe",
@@ -5597,17 +5686,36 @@ mod tests {
             "name": contract_name,
             "outBinding": "out",
             "inv": {"kind": "atomic", "name": "str.chars-in-set", "args": []},
+            "proofirProvenance": proofir_provenance,
             "sourceWarrants": [source_warrant]
         })];
 
         let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true)
             .expect("mint ir-document");
         let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
-        let header = contract_header(&graph, contract_name);
-        assert!(
-            header.get("sourceWarrants").is_none(),
-            "source mementos belong in the proof envelope, not the contract header: {header:#?}"
+        let headers = contract_headers(&graph, contract_name);
+        assert_eq!(
+            headers.len(),
+            2,
+            "Stated+Derived proofirProvenance lowers to one replay memento per kind"
         );
+        let provenance_kinds: std::collections::BTreeSet<_> = headers
+            .iter()
+            .map(|header| {
+                let warrants = header["proofirProvenance"]["warrants"]
+                    .as_array()
+                    .expect("warrants array");
+                assert_eq!(warrants.len(), 1);
+                warrants[0]["kind"].as_str().expect("warrant kind")
+            })
+            .collect();
+        assert_eq!(
+            provenance_kinds,
+            std::collections::BTreeSet::from(["Derived", "Stated"])
+        );
+        for header in &headers {
+            assert_eq!(header["sourceWarrants"], ir[0]["sourceWarrants"]);
+        }
 
         let mementos = source_memento_members(&graph);
         assert_eq!(mementos.len(), 1);

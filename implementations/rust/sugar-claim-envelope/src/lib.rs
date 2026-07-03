@@ -487,6 +487,11 @@ pub struct MintContractArgs {
     /// They are signed provenance carried in the contract header after the
     /// logical content CID is computed, so they do not change `contract_cid`.
     pub source_warrants: Vec<Arc<Value>>,
+    /// ProofIR vocabulary provenance for typed construction sites. Like
+    /// source warrants, this is signed provenance carried after the logical
+    /// content CID is computed; it tells consumers whether a fact is Stated or
+    /// Derived without changing what formula is proven.
+    pub proofir_provenance: Option<Arc<Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1101,6 +1106,9 @@ pub fn mint_contract_with_body_cid(
             "sourceWarrants".into(),
             Value::array(args.source_warrants.clone()),
         ));
+    }
+    if let Some(provenance) = &args.proofir_provenance {
+        kind_specific.push(("proofirProvenance".into(), provenance.clone()));
     }
     // Execution-witness evidence: PROVENANCE (how-discharged), carried in the
     // body for the verifier's witness arm, omitted when None so non-witness
@@ -1855,6 +1863,7 @@ mod tests {
             panic_loci: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
+            proofir_provenance: None,
             contract_name: "x".into(),
             pre: None,
             post: None,
@@ -1907,6 +1916,7 @@ mod tests {
             panic_loci: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
+            proofir_provenance: None,
             contract_name: "parseInt".into(),
             pre: Some(pre),
             post: None,
@@ -1944,6 +1954,7 @@ mod tests {
             panic_loci: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
+            proofir_provenance: None,
             contract_name: "checked_add_u8.postcondition".into(),
             pre: None,
             post: Some(post),
@@ -2132,6 +2143,7 @@ mod tests {
             panic_loci: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
+            proofir_provenance: None,
             contract_name: name.into(),
             pre: None,
             post: Some(post),
