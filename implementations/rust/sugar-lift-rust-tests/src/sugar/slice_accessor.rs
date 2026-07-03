@@ -295,7 +295,6 @@ fn slice_accessor_gap(reason: &str) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     /// Extract the expression fragment of the first statement in the body of the

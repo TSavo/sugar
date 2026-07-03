@@ -50,11 +50,9 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     }
     let consumed_receiver = frag.call_receiver_simple_ident();
     let static_len = static_len_in_scope_frag(&receiver, fcx);
-    let static_collection_len = collection_static_len_in_scope_frag(&receiver, fcx);
     Some(LenSugar::new(
         sequence_body_frag(&receiver, fcx),
         static_len,
-        static_collection_len,
         consumed_receiver,
     ))
 }
@@ -79,13 +77,7 @@ fn len_receiver_is_owned_by_literal_sugar(expr: &Expr, fcx: &SugarBuildCtx) -> b
 struct LenSugar {
     receiver: SugarBody<CompositeFloor>,
     static_len: Option<usize>,
-    static_collection_len: Option<StaticLenSource>,
     consumed_receiver: Option<String>,
-}
-
-struct StaticLenSource {
-    len: usize,
-    source: SugarBody<CompositeFloor>,
 }
 
 impl Sugar for LenSugar {
@@ -135,23 +127,6 @@ impl Sugar for LenSugar {
                 len_gap("len receiver sequence helper returned unexpected Complete")
             }
             Err(Outcome::Incomplete(effect)) => return Outcome::Incomplete(effect),
-            Err(gap) => {
-                if let Some(static_len) = &self.static_collection_len {
-                    match source_reduces_to_sequence(&static_len.source, ctx) {
-                        Ok(true) => {
-                            debug!(
-                                target: "sugar_lift_rust_tests::sugar::len",
-                                len = static_len.len,
-                                "reducing literal collection len through verified length-only adapter"
-                            );
-                            return Outcome::Complete(Desugared::Term(num(static_len.len as i128)));
-                        }
-                        Ok(false) => {}
-                        Err(outcome) => return outcome,
-                    }
-                }
-                return gap;
-            }
         };
         let len = seq.len();
         debug!(
@@ -167,13 +142,11 @@ impl LenSugar {
     fn new(
         receiver: SugarBody<CompositeFloor>,
         static_len: Option<usize>,
-        static_collection_len: Option<StaticLenSource>,
         consumed_receiver: Option<String>,
     ) -> Box<dyn Sugar> {
         Box::new(Self {
             receiver,
             static_len,
-            static_collection_len,
             consumed_receiver,
         })
     }
@@ -199,19 +172,6 @@ fn sequence_from_body(
     }
 }
 
-fn source_reduces_to_sequence(
-    body: &SugarBody<CompositeFloor>,
-    ctx: &SugarCtx,
-) -> Result<bool, Outcome> {
-    match body.reduce(ctx) {
-        Outcome::Complete(d) => Ok(d.into_seq().is_some()),
-        Outcome::Incomplete(effect) if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON) => {
-            Ok(true)
-        }
-        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
-    }
-}
-
 fn len_gap(reason: &str) -> ! {
     panic!("len completed without a literal sequence floor: {reason}")
 }
@@ -230,18 +190,6 @@ fn len_receiver_is_owned_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> boo
 fn static_len_in_scope_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<usize> {
     let e = frag.as_expr()?;
     method_family::literal_sequence_static_len_in_scope(e, fcx.let_inits(), fcx.scope())
-}
-
-fn collection_static_len_in_scope_frag(
-    frag: &SourceFragment,
-    fcx: &SugarBuildCtx,
-) -> Option<StaticLenSource> {
-    let e = frag.as_expr()?;
-    method_family::literal_collection_adapter_static_len_in_scope(e, fcx.let_inits(), fcx.scope())
-        .map(|static_len| StaticLenSource {
-            len: static_len.len,
-            source: sequence_body(&static_len.source, fcx),
-        })
 }
 
 fn sequence_body_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {

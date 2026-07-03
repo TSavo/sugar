@@ -244,7 +244,7 @@ mod from_src_tests {
             Outcome::Incomplete(Effect::Configuration { boundary, .. }) => {
                 assert_eq!(boundary, "cfg ! (target_os = \"linux\")");
             }
-            other => panic!("expected Configuration incomplete for cfg! without target facts"),
+            _other => panic!("expected Configuration incomplete for cfg! without target facts"),
         }
     }
 

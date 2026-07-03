@@ -2,8 +2,6 @@
 //
 // Statement-position mutably-aliased runtime expression sugar.
 
-use syn::Expr;
-
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
