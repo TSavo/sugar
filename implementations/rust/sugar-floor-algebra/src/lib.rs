@@ -18,6 +18,7 @@ pub mod guarded_return;
 pub mod pattern_projection;
 pub mod predicate_value;
 pub mod raise_value;
+pub mod route_raises_operation;
 pub mod symbolic_value;
 pub mod term_dispatch;
 
@@ -32,6 +33,9 @@ pub use pattern_projection::{
 };
 pub use predicate_value::PredicateValue;
 pub use raise_value::{is_raise_like_effect, RaiseValue};
+pub use route_raises_operation::{
+    RouteRaiseHandler, RouteRaisesAccept, RouteRaisesOperation, RouteRaisesVisitor,
+};
 pub use symbolic_value::SymbolicValue;
 pub use term_dispatch::{
     PredicateValueFloorAccept, PredicateValueFloorVisitor, RequiredPredicateValueVisitor,
