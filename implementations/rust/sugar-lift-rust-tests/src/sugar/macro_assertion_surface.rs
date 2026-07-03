@@ -20,7 +20,32 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_assertion_surface(
         "macro_assertion_surface",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                macro_rules! assert_four {
+                    () => {
+                        assert_eq!(2_i32 + 2, 4);
+                    };
+                }
+
+                #[test]
+                fn t_macro_assertion_surface_good() {
+                    assert_four!();
+                }
+            "#,
+            r#"
+                macro_rules! assert_four {
+                    () => {
+                        assert_eq!(2_i32 + 2, 5);
+                    };
+                }
+
+                #[test]
+                fn t_macro_assertion_surface_bad() {
+                    assert_four!();
+                }
+            "#,
+        ),
         recognize,
     );
 

@@ -22,7 +22,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "cstr",
     &["bound_path"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_cstr_good() {
+                assert_eq!(c"abc".count_bytes(), 3);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_cstr_bad() {
+                assert_eq!(c"abc".count_bytes(), 4);
+            }
+        "#,
+    ),
     recognize,
 );
 

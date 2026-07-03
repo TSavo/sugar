@@ -27,7 +27,26 @@ use crate::{Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "maybe_uninit_new",
     &["method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            use std::mem::MaybeUninit;
+
+            #[test]
+            fn t_maybe_uninit_new_good() {
+                let got = unsafe { MaybeUninit::new(7_u32).assume_init() };
+                assert_eq!(got, 7);
+            }
+        "#,
+        r#"
+            use std::mem::MaybeUninit;
+
+            #[test]
+            fn t_maybe_uninit_new_bad() {
+                let got = unsafe { MaybeUninit::new(7_u32).assume_init() };
+                assert_eq!(got, 8);
+            }
+        "#,
+    ),
     recognize,
 );
 

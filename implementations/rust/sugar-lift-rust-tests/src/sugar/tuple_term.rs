@@ -20,7 +20,20 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::tuple_producer(
         "literal_tuple_producer",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_literal_tuple_producer_good() {
+                    assert_eq!((5_i32, 6_i32).0, 5);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_literal_tuple_producer_bad() {
+                    assert_eq!((5_i32, 6_i32).0, 6);
+                }
+            "#,
+        ),
         recognize_tuple_producer,
     );
 

@@ -12,7 +12,20 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "string_add",
         &["binop"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_string_add_good() {
+                    assert_eq!("ab".to_string() + "cd", "abcd");
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_string_add_bad() {
+                    assert_eq!("ab".to_string() + "cd", "abce");
+                }
+            "#,
+        ),
         recognize,
     );
 

@@ -46,7 +46,22 @@ pub(crate) const RUNTIME_ELEM_REASON: &str =
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "literal",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_literal_good() {
+                    let got = [1_i32, 2, 3].into_iter().sum::<i32>();
+                    assert_eq!(got, 6);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_literal_bad() {
+                    let got = [1_i32, 2, 3].into_iter().sum::<i32>();
+                    assert_eq!(got, 7);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 

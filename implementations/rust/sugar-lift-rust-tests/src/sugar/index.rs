@@ -58,7 +58,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "index",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_index_good() {
+                    assert_eq!([10_i32, 20, 30][1], 20);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_index_bad() {
+                    assert_eq!([10_i32, 20, 30][1], 21);
+                }
+            "#,
+        ),
         recognize,
     );
 

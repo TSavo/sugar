@@ -17,7 +17,22 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "value_if",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_value_if_good() {
+                    let flag = true;
+                    assert_eq!(if flag { 5_i32 } else { 6_i32 }, 5);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_value_if_bad() {
+                    let flag = true;
+                    assert_eq!(if flag { 5_i32 } else { 6_i32 }, 6);
+                }
+            "#,
+        ),
         recognize,
     );
 

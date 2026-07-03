@@ -42,7 +42,24 @@ use sugar_ir_symbolic::{num, Term};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "try_from",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            use std::convert::TryFrom;
+
+            #[test]
+            fn t_try_from_good() {
+                assert_eq!(u8::try_from(255_u16).unwrap(), 255_u8);
+            }
+        "#,
+        r#"
+            use std::convert::TryFrom;
+
+            #[test]
+            fn t_try_from_bad() {
+                assert_eq!(u8::try_from(255_u16).unwrap(), 254_u8);
+            }
+        "#,
+    ),
     recognize,
 );
 

@@ -30,7 +30,20 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
     "option_adaptor",
     SugarRole::Term,
     &["map_term"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_option_adaptor_good() {
+                assert_eq!(Some(2_i32).map(|x| x + 3), Some(5_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_option_adaptor_bad() {
+                assert_eq!(Some(2_i32).map(|x| x + 3), Some(6_i32));
+            }
+        "#,
+    ),
     recognize,
 );
 

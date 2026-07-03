@@ -35,7 +35,22 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "array_repeat",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_array_repeat_good() {
+                    let got = [7_i32; 3].into_iter().sum::<i32>();
+                    assert_eq!(got, 21);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_array_repeat_bad() {
+                    let got = [7_i32; 3].into_iter().sum::<i32>();
+                    assert_eq!(got, 22);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 

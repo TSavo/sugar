@@ -33,7 +33,24 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_or
     "constraint_literal_ip_addr_property",
     SugarRole::Constraint,
     &["constraint_bool_expr"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            use std::net::Ipv4Addr;
+
+            #[test]
+            fn t_literal_ip_addr_property_good() {
+                assert!(Ipv4Addr::new(127, 0, 0, 1).is_loopback());
+            }
+        "#,
+        r#"
+            use std::net::Ipv4Addr;
+
+            #[test]
+            fn t_literal_ip_addr_property_bad() {
+                assert!(Ipv4Addr::new(8, 8, 8, 8).is_loopback());
+            }
+        "#,
+    ),
     recognize,
 );
 

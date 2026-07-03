@@ -10,8 +10,8 @@ use sugar_lift_rust_tests::{
     AssertionFactEmission, AssertionFactKind,
 };
 
-const EXPECTED_SEED_CLAIMS: usize = 48;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 157;
+const EXPECTED_SEED_CLAIMS: usize = 78;
+const EXPECTED_ENROLLMENT_FRONTIER: usize = 127;
 const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
 const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 4;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
@@ -691,6 +691,58 @@ fn s9_batch1_pairs_match_real_rust_semantics() {
         "nonzero_assoc_const",
         "nonzero_get",
         "float_literal_method",
+    ];
+    for claim in claims {
+        let witness = witnesses
+            .iter()
+            .find(|witness| witness.claim == claim)
+            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
+        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
+        let lying = run_rust_test_source(claim, "lying", witness.lying);
+        println!(
+            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
+            if truthful { "PASS" } else { "FAIL" },
+            if lying { "PASS" } else { "FAIL" }
+        );
+        assert!(truthful, "{claim} truthful witness must pass as real Rust");
+        assert!(!lying, "{claim} lying witness must fail as real Rust");
+    }
+}
+
+#[test]
+fn s9_batch2_pairs_match_real_rust_semantics() {
+    let witnesses = seed_witnesses();
+    let claims = [
+        "concat_macro",
+        "assertion_surface_relation_macro",
+        "assertion_surface_bounded_literal_macro",
+        "macro_assertion_surface",
+        "assertion_surface_assert_macro",
+        "constraint_bool_expr",
+        "constraint_tuple_decomp",
+        "string_add",
+        "index",
+        "maybe_uninit_new",
+        "maybe_uninit_zeroed",
+        "mem_zeroed",
+        "try_from",
+        "constraint_literal_ip_addr_property",
+        "dyn_any",
+        "cstr",
+        "array_try_from",
+        "literal_tuple_producer",
+        "array_repeat",
+        "format_macro",
+        "block_term",
+        "partition_point",
+        "option_adaptor",
+        "transparent_term",
+        "value_if",
+        "cell_refcell",
+        "literal",
+        "const_composite",
+        "primitive_int_tuple_producer",
+        "slice_search_assertion_surface",
     ];
     for claim in claims {
         let witness = witnesses

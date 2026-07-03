@@ -48,7 +48,20 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::
         "assertion_surface_relation_macro",
         "assertion_surface_assert_macro",
     ],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_slice_search_assertion_surface_good() {
+                assert_eq!([1_i32, 2, 3].split_first(), Some((&1_i32, &[2_i32, 3][..])));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_slice_search_assertion_surface_bad() {
+                assert_eq!([1_i32, 2, 3].split_first(), Some((&2_i32, &[2_i32, 3][..])));
+            }
+        "#,
+    ),
     recognize_assertion_surface,
 );
 

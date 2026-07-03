@@ -11,7 +11,20 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "concat_macro",
         &["macro_term", "reference_term"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_concat_macro_good() {
+                    assert_eq!(concat!("ab", "cd"), "abcd");
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_concat_macro_bad() {
+                    assert_eq!(concat!("ab", "cd"), "abce");
+                }
+            "#,
+        ),
         recognize,
     );
 
