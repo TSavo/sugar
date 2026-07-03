@@ -14,8 +14,32 @@ from sugar_lift_py_tests.factory.proofir_provenance_diagnostic import (
     proofir_formula_provenance_diagnostic,
 )
 from sugar_lift_py_tests.kit_rpc import BodyUniverseDto, FactoryWalkRowDto
+from sugar_lift_py_tests.proofir import ClaimFormula, ConstructionSite, Derived, Provenance
 
 ROOT = Path(__file__).resolve().parents[4]
+
+
+def _claim_formula_from_payload(
+    payload: dict[str, object],
+    *,
+    node_class: str,
+    role: str,
+) -> ClaimFormula:
+    wrapped = ClaimFormula.from_rpc(
+        payload,
+        provenance=Provenance(
+            node_class=node_class,
+            construction_site=ConstructionSite(
+                path="tests/test_proofir_vocab_instruments.py",
+                line=1,
+            ),
+            warrant=Derived(floor_chain=("construction-law-test",)),
+        ),
+        role=role,
+    )
+    assert wrapped is not None
+    return wrapped
+
 
 def test_proofir_vocab_instruments_pin_surviving_counters() -> None:
     report = collect_proofir_vocabulary_frontier(ROOT)
@@ -39,7 +63,7 @@ def test_proofir_vocab_cli_exits_red_with_pinned_vectors(capsys) -> None:
     assert "R(untyped-emission-sites)" not in stdout
     assert "R(formula-fragments-without-provenance):" in stdout
     assert "R(proofir-classes-without-verdict-witnesses): 0" in stdout
-    assert "R(naked-formula-boundary-crossings):" in stdout
+    assert "R(naked-formula-boundary-crossings):" not in stdout
     assert "R(unknown-sort-eq-seats): 1" in stdout
 
 
@@ -66,7 +90,11 @@ def test_proofir_vocab_provenance_counter_is_payload_diagnostic_shape() -> None:
         [
             BodyUniverseDto(
                 name="h#euf#c:call:h(i:5)::assertion",
-                inv={"kind": "atomic", "name": "=", "args": []},
+                inv=_claim_formula_from_payload(
+                    {"kind": "atomic", "name": "=", "args": []},
+                    node_class="EqualityFact",
+                    role="EqualityFact.inv",
+                ),
                 proofir_provenance={
                     "kind": "proofir-provenance",
                     "nodeClass": "EqualityFact",
@@ -74,7 +102,11 @@ def test_proofir_vocab_provenance_counter_is_payload_diagnostic_shape() -> None:
             ),
             BodyUniverseDto(
                 name="t::f::callable",
-                post={"kind": "atomic", "name": "=", "args": []},
+                post=_claim_formula_from_payload(
+                    {"kind": "atomic", "name": "=", "args": []},
+                    node_class="FunctionContract",
+                    role="FunctionContract.post",
+                ),
             ),
         ],
         [

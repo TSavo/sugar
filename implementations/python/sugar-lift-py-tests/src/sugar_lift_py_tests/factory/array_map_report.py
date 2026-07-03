@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -631,7 +632,7 @@ def _walk_row(
     filename: str,
     memento: SourceMementoDto,
     output: str,
-    emitted_formula: dict[str, Any] | None = None,
+    emitted_formula: Mapping[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> FactoryWalkRowDto:
     return FactoryWalkRowDto(

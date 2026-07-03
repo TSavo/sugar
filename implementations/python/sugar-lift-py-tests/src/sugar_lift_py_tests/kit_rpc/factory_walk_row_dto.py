@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,7 +22,7 @@ class FactoryWalkRowDto:
     span: SourceSpanDto | dict[str, Any] | None = None
     reason: str | None = None
     occurrences: int | None = None
-    emitted_formula: dict[str, Any] | None = None
+    emitted_formula: Mapping[str, Any] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_rpc(self) -> dict[str, Any]:

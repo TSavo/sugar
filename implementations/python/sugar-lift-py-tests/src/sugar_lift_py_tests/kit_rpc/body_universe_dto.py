@@ -36,6 +36,10 @@ class BodyUniverseDto:
     kind: str = "contract"
     bridge_source_symbol: str | None = None
 
+    def __post_init__(self) -> None:
+        for slot in ("pre", "post", "inv"):
+            _require_claim_formula_slot(slot, getattr(self, slot))
+
     def to_rpc(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "kind": self.kind,
@@ -61,3 +65,12 @@ class BodyUniverseDto:
         if self.warranted_by is not None:
             out["warrantedBy"] = to_rpc_value(self.warranted_by)
         return out
+
+
+def _require_claim_formula_slot(field_name: str, value: object) -> None:
+    if value is None:
+        return
+    from sugar_lift_py_tests.proofir.scope import ClaimFormula
+
+    if not isinstance(value, ClaimFormula):
+        raise TypeError(f"BodyUniverseDto.{field_name} must be ClaimFormula")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
@@ -189,8 +190,14 @@ class ProvenancedFormula:
         return self.scoped.ir_formula
 
 
-class ClaimFormula(dict[str, Any]):
+@dataclass(frozen=True, init=False, eq=False)
+class ClaimFormula(Mapping[str, Any]):
     """A role-wrapped formula that keeps the old wire bytes while carrying provenance."""
+
+    provenanced: ProvenancedFormula | None
+    _provenance: Provenance
+    role: str
+    _rpc: dict[str, Any]
 
     def __init__(self, provenanced: ProvenancedFormula, *, role: str) -> None:
         if not isinstance(provenanced, ProvenancedFormula):
@@ -207,10 +214,10 @@ class ClaimFormula(dict[str, Any]):
                 requested="claim role",
                 fix="name the proof/report role that owns this formula",
             )
-        dict.__init__(self, formula_to_rpc(provenanced.formula))
-        self.provenanced = provenanced
-        self._provenance = provenanced.provenance
-        self.role = role
+        object.__setattr__(self, "provenanced", provenanced)
+        object.__setattr__(self, "_provenance", provenanced.provenance)
+        object.__setattr__(self, "role", role)
+        object.__setattr__(self, "_rpc", formula_to_rpc(provenanced.formula))
 
     @classmethod
     def from_rpc(
@@ -223,6 +230,13 @@ class ClaimFormula(dict[str, Any]):
         if payload is None:
             return None
         _require_node_provenance(provenance, owner="proofir.scope.ClaimFormula")
+        if not isinstance(payload, Mapping):
+            proofir_construction_gap(
+                owner="proofir.scope.ClaimFormula",
+                observed=type(payload).__name__,
+                requested="formula RPC mapping",
+                fix="deserialize a formula payload before wrapping it with claim provenance",
+            )
         if not role:
             proofir_construction_gap(
                 owner="proofir.scope.ClaimFormula",
@@ -230,11 +244,11 @@ class ClaimFormula(dict[str, Any]):
                 requested="claim role",
                 fix="name the proof/report role that owns this formula",
             )
-        wrapped = dict.__new__(cls)
-        dict.__init__(wrapped, payload)
-        wrapped.provenanced = None
-        wrapped._provenance = provenance
-        wrapped.role = role
+        wrapped = object.__new__(cls)
+        object.__setattr__(wrapped, "provenanced", None)
+        object.__setattr__(wrapped, "_provenance", provenance)
+        object.__setattr__(wrapped, "role", role)
+        object.__setattr__(wrapped, "_rpc", dict(payload))
         return wrapped
 
     @property
@@ -263,8 +277,27 @@ class ClaimFormula(dict[str, Any]):
     def provenance(self) -> Provenance:
         return self._provenance
 
+    def __repr__(self) -> str:
+        return repr(self._rpc)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, ClaimFormula):
+            return self._rpc == other._rpc
+        if isinstance(other, Mapping):
+            return self._rpc == dict(other)
+        return False
+
+    def __getitem__(self, key: str) -> Any:
+        return self._rpc[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._rpc)
+
+    def __len__(self) -> int:
+        return len(self._rpc)
+
     def to_rpc(self) -> dict[str, Any]:
-        return dict(self)
+        return dict(self._rpc)
 
 
 def claim_formula_from_ir(

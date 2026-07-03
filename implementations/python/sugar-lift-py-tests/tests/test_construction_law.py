@@ -199,7 +199,15 @@ def test_equality_fact_derives_key_and_preserves_wire_bytes() -> None:
 
     assert EqualityFact.__module__.endswith(".proofir.nodes.equality_fact")
 
-    expected_inv = json.loads(encode_jcs(formula_to_value(ir_eq(call.ir_term, rhs.ir_term))))
+    expected_formula = ir_eq(call.ir_term, rhs.ir_term)
+    expected_inv = claim_formula_from_ir(
+        expected_formula,
+        var_sorts={**call.free_var_sorts, **rhs.free_var_sorts},
+        allowed_vars=(),
+        provenance=fact.provenance(),
+        role="EqualityFact.inv",
+    )
+    expected_inv_rpc = json.loads(encode_jcs(formula_to_value(expected_formula)))
     expected_name = canonical_euf_callsite_name(call)
     expected_declaration = BodyUniverseDto(
         name=expected_name,
@@ -208,6 +216,7 @@ def test_equality_fact_derives_key_and_preserves_wire_bytes() -> None:
         proofir_provenance=fact.provenance().warrant_memento(),
     ).to_rpc()
 
+    assert expected_inv.to_rpc() == expected_inv_rpc
     assert fact.euf_key == expected_name
     assert repr(fact.denotation()) == repr(ir_eq(call.ir_term, rhs.ir_term))
     assert fact.to_declaration() == expected_declaration
@@ -380,7 +389,8 @@ def test_role_wrappers_refuse_raw_formula_and_missing_provenance() -> None:
         role="construction-law",
     )
 
-    assert wrapped["kind"] == "atomic"
+    assert not isinstance(wrapped, dict)
+    assert wrapped.to_rpc()["kind"] == "atomic"
     assert wrapped.provenance.node_class == "UniverseMint"
 
     with pytest.raises(FactoryGap, match="Provenance"):
@@ -436,6 +446,21 @@ def test_universe_mint_requires_claim_formula_and_preserves_wire_shape() -> None
             formula=formula,
             provenance=None,
         )
+
+
+def test_body_universe_dto_requires_claim_formula_slots() -> None:
+    formula = _claim_formula()
+
+    assert BodyUniverseDto(name="module::typed::assertion", inv=formula).to_rpc()[
+        "inv"
+    ] == formula.to_rpc()
+
+    for slot in ("pre", "post", "inv"):
+        with pytest.raises(TypeError, match=f"BodyUniverseDto.{slot} must be ClaimFormula"):
+            BodyUniverseDto(
+                name=f"module::raw::{slot}",
+                **{slot: {"kind": "atomic", "name": "=", "args": []}},
+            )
 
 
 def test_call_edge_decl_requires_bridge_atom_and_provenance() -> None:

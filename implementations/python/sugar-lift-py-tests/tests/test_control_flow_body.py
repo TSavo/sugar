@@ -46,7 +46,7 @@ def _universe_post(source: str):
     rep = build_literal_call_report(source=source, filename="c.py", memento_file="c.py")
     universe = [c for c in rep.payload.ir if getattr(c, "post", None) is not None]
     assert universe, "the dig must mint a universe for the branching body"
-    return json.dumps(universe[0].post)
+    return json.dumps(universe[0].post.to_rpc())
 
 
 def test_branching_body_lifts_to_a_conjunction_of_guarded_implications():

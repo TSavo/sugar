@@ -48,4 +48,4 @@ def test_import_sugar_digs_imported_callee_into_its_module_source(
         "b64importmod.encodeBase64#euf#c:call:b64importmod.encodeBase64(s:'xyz')::assertion",
     ]
     assert rep.payload.ir[0].bridge_source_symbol == "call:b64importmod.encodeBase64"
-    assert "str.eq-bv-blocks" in json.dumps(rep.payload.ir[0].post)
+    assert "str.eq-bv-blocks" in json.dumps(rep.payload.ir[0].post.to_rpc())
