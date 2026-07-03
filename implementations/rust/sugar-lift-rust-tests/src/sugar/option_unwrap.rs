@@ -195,9 +195,12 @@ pub(crate) fn receiver_resolves_monadic_source(
                 call.method.to_string().as_str(),
                 "map"
                     | "and_then"
+                    | "or_else"
                     | "filter"
                     | "ok_or"
                     | "map_err"
+                    | "ok"
+                    | "err"
                     | "unwrap_or_else"
                     | "unwrap_or"
                     | "unwrap_or_default"

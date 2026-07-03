@@ -286,7 +286,7 @@ fn receiver_resolves_result_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usiz
         Expr::MethodCall(call)
             if matches!(
                 call.method.to_string().as_str(),
-                "map" | "and_then" | "map_err"
+                "map" | "and_then" | "map_err" | "or_else"
             ) =>
         {
             receiver_resolves_result_source(&call.receiver, fcx, depth + 1)
