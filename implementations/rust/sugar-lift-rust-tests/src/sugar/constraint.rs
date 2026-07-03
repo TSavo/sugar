@@ -173,7 +173,20 @@ pub(crate) const IF_PANIC_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_bef
 pub(crate) const NO_PANIC_CALL_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_no_panic_call",
     SugarRole::SupportConstraint,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_no_panic_call_good() {
+                assert_eq!("abc".len(), 3);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_no_panic_call_bad() {
+                assert_eq!("abc".len(), 4);
+            }
+        "#,
+    ),
     recognize_no_panic_call,
 );
 

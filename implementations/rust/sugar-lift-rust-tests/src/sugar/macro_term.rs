@@ -22,7 +22,32 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term(
         "macro_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                macro_rules! add_two {
+                    ($value:expr) => {
+                        $value + 2
+                    };
+                }
+
+                #[test]
+                fn t_macro_term_good() {
+                    assert_eq!(add_two!(3_i32), 5);
+                }
+            "#,
+            r#"
+                macro_rules! add_two {
+                    ($value:expr) => {
+                        $value + 2
+                    };
+                }
+
+                #[test]
+                fn t_macro_term_bad() {
+                    assert_eq!(add_two!(3_i32), 6);
+                }
+            "#,
+        ),
         recognize,
     );
 

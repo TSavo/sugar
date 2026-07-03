@@ -41,7 +41,24 @@ use crate::{token_key, Desugared, Effect, Outcome, RaiseEffect, Sugar, SugarCtx}
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "control_flow_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_question_mark_good() -> Result<(), i32> {
+                    let value = Ok::<i32, i32>(5)?;
+                    assert_eq!(value, 5);
+                    Ok(())
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_question_mark_bad() -> Result<(), i32> {
+                    let value = Ok::<i32, i32>(5)?;
+                    assert_eq!(value, 6);
+                    Ok(())
+                }
+            "#,
+        ),
         recognize_term,
     );
 

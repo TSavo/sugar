@@ -26,7 +26,40 @@ use crate::{
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "cfg_select_assertion_surface",
     SugarRole::AssertionSurface,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            macro_rules! cfg_select {
+                (_ => { $($yes:tt)* }) => {{
+                    $($yes)*
+                }};
+            }
+
+            #[test]
+            fn t_cfg_select_good() {
+                cfg_select! {
+                    _ => {
+                        assert_eq!(2_i32 + 2, 4);
+                    }
+                }
+            }
+        "#,
+        r#"
+            macro_rules! cfg_select {
+                (_ => { $($yes:tt)* }) => {{
+                    $($yes)*
+                }};
+            }
+
+            #[test]
+            fn t_cfg_select_bad() {
+                cfg_select! {
+                    _ => {
+                        assert_eq!(2_i32 + 2, 5);
+                    }
+                }
+            }
+        "#,
+    ),
     recognize,
 );
 

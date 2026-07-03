@@ -24,7 +24,20 @@ use crate::{
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::tuple_producer(
         "size_hint_tuple_producer",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_size_hint_good() {
+                    assert_eq!((0..4).size_hint(), (4, Some(4)));
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_size_hint_bad() {
+                    assert_eq!((0..4).size_hint(), (5, Some(4)));
+                }
+            "#,
+        ),
         recognize,
     );
 

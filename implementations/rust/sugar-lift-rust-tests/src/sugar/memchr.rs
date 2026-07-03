@@ -21,7 +21,28 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "memchr",
     &["call"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
+                haystack.iter().position(|byte| *byte == needle)
+            }
+
+            #[test]
+            fn t_memchr_good() {
+                assert_eq!(memchr(b'b', b"abc"), Some(1));
+            }
+        "#,
+        r#"
+            fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
+                haystack.iter().position(|byte| *byte == needle)
+            }
+
+            #[test]
+            fn t_memchr_bad() {
+                assert_eq!(memchr(b'b', b"abc"), Some(2));
+            }
+        "#,
+    ),
     recognize,
 );
 

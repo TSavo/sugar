@@ -32,7 +32,28 @@ use crate::{FactoryAuditLog, FloatWidthScope};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "match_node",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_match_node_good() {
+                    match 2_i32 {
+                        1 => assert_eq!(10, 11),
+                        2 => assert_eq!(20, 20),
+                        _ => assert_eq!(0, 1),
+                    }
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_match_node_bad() {
+                    match 2_i32 {
+                        1 => assert_eq!(10, 10),
+                        2 => assert_eq!(20, 21),
+                        _ => assert_eq!(0, 0),
+                    }
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
@@ -40,7 +61,28 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::constraint_before(
         "constraint_closed_match",
         &["constraint_bool_expr"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_constraint_closed_match_good() {
+                    assert!(match 2_i32 {
+                        1 => false,
+                        2 => true,
+                        _ => false,
+                    });
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_constraint_closed_match_bad() {
+                    assert!(match 2_i32 {
+                        1 => true,
+                        2 => false,
+                        _ => true,
+                    });
+                }
+            "#,
+        ),
         recognize_constraint,
     );
 

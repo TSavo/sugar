@@ -25,7 +25,30 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "conditional",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_conditional_good() {
+                    let guard = std::env::args().len() > 0;
+                    if guard {
+                        assert_eq!(2_i32 + 2, 4);
+                    } else {
+                        assert_eq!(2_i32 + 2, 4);
+                    }
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_conditional_bad() {
+                    let guard = std::env::args().len() > 0;
+                    if guard {
+                        assert_eq!(2_i32 + 2, 5);
+                    } else {
+                        assert_eq!(2_i32 + 2, 5);
+                    }
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
