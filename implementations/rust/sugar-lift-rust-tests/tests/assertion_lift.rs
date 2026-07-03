@@ -6228,27 +6228,6 @@ fn const_item_range_endpoint_refusal_uses_recursive_const_sugar() {
     );
 }
 
-fn assert_string_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs: &str) {
-    match formula {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Ctor { name, .. } => assert_eq!(name, expected_call),
-                other => panic!("expected call term lhs, got {other:?}"),
-            }
-            match args[1].as_ref() {
-                Term::Const {
-                    value: ConstValue::String(value),
-                    ..
-                } => assert_eq!(value, expected_rhs),
-                other => panic!("expected string rhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected equality atom, got {other:?}"),
-    }
-}
-
 fn assert_real_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs: &str) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -6383,45 +6362,6 @@ fn assert_string_predicate_atom(formula: &Formula, expected_name: &str, expected
             }
         }
         other => panic!("expected string predicate atom, got {other:?}"),
-    }
-}
-
-fn assert_method_len_cmp_atom(
-    formula: &Formula,
-    expected_op: &str,
-    expected_lhs: &str,
-    expected_rhs: i128,
-) {
-    match formula {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, expected_op);
-            assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, "method:len");
-                    assert_eq!(args.len(), 1);
-                    match args[0].as_ref() {
-                        Term::Const {
-                            value: ConstValue::String(value),
-                            sort,
-                        } => {
-                            assert_eq!(value, expected_lhs);
-                            assert_eq!(sort.name, "String");
-                        }
-                        other => panic!("expected method:len receiver, got {other:?}"),
-                    }
-                }
-                other => panic!("expected method:len term lhs, got {other:?}"),
-            }
-            match args[1].as_ref() {
-                Term::Const {
-                    value: ConstValue::Int(value),
-                    ..
-                } => assert_eq!(*value, expected_rhs),
-                other => panic!("expected int rhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected string length comparison atom, got {other:?}"),
     }
 }
 
@@ -11723,19 +11663,6 @@ fn cstr_literals() {
 
 // --- macro-invocation-as-EUF-term tranche (T-FORMAT) ---
 
-fn eq_lhs_name(formula: &Formula) -> String {
-    match formula {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            match args[0].as_ref() {
-                Term::Var { name } => name.clone(),
-                other => panic!("expected Var lhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected equality atom, got {other:?}"),
-    }
-}
-
 #[test]
 fn format_over_literal_binding_dissolves_to_str_const() {
     // SUPERSEDES the old `format_roundtrip_lifts_as_macro_term`: with format sugar, a
@@ -11838,19 +11765,6 @@ fn fmt_arith_bad() {
             r#"format!("{{}}", 2 + 3) == "6" -- must be UNSAT (the arg folds to "5")"#
         );
     }
-}
-
-fn assert_factory_gap_for_site(out: &AdapterOutput, selected: &str, site_needle: &str) {
-    assert!(
-        out.factory_audits.iter().any(|audit| {
-            audit.selected == Some(selected)
-                && audit.site.contains(site_needle)
-                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved
-                && audit.output == "gap"
-        }),
-        "expected factory gap for `{selected}` at `{site_needle}`: {:?}",
-        out.factory_audits
-    );
 }
 
 fn assert_factory_refusal_for_site(
@@ -25501,13 +25415,6 @@ fn t() {
 // only. Verified by the BAD-TWIN FLIP at the composition seam: caller `call:h(2) == 4`
 // plus callee post `call:h(2) == 2 + 1` goes z3-UNSAT.
 // ───────────────────────────────────────────────────────────────────────────
-
-/// The folded int value of a fully grounded equality atom's LHS. Panics if the LHS is
-/// not an int const, i.e. value-call peeling did not reach compiler-axiom bedrock.
-fn grounded_int_lhs(decl: &sugar_ir_symbolic::ContractDecl) -> i128 {
-    let (lhs, _rhs) = single_eq_atom(decl);
-    int_const_value(&lhs)
-}
 
 fn int_const_value(t: &Term) -> i128 {
     match t {

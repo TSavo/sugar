@@ -247,7 +247,6 @@ mod tests {
     // call_method_key/call_arg_count/call_receiver accessors -> build struct field ->
     // verify String floor. No parse_quote!, no StubTerm, no run().
     // The struct holds `method: String` + `receiver: SugarBody<TermFloor>` -- no raw syn.
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     /// Navigate to the tail method-call expression in a one-statement fn body.

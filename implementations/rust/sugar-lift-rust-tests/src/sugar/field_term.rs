@@ -145,7 +145,6 @@ mod tests {
     // -> assert struct fields. No parse_quote!, no StubTerm, no run(). The struct
     // holds ONLY String + FieldBase(SugarBody) + Option<usize> -- zero raw-syn fields
     // -- proving the migration is complete.
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     /// Navigate to the tail-expression term fragment in a one-line fn body.

@@ -153,7 +153,6 @@ fn char_from_impl_exists(dst: IntKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     fn from_call_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
