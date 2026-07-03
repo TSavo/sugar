@@ -92,6 +92,7 @@ Route `lift.rs`'s walkers through the catalog so the ladders collapse into claim
 
 ### Phase 5 — Totality ledger (65% → 100%)
 Promote ratchet-as-test to an enumerated ledger:
+- **Post-#3384 re-scope:** syn-source only. The LLBC/Charon/MIR/marriage seam was excised; there is no second node universe in this campaign.
 - `grammar_ledger` twin over syn node kinds: every (kind, shape) classified lifted / debt / membrane; a syn version bump introducing new variants = loud failure at ledger-check time (the Rust substitute for Python's import-time RuntimeError, since #[non_exhaustive] hides new variants from the compiler).
 - Existing `grammar_totality.rs` histogram becomes the ledger's census input; `UNCOVERED_CEILING` is replaced by exact classification (ceiling-style ratchets tolerate churn inside the budget — the ledger does not).
 - Exit: Δ(unclassified syn constructs) = 0 with the debt list pinned; dunder-frontier-style drains for the debt families follow as post-campaign issues.
