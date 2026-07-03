@@ -281,6 +281,36 @@ There are two acceptable migration routes:
 
 The first route is the least disruptive. The important invariant is that `JsonRpcCompiler` may remain JSON-RPC transport glue, but the in-process backend trait must not remain JSON-shaped.
 
+If the RPC server becomes the JSON frontend, frontend decode failures must not collapse into `Failed(String)`-shaped folklore. Add a typed frontend failure payload and map it to JSON-RPC error `data`:
+
+```rust
+pub enum FrontendErrorKind {
+    MalformedTransport,
+    UnknownInputKind,
+    InvalidTypedIr,
+    UnsupportedLegacyVariant,
+}
+
+pub struct FrontendErrorPayload {
+    pub kind: FrontendErrorKind,
+    pub frontend: String,
+    pub input_format: String,
+    pub path: Option<String>,
+    pub detail: String,
+    pub retirement: Option<String>,
+}
+```
+
+Route 1 is therefore allowed only as a declared compatibility hatch:
+
+- **Owner:** `sugar-ir-compiler` RPC/frontend adapter.
+- **Input:** JSON-RPC `params.ir_json` transport.
+- **Output:** `CompilerInput` or typed `FrontendErrorPayload` in JSON-RPC error `data`.
+- **Addressing:** `path` points at the offending transport/typed-IR position when available.
+- **Failure type:** `FrontendErrorKind`, not only an error string.
+- **Replay inputs:** original request payload plus frontend name/version.
+- **Retirement:** switch callers to a typed compile envelope once the compatibility wire method can be retired.
+
 ### Phase 5: Add binary frontend without touching backends
 
 Add a binary frontend only after the typed boundary exists.
@@ -303,7 +333,20 @@ Acceptance test:
 2. Decode the equivalent binary fixture into `CompilerInput`.
 3. Assert typed equality or canonical equivalence.
 4. Compile both through the same backend.
-5. Assert `CompiledFormula` equality except for explicitly allowed frontend provenance metadata.
+5. Assert `CompiledFormula` equality except for fields admitted by `FrontendProvenancePolicy`.
+
+`FrontendProvenancePolicy` is owned by `sugar-ir-compiler`, not by comments in individual tests. It should be a typed manifest/config row consumed by the equality instrument, for example:
+
+```rust
+pub struct FrontendProvenancePolicy {
+    pub owner: String,
+    pub allowed_fields: Vec<CompiledFormulaFieldPath>,
+    pub reason: String,
+    pub retirement: Option<String>,
+}
+```
+
+The default policy is empty: JSON and binary frontend outputs must be byte-for-byte equal after typed decode and backend compile. Any non-empty allowance is a named compatibility exception with owner and retirement path.
 
 No SMT-LIB/Lean/Coq/Maude backend file should change in this phase.
 
@@ -347,7 +390,7 @@ Allowlist JSON use for:
 
 ### Instrument C: binary frontend zero-backend-diff test
 
-Create a test that compares JSON frontend and binary frontend outputs through at least SMT-LIB and one non-SMT backend. The test should fail if adding the binary frontend requires backend changes or if backend output depends on source serialization.
+Create a test that compares JSON frontend and binary frontend outputs through at least SMT-LIB and one non-SMT backend. The test should fail if adding the binary frontend requires backend changes, if backend output depends on source serialization, or if any output difference is not admitted by the typed `FrontendProvenancePolicy`.
 
 ## 9. Backend ownership after refactor
 
