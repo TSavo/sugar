@@ -1554,21 +1554,32 @@ fn plan_artifact_body(
 fn component_plan_from_plan_artifact(
     artifact: &PlanArtifactMemento,
 ) -> Result<ComponentPlan, String> {
-    let envelope: Value = serde_json::from_slice(&artifact.member_bytes).map_err(|error| {
+    let mut graph = sugar_proof_envelope::ProofGraph::new();
+    graph
+        .push_plan_member_bytes(artifact.member_bytes.clone())
+        .map_err(|error| match error {
+            sugar_proof_envelope::PlanMemberBytesError::InvalidJson(error) => {
+                plan_artifact_replay_refusal(
+                    "invalid-json",
+                    &format!("PlanArtifact member bytes failed JSON decode: {error}"),
+                    "use plan_artifact_memento to mint canonical plan-memento bytes",
+                )
+            }
+            sugar_proof_envelope::PlanMemberBytesError::WrongKind => plan_artifact_replay_refusal(
+                "wrong-member-kind",
+                "PlanArtifact replay member header kind is not `plan-memento`",
+                "pass the plan-memento envelope minted by component_plan::plan_artifact_memento",
+            ),
+        })?;
+    let plan_member = graph.plans().next().ok_or_else(|| {
         plan_artifact_replay_refusal(
-            "invalid-json",
-            &format!("PlanArtifact member bytes failed JSON decode: {error}"),
-            "use plan_artifact_memento to mint canonical plan-memento bytes",
-        )
-    })?;
-    if envelope.pointer("/header/kind").and_then(Value::as_str) != Some("plan-memento") {
-        return Err(plan_artifact_replay_refusal(
             "wrong-member-kind",
             "PlanArtifact replay member header kind is not `plan-memento`",
             "pass the plan-memento envelope minted by component_plan::plan_artifact_memento",
-        ));
-    }
-    let body = envelope.get("body").ok_or_else(|| {
+        )
+    })?;
+    let member_json = plan_member.json();
+    let body = member_json.get("body").ok_or_else(|| {
         plan_artifact_replay_refusal(
             "missing-body",
             "PlanArtifact replay member has no body",
@@ -1583,17 +1594,14 @@ fn component_plan_from_plan_artifact(
         ));
     }
     let recomputed_plan_cid = jcs_cid(body);
-    let header_plan_cid = envelope
-        .pointer("/header/planCid")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            plan_artifact_replay_refusal(
-                "missing-plan-cid",
-                "PlanArtifact header lacks planCid",
-                "mint a plan-memento whose header planCid addresses the body",
-            )
-        })?;
-    if header_plan_cid != recomputed_plan_cid {
+    let header_plan_cid = plan_member.field("planCid").ok_or_else(|| {
+        plan_artifact_replay_refusal(
+            "missing-plan-cid",
+            "PlanArtifact header lacks planCid",
+            "mint a plan-memento whose header planCid addresses the body",
+        )
+    })?;
+    if header_plan_cid.as_str() != recomputed_plan_cid {
         return Err(plan_artifact_replay_refusal(
             "plan-cid-mismatch",
             "PlanArtifact header planCid does not address the JCS body",
@@ -2473,15 +2481,18 @@ done
             &plan,
         )
         .expect("non-empty plan mints PlanArtifact");
-        let envelope: Json =
-            serde_json::from_slice(&artifact.member_bytes).expect("PlanArtifact member JSON");
+        let mut graph = sugar_proof_envelope::ProofGraph::new();
+        graph
+            .push_plan_member_bytes(artifact.member_bytes.clone())
+            .expect("PlanArtifact member is a plan-memento");
+        let plan_member = graph.plans().next().expect("PlanArtifact member view");
+        let envelope = plan_member.json();
 
         assert_eq!(
-            envelope.pointer("/header/kind").and_then(Json::as_str),
-            Some("plan-memento")
-        );
-        assert_eq!(
-            envelope.pointer("/body/kind").and_then(Json::as_str),
+            envelope
+                .get("body")
+                .and_then(|body| body.get("kind"))
+                .and_then(Json::as_str),
             Some("component-plan-artifact")
         );
         assert_eq!(
