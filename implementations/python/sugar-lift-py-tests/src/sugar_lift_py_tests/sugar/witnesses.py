@@ -24,6 +24,9 @@ class SugarWitnessPair:
     lying: WitnessSource
 
 
+SugarWitnesses = SugarWitnessPair | tuple[SugarWitnessPair, ...]
+
+
 @dataclass(frozen=True)
 class PendingWitnesses:
     """Typed staging marker for a registrable sugar awaiting witness enrollment."""

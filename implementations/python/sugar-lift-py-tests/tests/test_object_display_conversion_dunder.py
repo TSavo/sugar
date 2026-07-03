@@ -41,26 +41,6 @@ def _object_identity(class_name: str, blame: str):
     return ctor("py.object.identity", [str_const(class_name), str_const(blame)])
 
 
-def _display_source(
-    *,
-    method_name: str,
-    returned: str,
-) -> str:
-    if method_name == "__format__":
-        method = "    def __format__(self, spec):\n        return spec\n"
-    elif method_name == "__bytes__":
-        method = f"    def __bytes__(self):\n        return b'{returned}'\n"
-    else:
-        method = f"    def __str__(self):\n        return '{returned}'\n"
-    return "class Box:\n" f"{method}"
-
-
-def _forced_status(source: str, expr: str, expected) -> str:
-    value, ctx = _reduce_expr(source, expr)
-    actual = force_floor(value, ctx, owner="display conversion SAT check")
-    return "sat" if actual == expected else "unsat"
-
-
 def test_str_builtin_projects_object_to_dunder_method_bridge() -> None:
     source = """\
 class Box:
@@ -135,34 +115,3 @@ class Box:
         )
     )
     assert force_floor(value, ctx, owner="format dunder bridge") == StringValue("")
-
-
-def test_display_conversion_dunders_emit_sat_and_unsat_twins() -> None:
-    cases = (
-        (
-            "__str__",
-            "str(Box())",
-            "ok",
-            StringValue("ok"),
-            StringValue("bad"),
-        ),
-        (
-            "__bytes__",
-            "bytes(Box())",
-            "ok",
-            SymbolicValue(ctor("py.bytes", [str_const("6f6b")])),
-            SymbolicValue(ctor("py.bytes", [str_const("626164")])),
-        ),
-        (
-            "__format__",
-            'format(Box(), "ok")',
-            "ok",
-            StringValue("ok"),
-            StringValue("bad"),
-        ),
-    )
-    for method_name, expression, returned, good_expected, bad_expected in cases:
-        source = _display_source(method_name=method_name, returned=returned)
-
-        assert _forced_status(source, expression, good_expected) == "sat"
-        assert _forced_status(source, expression, bad_expected) == "unsat"

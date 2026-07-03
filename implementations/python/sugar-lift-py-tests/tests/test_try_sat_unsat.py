@@ -63,11 +63,6 @@ def _write_project(
     )
 
 
-def _callsite_status(doc: dict) -> str:
-    values = _callsite_values(doc)
-    return "sat" if len(set(values)) == 1 else "unsat"
-
-
 def _callsite_values(doc: dict, *, argument: int = 5) -> list[int]:
     values: list[int] = []
     for contract in doc["ir"]:
@@ -243,7 +238,7 @@ def _selected_sugars(doc: dict) -> list[str]:
     return [row["selected"] for row in doc["factoryAuditSummary"]["factoryWalk"]]
 
 
-def test_try_body_sat_and_unsat_twins_go_through_lift_rpc(tmp_path: Path) -> None:
+def test_try_body_lift_rpc_emits_callsite_values(tmp_path: Path) -> None:
     body = (
         "    try:\n"
         "        return x + 1\n"
@@ -260,13 +255,11 @@ def test_try_body_sat_and_unsat_twins_go_through_lift_rpc(tmp_path: Path) -> Non
 
     assert _post_rhs(good_doc) == _add_rhs(1)
     assert _callsite_values(good_doc) == [6]
-    assert _callsite_status(good_doc) == "sat"
     assert _callsite_values(bad_doc) == [6, 7]
-    assert _callsite_status(bad_doc) == "unsat"
     assert "TrySugar" in _selected_sugars(good_doc)
 
 
-def test_try_except_raise_sat_and_unsat_twins_go_through_lift_rpc(
+def test_try_except_raise_lift_rpc_emits_callsite_values(
     tmp_path: Path,
 ) -> None:
     body = (
@@ -285,13 +278,11 @@ def test_try_except_raise_sat_and_unsat_twins_go_through_lift_rpc(
 
     assert _post_rhs(good_doc) == _add_rhs(1)
     assert _callsite_values(good_doc) == [6]
-    assert _callsite_status(good_doc) == "sat"
     assert _callsite_values(bad_doc) == [6, 7]
-    assert _callsite_status(bad_doc) == "unsat"
     assert "TrySugar" in _selected_sugars(good_doc)
 
 
-def test_try_finally_override_sat_and_unsat_twins_go_through_lift_rpc(
+def test_try_finally_override_lift_rpc_emits_callsite_values(
     tmp_path: Path,
 ) -> None:
     body = (
@@ -307,9 +298,7 @@ def test_try_finally_override_sat_and_unsat_twins_go_through_lift_rpc(
 
     assert _post_rhs(good_doc) == _add_rhs(2)
     assert _callsite_values(good_doc) == [7]
-    assert _callsite_status(good_doc) == "sat"
     assert _callsite_values(bad_doc) == [7, 6]
-    assert _callsite_status(bad_doc) == "unsat"
     assert "TrySugar" in _selected_sugars(good_doc)
 
 
@@ -327,9 +316,7 @@ def test_try_finally_inert_body_preserves_complete_universe_through_lift_rpc(
 
     assert _post_rhs(good_doc) == _add_rhs(1)
     assert _callsite_values(good_doc) == [6]
-    assert _callsite_status(good_doc) == "sat"
     assert _callsite_values(bad_doc) == [6, 7]
-    assert _callsite_status(bad_doc) == "unsat"
     assert "TrySugar" in _selected_sugars(good_doc)
 
 

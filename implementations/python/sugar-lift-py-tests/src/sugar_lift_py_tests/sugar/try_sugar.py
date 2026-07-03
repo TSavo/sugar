@@ -13,7 +13,11 @@ from sugar_lift_py_tests.operations import (
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.try_handler import TryHandler
-from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
+from sugar_lift_py_tests.sugar.witnesses import (
+    SugarWitnessPair,
+    SugarWitnesses,
+    WitnessSource,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -40,36 +44,83 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         return site.observed in {"Try", "TryStar"}
 
     @classmethod
-    def witnesses(cls) -> SugarWitnessPair:
-        return SugarWitnessPair(
-            name="try_body",
-            owner_sugar=cls.__name__,
-            family="try",
-            truthful=WitnessSource(
-                source=(
-                    "def wrapped(x):\n"
+    def witnesses(cls) -> SugarWitnesses:
+        def pair(
+            name: str,
+            body: str,
+            truthful: int,
+            lying: int,
+        ) -> SugarWitnessPair:
+            return SugarWitnessPair(
+                name=name,
+                owner_sugar=cls.__name__,
+                family="try",
+                truthful=WitnessSource(
+                    source=(
+                        "def wrapped(x):\n"
+                        f"{body}\n"
+                        "\n"
+                        "def test_wrapped():\n"
+                        f"    assert wrapped(5) == {truthful}\n"
+                    ),
+                    expected="sat",
+                ),
+                lying=WitnessSource(
+                    source=(
+                        "def wrapped(x):\n"
+                        f"{body}\n"
+                        "\n"
+                        "def test_wrapped():\n"
+                        f"    assert wrapped(5) == {lying}\n"
+                    ),
+                    expected="unsat",
+                ),
+            )
+
+        return (
+            pair(
+                "try_body",
+                (
                     "    try:\n"
                     "        return x + 1\n"
                     "    except Exception:\n"
                     "        return 99\n"
-                    "\n"
-                    "def test_wrapped():\n"
-                    "    assert wrapped(5) == 6\n"
                 ),
-                expected="sat",
+                6,
+                7,
             ),
-            lying=WitnessSource(
-                source=(
-                    "def wrapped(x):\n"
+            pair(
+                "try_except_raise",
+                (
+                    "    try:\n"
+                    "        raise ValueError('boom')\n"
+                    "    except ValueError:\n"
+                    "        return x + 1\n"
+                ),
+                6,
+                7,
+            ),
+            pair(
+                "try_finally_override",
+                (
                     "    try:\n"
                     "        return x + 1\n"
-                    "    except Exception:\n"
-                    "        return 99\n"
-                    "\n"
-                    "def test_wrapped():\n"
-                    "    assert wrapped(5) == 7\n"
+                    "    finally:\n"
+                    "        return x + 2\n"
                 ),
-                expected="unsat",
+                7,
+                6,
+            ),
+            pair(
+                "try_finally_inert",
+                (
+                    "    try:\n"
+                    "        return x + 1\n"
+                    "    finally:\n"
+                    "        'cleanup'\n"
+                ),
+                6,
+                7,
             ),
         )
 

@@ -8,6 +8,7 @@ from sugar_lift_py_tests.floor import ArrayLiteral, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -24,6 +25,13 @@ class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSu
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "List"
+
+    @classmethod
+    def witnesses(cls) -> SugarWitnessPair:
+        return _map_method_witness(
+            name="array_literal_map_method",
+            owner_sugar=cls.__name__,
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "ArrayLiteralSugar":
@@ -90,6 +98,28 @@ def _element_blame(element: SugarBody) -> str:
     row = getattr(element, "audit_row", None)
     blame = getattr(row, "blame", None)
     return blame or "<array element>"
+
+
+def _map_method_witness(*, name: str, owner_sugar: str) -> SugarWitnessPair:
+    return SugarWitnessPair(
+        name=name,
+        owner_sugar=owner_sugar,
+        family="array-map",
+        truthful=WitnessSource(
+            source=(
+                "def test_array_map_sugar():\n"
+                "    assert [1, 2, 3].map(lambda x: x + 1) == [2, 3, 4]\n"
+            ),
+            expected="sat",
+        ),
+        lying=WitnessSource(
+            source=(
+                "def test_array_map_sugar():\n"
+                "    assert [1, 2, 3].map(lambda x: x + 1) == [2, 3, 99]\n"
+            ),
+            expected="unsat",
+        ),
+    )
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402

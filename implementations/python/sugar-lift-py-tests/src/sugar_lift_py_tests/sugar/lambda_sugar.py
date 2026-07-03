@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import LambdaCallable
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.array_literal_sugar import _map_method_witness
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -18,6 +20,13 @@ class LambdaSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "Lambda" and len(site.lambda_params()) == 1
+
+    @classmethod
+    def witnesses(cls) -> SugarWitnessPair:
+        return _map_method_witness(
+            name="lambda_map_method",
+            owner_sugar=cls.__name__,
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "LambdaSugar":

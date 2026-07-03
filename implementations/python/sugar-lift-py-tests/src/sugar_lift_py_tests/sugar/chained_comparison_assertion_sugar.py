@@ -19,6 +19,7 @@ from sugar_lift_py_tests.ir import (
 from sugar_lift_py_tests.sugar.not_sugar import NotSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 
 _ORDER_FORMULAS: dict[str, Callable[[Term, Term], Formula]] = {
     "Eq": eq,
@@ -55,6 +56,28 @@ class ChainedComparisonAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         return all(
             can_symbolic_term(operand)
             for operand in [test.compare_left(), *comparators]
+        )
+
+    @classmethod
+    def witnesses(cls) -> SugarWitnessPair:
+        return SugarWitnessPair(
+            name="chained_comparison_literal",
+            owner_sugar=cls.__name__,
+            family="chained-comparison",
+            truthful=WitnessSource(
+                source=(
+                    "def test_device():\n"
+                    "    assert 'cpu' == 'cpu' == 'cpu'\n"
+                ),
+                expected="sat",
+            ),
+            lying=WitnessSource(
+                source=(
+                    "def test_device():\n"
+                    "    assert 'cpu' == 'cpu' == 'gpu'\n"
+                ),
+                expected="unsat",
+            ),
         )
 
     @classmethod

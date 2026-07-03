@@ -6,7 +6,9 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import LambdaCallable
 from sugar_lift_py_tests.operations import MapOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
+from sugar_lift_py_tests.sugar.array_literal_sugar import _map_method_witness
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -19,6 +21,13 @@ class MapSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     @classmethod
     def owns(cls, site) -> bool:
         return _is_map_call(site)
+
+    @classmethod
+    def witnesses(cls) -> SugarWitnessPair:
+        return _map_method_witness(
+            name="map_method",
+            owner_sugar=cls.__name__,
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "MapSugar":
