@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from sugar_lift_py_tests.ir import _Atomic, _Connective, _Quantifier
+from sugar_lift_py_tests.ir import Formula as IrFormula
 from sugar_lift_py_tests.proofir._errors import proofir_construction_gap
-from sugar_lift_py_tests.proofir.formulas import Formula
+from sugar_lift_py_tests.proofir.formulas import Formula, formula_from_ir, formula_to_rpc
 from sugar_lift_py_tests.proofir.sorts import Sort
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.proofir.nodes import Provenance
 
 
 @dataclass(frozen=True, init=False)
@@ -111,6 +115,177 @@ class PreCondition:
         return self.closed.ir_formula
 
 
+@dataclass(frozen=True, init=False)
+class OpenFormula:
+    formula: Formula
+
+    def __init__(self, formula: Formula) -> None:
+        _require_tiny_formula(formula, owner="proofir.scope.OpenFormula")
+        object.__setattr__(self, "formula", formula)
+
+    @property
+    def ir_formula(self):
+        return self.formula.ir_formula
+
+
+@dataclass(frozen=True, init=False)
+class ScopedFormula:
+    open_formula: OpenFormula
+    allowed_vars: Mapping[str, Sort]
+    closed: ClosedFormula
+
+    def __init__(
+        self,
+        formula: Formula | OpenFormula,
+        *,
+        allowed_vars: Mapping[str, Sort],
+    ) -> None:
+        open_formula = formula if isinstance(formula, OpenFormula) else OpenFormula(formula)
+        _require_sorted_scope(
+            open_formula.formula,
+            formals=allowed_vars,
+            extra={},
+            owner="proofir.scope.ScopedFormula",
+        )
+        closed = ClosedFormula(open_formula.formula, allowed_vars=allowed_vars.keys())
+        object.__setattr__(self, "open_formula", open_formula)
+        object.__setattr__(self, "allowed_vars", dict(allowed_vars))
+        object.__setattr__(self, "closed", closed)
+
+    @property
+    def formula(self) -> Formula:
+        return self.open_formula.formula
+
+    @property
+    def ir_formula(self):
+        return self.closed.ir_formula
+
+
+@dataclass(frozen=True, init=False)
+class ProvenancedFormula:
+    scoped: ScopedFormula
+    provenance: Provenance
+
+    def __init__(self, scoped: ScopedFormula, *, provenance: Provenance) -> None:
+        if not isinstance(scoped, ScopedFormula):
+            proofir_construction_gap(
+                owner="proofir.scope.ProvenancedFormula",
+                observed=type(scoped).__name__,
+                requested="ScopedFormula",
+                fix="scope the formula before adding provenance",
+            )
+        _require_node_provenance(
+            provenance, owner="proofir.scope.ProvenancedFormula"
+        )
+        object.__setattr__(self, "scoped", scoped)
+        object.__setattr__(self, "provenance", provenance)
+
+    @property
+    def formula(self) -> Formula:
+        return self.scoped.formula
+
+    @property
+    def ir_formula(self):
+        return self.scoped.ir_formula
+
+
+class ClaimFormula(dict[str, Any]):
+    """A role-wrapped formula that keeps the old wire bytes while carrying provenance."""
+
+    def __init__(self, provenanced: ProvenancedFormula, *, role: str) -> None:
+        if not isinstance(provenanced, ProvenancedFormula):
+            proofir_construction_gap(
+                owner="proofir.scope.ClaimFormula",
+                observed=type(provenanced).__name__,
+                requested="ProvenancedFormula",
+                fix="attach construction provenance before a formula can enter a claim slot",
+            )
+        if not role:
+            proofir_construction_gap(
+                owner="proofir.scope.ClaimFormula",
+                observed="empty role",
+                requested="claim role",
+                fix="name the proof/report role that owns this formula",
+            )
+        dict.__init__(self, formula_to_rpc(provenanced.formula))
+        self.provenanced = provenanced
+        self._provenance = provenanced.provenance
+        self.role = role
+
+    @classmethod
+    def from_rpc(
+        cls,
+        payload: Mapping[str, Any] | None,
+        *,
+        provenance: Provenance,
+        role: str,
+    ) -> ClaimFormula | None:
+        if payload is None:
+            return None
+        _require_node_provenance(provenance, owner="proofir.scope.ClaimFormula")
+        if not role:
+            proofir_construction_gap(
+                owner="proofir.scope.ClaimFormula",
+                observed="empty role",
+                requested="claim role",
+                fix="name the proof/report role that owns this formula",
+            )
+        wrapped = dict.__new__(cls)
+        dict.__init__(wrapped, payload)
+        wrapped.provenanced = None
+        wrapped._provenance = provenance
+        wrapped.role = role
+        return wrapped
+
+    @property
+    def formula(self) -> Formula:
+        if self.provenanced is None:
+            proofir_construction_gap(
+                owner="proofir.scope.ClaimFormula",
+                observed="wire-only claim formula",
+                requested="constructed ProvenancedFormula",
+                fix="ask the owning ProofIR node for denotation before wire lowering",
+            )
+        return self.provenanced.formula
+
+    @property
+    def ir_formula(self):
+        if self.provenanced is None:
+            proofir_construction_gap(
+                owner="proofir.scope.ClaimFormula",
+                observed="wire-only claim formula",
+                requested="constructed ProvenancedFormula",
+                fix="ask the owning ProofIR node for denotation before wire lowering",
+            )
+        return self.provenanced.ir_formula
+
+    @property
+    def provenance(self) -> Provenance:
+        return self._provenance
+
+    def to_rpc(self) -> dict[str, Any]:
+        return dict(self)
+
+
+def claim_formula_from_ir(
+    ir_formula: IrFormula,
+    *,
+    var_sorts: Mapping[str, Sort],
+    allowed_vars: Iterable[str],
+    provenance: Provenance,
+    role: str,
+) -> ClaimFormula:
+    allowed = tuple(allowed_vars)
+    scoped = ScopedFormula(
+        formula_from_ir(ir_formula, var_sorts=var_sorts),
+        allowed_vars={name: var_sorts[name] for name in allowed},
+    )
+    return ClaimFormula(
+        ProvenancedFormula(scoped, provenance=provenance),
+        role=role,
+    )
+
+
 def _is_ir_formula(value: object) -> bool:
     return isinstance(value, (_Atomic, _Connective, _Quantifier))
 
@@ -167,4 +342,25 @@ def _require_sorted_scope(
         )
 
 
-__all__ = ["ClosedFormula", "PostCondition", "PreCondition"]
+def _require_node_provenance(provenance: object, *, owner: str) -> None:
+    from sugar_lift_py_tests.proofir.nodes import Provenance
+
+    if not isinstance(provenance, Provenance):
+        proofir_construction_gap(
+            owner=owner,
+            observed=type(provenance).__name__,
+            requested="Provenance",
+            fix="construct the formula with Stated or Derived provenance",
+        )
+
+
+__all__ = [
+    "ClaimFormula",
+    "ClosedFormula",
+    "OpenFormula",
+    "PostCondition",
+    "PreCondition",
+    "ProvenancedFormula",
+    "ScopedFormula",
+    "claim_formula_from_ir",
+]

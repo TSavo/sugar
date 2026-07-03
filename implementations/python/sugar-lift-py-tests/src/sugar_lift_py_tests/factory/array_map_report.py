@@ -21,6 +21,17 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceSpanDto,
 )
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.proofir import (
+    BridgeAtom,
+    CallEdgeDecl,
+    ConstructionSite,
+    Derived,
+    IntSort,
+    Provenance,
+    Sort,
+    UniverseMint,
+    claim_formula_from_ir,
+)
 from sugar_lift_py_tests.sugar.array_literal_sugar import ArrayLiteralSugar
 from sugar_lift_py_tests.sugar.list_sugar import list_sugar
 
@@ -210,13 +221,21 @@ def _lift_fluent_array_map_assert(
             for left, right in zip(actual_items, expected_items)
         ]
     )
-    inv = json.loads(encode_jcs(formula_to_value(formula)))
-    contract = BodyUniverseDto(
-        name=f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar",
-        out_binding="out",
-        inv=inv,
-        source_warrants=[statement_memento],
+    inv = _claim_formula(
+        formula,
+        stmt,
+        memento_file,
+        role="python.array-map-sugar",
+        node_class=UniverseMint.node_class,
     )
+    contract = UniverseMint(
+        name=f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar",
+        slot="inv",
+        formula=inv,
+        provenance=inv.provenance,
+        out_binding="out",
+        source_warrants=(statement_memento,),
+    ).to_body_universe()
     rows = [
         _walk_row(
             "ArrayLiteralSugar",
@@ -327,10 +346,14 @@ def _lift_native_list_map_assert(
         contract_name=assertion_contract_name,
     )
 
-    callable_post = json.loads(
-        encode_jcs(
-            formula_to_value(eq(make_var("out"), make_var(callable_sugar.return_name)))
-        )
+    callable_post = _claim_formula(
+        eq(make_var("out"), make_var(callable_sugar.return_name)),
+        stmt,
+        memento_file,
+        role="python.callable-sugar",
+        node_class=UniverseMint.node_class,
+        var_sorts={"out": IntSort(), callable_sugar.return_name: IntSort()},
+        allowed_vars=("out", callable_sugar.return_name),
     )
     formula = and_(
         [eq(num(len(actual_items)), num(len(expected_items)))]
@@ -339,30 +362,40 @@ def _lift_native_list_map_assert(
             for left, right in zip(actual_items, expected_items)
         ]
     )
-    inv = json.loads(encode_jcs(formula_to_value(formula)))
-    callable_contract = BodyUniverseDto(
-        name=callable_contract_name,
-        out_binding="out",
-        post=callable_post,
-        source_warrants=[callable_memento],
+    inv = _claim_formula(
+        formula,
+        stmt,
+        memento_file,
+        role="python.array-map-sugar",
+        node_class=UniverseMint.node_class,
     )
+    callable_contract = UniverseMint(
+        name=callable_contract_name,
+        slot="post",
+        formula=callable_post,
+        provenance=callable_post.provenance,
+        out_binding="out",
+        source_warrants=(callable_memento,),
+    ).to_body_universe()
     callsite = _source_locus_string(
         memento_file,
         line=list_sugar_value.body.source_line,
         col=list_sugar_value.body.source_col,
     )
-    assertion_contract = BodyUniverseDto(
+    assertion_contract = UniverseMint(
         name=assertion_contract_name,
+        slot="inv",
+        formula=inv,
+        provenance=inv.provenance,
         out_binding="out",
-        inv=inv,
-        source_warrants=[statement_memento],
+        source_warrants=(statement_memento,),
         warranted_by=CallsiteFactDto(
             contract_name=callable_contract_name,
             callsite=callsite,
             fact=callable_post,
             source_memento=statement_memento,
         ),
-    )
+    ).to_body_universe()
     rows = [
         _walk_row(
             "FunctionRefSugar",
@@ -415,13 +448,23 @@ def _lift_native_list_map_assert(
         ],
         rows,
         [
-            {
-                "kind": "call-edge",
-                "sourceContract": callable_contract.name,
-                "targetSymbol": callable_name,
-                "targetContract": assertion_contract.name,
-                "callsite": callsite,
-            }
+            CallEdgeDecl(
+                bridge=BridgeAtom(
+                    source_contract=callable_contract.name,
+                    target_symbol=callable_name,
+                    target_contract=assertion_contract.name,
+                    callsite=callsite,
+                ),
+                provenance=Provenance(
+                    node_class=CallEdgeDecl.node_class,
+                    construction_site=ConstructionSite(
+                        path=memento_file,
+                        line=stmt.line,
+                        column=stmt.col,
+                    ),
+                    warrant=Derived(floor_chain=("array-map-call-edge",)),
+                ),
+            ).to_declaration()
         ],
     )
 
@@ -467,6 +510,34 @@ def _callsite_string(memento_file: str, node: SourceFragment) -> str:
 
 def _source_locus_string(memento_file: str, *, line: int, col: int) -> str:
     return f"{memento_file.replace(os.sep, '/')}:" f"{line}:{col}"
+
+
+def _claim_formula(
+    formula,
+    stmt: SourceFragment,
+    memento_file: str,
+    *,
+    role: str,
+    node_class: str,
+    var_sorts: dict[str, Sort] | None = None,
+    allowed_vars: tuple[str, ...] | None = None,
+):
+    sorts = var_sorts or {}
+    return claim_formula_from_ir(
+        formula,
+        var_sorts=sorts,
+        allowed_vars=allowed_vars or tuple(sorts),
+        provenance=Provenance(
+            node_class=node_class,
+            construction_site=ConstructionSite(
+                path=memento_file,
+                line=stmt.line,
+                column=stmt.col,
+            ),
+            warrant=Derived(floor_chain=(role,)),
+        ),
+        role=role,
+    )
 
 
 def _callable_source_audit(

@@ -14,7 +14,7 @@ def proofir_formula_provenance_diagnostic(
         for field_name in ("pre", "post", "inv"):
             if getattr(contract, field_name) is None:
                 continue
-            if _contract_field_has_proofir_provenance(contract):
+            if _contract_field_has_proofir_provenance(contract, field_name):
                 continue
             missing.append(
                 {
@@ -25,6 +25,8 @@ def proofir_formula_provenance_diagnostic(
             )
     for row in factory_walk:
         if row.emitted_formula is None:
+            continue
+        if _formula_value_has_proofir_provenance(row.emitted_formula):
             continue
         missing.append(
             {
@@ -51,7 +53,11 @@ def _node_class_for_contract_field(contract: BodyUniverseDto, field_name: str) -
     return "FunctionContract"
 
 
-def _contract_field_has_proofir_provenance(contract: BodyUniverseDto) -> bool:
+def _contract_field_has_proofir_provenance(
+    contract: BodyUniverseDto, field_name: str
+) -> bool:
+    if _formula_value_has_proofir_provenance(getattr(contract, field_name)):
+        return True
     if contract.proofir_provenance is not None:
         return True
     for warrant in contract.source_warrants:
@@ -62,4 +68,11 @@ def _contract_field_has_proofir_provenance(contract: BodyUniverseDto) -> bool:
             rpc = to_rpc()
             if isinstance(rpc, dict) and rpc.get("kind") == "proofir-provenance":
                 return True
+    return False
+
+
+def _formula_value_has_proofir_provenance(value: object) -> bool:
+    provenance = getattr(value, "provenance", None)
+    if provenance is not None:
+        return True
     return False

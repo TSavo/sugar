@@ -315,6 +315,10 @@ from .function_contract import (  # noqa: E402
     FunctionContractBuilder,
 )
 from .refusal_record import RefusalRecord  # noqa: E402
+from .audit_memento import AuditLocus, AuditMemento  # noqa: E402
+from .call_edge_decl import BridgeAtom, CallEdgeDecl  # noqa: E402
+from .universe_mint import BodyUniverse, UniverseMint  # noqa: E402
+from .vendor_conjoin import FactAtom, UniverseAtom, VendorConjoin  # noqa: E402
 
 
 REGISTERED_PROOFIR_NODE_CLASSES: tuple[type[Any], ...] = (
@@ -323,10 +327,20 @@ REGISTERED_PROOFIR_NODE_CLASSES: tuple[type[Any], ...] = (
     RefusalRecord,
 )
 
+_ADDITIONAL_PROOFIR_WITNESS_CLASSES: tuple[type[Any], ...] = (
+    CallEdgeDecl,
+    AuditMemento,
+    UniverseMint,
+    VendorConjoin,
+)
+
 
 def registered_verdict_witnesses() -> tuple[tuple[str, bool, bool], ...]:
     registrations: list[tuple[str, bool, bool]] = []
-    for node_class in REGISTERED_PROOFIR_NODE_CLASSES:
+    for node_class in (
+        *REGISTERED_PROOFIR_NODE_CLASSES,
+        *_ADDITIONAL_PROOFIR_WITNESS_CLASSES,
+    ):
         pair = node_class.verdict_witnesses()
         registrations.append(
             (

@@ -20,13 +20,14 @@ ROOT = Path(__file__).resolve().parents[4]
 def test_proofir_vocab_instruments_pin_surviving_counters() -> None:
     report = collect_proofir_vocabulary_frontier(ROOT)
 
-    assert report.formula_fragments_without_provenance > 0
+    assert report.formula_fragments_without_provenance == 0
     assert (
         report.formula_fragments_without_provenance
         == len(report.provenance.missing)
     )
-    assert report.proofir_classes_without_verdict_witnesses == 4
-    assert report.naked_formula_boundary_crossings > 0
+    assert report.proofir_classes_without_verdict_witnesses == 0
+    assert report.naked_formula_boundary_crossings == 0
+    assert report.unknown_sort_equality_seats == 1
 
 
 def test_proofir_vocab_cli_exits_red_with_pinned_vectors(capsys) -> None:
@@ -37,8 +38,9 @@ def test_proofir_vocab_cli_exits_red_with_pinned_vectors(capsys) -> None:
     assert "ProofIR semantic vocabulary frontier" in stdout
     assert "R(untyped-emission-sites)" not in stdout
     assert "R(formula-fragments-without-provenance):" in stdout
-    assert "R(proofir-classes-without-verdict-witnesses): 4" in stdout
+    assert "R(proofir-classes-without-verdict-witnesses): 0" in stdout
     assert "R(naked-formula-boundary-crossings):" in stdout
+    assert "R(unknown-sort-eq-seats): 1" in stdout
 
 
 def test_proofir_vocab_provenance_counter_tooth() -> None:

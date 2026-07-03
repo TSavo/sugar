@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.effect import (
@@ -25,6 +25,11 @@ from . import (
     _require_provenance,
     _witness_provenance,
 )
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.factory.floor_contract_agreement import (
+        FloorContractAgreementViolation,
+    )
 
 
 @dataclass(frozen=True, init=False)
@@ -116,7 +121,9 @@ class RefusalRecord:
         }
 
     @staticmethod
-    def agreement_violation_diagnostic(violation: object) -> dict[str, Any]:
+    def agreement_violation_diagnostic(
+        violation: FloorContractAgreementViolation,
+    ) -> dict[str, Any]:
         from sugar_lift_py_tests.factory.floor_contract_agreement import (
             FloorContractAgreementViolation,
         )
