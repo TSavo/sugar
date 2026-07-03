@@ -1,5 +1,5 @@
 // Package sample is a Go library that DECLARES a Sugar boundary on one of
-// its functions, the way rust (`#[sugar::sugar(...)]`) and java authors do.
+// its functions, the way Rust native annotations and Java authors do.
 // The `//sugar:sugar(...)` doc-comment directive is the Go authoring idiom
 // (analogous to `//go:generate` / `//go:build`). Running the authoring surface
 // (`sugar mint` with the go-bind / go-contracts plugins) lifts ONLY the

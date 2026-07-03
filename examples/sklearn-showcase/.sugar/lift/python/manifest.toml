@@ -9,7 +9,8 @@ command = [
     "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src",
     "/tmp/sklearn-witness-venv/bin/python",
     "-m",
-    "sugar_lift_py_tests.lsp",
+    "sugar_lift_py_tests.lift_rpc",
+    "--rpc",
 ]
 working_dir = "."
 

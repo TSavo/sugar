@@ -435,7 +435,7 @@ fn test3_kit_dispatch_content_deterministic() {
     );
 
     let rust_source = r#"
-/// #[sugar::contract(post = "result >= 0")]
+/// #[ensures(result >= 0)]
 pub fn abs_value(x: i64) -> i64 {
     if x < 0 { -x } else { x }
 }

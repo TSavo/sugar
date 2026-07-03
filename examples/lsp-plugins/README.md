@@ -151,7 +151,7 @@ fn parseInt(s: []const u8) i32 { ... }
 
 **Rust plugin** (attributes are ordinary Rust syntax consumed by the plugin):
 ```rust
-#[sugar::implement(target = "bafy...js-parseInt-v24")]
+#[ensures(result == parse_int_spec(s))]
 fn parse_int(s: &str) -> i32 { ... }
 ```
 

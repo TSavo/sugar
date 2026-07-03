@@ -126,7 +126,7 @@ $ sugar prove examples/voltron-demo
 
 **SUPERSEDED AGAIN — final state below.** With #1580 also landed
 (walk_rpc now emits a sibling `kind: contract` decl per
-`#[sugar::sugar]`, cmd_mint mints it into the shim's `.proof`),
+native library-binding metadata, cmd_mint mints it into the shim's `.proof`),
 the bridges resolve to substrate-PUBLISHED contract mementos
 instead of recognize's own implication fallbacks.
 
@@ -142,7 +142,7 @@ $ sugar prove examples/voltron-demo
 The full Voltron loop end-to-end with substrate-honest provenance:
 
 1. **Lift** — walk_rpc walks the shim source, emits two records
-   per `#[sugar::sugar(...)]` annotation:
+   per native library-binding declaration:
    a. `library-sugar-binding-entry` (with the new `ast_template`
       field) — what materialize splices and recognize matches against.
    b. `kind: contract` decl with a trivial-identity post — what

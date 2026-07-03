@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # pandas showcase: the same two-axis correctness claim as numpy-showcase, one
-# rung up the ladder. The next library after numpy is NOT a new package -- it is
-# the SAME one lifter (sugar_lift_py_tests.assertion_lsp), which learns pandas's
-# vocabulary from each test file's imports plus a dropped-in data file,
-# .sugar/vocab-exceptions/pandas.testing.json. This example differs from
+# rung up the ladder. The Python factory lift RPC handles both the plain pytest
+# surface and the pandas.testing surface; pandas-specific helper exceptions live
+# in .sugar/vocab-exceptions/pandas.testing.json. This example differs from
 # numpy-showcase only by that exception file and pointing the witness venv at pandas.
 #
 #   mint   — three lift surfaces run over the project: the plain pytest CONSISTENCY

@@ -13,7 +13,7 @@ IDE (VS Code, Neovim, Emacs)
   ↓ LSP messages
 Sugar Language Server (per language, swappable)
   ├── Text Document Synchronization (open/change/close)
-  ├── Annotation Extraction (#[sugar::implement], etc.)
+  ├── Annotation Extraction (native contract annotations)
   ├── Position Mapping (line/col ↔ symbol)
   └── JSON-RPC Invocation (configurable backend)
         ↓
@@ -116,7 +116,7 @@ The server advertises these LSP capabilities:
 
 On document open or change, the server:
 1. Parses the document with tree-sitter (or host-language parser)
-2. Extracts `#[sugar::implement]`, `#[sugar::contract]`, `#[sugar::verify]` annotations
+2. Extracts native implementation, requirement, and postcondition annotations
 3. Resolves target contract CIDs against the `.proof` index
 4. Queues background verification for new or changed functions
 
@@ -135,7 +135,7 @@ On document open or change, the server:
 }
 ```
 
-**Response (on function with `#[sugar::implement]`):**
+**Response (on a function with a native implementation annotation):**
 ```json
 {
   "jsonrpc": "2.0",
@@ -351,9 +351,9 @@ When the user types, the server:
 4. Publishes diagnostics when results arrive
 
 The verification queue is **prioritized**:
-1. Functions with `#[sugar::implement]` (highest — explicit contract)
-2. Functions with `#[sugar::verify]` (high — need verification)
-3. Functions with `#[sugar::contract]` (medium — may affect callers)
+1. Functions with native implementation annotations (highest — explicit contract)
+2. Functions with native verification annotations (high — need verification)
+3. Functions with native `#[requires]` / `#[ensures]` contracts (medium — may affect callers)
 4. Call sites to verified functions (low — inherited verification)
 
 ## Workspace Indexing
@@ -374,7 +374,7 @@ On workspace open, the server:
 
 3. **Scans for source annotations:**
    - Tree-sitter parse of all source files
-   - Extract `#[sugar::implement]`, `#[sugar::contract]`, `#[sugar::verify]`
+   - Extract native implementation, requirement, and postcondition annotations
    - Build symbol → contract CID mapping
 
 4. **Builds bridge graph:**

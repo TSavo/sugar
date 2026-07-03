@@ -1,12 +1,12 @@
 # pandas showcase
 
 The next library up the ladder from numpy is **pandas**, and standing it up is
-not a research project: it is **not even a new package**. It is the **same one
-lifter** (`sugar_lift_py_tests.assertion_lsp`), which learns pandas's vocabulary
-from each test file's imports plus a dropped-in data file,
-`.sugar/vocab-exceptions/pandas.testing.json` (the structurally-opaque remainder,
-no code). This example differs from [`numpy-showcase`](../numpy-showcase) only by
-that exception file and pointing the witness venv at pandas.
+not a research project: it is **not even a new package**. The Python factory
+lift RPC handles both the plain pytest surface and the pandas testing surface;
+`.sugar/vocab-exceptions/pandas.testing.json` carries the structurally opaque
+pandas helper exceptions. This example differs from
+[`numpy-showcase`](../numpy-showcase) only by that exception file and pointing
+the witness venv at pandas.
 
 ```sh
 ./run.sh

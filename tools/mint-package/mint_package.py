@@ -288,7 +288,7 @@ def main():
         "#!/usr/bin/env bash\nset -euo pipefail\n"
         f'export PYTHONPATH="{REPO}/implementations/python/sugar-lift-py-tests/src:'
         f'{REPO}/implementations/python/sugar-lift-python-source/src:{site}"\n'
-        f'exec "{kit_py}" -m sugar_lift_py_tests.lsp\n'
+        f'exec "{kit_py}" -m sugar_lift_py_tests.lift_rpc --rpc\n'
     )
     os.chmod(shim, 0o755)
     open(os.path.join(lift_dir, "manifest.toml"), "w").write(

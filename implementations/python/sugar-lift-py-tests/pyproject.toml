@@ -20,12 +20,8 @@ dependencies = [
 test = ["pytest>=7", "black>=25.1.0", "pyright==1.1.411"]
 
 [project.scripts]
-sugar-lsp-python = "sugar_lift_py_tests.lsp:main"
 sugar-lift-python = "sugar_lift_py_tests.lift_rpc:main"
 sugar-python-factory-floor-idd = "sugar_lift_py_tests.idd.cli:main"
-# The persistent editor language server (LSP wire protocol; renders `sugar
-# prove` as red squiggles). Distinct from the batch lift plugin above.
-sugar-editor-lsp-python = "sugar_lift_py_tests.editor_lsp:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

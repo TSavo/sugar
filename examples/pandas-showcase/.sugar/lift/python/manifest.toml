@@ -2,15 +2,16 @@ name = "python-lift"
 version = "0.1.0-draft"
 protocol_version = "pep/1.7.0"
 kind = "lift"
-# The plain pytest bare-assert CONSISTENCY seat (sugar_lift_py_tests). Scalar
-# assertions are where z3's teeth are. Invoked module-form over PYTHONPATH so no
-# console script needs installing in the venv.
+# The plain pytest bare-assert CONSISTENCY seat. Scalar assertions are where
+# z3's teeth are. Invoked module-form over PYTHONPATH so no console script needs
+# installing in the venv.
 command = [
     "/usr/bin/env",
     "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src",
     "/tmp/pandas-witness-venv/bin/python",
     "-m",
-    "sugar_lift_py_tests.lsp",
+    "sugar_lift_py_tests.lift_rpc",
+    "--rpc",
 ]
 working_dir = "."
 

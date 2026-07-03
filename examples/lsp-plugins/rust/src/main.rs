@@ -44,10 +44,10 @@ fn main() {
     }
 
     let re_impl = Regex::new(
-        r#"#\[sugar::implement\s*\(\s*target\s*=\s*"([^"]+)"\s*\)\]"#
+        r#"#\[ensures\s*\(\s*result\s*==\s*([^\)]*)\)\]"#
     ).unwrap();
-    let re_contract = Regex::new(r#"#\[sugar::contract"#).unwrap();
-    let re_verify = Regex::new(r#"#\[sugar::verify"#).unwrap();
+    let re_contract = Regex::new(r#"#\[requires"#).unwrap();
+    let re_verify = Regex::new(r#"#\[ensures"#).unwrap();
     let re_fn = Regex::new(r#"\bfn\s+(\w+)"#).unwrap();
 
     let stdin = std::io::stdin();

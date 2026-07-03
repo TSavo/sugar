@@ -14,10 +14,10 @@ Sugar's Rust kit ships two authoring surfaces for contracts:
    `#[path]` and drains the kit's process-local `CONTRACT_COLLECTOR`
    after running each `invariants()`.
 
-2. **`#[sugar::contract(...)]` decorators** placed directly above
-   the function being constrained. The decorator emits a hidden static
-   `ContractRegistration` collected by the `inventory` crate's
-   distributed slice.
+2. **Native contract annotations such as `#[requires]` and
+   `#[ensures]`** placed directly above the function being constrained.
+   The annotation surface emits a hidden static `ContractRegistration`
+   collected by the `inventory` crate's distributed slice.
 
 Both surfaces produce the same value: a
 `sugar_ir_symbolic::ContractDecl` with optional `pre` / `post` /

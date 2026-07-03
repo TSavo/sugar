@@ -16,7 +16,7 @@ principled refusal, none by a silent pass.
 Four lift surfaces are conjoined by one `sugar mint`, not two:
 
 ```
-rust-bind          sugar boundaries (#[sugar::sugar])
+rust-bind          native library-binding contracts
 rust-contracts     #[test] asserts -> inv witnessed facts
 rust-fn-contracts  every production fn -> body-bearing formals + pre + post
 rust-implications  every intra-body call -> a kind:bridge memento

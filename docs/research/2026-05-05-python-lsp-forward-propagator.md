@@ -41,7 +41,7 @@ def main() -> None:
             )
 ```
 
-Entry point: `python -m sugar_lift_py_tests.lsp` or `from sugar_lift_py_tests.lsp import main; main()`.
+Entry point: `python -m sugar_lift_py_tests.lift_rpc --rpc`.
 
 **Gap: no standalone binary.** Unlike Go (`cmd/sugar-lsp-go/main.go`) and PHP (`sugar-lift/src/lspd.php`), the Python LSP has no dedicated binary entry point. It lives as a module inside the test package. For the ForwardPropagator to spawn it as a subprocess, a thin binary wrapper is needed at `implementations/python/bin/sugar-lsp-python`:
 
@@ -49,7 +49,7 @@ Entry point: `python -m sugar_lift_py_tests.lsp` or `from sugar_lift_py_tests.ls
 #!/usr/bin/env python3
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'sugar-lift-py-tests', 'src'))
-from sugar_lift_py_tests.lsp import main
+from sugar_lift_py_tests.lift_rpc import main
 main()
 ```
 

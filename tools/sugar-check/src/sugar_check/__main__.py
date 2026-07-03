@@ -28,7 +28,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-KIT_MODULE = "sugar_lift_py_tests.lsp"
+KIT_MODULE = "sugar_lift_py_tests.lift_rpc"
 
 CONFIG_TOML = """[[plugins]]
 name = "python-tests-lift"
@@ -60,7 +60,7 @@ def manifest_toml() -> str:
     return (
         'name = "python-tests-lift"\n'
         'kind = "lift"\n'
-        f'command = ["{sys.executable}", "-m", "{KIT_MODULE}"]\n'
+        f'command = ["{sys.executable}", "-m", "{KIT_MODULE}", "--rpc"]\n'
         'working_dir = "."\n'
         "[capabilities]\n"
         'authoring_surfaces = ["python-tests"]\n'
