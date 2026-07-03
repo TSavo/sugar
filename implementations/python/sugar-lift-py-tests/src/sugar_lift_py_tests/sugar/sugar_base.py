@@ -4,7 +4,7 @@ from abc import ABC
 from typing import List
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
-from sugar_lift_py_tests.sugar.witnesses import PendingWitnesses
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnesses
 
 # Every Sugar subclass that declares a role self-registers its claim here at import
 # time, so the catalog is just this list -- no hand-wired CLAIM constants, impossible
@@ -46,12 +46,12 @@ class Sugar(ABC):
         super().__init_subclass__(**kwargs)
         if role is None:
             return  # an intermediate base (e.g. a shared mixin), not a registrable leaf
+        if "witnesses" not in cls.__dict__:
+            raise TypeError(
+                f"{cls.__name__} is a registrable sugar but does not define "
+                "witnesses(); enrollment is existence"
+            )
         cls.role = role
-        witnesses = (
-            cls.witnesses
-            if "witnesses" in cls.__dict__
-            else cls._pending_witnesses
-        )
         _REGISTRY.append(
             SugarClaim(
                 name=cls.__name__,
@@ -59,7 +59,7 @@ class Sugar(ABC):
                 owns=cls.owns,
                 build=cls.build,
                 comes_before=comes_before,
-                witnesses=witnesses,
+                witnesses=cls.witnesses,
             )
         )
 
@@ -72,15 +72,8 @@ class Sugar(ABC):
         raise NotImplementedError(f"{cls.__name__} must define build(fragment, ctx)")
 
     @classmethod
-    def witnesses(cls) -> PendingWitnesses:
-        return cls._pending_witnesses()
-
-    @classmethod
-    def _pending_witnesses(cls) -> PendingWitnesses:
-        return PendingWitnesses(
-            sugar_name=cls.__name__,
-            module=cls.__module__,
-        )
+    def witnesses(cls) -> SugarWitnesses:
+        raise NotImplementedError(f"{cls.__name__} must define witnesses()")
 
     def desugar(self, ctx):
         raise NotImplementedError(f"{type(self).__name__} must define desugar(ctx)")

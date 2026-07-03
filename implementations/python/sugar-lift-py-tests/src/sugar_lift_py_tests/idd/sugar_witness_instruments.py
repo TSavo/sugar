@@ -8,7 +8,7 @@ from typing import Any, Sequence
 from sugar_lift_py_tests import floor as floor_pkg
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.sugar.witnesses import (
-    PendingWitnesses,
+    NotVerdictBearing,
     SugarWitnessPair,
     WitnessSource,
 )
@@ -33,12 +33,14 @@ class NonFolOptOut:
     sugar_name: str
     floor_name: str
     reason: str
+    retirement_condition: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "sugarName": self.sugar_name,
             "floorName": self.floor_name,
             "reason": self.reason,
+            "retirementCondition": self.retirement_condition,
         }
 
 
@@ -152,6 +154,7 @@ class SugarWitnessFrontierReport:
     unenrolled_sugars: tuple[UnenrolledSugar, ...]
     seed_report: SugarWitnessSeedReport
     opt_out_audit: NonFolOptOutAudit
+    temporal_opt_outs: tuple[NonFolOptOut, ...]
 
     @property
     def is_zero(self) -> bool:
@@ -159,6 +162,7 @@ class SugarWitnessFrontierReport:
             not self.unenrolled_sugars
             and self.seed_report.is_zero
             and self.opt_out_audit.is_zero
+            and not self.temporal_opt_outs
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -174,16 +178,19 @@ class SugarWitnessFrontierReport:
                     self.seed_report.witnesses_not_dispatching_to_owner
                 ),
                 "non_fol_opt_out_drift": opt_out_r["total"],
+                "temporal_opt_outs": len(self.temporal_opt_outs),
                 "total": len(self.unenrolled_sugars)
                 + self.seed_report.witness_triples_failing
                 + self.seed_report.witnesses_not_dispatching_to_owner
-                + opt_out_r["total"],
+                + opt_out_r["total"]
+                + len(self.temporal_opt_outs),
             },
             "unenrolledSugars": [
                 offender.to_json() for offender in self.unenrolled_sugars
             ],
             "seedHarness": self.seed_report.to_json(),
             "nonFolOptOutAudit": self.opt_out_audit.to_json(),
+            "temporalOptOuts": [row.to_json() for row in self.temporal_opt_outs],
         }
 
 
@@ -216,6 +223,10 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "attribute mutation is stateful support until object-field updates "
             "carry a solver verdict"
         ),
+        retirement_condition=(
+            "retire when attribute assignment/object-field update floors emit a "
+            "truthful/lying solver witness"
+        ),
     ),
     NonFolOptOut(
         sugar_name="AttributeDeleteSugar",
@@ -223,6 +234,10 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason=(
             "attribute deletion is stateful support until object-field deletes "
             "carry a solver verdict"
+        ),
+        retirement_condition=(
+            "retire when attribute deletion/object-field delete floors emit a "
+            "truthful/lying solver witness"
         ),
     ),
     NonFolOptOut(
@@ -236,6 +251,10 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason=(
             "bitwise terms are symbolic bitvector support until the production "
             "solver path yields a SAT/UNSAT verdict"
+        ),
+        retirement_condition=(
+            "retire when bitwise terms produce SAT/UNSAT through the production "
+            "solver path"
         ),
     ),
     NonFolOptOut(
@@ -258,6 +277,10 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "ord-byte terms are symbolic encoder support until the enclosing "
             "str.eq-bv-blocks universe carries the verdict"
         ),
+        retirement_condition=(
+            "retire when the enclosing str.eq-bv-blocks universe carries an "
+            "OrdByte truthful/lying solver witness"
+        ),
     ),
     NonFolOptOut(
         sugar_name="SubscriptAssignSugar",
@@ -270,6 +293,7 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="subscript delete mutation produces no FOL assertion",
     ),
 )
+
 
 def seeds_from_catalog_witnesses() -> tuple[SugarWitnessSeed, ...]:
     seeds: list[SugarWitnessSeed] = []
@@ -306,6 +330,7 @@ def collect_sugar_witness_frontier(
         unenrolled_sugars=tuple(unenrolled_sugars()),
         seed_report=seed_report,
         opt_out_audit=non_fol_opt_out_audit(),
+        temporal_opt_outs=temporal_opt_outs(),
     )
 
 
@@ -409,6 +434,7 @@ def render_text(report: SugarWitnessFrontierReport) -> str:
         "R(non-fol-opt-out-drift): "
         f"{r['non_fol_opt_out_drift']}\n"
     )
+    lines.append(f"R(temporal-opt-outs): {r['temporal_opt_outs']}\n")
     lines.append(
         "seed coverage: "
         f"{report.seed_report.seed_count} seed cases, "
@@ -442,6 +468,12 @@ def render_text(report: SugarWitnessFrontierReport) -> str:
             )
         for floor_name in report.opt_out_audit.marked_but_unpinned:
             lines.append(f"  - marked {floor_name} has no pinned sugar row\n")
+    if report.temporal_opt_outs:
+        lines.append("temporal opt-outs:\n")
+        for row in report.temporal_opt_outs:
+            lines.append(
+                f"  - {row.sugar_name}: {row.retirement_condition}\n"
+            )
     return "".join(lines)
 
 
@@ -476,17 +508,20 @@ def non_fol_opt_out_audit(
     )
 
 
+def temporal_opt_outs(
+    *,
+    pinned: Sequence[NonFolOptOut] = EXPECTED_NON_FOL_OPT_OUTS,
+) -> tuple[NonFolOptOut, ...]:
+    return tuple(row for row in pinned if row.retirement_condition is not None)
+
+
 def _claim_module(claim) -> str:
     return getattr(claim.build, "__module__", "<unknown>")
 
 
 def _claim_witnesses(claim) -> object:
     if claim.witnesses is None:
-        return PendingWitnesses(
-            sugar_name=claim.name,
-            module=_claim_module(claim),
-            reason="claim registered before witness surface existed",
-        )
+        raise TypeError(f"{claim.name} registered without witnesses()")
     return claim.witnesses()
 
 
@@ -498,8 +533,14 @@ def _claim_has_witness_or_opt_out(claim) -> bool:
         isinstance(item, SugarWitnessPair) for item in witness
     ):
         return True
-    if _non_fol_opt_out_for(claim.name) is not None:
-        return True
+    if isinstance(witness, NotVerdictBearing):
+        pinned = _non_fol_opt_out_for(claim.name)
+        return (
+            pinned is not None
+            and witness.sugar_name == pinned.sugar_name
+            and witness.floor_name == pinned.floor_name
+            and witness.reason == pinned.reason
+        )
     return False
 
 

@@ -7,6 +7,7 @@ from sugar_lift_py_tests.floor import SupportValue
 from sugar_lift_py_tests.operations import DelItemOperation, perform_operation
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -28,6 +29,14 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
             return False
         targets = site.delete_targets()
         return len(targets) == 1 and targets[0].observed == "Subscript"
+
+    @classmethod
+    def witnesses(cls) -> NotVerdictBearing:
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="SupportValue",
+            reason="subscript delete mutation produces no FOL assertion",
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "SubscriptDeleteSugar":

@@ -7,6 +7,7 @@ from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.operations import AwaitOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -22,6 +23,14 @@ class AwaitSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "Await"
+
+    @classmethod
+    def witnesses(cls) -> NotVerdictBearing:
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="SupportValue",
+            reason="await unwrapping is async runtime support without a sync verdict path",
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "AwaitSugar":

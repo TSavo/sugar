@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import SupportValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,14 @@ class CommentSugar(Sugar, role=SugarRole.STATEMENT):
             len(terms) == 1
             and terms[0].observed == "PrimitiveLiteral"
             and isinstance(terms[0].literal_value(), str)
+        )
+
+    @classmethod
+    def witnesses(cls) -> NotVerdictBearing:
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="SupportValue",
+            reason="comments are inert source support",
         )
 
     @classmethod

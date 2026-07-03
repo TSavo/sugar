@@ -8,6 +8,7 @@ from sugar_lift_py_tests.operations import AsyncContextManagerOperation
 from sugar_lift_py_tests.operations import perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -27,6 +28,17 @@ class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "AsyncWith"
+
+    @classmethod
+    def witnesses(cls) -> NotVerdictBearing:
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="SupportValue",
+            reason=(
+                "async context-manager execution is runtime support, not a "
+                "current FOL claim"
+            ),
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "AsyncWithSugar":
