@@ -10,7 +10,7 @@ use crate::compose::{
     compose_function_contracts, ComposedFunctionContract, FunctionContractMemento,
 };
 
-use super::traits::{Canonical, Catalog, Domain, DomainError};
+use super::traits::{Canonical, Catalog};
 use super::types::{
     Attestation, Boundary, Cid, Contract, DomainClaim, DomainKind, Refutation, Verdict,
 };
