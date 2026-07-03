@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Lift-plugin resolver and legacy CLI adapter.
+// Lift-plugin resolver and CLI projection adapter.
 //
 // The transport and primitive claim construction are `libsugar::core::Kit`.
 // This module only resolves the surface manifest, builds the lift request
-// input, and keeps the legacy CLI response escape hatch while old command edges
-// are migrated.
+// input, and derives compatibility response projections from typed claims.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -16,6 +15,7 @@ use libsugar::core::{
     PathExecutionError, Term, Verb,
 };
 use owo_colors::OwoColorize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sugar_ir_types::CompositionRefusalMemento;
 
@@ -39,12 +39,45 @@ pub(crate) struct LiftPluginManifest {
 #[derive(Debug, Clone)]
 pub(crate) struct LiftPluginSession {
     pub claim: DomainClaim,
-    legacy_response: Value,
 }
 
 impl LiftPluginSession {
-    pub(crate) fn response(&self) -> &Value {
-        &self.legacy_response
+    pub(crate) fn from_claim(claim: DomainClaim) -> Result<Self, LiftPluginError> {
+        LiftResponseProjection::from_claim(&claim)?;
+        Ok(Self { claim })
+    }
+
+    pub(crate) fn response_projection(&self) -> LiftResponseProjection<'_> {
+        LiftResponseProjection { claim: &self.claim }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LiftResponseProjection<'a> {
+    claim: &'a DomainClaim,
+}
+
+impl<'a> LiftResponseProjection<'a> {
+    fn from_claim(claim: &'a DomainClaim) -> Result<Self, LiftPluginError> {
+        let projection = Self { claim };
+        projection.response_value()?;
+        Ok(projection)
+    }
+
+    pub(crate) fn response_value(&self) -> Result<&'a Value, LiftPluginError> {
+        response_value_from_claim(self.claim)
+    }
+
+    pub(crate) fn clone_response_for_compatibility(&self) -> Result<Value, LiftPluginError> {
+        let response = self.response_value()?;
+        let before = current_rss_kib();
+        let cloned = response.clone();
+        trace_lift_plugin_value_checkpoint_with_delta(
+            "LiftResponseProjection.clone_response_for_compatibility.after_value_clone",
+            &cloned,
+            rss_delta_kib(before, current_rss_kib()),
+        );
+        Ok(cloned)
     }
 }
 
@@ -80,21 +113,110 @@ pub struct LiftPluginOptions {
     pub contract_bindings: Vec<Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum LiftPluginDiagnosticKind {
+    ManifestResolution,
+    RequestEncoding,
+    Transport,
+    PathExecution,
+    MissingResponsePayload,
+    InvalidResponsePayload,
+    LegacyResponseUnavailable,
+}
+
+impl LiftPluginDiagnosticKind {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::ManifestResolution => "manifest_resolution",
+            Self::RequestEncoding => "request_encoding",
+            Self::Transport => "transport",
+            Self::PathExecution => "path_execution",
+            Self::MissingResponsePayload => "missing_response_payload",
+            Self::InvalidResponsePayload => "invalid_response_payload",
+            Self::LegacyResponseUnavailable => "legacy_response_unavailable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LiftPluginDiagnosticPayload {
+    pub kind: LiftPluginDiagnosticKind,
+    pub frontend: String,
+    pub input_format: String,
+    pub path: String,
+    pub detail: String,
+    pub retirement: String,
+}
+
+impl LiftPluginDiagnosticPayload {
+    fn new(
+        kind: LiftPluginDiagnosticKind,
+        path: impl Into<String>,
+        detail: impl Into<String>,
+        retirement: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            frontend: "sugar-cli::lift_plugin".to_string(),
+            input_format: "lift-plugin-json-rpc-v1".to_string(),
+            path: path.into(),
+            detail: detail.into(),
+            retirement: retirement.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for LiftPluginDiagnosticPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "lift plugin diagnostic kind={} frontend={} input_format={} path={}: {}; fix={}",
+            self.kind.as_str(),
+            self.frontend,
+            self.input_format,
+            self.path,
+            self.detail,
+            self.retirement
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum LiftPluginError {
     MissingBinary { binary: String },
     Refused(Box<CompositionRefusalMemento>),
-    Failed(String),
+    Diagnostic(LiftPluginDiagnosticPayload),
+}
+
+impl LiftPluginError {
+    fn diagnostic(
+        kind: LiftPluginDiagnosticKind,
+        path: impl Into<String>,
+        detail: impl Into<String>,
+        retirement: impl Into<String>,
+    ) -> Self {
+        Self::Diagnostic(LiftPluginDiagnosticPayload::new(
+            kind, path, detail, retirement,
+        ))
+    }
 }
 
 impl From<LiftPluginKitError> for LiftPluginError {
     fn from(value: LiftPluginKitError) -> Self {
         match value {
             LiftPluginKitError::MissingBinary { binary } => Self::MissingBinary { binary },
-            LiftPluginKitError::Failed(message) => Self::Failed(message),
-            LiftPluginKitError::LegacyResponseUnavailable => {
-                Self::Failed("lift plugin term no longer carries a legacy response".to_string())
-            }
+            LiftPluginKitError::Failed(message) => Self::diagnostic(
+                LiftPluginDiagnosticKind::Transport,
+                "lift-plugin.transport",
+                message,
+                "Inspect the lifter command, stdout/stderr, and JSON-RPC framing; keep failures as LiftPluginDiagnosticPayload, not a bare string.",
+            ),
+            LiftPluginKitError::LegacyResponseUnavailable => Self::diagnostic(
+                LiftPluginDiagnosticKind::LegacyResponseUnavailable,
+                "DomainClaim.payload",
+                "lift plugin term no longer carries a legacy response projection",
+                "Fix the lifter to emit a Term::Const response through LiftPluginKit::claim_from_response_term, then consume it through the typed claim projection.",
+            ),
         }
     }
 }
@@ -108,7 +230,7 @@ impl std::fmt::Display for LiftPluginError {
                 "composition refused: {}: {}",
                 refusal.header.failure_kind, refusal.header.failure_detail
             ),
-            Self::Failed(message) => f.write_str(message),
+            Self::Diagnostic(diagnostic) => diagnostic.fmt(f),
         }
     }
 }
@@ -122,7 +244,14 @@ pub(crate) fn dispatch_lift(
     quiet: bool,
 ) -> Result<LiftPluginSession, LiftPluginError> {
     let started = Instant::now();
-    let manifest = find_manifest(project_root, surface).map_err(LiftPluginError::Failed)?;
+    let manifest = find_manifest(project_root, surface).map_err(|error| {
+        LiftPluginError::diagnostic(
+            LiftPluginDiagnosticKind::ManifestResolution,
+            format!("surface[{surface}].manifest"),
+            error,
+            "Declare the lift surface in .sugar/lift/<surface>/manifest.toml, .sugar/config.toml, or component planning before dispatch.",
+        )
+    })?;
     trace_log(format!(
         "lift rpc start surface={surface} project={} plugin={} command={:?}",
         project_root.display(),
@@ -164,10 +293,7 @@ pub(crate) fn dispatch_lift(
         }
     }
 
-    Ok(LiftPluginSession {
-        legacy_response: core_session.legacy_response,
-        claim: core_session.claim,
-    })
+    LiftPluginSession::from_claim(core_session.claim)
 }
 
 pub(crate) fn dispatch_lift_path(
@@ -202,7 +328,14 @@ pub(crate) fn dispatch_lift_path(
     let source = Input::Source {
         dialect: dialect.clone(),
         bytes: serde_json::to_vec(&lift_params)
-            .map_err(|error| LiftPluginError::Failed(format!("encode lift request: {error}")))?,
+            .map_err(|error| {
+                LiftPluginError::diagnostic(
+                    LiftPluginDiagnosticKind::RequestEncoding,
+                    "lift.request",
+                    format!("encode lift request: {error}"),
+                    "Inspect LiftPluginOptions and build_lift_params; every request value must be JSON-serializable before it enters the lift-plugin transport.",
+                )
+            })?,
     };
     let source_cid = address(&source);
     let mut inputs = HashMapInputCatalog::default();
@@ -237,7 +370,7 @@ pub(crate) fn dispatch_lift_path(
     let terminal_claim = chain.terminal_claim();
     trace_lift_plugin_claim_checkpoint("dispatch_lift_path.after_execute_path", terminal_claim);
     let before = current_rss_kib();
-    let mut claim = chain.into_terminal_claim();
+    let claim = chain.into_terminal_claim();
     trace_lift_plugin_claim_checkpoint_with_delta(
         "dispatch_lift_path.after_terminal_claim_move",
         &claim,
@@ -247,37 +380,8 @@ pub(crate) fn dispatch_lift_path(
         "lift path executed surface={surface} elapsed={:?}",
         started.elapsed()
     ));
-    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_payload_response_clone", &claim);
-    let legacy_response = claim
-        .payload
-        .as_ref()
-        .ok_or_else(|| LiftPluginError::Failed("lift claim missing term payload".to_string()))
-        .and_then(response_from_payload_term)?;
-    claim.payload = None;
-    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.after_payload_drop", &claim);
-
-    Ok(LiftPluginSession {
-        legacy_response,
-        claim,
-    })
-}
-
-fn response_from_payload_term(term: &Term) -> Result<Value, LiftPluginError> {
-    match term {
-        Term::Const { value, .. } => {
-            let before = current_rss_kib();
-            let cloned = value.clone();
-            trace_lift_plugin_value_checkpoint_with_delta(
-                "response_from_payload_term.after_value_clone",
-                &cloned,
-                rss_delta_kib(before, current_rss_kib()),
-            );
-            Ok(cloned)
-        }
-        _ => Err(LiftPluginError::Failed(
-            "lift claim payload was not a lift response term".to_string(),
-        )),
-    }
+    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_response_projection", &claim);
+    LiftPluginSession::from_claim(claim)
 }
 
 fn lift_error_from_path(error: PathExecutionError) -> LiftPluginError {
@@ -287,11 +391,56 @@ fn lift_error_from_path(error: PathExecutionError) -> LiftPluginError {
             libsugar::core::KitError::Transformation(message)
                 if message.starts_with("lift plugin transport: lifter binary `") =>
             {
-                LiftPluginError::Failed(message)
+                LiftPluginError::diagnostic(
+                    LiftPluginDiagnosticKind::Transport,
+                    "lift-plugin.transport",
+                    message,
+                    "Install or configure the lifter binary named by the lift manifest; missing binaries are the only transport failure mint may downgrade to an empty-set attestation.",
+                )
             }
-            other => LiftPluginError::Failed(other.to_string()),
+            other => LiftPluginError::diagnostic(
+                LiftPluginDiagnosticKind::PathExecution,
+                "lift.path",
+                other.to_string(),
+                "Inspect the lift PathAlgebra step and registered LiftKit; path execution failures must stay structured at the lift-plugin seam.",
+            ),
         },
-        other => LiftPluginError::Failed(other.to_string()),
+        other => LiftPluginError::diagnostic(
+            LiftPluginDiagnosticKind::PathExecution,
+            "lift.path",
+            other.to_string(),
+            "Inspect the lift PathAlgebra step and input catalog; path execution failures must stay structured at the lift-plugin seam.",
+        ),
+    }
+}
+
+fn response_value_from_claim(claim: &DomainClaim) -> Result<&Value, LiftPluginError> {
+    match claim.payload.as_ref() {
+        Some(Term::Const { value, .. }) => Ok(value),
+        Some(term) => Err(LiftPluginError::diagnostic(
+            LiftPluginDiagnosticKind::InvalidResponsePayload,
+            "DomainClaim.payload",
+            format!(
+                "lift claim payload must be Term::Const carrying lift response JSON; found {}",
+                term_shape(term)
+            ),
+            "Fix the lifter to emit its wire response through LiftPluginKit::claim_from_response_term, or add a typed claim projection for the new Term shape before it crosses the CLI seam.",
+        )),
+        None => Err(LiftPluginError::diagnostic(
+            LiftPluginDiagnosticKind::MissingResponsePayload,
+            "DomainClaim.payload",
+            "lift claim is missing the Term::Const response payload required for typed claim projection",
+            "Preserve DomainClaim.payload until the CLI derives LiftResponseProjection, then migrate consumers to the typed claim projection instead of a stored legacy_response field.",
+        )),
+    }
+}
+
+fn term_shape(term: &Term) -> &'static str {
+    match term {
+        Term::Op { .. } => "Term::Op",
+        Term::Var { .. } => "Term::Var",
+        Term::Const { .. } => "Term::Const",
+        Term::Unit => "Term::Unit",
     }
 }
 
@@ -667,7 +816,7 @@ mod tests {
     }
 
     #[test]
-    fn lift_session_is_domain_claim_first_and_legacy_response_round_trips() {
+    fn lift_session_is_domain_claim_first_and_response_projection_round_trips() {
         let response = json!({
             "kind": "ir-document",
             "ir": [],
@@ -694,10 +843,8 @@ mod tests {
         let claim = kit
             .claim_from_response_term(&input, term)
             .expect("lift response becomes a primitive claim");
-        let session = LiftPluginSession {
-            claim,
-            legacy_response: response.clone(),
-        };
+        let session = LiftPluginSession::from_claim(claim)
+            .expect("claim payload becomes a lift response projection");
 
         assert_eq!(
             session.claim.domain,
@@ -706,6 +853,114 @@ mod tests {
         assert_eq!(session.claim.from.len(), 1);
         assert!(session.claim.premises.is_empty());
         assert_eq!(session.claim.artifacts.len(), 1);
-        assert_eq!(session.response(), &response);
+        assert_eq!(
+            session
+                .response_projection()
+                .clone_response_for_compatibility()
+                .expect("projection clones legacy-compatible response"),
+            response
+        );
+    }
+
+    #[test]
+    fn lift_response_projection_byte_identity_rejects_planted_drift() {
+        let response = json!({
+            "kind": "ir-document",
+            "ir": [{"kind": "fixture", "name": "stable"}],
+            "diagnostics": []
+        });
+        let request = build_lift_params(
+            Path::new("."),
+            "rust",
+            LiftPluginOptions {
+                identify_only: false,
+                library_bindings: false,
+                ..Default::default()
+            },
+        );
+
+        let term = Term::Const {
+            value: response.clone(),
+            sort: Sort::Primitive {
+                name: "LiftPluginResponse".to_string(),
+            },
+        };
+        let kit = LiftPluginKit::new("rust", Vec::new(), None);
+        let input = Input::Spec(request);
+        let claim = kit
+            .claim_from_response_term(&input, term)
+            .expect("lift response becomes a primitive claim");
+        let session = LiftPluginSession::from_claim(claim)
+            .expect("claim payload becomes a lift response projection");
+
+        let projected = session
+            .response_projection()
+            .clone_response_for_compatibility()
+            .expect("projection clones legacy-compatible response");
+        let mut drifted = response.clone();
+        drifted["ir"][0]["name"] = json!("planted-drift");
+
+        assert_eq!(
+            projected, response,
+            "typed claim projection must be byte-identical to the plugin response"
+        );
+        assert_ne!(
+            projected, drifted,
+            "planted drift control: fixture must red if projection output changes"
+        );
+    }
+
+    #[test]
+    fn malformed_lift_response_payload_becomes_typed_diagnostic() {
+        let response = json!({
+            "kind": "ir-document",
+            "ir": [],
+            "diagnostics": []
+        });
+        let request = build_lift_params(
+            Path::new("."),
+            "rust",
+            LiftPluginOptions {
+                identify_only: false,
+                library_bindings: false,
+                ..Default::default()
+            },
+        );
+
+        let term = Term::Const {
+            value: response,
+            sort: Sort::Primitive {
+                name: "LiftPluginResponse".to_string(),
+            },
+        };
+        let kit = LiftPluginKit::new("rust", Vec::new(), None);
+        let input = Input::Spec(request);
+        let mut claim = kit
+            .claim_from_response_term(&input, term)
+            .expect("lift response becomes a primitive claim");
+        claim.payload = Some(Term::Var {
+            name: "not-a-response-const".to_string(),
+        });
+
+        let error = LiftPluginSession::from_claim(claim)
+            .expect_err("non-Const payload cannot be a lift response projection");
+        match error {
+            LiftPluginError::Diagnostic(diagnostic) => {
+                assert_eq!(
+                    diagnostic.kind,
+                    LiftPluginDiagnosticKind::InvalidResponsePayload
+                );
+                assert_eq!(diagnostic.path, "DomainClaim.payload");
+                assert!(
+                    diagnostic.detail.contains("Term::Const"),
+                    "diagnostic must name the expected replacement shape: {diagnostic:?}"
+                );
+                assert!(
+                    diagnostic.retirement.contains("typed claim projection"),
+                    "diagnostic must tell a cold agent where the fix lives: {diagnostic:?}"
+                );
+            }
+            other => panic!("expected typed diagnostic, got {other:?}"),
+        }
     }
 }

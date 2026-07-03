@@ -97,7 +97,14 @@ pub fn run(args: LiftArgs) -> u8 {
 
     match lift_plugin::dispatch_lift_path(&project_root, &surface, lift_options, true) {
         Ok(session) => {
-            let response = session.response();
+            let projection = session.response_projection();
+            let response = match projection.response_value() {
+                Ok(response) => response,
+                Err(error) => {
+                    eprintln!("{}: {error}", "error".red().bold());
+                    return EXIT_VERIFY_FAIL;
+                }
+            };
             if args.report {
                 trace_lift_report_response("after_lift_plugin_response", response);
             }
@@ -291,7 +298,7 @@ pub fn run(args: LiftArgs) -> u8 {
             );
             EXIT_VERIFY_FAIL
         }
-        Err(LiftPluginError::Failed(error)) => {
+        Err(LiftPluginError::Diagnostic(error)) => {
             eprintln!("{}: {error}", "error".red().bold());
             EXIT_VERIFY_FAIL
         }

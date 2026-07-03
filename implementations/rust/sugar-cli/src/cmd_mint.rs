@@ -813,10 +813,15 @@ impl MintKit {
                         refusal.header.failure_kind, refusal.header.failure_detail
                     )))
                 }
-                Err(LiftPluginError::Failed(error)) => return Err(KitError::Transformation(error)),
+                Err(LiftPluginError::Diagnostic(error)) => {
+                    return Err(KitError::Transformation(error.to_string()))
+                }
             };
 
-            let response = session.response().clone();
+            let response = session
+                .response_projection()
+                .clone_response_for_compatibility()
+                .map_err(|error| KitError::Transformation(error.to_string()))?;
             assert_oracle_ready_if_requested(&step.surface, &response)
                 .map_err(KitError::Transformation)?;
             // Carry forward the first plugin's lift_claim as the
@@ -970,10 +975,15 @@ impl MintKit {
                         refusal.header.failure_kind, refusal.header.failure_detail
                     )))
                 }
-                Err(LiftPluginError::Failed(error)) => return Err(KitError::Transformation(error)),
+                Err(LiftPluginError::Diagnostic(error)) => {
+                    return Err(KitError::Transformation(error.to_string()))
+                }
             };
 
-            let response = session.response().clone();
+            let response = session
+                .response_projection()
+                .clone_response_for_compatibility()
+                .map_err(|error| KitError::Transformation(error.to_string()))?;
             assert_oracle_ready_if_requested(&step.surface, &response)
                 .map_err(KitError::Transformation)?;
             if combined_lift_claim.is_none() {
@@ -1615,15 +1625,7 @@ fn dispatch_report_lift_plugin(
         contract_bindings,
         ..Default::default()
     };
-    lift_plugin::dispatch_lift(project_root, &plugin.surface, lift_options, true)
-        .map(|session| {
-            let mut response = session.response().clone();
-            prefix_workspace_override_source_files(
-                &mut response,
-                plugin.workspace_override.as_deref(),
-            );
-            response
-        })
+    let session = lift_plugin::dispatch_lift(project_root, &plugin.surface, lift_options, true)
         .map_err(|error| match error {
             LiftPluginError::MissingBinary { binary } => {
                 format!("lifter binary `{binary}` not found")
@@ -1632,8 +1634,14 @@ fn dispatch_report_lift_plugin(
                 "{}: {}",
                 refusal.header.failure_kind, refusal.header.failure_detail
             ),
-            LiftPluginError::Failed(error) => error,
-        })
+            LiftPluginError::Diagnostic(error) => error.to_string(),
+        })?;
+    let mut response = session
+        .response_projection()
+        .clone_response_for_compatibility()
+        .map_err(|error| error.to_string())?;
+    prefix_workspace_override_source_files(&mut response, plugin.workspace_override.as_deref());
+    Ok(response)
 }
 
 fn prefix_workspace_override_source_files(response: &mut Value, workspace_override: Option<&str>) {
