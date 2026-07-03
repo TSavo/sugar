@@ -27820,6 +27820,164 @@ fn t_str_table_select_runtime_index() {
 }
 
 #[test]
+fn ptr_eq_term_distinct_locals_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t_ptr_eq_term_distinct_locals_bad() {
+    let left = 1_i32;
+    let right = 1_i32;
+    assert!(std::ptr::eq(&left, &right));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/ptr-eq-term-distinct-locals-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "distinct-local pointer identity lie must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "ptr_eq_term_distinct_locals_bad") {
+        assert!(
+            !sat,
+            "&left and &right are distinct allocation/binding identities even when values match; inv={:?}",
+            decl.inv
+        );
+    }
+}
+
+#[test]
+fn ptr_eq_term_same_binding_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t_ptr_eq_term_same_binding_good() {
+    let value = 1_i32;
+    assert!(std::ptr::eq(&value, &value));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/ptr-eq-term-same-binding-good.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "same-binding pointer identity truth must lift; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "ptr_eq_term_same_binding_good",
+    ) {
+        assert!(sat, "&value and &value pointer identity must be z3-SAT");
+    }
+}
+
+#[test]
+fn result_transpose_collect_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t_result_transpose_collect_bad() {
+    let got: Result<Vec<i32>, i32> = [1_i32, 2, 3]
+        .into_iter()
+        .map(|x| -> Result<Option<i32>, i32> {
+            if x % 2 == 0 { Ok(Some(x + 1)) } else { Ok(None) }
+        })
+        .filter_map(Result::transpose)
+        .collect();
+    assert_eq!(got, Ok(vec![4]));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/result-transpose-collect-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad Result transpose/collect twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "result_transpose_collect_bad") {
+        assert!(
+            !sat,
+            "filter_map(Result::transpose).collect() produces Ok(vec![3]), not Ok(vec![4]); inv={:?}",
+            decl.inv
+        );
+    }
+}
+
+#[test]
+fn result_transpose_collect_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t_result_transpose_collect_good() {
+    let got: Result<Vec<i32>, i32> = [1_i32, 2, 3]
+        .into_iter()
+        .map(|x| -> Result<Option<i32>, i32> {
+            if x % 2 == 0 { Ok(Some(x + 1)) } else { Ok(None) }
+        })
+        .filter_map(Result::transpose)
+        .collect();
+    assert_eq!(got, Ok(vec![3]));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/result-transpose-collect-good.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "truthful Result transpose/collect twin must lift; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "result_transpose_collect_good",
+    ) {
+        assert!(sat, "Ok(vec![3]) witness must be z3-SAT");
+    }
+}
+
+#[test]
+fn nested_vec_macro_bad_twin_is_z3_unsat_after_collection_projection() {
+    let src = r#"
+#[test]
+fn t_nested_vec_macro_bad() {
+    assert_eq!(Some(vec![1_i32, 2]), Some(vec![1_i32, 3]));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nested-vec-macro-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "nested vec macro lie should lift so the collection projection can bite; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "nested_vec_macro_bad") {
+        assert!(
+            !sat,
+            "nested Some(vec![..]) equality must be refuted by recursive collection facts; inv={:?}",
+            decl.inv
+        );
+    }
+}
+
+#[test]
+fn let_bound_vec_macro_bad_twin_is_z3_unsat_after_collection_projection() {
+    let src = r#"
+#[test]
+fn t_let_bound_vec_macro_bad() {
+    let got = vec![1_i32, 2];
+    assert_eq!(got, vec![1_i32, 3]);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/let-bound-vec-macro-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "let-bound vec macro lie should lift so the collection projection can bite; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "let_bound_vec_macro_bad") {
+        assert!(
+            !sat,
+            "let-bound vec macro equality should be refuted if collection projection reaches non-direct values; inv={:?}",
+            decl.inv
+        );
+    }
+}
+
+#[test]
 fn rpc_source_refuses_mutating_closure_value_construction_with_literal_twin() {
     let doc = run_rpc_lift(
         "src/source_mutating_closure_value.rs",

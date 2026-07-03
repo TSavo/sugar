@@ -16,7 +16,7 @@ use crate::{
     Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
     TemporalScope,
 };
-use sugar_ir_symbolic::Term;
+use sugar_ir_symbolic::{make_var, Term};
 use syn::{Expr, Item};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -31,8 +31,22 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 pub(crate) const PTR_EQ_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "ptr_eq_term",
     &["call"],
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family h: pointer identity semantic lie remains SAT",
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_ptr_eq_term_good() {
+                let value = 1_i32;
+                assert!(std::ptr::eq(&value, &value));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_ptr_eq_term_bad() {
+                let left = 1_i32;
+                let right = 1_i32;
+                assert!(std::ptr::eq(&left, &right));
+            }
+        "#,
     ),
     recognize_ptr_eq_term,
 );
@@ -51,7 +65,7 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     )))
 }
 
-fn recognize_ptr_eq_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_ptr_eq_term(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let callee = pointer_eq_callee_frag(frag.call_func()?)?;
     if frag.call_arg_count() != 2 {
         panic!("ptr::eq expects two arguments; write more Sugar for this AST");
@@ -61,9 +75,17 @@ fn recognize_ptr_eq_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<B
         args: frag
             .call_args()
             .into_iter()
-            .map(|arg| PointerEqArg {
-                site: arg.token_str(),
-                body: SugarBody::term_frag(&arg, fcx),
+            .map(|arg| {
+                let site = arg.token_str();
+                let expr = arg
+                    .as_expr()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "ptr::eq argument `{site}` was not an expression fragment; write more Sugar for this AST"
+                        )
+                    })
+                    .clone();
+                PointerEqArg { site, expr }
             })
             .collect(),
     }))
@@ -83,7 +105,7 @@ fn pointer_eq_callee_frag(frag: SourceFragment<'_>) -> Option<String> {
 
 struct PointerEqArg {
     site: String,
-    body: SugarBody<TermFloor>,
+    expr: Expr,
 }
 
 struct PointerEqTermSugar {
@@ -95,17 +117,9 @@ impl Sugar for PointerEqTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let mut args = Vec::with_capacity(self.args.len());
         for arg in &self.args {
-            let term = match arg.body.reduce(ctx) {
-                Outcome::Complete(d) => match d.into_term() {
-                    Some(term) => term,
-                    None => {
-                        panic!(
-                            "ptr::eq argument `{}` completed a non-Term where pointer identity was required; write more Sugar for this AST",
-                            arg.site
-                        );
-                    }
-                },
-                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+            let term = match pointer_identity_term(&arg.expr, ctx.scope) {
+                Ok(term) => term,
+                Err(effect) => return Outcome::Incomplete(effect),
             };
             if is_mutable_reference_identity(&term) {
                 return Outcome::Incomplete(mutable_reference_identity_effect(&arg.site));
@@ -167,6 +181,16 @@ pub(crate) fn pointer_identity_term(
                 pointer_identity_term(&index.index, scope)?,
             ],
         })),
+        Expr::Path(path) if path.qself.is_none() => scope
+            .path_name(&path.path)
+            .map(make_var)
+            .map_err(|reason| Effect::AmbiguousTemporalIdentity {
+                boundary: token_key(expr),
+                reason: format!(
+                    "pointer identity path cannot be derived from scoped allocation/binding \
+                     testimony: {reason}"
+                ),
+            }),
         Expr::Paren(paren) => pointer_identity_term(&paren.expr, scope),
         Expr::Group(group) => pointer_identity_term(&group.expr, scope),
         other => reduce_term_in_scope(other, scope),

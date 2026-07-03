@@ -28,8 +28,33 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "result_transpose_collect",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family f: Result transpose/collect collection-shape lie remains SAT",
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_result_transpose_collect_good() {
+                let got: Result<Vec<i32>, i32> = [1_i32, 2, 3]
+                    .into_iter()
+                    .map(|x| -> Result<Option<i32>, i32> {
+                        if x % 2 == 0 { Ok(Some(x + 1)) } else { Ok(None) }
+                    })
+                    .filter_map(Result::transpose)
+                    .collect();
+                assert_eq!(got, Ok(vec![3]));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_result_transpose_collect_bad() {
+                let got: Result<Vec<i32>, i32> = [1_i32, 2, 3]
+                    .into_iter()
+                    .map(|x| -> Result<Option<i32>, i32> {
+                        if x % 2 == 0 { Ok(Some(x + 1)) } else { Ok(None) }
+                    })
+                    .filter_map(Result::transpose)
+                    .collect();
+                assert_eq!(got, Ok(vec![4]));
+            }
+        "#,
     ),
     recognize,
 );

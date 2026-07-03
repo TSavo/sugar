@@ -499,7 +499,10 @@ fn grounded_term_components(term: Rc<Term>) -> Result<Option<Vec<Rc<Term>>>, Out
         Term::Var { name } if name.starts_with("agg:Array(") => Ok(None),
         Term::Const { .. } => Ok(Some(vec![Rc::clone(&term)])),
         Term::Var { name } if name.starts_with("literal:Array(") => {
-            Ok(literal_array_var_int_components(name))
+            Ok(literal_aggregate_var_int_components(name, "literal:Array("))
+        }
+        Term::Var { name } if name.starts_with("literal:Vec(") => {
+            Ok(literal_aggregate_var_int_components(name, "literal:Vec("))
         }
         Term::Var { name } if name.starts_with("literal:") => Ok(Some(vec![Rc::clone(&term)])),
         Term::Var { .. } => Ok(None),
@@ -528,14 +531,17 @@ fn grounded_term_components(term: Rc<Term>) -> Result<Option<Vec<Rc<Term>>>, Out
     }
 }
 
-fn literal_array_var_int_components(name: &str) -> Option<Vec<Rc<Term>>> {
-    let inner = name.strip_prefix("literal:Array(")?.strip_suffix(')')?;
+fn literal_aggregate_var_int_components(name: &str, prefix: &str) -> Option<Vec<Rc<Term>>> {
+    let inner = name.strip_prefix(prefix)?.strip_suffix(')')?;
     if inner.is_empty() {
         return Some(Vec::new());
     }
     inner
         .split(',')
-        .map(|part| part.strip_prefix("i:")?.parse::<i128>().ok().map(num))
+        .map(|part| {
+            let rest = part.strip_prefix("i:")?;
+            rest.split(':').next()?.parse::<i128>().ok().map(num)
+        })
         .collect()
 }
 

@@ -19663,6 +19663,15 @@ pub(crate) fn assertion_entry_from_relation(
             claim_count: 1,
         };
     }
+    if let Some(atom) = pointer_eq_identity_relation_atom(&lhs, &rhs, op) {
+        return AssertionEntry {
+            name: None,
+            atom,
+            fact_span: None,
+            kind: AssertionFactKind::Warranted,
+            claim_count: 1,
+        };
+    }
     if let Some(atom) = range_structural_relation_atom(&lhs, &rhs, op) {
         return AssertionEntry {
             name: None,
@@ -19721,6 +19730,112 @@ pub(crate) fn assertion_entry_from_relation(
         fact_span: None,
         kind: AssertionFactKind::Warranted,
         claim_count: 1,
+    }
+}
+
+fn pointer_eq_identity_relation_atom(
+    lhs: &Rc<Term>,
+    rhs: &Rc<Term>,
+    op: RelationOp,
+) -> Option<Rc<Formula>> {
+    if !matches!(op, RelationOp::Eq | RelationOp::Ne) {
+        return None;
+    }
+    let (call, expected) = pointer_eq_call_and_bool(lhs, rhs)?;
+    let derived = pointer_eq_identity_value(call)?;
+    let expected_value = term_bool_value(&expected)?;
+    let stated = match op {
+        RelationOp::Eq => eq(call.clone(), expected),
+        RelationOp::Ne => ne(call.clone(), expected),
+        _ => unreachable!("pointer identity facts are only emitted for equality operators"),
+    };
+    if matches!(op, RelationOp::Eq) && expected_value == derived {
+        return Some(stated);
+    }
+    Some(and_(vec![stated, eq(call.clone(), bool_const(derived))]))
+}
+
+fn pointer_eq_call_and_bool<'a>(
+    lhs: &'a Rc<Term>,
+    rhs: &'a Rc<Term>,
+) -> Option<(&'a Rc<Term>, Rc<Term>)> {
+    if is_pointer_eq_call(lhs) && is_bool_term(rhs) {
+        return Some((lhs, rhs.clone()));
+    }
+    if is_pointer_eq_call(rhs) && is_bool_term(lhs) {
+        return Some((rhs, lhs.clone()));
+    }
+    None
+}
+
+fn is_pointer_eq_call(term: &Rc<Term>) -> bool {
+    matches!(
+        term.as_ref(),
+        Term::Ctor { name, args }
+            if matches!(
+                name.as_str(),
+                "call:core::ptr::eq" | "call:ptr::eq" | "call:std::ptr::eq"
+            ) && args.len() == 2
+    )
+}
+
+fn is_bool_term(term: &Rc<Term>) -> bool {
+    matches!(
+        term.as_ref(),
+        Term::Const {
+            value: ConstValue::Bool(_),
+            ..
+        }
+    )
+}
+
+fn term_bool_value(term: &Rc<Term>) -> Option<bool> {
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Bool(value),
+            ..
+        } => Some(*value),
+        _ => None,
+    }
+}
+
+fn pointer_eq_identity_value(call: &Rc<Term>) -> Option<bool> {
+    let Term::Ctor { args, .. } = call.as_ref() else {
+        return None;
+    };
+    let [left, right] = args.as_slice() else {
+        return None;
+    };
+    if canonical_term_sig(left) == canonical_term_sig(right) {
+        return Some(true);
+    }
+    (shared_borrow_place_identity(left) && shared_borrow_place_identity(right)).then_some(false)
+}
+
+fn shared_borrow_place_identity(term: &Rc<Term>) -> bool {
+    let Term::Ctor { name, args } = term.as_ref() else {
+        return false;
+    };
+    name == "ref" && args.len() == 1 && stable_place_identity(&args[0])
+}
+
+fn stable_place_identity(term: &Rc<Term>) -> bool {
+    match term.as_ref() {
+        Term::Var { .. } => true,
+        Term::Ctor { name, args } if name == "index" && args.len() == 2 => {
+            stable_place_identity(&args[0]) && stable_index_identity_component(&args[1])
+        }
+        _ => false,
+    }
+}
+
+fn stable_index_identity_component(term: &Rc<Term>) -> bool {
+    match term.as_ref() {
+        Term::Const { .. } | Term::Var { .. } => true,
+        Term::Ctor { name, args } if name == "index" && args.len() == 2 => {
+            stable_place_identity(&args[0]) && stable_index_identity_component(&args[1])
+        }
+        _ => false,
     }
 }
 
@@ -19864,14 +19979,39 @@ fn value_ctor_argument_projection_relation_atom(
 }
 
 fn push_value_ctor_argument_projection_atoms(term: &Rc<Term>, atoms: &mut Vec<Rc<Formula>>) {
-    let Term::Ctor { name, args } = term.as_ref() else {
-        return;
-    };
-    if !value_ctor_argument_projection_accepts(name) {
-        return;
+    match term.as_ref() {
+        Term::Ctor { name, args } if value_ctor_argument_projection_accepts(name) => {
+            for (index, arg) in args.iter().enumerate() {
+                if value_ctor_argument_projection_arg_is_owned(name, arg) {
+                    atoms.push(eq(value_ctor_argument_term(index, term), arg.clone()));
+                }
+                push_value_ctor_argument_projection_atoms(arg, atoms);
+            }
+        }
+        Term::Var { name } if name.starts_with("literal:Vec(") => {
+            push_literal_vec_projection_atoms(term, name, atoms);
+        }
+        _ => {}
     }
-    for (index, arg) in args.iter().enumerate() {
-        atoms.push(eq(value_ctor_argument_term(index, term), arg.clone()));
+}
+
+fn value_ctor_argument_projection_arg_is_owned(name: &str, arg: &Rc<Term>) -> bool {
+    match name {
+        "opt:some" | "res:ok" | "res:err" => term_has_owned_projection(arg),
+        _ => true,
+    }
+}
+
+fn term_has_owned_projection(term: &Rc<Term>) -> bool {
+    match term.as_ref() {
+        Term::Var { name } if name.starts_with("literal:Vec(") => {
+            literal_vec_var_int_components(name).is_some()
+        }
+        Term::Ctor { name, args } if value_ctor_argument_projection_accepts(name) => {
+            !matches!(name.as_str(), "opt:some" | "res:ok" | "res:err")
+                || args.iter().any(term_has_owned_projection)
+        }
+        _ => false,
     }
 }
 
@@ -19879,7 +20019,10 @@ fn value_ctor_argument_projection_accepts(name: &str) -> bool {
     // Declared acceptance set for source-constructed value literals whose arguments
     // are the value's identity. This is the #3412 ctor-projection shape applied only
     // where the constructor semantics are already owned by a literal-value sugar.
-    matches!(name, "ip:v4" | "ip:v6" | "ip:any-v4" | "ip:any-v6")
+    matches!(
+        name,
+        "ip:v4" | "ip:v6" | "ip:any-v4" | "ip:any-v6" | "opt:some" | "res:ok" | "res:err"
+    )
 }
 
 fn value_ctor_argument_term(index: usize, term: &Rc<Term>) -> Rc<Term> {
@@ -19887,6 +20030,50 @@ fn value_ctor_argument_term(index: usize, term: &Rc<Term>) -> Rc<Term> {
         name: format!("ctor-arg:{index}"),
         args: vec![term.clone()],
     })
+}
+
+fn collection_length_term(term: &Rc<Term>) -> Rc<Term> {
+    Rc::new(Term::Ctor {
+        name: "collection-len".to_string(),
+        args: vec![term.clone()],
+    })
+}
+
+fn collection_element_term(index: usize, term: &Rc<Term>) -> Rc<Term> {
+    Rc::new(Term::Ctor {
+        name: format!("collection-elem:{index}"),
+        args: vec![term.clone()],
+    })
+}
+
+fn push_literal_vec_projection_atoms(term: &Rc<Term>, name: &str, atoms: &mut Vec<Rc<Formula>>) {
+    let Some(elements) = literal_vec_var_int_components(name) else {
+        return;
+    };
+    atoms.push(eq(
+        collection_length_term(term),
+        num(elements.len() as i128),
+    ));
+    for (index, element) in elements.into_iter().enumerate() {
+        atoms.push(eq(collection_element_term(index, term), element));
+    }
+}
+
+fn literal_vec_var_int_components(name: &str) -> Option<Vec<Rc<Term>>> {
+    let inner = name.strip_prefix("literal:Vec(")?.strip_suffix(')')?;
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(canonical_int_component)
+        .collect::<Option<Vec<_>>>()
+}
+
+fn canonical_int_component(part: &str) -> Option<Rc<Term>> {
+    let rest = part.strip_prefix("i:")?;
+    let value = rest.split(':').next()?.parse::<i128>().ok()?;
+    Some(num(value))
 }
 
 fn table_select_relation_atom(

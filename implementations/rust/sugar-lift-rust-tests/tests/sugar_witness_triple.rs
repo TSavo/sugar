@@ -734,6 +734,8 @@ const S9_BATCH4_PAIR_CLAIMS: &[&str] = &[
 
 const S9_BATCH5_PAIR_CLAIMS: &[&str] = &["literal_ip_addr", "str_table_select"];
 
+const S9_BATCH6_PAIR_CLAIMS: &[&str] = &["ptr_eq_term", "result_transpose_collect"];
+
 const S5_ADAPTER_PAIR_CLAIMS: &[&str] = &[
     "filter",
     "filter_map",
@@ -771,6 +773,7 @@ fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
         S9_BATCH3_PAIR_CLAIMS,
         S9_BATCH4_PAIR_CLAIMS,
         S9_BATCH5_PAIR_CLAIMS,
+        S9_BATCH6_PAIR_CLAIMS,
         S5_ADAPTER_PAIR_CLAIMS,
         S6_OPTION_RESULT_PAIR_CLAIMS,
     ]
@@ -959,6 +962,11 @@ fn s9_batch4_pairs_match_real_rust_semantics() {
 #[test]
 fn s9_batch5_pairs_match_real_rust_semantics() {
     assert_pairs_match_real_rust_semantics(S9_BATCH5_PAIR_CLAIMS);
+}
+
+#[test]
+fn s9_batch6_pairs_match_real_rust_semantics() {
+    assert_pairs_match_real_rust_semantics(S9_BATCH6_PAIR_CLAIMS);
 }
 
 #[test]
