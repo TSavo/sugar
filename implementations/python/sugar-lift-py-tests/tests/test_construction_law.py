@@ -8,6 +8,7 @@ import pytest
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.ir import (
+    eq,
     eq as ir_eq,
     formula_to_value,
     make_var,
@@ -20,13 +21,14 @@ from sugar_lift_py_tests.proofir import (
     ConstructionSite,
     Derived,
     EqualityFact,
+    FunctionContract,
     Provenance,
     RefusalRecord,
     canonical_euf_callsite_name,
 )
-from sugar_lift_py_tests.proofir.formulas import Eq
-from sugar_lift_py_tests.proofir.scope import ClosedFormula
-from sugar_lift_py_tests.proofir.sorts import IntSort, StringSort
+from sugar_lift_py_tests.proofir.formulas import Eq, Formula
+from sugar_lift_py_tests.proofir.scope import ClosedFormula, PostCondition
+from sugar_lift_py_tests.proofir.sorts import IntSort, StringSort, UnknownSort
 from sugar_lift_py_tests.proofir.terms import CallTerm, ConstTerm, VarTerm
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -36,6 +38,15 @@ def _provenance() -> Provenance:
     site = ConstructionSite(path="tests/test_construction_law.py", line=1)
     return Provenance(
         node_class="EqualityFact",
+        construction_site=site,
+        warrant=Derived(floor_chain=("construction-law",)),
+    )
+
+
+def _contract_provenance() -> Provenance:
+    site = ConstructionSite(path="tests/test_construction_law.py", line=1)
+    return Provenance(
+        node_class="FunctionContract",
         construction_site=site,
         warrant=Derived(floor_chain=("construction-law",)),
     )
@@ -60,6 +71,50 @@ def test_closed_formula_refuses_naked_ir_formula_and_illegal_free_var() -> None:
         ClosedFormula(Eq(out, ghost), allowed_vars=("out",))
 
 
+def test_post_condition_enforces_contract_scope_and_sort_law() -> None:
+    out = VarTerm("out", sort=IntSort())
+    x = VarTerm("x", sort=IntSort())
+    ghost = VarTerm("ghost", sort=IntSort())
+
+    post = PostCondition(
+        Eq(out, x),
+        formals={"x": IntSort()},
+        out_binding="out",
+        out_sort=IntSort(),
+    )
+
+    assert post.ir_formula == ir_eq(out.ir_term, x.ir_term)
+
+    with pytest.raises(FactoryGap, match="declared formals plus out"):
+        PostCondition(
+            Eq(out, ghost),
+            formals={"x": IntSort()},
+            out_binding="out",
+            out_sort=IntSort(),
+        )
+
+    with pytest.raises(FactoryGap, match="post mentioning 'out'"):
+        PostCondition(
+            Eq(x, ConstTerm(0, sort=IntSort())),
+            formals={"x": IntSort()},
+            out_binding="out",
+            out_sort=IntSort(),
+        )
+
+    unsorted = Formula(
+        ir_eq(make_var("out"), make_var("x")),
+        free_vars=frozenset({"out", "x"}),
+        free_var_sorts={"out": IntSort()},
+    )
+    with pytest.raises(FactoryGap, match="sort"):
+        PostCondition(
+            unsorted,
+            formals={"x": IntSort()},
+            out_binding="out",
+            out_sort=IntSort(),
+        )
+
+
 def test_equality_fact_derives_key_and_preserves_wire_bytes() -> None:
     call = CallTerm("h", (ConstTerm(5, sort=IntSort()),), sort=IntSort())
     rhs = ConstTerm(6, sort=IntSort())
@@ -80,6 +135,49 @@ def test_equality_fact_derives_key_and_preserves_wire_bytes() -> None:
     assert repr(fact.denotation()) == repr(ir_eq(call.ir_term, rhs.ir_term))
     assert fact.to_declaration() == expected_declaration
     assert json.loads(fact.to_proof_ir()) == expected_declaration
+
+
+def test_equality_fact_unknown_return_sort_policy_is_explicit() -> None:
+    call = CallTerm("h", (), sort=UnknownSort(reason="no function contract available"))
+    rhs = ConstTerm(0, sort=IntSort())
+    fact = EqualityFact(call_term=call, rhs_term=rhs, provenance=_provenance())
+
+    assert fact.call_term.sort.reason == "no function contract available"
+    assert repr(fact.denotation()) == repr(ir_eq(call.ir_term, rhs.ir_term))
+
+
+def test_function_contract_accepts_post_condition_not_raw_formula_or_dict() -> None:
+    post = PostCondition(
+        Eq(VarTerm("out", sort=IntSort()), ConstTerm(0, sort=IntSort())),
+        formals={},
+        out_binding="out",
+        out_sort=IntSort(),
+    )
+    contract = FunctionContract(
+        symbol="module::h::callable",
+        formals=(),
+        post=post,
+        warrants=(_contract_provenance(),),
+    )
+
+    assert FunctionContract.__module__.endswith(".proofir.nodes.function_contract")
+    assert contract.denotation() == eq(make_var("out"), num(0))
+
+    with pytest.raises(TypeError, match="PostCondition"):
+        FunctionContract(
+            symbol="module::raw::callable",
+            formals=(),
+            post=ir_eq(make_var("out"), num(0)),
+            warrants=(_contract_provenance(),),
+        )
+
+    with pytest.raises(TypeError, match="PostCondition"):
+        FunctionContract(
+            symbol="module::dict::callable",
+            formals=(),
+            post={"kind": "atomic"},
+            warrants=(_contract_provenance(),),
+        )
 
 
 def test_equality_fact_from_string_key_is_unrepresentable() -> None:

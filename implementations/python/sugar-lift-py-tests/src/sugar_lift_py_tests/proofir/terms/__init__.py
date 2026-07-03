@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Generic, NoReturn, TypeVar
+from dataclasses import dataclass, field
+from typing import Any, Generic, Mapping, NoReturn, TypeVar
 
 from sugar_lift_py_tests.ir import (
     Term as IrTerm,
@@ -36,6 +36,7 @@ class Term(Generic[S]):
     sort: S
     ir_term: IrTerm
     free_vars: frozenset[str] = frozenset()
+    free_var_sorts: Mapping[str, Sort] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, init=False)
@@ -46,6 +47,7 @@ class ConstTerm(Term[S]):
         object.__setattr__(self, "sort", sort)
         object.__setattr__(self, "ir_term", _const_ir_term(value, sort))
         object.__setattr__(self, "free_vars", frozenset())
+        object.__setattr__(self, "free_var_sorts", {})
         object.__setattr__(self, "value", value)
 
 
@@ -64,6 +66,7 @@ class VarTerm(Term[S]):
         object.__setattr__(self, "sort", sort)
         object.__setattr__(self, "ir_term", _Var(name))
         object.__setattr__(self, "free_vars", frozenset({name}))
+        object.__setattr__(self, "free_var_sorts", {name: sort})
         object.__setattr__(self, "name", name)
 
 
@@ -105,6 +108,11 @@ class CallTerm(Term[S]):
             "free_vars",
             frozenset().union(*(arg.free_vars for arg in args)),
         )
+        object.__setattr__(
+            self,
+            "free_var_sorts",
+            _merge_var_sorts(*(arg.free_var_sorts for arg in args)),
+        )
         object.__setattr__(self, "callee_name", callee_name)
         object.__setattr__(self, "args", args)
 
@@ -117,10 +125,12 @@ class WrappedTerm(Term[S]):
         *,
         sort: S,
         free_vars: frozenset[str] = frozenset(),
+        free_var_sorts: Mapping[str, Sort] | None = None,
     ) -> None:
         object.__setattr__(self, "sort", sort)
         object.__setattr__(self, "ir_term", ir_term)
         object.__setattr__(self, "free_vars", free_vars)
+        object.__setattr__(self, "free_var_sorts", dict(free_var_sorts or {}))
 
 
 def term_from_ir(ir_term: IrTerm, *, sort: Sort | None = None) -> Term[Any]:
@@ -202,6 +212,22 @@ def _free_vars_in_ir_term(ir_term: IrTerm) -> frozenset[str]:
     if isinstance(ir_term, _Ctor):
         return frozenset().union(*(_free_vars_in_ir_term(arg) for arg in ir_term.args))
     return frozenset()
+
+
+def _merge_var_sorts(*maps: Mapping[str, Sort]) -> dict[str, Sort]:
+    merged: dict[str, Sort] = {}
+    for var_sorts in maps:
+        for name, sort in var_sorts.items():
+            previous = merged.get(name)
+            if previous is not None and previous != sort:
+                proofir_construction_gap(
+                    owner="proofir.terms",
+                    observed=f"{name}: {previous.name} vs {sort.name}",
+                    requested="one sort per free variable",
+                    fix="construct the formula with a single declared sort for each variable",
+                )
+            merged[name] = sort
+    return merged
 
 
 __all__ = [

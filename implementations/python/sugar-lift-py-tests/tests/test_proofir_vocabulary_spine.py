@@ -12,7 +12,6 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.ir import (
     Bool,
     Int,
-    bool_const,
     eq,
     make_var,
     num,
@@ -27,13 +26,17 @@ from sugar_lift_py_tests.proofir import (
     ConstTerm,
     ConstructionSite,
     Derived,
+    Eq,
     EqualityFact,
     FunctionContract,
+    BoolSort,
     IntSort,
+    PostCondition,
     Provenance,
     REGISTERED_PROOFIR_NODE_CLASSES,
     RefusalRecord,
     Stated,
+    VarTerm,
     canonical_euf_callsite_name,
     merge_equality_facts,
 )
@@ -506,7 +509,17 @@ def test_function_contract_witnesses_and_builder_invariants(tmp_path: Path) -> N
             provenance=_derived_provenance("FunctionContract"),
         )
         .formal("x", Int())
-        .post(eq(make_var("out"), make_var("x")))
+        .post(
+            PostCondition(
+                formula=Eq(
+                    VarTerm("out", sort=IntSort()),
+                    VarTerm("x", sort=IntSort()),
+                ),
+                out_binding="out",
+                out_sort=IntSort(),
+                formals={"x": IntSort()},
+            )
+        )
         .build()
     )
     assert contract.denotation() is not None
@@ -523,7 +536,7 @@ def test_function_contract_witnesses_and_builder_invariants(tmp_path: Path) -> N
             .formal("x", Int())
             .build()
         )
-    with pytest.raises(FactoryGap, match="typed Formula"):
+    with pytest.raises(TypeError, match="PostCondition"):
         (
             FunctionContract.builder(
                 symbol="module::dict::callable",
@@ -532,7 +545,6 @@ def test_function_contract_witnesses_and_builder_invariants(tmp_path: Path) -> N
                 provenance=_derived_provenance("FunctionContract"),
             )
             .post({"kind": "atomic"})
-            .build()
         )
 
 
@@ -559,7 +571,7 @@ def test_refusal_record_has_no_formula_and_fact_plus_refusal_is_unconstructible(
 
 
 def test_function_contract_rejects_wrong_formula_and_declaration_shapes() -> None:
-    with pytest.raises(FactoryGap, match="out binding"):
+    with pytest.raises(FactoryGap, match="post mentioning 'result'"):
         (
             FunctionContract.builder(
                 symbol="module::bad::callable",
@@ -567,6 +579,16 @@ def test_function_contract_rejects_wrong_formula_and_declaration_shapes() -> Non
                 out_sort=Bool(),
                 provenance=_derived_provenance("FunctionContract"),
             )
-            .post(eq(make_var("out"), bool_const(True)))
+            .post(
+                PostCondition(
+                    formula=Eq(
+                        VarTerm("out", sort=BoolSort()),
+                        ConstTerm(True, sort=BoolSort()),
+                    ),
+                    out_binding="result",
+                    out_sort=BoolSort(),
+                    formals={},
+                )
+            )
             .build()
         )

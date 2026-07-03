@@ -18,6 +18,11 @@ from sugar_lift_py_tests.idd.collect_factory_spine_frontier import (
     collect_factory_spine_frontier,
 )
 from sugar_lift_py_tests.ir import eq, make_var, num
+from sugar_lift_py_tests.proofir import ConstructionSite, Derived, FunctionContract, Provenance
+from sugar_lift_py_tests.proofir.formulas import Eq
+from sugar_lift_py_tests.proofir.scope import PostCondition
+from sugar_lift_py_tests.proofir.sorts import IntSort
+from sugar_lift_py_tests.proofir.terms import ConstTerm, VarTerm
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -51,7 +56,7 @@ def test_factory_spine_frontier_pins_current_xsugar_bypass_baseline() -> None:
         "factory/array_map_report.py:179",
         "factory/array_map_report.py:275",
         "factory/array_map_report.py:277",
-        "factory/literal_call_report.py:474",
+        "factory/literal_call_report.py:574",
         "floor/call_site_value.py:156",
         "sugar/builtin_call_sugar.py:45",
         "sugar/builtin_call_sugar.py:121",
@@ -83,7 +88,7 @@ def test_factory_spine_frontier_cli_exits_red_with_pinned_bypasses(
     assert "  xsugar_build_bypasses: 11" in stdout
     assert "  total: 11" in stdout
     assert "factory spine frontier offenders:" in stdout
-    assert "factory/literal_call_report.py:474" in stdout
+    assert "factory/literal_call_report.py:574" in stdout
     assert "floor/call_site_value.py:156" in stdout
     assert "sugar/builtin_call_sugar.py:45" in stdout
     assert "sugar/map_builtin_sugar.py:36" in stdout
@@ -233,17 +238,22 @@ def test_floor_contract_agreement_counter_reports_zero_for_current_chain() -> No
 
 
 def test_floor_contract_agreement_bad_twin_trips_gate() -> None:
-    report = build_literal_call_report(
-        source=(
-            "def h(x):\n" "    return x + 1\n" "def t():\n" "    assert h(5) == 6\n"
-        ),
-        filename="t.py",
-        memento_file="t.py",
+    provenance = Provenance(
+        node_class="FunctionContract",
+        construction_site=ConstructionSite(path="tests/test_floor_projection_instruments.py", line=1),
+        warrant=Derived(floor_chain=("construction-law",)),
     )
-    callable_contract = next(c for c in report.payload.ir if c.name == "t::h::callable")
-    planted = replace(
-        callable_contract,
-        post=_formula_to_rpc(eq(make_var("out"), num(99))),
+    planted = FunctionContract(
+        symbol="t::h::callable",
+        formals=(FunctionContract.formal("x", IntSort()),),
+        post=PostCondition(
+            Eq(VarTerm("out", sort=IntSort()), ConstTerm(99, sort=IntSort())),
+            formals={"x": IntSort()},
+            out_binding="out",
+            out_sort=IntSort(),
+        ),
+        warrants=(provenance,),
+        bridge_source_symbol="call:h",
     )
 
     violations = floor_contract_agreement_violations_for_fact(
@@ -261,3 +271,9 @@ def test_floor_contract_agreement_bad_twin_trips_gate() -> None:
     assert "h" in message
     assert "t::h::callable" in message
     assert "h#euf#c:call:h(i:5)::assertion" in message
+
+
+def test_floor_contract_agreement_shadow_interpreter_is_deleted() -> None:
+    assert not hasattr(agreement_gate, "_formula_models")
+    assert not hasattr(agreement_gate, "_normalize_term")
+    assert not hasattr(agreement_gate, "_fold_ctor")
