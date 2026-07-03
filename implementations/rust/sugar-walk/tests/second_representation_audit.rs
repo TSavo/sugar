@@ -2,9 +2,10 @@
 //
 // IrTerm boundary-collapse campaign (#3191), Slice 1 Instrument C.
 //
-// This is an IDD auditor. It pins the current `sugar-walk` sites that reason
-// structurally over `IrTerm` instead of crossing into the single floor-algebra
-// representation. Slices 3-7 drain these rows; this test ratchets with them.
+// This is an IDD gate. It rejects `sugar-walk` sites that reason structurally
+// over `IrTerm` instead of crossing into the single floor-algebra
+// representation. Slice 8 closed the pinned frontier; the planted bad twin
+// below keeps the auditor armed.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -23,50 +24,7 @@ struct ExpectedStructuralSite {
     replacement: &'static str,
 }
 
-const EXPECTED_STRUCTURAL_IRTERM_SITES: &[ExpectedStructuralSite] = &[
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "guarded_return_for_branch",
-        kind: "irterm_guard_reasoning",
-        owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
-        replacement: "lower condition/value terms and call ControlFlowGuardOperation",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "len_eq_one_branch_guard",
-        kind: "irterm_guard_reasoning",
-        owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
-        replacement: "express len==1 guard synthesis through the algebra guard operation",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "find_next_partial_receiver",
-        kind: "irterm_partial_receiver_walk",
-        owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
-        replacement: "move receiver discovery behind the algebra guard operation",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "len_receiver_term",
-        kind: "irterm_len_receiver_match",
-        owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
-        replacement: "move len receiver recognition behind the algebra guard operation",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "wrap_known_option_unwrap_guard",
-        kind: "irterm_guard_wrapper",
-        owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
-        replacement: "route known option unwrap guard through algebra guard composition",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "wrap_cf_guarded",
-        kind: "irterm_guard_wrapper",
-        owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
-        replacement: "let the algebra guarded-return floor own cf_guarded construction",
-    },
-];
+const EXPECTED_STRUCTURAL_IRTERM_SITES: &[ExpectedStructuralSite] = &[];
 
 const ALLOWED_STRUCTURAL_PATTERN_FNS: &[(&str, &str)] = &[
     (
@@ -76,15 +34,6 @@ const ALLOWED_STRUCTURAL_PATTERN_FNS: &[(&str, &str)] = &[
     (
         "is_trivial_result_term",
         "let-pruning helper, not a duplicate floor operation",
-    ),
-    (
-        "len_eq_one_receiver_key",
-        "covered by len_eq_one_branch_guard row",
-    ),
-    ("is_const_one", "covered by len_eq_one_branch_guard row"),
-    (
-        "next_into_iter_receiver_key",
-        "covered by find_next_partial_receiver row",
     ),
     (
         "lift_expr_to_term_inner",
@@ -331,7 +280,23 @@ fn structural_irterm_reasoning_frontier_matches_expected() {
         "{}",
         report.to_json()
     );
+    assert!(
+        report.pinned.is_empty(),
+        "Instrument C gate requires stable zero\n{}",
+        report.to_json()
+    );
     eprintln!("{}", report.to_json());
+}
+
+#[test]
+fn structural_irterm_reasoning_gate_is_stable_zero() {
+    let report = collect_report(&repo_root());
+
+    assert!(
+        report.pinned.is_empty(),
+        "Instrument C is a gate at campaign close; structural IrTerm reasoning must be zero\n{}",
+        report.to_json()
+    );
 }
 
 #[test]
