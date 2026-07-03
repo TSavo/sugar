@@ -22,8 +22,62 @@ class TupleLiteralValue(FloorValue):
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
         return operation.binary_tuple(self, ctx)
 
+    def call_method_with(self, operation: Any, ctx: Any) -> Any:
+        del ctx
+        if operation.name == "__len__" and not operation.arguments:
+            from sugar_lift_py_tests.floor.term_value import TermValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(len(self.items)))
+        _call_method_gap(
+            owner=operation.owner,
+            blame=operation.blame,
+            observed=f"TupleLiteralValue.{operation.name}",
+            requested="tuple builtin method floor",
+            fix=f"add TupleLiteralValue method floor for `{operation.name}`",
+        )
+
+    def materialize_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.materialize_tuple(self, ctx)
+
     def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_tuple(self, ctx)
 
     def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_literal(self, ctx)
+
+    def subscript_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.subscript_tuple(self, ctx)
+
+
+def _call_method_gap(
+    *,
+    owner: str,
+    blame: str,
+    observed: str,
+    requested: str,
+    fix: str,
+):
+    from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+
+    info = FactoryGapInfo(
+        owner=owner,
+        blame=blame,
+        observed=observed,
+        requested=requested,
+        fix=fix,
+        gap_kind="Floor",
+        gap_locus="construction",
+    )
+    raise FactoryGap(
+        info,
+        FactoryAuditRow(
+            role=requested,
+            status="floor-gap",
+            observed=observed,
+            blame=blame,
+            selected=None,
+            candidates=[],
+            message=info.message,
+        ),
+    )

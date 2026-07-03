@@ -167,7 +167,10 @@ def test_membership_assertion_emits_symbolic_bytes_contains_predicate() -> None:
             "contains",
             [
                 make_var("payload"),
-                ctor("py.bytes", [str_const("5f6d756c746961727261795f756d617468")]),
+                ctor(
+                    "python:bytes",
+                    [str_const("5f6d756c746961727261795f756d617468")],
+                ),
             ],
         )
     )

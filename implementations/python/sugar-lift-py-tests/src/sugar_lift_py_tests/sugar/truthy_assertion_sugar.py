@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryGap
-from sugar_lift_py_tests.floor import ObjectValue
-from sugar_lift_py_tests.ir import Formula, Term, atomic
+from sugar_lift_py_tests.floor import BoolValue, ObjectValue
+from sugar_lift_py_tests.ir import Formula, Term, atomic, bool_const, eq
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.object_truthiness import object_truth_formula
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -63,6 +63,8 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         if isinstance(outcome, Incomplete):
             return outcome
         value = complete_value(outcome, owner="TruthyAssertionSugar term")
+        if isinstance(value, BoolValue):
+            return eq(value.to_term(owner="TruthyAssertionSugar"), bool_const(True))
         if not isinstance(value, ObjectValue):
             return self.assertion_formula()
         return object_truth_formula(

@@ -30,7 +30,7 @@ _FOLD: dict[str, Callable[[int | float, int | float], int | float]] = {
 }
 
 # Operators whose divisor of 0 is a runtime effect (Python raises), not a value.
-_DIVIDES = {"/", "//", "%"}
+_DIVIDES = {"/", "//", "%", "divmod"}
 
 
 @dataclass(frozen=True)
@@ -47,11 +47,23 @@ class BinaryOperatorOperation:
         if self.operator == "*" and isinstance(self.right, TupleLiteralValue):
             return self._repeat_tuple(self.right, receiver)
         if isinstance(self.right, TermValue):
+            if self.operator in {"==", "!="}:
+                equal = receiver.value == self.right.value
+                return Complete(
+                    BoolValue(equal if self.operator == "==" else not equal)
+                )
             if self.operator in _DIVIDES and self.right.value == 0:
                 return Incomplete(
                     RuntimeEffect(
                         f"division by zero (`{self.operator}` by 0): a runtime "
                         "DivByZero effect that raises and stops constraint propagation"
+                    )
+                )
+            if self.operator == "divmod":
+                quotient, remainder = divmod(receiver.value, self.right.value)
+                return Complete(
+                    TupleLiteralValue(
+                        (TermValue(int(quotient)), TermValue(int(remainder)))
                     )
                 )
             folder = _FOLD.get(self.operator)

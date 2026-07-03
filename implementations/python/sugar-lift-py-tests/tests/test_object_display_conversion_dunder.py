@@ -13,6 +13,7 @@ from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
+
 def _ctx_for_module(source: str) -> FactoryBuildContext:
     module = ast.parse(source)
     resolver = {
@@ -73,7 +74,7 @@ class Box:
         ctor("call:Box.__bytes__", [_object_identity("Box", "t.py:1:6")])
     )
     assert force_floor(value, ctx, owner="bytes dunder bridge") == SymbolicValue(
-        ctor("py.bytes", [str_const("4f4b")])
+        ctor("python:bytes", [str_const("4f4b")])
     )
 
 

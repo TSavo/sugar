@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,6 @@ from sugar_lift_py_tests.proofir import (
     canonical_euf_callsite_name,
     merge_equality_facts,
 )
-
 
 ROOT = Path(__file__).resolve().parents[4]
 RUST_WORKSPACE = ROOT / "implementations" / "rust"
@@ -118,7 +118,6 @@ def _stage_cli_project(project: Path, source: str) -> None:
     sugar = project / ".sugar"
     (sugar / "lift" / "python").mkdir(parents=True)
     (sugar / "components" / "python-lift").mkdir(parents=True)
-    (sugar / "ir-compilers" / "smt-lib").mkdir(parents=True)
     (sugar / "config.toml").write_text(
         """[[plugins]]
 name = "python-lift"
@@ -185,7 +184,7 @@ flags = ["-smt2", "-in"]
     )
     wrapper.chmod(0o755)
     (sugar / "lift" / "python" / "manifest.toml").write_text(
-        f'name = "python"\ncommand = ["{wrapper}", "--rpc"]\nworking_dir = "."\n',
+        f'name = "python"\ncommand = [{json.dumps(sys.executable)}, "{wrapper_py}", "--rpc"]\nworking_dir = "."\n',
         encoding="utf-8",
     )
     component_script = sugar / "components" / "python-lift" / "component.sh"
@@ -219,9 +218,9 @@ flags = ["-smt2", "-in"]
     component_script.write_text(
         "while IFS= read -r line; do\n"
         '  case "$line" in\n'
-        f'    *\'"method":"initialize"\'*) printf \'%s\\n\' \'{initialize_response}\' ;;\n'
-        f'    *\'"method":"sugar.component.plan"\'*) printf \'%s\\n\' \'{plan_response}\' ;;\n'
-        f'    *\'"method":"shutdown"\'*) printf \'%s\\n\' \'{shutdown_response}\'; exit 0 ;;\n'
+        f"    *'\"method\":\"initialize\"'*) printf '%s\\n' '{initialize_response}' ;;\n"
+        f"    *'\"method\":\"sugar.component.plan\"'*) printf '%s\\n' '{plan_response}' ;;\n"
+        f"    *'\"method\":\"shutdown\"'*) printf '%s\\n' '{shutdown_response}'; exit 0 ;;\n"
         "  esac\n"
         "done\n",
         encoding="utf-8",
@@ -231,16 +230,6 @@ flags = ["-smt2", "-in"]
         'name = "python-lift-component"\n'
         'protocol_version = "sugar-component/1"\n'
         f'command = ["/bin/sh", "{component_script}"]\n',
-        encoding="utf-8",
-    )
-    (sugar / "ir-compilers" / "smt-lib" / "manifest.toml").write_text(
-        'name = "smt-lib-reference"\n'
-        'version = "0.1.0"\n'
-        'protocol_version = "sugar-ir-compiler/1"\n'
-        'command = ["cargo", "run", "--locked", "-p", '
-        '"sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]\n'
-        f'working_dir = "{RUST_WORKSPACE}"\n'
-        'dialects = ["smt-lib-v2.6"]\n',
         encoding="utf-8",
     )
 
@@ -338,8 +327,7 @@ def _has_equality_fact(doc: dict) -> bool:
 
 def _has_function_contract(doc: dict) -> bool:
     return any(
-        row.get("kind") == "function-contract" and row.get("post")
-        for row in doc["ir"]
+        row.get("kind") == "function-contract" and row.get("post") for row in doc["ir"]
     )
 
 
@@ -438,8 +426,7 @@ def test_equality_fact_semantic_merge_collapses_stated_and_derived_warrants() ->
     assert "sourceWarrants" not in merged_wire
     assert merged_wire["proofirProvenance"]["nodeClass"] == "EqualityFact"
     assert {
-        warrant["kind"]
-        for warrant in merged_wire["proofirProvenance"]["warrants"]
+        warrant["kind"] for warrant in merged_wire["proofirProvenance"]["warrants"]
     } == {"Derived", "Stated"}
     assert merge_equality_facts(stated, stated) == stated
     assert merge_equality_facts(merged, stated) == merged
@@ -541,8 +528,7 @@ def test_function_contract_witnesses_and_builder_invariants(tmp_path: Path) -> N
                 out_binding="out",
                 out_sort=Int(),
                 provenance=_derived_provenance("FunctionContract"),
-            )
-            .post({"kind": "atomic"})
+            ).post({"kind": "atomic"})
         )
 
 

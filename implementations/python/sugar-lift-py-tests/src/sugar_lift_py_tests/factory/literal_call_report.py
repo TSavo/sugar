@@ -59,7 +59,9 @@ from sugar_lift_py_tests.proofir import (
     formula_from_ir,
     merge_equality_facts,
 )
-from sugar_lift_py_tests.proofir.formulas import formula_to_rpc as proofir_formula_to_rpc
+from sugar_lift_py_tests.proofir.formulas import (
+    formula_to_rpc as proofir_formula_to_rpc,
+)
 from sugar_lift_py_tests.proofir.sorts import Sort as ProofSort, sort_from_ir
 
 from .dig_refusal import DigRefusal
@@ -235,7 +237,9 @@ def _mark_term_sort(term: Term, sort: ProofSort, sorts: dict[str, ProofSort]) ->
             _mark_term_sort(arg, sort, sorts)
 
 
-def _typed_formula_to_rpc(formula: Formula, scope_sorts: dict[str, ProofSort]) -> dict[str, Any]:
+def _typed_formula_to_rpc(
+    formula: Formula, scope_sorts: dict[str, ProofSort]
+) -> dict[str, Any]:
     return proofir_formula_to_rpc(formula_from_ir(formula, var_sorts=scope_sorts))
 
 
@@ -671,7 +675,49 @@ def _factory_assertion_derived_context(
 ) -> LiftResult | None:
     if stmt.observed != "Assert":
         return None
-    comparison = stmt.assert_test()
+    test = stmt.assert_test()
+    if test.observed == "BoolOp":
+        contexts = [
+            context
+            for value in test.boolop_values()
+            if (
+                context := _factory_assertion_derived_context(
+                    stmt.assert_with_test(value),
+                    fn=fn,
+                    filename=filename,
+                    memento_file=memento_file,
+                    source_lines=source_lines,
+                    functions_by_name=functions_by_name,
+                    classes_by_name=classes_by_name,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    dig_refusals=dig_refusals,
+                    agreement_violations=agreement_violations,
+                    factory_audits=factory_audits,
+                )
+            )
+            is not None
+        ]
+        return _merge_many(contexts) if contexts else None
+    if test.observed == "Call":
+        callee_name = _callee_name(test, import_aliases, from_imports)
+        if callee_name is None or callee_name not in functions_by_name:
+            return None
+        return _construct_callsite_from_factory_term(
+            stmt,
+            test,
+            callee_name,
+            fn,
+            functions_by_name,
+            classes_by_name,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            dig_refusals=dig_refusals,
+            agreement_violations=agreement_violations,
+            factory_audits=factory_audits,
+        )
+    comparison = test
     if comparison.observed != "Compare":
         return None
     if comparison.compare_ops() != ["Eq"] or len(comparison.compare_comparators()) != 1:
@@ -1004,7 +1050,11 @@ def _emit_euf_fact(
     Both land under the same #euf# key, so they conjoin -- agreement discharges, disagreement
     is UNSAT. One emitter means the key is spelled once: a vendor lie and a Python truth meet
     on the same name or they never meet at all."""
-    from sugar_lift_py_tests.proofir import CallTerm, canonical_euf_callsite_name, term_from_ir
+    from sugar_lift_py_tests.proofir import (
+        CallTerm,
+        canonical_euf_callsite_name,
+        term_from_ir,
+    )
 
     rhs_term = term_from_ir(value_term)
     call_sort = call_return_sort or UnknownSort(
@@ -1385,10 +1435,9 @@ def _construct_callsite_from_factory_term(
     ``project_callsite_with``. No callee body is reduced here by hand.
     """
     from .build import default_catalog
-    from .sugar_constructors import build_bridge_body
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.factory.factory_gap import FactoryGap
-    from sugar_lift_py_tests.floor import CallSiteValue, FloorValue
+    from sugar_lift_py_tests.floor import CallSiteValue
     from sugar_lift_py_tests.floor.call_site_value import force_floor
     from sugar_lift_py_tests.operations import (
         CallsiteProjectionOperation,
@@ -1402,7 +1451,7 @@ def _construct_callsite_from_factory_term(
         name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
         audit_sink=factory_audits,
     )
-    sink: list[tuple[str, FloorValue]] = []
+    sink: list[CallSiteValue] = []
     reduce_ctx = ReduceContext.root(
         owner="literal_call_report.callsite_floor", dig_sink=sink
     )
@@ -1508,20 +1557,28 @@ def _construct_callsite_from_factory_term(
         if contract_name in callsites_seen:
             return
         callsites_seen.add(contract_name)
-        immediate = _immediate_callsite_term(
-            call_value,
-            reduce_ctx,
-            owner="literal_call_report.callsite_bridge",
-            blame=callsite.blame,
-            dig_refusals=dig_refusals,
-        )
-        immediate_emitted = False
-        if immediate is not None:
+
+        def emit_immediate_fallback() -> bool | _BridgeProjectionRefused:
+            immediate = _immediate_callsite_term(
+                call_value,
+                reduce_ctx,
+                owner="literal_call_report.callsite_bridge",
+                blame=callsite.blame,
+                dig_refusals=dig_refusals,
+            )
+            if immediate is None:
+                return False
             if isinstance(immediate, _BridgeProjectionRefused):
-                return
-            immediate_emitted = emit_projected_fact(
+                return immediate
+            return emit_projected_fact(
                 call_value, arg_terms, immediate, check_agreement=True
             )
+
+        nested_sink_start = len(sink)
+        immediate = emit_immediate_fallback()
+        if isinstance(immediate, _BridgeProjectionRefused):
+            return
+        immediate_emitted = immediate
         try:
             floor = force_floor(
                 call_value,
@@ -1577,35 +1634,7 @@ def _construct_callsite_from_factory_term(
             call_value,
             arg_terms,
             value_term,
-            check_agreement=not immediate_emitted,
-        )
-
-    def sink_call_value(cn: str, arg_value: FloorValue) -> CallSiteValue | None:
-        callee = functions_by_name.get(cn)
-        if callee is None or len(callee.function_params()) != 1:
-            return None
-        try:
-            body = build_bridge_body(
-                callee, replace(build_ctx, building=build_ctx.building | {cn})
-            )
-            arg_term = floor_to_term(
-                arg_value, owner="literal_call_report.callsite_floor_sink_arg"
-            )
-        except (TypeError, ValueError, FactoryGap) as exc:
-            _record_dig_refusal(
-                dig_refusals,
-                callee=cn,
-                blame=callee.blame,
-                caught=exc,
-                reason="transitive bridge floor projection refused this callee",
-            )
-            return None
-        return CallSiteValue(
-            target_name=cn,
-            arg_values=(arg_value,),
-            parameters=tuple(callee.function_params()),
-            term=euf_call_term(cn, [arg_term]),
-            body=body,
+            check_agreement=(not immediate_emitted and len(sink) == nested_sink_start),
         )
 
     mint_universe(callee_name)
@@ -1630,12 +1659,10 @@ def _construct_callsite_from_factory_term(
     floor_fact(top_value)
     index = 0
     while index < len(sink):
-        cn, arg_value = sink[index]
+        bridged = sink[index]
         index += 1
-        mint_universe(cn)
-        bridged = sink_call_value(cn, arg_value)
-        if bridged is not None:
-            floor_fact(bridged)
+        mint_universe(bridged.target_name)
+        floor_fact(bridged)
     return _merge_many(facts)
 
 
@@ -1781,16 +1808,17 @@ def _function_universe(
     ]
     _universe_bound = set(formal_names) | {"out"}
     _universe_formulas = [
-        f
-        for f in body_formulas
-        if not _is_free_var_definition(f, _universe_bound)
+        f for f in body_formulas if not _is_free_var_definition(f, _universe_bound)
     ]
+    _universe_formulas = _with_python_bytes_content_universe(_universe_formulas)
     if not _universe_formulas:
         return None
     function_post = _post_condition_from_ir(
-        _universe_formulas[0]
-        if len(_universe_formulas) == 1
-        else and_(_universe_formulas),
+        (
+            _universe_formulas[0]
+            if len(_universe_formulas) == 1
+            else and_(_universe_formulas)
+        ),
         scope_sorts=scope_sorts,
         formal_names=formal_names,
     )
@@ -1964,14 +1992,15 @@ def _dig_universe(
     # `out`); the str.eq-bv-blocks payload already carries the alphabet constant.
     _universe_bound = set(formal_names) | {"out"}
     _universe_formulas = [
-        f
-        for f in body_formulas
-        if not _is_free_var_definition(f, _universe_bound)
+        f for f in body_formulas if not _is_free_var_definition(f, _universe_bound)
     ]
+    _universe_formulas = _with_python_bytes_content_universe(_universe_formulas)
     function_post = _post_condition_from_ir(
-        _universe_formulas[0]
-        if len(_universe_formulas) == 1
-        else and_(_universe_formulas),
+        (
+            _universe_formulas[0]
+            if len(_universe_formulas) == 1
+            else and_(_universe_formulas)
+        ),
         scope_sorts=scope_sorts,
         formal_names=formal_names,
     )
@@ -2059,6 +2088,40 @@ def _dig_universe(
         [audit],
         walk_rows,
         [],
+    )
+
+
+def _with_python_bytes_content_universe(formulas: list[Formula]) -> list[Formula]:
+    """Make byte-literal return bodies participate in string-theory consistency.
+
+    The SMT compiler unwraps ``python:bytes(<String const>)`` only when the
+    call-result subject is string-tainted. A simple body post
+    ``out == python:bytes("...")`` otherwise remains in the opaque term regime,
+    so a lying assertion can equal the same call result to different bytes
+    without contradiction. The extra predicate is content testimony for this
+    byte-literal body; it does not claim anything about opaque byte expressions.
+    """
+
+    out = _Var("out")
+    for formula in formulas:
+        if not isinstance(formula, _Atomic) or formula.name != "=":
+            continue
+        if len(formula.args) != 2:
+            continue
+        left, right = formula.args
+        if left == out and _is_python_bytes_literal_term(right):
+            return [*formulas, _Atomic("str.is_ascii", (out,))]
+        if right == out and _is_python_bytes_literal_term(left):
+            return [*formulas, _Atomic("str.is_ascii", (out,))]
+    return formulas
+
+
+def _is_python_bytes_literal_term(term: Term) -> bool:
+    return (
+        isinstance(term, _Ctor)
+        and term.name == "python:bytes"
+        and len(term.args) == 1
+        and isinstance(term.args[0], _ConstStr)
     )
 
 

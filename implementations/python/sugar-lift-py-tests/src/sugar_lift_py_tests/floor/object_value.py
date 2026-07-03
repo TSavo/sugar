@@ -34,12 +34,12 @@ class ObjectValue(FloorValue):
         return operation.delete_object(self, ctx)
 
     def call_method_with(self, operation, ctx):
-        del ctx
         return self.call_method_value(
             operation.name,
             operation.arguments,
             owner=operation.owner,
             blame=operation.blame,
+            ctx=ctx,
         )
 
     def descriptor_with(self, operation, ctx):
@@ -118,7 +118,6 @@ class ObjectValue(FloorValue):
         return operation.project_object(self, ctx)
 
     def binary_operator_with(self, operation, ctx):
-        del ctx
         method_name = _BINARY_DUNDER_METHODS.get(operation.operator)
         if method_name is None:
             return self._floor_gap(
@@ -131,11 +130,23 @@ class ObjectValue(FloorValue):
                     f"`{operation.operator}`"
                 ),
             )
+        if (
+            operation.operator == "=="
+            and isinstance(operation.right, ObjectValue)
+            and not self.has_method(method_name)
+        ):
+            from sugar_lift_py_tests.floor.bool_value import BoolValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                BoolValue(_structural_object_equality(self, operation.right))
+            )
         return self.call_method_value(
             method_name,
             (operation.right,),
             owner=operation.owner,
             blame=operation.blame,
+            ctx=ctx,
         )
 
     def reflected_binary_operator_with(self, operation, ctx):
@@ -208,8 +219,10 @@ class ObjectValue(FloorValue):
         *,
         owner: str,
         blame: str,
+        ctx: object | None = None,
     ):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
@@ -243,15 +256,21 @@ class ObjectValue(FloorValue):
                 floor_to_term(value, owner=f"{owner} method argument")
                 for value in arg_values
             ]
-            return Complete(
-                CallSiteValue(
-                    target_name=target_name,
-                    arg_values=arg_values,
-                    parameters=method.parameters,
-                    term=ctor(f"call:{target_name}", arg_terms),
-                    body=method.body,
-                )
+            call_value = CallSiteValue(
+                target_name=target_name,
+                arg_values=arg_values,
+                parameters=method.parameters,
+                term=ctor(f"call:{target_name}", arg_terms),
+                body=method.body,
             )
+            if not any(
+                isinstance(value, (SymbolicValue, CallSiteValue))
+                for value in arg_values
+            ):
+                sink = getattr(ctx, "dig_sink", None) if ctx is not None else None
+                if sink is not None:
+                    sink.append(call_value)
+            return Complete(call_value)
         return self._floor_gap(
             owner=owner,
             blame=blame,
@@ -310,6 +329,10 @@ class ObjectValue(FloorValue):
                 message=info.message,
             ),
         )
+
+
+def _structural_object_equality(left: ObjectValue, right: ObjectValue) -> bool:
+    return left.class_name == right.class_name and left.fields == right.fields
 
 
 _BINARY_DUNDER_METHODS = {

@@ -15,7 +15,12 @@ from sugar_lift_py_tests.idd.collect_factory_spine_frontier import (
     collect_factory_spine_frontier,
 )
 from sugar_lift_py_tests.ir import eq, make_var, num
-from sugar_lift_py_tests.proofir import ConstructionSite, Derived, FunctionContract, Provenance
+from sugar_lift_py_tests.proofir import (
+    ConstructionSite,
+    Derived,
+    FunctionContract,
+    Provenance,
+)
 from sugar_lift_py_tests.proofir.formulas import Eq
 from sugar_lift_py_tests.proofir.scope import PostCondition
 from sugar_lift_py_tests.proofir.sorts import IntSort
@@ -53,7 +58,7 @@ def test_factory_spine_frontier_pins_current_xsugar_bypass_baseline() -> None:
         "factory/array_map_report.py:202",
         "factory/array_map_report.py:311",
         "factory/array_map_report.py:313",
-        "factory/literal_call_report.py:613",
+        "factory/literal_call_report.py:617",
         "floor/call_site_value.py:156",
         "sugar/builtin_call_sugar.py:54",
         "sugar/builtin_call_sugar.py:134",
@@ -85,7 +90,7 @@ def test_factory_spine_frontier_cli_exits_red_with_pinned_bypasses(
     assert "  xsugar_build_bypasses: 11" in stdout
     assert "  total: 11" in stdout
     assert "factory spine frontier offenders:" in stdout
-    assert "factory/literal_call_report.py:613" in stdout
+    assert "factory/literal_call_report.py:617" in stdout
     assert "floor/call_site_value.py:156" in stdout
     assert "sugar/builtin_call_sugar.py:54" in stdout
     assert "sugar/map_builtin_sugar.py:36" in stdout
@@ -237,7 +242,9 @@ def test_floor_contract_agreement_counter_reports_zero_for_current_chain() -> No
 def test_floor_contract_agreement_bad_twin_trips_gate() -> None:
     provenance = Provenance(
         node_class="FunctionContract",
-        construction_site=ConstructionSite(path="tests/test_floor_projection_instruments.py", line=1),
+        construction_site=ConstructionSite(
+            path="tests/test_floor_projection_instruments.py", line=1
+        ),
         warrant=Derived(floor_chain=("construction-law",)),
     )
     planted = FunctionContract(

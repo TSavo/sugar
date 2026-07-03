@@ -27,7 +27,9 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_lift_py_tests.witness_harness import (
     WitnessPipelineError,
+    _stage_cli_project,
     prove_verdict,
+    run_lift_rpc,
     run_source_through_real_solver,
 )
 
@@ -35,9 +37,7 @@ ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 0
 EXPECTED_SEED_CASES = 53
 EXPECTED_SEED_OWNER_COUNT = 41
-# #3333: display-conversion callsites must emit the derived body/floor fact so
-# its lying witness leaves the S4 residue set.
-EXPECTED_TRIPLE_FAILURES = 13
+EXPECTED_TRIPLE_FAILURES = 0
 EXPECTED_MIGRATED_SEED_NAMES = {
     "add_method_return",
     "assign_return",
@@ -92,21 +92,7 @@ EXPECTED_MIGRATED_SEED_NAMES = {
     "unary_op_return",
     "with_return",
 }
-EXPECTED_PINNED_FAILURE_SEED_NAMES = {
-    "builder_ctor_len_return",
-    "builtin_len_return",
-    "call_truth_assertion_boolop",
-    "constant_bytes_return",
-    "divmod_subscript_return",
-    "format_int_return",
-    "isinstance_assertion_boolop",
-    "object_equality_return",
-    "object_rich_compare_return",
-    "to_list_len_return",
-    "truthy_assertion_boolop",
-    "tuple_literal_subscript_return",
-    "tuple_unpack_assign_return",
-}
+EXPECTED_PINNED_FAILURE_SEED_NAMES: set[str] = set()
 EXPECTED_OPT_OUT_SUGARS = {
     "AliasSugar",
     "AsyncForSugar",
@@ -284,21 +270,7 @@ def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
             failure.observed,
         )
         for failure in seed_report.triple_failures
-    ] == [
-        ("builder_ctor_len_return", "lying", "verdict", "unsat", "sat"),
-        ("builtin_len_return", "lying", "verdict", "unsat", "sat"),
-        ("call_truth_assertion_boolop", "lying", "verdict", "unsat", "sat"),
-        ("constant_bytes_return", "lying", "verdict", "unsat", "sat"),
-        ("divmod_subscript_return", "lying", "verdict", "unsat", "sat"),
-        ("format_int_return", "lying", "verdict", "unsat", "sat"),
-        ("isinstance_assertion_boolop", "lying", "verdict", "unsat", "sat"),
-        ("object_equality_return", "lying", "verdict", "unsat", "sat"),
-        ("object_rich_compare_return", "lying", "verdict", "unsat", "sat"),
-        ("to_list_len_return", "lying", "verdict", "unsat", "sat"),
-        ("truthy_assertion_boolop", "lying", "verdict", "unsat", "sat"),
-        ("tuple_literal_subscript_return", "lying", "verdict", "unsat", "sat"),
-        ("tuple_unpack_assign_return", "lying", "verdict", "unsat", "sat"),
-    ]
+    ] == []
     assert seed_report.non_circularity_failures == ()
 
 
@@ -474,6 +446,133 @@ def test_effectful_display_conversion_refuses_without_fabricated_derived_fact(
     )
 
 
+@pytest.mark.parametrize(
+    ("seed_name", "truthful_rhs", "lying_rhs"),
+    [
+        ("builder_ctor_len_return", 1, 2),
+        ("builtin_len_return", 3, 2),
+        ("constant_bytes_return", ("python:bytes", "78"), ("python:bytes", "79")),
+        ("divmod_subscript_return", 2, 3),
+        ("format_int_return", 5, 6),
+        ("object_equality_return", True, False),
+        ("object_rich_compare_return", True, False),
+        ("to_list_len_return", 2, 3),
+        ("tuple_literal_subscript_return", 2, 3),
+        ("tuple_unpack_assign_return", 2, 1),
+    ],
+)
+def test_literal_call_residue_rows_emit_derived_fact_and_refute_lie(
+    tmp_path: Path,
+    seed_name: str,
+    truthful_rhs: object,
+    lying_rhs: object,
+) -> None:
+    seed = next(item for item in DEFAULT_SUGAR_WITNESS_SEEDS if item.name == seed_name)
+
+    truthful = run_source_through_real_solver(
+        tmp_path / f"{seed_name}-truthful", seed.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / f"{seed_name}-lying", seed.lying.source
+    )
+
+    trace = {
+        "seed": seed.name,
+        "truthful": {
+            "expected": seed.truthful.expected,
+            "observed": truthful.verdict,
+            "selectedSugars": truthful.selected_sugars,
+            "ir": _a_callsite_euf_rows(truthful.lift_doc),
+            "diagnostics": truthful.lift_doc["diagnostics"],
+            "rows": truthful.prove_doc.get("rows"),
+        },
+        "lying": {
+            "expected": seed.lying.expected,
+            "observed": lying.verdict,
+            "selectedSugars": lying.selected_sugars,
+            "ir": _a_callsite_euf_rows(lying.lift_doc),
+            "diagnostics": lying.lift_doc["diagnostics"],
+            "rows": lying.prove_doc.get("rows"),
+        },
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert truthful.verdict == "sat"
+    truthful_rows = _a_callsite_euf_rows(truthful.lift_doc)
+    truthful_value_rows = [
+        row for row in truthful_rows if _euf_rhs_fingerprint(row) == truthful_rhs
+    ]
+    assert len(truthful_value_rows) == 1
+    assert _warrant_kinds(truthful_value_rows[0]) == {"Stated", "Derived"}
+
+    assert lying.verdict == "unsat"
+    lying_rows = _a_callsite_euf_rows(lying.lift_doc)
+    lying_value_rows = [
+        row
+        for row in lying_rows
+        if _euf_rhs_fingerprint(row) in {truthful_rhs, lying_rhs}
+    ]
+    assert len(lying_value_rows) == 2
+    assert {
+        _euf_rhs_fingerprint(row): _warrant_kinds(row) for row in lying_value_rows
+    } == {
+        truthful_rhs: {"Derived"},
+        lying_rhs: {"Stated"},
+    }
+
+
+@pytest.mark.parametrize(
+    "seed_name",
+    ["truthy_assertion_boolop", "isinstance_assertion_boolop"],
+)
+def test_boolop_literal_residue_lie_lowers_to_concrete_false_operand(
+    tmp_path: Path,
+    seed_name: str,
+) -> None:
+    seed = next(item for item in DEFAULT_SUGAR_WITNESS_SEEDS if item.name == seed_name)
+    project = tmp_path / seed_name
+    _stage_cli_project(project, seed.lying.source)
+
+    lift_doc = run_lift_rpc(project)
+    assertion = _single_assertion_contract(lift_doc)
+    trace = {
+        "seed": seed_name,
+        "assertion": assertion,
+        "diagnostics": lift_doc["diagnostics"],
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert _formula_contains_eq_value(assertion["inv"], False, True)
+
+
+def test_call_truth_boolop_residue_emits_local_call_derived_fact(
+    tmp_path: Path,
+) -> None:
+    seed = next(
+        item
+        for item in DEFAULT_SUGAR_WITNESS_SEEDS
+        if item.name == "call_truth_assertion_boolop"
+    )
+    project = tmp_path / "call_truth_assertion_boolop"
+    _stage_cli_project(project, seed.lying.source)
+
+    lift_doc = run_lift_rpc(project)
+    assertion = _single_assertion_contract(lift_doc)
+    rows = _a_callsite_euf_rows(lift_doc)
+    trace = {
+        "seed": seed.name,
+        "assertion": assertion,
+        "ir": rows,
+        "diagnostics": lift_doc["diagnostics"],
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert _formula_contains_call_truth(assertion["inv"], "call:A", 2)
+    assert len(rows) == 1
+    assert _euf_rhs_fingerprint(rows[0]) is False
+    assert _warrant_kinds(rows[0]) == {"Derived"}
+
+
 def _binary_dunder_euf_rows(lift_doc: dict) -> list[dict]:
     return _euf_rows(lift_doc)
 
@@ -483,6 +582,16 @@ def _euf_rows(lift_doc: dict) -> list[dict]:
         row
         for row in lift_doc["ir"]
         if isinstance(row, dict) and row.get("name") == "A#euf#c:call:A()::assertion"
+    ]
+
+
+def _a_callsite_euf_rows(lift_doc: dict) -> list[dict]:
+    return [
+        row
+        for row in lift_doc["ir"]
+        if isinstance(row, dict)
+        and row.get("name", "").startswith("A#euf#c:call:A(")
+        and row.get("name", "").endswith("::assertion")
     ]
 
 
@@ -496,6 +605,71 @@ def _euf_rhs_values(rows: list[dict]) -> list[int]:
 
 def _euf_rhs_value(row: dict) -> int:
     return row["inv"]["args"][1]["value"]
+
+
+def _euf_rhs_fingerprint(row: dict) -> object:
+    rhs = row["inv"]["args"][1]
+    if rhs.get("kind") == "const":
+        return rhs["value"]
+    if rhs.get("kind") == "ctor":
+        args = rhs.get("args", ())
+        if rhs.get("name") == "python:bytes" and len(args) == 1:
+            return ("python:bytes", args[0]["value"])
+        return (rhs.get("name"), tuple(json.dumps(arg, sort_keys=True) for arg in args))
+    return json.dumps(rhs, sort_keys=True)
+
+
+def _single_assertion_contract(lift_doc: dict) -> dict:
+    rows = [
+        row
+        for row in lift_doc["ir"]
+        if isinstance(row, dict)
+        and row.get("kind") == "contract"
+        and row.get("name", "").startswith("test_witness::test_a::assert:")
+    ]
+    assert len(rows) == 1
+    return rows[0]
+
+
+def _formula_contains_eq_value(formula: dict, left: object, right: object) -> bool:
+    if formula.get("kind") == "atomic" and formula.get("name") == "=":
+        args = formula.get("args", ())
+        return len(args) == 2 and [arg.get("value") for arg in args] == [left, right]
+    return any(
+        isinstance(operand, dict) and _formula_contains_eq_value(operand, left, right)
+        for operand in formula.get("operands", ())
+    )
+
+
+def _formula_contains_call_truth(formula: dict, callee_name: str, arg: int) -> bool:
+    if formula.get("kind") == "atomic" and formula.get("name") == "=":
+        args = formula.get("args", ())
+        if len(args) != 2:
+            return False
+        call, truth = args
+        return (
+            call.get("kind") == "ctor"
+            and call.get("name") == callee_name
+            and call.get("args")
+            == [
+                {
+                    "kind": "const",
+                    "sort": {"kind": "primitive", "name": "Int"},
+                    "value": arg,
+                }
+            ]
+            and truth
+            == {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Bool"},
+                "value": True,
+            }
+        )
+    return any(
+        isinstance(operand, dict)
+        and _formula_contains_call_truth(operand, callee_name, arg)
+        for operand in formula.get("operands", ())
+    )
 
 
 def test_sugar_witness_non_circularity_bad_twin_names_mismatch(
@@ -539,7 +713,7 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         + len(EXPECTED_TEMPORAL_OPT_OUT_SUGARS),
     }
     assert "R(unenrolled-sugars): 0" in text
-    assert "R(witness-triples-failing): 13" in text
+    assert "R(witness-triples-failing): 0" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
     assert "R(temporal-opt-outs): 4" in text
@@ -548,7 +722,7 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
     assert "temporal opt-outs:" in text
 
 
-def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
+def test_sugar_witness_cli_exits_red_for_temporal_opt_out_frontier(
     seed_report,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -561,7 +735,7 @@ def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
     assert status == 1
     stdout = capsys.readouterr().out
     assert "R(unenrolled-sugars): 0" in stdout
-    assert "R(witness-triples-failing): 13" in stdout
+    assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
     assert "R(temporal-opt-outs): 4" in stdout
 

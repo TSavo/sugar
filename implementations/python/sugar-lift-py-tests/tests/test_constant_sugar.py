@@ -37,7 +37,7 @@ def test_constant_sugar_lifts_bytes_literal_in_projected_equality() -> None:
             },
             {
                 "kind": "ctor",
-                "name": "py.bytes",
+                "name": "python:bytes",
                 "args": [
                     {
                         "kind": "const",

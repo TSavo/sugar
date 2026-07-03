@@ -22,7 +22,11 @@ def _assertion_facts(src: str) -> dict[str | None, list[object]]:
 
 def _assertion_contracts(src: str):
     report = build_literal_call_report(source=src, filename="t.py", memento_file="t.py")
-    return [contract for contract in report.payload.ir if contract.name.endswith("::assertion")]
+    return [
+        contract
+        for contract in report.payload.ir
+        if contract.name.endswith("::assertion")
+    ]
 
 
 def _diagnostics(src: str) -> list[dict]:
@@ -68,7 +72,8 @@ def test_truthful_transitive_literal_floor_stays_consistent() -> None:
     truthful_rows = [
         contract
         for contract in _assertion_contracts(source)
-        if contract.inv["args"][1].get("value") == 0
+        if contract.inv["args"][0].get("name") == "call:A"
+        and contract.inv["args"][1].get("value") == 0
     ]
     assert len(truthful_rows) == 1
     provenance = truthful_rows[0].proofir_provenance
@@ -81,12 +86,7 @@ def test_truthful_transitive_literal_floor_stays_consistent() -> None:
 
 
 def test_effectful_callee_records_refusal_and_emits_no_floor_fact() -> None:
-    source = (
-        "def A():\n"
-        "    return 1 // 0\n"
-        "def t():\n"
-        "    assert A() == 1\n"
-    )
+    source = "def A():\n" "    return 1 // 0\n" "def t():\n" "    assert A() == 1\n"
 
     assert _assertion_facts(source)["call:A"] == [1]
     refusals = [row for row in _diagnostics(source) if row.get("kind") == "dig-refusal"]

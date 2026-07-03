@@ -61,8 +61,7 @@ class BridgeStrategy:
     from `ctx.build_body`, the catalog), never a side-door constructor.
 
     (Absorbed from the former call constructor -- same body adapter, now reached only through
-    the catalog. The in-body bridge EMIT exists; full enqueue-on-emit awaits the dig queue, so
-    today the dig is still warranted by the assertion in `_dig_universe`.)
+    the catalog. The in-body bridge EMIT and the dig obligation are one construction act.)
     """
 
     target_name: str
@@ -92,14 +91,6 @@ class BridgeStrategy:
             complete_value(argument.reduce(ctx), owner="BridgeStrategy argument")
             for argument in self.arguments
         )
-        # Only a CONCRETE arg can be dug (curried over a value); a symbolic formal -- the
-        # universe build -- leaves the bridge symbolic and enqueues nothing.
-        if len(arg_values) == 1 and not isinstance(
-            arg_values[0], (SymbolicValue, CallSiteValue)
-        ):
-            sink = getattr(ctx, "dig_sink", None)
-            if sink is not None:
-                sink.append((self.target_name, arg_values[0]))
         term = euf_call_term(
             self.target_name,
             [
@@ -107,15 +98,22 @@ class BridgeStrategy:
                 for arg in arg_values
             ],
         )
-        return Complete(
-            CallSiteValue(
-                target_name=self.target_name,
-                arg_values=arg_values,
-                parameters=self.parameters,
-                term=term,
-                body=self.body,
-            )
+        call_value = CallSiteValue(
+            target_name=self.target_name,
+            arg_values=arg_values,
+            parameters=self.parameters,
+            term=term,
+            body=self.body,
         )
+        # Only concrete args can be dug (curried over values); symbolic formals leave
+        # the bridge symbolic and enqueue nothing.
+        if not any(
+            isinstance(arg, (SymbolicValue, CallSiteValue)) for arg in arg_values
+        ):
+            sink = getattr(ctx, "dig_sink", None)
+            if sink is not None:
+                sink.append(call_value)
+        return Complete(call_value)
 
     # --- the UNIVERSE (used by the dig in _dig_universe, via the catalog) -------------------
 
@@ -452,12 +450,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             pair(
                 "builtin_len_callsite",
                 "builtin-dunder-len",
-                (
-                    "class Box:\n"
-                    "    def __len__(self):\n"
-                    "        return 1\n"
-                    "\n"
-                ),
+                ("class Box:\n" "    def __len__(self):\n" "        return 1\n" "\n"),
                 "[10, 20, 30][len(Box())]",
                 "20",
                 "10",
@@ -465,12 +458,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             pair(
                 "builtin_hash_callsite",
                 "builtin-dunder-hash",
-                (
-                    "class Box:\n"
-                    "    def __hash__(self):\n"
-                    "        return 1\n"
-                    "\n"
-                ),
+                ("class Box:\n" "    def __hash__(self):\n" "        return 1\n" "\n"),
                 "[10, 20, 30][hash(Box())]",
                 "20",
                 "10",
