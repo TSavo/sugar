@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,6 +15,569 @@ const EXPECTED_ENROLLMENT_FRONTIER: usize = 99;
 const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
 const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 4;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum PendingResidualClass {
+    ReasonedBucket,
+    PinnedCatch,
+    TemporalCampaign,
+}
+
+impl PendingResidualClass {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReasonedBucket => "reasoned-bucket",
+            Self::PinnedCatch => "pinned-catch",
+            Self::TemporalCampaign => "temporal-campaign",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingResidual {
+    claim: &'static str,
+    class: PendingResidualClass,
+    detail: &'static str,
+}
+
+const EXPECTED_PENDING_RESIDUALS: &[PendingResidual] = &[
+    PendingResidual {
+        claim: "addr_of_mut",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "unsafe address-of expression; needs pointer-provenance floor before a verdict pair",
+    },
+    PendingResidual {
+        claim: "array_chunks",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: array_chunks literal-iterator standing",
+    },
+    PendingResidual {
+        claim: "array_term",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch aggregate row: witnesses dispatch through aggregate_decomp/term_literal",
+    },
+    PendingResidual {
+        claim: "assertion_surface_infinity_eq",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family e: float/infinity semantics lie remains SAT",
+    },
+    PendingResidual {
+        claim: "atomic_load",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "observable atomic memory read; no stable witness value source yet",
+    },
+    PendingResidual {
+        claim: "await_term",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "async await runtime handoff; verdict pair needs executor/future witness machinery",
+    },
+    PendingResidual {
+        claim: "bound_path",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch path row: witnesses dispatch through assertion surfaces or term_literal",
+    },
+    PendingResidual {
+        claim: "bound_path_composite",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch bound composite row; pair needs source-owner alignment",
+    },
+    PendingResidual {
+        claim: "call",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family i: generic call EUF semantic lie remains SAT",
+    },
+    PendingResidual {
+        claim: "char_range_collect_string",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: char range collection-to-string",
+    },
+    PendingResidual {
+        claim: "char_range_filter_map_eq",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: char range filter_map equality",
+    },
+    PendingResidual {
+        claim: "char_range_filter_map_eq_assertion_surface",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: assertion-surface char range filter_map equality",
+    },
+    PendingResidual {
+        claim: "closure_iter_advance_body",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "closure adaptor runtime iterator advance; needs closure-state witness machinery",
+    },
+    PendingResidual {
+        claim: "closure_mutating_body",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "closure adaptor mutates captured state; needs mutable closure-state witness machinery",
+    },
+    PendingResidual {
+        claim: "closure_opaque_accessor",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "closure adaptor opaque accessor; no deterministic verdict source",
+    },
+    PendingResidual {
+        claim: "closure_runtime_receiver",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "closure adaptor runtime receiver; no literal standing for witness pair",
+    },
+    PendingResidual {
+        claim: "closure_term",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "closure term identity needs callable/closure witness machinery",
+    },
+    PendingResidual {
+        claim: "closure_tls_accessor",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "thread-local closure accessor; runtime TLS state is not verdict-bearing yet",
+    },
+    PendingResidual {
+        claim: "collect",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5/S6 collection terminal family: collect materialization",
+    },
+    PendingResidual {
+        claim: "collection_literal",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch collection row: aggregate literal witnesses dispatch elsewhere",
+    },
+    PendingResidual {
+        claim: "compute_float",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family e: compute_float wrapper remains EUF and lying SAT",
+    },
+    PendingResidual {
+        claim: "constraint_assert_macro",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch macro row: assertion witnesses dispatch to assertion-surface macro owners",
+    },
+    PendingResidual {
+        claim: "constraint_bounded_literal_macro",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch macro row: bounded literal assertion witnesses dispatch to assertion surface",
+    },
+    PendingResidual {
+        claim: "constraint_cfg_macro",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "configuration fact surface missing; target-cfg facts need a typed witness source",
+    },
+    PendingResidual {
+        claim: "constraint_float_refinement",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family e: float refinement semantic lie remains SAT",
+    },
+    PendingResidual {
+        claim: "constraint_if_panic",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family g: panic/guard implication semantic lie remains SAT",
+    },
+    PendingResidual {
+        claim: "constraint_infinity_eq",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family e: infinity equality needs the float semantics drain",
+    },
+    PendingResidual {
+        claim: "constraint_literal_iterator_quantifier",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "#3415 family j / temporal quantifier cross-chain: finite literal iterator curry facts",
+    },
+    PendingResidual {
+        claim: "constraint_match_scrutinee",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "match-scrutinee carrier facts need owner-aligned pattern witness machinery",
+    },
+    PendingResidual {
+        claim: "constraint_matches_macro",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family b: macro-expansion shape semantic lie remains SAT",
+    },
+    PendingResidual {
+        claim: "constraint_relation_macro",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch macro row: relation witnesses dispatch through assertion-surface owners",
+    },
+    PendingResidual {
+        claim: "constraint_runtime_expr",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "runtime-expression constraint; needs runtime value witness machinery",
+    },
+    PendingResidual {
+        claim: "control_flow_composite",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "control-flow composite effect surface needs statement-position assertion anchoring",
+    },
+    PendingResidual {
+        claim: "cycle_take",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: cycle/take finite standing",
+    },
+    PendingResidual {
+        claim: "dormant_mut_ref",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "mutable alias state; needs temporal/mutable-reference witness machinery",
+    },
+    PendingResidual {
+        claim: "field_term",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family a: field projection semantic lie remains SAT",
+    },
+    PendingResidual {
+        claim: "flat_map",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: flat_map expansion",
+    },
+    PendingResidual {
+        claim: "flatten",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: flatten expansion",
+    },
+    PendingResidual {
+        claim: "for_each",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter/effect family: for_each closure effects",
+    },
+    PendingResidual {
+        claim: "for_loop_mutation",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "loop mutation state; needs guarded temporal statement anchoring",
+    },
+    PendingResidual {
+        claim: "for_replay",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "family-j temporal quantifier cross-chain: replayed loop members",
+    },
+    PendingResidual {
+        claim: "forall_loop",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "family-j temporal quantifier cross-chain: forall loop facts",
+    },
+    PendingResidual {
+        claim: "format_args_estimated_capacity",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "unstable-feature bucket: fmt_internals capacity is not stable Rust witness ground",
+    },
+    PendingResidual {
+        claim: "function_map",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: named function map composition",
+    },
+    PendingResidual {
+        claim: "function_map_term",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: named function map as term",
+    },
+    PendingResidual {
+        claim: "future_join",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "async future join runtime handoff; no stable verdict witness yet",
+    },
+    PendingResidual {
+        claim: "identity_map",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: identity map standing",
+    },
+    PendingResidual {
+        claim: "intersperse",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: intersperse sequence expansion",
+    },
+    PendingResidual {
+        claim: "intersperse_collect_string",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "unstable-feature bucket: iter_intersperse collection string witness blocked",
+    },
+    PendingResidual {
+        claim: "intersperse_concat",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "unstable-feature bucket: iter_intersperse concat witness blocked",
+    },
+    PendingResidual {
+        claim: "iter_next",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5/S6 iterator state family: next() consumption",
+    },
+    PendingResidual {
+        claim: "iter_terminal",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5/S6 iterator terminal family",
+    },
+    PendingResidual {
+        claim: "iterator",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: base iterator standing",
+    },
+    PendingResidual {
+        claim: "kmerge",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: k-way merge standing",
+    },
+    PendingResidual {
+        claim: "literal_ip_addr",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family c: literal IP address value relation lie remains SAT",
+    },
+    PendingResidual {
+        claim: "map_term",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: map term projection",
+    },
+    PendingResidual {
+        claim: "match_scrutinee",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "match scrutinee verdict needs owner-aligned pattern witness machinery",
+    },
+    PendingResidual {
+        claim: "match_scrutinee_term",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "match scrutinee term needs owner-aligned pattern witness machinery",
+    },
+    PendingResidual {
+        claim: "method",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family i: generic method EUF semantic lie remains SAT",
+    },
+    PendingResidual {
+        claim: "monadic_composite",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S6 Option-Result family: monadic composite routing",
+    },
+    PendingResidual {
+        claim: "panic_macro",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "effect-router surface; needs statement-position handler witness before verdict pair",
+    },
+    PendingResidual {
+        claim: "path",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch fallback path row; witnesses dispatch to const/bound/term owners",
+    },
+    PendingResidual {
+        claim: "peekable",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5/S6 iterator state family: peekable adaptor",
+    },
+    PendingResidual {
+        claim: "peekable_runtime_assertion_surface",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5/S6 iterator state family: peekable assertion surface",
+    },
+    PendingResidual {
+        claim: "ptr_eq_term",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family h: pointer identity semantic lie remains SAT",
+    },
+    PendingResidual {
+        claim: "ptr_metadata",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "unstable pointer metadata facts need typed pointer-provenance machinery",
+    },
+    PendingResidual {
+        claim: "range_bounds_contains",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "family-j temporal quantifier cross-chain: RangeBounds contains facts",
+    },
+    PendingResidual {
+        claim: "range_construct",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch range row: probes dispatch to range_term/struct_term/aggregate surfaces",
+    },
+    PendingResidual {
+        claim: "raw_addr_term",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "raw address term needs pointer-provenance facts before verdict pair",
+    },
+    PendingResidual {
+        claim: "raw_pointer_arithmetic",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "unsafe pointer arithmetic; no stable proof relation yet",
+    },
+    PendingResidual {
+        claim: "reference_sequence",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5/S6 iterator/reference sequence standing",
+    },
+    PendingResidual {
+        claim: "repeat_term",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch aggregate row: repeat witnesses dispatch through aggregate_decomp/term_literal",
+    },
+    PendingResidual {
+        claim: "result_inspect",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S6 Option-Result family: inspect on Result",
+    },
+    PendingResidual {
+        claim: "result_transpose_collect",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family f: Result transpose/collect collection-shape lie remains SAT",
+    },
+    PendingResidual {
+        claim: "rev",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: rev ordering",
+    },
+    PendingResidual {
+        claim: "runtime_iterator_source",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5/S6 iterator standing: runtime source remains effectful",
+    },
+    PendingResidual {
+        claim: "scan",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: scan stateful composition",
+    },
+    PendingResidual {
+        claim: "slice_chunk_window",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: slice chunks/windows",
+    },
+    PendingResidual {
+        claim: "slice_index",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "unstable-feature bucket: slice_index_methods is not stable Rust witness ground",
+    },
+    PendingResidual {
+        claim: "source_location",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "source-location value is compile-context metadata, not a semantic witness yet",
+    },
+    PendingResidual {
+        claim: "statement_async_future",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "async statement/future handoff; no verdict-bearing runtime witness",
+    },
+    PendingResidual {
+        claim: "statement_control_flow",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "statement control-flow effect needs statement-position assertion anchoring",
+    },
+    PendingResidual {
+        claim: "statement_future_handoff",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "future handoff statement effect; no deterministic verdict source",
+    },
+    PendingResidual {
+        claim: "statement_future_handoff_composite",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "future handoff composite; no deterministic verdict source",
+    },
+    PendingResidual {
+        claim: "statement_loop_advance",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5/S6 iterator-state family: statement loop advance",
+    },
+    PendingResidual {
+        claim: "statement_nested_assertion",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "nested assertion statement needs statement-position assertion anchoring",
+    },
+    PendingResidual {
+        claim: "statement_reflection",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "reflection statement; no stable semantic witness relation yet",
+    },
+    PendingResidual {
+        claim: "statement_runtime_expr",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "runtime expression statement; no stable value source in witness harness",
+    },
+    PendingResidual {
+        claim: "statement_unsafe_memory",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "unsafe-memory statement effect; no stable proof relation yet",
+    },
+    PendingResidual {
+        claim: "step_by",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S5 adapter family: step_by standing",
+    },
+    PendingResidual {
+        claim: "str_table_select",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family k: bv/table-select/string conversion lie remains SAT",
+    },
+    PendingResidual {
+        claim: "struct_term",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch aggregate row: struct witnesses dispatch through aggregate_decomp/term_literal",
+    },
+    PendingResidual {
+        claim: "transparent_composite",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch transparent composite row; witnesses dispatch to transparent_term",
+    },
+    PendingResidual {
+        claim: "try_from_fn",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S6 Option-Result family: try_from_fn fallible iteration",
+    },
+    PendingResidual {
+        claim: "try_map",
+        class: PendingResidualClass::TemporalCampaign,
+        detail: "S6 Option-Result family: try_map fallible adaptor",
+    },
+    PendingResidual {
+        claim: "tuple_term",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "owner-mismatch aggregate row: tuple witnesses dispatch through tuple_decomp/term_literal",
+    },
+    PendingResidual {
+        claim: "unsafe_memory",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "unsafe-memory expression effect; no stable proof relation yet",
+    },
+    PendingResidual {
+        claim: "vec_literal",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "production-panic bucket: vector literal term production still panics/unsupported",
+    },
+    PendingResidual {
+        claim: "vec_macro",
+        class: PendingResidualClass::PinnedCatch,
+        detail: "#3415 family b/f: vec macro collection-shape semantic lie remains SAT",
+    },
+    PendingResidual {
+        claim: "write_macro",
+        class: PendingResidualClass::ReasonedBucket,
+        detail: "formatting/write side effect; no deterministic verdict-bearing output witness",
+    },
+];
+
+#[test]
+fn s9_batch5_residual_pending_map_covers_every_row() {
+    let actual = catalog_claims()
+        .into_iter()
+        .filter(|claim| claim.witnesses.is_pending())
+        .map(|claim| claim.name)
+        .collect::<BTreeSet<_>>();
+    let mut expected = BTreeSet::new();
+    let mut counts = BTreeMap::<&'static str, usize>::new();
+    for row in EXPECTED_PENDING_RESIDUALS {
+        assert!(
+            !row.detail.trim().is_empty(),
+            "residual row `{}` must name the blocker or owner",
+            row.claim
+        );
+        assert!(
+            expected.insert(row.claim),
+            "duplicate residual row `{}`",
+            row.claim
+        );
+        *counts.entry(row.class.as_str()).or_default() += 1;
+    }
+    let missing = actual.difference(&expected).copied().collect::<Vec<_>>();
+    let stale = expected.difference(&actual).copied().collect::<Vec<_>>();
+    println!(
+        "R(rust-witness-residual-map)={} class_counts={:?}",
+        EXPECTED_PENDING_RESIDUALS.len(),
+        counts
+    );
+    assert!(
+        missing.is_empty() && stale.is_empty(),
+        "S9 batch 5 residual map must classify every Pending claim exactly once; missing={missing:?}; stale={stale:?}"
+    );
+    assert_eq!(actual.len(), EXPECTED_ENROLLMENT_FRONTIER);
+}
 
 #[derive(Clone, Copy)]
 struct WitnessPair {
