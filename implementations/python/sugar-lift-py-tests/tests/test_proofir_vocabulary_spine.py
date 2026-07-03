@@ -353,7 +353,8 @@ def _proofir_provenance_classes(doc: dict) -> set[str]:
 def _assert_real_verdict(prove: dict, case) -> None:
     row = _first_euf_row(prove)
     if case.refusal_absence:
-        assert row["status"] == "discharged", prove
+        assert row["status"] == "refused", prove
+        assert "vacuous" in row["reason"], prove
         assert row["verification"]["linkedPosts"] == []
         return
     expected_status = {"sat": "discharged", "unsat": "unsatisfied"}[case.expected]
