@@ -20,7 +20,46 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::tuple_producer(
         "integer_decode_tuple_producer",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                trait IntegerDecode {
+                    fn integer_decode(self) -> (u64, i16, i8);
+                }
+
+                impl IntegerDecode for f64 {
+                    fn integer_decode(self) -> (u64, i16, i8) {
+                        (7074237752028906, -51, 1)
+                    }
+                }
+
+                #[test]
+                fn t_integer_decode_good() {
+                    assert_eq!(
+                        3.14159265359_f64.integer_decode(),
+                        (7074237752028906, -51, 1)
+                    );
+                }
+            "#,
+            r#"
+                trait IntegerDecode {
+                    fn integer_decode(self) -> (u64, i16, i8);
+                }
+
+                impl IntegerDecode for f64 {
+                    fn integer_decode(self) -> (u64, i16, i8) {
+                        (7074237752028906, -51, 1)
+                    }
+                }
+
+                #[test]
+                fn t_integer_decode_bad() {
+                    assert_eq!(
+                        3.14159265359_f64.integer_decode(),
+                        (7074237752028907, -51, 1)
+                    );
+                }
+            "#,
+        ),
         recognize_tuple_producer,
     );
 

@@ -61,7 +61,48 @@ use crate::sugar::source_fragment::SourceFragment;
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_regex_match",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            struct Regex(&'static str);
+
+            impl Regex {
+                fn new(pattern: &'static str) -> Result<Self, ()> {
+                    Ok(Self(pattern))
+                }
+
+                fn is_match(&self, subject: &str) -> bool {
+                    self.0 == "^a+$"
+                        && subject.chars().all(|ch| ch == 'a')
+                        && !subject.is_empty()
+                }
+            }
+
+            #[test]
+            fn t_regex_match_good() {
+                assert!(Regex::new("^a+$").unwrap().is_match("aaa"));
+            }
+        "#,
+        r#"
+            struct Regex(&'static str);
+
+            impl Regex {
+                fn new(pattern: &'static str) -> Result<Self, ()> {
+                    Ok(Self(pattern))
+                }
+
+                fn is_match(&self, subject: &str) -> bool {
+                    self.0 == "^a+$"
+                        && subject.chars().all(|ch| ch == 'a')
+                        && !subject.is_empty()
+                }
+            }
+
+            #[test]
+            fn t_regex_match_bad() {
+                assert!(Regex::new("^a+$").unwrap().is_match("bbb"));
+            }
+        "#,
+    ),
     recognize_constraint,
 );
 
