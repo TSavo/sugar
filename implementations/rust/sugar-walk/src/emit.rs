@@ -26,6 +26,7 @@ use std::{
 use quote::ToTokens;
 use serde_json::{json, Value as JsonValue};
 use sugar_canonicalizer::{blake3_512_of, Value};
+use sugar_floor_algebra::{Effect, Outcome, RaiseEffect, RouteRaisesOperation};
 use syn::parse::Parser;
 use syn::{BinOp, Expr, ExprIf, Lit, Meta, ReturnType, Stmt, Type, UnOp};
 
@@ -1257,6 +1258,59 @@ fn seq_all_then(mut terms: Vec<AlgebraTerm>, tail: AlgebraTerm) -> AlgebraTerm {
     seq_all(terms)
 }
 
+fn route_try_residual_to_legacy_term(
+    op_name: &'static str,
+    inner: AlgebraTerm,
+    effect: Effect,
+) -> Result<AlgebraTerm, String> {
+    let original = effect.clone();
+    match RouteRaisesOperation::new(Vec::new(), "sugar-walk.emit.try")
+        .route_incomplete(Outcome::Incomplete(effect))
+    {
+        Outcome::Incomplete(returned) if returned == original => Ok(AlgebraTerm::op(op_name, vec![inner])),
+        Outcome::Incomplete(returned) => Err(format!(
+            "sugar-walk.emit.try: RouteRaisesOperation rewrote unmatched raise {original:?} into {returned:?}"
+        )),
+        Outcome::Complete(_) => {
+            Err("sugar-walk.emit.try: RouteRaisesOperation routed residual try without a handler".to_string())
+        }
+    }
+}
+
+fn result_try_effect(try_expr: &syn::ExprTry) -> Effect {
+    Effect::Raise(RaiseEffect::ResultErr {
+        boundary: try_expr.to_token_stream().to_string(),
+    })
+}
+
+fn option_try_effect(try_expr: &syn::ExprTry) -> Effect {
+    Effect::Raise(RaiseEffect::EarlyReturn {
+        boundary: try_expr.to_token_stream().to_string(),
+    })
+}
+
+fn lower_try_expr_to_stmt(
+    try_expr: &syn::ExprTry,
+    ctx: &LoweringContext,
+) -> Result<AlgebraTerm, String> {
+    let inner = lower_expr_to_value_term(&try_expr.expr, ctx)?;
+    route_try_residual_to_legacy_term("try", inner, result_try_effect(try_expr))
+}
+
+fn lower_try_expr_to_value_term(
+    try_expr: &syn::ExprTry,
+    ctx: &LoweringContext,
+) -> Result<AlgebraTerm, String> {
+    let inner = lower_expr_to_value_term(&try_expr.expr, ctx)?;
+    let (op_name, effect) = match &ctx.return_shape {
+        ReturnShape::Partial { loss, .. } if *loss == "return-type-option" => {
+            ("try_option", option_try_effect(try_expr))
+        }
+        _ => ("try", result_try_effect(try_expr)),
+    };
+    route_try_residual_to_legacy_term(op_name, inner, effect)
+}
+
 fn lower_tail_expr_to_stmt(expr: &Expr, ctx: &LoweringContext) -> Result<AlgebraTerm, String> {
     if ctx.return_shape.sort() == Some(ExprSort::Unit)
         && matches!(expr, Expr::ForLoop(_) | Expr::If(_) | Expr::Match(_))
@@ -1340,10 +1394,7 @@ fn lower_expr_to_stmt(expr: &Expr, ctx: &LoweringContext) -> Result<AlgebraTerm,
         }
         Expr::Call(call) => lower_call_expr_to_value_term(call, ctx),
         Expr::Macro(mac) => lower_macro_to_value_term(&mac.mac, ctx),
-        Expr::Try(try_expr) => Ok(AlgebraTerm::op(
-            "try",
-            vec![lower_expr_to_value_term(&try_expr.expr, ctx)?],
-        )),
+        Expr::Try(try_expr) => lower_try_expr_to_stmt(try_expr, ctx),
         Expr::Index(_) => lower_discarded_value_expr_to_stmt(expr, ctx),
         Expr::Field(_) => lower_discarded_value_expr_to_stmt(expr, ctx),
         Expr::Tuple(tuple) => {
@@ -1944,16 +1995,7 @@ fn lower_expr_to_value_term(expr: &Expr, ctx: &LoweringContext) -> Result<Algebr
                 lower_expr_to_int_term(&index.index, ctx)?,
             ],
         )),
-        Expr::Try(try_expr) => {
-            let op = match &ctx.return_shape {
-                ReturnShape::Partial { loss, .. } if *loss == "return-type-option" => "try_option",
-                _ => "try",
-            };
-            Ok(AlgebraTerm::op(
-                op,
-                vec![lower_expr_to_value_term(&try_expr.expr, ctx)?],
-            ))
-        }
+        Expr::Try(try_expr) => lower_try_expr_to_value_term(try_expr, ctx),
         Expr::Macro(mac) => lower_macro_to_value_term(&mac.mac, ctx),
         Expr::Match(match_expr) => lower_match_to_value_term(match_expr, ctx),
         Expr::Reference(reference) => {
