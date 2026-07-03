@@ -10,7 +10,7 @@
 use serde_json::Value as Json;
 
 use sugar_ir_compiler::{
-    compile_json_adapter, Capabilities, CompileError, CompiledFormula, CompilerInput, IrCompiler,
+    Capabilities, CompileError, CompiledFormula, CompilerInput, IrCompiler, OpacityManifest,
     PROTOCOL_VERSION,
 };
 
@@ -41,13 +41,6 @@ impl Default for SmtLibCompiler {
 }
 
 impl IrCompiler for SmtLibCompiler {
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        if dialect != DIALECT {
-            return Err(CompileError::UnsupportedDialect(dialect.to_string()));
-        }
-        compile_json_adapter(self, ir, dialect)
-    }
-
     fn compile_typed(
         &self,
         ir: &CompilerInput,
@@ -56,8 +49,7 @@ impl IrCompiler for SmtLibCompiler {
         if dialect != DIALECT {
             return Err(CompileError::UnsupportedDialect(dialect.to_string()));
         }
-        let ir = ir.to_json_value()?;
-        compile_to_parts(&ir)
+        compile_input_to_parts(ir)
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -92,10 +84,6 @@ impl IrCompiler for SmtLibCompiler {
             ],
         }
     }
-}
-
-fn is_term_kind(kind: &str) -> bool {
-    matches!(kind, "var" | "const" | "ctor" | "lambda" | "let")
 }
 
 /// Walk an IrTerm tree; reject any `Var` with an empty `name`. Spec
@@ -257,41 +245,66 @@ fn validate_formula(formula: &sugar_ir_types::IrFormula) -> Result<(), String> {
 /// `compile_to_parts`. Also accepts bare terms (lambda, let, etc.) for
 /// backward compatibility with the historical verifier emitter.
 pub fn emit(ir_formula: &Json) -> Result<String, String> {
-    let kind = ir_formula
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if is_term_kind(kind) {
-        let term: sugar_ir_types::Term =
-            serde_json::from_value(ir_formula.clone()).map_err(|e| format!("{e}"))?;
-        validate_term(&term)?;
-        Ok(emitter::emit_term(&term))
-    } else {
-        compile_to_parts(ir_formula)
-            .map(|c| {
-                let mut s = c.preamble;
-                s.push_str(&c.body);
-                s
-            })
-            .map_err(|e| e.to_string())
-    }
+    compile_to_parts(ir_formula)
+        .map(|c| {
+            let mut s = c.preamble;
+            s.push_str(&c.body);
+            s
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Compile to (preamble, body, free_vars). Pure; no I/O.
 pub fn compile_to_parts(ir_formula: &Json) -> Result<CompiledFormula, CompileError> {
-    let formula: sugar_ir_types::Formula = serde_json::from_value(ir_formula.clone())
-        .map_err(|e| CompileError::MalformedIr(e.to_string()))?;
-    validate_formula(&formula).map_err(CompileError::MalformedIr)?;
-    check_mixed_sort_conjunction(&formula).map_err(CompileError::UnsupportedSort)?;
-    emitter::compile_formula(&formula)
+    let input = CompilerInput::decode_json(ir_formula.clone())?;
+    compile_input_to_parts(&input)
+}
+
+fn compile_input_to_parts(input: &CompilerInput) -> Result<CompiledFormula, CompileError> {
+    match input {
+        CompilerInput::Formula(formula) => compile_formula_to_parts(formula),
+        CompilerInput::Term(term) => compile_term_to_parts(term),
+        CompilerInput::EquationalTheory(_) => Err(CompileError::UnsupportedPredicate(
+            "equational_theory".to_string(),
+        )),
+    }
+}
+
+pub fn compile_formula_to_parts(
+    formula: &sugar_ir_types::Formula,
+) -> Result<CompiledFormula, CompileError> {
+    validate_formula(formula).map_err(CompileError::MalformedIr)?;
+    check_mixed_sort_conjunction(formula).map_err(CompileError::UnsupportedSort)?;
+    emitter::compile_formula(formula)
 }
 
 pub fn compile_asserted_to_parts(ir_formula: &Json) -> Result<CompiledFormula, CompileError> {
-    let formula: sugar_ir_types::Formula = serde_json::from_value(ir_formula.clone())
-        .map_err(|e| CompileError::MalformedIr(e.to_string()))?;
-    validate_formula(&formula).map_err(CompileError::MalformedIr)?;
-    check_mixed_sort_conjunction(&formula).map_err(CompileError::UnsupportedSort)?;
-    emitter::compile_asserted_formula(&formula)
+    let input = CompilerInput::decode_json(ir_formula.clone())?;
+    let CompilerInput::Formula(formula) = input else {
+        return Err(CompileError::MalformedIr(
+            "asserted SMT-LIB compile expects a formula input".to_string(),
+        ));
+    };
+    compile_asserted_formula_to_parts(&formula)
+}
+
+pub fn compile_asserted_formula_to_parts(
+    formula: &sugar_ir_types::Formula,
+) -> Result<CompiledFormula, CompileError> {
+    validate_formula(formula).map_err(CompileError::MalformedIr)?;
+    check_mixed_sort_conjunction(formula).map_err(CompileError::UnsupportedSort)?;
+    emitter::compile_asserted_formula(formula)
+}
+
+pub fn compile_term_to_parts(term: &sugar_ir_types::Term) -> Result<CompiledFormula, CompileError> {
+    validate_term(term).map_err(CompileError::MalformedIr)?;
+    Ok(CompiledFormula {
+        preamble: String::new(),
+        body: emitter::emit_term(term),
+        free_vars: vec![],
+        opacity_manifest: OpacityManifest::default(),
+        metadata: Json::Null,
+    })
 }
 
 pub fn emit_asserted(ir_formula: &Json) -> Result<String, String> {

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_ir_compiler::{
-    compile_json_adapter, Capabilities, CompileError, CompiledFormula, CompilerInput, FreeVar,
-    IrCompiler, OpacityEntry, OpacityManifest, PROTOCOL_VERSION,
+    Capabilities, CompileError, CompiledFormula, CompilerInput, FreeVar, IrCompiler, OpacityEntry,
+    OpacityManifest, PROTOCOL_VERSION,
 };
 use sugar_ir_types::{Formula, Sort, Term};
 
@@ -33,13 +33,6 @@ impl Default for LeanCompiler {
 }
 
 impl IrCompiler for LeanCompiler {
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        if dialect != DIALECT {
-            return Err(CompileError::UnsupportedDialect(dialect.to_string()));
-        }
-        compile_json_adapter(self, ir, dialect)
-    }
-
     fn compile_typed(
         &self,
         ir: &CompilerInput,
@@ -48,8 +41,7 @@ impl IrCompiler for LeanCompiler {
         if dialect != DIALECT {
             return Err(CompileError::UnsupportedDialect(dialect.to_string()));
         }
-        let ir = ir.to_json_value()?;
-        compile_to_parts(&ir)
+        compile_input_to_parts(ir)
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -89,41 +81,47 @@ impl IrCompiler for LeanCompiler {
     }
 }
 
-fn is_term_kind(kind: &str) -> bool {
-    matches!(kind, "var" | "const" | "ctor" | "lambda" | "let")
-}
-
 pub fn emit(ir: &Json) -> Result<String, CompileError> {
     let compiled = compile_to_parts(ir)?;
     Ok(format!("{}{}", compiled.preamble, compiled.body))
 }
 
 pub fn compile_to_parts(ir: &Json) -> Result<CompiledFormula, CompileError> {
-    let kind = ir.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-    if is_term_kind(kind) {
-        let term: Term = serde_json::from_value(ir.clone())
-            .map_err(|e| CompileError::MalformedIr(e.to_string()))?;
-        let mut ctx = EmitContext::default();
-        let expr = emit_term(&term, &mut ctx)?;
-        let mut body = String::new();
-        body.push_str(&format!(
-            "theorem {THEOREM_NAME} : ({expr}) = ({expr}) := by\n  aesop\n\n"
-        ));
-        body.push_str(&format!("#print axioms {THEOREM_NAME}\n"));
-        return Ok(CompiledFormula {
-            preamble: lean_preamble(),
-            body,
-            free_vars: vec![],
-            opacity_manifest: opacity_manifest(ctx.opacities),
-            metadata: Json::Null,
-        });
-    }
+    let input = CompilerInput::decode_json(ir.clone())?;
+    compile_input_to_parts(&input)
+}
 
-    let formula: Formula =
-        serde_json::from_value(ir.clone()).map_err(|e| CompileError::MalformedIr(e.to_string()))?;
+fn compile_input_to_parts(input: &CompilerInput) -> Result<CompiledFormula, CompileError> {
+    match input {
+        CompilerInput::Formula(formula) => compile_formula_to_parts(formula),
+        CompilerInput::Term(term) => compile_term_to_parts(term),
+        CompilerInput::EquationalTheory(_) => Err(CompileError::UnsupportedPredicate(
+            "equational_theory".to_string(),
+        )),
+    }
+}
+
+pub fn compile_term_to_parts(term: &Term) -> Result<CompiledFormula, CompileError> {
     let mut ctx = EmitContext::default();
-    collect_formula(&formula, &mut ctx, &mut BTreeMap::new())?;
-    let proposition = emit_formula(&formula, &mut ctx)?;
+    let expr = emit_term(term, &mut ctx)?;
+    let mut body = String::new();
+    body.push_str(&format!(
+        "theorem {THEOREM_NAME} : ({expr}) = ({expr}) := by\n  aesop\n\n"
+    ));
+    body.push_str(&format!("#print axioms {THEOREM_NAME}\n"));
+    Ok(CompiledFormula {
+        preamble: lean_preamble(),
+        body,
+        free_vars: vec![],
+        opacity_manifest: opacity_manifest(ctx.opacities),
+        metadata: Json::Null,
+    })
+}
+
+pub fn compile_formula_to_parts(formula: &Formula) -> Result<CompiledFormula, CompileError> {
+    let mut ctx = EmitContext::default();
+    collect_formula(formula, &mut ctx, &mut BTreeMap::new())?;
+    let proposition = emit_formula(formula, &mut ctx)?;
     ctx.sort_opacities();
 
     let mut binders = Vec::new();
