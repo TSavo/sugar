@@ -353,7 +353,27 @@ existence: a sugar in the catalog testifies or reds; a sugar that cannot
 testify does not compile. When reviewing or building anything in this repo,
 measure it against this sentence.
 
-## Repository Mechanics
+### The error-message corollary (2026-07-03)
+
+**"You can't make every agent smart, but you can make every error message
+smarter than the mistake."**
+
+This is how the capstone law cashes out at the moment of failure. A refusal,
+panic, or compile error in this repo is not a report — it is the handover of
+the fix. It names the crime, the owner, the illegal shape, and the replacement
+architecture, in enough detail that the agent reading it has no reasoning left
+to do: no context to reconstruct, no doctrine to remember, no judgment to
+spend. `FunctionContract post must be PostCondition`. `expected
+&BundleScopedCallsiteKey`. `fix=use matching term sorts or insert an explicit
+coercion before Eq`. The error message is the exorcism ritual, not the alarm.
+
+This is the practical answer to spiky agent intelligence: you cannot raise
+every agent's ceiling, but you can raise the floor of every failure they will
+ever encounter. When you write a refusal, a panic, a constructor error, or an
+instrument's red output, write it for the least-context agent that will ever
+hit it — because that agent, reading that message, IS the system's
+intelligence at that moment. A failure that must be debugged is a failure
+message that wasn't finished.
 
 The manifesto above is the operating model. The rest of this file is local
 mechanics for applying it in this checkout.
