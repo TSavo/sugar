@@ -186,12 +186,21 @@ fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn 
     {
         return Some(crate::sugar::term_leaf::resolved_term(term));
     }
-    let (pat, _) = single_surviving_value_arm(m)?;
-    value_arm_pattern_is_term_bindable(pat)?;
-    Some(Box::new(MatchValueTermSugar {
-        scrutinee: SugarBody::term(&m.expr, fcx),
-        m: m.clone(),
-    }))
+    if let Some((pat, _)) = single_surviving_value_arm(m) {
+        value_arm_pattern_is_term_bindable(pat)?;
+        return Some(Box::new(MatchValueTermSugar {
+            scrutinee: SugarBody::term(&m.expr, fcx),
+            m: m.clone(),
+        }));
+    }
+    if crate::sugar::match_scrutinee::expr_resolves_runtime_call_result(&m.expr, fcx, 0) {
+        return None;
+    }
+    match_has_runtime_term_interior(m).then(|| {
+        Box::new(RuntimeMatchTermSugar {
+            boundary: token_key(expr),
+        }) as Box<dyn Sugar>
+    })
 }
 
 /// A match arm reduced to its discriminant guard + body statements. The guard is
@@ -328,6 +337,10 @@ struct MatchValueTermSugar {
     m: syn::ExprMatch,
 }
 
+struct RuntimeMatchTermSugar {
+    boundary: String,
+}
+
 struct ClosedMatchTermSugar {
     body: SugarBody<TermFloor>,
 }
@@ -386,6 +399,14 @@ impl Sugar for MatchValueTermSugar {
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         self.reduce(ctx)
+    }
+}
+
+impl Sugar for RuntimeMatchTermSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeMatchTerm {
+            boundary: self.boundary.clone(),
+        })
     }
 }
 
@@ -502,6 +523,59 @@ fn single_surviving_value_arm(m: &syn::ExprMatch) -> Option<(&Pat, &Expr)> {
     }
     let arm = surviving[0];
     Some((&arm.pat, &arm.body))
+}
+
+fn match_has_runtime_term_interior(m: &syn::ExprMatch) -> bool {
+    m.arms
+        .iter()
+        .filter(|arm| !expr_diverges(&arm.body))
+        .any(|arm| expr_has_runtime_term_interior(&arm.body))
+}
+
+fn stmt_has_runtime_term_interior(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Local(local) => local
+            .init
+            .as_ref()
+            .is_some_and(|init| expr_has_runtime_term_interior(&init.expr)),
+        Stmt::Item(_) => false,
+        Stmt::Expr(expr, _) => expr_has_runtime_term_interior(expr),
+        Stmt::Macro(_) => true,
+    }
+}
+
+fn expr_has_runtime_term_interior(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call(_) | Expr::MethodCall(_) | Expr::Try(_) | Expr::Macro(_) => true,
+        Expr::Block(block) => block.block.stmts.iter().any(stmt_has_runtime_term_interior),
+        Expr::If(if_expr) => {
+            expr_has_runtime_term_interior(&if_expr.cond)
+                || if_expr
+                    .then_branch
+                    .stmts
+                    .iter()
+                    .any(stmt_has_runtime_term_interior)
+                || if_expr
+                    .else_branch
+                    .as_ref()
+                    .is_some_and(|(_, else_expr)| expr_has_runtime_term_interior(else_expr))
+        }
+        Expr::Match(match_expr) => match_has_runtime_term_interior(match_expr),
+        Expr::Paren(paren) => expr_has_runtime_term_interior(&paren.expr),
+        Expr::Group(group) => expr_has_runtime_term_interior(&group.expr),
+        Expr::Reference(reference) => expr_has_runtime_term_interior(&reference.expr),
+        Expr::Unary(unary) => expr_has_runtime_term_interior(&unary.expr),
+        Expr::Binary(binary) => {
+            expr_has_runtime_term_interior(&binary.left)
+                || expr_has_runtime_term_interior(&binary.right)
+        }
+        Expr::Field(field) => expr_has_runtime_term_interior(&field.base),
+        Expr::Index(index) => {
+            expr_has_runtime_term_interior(&index.expr)
+                || expr_has_runtime_term_interior(&index.index)
+        }
+        _ => false,
+    }
 }
 
 fn value_arm_pattern_is_term_bindable(pat: &Pat) -> Option<()> {

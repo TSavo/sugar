@@ -904,6 +904,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("runtime slice source, not literal")
         || reason.contains("runtime slice index, not literal")
         || reason.contains("destructured source runtime, not literal")
+        || reason.contains("predicate runtime bool floor")
         || reason.contains("dyn Any concrete type not statically determined")
         || reason.contains("runtime IP address receiver, not literal")
         || reason.contains("runtime memchr needle, not literal")
@@ -968,6 +969,10 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // over a CONSTRUCTED literal scrutinee matches None and STAYS the unclassified `only
         // scalar equality` reason (the fake-refuse guardrail). Typed `RuntimeMatchScrutineeEffect`.
         || reason.contains("operand is a runtime non-scalar result")
+        // TERMINAL: a value-position match whose live arms contain runtime calls / method
+        // calls / `?` cannot hand a single source-literal value to term consumers. Pure
+        // same-sort case terms are future work; this branch fires only on runtime interiors.
+        || reason.contains("match term runtime interior")
         // TERMINAL: `str::parse()` without a turbofish takes its result type from the
         // surrounding relation (`assert_eq!(input.parse(), Ok(1.0f64))`). The written callsite
         // therefore does not own a single timeless value: the same `input.parse()` syntax can
@@ -9194,6 +9199,10 @@ enum Effect {
     /// `runtime_match_scrutinee_effect`; a `match` over a CONSTRUCTED literal scrutinee stays
     /// the bare `only scalar equality` reason (UNCLASSIFIED -- the inverse-sin guardrail).
     RuntimeMatchScrutinee { boundary: String },
+    /// RUNTIME-MATCH-TERM: a value-position `match` has live arms with runtime interiors
+    /// (calls, method calls, `?`, or macros). Pure same-sort arms are future case-term work;
+    /// runtime interiors have no source-literal value to select.
+    RuntimeMatchTerm { boundary: String },
     /// TYPE-INFERRED-PARSE-RESULT: `str::parse()` without turbofish takes its result type
     /// from the surrounding relation. The same call syntax can denote distinct parser
     /// results under different expected types, so relation sugar must refuse the source
@@ -9209,6 +9218,10 @@ enum Effect {
     /// this fires only when the destructured source has no literal floor to hand to the
     /// binding.
     RuntimeDestructuredSource { reason: String },
+    /// RUNTIME-PREDICATE-BOOL-FLOOR: a sequence adaptor predicate reduced to a bool-sorted
+    /// term, but not to a literal truth value. The adaptor cannot decide which elements are
+    /// kept from an opaque predicate result, so it stops by name instead of guessing a set.
+    RuntimePredicateBoolFloor { family: String, boundary: String },
     /// ARRAY-REPEAT (non-literal): an array-repeat `[elem; N]` whose length `N` is NOT a plain
     /// literal -- a const-generic param or a const expression (`[0u8; SIZE]`, `[(); SIZE - 1]`).
     /// With a NON-literal count there is no finite construction from the written literal to
@@ -9456,6 +9469,9 @@ impl Effect {
                  `{boundary}` (a `match` over a runtime call result, not constructible from source \
                  literals); refused"
             ),
+            Effect::RuntimeMatchTerm { boundary } => format!(
+                "match term runtime interior `{boundary}` is not a constructible case-term value"
+            ),
             Effect::TypeInferredParseResult {
                 assertion,
                 boundary,
@@ -9469,6 +9485,9 @@ impl Effect {
                 "panic payload downcast reads runtime exception state `{boundary}`; refused"
             ),
             Effect::RuntimeDestructuredSource { reason } => reason.clone(),
+            Effect::RuntimePredicateBoolFloor { family, boundary } => {
+                format!("{family} predicate runtime bool floor `{boundary}`, not literal-determined")
+            }
             // Carries the existing "array-repeat ... non-literal length ... refused by name"
             // substring verbatim so a single whitelist entry recognizes it; the emit site's
             // `assert_eq!:` / `assert!:` prefix is preserved by the caller.
@@ -24390,6 +24409,79 @@ fn t() {
     }
 
     #[test]
+    fn dogfood_runtime_filter_predicate_floor_is_typed_effect() {
+        let src = r#"
+            struct Row {
+                status: &'static str,
+            }
+
+            fn runtime_row(status: &'static str) -> Row {
+                Row { status }
+            }
+
+            #[test]
+            fn runtime_filter() {
+                let rows = [runtime_row("proven"), runtime_row("residue")];
+                let proven = rows.iter().filter(|row| row.status == "proven").count();
+                assert_eq!(proven, 1);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted,
+            0,
+            "a filter over runtime row fields must not guess the kept set: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons.iter().any(|r| {
+                r.contains("filter predicate runtime bool floor")
+                    && r.contains("not literal-determined")
+                    && matches!(refusal_disposition(r), Disposition::TerminalEffect)
+            }),
+            "filter predicate must be a named terminal typed effect: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn dogfood_unresolved_destructured_source_is_typed_runtime_effect() {
+        let src = r#"
+            fn dependency_vectors_cid_of_text(_: &str) -> Result<(String, usize), ()> {
+                todo!()
+            }
+
+            #[test]
+            fn package_shape() {
+                let (_cid_a, n_a) = dependency_vectors_cid_of_text("lock").expect("parse");
+                assert_eq!(n_a, 3);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted,
+            0,
+            "an unresolved destructured source must not fabricate the projected field: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons.iter().any(|r| {
+                r.contains("destructured source runtime, not literal for `n_a`")
+                    && matches!(refusal_disposition(r), Disposition::TerminalEffect)
+            }),
+            "unresolved destructured source must surface as the typed runtime destructure effect: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("destructured source trace unresolved")),
+            "old construction-gap wording must not leak into the verdict path: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
     fn dig_overflow_in_closure_preserves_primitive_width_axiom() {
         // Primitive arithmetic stays in the Rust-width lane: the map closure is
         // evaluated as i64 arithmetic, not widened to unbounded mathematical Int.
@@ -25221,12 +25313,14 @@ fn t() {
             "assert_eq!: unsupported term `& mut x`: effectful / raw-pointer / mutable-reference term (a `&mut` borrow) is not a constructible timeless value; refused",
             "assert_eq!: unsupported term `& raw const garlic`: effectful / raw-pointer / mutable-reference term (a raw pointer (`&raw const`/`&raw mut`)) is not a constructible timeless value; refused",
             "assert!: only scalar equality is liftable; operand is a runtime non-scalar result `match b . binary_search (& 3) { Ok (1 ..= 3) => true , _ => false , }` (a `match` over a runtime call result, not constructible from source literals); refused",
+            "match term runtime interior `match target { Some (p) => p . clone () , None => std :: env :: current_dir () ? }` is not a constructible case-term value",
             "assert_eq!: unsupported term `input . parse ()`: type-inferred runtime parser result (parse result type is supplied by assertion context, not by the call syntax; no single constructible timeless value); refused",
             "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
             "array-repeat length 18446744073709551615 exceeds the 4096-element expansion bound; refused by name: `[() ; usize :: MAX]`",
             "struct literal with `..rest` is not fully pinned from the literal: `WitnessPoint { .. base }` (bin-2: rest fields are not constructed by this literal); owner=rust.struct_term; shape=struct-update-literal; replacement=derive field projection facts only from fully pinned `struct:*` ctor arguments; refused",
             "out-of-bounds unchecked slice indexing `[10 , 20 , 30] . get_unchecked (5)` is undefined behavior with no determinate value; refused",
             "destructured source runtime, not literal for `a`: pattern binding participates in the assertion, but the destructured source did not resolve to a literal tuple/array; refused",
+            "filter predicate runtime bool floor `c:cmp:eq(v:opaque:row,s:\"proven\")`, not literal-determined",
             "named refusal (atomic read-modify-write runtime state): vendor pin not liftable: temporally unstable mutating method read of `x` after `.fetch_or()`",
             "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state",
             "named refusal (cell value runtime/aliased, not literal-pinned): vendor pin not liftable: cell value runtime/aliased, not literal-pinned",
