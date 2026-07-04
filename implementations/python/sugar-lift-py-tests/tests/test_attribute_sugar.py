@@ -66,6 +66,26 @@ def test_call_result_attribute_reduces_to_py_attr_ctor() -> None:
     )
 
 
+def test_dynamic_subscript_attribute_receiver_refuses() -> None:
+    with pytest.raises(FactoryGap) as raised:
+        reduce_term("d[...].flags.writeable")
+
+    assert raised.value.audit_row.status == "refused"
+    assert raised.value.audit_row.selected == "AttributeSugar"
+    assert raised.value.info["observed"] == "Attribute.runtime_receiver"
+    assert "runtime receiver" in raised.value.info["fix"]
+
+
+def test_dynamic_call_attribute_receiver_refuses() -> None:
+    with pytest.raises(FactoryGap) as raised:
+        reduce_term("np.add(1, 2, **get_kwarg(int64_2)).dtype")
+
+    assert raised.value.audit_row.status == "refused"
+    assert raised.value.audit_row.selected == "AttributeSugar"
+    assert raised.value.info["observed"] == "Attribute.runtime_receiver"
+    assert "runtime receiver" in raised.value.info["fix"]
+
+
 def test_desugar_propagates_floor_gaps() -> None:
     sugar = AttributeSugar(
         term=str_const("t"),

@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import BoundVar, SymbolicValue
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.operations import AttributeLookupOperation, perform_operation
@@ -15,15 +23,16 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class AttributeSugar(Sugar, role=SugarRole.TERM):
-    term: Term
+    term: Term | None
     receiver: SugarBody | None
     receiver_name: str | None
     name: str
     blame: str
+    runtime_reason: str | None = None
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "Attribute" and can_symbolic_term(site)
+        return site.observed == "Attribute"
 
     @classmethod
     def witnesses(cls):
@@ -31,6 +40,19 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def build(cls, site, ctx) -> "AttributeSugar":
+        if not can_symbolic_term(site):
+            receiver = site.attr_receiver()
+            return cls(
+                term=None,
+                receiver=None,
+                receiver_name=None,
+                name=site.attr_name(),
+                blame=site.blame,
+                runtime_reason=(
+                    f"attribute receiver `{receiver.observed}` requires runtime "
+                    "evaluation before attribute lookup"
+                ),
+            )
         return cls(
             term=symbolic_term(
                 site,
@@ -47,6 +69,10 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx) -> Outcome:
+        if self.runtime_reason is not None:
+            _runtime_receiver_refusal(self.blame, self.runtime_reason)
+        if self.term is None:
+            raise TypeError("AttributeSugar non-runtime path requires a term")
         if self.receiver is None:
             return Complete(SymbolicValue(self.term))
         if self.receiver_name is not None and not _temporal_has_binding(
@@ -75,6 +101,34 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
             operation=operation,
             ctx=ctx,
         )
+
+
+def _runtime_receiver_refusal(blame: str, reason: str) -> NoReturn:
+    message = (
+        "attribute lookup runtime receiver: "
+        f"{reason}. Python attribute lookup depends on the runtime receiver; "
+        "reduce the receiver to a supported object, keep the access symbolic, "
+        "or add a runtime/effect recognizer for this attribute shape."
+    )
+    info = FactoryGapInfo(
+        owner="AttributeSugar",
+        blame=blame,
+        observed="Attribute.runtime_receiver",
+        requested="symbolic or supported object receiver",
+        fix=message,
+        gap_kind=GapKind.SUGAR,
+        gap_locus=GapLocus.CONSTRUCTION,
+    )
+    audit = FactoryAuditRow(
+        role="term",
+        status="refused",
+        observed=info.observed,
+        blame=blame,
+        selected="AttributeSugar",
+        candidates=["AttributeSugar"],
+        message=info.message,
+    )
+    raise FactoryGap(info, audit)
 
 
 def _projectable_receiver(site, ctx) -> SugarBody | None:
