@@ -440,6 +440,33 @@ over identity — `x` and `y` are two names on one value node, exactly as
 CID-canonical form strips function names. The floor algebra is the identity
 layer; a walker deciding what `let y = x` means is a name asking a name.
 
+## The domain precondition: rustc already did the work
+
+The kit's domain of definition is COMPILING programs. If rustc says yes, we
+guarantee a correctness membrane: total classification, every assertion
+lifted or honestly refused, zero lies discharged, verdicts only through the
+CLI. If rustc says no, our behavior is **undefined — in the C sense.** We
+might text your wife your girlfriend's number.
+
+This is enforceable, not rhetorical. If someone writes a rustc-rejected
+expression, the code path we take is NOT "is this even valid Rust?" — it is
+`void*` to a random place in memory, `jnz`. The lift never spends a branch,
+an arm, an error message, or a polite refusal on input the vendor's compiler
+rejects. Every rustc invariant — no use-after-move, `&mut` exclusivity, type
+correctness, bound names — is assumed unconditionally, everywhere, forever.
+An arm that handles a non-compiling shape is worse than dead code: it is a
+false claim that the shape can arrive, and it is where wildcard arms and fake
+generality breed. Delete it; the domain precondition covers it.
+
+Do not confuse the two red doors. UNRECOGNIZED-BUT-VALID Rust — a shape rustc
+accepts that the factory has no recognizer for — gets the sacred panic:
+"write more Sugar for this AST," loud, owned, a coverage row on the floor.
+INVALID Rust gets nothing at all, not even the question. The first door is
+the honest frontier; the second door does not exist. This is safe in a way
+C's own UB never was: the record's front door is the witnessed build, so
+no-compile means no test run, no vendor claim, no memento — the demons
+cannot sign the proof chain.
+
 The manifesto above is the operating model. The rest of this file is local
 mechanics for applying it in this checkout.
 
