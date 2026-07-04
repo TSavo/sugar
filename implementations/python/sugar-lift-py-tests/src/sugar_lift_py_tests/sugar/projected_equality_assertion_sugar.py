@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.ir import Formula, eq
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import (
@@ -46,16 +46,20 @@ class ProjectedEqualityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     def witnesses(cls):
         return projected_equality_assertion_witness()
 
-    def assertion_formula(self, ctx) -> Formula:
+    def assertion_formula(self, ctx) -> Formula | Incomplete:
+        left_outcome = self.left.reduce(ctx)
+        if isinstance(left_outcome, Incomplete):
+            return left_outcome
+        right_outcome = self.right.reduce(ctx)
+        if isinstance(right_outcome, Incomplete):
+            return right_outcome
         return eq(
             floor_to_term(
-                complete_value(self.left.reduce(ctx), owner="projected equality left"),
+                complete_value(left_outcome, owner="projected equality left"),
                 owner="projected equality left",
             ),
             floor_to_term(
-                complete_value(
-                    self.right.reduce(ctx), owner="projected equality right"
-                ),
+                complete_value(right_outcome, owner="projected equality right"),
                 owner="projected equality right",
             ),
         )

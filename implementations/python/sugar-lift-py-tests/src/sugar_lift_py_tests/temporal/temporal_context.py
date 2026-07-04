@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NoReturn
 
+from sugar_lift_py_tests.effect import FactoryGapEffect
 from sugar_lift_py_tests.floor import FloorValue
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
 from .temporal_binding import TemporalBinding
 
@@ -26,6 +28,22 @@ class TemporalContext:
             observed=name,
             requested="value",
             fix=f"bind `{name}` before reducing NameSugar",
+        )
+
+    def value_outcome_for(self, name: str) -> Outcome:
+        for binding in reversed(self.bindings):
+            if binding.name == name:
+                return Complete(binding.value)
+        return Incomplete(
+            FactoryGapEffect(
+                owner="TemporalContext",
+                blame="<temporal>",
+                observed=name,
+                requested="value",
+                fix=f"bind `{name}` before reducing NameSugar",
+                gap_kind="Floor",
+                gap_locus="Construction",
+            )
         )
 
     def receiver_for(self, name: str) -> FloorValue:

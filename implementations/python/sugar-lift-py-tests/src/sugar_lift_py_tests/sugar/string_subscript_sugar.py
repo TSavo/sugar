@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import SubscriptOperation, perform_operation
-from sugar_lift_py_tests.outcome import Outcome, complete_value
+from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import string_subscript_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -58,12 +58,16 @@ class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
         return cls(receiver=receiver, index=index, blame=blame)
 
     def desugar(self, ctx=None) -> Outcome:
+        receiver_outcome = self.receiver.reduce(ctx)
+        if isinstance(receiver_outcome, Incomplete):
+            return receiver_outcome
         receiver = complete_value(
-            self.receiver.reduce(ctx), owner="StringSubscriptSugar receiver"
+            receiver_outcome, owner="StringSubscriptSugar receiver"
         )
-        index = complete_value(
-            self.index.reduce(ctx), owner="StringSubscriptSugar index"
-        )
+        index_outcome = self.index.reduce(ctx)
+        if isinstance(index_outcome, Incomplete):
+            return index_outcome
+        index = complete_value(index_outcome, owner="StringSubscriptSugar index")
         operation = SubscriptOperation(
             index=index,
             owner="StringSubscriptSugar",

@@ -24,7 +24,7 @@ from sugar_lift_py_tests.ir import (
     str_const,
 )
 from sugar_lift_py_tests.operations import ControlFlowGuardOperation, perform_operation
-from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import if_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -69,13 +69,19 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx) -> Outcome:
-        then_bv = complete_value(self.then.reduce(ctx), owner="if then-block")
+        then_outcome = self.then.reduce(ctx)
+        if isinstance(then_outcome, Incomplete):
+            return then_outcome
+        then_bv = complete_value(then_outcome, owner="if then-block")
         if not isinstance(then_bv, BlockValue):
             raise TypeError("IfSugar then branch must reduce to a block")
         then_guarded = self._guard_block(then_bv, (self.test,), ctx)
         guarded = list(then_guarded.statements)
         if self.else_block is not None:
-            else_bv = complete_value(self.else_block.reduce(ctx), owner="if else-block")
+            else_outcome = self.else_block.reduce(ctx)
+            if isinstance(else_outcome, Incomplete):
+                return else_outcome
+            else_bv = complete_value(else_outcome, owner="if else-block")
             if not isinstance(else_bv, BlockValue):
                 raise TypeError("IfSugar else branch must reduce to a block")
             negated = (not_(self.test),)

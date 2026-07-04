@@ -7,6 +7,12 @@ from sugar_lift_py_tests.claim import SugarRole
 from .source_fragment import SourceFragment
 
 
+class IncompleteFunctionBody(Exception):
+    def __init__(self, incomplete):
+        super().__init__(incomplete.reason)
+        self.incomplete = incomplete
+
+
 def _cf_operand(frag: SourceFragment):
     from sugar_lift_py_tests.ir import make_var, num, str_const
 
@@ -50,7 +56,7 @@ def _lift_cf_return(node, build_ctx, reduce_ctx):
     the sugars EMIT THE OPERATIONS (`+`, `bvand`, `str.++`, a callsite, ...). The
     lift stays sort-silent -- the SMT compiler derives each variable's canonical
     carrier from the operations it appears in."""
-    from sugar_lift_py_tests.outcome import complete_value
+    from sugar_lift_py_tests.outcome import Incomplete, complete_value
     from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
     body = build_ctx.build_body(node, SugarRole.TERM)
@@ -119,12 +125,15 @@ def build_control_flow_body_sugar(site, ctx):
         GuardedReturn,
         ReturnValue,
     )
-    from sugar_lift_py_tests.outcome import complete_value
+    from sugar_lift_py_tests.outcome import Incomplete, complete_value
     from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
     body = site.node.body
     block = ctx.build_body(Block.of(body), SugarRole.STATEMENT)
-    block_value = complete_value(block.reduce(reduce_ctx), owner="function body")
+    block_outcome = block.reduce(reduce_ctx)
+    if isinstance(block_outcome, Incomplete):
+        raise IncompleteFunctionBody(block_outcome)
+    block_value = complete_value(block_outcome, owner="function body")
     if type(block_value) is not BlockValue:
         raise TypeError(
             f"ControlFlowBodySugar expected BlockValue, got {type(block_value).__name__}"

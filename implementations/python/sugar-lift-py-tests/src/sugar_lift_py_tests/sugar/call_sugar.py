@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.effect import FactoryGapEffect
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.factory.factory_gap_info import (
@@ -14,7 +15,7 @@ from sugar_lift_py_tests.factory.factory_gap_info import (
 )
 from sugar_lift_py_tests.floor import CallSiteValue, StringValue, SymbolicValue
 from sugar_lift_py_tests.ir import Formula, Term, eq, make_var, str_const
-from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import (
@@ -32,6 +33,15 @@ _BODY_TYPES = (SugarBody, FunctionBodyUniverse)
 
 class CallStrategy(Protocol):
     def emit(self, sugar: "CallSugar", ctx: object) -> Outcome: ...
+
+
+@dataclass(frozen=True)
+class TypedEffectStrategy:
+    incomplete: Incomplete
+
+    def emit(self, sugar: "CallSugar", ctx) -> Outcome:
+        del sugar, ctx
+        return self.incomplete
 
 
 @dataclass(frozen=True)
@@ -192,13 +202,19 @@ class ExternalBridgeStrategy:
 
         terms = []
         for argument in self.arguments:
+            argument_outcome = argument.reduce(ctx)
+            if isinstance(argument_outcome, Incomplete):
+                return argument_outcome
             value = complete_value(
-                argument.reduce(ctx), owner="ExternalBridgeStrategy argument"
+                argument_outcome, owner="ExternalBridgeStrategy argument"
             )
             terms.append(floor_to_term(value, owner="external bridge argument"))
         for name, keyword in self.keywords:
+            keyword_outcome = keyword.reduce(ctx)
+            if isinstance(keyword_outcome, Incomplete):
+                return keyword_outcome
             value = complete_value(
-                keyword.reduce(ctx), owner=f"ExternalBridgeStrategy keyword {name}"
+                keyword_outcome, owner=f"ExternalBridgeStrategy keyword {name}"
             )
             terms.append(
                 ctor(
@@ -240,16 +256,21 @@ class MethodCallStrategy:
             perform_operation,
         )
 
-        receiver = complete_value(
-            self.receiver.reduce(ctx), owner="MethodCallStrategy receiver"
-        )
-        arguments = tuple(
-            complete_value(argument.reduce(ctx), owner="MethodCallStrategy argument")
-            for argument in self.arguments
-        )
+        receiver_outcome = self.receiver.reduce(ctx)
+        if isinstance(receiver_outcome, Incomplete):
+            return receiver_outcome
+        receiver = complete_value(receiver_outcome, owner="MethodCallStrategy receiver")
+        arguments = []
+        for argument in self.arguments:
+            argument_outcome = argument.reduce(ctx)
+            if isinstance(argument_outcome, Incomplete):
+                return argument_outcome
+            arguments.append(
+                complete_value(argument_outcome, owner="MethodCallStrategy argument")
+            )
         operation = MethodCallOperation(
             name=self.method_name,
-            arguments=arguments,
+            arguments=tuple(arguments),
             owner="CallSugar",
             blame=self.blame,
         )
@@ -488,7 +509,10 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     def build(cls, fragment, ctx) -> "CallSugar":
         from dataclasses import replace
 
-        from sugar_lift_py_tests.factory.sugar_constructors import build_bridge_body
+        from sugar_lift_py_tests.factory.sugar_constructors import (
+            IncompleteFunctionBody,
+            build_bridge_body,
+        )
         from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
         import_target = fragment.call_import_target_name(
@@ -546,6 +570,8 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 body = build_bridge_body(
                     function, replace(ctx, building=building | {target})
                 )
+            except IncompleteFunctionBody as exc:
+                return cls(strategy=TypedEffectStrategy(exc.incomplete))
             except TypeError as exc:
                 return cls(
                     strategy=RefuseStrategy(
@@ -578,7 +604,10 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         if (
             fragment.call_is_method_call()
             and target is not None
-            and _resolver_has_method(ctx, target)
+            and (
+                _resolver_has_method(ctx, target)
+                or _method_receiver_is_temporally_bound(fragment, ctx)
+            )
         ):
             receiver = fragment.call_receiver()
             if receiver is not None:
@@ -624,6 +653,16 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         return self.strategy.emit(self, ctx)
 
 
+def _method_receiver_is_temporally_bound(fragment, ctx) -> bool:
+    if fragment.call_has_keywords():
+        return False
+    receiver = fragment.call_receiver()
+    if receiver is None or receiver.observed != "Name":
+        return False
+    receiver_name = receiver.name_id()
+    return any(binding.name == receiver_name for binding in ctx.temporal.bindings)
+
+
 def _build_constructor_strategy(fragment, ctx, target: str, class_site):
     from sugar_lift_py_tests.sugar.constructor_strategy import ConstructorStrategy
 
@@ -642,6 +681,23 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
     init = _find_init(class_site)
     if init is None:
         if fragment.call_arg_count() != 0:
+            if _has_opaque_constructor_base(class_site, ctx):
+                return TypedEffectStrategy(
+                    Incomplete(
+                        FactoryGapEffect(
+                            owner="python.factory",
+                            blame=fragment.blame,
+                            observed=f"{target}(...)",
+                            requested="inherited opaque constructor effect",
+                            fix=(
+                                f"link or prove constructor semantics for `{target}`'s "
+                                "base class; do not fabricate a local __init__"
+                            ),
+                            gap_kind="Constructor",
+                            gap_locus="AST",
+                        )
+                    )
+                )
             return RefuseStrategy(
                 FactoryGapInfo(
                     owner="python.factory",
@@ -726,6 +782,23 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
     )
 
 
+def _has_opaque_constructor_base(class_site, ctx) -> bool:
+    base_names = class_site.class_base_names()
+    if not base_names:
+        return False
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    for base_name in base_names:
+        if base_name is not None:
+            resolved = ctx.name_resolver.get(base_name)
+            if resolved is not None:
+                base_site = SourceFragment.from_node(resolved, ctx.filename)
+                if base_site.observed == "ClassDef":
+                    continue
+        return True
+    return False
+
+
 def _build_class_fields(class_site, ctx):
     fields = []
     for stmt in class_site.class_body():
@@ -735,10 +808,24 @@ def _build_class_fields(class_site, ctx):
         if name is None:
             continue
         value = stmt.assign_value()
-        if not _is_resolved_local_class_call(value, ctx):
+        if not (
+            _is_resolved_local_class_call(value, ctx)
+            or _is_external_bridge_call(value, ctx)
+        ):
             continue
         fields.append((name, ctx.build_body(value, SugarRole.TERM)))
     return tuple(fields)
+
+
+def _is_external_bridge_call(fragment, ctx) -> bool:
+    if fragment.observed != "Call":
+        return False
+    return (
+        fragment.call_import_target_name(
+            ctx.import_aliases or {}, ctx.from_imports or {}
+        )
+        is not None
+    )
 
 
 def _is_resolved_local_class_call(fragment, ctx) -> bool:
