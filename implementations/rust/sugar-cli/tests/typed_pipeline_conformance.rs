@@ -789,11 +789,13 @@ fn ambient_source_with_source_and_kind_split_stays_green() {
     std::fs::write(
         &source,
         r#"
-const MISSING_INDEPENDENT_KIND_REASON: &str = "fixture";
-
 enum ProofIrProvenanceKind {
     Stated,
     Derived,
+}
+
+enum VerifyEffect {
+    MissingIndependentKindWitness,
 }
 
 struct AmbientFactWitnessKey {
@@ -815,7 +817,7 @@ fn conjoin_replayed_callsite_rows(
         ambient_ground_callsite_facts,
         excluded_source_cids,
         current_ground_witnesses,
-        MISSING_INDEPENDENT_KIND_REASON,
+        VerifyEffect::MissingIndependentKindWitness,
     );
 }
 "#,
@@ -2081,7 +2083,7 @@ fn discover_ambient_testimony(root: &Path, manifest: &InterfaceManifest) -> Vec<
         let has_kind_split = text.contains("ProofIrProvenanceKind")
             && text.contains("AmbientFactWitnessKey")
             && text.contains("provenance_kind")
-            && text.contains("MISSING_INDEPENDENT_KIND_REASON");
+            && text.contains("MissingIndependentKindWitness");
         if !has_source_split {
             findings.push(AmbientFinding {
                 path: rel.clone(),

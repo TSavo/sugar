@@ -40,6 +40,7 @@ pub mod cbor_decode;
 pub mod compiler_registry;
 pub mod consistency;
 pub mod domain_claim_shape_report;
+pub mod effects;
 pub mod enumerate_callsites;
 pub mod formula_rewrite;
 pub mod handshake;
@@ -59,6 +60,10 @@ pub mod types;
 pub use domain_claim_shape_report::{
     shape_report_claim, shape_report_claims, validate_trichotomy, DomainClaimShapeReport,
     StatedClaimOutcome, TrichotomyError,
+};
+pub use effects::{
+    VerifyEffect, VerifyEffectBoundary, WitnessDischargeGround, WitnessVerificationCheck,
+    WitnessVerificationOutcome,
 };
 pub use runner::{
     LegacyZ3Fallback, PlanArtifactInput, ProofRunArtifact, ProofRunArtifactError, Runner,

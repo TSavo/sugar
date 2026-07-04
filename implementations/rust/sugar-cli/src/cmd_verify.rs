@@ -65,6 +65,7 @@ use sugar_verifier::{
     classify, enumerate_callsites, instantiate, load_all_proofs, resolve_target,
     run_plan_with_compilers, DispatchConfig, FormulaTheory, LegacyZ3Fallback, MementoPool,
     ObligationVerdict, Runner, RunnerConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
+    WitnessVerificationOutcome,
 };
 use tracing::{debug, info};
 
@@ -662,9 +663,9 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
             .map(|w| {
                 json!({
                     "witnessCid": w.witness_cid,
-                    "verdict": w.verdict,
+                    "verdict": w.verdict(),
                     "checks": w.checks,
-                    "reason": w.reason,
+                    "reason": w.reason(),
                 })
             })
             .collect();
@@ -1528,9 +1529,9 @@ fn emit_json_receipt(
         .map(|w| {
             json!({
                 "witnessCid": w.witness_cid,
-                "verdict": w.verdict,
+                "verdict": w.verdict(),
                 "checks": w.checks,
-                "reason": w.reason,
+                "reason": w.reason(),
             })
         })
         .collect();
@@ -1622,10 +1623,12 @@ fn emit_human_receipt(
             "Witness dimension (rust recomputes; oracle untrusted)".bold()
         );
         for w in witnesses {
-            let status = match w.verdict.as_str() {
-                "verified" => "pass".green().to_string(),
-                "broken-oracle" => "BROKEN-ORACLE".red().bold().to_string(),
-                _ => "REFUSED".red().to_string(),
+            let status = match &w.outcome {
+                WitnessVerificationOutcome::Verified { .. } => "pass".green().to_string(),
+                WitnessVerificationOutcome::BrokenOracle { .. } => {
+                    "BROKEN-ORACLE".red().bold().to_string()
+                }
+                WitnessVerificationOutcome::Refused(_) => "REFUSED".red().to_string(),
             };
             println!(
                 "  [{}] {}  ({})",
@@ -1633,8 +1636,9 @@ fn emit_human_receipt(
                 short_cid(&w.witness_cid),
                 w.checks.join("+")
             );
-            if !w.reason.is_empty() {
-                println!("        {}", w.reason.dimmed());
+            let reason = w.reason();
+            if !reason.is_empty() {
+                println!("        {}", reason.dimmed());
             }
         }
     }
@@ -1671,18 +1675,20 @@ fn format_witness_replay_report(witnesses: &[witness_verify::WitnessVerifyResult
         "Witness body replay (rust recomputes; oracle untrusted)".bold()
     );
     for witness in witnesses {
-        let status = match witness.verdict.as_str() {
-            "verified" => "verified".green().to_string(),
-            "broken-oracle" => "broken-oracle".red().bold().to_string(),
-            "refused" => "refused".red().to_string(),
-            other => other.to_string(),
+        let status = match &witness.outcome {
+            WitnessVerificationOutcome::Verified { .. } => "verified".green().to_string(),
+            WitnessVerificationOutcome::BrokenOracle { .. } => {
+                "broken-oracle".red().bold().to_string()
+            }
+            WitnessVerificationOutcome::Refused(_) => "refused".red().to_string(),
         };
         let _ = writeln!(out, "  [{status}] {}", witness.witness_cid);
         if !witness.checks.is_empty() {
             let _ = writeln!(out, "      checks: {}", witness.checks.join(", "));
         }
-        if !witness.reason.is_empty() {
-            let _ = writeln!(out, "      reason: {}", witness.reason);
+        let reason = witness.reason();
+        if !reason.is_empty() {
+            let _ = writeln!(out, "      reason: {}", reason);
         }
     }
     out
@@ -1883,9 +1889,10 @@ mod tests {
     fn witness_replay_report_names_checks_and_recompute_reason() {
         let out = format_witness_replay_report(&[witness_verify::WitnessVerifyResult {
             witness_cid: "blake3-512:witness-body".into(),
-            verdict: "verified".into(),
+            outcome: WitnessVerificationOutcome::Verified {
+                resolved_by: "rust-kit".into(),
+            },
             checks: vec!["signature".into(), "content-address:rust-kit".into()],
-            reason: "oracle resolved via rust-kit; rust recomputed the CID and it matched".into(),
         }]);
 
         assert!(out.contains("Witness body replay"), "{out}");
