@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `Expr::Closure`: an opaque `closure:<body>` EUF symbol keyed by
 // its body text + the version-aware terms of its captured free vars; an ambiguous

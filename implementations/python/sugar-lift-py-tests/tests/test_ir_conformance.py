@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Pinned Rust→Python conformance tests for full IR formulas. The JCS string
 # and BLAKE3-512 hash literals come from

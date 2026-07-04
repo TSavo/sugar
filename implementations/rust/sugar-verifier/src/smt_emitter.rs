@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 5: smt_emitter. Render an obligation's IR to an SMT-LIB
 // script.

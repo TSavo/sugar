@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `NonZeroSugar`: `NonZero::<T>::new(literal)` and `.get()` over a NonZero-derived
 // literal are stdlib value sugar. They are structural wrappers around the integer

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `format_args!` is a rustc builtin that constructs `core::fmt::Arguments`, not an
 // ordinary macro term. Own the closed stdlib methods whose result follows from the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `UnarySugar`: the TERM-FLOOR COMPOSITE for a unary operator in term position
 // (`-x`, `!x`, `*p`). It composes ONE child `Box<dyn Sugar>` (built from the

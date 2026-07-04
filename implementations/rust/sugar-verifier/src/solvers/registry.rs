@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Build the runtime solver registry from a parsed SolversConfig.
 // Maps each `[solvers.<name>]` block to one of:

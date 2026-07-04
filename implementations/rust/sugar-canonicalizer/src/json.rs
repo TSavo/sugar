@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // serde_json -> canonical Value bridge. One public entry point:
 // `jcs_cid_of_json` content-addresses any serde_json value by converting it

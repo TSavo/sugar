@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // ReturnSugar: lifts a tail expression to `Desugared::StmtReturn(term)` and an
 // explicit `return <expr>` statement to routeable early-return raise data. The

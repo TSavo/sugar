@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `DurationValueSugar`: the CarrierEmbedding floor for `std::time::Duration`
 // values that are source-closed and canonical. Duration is not a peer SMT sort

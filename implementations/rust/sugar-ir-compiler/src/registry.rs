@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Dialect-keyed registry. In-process Rust impls register here for the
 // fast path; subprocess plugins discovered from manifests register the

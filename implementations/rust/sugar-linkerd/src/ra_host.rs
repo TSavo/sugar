@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // ra_host.rs: resident, warm rust-analyzer host inside the persistent daemon.
 //

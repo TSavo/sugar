@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // sugar-linkerd: long-running JSON-RPC daemon for the Sugar
 // linker, implementing spec `protocol/specs/2026-05-04-linker-daemon-protocol.md`.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Walk-on-canonicalizer dogfood. Closes #368 AC #7:
 // "Dogfood on at least one function in `sugar-canonicalizer`."

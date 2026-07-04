@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IntMidpointSugar`: primitive integer `T::midpoint(a, b)` over text-determined
 // operands is a stdlib/compiler axiom. The associated type supplies the width and

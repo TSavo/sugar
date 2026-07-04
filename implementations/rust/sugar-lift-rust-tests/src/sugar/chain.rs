@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ChainSugar`: `.chain(rhs)` over two finite literal-derived sequences. This is a
 // domain transform, not a terminal method call: the left and right receivers are

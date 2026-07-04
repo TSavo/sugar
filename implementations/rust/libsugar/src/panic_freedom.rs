@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Substrate identifiers for panic freedom: the bare Rust v1 wire tokens the
 //! lifter emits and the verifier reads to prove a function cannot panic

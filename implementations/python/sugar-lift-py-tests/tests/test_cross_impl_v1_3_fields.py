@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Cross-impl conformance tests for the v1.3.0 protocol-additive fields:
 #   - EvidenceTerm (IR-level proof certificate)

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # claim_envelope tests: layered-shape construction, byte-equivalence
 # against the Rust reference, error-path coverage, and the contractSet

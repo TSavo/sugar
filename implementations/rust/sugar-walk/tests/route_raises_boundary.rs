@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use sugar_floor_algebra::{
     Desugared, Effect, GuardedRaise, Outcome, RaiseEffect, RouteRaiseHandler, RouteRaisesOperation,

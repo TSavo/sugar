@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 4 (instantiate) tests. Pins:
 //   - substitutes the call's arg term for the forall's bound variable

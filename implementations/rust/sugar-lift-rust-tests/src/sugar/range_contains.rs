@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `RangeContainsSugar`: `(a..b).contains(&x)` / `(a..=b).contains(&x)` (and the open-ended
 // variants) over a range literal with const INTEGER endpoints and a const integer argument

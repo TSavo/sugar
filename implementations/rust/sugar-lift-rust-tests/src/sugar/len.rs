@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `LenSugar`: std literal-sequence length in term position. For written literal arrays,
 // slices, ranges, and identity iterator chains over them, `.len()` is a compiler/std

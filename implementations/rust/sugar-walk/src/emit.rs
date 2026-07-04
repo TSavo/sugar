@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Emit the shadow source as a v1.5.0-shape proof.ir bundle.
 //

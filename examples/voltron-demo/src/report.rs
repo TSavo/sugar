@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // report.rs — the cross-vendor seam, in user code. Owns no vendor
 // boundaries itself. Uses persist::sql_query_row (SQL vendor) to read

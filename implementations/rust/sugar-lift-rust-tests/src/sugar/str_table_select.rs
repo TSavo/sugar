@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `StrTableSelectSugar`: general Sugar for `literal_byte_array[bv32_expr]` in
 // term position.  Fires BEFORE `IndexSugar` via the `comes_before: &["index"]`

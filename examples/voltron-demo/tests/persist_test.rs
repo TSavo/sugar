@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Unit tests for persist. The lifter derives a post-condition from
 // insert_event's body that the rowid is positive (via the panic guard);

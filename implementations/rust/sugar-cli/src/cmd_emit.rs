@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `sugar emit`: dispatch neutral contract predicates to a target test
 // emitter kit. The target kit owns framework syntax and native check

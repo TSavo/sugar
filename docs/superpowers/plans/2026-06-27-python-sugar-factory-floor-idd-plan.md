@@ -2124,7 +2124,7 @@ semantics.
 Create `.sugar/components/python-test-assertions/manifest.toml`:
 
 ```toml
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 name = "python-test-assertions"
 version = "0.1.0"

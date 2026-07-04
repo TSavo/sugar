@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `OptionAdaptorSugar`: value-level std `Option`/`Result` adaptors over grounded
 // monadic terms. This owns `.map(|x| ...)`, `.and_then(|x| Some(..))`,

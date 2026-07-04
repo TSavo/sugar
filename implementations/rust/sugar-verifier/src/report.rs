@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 7: report. Aggregate per-callsite verdicts plus load-error
 // rows. Mirrors .../verifier/report.cpp.

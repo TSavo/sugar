@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `Expr::Range` (`a..b` / `a..=b`): `range`/`range_incl` over
 // start (or `0`) and end (or `range_end_len`). Byte-identical to the `Expr::Range` arm

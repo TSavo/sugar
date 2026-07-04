@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // BlockSugar: the statement-composition engine. Reduces a braced block of statements
 // to `Desugared::StmtBlock { guarded, raises, fall_through }` by dispatching each statement

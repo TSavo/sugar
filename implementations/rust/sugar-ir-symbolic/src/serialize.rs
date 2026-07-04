@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // IR-JSON serializer. Emits the locked IR-JSON shape per
 // protocol/specs/2026-04-30-ir-formal-grammar.md.

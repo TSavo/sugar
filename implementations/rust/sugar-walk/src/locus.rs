@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Source-locus metadata for arrivals, contracts, and other mementos.
 // Per #372 part 1.

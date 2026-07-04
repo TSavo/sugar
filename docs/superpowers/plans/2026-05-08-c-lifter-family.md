@@ -91,7 +91,7 @@ int main(void) {
 Create `implementations/c/sugar-lift-core/Makefile`:
 
 ```makefile
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 CC = cc
 CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -g
@@ -138,7 +138,7 @@ Expected: compile failure because `sugar/c_lift_core.h` and the result API do no
 Create `implementations/c/sugar-lift-core/include/sugar/c_lift_core.h`:
 
 ```c
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 #ifndef SUGAR_C_LIFT_CORE_H
 #define SUGAR_C_LIFT_CORE_H
 
@@ -179,7 +179,7 @@ char *pk_c_lift_result_to_json(const pk_c_lift_result *result);
 Create `implementations/c/sugar-lift-core/src/core.c`:
 
 ```c
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 #include "sugar/c_lift_core.h"
 #include <stdlib.h>
 #include <string.h>
@@ -442,7 +442,7 @@ void pk_c_source_facts_free(pk_c_source_facts *facts);
 Replace `implementations/c/sugar-lift-core/src/parser.c` with this regex-backed fact extractor:
 
 ```c
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 #define _GNU_SOURCE
 #include "sugar/c_lift_core.h"
 #include <regex.h>
@@ -1180,7 +1180,7 @@ printf 'sugar-lift-c-sparse integration passed\n'
 Create `Makefile`:
 
 ```makefile
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 CC = cc
 CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -I../sugar-lift-core/include -g
@@ -1234,7 +1234,7 @@ Expected: compile failure because `src/main.c` and `src/sparse.c` do not exist.
 Create `src/main.c`:
 
 ```c
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 #define _GNU_SOURCE
 #include "sugar/c_lift_core.h"
 #include <stdio.h>
@@ -1310,7 +1310,7 @@ int main(int argc, char **argv) {
 Create `src/sparse.c`:
 
 ```c
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 #include "sugar/c_lift_core.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -1432,7 +1432,7 @@ printf 'sugar-lift-c-assertions integration passed\n'
 Create `Makefile`:
 
 ```makefile
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 CC = cc
 CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -I../sugar-lift-core/include -g
@@ -1486,7 +1486,7 @@ Expected: compile failure because source files do not exist.
 Create `src/main.c`:
 
 ```c
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 #define _GNU_SOURCE
 #include "sugar/c_lift_core.h"
 #include <stdio.h>
@@ -1562,7 +1562,7 @@ int main(int argc, char **argv) {
 Create `src/assertions.c`:
 
 ```c
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 #include "sugar/c_lift_core.h"
 #include <stdio.h>
 #include <string.h>
@@ -1689,7 +1689,7 @@ printf 'C lifter composition integration passed\n'
 Create `Makefile`:
 
 ```makefile
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 .PHONY: all test clean
 

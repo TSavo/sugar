@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // IDD instrument: EVERYTHING must read/write `.proof` catalogs through the
 // `ProofGraph` api in `sugar-proof-envelope`, never by hand. This audit

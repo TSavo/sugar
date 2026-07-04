@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IndexSugar`: the CONSTRUCTIVE term node for a general index read `a[i]` -- the
 // constructive tail of the `Expr::Index` arm of `translate_term_in_scope`. It is the

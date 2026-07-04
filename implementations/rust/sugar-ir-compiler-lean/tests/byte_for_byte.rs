@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use serde_json::json;
 use sugar_ir_compiler::{CompilerInput, IrCompiler};

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Atomic `.load(..)` over a non-path receiver is a runtime state boundary.
 

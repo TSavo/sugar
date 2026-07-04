@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Structural tests for the kit constructors. Pins:
 //   - `must` and `contract` push into the collector; `finish` drains.

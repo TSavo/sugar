@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `Expr::Array` in TERM position: the `literal_aggregate_term`
 // "Array" ctor over the element exprs. This is the TERM-position node — DISTINCT from

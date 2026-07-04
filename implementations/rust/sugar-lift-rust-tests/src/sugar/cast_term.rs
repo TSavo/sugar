@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `Expr::Cast` (`x as T`): an inferred target (`as _`) is
 // compiler type inference and therefore transparent; raw-pointer target casts are

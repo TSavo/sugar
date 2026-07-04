@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Java-native JUnit witness kit for the Sugar/ProvekIt substrate.
 // P5a: the witness lifter role — LIFT + RESOLVE_WITNESS.

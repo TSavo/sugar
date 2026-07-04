@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Rust contracts (test) surface. Same path rule as rust-bind: two `..` for an
 # examples/ kit. Uses sugar-lift's contracts lane (none lift here -- the

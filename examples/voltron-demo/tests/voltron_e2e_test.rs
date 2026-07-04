@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // End-to-end test for the voltron-demo spine. Exercises ingest → persist
 // → report all the way through, threading both vendor shims. This is the

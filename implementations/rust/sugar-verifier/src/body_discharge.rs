@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Body-discharge: reduce a harvested-assertion obligation through the
 // CALLEE FUNCTION BODY, so the solver sees the body's value-semantics

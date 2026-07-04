@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Java-native JUnit/TestNG assertion lifter for the Sugar/ProvekIt substrate.
 // Phase 4.5: throw-locus derivation — the name never enters into it.

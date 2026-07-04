@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // HAND-MAINTAINED. Enum totality is compiler-enforced; atom/op-table totality
 // is enforced by the vocabulary audit test (tests/vocabulary_totality.rs).
 

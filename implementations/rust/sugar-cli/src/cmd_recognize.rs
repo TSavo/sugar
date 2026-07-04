@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `sugar recognize`: kit-owned source-level recognition per protocol §4.2.5.
 //

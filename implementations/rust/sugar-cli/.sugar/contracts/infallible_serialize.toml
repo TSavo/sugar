@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Rust-kit manifest for serde_json Result totality specific to sugar-cli.
 # The Rust kit reads this as side metadata during lifting; the CLI/verifier

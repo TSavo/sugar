@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `GenericBodySugar`: recognize a functional string-encoder function body and
 // emit a `str.eq-bv-blocks` universe post atom by COMPOSITION.

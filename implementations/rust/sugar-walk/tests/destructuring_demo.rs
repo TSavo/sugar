@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Destructuring let-bindings: tuple, struct, and slice patterns each
 // produce one arrival per bound name in the shadow source.

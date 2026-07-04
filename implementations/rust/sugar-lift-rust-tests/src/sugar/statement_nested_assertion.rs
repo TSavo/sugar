@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Statement-position assertion syntax that appears inside a value expression.
 // The assertion macro is the source boundary: it is not an unconditional

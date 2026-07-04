@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `VecLiteralSugar`: stdlib vector-builder patterns that are closed over primitive
 // compiler axioms. This is deliberately not a general mutable-Vec interpreter; it

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // outlives.rs: C.9 region-quantifier composition + substitution.
 // Implements `compose_region_demands` per protocol/specs/2026-05-05-outlives-kernel-axioms.md §4.

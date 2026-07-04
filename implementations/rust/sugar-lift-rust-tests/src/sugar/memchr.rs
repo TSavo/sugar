@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Literal `memchr` / `memrchr` terminal sugar. Byte-string and literal byte
 // arrays are searched exactly. Runtime or mutable slice sources stop at a named

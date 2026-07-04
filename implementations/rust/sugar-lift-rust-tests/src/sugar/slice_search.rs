@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Literal slice/array search and split surfaces not owned by the broader iterator
 // terminal family. Recognition is intentionally narrow: only source shapes whose

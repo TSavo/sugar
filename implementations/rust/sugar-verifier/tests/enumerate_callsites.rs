@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 2 (enumerate_callsites) tests. Pins:
 //   - walks contract.body.pre / .post / .inv looking for ctor terms

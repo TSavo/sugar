@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `sugar-walk-emit`: take a Rust source file, lift + walk + shadow,
 // emit a proof.ir bundle as JCS-canonical bytes on stdout. It also has

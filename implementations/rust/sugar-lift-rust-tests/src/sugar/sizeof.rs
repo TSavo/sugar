@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `SizeOfSugar`: `mem::size_of::<T>()` is a compiler axiom, not an opaque
 // function call. The Rust compiler has already made `T` meaningful for compiled

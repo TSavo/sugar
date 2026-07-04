@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `RevSugar`: the `.rev()` adaptor (and the synthetic final `Rev` appended for
 // `.rfold`). A decorator `Sugar` over an inner sequence-`Sugar` that reverses the

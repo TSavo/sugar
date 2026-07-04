@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `RegexSugar`: the rust-side regex-match lifter, COMPOSITIONAL. A
 // `Regex::new(<pattern>).unwrap().is_match(s)` / `re.is_match(s)` /

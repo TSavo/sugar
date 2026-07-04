@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // InfinityEqSugar: `x == f32::INFINITY` / `x == f64::NEG_INFINITY` is not
 // ordinary path equality. Rustc gives the width/sign on the constant side; we

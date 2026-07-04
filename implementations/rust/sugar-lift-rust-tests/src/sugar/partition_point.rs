@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `PartitionPointSugar`: `[literal].partition_point(|x| <pred>)` over a literal
 // scalar slice with a lift-known predicate closure is value sugar.

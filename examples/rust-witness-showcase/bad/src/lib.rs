@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The code under test: a BROKEN adder. `add` is wrong (subtracts), so the test
 //! that pins the correct answer FAILS. The witness package records the failure
 //! honestly; discharge then REFUSES on the all-passed check.

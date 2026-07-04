@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `CharRangeCollectStringSugar`: stdlib string collection sugar for
 // `<literal int range>.map(|b| b as char).collect::<String>()`. The Rust compiler

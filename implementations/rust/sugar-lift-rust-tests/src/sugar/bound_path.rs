@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `BoundPathSugar`: a stable `let` binding used as a term is transparent to the
 // ProofIR term it names. Recognition identifies the bound local and the factory hands

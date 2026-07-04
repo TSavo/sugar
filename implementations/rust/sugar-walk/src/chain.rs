@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Iterator-chain detection from a Rust expression. Walks consecutive
 // `MethodCall` nodes (vec.iter().map(f).filter(g).sum()) and

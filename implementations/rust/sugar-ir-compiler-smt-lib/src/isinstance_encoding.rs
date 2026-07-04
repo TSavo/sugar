@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // HAND-MAINTAINED. isinstance disjointness axioms for the Python pytest lifter.
 //

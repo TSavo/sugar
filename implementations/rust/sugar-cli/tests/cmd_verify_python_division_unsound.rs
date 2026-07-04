@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // CARDINAL-SIN REGRESSION (Python analog of `cmd_verify_go_division_unsound.rs`):
 // the verify-facing Python lifter must NEVER sign a witness for a Python-false

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for closed stdlib `format!(...)`. This is the specific
 // format-surface owner; generic macro recursion only handles unresolved cases.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Shared unit-path value vocabulary. For compiling Rust, `Zst` in a const-value
 // context is a compiler-resolved zero-sized value constructor, not a runtime

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `addr_of_mut!(place)`: this constructs a write-capable
 // raw-pointer capability. Construction is inert; assignment/call consumers own

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // End-to-end SMT-emit round-trip test. Builds a forall-Int formula in
 // memory (no I/O), instantiates with a free var, emits SMT-LIB, and

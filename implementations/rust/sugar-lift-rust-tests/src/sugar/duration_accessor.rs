@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `DurationAccessorSugar`: an integer field accessor (`as_secs` / `subsec_nanos`
 // / `subsec_micros` / `subsec_millis` / `as_millis` / `as_micros` / `as_nanos`)

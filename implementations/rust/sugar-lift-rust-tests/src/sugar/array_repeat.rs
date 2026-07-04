@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ArrayRepeatSugar`: the REFUSE-side node for an `[elem; N]` array-repeat whose length `N`
 // is NOT a literal. It OWNS, in its own `desugar`, the single non-literal-length verdict the

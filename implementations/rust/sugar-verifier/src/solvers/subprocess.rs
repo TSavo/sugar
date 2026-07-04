@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Subprocess solver. Generic SMT-LIB v2.6 driver: pipe the script to
 // `<binary> [flags...]` on stdin, read the first non-empty stdout line,

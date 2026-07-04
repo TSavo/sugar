@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Hover type-resolution fixture. The single production function does the exact
 // shape the sugar-cli panic census is dominated by:

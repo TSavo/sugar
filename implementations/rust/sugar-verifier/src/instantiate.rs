@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 4: instantiate. Substitute the call's arg term for the
 // resolved forall's bound variable. Flat quantifier shape: the

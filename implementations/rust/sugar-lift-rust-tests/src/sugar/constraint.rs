@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // ConstraintSugar family: source shapes whose semantic output is a ProofIR
 // constraint. The collector asks for the `Constraint` role; these claims own

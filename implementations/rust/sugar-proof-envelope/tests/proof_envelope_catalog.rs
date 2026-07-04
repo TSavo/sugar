@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // .proof catalog envelope tests. Pins:
 //   - filename CID matches BLAKE3-512 of the catalog bytes (trust-root)

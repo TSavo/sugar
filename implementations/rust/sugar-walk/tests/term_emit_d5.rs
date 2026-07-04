@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use sugar_walk::emit::rust_function_term_json_for_file;
 use sugar_walk::type_decl::lift_file_type_decls;

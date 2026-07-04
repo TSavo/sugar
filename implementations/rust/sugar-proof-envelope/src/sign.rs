@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Ed25519 signing helper. v1.1.0 of the protocol mandates
 // self-identifying signatures of the form:

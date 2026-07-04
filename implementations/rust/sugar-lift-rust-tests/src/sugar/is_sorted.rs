@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IsSortedSugar`: `.is_sorted()` over a literal array -- directly, or behind an
 // order-PRESERVING view/iter adaptor (`.iter()` / `.into_iter()` / `.iter_mut()`

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 #[path = "../../sugar-ir-compiler-test-support/vocabulary.rs"]
 mod vocabulary;

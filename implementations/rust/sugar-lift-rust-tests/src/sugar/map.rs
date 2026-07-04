@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `MapSugar`: the `.map(f)` adaptor. A decorator `Sugar` over an inner
 // sequence-`Sugar` that replaces each element with the closure's const value. Bails

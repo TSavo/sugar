@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `PathSugar`: the TERM-FLOOR LEAF for a path read in term position -- the
 // constructive node mirror of the GENERAL `Expr::Path` arm of

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Sugar-owned recognition claims. Each Sugar module exports the claim(s) for
 // the source positions it owns; the factory only brokers over these claims.

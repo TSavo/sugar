@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Integration test: spawn `sugar-lsp-rust`, drive it via NDJSON,
 // assert protocol contract per spec.

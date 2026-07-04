@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // IDD guard: .proof authors use the typed graph API. Leaves are atoms, graph
 // edges are typed mementos, and build_proof_envelope receives exactly one

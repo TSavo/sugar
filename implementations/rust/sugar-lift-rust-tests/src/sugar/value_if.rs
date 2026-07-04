@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ValueIfSugar`: a term-position `if cond { a } else { b }` whose branches
 // already have term floors. The sugar owns only the source composition; branch

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `sugar lift <PROJECT>`: dispatch the configured lift-plugin protocol
 // and emit the raw lifted ProofIR response. Minting is a separate composition

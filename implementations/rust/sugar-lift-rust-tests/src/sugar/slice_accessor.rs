@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Direct slice/array accessor methods over literal sequences. Iterator terminals
 // (`.iter().sum()`, `.iter().min()`, ...), raw indexing (`a[i]`), `.len()`, and

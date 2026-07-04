@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for closed stdlib `concat!(...)`. The concatenation semantics
 // live here, ahead of the generic macro fallback.

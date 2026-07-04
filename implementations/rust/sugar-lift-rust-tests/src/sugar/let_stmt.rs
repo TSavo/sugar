@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // LetSugar: a `let <pat> = <init>;` statement is not a semantic wall. The initializer
 // is a normal Rust expression surface: if it contains a fact-emitting expression

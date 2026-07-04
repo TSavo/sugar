@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // persist.rs — SQL persistence module. Three boundary stubs for rusqlite
 // (open_in_memory, sql_execute, sql_query_row_string) + user-side

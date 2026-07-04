@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Bundled SMT-LIB v2.6 IR compiler. Extracted from the inline
 // sugar-verifier::smt_emitter so the same code serves both the

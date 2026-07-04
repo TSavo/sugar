@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `SkipWhileSugar`: the `.skip_while(pred)` adaptor. A decorator `Sugar` over an
 // inner sequence-`Sugar` that drops the leading run of elements where the closure

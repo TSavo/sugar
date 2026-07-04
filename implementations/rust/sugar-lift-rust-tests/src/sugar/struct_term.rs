@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `Expr::Struct`: a constructor `struct:<path>` with sorted
 // `field:<name>` subctors over the field-value children. A `..rest` struct literal is

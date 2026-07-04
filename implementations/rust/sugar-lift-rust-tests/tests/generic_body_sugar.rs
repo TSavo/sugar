@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TDD test suite for GenericBodySugar: a functional string-encoder body lifts
 // to a `str.eq-bv-blocks` post atom by composition (not a base64 special-case).

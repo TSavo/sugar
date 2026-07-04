@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Go/no-go probe for the rust-analyzer hover type-resolution refinement.
 //!
 //! The hover refinement's parser is unit-tested against SYNTHETIC markdown

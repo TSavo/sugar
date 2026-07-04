@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Literal slice chunk/window adaptors. These are composite-only wrappers used by the
 // sequence-method peel path: a literal slice split into `chunks`, `rchunks`, exact

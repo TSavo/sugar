@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // JCS-JSON encoder (RFC 8785 / "JSON Canonicalization Scheme"). v1.
 // Mirrors implementations/cpp/sugar/canonicalizer/jcs.cpp 1:1.

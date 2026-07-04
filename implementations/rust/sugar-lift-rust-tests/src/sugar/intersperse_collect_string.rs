@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IntersperseCollectStringSugar`: stdlib string collection sugar for
 // `<literal seq>.map(|x| x.to_string()).intersperse(<literal sep>).collect::<String>()`.

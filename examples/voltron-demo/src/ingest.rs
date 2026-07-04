@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // ingest.rs — JSON ingestion module. Two boundary stubs for serde_json
 // (json_parse, json_serialize) + the user-side `parse_event` function

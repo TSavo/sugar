@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IsEmptySugar`: `.is_empty()` over a range literal with const integer/char
 // endpoints, or over a literal collection sequence (array / repeat / Vec-constructor),

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ConstItemSugar`: a local `const`/`static` item with no assertion-family macro is
 // inert compiler-axiom support. The compiler already checked the initializer for

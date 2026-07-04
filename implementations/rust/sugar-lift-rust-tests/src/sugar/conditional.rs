@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ConditionalSugar`: a guarded point-wise claim (`if cond { asserts } else { asserts }`)
 // reduced to `cond => then-conj` and `!cond => else-conj`. Relocated verbatim from the

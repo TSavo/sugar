@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Deterministic CBOR encoder tests, RFC 8949 §4.2.1.
 //

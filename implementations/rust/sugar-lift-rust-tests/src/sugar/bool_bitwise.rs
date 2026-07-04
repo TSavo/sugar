@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // BoolBitwiseSugar: Rust permits `&` and `|` over `bool`. In assertion
 // position, those are first-order conjunction/disjunction after each side has

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Pre-materialize downstream consumer. Each stub function's signature
 // matches the corresponding sugar binding in `sugar-shim-rusqlite`'s

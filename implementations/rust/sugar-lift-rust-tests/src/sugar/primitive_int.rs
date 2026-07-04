@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `PrimitiveIntSugar`: small primitive-integer stdlib/compiler axioms over
 // grounded literal terms. The compiler owns these semantics; this sugar reads

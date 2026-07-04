@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Literal IP address property predicates. The source tests use local macros such as
 // `ip!("127.0.0.1").is_loopback()`: recognition captures the raw receiver, while

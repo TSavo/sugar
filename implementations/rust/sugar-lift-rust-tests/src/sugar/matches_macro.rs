@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // MatchesMacroSugar: `matches!(subject, Pattern)` is a constraint-shaped
 // assertion vocabulary entry. The subject is built through the normal term

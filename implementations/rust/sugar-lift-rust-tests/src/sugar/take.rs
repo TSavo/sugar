@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `TakeSugar`: the `.take(n)` adaptor. A decorator `Sugar` over an inner
 // sequence-`Sugar` that keeps the first `n` elements. Lifted verbatim from the

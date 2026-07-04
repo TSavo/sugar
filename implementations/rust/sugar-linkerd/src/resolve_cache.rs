@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // resolve_cache.rs: content-addressed per-file callee-resolution cache.
 //

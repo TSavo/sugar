@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ScanSugar`: `.scan(init, |acc, x| { *acc <op>= rhs_expr; Some(*acc) })` over a
 // FINITE LITERAL source — the stateful-map adaptor collapsed to a concrete integer

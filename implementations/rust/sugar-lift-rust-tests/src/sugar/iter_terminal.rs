@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IterTerminalSugar`: the iterator REDUCTION + POSITIONAL + EXTREMUM + PREDICATE
 // terminals over a FINITE LITERAL domain. Each writes the EQUIVALENT FOL of its operation

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // PYTHON end-to-end production-bridge gauntlet -- the Python analog of
 // `cmd_verify_go_production_bridge.rs`. Proves the verification spine is

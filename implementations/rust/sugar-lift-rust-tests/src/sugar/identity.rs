@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IdentitySugar`: the `iter` / `into_iter` / `cloned` / `copied` / `fuse` adaptor.
 // A decorator `Sugar` over an inner sequence-`Sugar` whose `desugar` is the identity

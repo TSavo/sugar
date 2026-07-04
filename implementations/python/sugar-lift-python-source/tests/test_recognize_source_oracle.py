@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Recognize runs THROUGH the Source Oracle. The `.proof` carries the SourceMemento
 # (locus + CIDs, NO inline ast_template/body_text -- the only shape a proof ever

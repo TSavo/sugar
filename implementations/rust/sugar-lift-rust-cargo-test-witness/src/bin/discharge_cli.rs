@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Witness discharge command -- the verifier<->kit contract (mirror python
 // `discharge_cli.py`).

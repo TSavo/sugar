@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 1: load_all_proofs. Walk <project_root> for *.proof files,
 // CBOR-decode the catalog, JSON-parse each member envelope, recompute

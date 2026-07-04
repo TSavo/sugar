@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `Expr::RawAddr` (`&raw const x` / `&raw mut x`): a raw
 // pointer capability constructor. Construction itself is inert; consumers own

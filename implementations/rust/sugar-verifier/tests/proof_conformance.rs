@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Proof-file conformance tests. These are the first dogfood target:
 // `.proof` bytes -> proof-file-format conformance report.

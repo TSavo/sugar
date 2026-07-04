@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Rust round-trip: read back a directory of .proof files, walk the
 // six-stage pipeline up through enumerate_callsites, and assert

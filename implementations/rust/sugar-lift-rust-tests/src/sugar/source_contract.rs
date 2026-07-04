@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Source-contract emission Sugar: compose source-backed function contracts from
 // existing term, bool, and constraint floors. The crate root re-exports the

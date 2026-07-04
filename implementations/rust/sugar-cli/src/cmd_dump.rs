@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `sugar dump <PROOF-FILE>`: read the proof graph and say it out loud.
 //

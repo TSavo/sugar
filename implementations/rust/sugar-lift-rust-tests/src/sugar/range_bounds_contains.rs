@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `RangeBoundsContainsSugar`: a bound `RangeBounds` tuple receiver (`r.contains(&x)`,
 // where `r = (Bound::Included(..), Bound::Excluded(..))`) is a trait-surface boundary.

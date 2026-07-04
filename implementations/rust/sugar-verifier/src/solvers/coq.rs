@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Coq subprocess solver. Invokes `coqc` on a generated `.v` file.
 //

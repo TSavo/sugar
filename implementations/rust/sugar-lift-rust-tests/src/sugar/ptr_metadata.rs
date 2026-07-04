@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ptr::metadata` terminal sugar. Only metadata whose payload is written in the
 // text as a DST length (string literal / literal slice) reduces to a literal

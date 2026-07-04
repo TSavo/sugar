@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `FilterMapSugar`: the `.filter_map(f)` adaptor. A decorator `Sugar` over an inner
 // sequence-`Sugar` that const-evaluates the `Option`-returning closure over each

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Verifier runner. Composes the seven stages and fans out per
 // callsite via rayon. Stage 6 (solve) is now driven by the

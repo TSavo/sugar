@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The code under test: a tiny, correct adder. Every test below PASSES, so the
 //! cargo-test witness package discharges by recompute (the suite re-runs, the
 //! bundle cid reproduces, and every per-test witness reads "passed").

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use libsugar::core::{Cid, Term};
 use libsugar::transport::{transport_term, OperationTransport, TermTransport, TransportError};

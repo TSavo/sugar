@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Multi-solver demo. Drives the verifier four times against the same
 // fixture obligation -- one run per mode (single, chain, portfolio
