@@ -7,7 +7,9 @@ import pytest
 
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.factory.dig_refusal import DigRefusal
+from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
 from sugar_lift_py_tests.factory.floor_contract_agreement import (
     FloorContractAgreementViolation,
 )
@@ -23,10 +25,14 @@ from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.effect import (
     CoverageGapEffect,
+    DigRefusalEffect,
+    FactoryGapEffect,
     RaiseEffect,
     RuntimeEffect,
+    SourceOracleEffect,
     effect_kind,
     effect_reason,
+    effect_status,
 )
 from sugar_lift_py_tests.proofir import (
     AuditLocus,
@@ -312,6 +318,9 @@ def test_incomplete_effect_is_a_closed_typed_union() -> None:
     with pytest.raises(TypeError, match="unhandled Effect"):
         effect_kind(FutureEffect())  # type: ignore[arg-type]
 
+    with pytest.raises(TypeError, match="unhandled Effect"):
+        effect_status(FutureEffect())  # type: ignore[arg-type]
+
     runtime = RuntimeEffect("opaque runtime effect")
     raise_effect = RaiseEffect("ValueError", "tests/test_construction_law.py:1")
     coverage = CoverageGapEffect(
@@ -329,6 +338,62 @@ def test_incomplete_effect_is_a_closed_typed_union() -> None:
         assert record.effect_kind == effect_kind(effect)
         assert record.reason == effect_reason(effect)
         assert record.to_declaration()["effectKind"] == effect_kind(effect)
+
+
+def test_python_effect_status_boundary_lowers_legacy_status_once() -> None:
+    runtime = RuntimeEffect("opaque runtime effect")
+    drifted = SourceOracleEffect(
+        reason=(
+            "source CID misaligned for `encode_len` in `encoder.py`: "
+            "the source drifted from the proof"
+        )
+    )
+    absent = SourceOracleEffect(reason="source function missing at pinned locus")
+
+    assert effect_status(runtime) == "refused"
+    assert effect_status(drifted) == "drifted"
+    assert effect_status(absent) == "absent"
+
+
+def test_refusal_record_gap_effects_are_typed_before_legacy_lowering() -> None:
+    gap_info = FactoryGapInfo(
+        owner="CallSugar",
+        blame="factory",
+        observed="Dict",
+        requested="CallTerm",
+        fix="route call through typed construction",
+    )
+    gap = FactoryGap(
+        gap_info,
+        FactoryAuditRow(
+            role="BodyUniverse",
+            status="gap",
+            observed="Dict",
+            blame="factory",
+            selected=None,
+            candidates=[],
+            message=gap_info.message,
+        ),
+    )
+    gap_record = RefusalRecord.from_gap(gap, provenance=_refusal_provenance())
+
+    assert isinstance(gap_record.effect, FactoryGapEffect)
+    assert gap_record.effect_kind == "FactoryGap"
+    assert gap_record.reason == str(gap)
+    assert gap_record.to_declaration()["reason"] == str(gap)
+
+    dig = DigRefusal(
+        callee="pkg.mod::A",
+        blame="factory",
+        caught="RuntimeError",
+        reason="cannot climb",
+    )
+    dig_record = RefusalRecord.from_gap(dig, provenance=_refusal_provenance())
+
+    assert isinstance(dig_record.effect, DigRefusalEffect)
+    assert dig_record.effect_kind == "DigRefusal"
+    assert dig_record.reason == "cannot climb"
+    assert dig_record.to_declaration()["reason"] == "cannot climb"
 
 
 def test_refusal_diagnostics_route_through_refusal_record(monkeypatch) -> None:

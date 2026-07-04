@@ -11,6 +11,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sugar_lift_py_tests.audit_only import collect_construction_gaps
+from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
 from sugar_lift_py_tests.lib import lift_source
@@ -320,10 +321,15 @@ def _source_memento_display(memento: Dict[str, Any]) -> str:
     return " ".join(pieces)
 
 
-def _source_refusal_status(reason: str) -> str:
-    if "source CID misaligned" in reason or "template CID misaligned" in reason:
-        return "drifted"
-    return "absent"
+def _source_oracle_effect_result(
+    effect: SourceOracleEffect,
+    memento: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "status": effect_status(effect),
+        "reason": effect_reason(effect),
+        "memento": _source_memento_response(memento, {}),
+    }
 
 
 def _resolve_source_memento_result(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -338,12 +344,9 @@ def _resolve_source_memento_result(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         resolved = resolve_source_memento(workspace_root, memento)
     except SourceOracleRefusal as exc:
-        reason = str(exc)
-        return {
-            "status": _source_refusal_status(reason),
-            "reason": reason,
-            "memento": _source_memento_response(memento, {}),
-        }
+        return _source_oracle_effect_result(
+            SourceOracleEffect(reason=str(exc)), memento
+        )
     body_text = str(resolved.get("body_text") or "").strip()
     lean_memento = _source_memento_response(memento, resolved)
     return {
