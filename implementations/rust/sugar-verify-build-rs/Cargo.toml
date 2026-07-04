@@ -3,7 +3,7 @@ name = "sugar-verify-build-rs"
 version = "0.1.0"
 edition = "2021"
 description = "Cargo build.rs integration for sugar verification. The memento IS the verification."
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/sugar/sugar"
 
 [dependencies]

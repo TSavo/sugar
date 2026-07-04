@@ -7,7 +7,7 @@ name = "recognize-demo-python"
 version = "0.0.0"
 description = "Python recognize verb demo that composes requests and sqlite3 call sites through Sugar shim bindings."
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = { text = "MIT OR Apache-2.0" }
 dependencies = [
     "requests>=2",
 ]

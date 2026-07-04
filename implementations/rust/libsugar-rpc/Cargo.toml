@@ -2,7 +2,7 @@
 name = "libsugar-rpc"
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 description = "JSON-RPC 2.0 NDJSON server library for Sugar's lift-plugin protocol. External-crate-only, vendorable. Adapter binaries call run_server() with their adapter-specific AdapterLifter; the library handles the protocol mechanics, content-addressed naming, and dedup."
 
 # CLEANROOM: this crate has ZERO `sugar-*` dependencies. The whole

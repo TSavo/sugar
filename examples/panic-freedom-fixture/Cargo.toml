@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Panic-freedom fixture: a standalone crate whose only purpose is to exercise
 # the panic-freedom mechanism end-to-end. `sugar mint --project .` lifts its
@@ -15,7 +15,7 @@
 name = "sugar-panic-freedom-fixture"
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 publish = false
 description = "Sugar panic-freedom demonstration fixture (guarded vs unguarded unwrap)."
 

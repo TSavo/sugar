@@ -2,7 +2,7 @@
 name = "rusqlite-demo-consumer"
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 description = "Real Rust app that uses rusqlite. Each rusqlite call site carries a Sugar concept-citation comment, anchoring the boundary to the sugar-shim-rusqlite .proof envelope (paper 24 §5: composition at the seam IS the trade)."
 
 [[bin]]

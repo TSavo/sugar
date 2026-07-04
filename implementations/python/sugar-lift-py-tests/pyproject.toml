@@ -7,7 +7,7 @@ name = "sugar-lift-py-tests"
 version = "0.1.0"
 description = "Sugar: Python pytest/unittest structural lifts plus production callsite WP walking."
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.8"
 authors = [{ name = "Sugar" }]
 dependencies = [
