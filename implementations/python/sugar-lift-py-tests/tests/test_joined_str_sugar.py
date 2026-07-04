@@ -67,9 +67,7 @@ def test_formatted_joined_str_with_symbolic_field_is_addressable() -> None:
     body = ctx.build_body(ast.parse("f'value={x}'", mode="eval").body, SugarRole.TERM)
     reduce_ctx = replace(
         ReduceContext.root(owner="joined-str-test"),
-        temporal=TemporalContext.empty().bind_value(
-            "x", SymbolicValue(make_var("x"))
-        ),
+        temporal=TemporalContext.empty().bind_value("x", SymbolicValue(make_var("x"))),
     )
 
     outcome = body.reduce(reduce_ctx)
