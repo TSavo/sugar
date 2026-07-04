@@ -110,6 +110,7 @@ EXPECTED_OPT_OUT_SUGARS = {
     "ListLiteralSugar",
     "OrdByteSugar",
     "PassSugar",
+    "StarredSugar",
     "SubscriptAssignSugar",
     "SubscriptDeleteSugar",
 }

@@ -301,6 +301,14 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="pass is inert control-flow support",
     ),
     NonFolOptOut(
+        sugar_name="StarredSugar",
+        floor_name="SupportValue",
+        reason=(
+            "starred expression expansion is runtime call/display support, "
+            "not a standalone FOL claim"
+        ),
+    ),
+    NonFolOptOut(
         sugar_name="SubscriptAssignSugar",
         floor_name="SupportValue",
         reason="subscript assignment mutation produces no FOL assertion",
