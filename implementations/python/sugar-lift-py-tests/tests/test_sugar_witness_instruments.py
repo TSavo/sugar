@@ -35,8 +35,8 @@ from sugar_lift_py_tests.witness_harness import (
 
 ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 0
-EXPECTED_SEED_CASES = 55
-EXPECTED_SEED_OWNER_COUNT = 42
+EXPECTED_SEED_CASES = 56
+EXPECTED_SEED_OWNER_COUNT = 43
 EXPECTED_TRIPLE_FAILURES = 0
 EXPECTED_MIGRATED_SEED_NAMES = {
     "add_method_return",
@@ -63,6 +63,7 @@ EXPECTED_MIGRATED_SEED_NAMES = {
     "isinstance_assertion_boolop",
     "joined_str_literal_return",
     "lambda_map_method",
+    "list_comp_literal_domain_return",
     "membership_assertion_boolop",
     "name_return",
     "not_assertion_boolop",

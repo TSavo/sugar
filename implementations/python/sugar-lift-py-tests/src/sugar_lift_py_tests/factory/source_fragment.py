@@ -686,6 +686,44 @@ class SourceFragment:
             return None
         return SourceFragment.from_node(spec, self.filename).joined_str_static_text()
 
+    # --- comprehensions ----------------------------------------------------
+
+    def listcomp_element(self) -> "SourceFragment":
+        """Return the element expression produced by a list comprehension."""
+        self._require(ast.ListComp)
+        return SourceFragment.from_node(self.node.elt, self.filename)  # type: ignore[attr-defined]
+
+    def listcomp_generators(self) -> "list[SourceFragment]":
+        """Return the comprehension clauses of a list comprehension."""
+        self._require(ast.ListComp)
+        return [
+            SourceFragment.from_node(generator, self.filename)
+            for generator in self.node.generators  # type: ignore[attr-defined]
+        ]
+
+    def comprehension_target(self) -> "SourceFragment":
+        """Return the target bound by a comprehension clause."""
+        self._require(ast.comprehension)
+        return SourceFragment.from_node(self.node.target, self.filename)  # type: ignore[attr-defined]
+
+    def comprehension_iter(self) -> "SourceFragment":
+        """Return the iterable expression of a comprehension clause."""
+        self._require(ast.comprehension)
+        return SourceFragment.from_node(self.node.iter, self.filename)  # type: ignore[attr-defined]
+
+    def comprehension_ifs(self) -> "list[SourceFragment]":
+        """Return the guard expressions of a comprehension clause."""
+        self._require(ast.comprehension)
+        return [
+            SourceFragment.from_node(guard, self.filename)
+            for guard in self.node.ifs  # type: ignore[attr-defined]
+        ]
+
+    def comprehension_is_async(self) -> bool:
+        """Return True when the comprehension clause is async."""
+        self._require(ast.comprehension)
+        return bool(self.node.is_async)  # type: ignore[attr-defined]
+
     # --- annotated assignment ----------------------------------------------
 
     def annassign_target(self) -> "SourceFragment":
