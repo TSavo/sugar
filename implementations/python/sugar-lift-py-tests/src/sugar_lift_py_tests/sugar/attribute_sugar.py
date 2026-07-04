@@ -1,16 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
-    FactoryGapInfo,
-    GapKind,
-    GapLocus,
-)
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import BoundVar, SymbolicValue
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.operations import AttributeLookupOperation, perform_operation
@@ -70,7 +63,7 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
 
     def desugar(self, ctx) -> Outcome:
         if self.runtime_reason is not None:
-            _runtime_receiver_refusal(self.blame, self.runtime_reason)
+            return _runtime_receiver_effect(self.blame, self.runtime_reason)
         if self.term is None:
             raise TypeError("AttributeSugar non-runtime path requires a term")
         if self.receiver is None:
@@ -103,32 +96,15 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
         )
 
 
-def _runtime_receiver_refusal(blame: str, reason: str) -> NoReturn:
-    message = (
-        "attribute lookup runtime receiver: "
-        f"{reason}. Python attribute lookup depends on the runtime receiver; "
-        "reduce the receiver to a supported object, keep the access symbolic, "
-        "or add a runtime/effect recognizer for this attribute shape."
+def _runtime_receiver_effect(blame: str, reason: str) -> Incomplete:
+    return Incomplete(
+        RuntimeEffect(
+            "attribute lookup runtime boundary: "
+            f"{reason}. Python attribute lookup depends on the runtime receiver; "
+            "keep as typed red until a narrower vendor-cited reduction owns the "
+            f"shape. blame={blame}"
+        )
     )
-    info = FactoryGapInfo(
-        owner="AttributeSugar",
-        blame=blame,
-        observed="Attribute.runtime_receiver",
-        requested="symbolic or supported object receiver",
-        fix=message,
-        gap_kind=GapKind.SUGAR,
-        gap_locus=GapLocus.CONSTRUCTION,
-    )
-    audit = FactoryAuditRow(
-        role="term",
-        status="refused",
-        observed=info.observed,
-        blame=blame,
-        selected="AttributeSugar",
-        candidates=["AttributeSugar"],
-        message=info.message,
-    )
-    raise FactoryGap(info, audit)
 
 
 def _projectable_receiver(site, ctx) -> SugarBody | None:

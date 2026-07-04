@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+
 import pytest
 
 from factory_reduce import fol, reduce_term
@@ -13,7 +15,12 @@ from sugar_lift_py_tests.factory import (
     GapKind,
     GapLocus,
 )
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
+from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.ir import ctor, make_var, str_const
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
 
@@ -66,24 +73,42 @@ def test_call_result_attribute_reduces_to_py_attr_ctor() -> None:
     )
 
 
-def test_dynamic_subscript_attribute_receiver_refuses() -> None:
-    with pytest.raises(FactoryGap) as raised:
-        reduce_term("d[...].flags.writeable")
+def test_dynamic_subscript_attribute_receiver_is_typed_runtime_effect() -> None:
+    ctx = FactoryBuildContext(filename="attribute.py", catalog=default_catalog())
+    body = ctx.build_body(
+        ast.parse("d[...].flags.writeable", mode="eval").body,
+        SugarRole.TERM,
+    )
 
-    assert raised.value.audit_row.status == "refused"
-    assert raised.value.audit_row.selected == "AttributeSugar"
-    assert raised.value.info["observed"] == "Attribute.runtime_receiver"
-    assert "runtime receiver" in raised.value.info["fix"]
+    outcome = body.reduce(ReduceContext.root(owner="attribute-test"))
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "attribute lookup runtime boundary" in outcome.effect.reason
+    assert "attribute receiver `Attribute` requires runtime evaluation" in (
+        outcome.effect.reason
+    )
+    assert "typed red" in outcome.effect.reason
+    assert "blame=" in outcome.effect.reason
 
 
-def test_dynamic_call_attribute_receiver_refuses() -> None:
-    with pytest.raises(FactoryGap) as raised:
-        reduce_term("np.add(1, 2, **get_kwarg(int64_2)).dtype")
+def test_dynamic_call_attribute_receiver_is_typed_runtime_effect() -> None:
+    ctx = FactoryBuildContext(filename="attribute.py", catalog=default_catalog())
+    body = ctx.build_body(
+        ast.parse("np.add(1, 2, **get_kwarg(int64_2)).dtype", mode="eval").body,
+        SugarRole.TERM,
+    )
 
-    assert raised.value.audit_row.status == "refused"
-    assert raised.value.audit_row.selected == "AttributeSugar"
-    assert raised.value.info["observed"] == "Attribute.runtime_receiver"
-    assert "runtime receiver" in raised.value.info["fix"]
+    outcome = body.reduce(ReduceContext.root(owner="attribute-test"))
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "attribute lookup runtime boundary" in outcome.effect.reason
+    assert "attribute receiver `Call` requires runtime evaluation" in (
+        outcome.effect.reason
+    )
+    assert "typed red" in outcome.effect.reason
+    assert "blame=" in outcome.effect.reason
 
 
 def test_desugar_propagates_floor_gaps() -> None:
