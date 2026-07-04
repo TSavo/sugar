@@ -764,8 +764,12 @@ def _is_nested_import_target(import_target: str) -> bool:
     return import_target.count(".") >= 2
 
 
-def _build_external_bridge_strategy(fragment, ctx, import_target: str, target: str | None):
-    arguments = tuple(ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args())
+def _build_external_bridge_strategy(
+    fragment, ctx, import_target: str, target: str | None
+):
+    arguments = tuple(
+        ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args()
+    )
     keywords = []
     for keyword in fragment.call_keywords():
         name = keyword.keyword_arg_name()

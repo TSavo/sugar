@@ -142,11 +142,7 @@ def _euf_rows(lift_doc: dict) -> list[dict]:
 
 
 def _derived_rows(lift_doc: dict) -> list[dict]:
-    return [
-        row
-        for row in lift_doc["ir"]
-        if "Derived" in _warrant_kinds(row)
-    ]
+    return [row for row in lift_doc["ir"] if "Derived" in _warrant_kinds(row)]
 
 
 def _warrant_kinds(row: dict) -> set[str]:
