@@ -37,11 +37,7 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:runtime-boundary-refusal",
     ),
     (
-        "iter_scan_last_over_literal_digs_with_teeth",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "iter_scan_sum_over_literal_digs_with_teeth",
+        "bound_array_chunks_iterator_state_refuses_instead_of_composite_gap",
         "floor-gap:iterator-temporal-state",
     ),
     (
@@ -63,10 +59,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     (
         "literal_runtime_element_named_refused_with_twin",
         "floor-gap:literal-domain-edge",
-    ),
-    (
-        "literal_slice_chunk_window_zip_collects_ground_with_teeth",
-        "floor-gap:temporal-closure-adaptor",
     ),
     (
         "macro_expansion_terminal_runtime_effect_is_refused_not_support_only",
@@ -101,12 +93,12 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:runtime-boundary-refusal",
     ),
     (
-        "slice_accessor_runtime_source_or_index_refuses_named_boundary",
-        "floor-gap:runtime-boundary-refusal",
+        "rpc_source_refuses_only_genuinely_not_in_text_iterator_state_with_literal_twins",
+        "floor-gap:iterator-temporal-state",
     ),
     (
-        "slice_chunk_window_count_runtime_source_refuses_named_boundary",
-        "floor-gap:slice-chunk-window-terminal",
+        "slice_accessor_runtime_source_or_index_refuses_named_boundary",
+        "floor-gap:runtime-boundary-refusal",
     ),
     (
         "slice_chunk_window_runtime_source_refuses_named_boundary",
@@ -118,10 +110,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     ),
     (
         "temporal_closure_adaptor_runtime_boundaries_decline",
-        "floor-gap:temporal-closure-adaptor",
-    ),
-    (
-        "temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth",
         "floor-gap:temporal-closure-adaptor",
     ),
     (
@@ -145,7 +133,7 @@ const CLASS_DISPOSITIONS: &[(&str, ClassDisposition)] = &[
             bucket: "unlifted-construct",
             owner: "#3378 temporal-floor S5",
             follow_up: "iterator terminal/adaptor floors",
-            note: "next/nth/peekable/scan/rev rows need counted temporal-floor standing, not derived-testimony repair",
+            note: "remaining next/nth/peekable/rev/array-chunk rows need counted temporal-floor standing, not derived-testimony repair",
         },
     ),
     (
