@@ -467,6 +467,18 @@ C's own UB never was: the record's front door is the witnessed build, so
 no-compile means no test run, no vendor claim, no memento — the demons
 cannot sign the proof chain.
 
+`unsafe` is not a special case of this section — it is the vendor's OWN
+undecidable tag, built into the grammar: the keyword whose entire meaning is
+"the checker's guarantees end at this brace." The language ships with its
+incompleteness annotated in source, by the compiler's authors, in the
+vendor's own vocabulary. We do not decide that `unsafe` is an effect; Rust
+decided, and we transport the tag — the purest cite-don't-invent in the
+system. LITERALLY no correctness guarantees inside, ever: an `unsafe`
+interior renders as a typed red effect on the wall, and there is no "yet"
+about it — a reason string that says "no stable proof relation yet" is
+carrying a drifted word, because "yet" implies we might someday guarantee
+something the vendor tagged as never-guaranteed.
+
 State the contract's edge precisely: **we make no guarantees about code the
 vendor makes no guarantees about.** On uncompilable input, at best we panic;
 at worst we report green where red belonged — and even that is CORRECT BY
@@ -569,6 +581,55 @@ Copy severance probe asks rustc rather than modeling traits; the witnessed
 build is the record's front door). One demand, two matches: every checker in
 the chain must be total over its domain, panic on its gap, and be CITED —
 never reimplemented — by the match downstream of it.
+
+## The universe is content: h = h(p), p = l(h)
+
+Say it plainly: the address of a thing is a pure function of the thing, and
+the thing is recoverable from its address. Mementos ARE h. That is the whole
+ontology — the system's universe is comprised of nothing but vectors in
+vector space that ARE their content. The law of content addressing is
+blake3-512, because this one namespace must hold every piece of code that
+ever exists, every contract that ever exists, and every memento that ever
+exists, collision-free, forever.
+
+Understand what this evicts. **h ≠ p is an invariant in every other system**
+— built into the water supply. Every line of blockchain code assumes the
+hash is a COMMITMENT to data that lives somewhere else, and pays the tax on
+that gap: data-availability sampling, withholding attacks, fraud proofs,
+light clients trusting commitments to data they have never seen. Here there
+is no gap to bridge. A warrant does not REFERENCE a program that could skew
+away from it; it CONTAINS h(p), and h(p) admits exactly one preimage.
+TOCTOU requires a mutable name — a name that can point at different content
+at different times — and this universe has no mutable names. The binding
+problem is not solved; it cannot be STATED.
+
+Corollaries, each load-bearing:
+
+- **There is no RNG. Doesn't exist. There are no calls to time. Doesn't
+  exist.** Nothing ambient ever enters an evaluation, so every artifact is
+  a VALUE, not an EVENT. An event happens once and leaves only testimony,
+  and testimony needs a trusted witness; a value just IS, re-evaluable by
+  anyone, forever, always to the same answer. A signature here signs "this
+  value is in my universe," never "I witnessed this happen." Recomputability
+  is not a feature; it is what the objects are.
+- **Either p = l(h(p)), GIVEN p — or that's not our problem.** The burden of
+  presence is on the presenter. Bring p and the round-trip self-certifies —
+  no oracle, no committee, no availability fight. Can't produce p? Then
+  there is no claim, no memento, no thing. Withholding is not an attack; it
+  is nonexistence. This is the same contract edge as uncompilable code,
+  stated again: we make no guarantees about what was never presented to the
+  domain.
+- **Can't content-address it → doesn't belong.** Not hygiene — the
+  MEMBERSHIP RULE. Existence in this system is being a point in the space.
+  Nothing grants names, so no shared identity hub can ever be smuggled in;
+  h = h(p) is self-certifying to any observer with hands, and federation is
+  free by construction.
+
+The tell for drift: describing the system as DOING things — checking,
+binding, defending — where its power is what things ARE. Identity is a noun
+here, not a verb. Anyone reasoning "what if the hash points at the wrong
+program" has imported h ≠ p from the water supply of every other system;
+the question is not wrong, it is ungrammatical.
 
 The manifesto above is the operating model. The rest of this file is local
 mechanics for applying it in this checkout.
