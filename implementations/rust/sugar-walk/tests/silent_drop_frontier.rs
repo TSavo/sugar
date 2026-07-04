@@ -703,7 +703,6 @@ struct Report {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct SanctionKey {
     file: String,
-    line: usize,
     kind: String,
     reason: String,
 }
@@ -711,6 +710,7 @@ struct SanctionKey {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct ObservedSanction {
     key: SanctionKey,
+    line: usize,
     comment: String,
 }
 
@@ -869,10 +869,10 @@ fn collect_sugar_audit_sanctions_from_source(file: &str, source: &str) -> Vec<Ob
             parse_sugar_audit_comment(line).map(|(kind, reason)| ObservedSanction {
                 key: SanctionKey {
                     file: file.to_string(),
-                    line: index + 1,
                     kind: kind.to_string(),
                     reason: reason.to_string(),
                 },
+                line: index + 1,
                 comment: line.trim().to_string(),
             })
         })
@@ -921,9 +921,6 @@ impl Collector {
         let Some(comment_line) = line.checked_sub(1) else {
             return false;
         };
-        let Some(expected) = expected_sanction_for(&self.file, comment_line) else {
-            return false;
-        };
         let Some(source_line) = comment_line
             .checked_sub(1)
             .and_then(|idx| self.lines.get(idx))
@@ -931,7 +928,7 @@ impl Collector {
             return false;
         };
         parse_sugar_audit_comment(source_line)
-            .is_some_and(|(kind, reason)| kind == expected.kind && reason == expected.reason)
+            .is_some_and(|(kind, reason)| expected_sanction_for(&self.file, kind, reason).is_some())
     }
 
     fn push_site(
@@ -1041,10 +1038,14 @@ fn parse_sugar_audit_comment(line: &str) -> Option<(&str, &str)> {
     matches!(kind, "not-mine" | "default-ok").then_some((kind, reason))
 }
 
-fn expected_sanction_for(file: &str, line: usize) -> Option<&'static ExpectedSanction> {
-    EXPECTED_SANCTIONS
-        .iter()
-        .find(|sanction| sanction.file == file && sanction.line == line)
+fn expected_sanction_for(
+    file: &str,
+    kind: &str,
+    reason: &str,
+) -> Option<&'static ExpectedSanction> {
+    EXPECTED_SANCTIONS.iter().find(|sanction| {
+        sanction.file == file && sanction.kind == kind && sanction.reason == reason
+    })
 }
 
 fn expected_sanction_keys() -> Vec<SanctionKey> {
@@ -1052,7 +1053,6 @@ fn expected_sanction_keys() -> Vec<SanctionKey> {
         .iter()
         .map(|sanction| SanctionKey {
             file: sanction.file.to_string(),
-            line: sanction.line,
             kind: sanction.kind.to_string(),
             reason: sanction.reason.to_string(),
         })
@@ -1082,7 +1082,7 @@ fn sanctions_report_json(
         .map(|sanction| {
             serde_json::json!({
                 "file": sanction.key.file,
-                "line": sanction.key.line,
+                "line": sanction.line,
                 "kind": sanction.key.kind,
                 "reason": sanction.key.reason,
                 "comment": sanction.comment,
@@ -1097,7 +1097,7 @@ fn sanctions_report_json(
         "unexpected": unexpected.iter().map(|sanction| {
             serde_json::json!({
                 "file": sanction.key.file,
-                "line": sanction.key.line,
+                "line": sanction.line,
                 "kind": sanction.key.kind,
                 "reason": sanction.key.reason,
             })
@@ -1105,7 +1105,6 @@ fn sanctions_report_json(
         "missing": missing.iter().map(|key| {
             serde_json::json!({
                 "file": key.file,
-                "line": key.line,
                 "kind": key.kind,
                 "reason": key.reason,
             })
@@ -1266,7 +1265,6 @@ fn listed_sugar_audit_comment_requires_live_anchor() {
         .collect::<BTreeSet<_>>();
     let expected = SanctionKey {
         file: "implementations/rust/sugar-walk/src/planted.rs".to_string(),
-        line: 1,
         kind: "not-mine".to_string(),
         reason: "planted-comment".to_string(),
     };

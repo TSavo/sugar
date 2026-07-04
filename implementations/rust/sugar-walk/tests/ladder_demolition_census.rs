@@ -706,14 +706,15 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct LadderKey {
     file: String,
-    line: usize,
     enclosing_fn: String,
     family: String,
+    signal_count: usize,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct LadderSite {
     key: LadderKey,
+    line: usize,
     signals: Vec<String>,
 }
 
@@ -722,9 +723,10 @@ impl LadderSite {
         let family = family_by_name(&self.key.family);
         json!({
             "file": self.key.file,
-            "line": self.key.line,
+            "line": self.line,
             "enclosingFn": self.key.enclosing_fn,
             "family": self.key.family,
+            "signalCount": self.key.signal_count,
             "owner": family.map(|f| f.owner).unwrap_or("unowned"),
             "replacement": family.map(|f| f.replacement).unwrap_or("missing replacement route"),
             "signals": self.signals,
@@ -736,9 +738,9 @@ impl ExpectedLadderSite {
     fn key(&self) -> LadderKey {
         LadderKey {
             file: self.file.to_string(),
-            line: self.line,
             enclosing_fn: self.enclosing_fn.to_string(),
             family: self.family.to_string(),
+            signal_count: self.max_signals,
         }
     }
 
@@ -749,6 +751,7 @@ impl ExpectedLadderSite {
             "line": self.line,
             "enclosingFn": self.enclosing_fn,
             "family": self.family,
+            "signalCount": self.max_signals,
             "maxSignals": self.max_signals,
             "owner": family.map(|f| f.owner).unwrap_or("unowned"),
             "replacement": family.map(|f| f.replacement).unwrap_or("missing replacement route"),
@@ -841,10 +844,11 @@ impl<'ast> Visit<'ast> for LadderVisitor<'_> {
             self.sites.push(LadderSite {
                 key: LadderKey {
                     file: self.file.to_string(),
-                    line,
                     enclosing_fn,
                     family: family.name.to_string(),
+                    signal_count: signals.len(),
                 },
+                line,
                 signals,
             });
         }
@@ -1053,7 +1057,7 @@ fn to_expected_literal(observed: &[LadderSite]) -> String {
         out.push_str(&format!(
             "    ExpectedLadderSite {{ file: {:?}, line: {}, enclosing_fn: {:?}, family: {:?}, max_signals: {} }},\n",
             site.key.file,
-            site.key.line,
+            site.line,
             site.key.enclosing_fn,
             site.key.family,
             site.signals.len()

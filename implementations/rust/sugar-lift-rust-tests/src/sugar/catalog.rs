@@ -178,6 +178,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &is_empty::EXPR_SUGAR,
     &is_sorted::EXPR_SUGAR,
     &slice_accessor::EXPR_SUGAR,
+    &slice_chunk_window::TERM_EXPR_SUGAR,
     &slice_search::EXPR_SUGAR,
     &duration_accessor::EXPR_SUGAR,
     &duration_value::EXPR_SUGAR,

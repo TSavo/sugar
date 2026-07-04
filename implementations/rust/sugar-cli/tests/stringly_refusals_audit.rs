@@ -14,7 +14,6 @@
 // reason prose" sites cannot appear quietly.
 
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -729,11 +728,12 @@ fn replacement_for_ground(ground: &str) -> &'static str {
     }
 }
 
-fn sorted_set(sites: Vec<Site>) -> BTreeSet<(String, String, usize, String)> {
-    sites
-        .into_iter()
-        .map(|site| (site.ground, site.path, site.line, site.text))
-        .collect()
+fn identity_multiset(sites: Vec<Site>) -> BTreeMap<(String, String, String), usize> {
+    let mut out = BTreeMap::new();
+    for site in sites {
+        *out.entry((site.ground, site.path, site.text)).or_default() += 1;
+    }
+    out
 }
 
 #[test]
@@ -743,8 +743,8 @@ fn stringly_refusal_emission_frontier_matches_expected_multiset() {
         collect_stringly_refusal_emissions(&root).expect("collect stringly refusal emissions");
     let expected = expected_as_sites();
     assert_eq!(
-        sorted_set(observed.clone()),
-        sorted_set(expected),
+        identity_multiset(observed.clone()),
+        identity_multiset(expected),
         "R(stringly-refusals) emission frontier changed\n\nObserved vector:\n{}\n\nObserved sites:\n{}\n\nPasteable expected literal:\n{}",
         report_vector(&observed),
         report_sites(&observed),
