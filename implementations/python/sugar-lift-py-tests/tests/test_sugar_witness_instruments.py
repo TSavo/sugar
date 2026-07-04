@@ -268,7 +268,7 @@ def test_temporal_opt_outs_are_pinned_as_retirable_deferrals() -> None:
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
     assert seed_report.seed_count == EXPECTED_SEED_CASES
     assert seed_report.unique_owner_count == EXPECTED_SEED_OWNER_COUNT
-    assert seed_report.catalog_count == 58
+    assert seed_report.catalog_count == 59
     assert seed_report.witness_triples_failing == EXPECTED_TRIPLE_FAILURES
     assert seed_report.witnesses_not_dispatching_to_owner == 0
     assert [
