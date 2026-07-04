@@ -82,10 +82,20 @@ fn collect_offenders() -> Vec<Offender> {
 
 fn expected_frontier_counts() -> BTreeMap<&'static str, (usize, usize)> {
     BTreeMap::from([
-        ("raw_ast_signature", (141, 1132)),
-        ("raw_ast_variant_pattern", (117, 1934)),
+        // Owned upward pin from #3493 / 6590ad822
+        // ("Drain assertion lift runtime boundary frontier").
+        // The slice/chunk/window and slice_accessor typed-effect lift delivery
+        // added production SourceFragment escape use in real lift code:
+        //   * slice_accessor.rs:275 and :280, both blamed to 6590ad822
+        //   * slice_chunk_window.rs:77, blamed to 6590ad822
+        // Compared with pre-#3493 parent 74080ce72, this accounts for
+        // source_fragment_escape_accessor moving 94 files / 151 lines ->
+        // 95 files / 154 lines. The related raw AST signature / variant
+        // growth below is the same new lift footprint, not silent drift.
+        ("raw_ast_signature", (142, 1139)),
+        ("raw_ast_variant_pattern", (117, 1957)),
         ("raw_syn_import", (123, 123)),
-        ("source_fragment_escape_accessor", (94, 151)),
+        ("source_fragment_escape_accessor", (95, 154)),
     ])
 }
 
