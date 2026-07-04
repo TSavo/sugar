@@ -165,16 +165,7 @@ struct ExpectedUbDomainRichnessException {
 
 const EXPECTED_UB_DOMAIN_RICHNESS: &[ExpectedUbDomainRichnessOffender] = &[];
 
-const EXPECTED_UB_DOMAIN_RICHNESS_EXCEPTIONS: &[ExpectedUbDomainRichnessException] =
-    &[ExpectedUbDomainRichnessException {
-        path: "sugar-lift-rust-tests/src/sugar/format.rs",
-        line: 1311,
-        axis: "crafted-invalid-rust-diagnostic",
-        owner: "#3483",
-        needle: "malformed / unsupported brace use",
-        reason: "also reached by compiling but unsupported format syntax; keep a bail until the formatter owns those arms",
-        compiling_input_witness: r#"format!("{:>9}", 1)"#,
-    }];
+const EXPECTED_UB_DOMAIN_RICHNESS_EXCEPTIONS: &[ExpectedUbDomainRichnessException] = &[];
 
 fn hand_rolled_cid_parser_axis(line: &str) -> Option<&'static str> {
     let t = line.trim();

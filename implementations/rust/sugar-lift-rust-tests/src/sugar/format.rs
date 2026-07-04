@@ -875,6 +875,12 @@ impl FmtValue {
     }
 
     fn render(&self, spec: &Spec) -> Result<Option<String>, String> {
+        if let Some((fill, align, width)) = spec.explicit_arbitrary_fill_padding() {
+            let inner = spec.without_explicit_fill_padding();
+            return self.accept(RenderVisitor { spec: &inner }).map(|rendered| {
+                rendered.map(|body| apply_explicit_fill(body, fill, align, width))
+            });
+        }
         self.accept(RenderVisitor { spec })
     }
 }
@@ -1300,7 +1306,7 @@ pub(crate) fn parse_args(tokens: &proc_macro2::TokenStream) -> Option<Vec<Expr>>
 /// Render a `format!("<fmt>", <args>)` by parsing the fmt string into literal segments
 /// and `{...}` placeholders, resolving each placeholder's argument to a `FmtValue`, and
 /// rendering it through a STATICALLY-WRITTEN real `format!` per its spec. Returns
-/// `Ok(None)` on any runtime arg / unsupported spec (bail); `Err` on a named terminal.
+/// `Ok(None)` on runtime args; uncovered written specs take the construction-gap panic.
 fn render_format(
     fmt: &str,
     args: &[Expr],
@@ -1308,7 +1314,10 @@ fn render_format(
 ) -> Result<Option<String>, String> {
     let pieces = match parse_fmt_pieces(fmt) {
         Some(p) => p,
-        None => return Ok(None), // malformed / unsupported brace use -> bail
+        None => panic!(
+            "write more Sugar for this AST: format-spec grammar not reproduced for `{fmt}`; \
+             replacement=teach the format recognizer this exact rust-format spec or route a typed runtime-format refusal"
+        ),
     };
     // Resolve positional args once (used by `{}` / `{0}`); named/captured resolved
     // per-placeholder against the binding map (Rust 1.58 implicit capture).
@@ -1527,10 +1536,10 @@ fn is_ident(s: &str) -> bool {
 // We support the closed set of specs the corpus uses that we can render through a
 // STATICALLY-WRITTEN real `format!` call: the trait kind (Display / Debug / lower-hex /
 // upper-hex / binary / octal / lower-exp / upper-exp), an optional `+` sign, optional
-// `#` alternate debug, optional `+` sign, optional `0`-pad-to-width, optional bare
-// width, and optional `.N` precision. Bare width is only rendered by value floors that
-// explicitly own it; pointer formatting parses and bubbles a named runtime-address
-// effect; alignment / fill (`{:>9}`, `{:^9}`) are NOT reproduced here -> bail.
+// `#` alternate debug, optional `+` sign, optional fill/alignment, optional
+// `0`-pad-to-width, optional bare width, and optional `.N` precision. Bare width is
+// only rendered by value floors that explicitly own it; pointer formatting parses and
+// bubbles a named runtime-address effect.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -1547,10 +1556,12 @@ enum Kind {
     Pointer,
 }
 
+#[derive(Clone, Copy)]
 struct Spec {
     kind: Kind,
     alternate: bool,
     plus: bool,
+    fill: Option<char>,
     align: Option<Align>,
     width: Option<usize>,
     zero_width: Option<usize>,
@@ -1581,6 +1592,7 @@ impl Spec {
             kind: Kind::Display,
             alternate: false,
             plus: false,
+            fill: None,
             align: None,
             width: None,
             zero_width: None,
@@ -1588,36 +1600,58 @@ impl Spec {
         }
     }
 
+    fn explicit_arbitrary_fill_padding(&self) -> Option<(char, Align, usize)> {
+        let fill = self.fill?;
+        if fill == '0' || fill == ' ' {
+            return None;
+        }
+        let align = self.align?;
+        Some((fill, align, self.zero_width.or(self.width).unwrap_or(0)))
+    }
+
+    fn without_explicit_fill_padding(&self) -> Spec {
+        let mut spec = *self;
+        spec.fill = None;
+        spec.align = None;
+        spec.width = None;
+        spec.zero_width = None;
+        spec
+    }
+
     /// Parse a format SPEC (the part after `:`). Returns `None` for any spec feature we
-    /// do NOT faithfully reproduce (fill/align, `$`/`*` dynamic width, etc.) — refuse by
-    /// NOT digging, never guess.
+    /// do NOT faithfully reproduce (`$`/`*` dynamic width, etc.) — refuse by NOT digging,
+    /// never guess.
     fn parse(spec: &str) -> Option<Spec> {
         let mut s = spec;
         let mut alternate = false;
         let mut plus = false;
+        let mut fill = None;
         let mut align = None;
         let mut zero_fill = false;
         let mut width = None;
         let mut zero_width = None;
         let mut precision = None;
 
-        // [[fill]align] — support rust's default-fill alignment and explicit `0` fill,
-        // both delegated to static `format!` arms by the value floor. Other explicit
-        // fill chars remain unsupported until a floor owns those exact arms.
+        // [[fill]align] — Rust permits any fill char when followed by `<`, `>`, or `^`.
+        // The value floor renders the body through the real formatter, then applies the
+        // explicit fill as pure padding around that already-reduced text.
         let mut chars = s.char_indices();
         if let Some((_, c0)) = chars.next() {
-            if let Some(parsed) = Align::parse(c0) {
+            if let Some((i1, c1)) = chars.next() {
+                if let Some(parsed) = Align::parse(c1) {
+                    fill = Some(c0);
+                    align = Some(parsed);
+                    if c0 == '0' {
+                        zero_fill = true;
+                    }
+                    s = &s[i1 + c1.len_utf8()..];
+                } else if let Some(parsed) = Align::parse(c0) {
+                    align = Some(parsed);
+                    s = &s[c0.len_utf8()..];
+                }
+            } else if let Some(parsed) = Align::parse(c0) {
                 align = Some(parsed);
                 s = &s[c0.len_utf8()..];
-            } else if let Some((i1, c1)) = chars.next() {
-                if let Some(parsed) = Align::parse(c1) {
-                    if c0 != '0' {
-                        return None;
-                    }
-                    align = Some(parsed);
-                    zero_fill = true;
-                    s = &s[i1 + c1.len_utf8()..];
-                }
             }
         }
 
@@ -1693,6 +1727,7 @@ impl Spec {
             kind,
             alternate,
             plus,
+            fill,
             align,
             width,
             zero_width,
@@ -1726,6 +1761,31 @@ fn zero_pad(body: String, width: usize) -> String {
     } else {
         format!("{}{}", "0".repeat(pad), body)
     }
+}
+
+fn apply_explicit_fill(body: String, fill: char, align: Align, width: usize) -> String {
+    let len = body.chars().count();
+    if len >= width {
+        return body;
+    }
+    let pad = width - len;
+    match align {
+        Align::Left => format!("{body}{}", repeat_fill(fill, pad)),
+        Align::Right => format!("{}{body}", repeat_fill(fill, pad)),
+        Align::Center => {
+            let left = pad / 2;
+            let right = pad - left;
+            format!(
+                "{}{body}{}",
+                repeat_fill(fill, left),
+                repeat_fill(fill, right)
+            )
+        }
+    }
+}
+
+fn repeat_fill(fill: char, count: usize) -> String {
+    std::iter::repeat_n(fill, count).collect()
 }
 
 fn render_i128_display(value: i128, spec: &Spec) -> String {
@@ -3445,11 +3505,11 @@ mod tests {
     fn render_format_values_parse_panic_names_template_and_source_memento() {
         let panic = std::panic::catch_unwind(|| {
             let _ = render_format_values(
-                "{: >3}",
+                "{:.*}",
                 &[],
                 &BTreeMap::new(),
                 &BTreeMap::new(),
-                "format!(\"{: >3}\", 'a')",
+                "format!(\"{:.*}\", 2, 1.0)",
             );
         })
         .expect_err("parse-rejected compiled format template should panic");
@@ -3459,9 +3519,9 @@ mod tests {
             message.contains("compiled format template did not parse"),
             "{message}"
         );
-        assert!(message.contains("template=\"{: >3}\""), "{message}");
+        assert!(message.contains("template=\"{:.*}\""), "{message}");
         assert!(
-            message.contains("source_memento=format!(\"{: >3}\", 'a')"),
+            message.contains("source_memento=format!(\"{:.*}\", 2, 1.0)"),
             "{message}"
         );
     }
@@ -3740,10 +3800,27 @@ mod tests {
     }
 
     #[test]
-    fn bails_on_explicit_arbitrary_fill_alignment_width() {
-        // Explicit non-zero fill needs its own static format! arm before we claim it.
-        assert_eq!(resolve(r#"format!("{:*>9}", 1)"#).unwrap(), None);
-        assert_eq!(resolve(r#"format!("{:x^9?}", 1)"#).unwrap(), None);
+    fn explicit_arbitrary_fill_alignment_width_lifts() {
+        assert_eq!(
+            resolve(r#"format!("{:*>9}", 1)"#).unwrap().as_deref(),
+            Some("********1")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:x^9?}", 1)"#).unwrap().as_deref(),
+            Some("xxxx1xxxx")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:_<5}", "a")"#).unwrap().as_deref(),
+            Some("a____")
+        );
+        assert_eq!(
+            resolve(r#"format!("{: >3}", 'a')"#).unwrap().as_deref(),
+            Some("  a")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:*^8?}", "hi")"#).unwrap().as_deref(),
+            Some(r#"**"hi"**"#)
+        );
     }
 
     #[test]

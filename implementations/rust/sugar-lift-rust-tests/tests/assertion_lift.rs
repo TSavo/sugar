@@ -22881,6 +22881,47 @@ fn format_int_eq_has_teeth() {
 }
 
 #[test]
+fn format_explicit_fill_alignment_width_has_teeth() {
+    let good = format_eq_verdict(
+        r#"format!("{:*>9}", 1)"#,
+        r#""********1""#,
+        "explicit_fill_right_good",
+    );
+    assert!(
+        good,
+        "format!(\"{{:*>9}}\", 1) == \"********1\" must be SAT (discharges)"
+    );
+    let bad = format_eq_verdict(
+        r#"format!("{:*>9}", 1)"#,
+        r#""1********""#,
+        "explicit_fill_right_bad",
+    );
+    assert!(
+        !bad,
+        "format!(\"{{:*>9}}\", 1) == \"1********\" must be z3-UNSAT (teeth)"
+    );
+
+    let centered = format_eq_verdict(
+        r#"format!("{:x^9?}", 1)"#,
+        r#""xxxx1xxxx""#,
+        "explicit_fill_center_debug_good",
+    );
+    assert!(
+        centered,
+        "format!(\"{{:x^9?}}\", 1) == \"xxxx1xxxx\" must be SAT"
+    );
+    let centered_bad = format_eq_verdict(
+        r#"format!("{:x^9?}", 1)"#,
+        r#""xxxxx1xxx""#,
+        "explicit_fill_center_debug_bad",
+    );
+    assert!(
+        !centered_bad,
+        "centered explicit fill must keep Rust's left/right padding split"
+    );
+}
+
+#[test]
 fn format_char_eq_has_teeth() {
     {
         let good = format_eq_verdict(r#"format!("{}", 'a')"#, r#""a""#, "char_good");
