@@ -37,10 +37,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:runtime-boundary-refusal",
     ),
     (
-        "bound_array_chunks_iterator_state_refuses_instead_of_composite_gap",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
         "iterator_clone_binding_uses_runtime_iterator_source_floor",
         "floor-gap:iterator-temporal-state",
     ),
@@ -93,10 +89,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:runtime-boundary-refusal",
     ),
     (
-        "rpc_source_refuses_only_genuinely_not_in_text_iterator_state_with_literal_twins",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
         "slice_accessor_runtime_source_or_index_refuses_named_boundary",
         "floor-gap:runtime-boundary-refusal",
     ),
@@ -133,7 +125,7 @@ const CLASS_DISPOSITIONS: &[(&str, ClassDisposition)] = &[
             bucket: "unlifted-construct",
             owner: "#3378 temporal-floor S5",
             follow_up: "iterator terminal/adaptor floors",
-            note: "remaining next/nth/peekable/rev/array-chunk rows need counted temporal-floor standing, not derived-testimony repair",
+            note: "remaining next/nth/peekable/rev rows need counted temporal-floor standing, not derived-testimony repair",
         },
     ),
     (

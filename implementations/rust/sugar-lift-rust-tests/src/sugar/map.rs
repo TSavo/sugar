@@ -23,10 +23,11 @@ use crate::sugar::temporal_floor::{
 use crate::sugar::term_dispatch::{CurryVisitor, DesugaredFloorAccept};
 use crate::sugar::{format::stable_let_bindings, method_family};
 use crate::{
-    canonical_term_sig, closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
-    const_eval_unary_closure_with_u128_shift, curry_param_name, curry_param_term,
-    strip_refs_groups, substitute_expr, token_key, ConstVal, Desugared, DesugaredElem, Effect,
-    Outcome, Sugar, SugarCtx,
+    canonical_term_sig, closure_body_is_side_effecting,
+    closure_body_mutates_captured_runtime_state, closure_constructs_drop_side_effect_value,
+    const_eval_unary_closure, const_eval_unary_closure_with_u128_shift, curry_param_name,
+    curry_param_term, strip_refs_groups, substitute_expr, token_key, ConstVal, Desugared,
+    DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -335,7 +336,10 @@ impl MappedSequence {
 
 fn captured_mutation_refusal(mapper: &MapClosure) -> Option<Outcome> {
     let source = Expr::Closure(mapper.expr().clone());
-    if !closure_body_mutates_captured_runtime_state(&source) {
+    if !closure_body_mutates_captured_runtime_state(&source)
+        && !closure_body_is_side_effecting(&mapper.expr().body)
+        && !closure_constructs_drop_side_effect_value(mapper.expr())
+    {
         return None;
     }
     Some(Outcome::Incomplete(Effect::Mutation {
