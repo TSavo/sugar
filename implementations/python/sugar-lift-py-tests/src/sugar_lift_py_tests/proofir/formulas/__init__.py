@@ -134,7 +134,9 @@ def _merge_var_sorts(*maps: Mapping[str, Sort]) -> dict[str, Sort]:
 
 def _free_vars_in_ir_formula(ir_formula: IrFormula) -> frozenset[str]:
     if isinstance(ir_formula, _Atomic):
-        return frozenset().union(*(_free_vars_in_ir_term(term) for term in ir_formula.args))
+        return frozenset().union(
+            *(_free_vars_in_ir_term(term) for term in ir_formula.args)
+        )
     if isinstance(ir_formula, _Connective):
         return frozenset().union(
             *(_free_vars_in_ir_formula(operand) for operand in ir_formula.operands)

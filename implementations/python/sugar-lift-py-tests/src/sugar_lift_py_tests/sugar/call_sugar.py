@@ -508,6 +508,12 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         fragment, ctx, target, resolved
                     )
                 )
+        if import_target is not None and _is_nested_import_target(import_target):
+            return cls(
+                strategy=_build_external_bridge_strategy(
+                    fragment, ctx, import_target, target
+                )
+            )
         # RESOLVED + unary + NOT already on the build stack -> the bridge carries its universe.
         # The build-stack check is the recursion guard: eagerly building a callee already being
         # built loops forever, and an infinite recursion is not finitely constructible. So a
@@ -564,36 +570,9 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 )
             )
         if import_target is not None and function_node is None:
-            arguments = tuple(
-                ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args()
-            )
-            keywords = []
-            for keyword in fragment.call_keywords():
-                name = keyword.keyword_arg_name()
-                if name is None:
-                    info = FactoryGapInfo(
-                        owner="python.factory",
-                        blame=fragment.blame,
-                        observed=_call_frontier_observed(
-                            fragment, import_target=import_target, target=target
-                        ),
-                        requested="term",
-                        fix=(
-                            f"resolve call to '{target}' with explicit keyword names; "
-                            "add **kwargs bridge sugar"
-                        ),
-                    )
-                    return cls(strategy=RefuseStrategy(info))
-                keywords.append(
-                    (name, ctx.build_body(keyword.keyword_value(), SugarRole.TERM))
-                )
             return cls(
-                strategy=ExternalBridgeStrategy(
-                    target_name=import_target,
-                    arguments=arguments,
-                    keywords=tuple(keywords),
-                    line=fragment.line,
-                    column=fragment.col,
+                strategy=_build_external_bridge_strategy(
+                    fragment, ctx, import_target, target
                 )
             )
         if (
@@ -779,6 +758,43 @@ def _is_resolved_local_class_call(fragment, ctx) -> bool:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
     return SourceFragment.from_node(resolved_node, ctx.filename).observed == "ClassDef"
+
+
+def _is_nested_import_target(import_target: str) -> bool:
+    return import_target.count(".") >= 2
+
+
+def _build_external_bridge_strategy(
+    fragment, ctx, import_target: str, target: str | None
+):
+    arguments = tuple(
+        ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args()
+    )
+    keywords = []
+    for keyword in fragment.call_keywords():
+        name = keyword.keyword_arg_name()
+        if name is None:
+            info = FactoryGapInfo(
+                owner="python.factory",
+                blame=fragment.blame,
+                observed=_call_frontier_observed(
+                    fragment, import_target=import_target, target=target
+                ),
+                requested="term",
+                fix=(
+                    f"resolve call to '{target}' with explicit keyword names; "
+                    "add **kwargs bridge sugar"
+                ),
+            )
+            return RefuseStrategy(info)
+        keywords.append((name, ctx.build_body(keyword.keyword_value(), SugarRole.TERM)))
+    return ExternalBridgeStrategy(
+        target_name=import_target,
+        arguments=arguments,
+        keywords=tuple(keywords),
+        line=fragment.line,
+        column=fragment.col,
+    )
 
 
 def _build_object_methods(class_site, ctx):

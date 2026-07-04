@@ -60,7 +60,5 @@ def test_bool_primitive_literal_sugar_reduces_to_bool_floor() -> None:
     )
 
     assert bool_sugar == PrimitiveLiteralSugar(value=True)
-    assert complete_value(bool_sugar.desugar(), owner="bool literal") == BoolValue(
-        True
-    )
+    assert complete_value(bool_sugar.desugar(), owner="bool literal") == BoolValue(True)
     assert fol(reduce_term("True")) == fol(bool_const(True))

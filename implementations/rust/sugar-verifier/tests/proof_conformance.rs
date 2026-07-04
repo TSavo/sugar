@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use sugar_canonicalizer::cid_hex;
 use sugar_claim_envelope::{mint_contract, Authoring, MintContractArgs};
 use sugar_ir_symbolic::serialize::formula_to_value;
 use sugar_ir_symbolic::{forall, gt, must, num, reset_collector, Int};
@@ -85,7 +86,7 @@ fn fixture_proof_bytes() -> (String, Vec<u8>) {
 fn valid_proof_file_reports_conformant() {
     let dir = make_unique_dir("valid");
     let (cid, bytes) = fixture_proof_bytes();
-    let hex = cid.strip_prefix("blake3-512:").expect("cid prefix");
+    let hex = cid_hex(&cid).expect("cid prefix");
     let path = dir.join(format!("{hex}.proof"));
     fs::write(&path, bytes).expect("write proof");
 
@@ -121,7 +122,7 @@ fn unsigned_catalog_reports_catalog_signature_rule() {
     let dir = make_unique_dir("unsigned-catalog");
     let bytes = minimal_unsigned_catalog_bytes();
     let cid = sugar_canonicalizer::blake3_512_of(&bytes);
-    let hex = cid.strip_prefix("blake3-512:").expect("cid prefix");
+    let hex = cid_hex(&cid).expect("cid prefix");
     let path = dir.join(format!("{hex}.proof"));
     fs::write(&path, bytes).expect("write proof");
 
@@ -145,9 +146,7 @@ fn catalog_body_tamper_reports_catalog_signature_rule() {
         .expect("fixture carries declaredAt");
     bytes[date_offset + 3] = b'7';
     let tampered_cid = sugar_canonicalizer::blake3_512_of(&bytes);
-    let hex = tampered_cid
-        .strip_prefix("blake3-512:")
-        .expect("cid prefix");
+    let hex = cid_hex(&tampered_cid).expect("cid prefix");
     let path = dir.join(format!("{hex}.proof"));
     fs::write(&path, bytes).expect("write proof");
 

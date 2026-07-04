@@ -37,7 +37,9 @@ def collect_gap_swallow_frontier(root: str | Path) -> GapSwallowReport:
         rel = path.relative_to(kit_src).as_posix()
         if _excluded(rel):
             continue
-        root_fragment = SourceFragment.from_source(path.read_text(encoding="utf-8"), rel)
+        root_fragment = SourceFragment.from_source(
+            path.read_text(encoding="utf-8"), rel
+        )
         for fragment in [root_fragment, *root_fragment.walk()]:
             if fragment.observed not in {"Try", "TryStar"}:
                 continue
@@ -85,11 +87,7 @@ def _kit_src(root: Path) -> Path:
 
 
 def _excluded(rel: str) -> bool:
-    return (
-        rel.startswith("tests/")
-        or rel.startswith("idd/")
-        or "__pycache__" in rel
-    )
+    return rel.startswith("tests/") or rel.startswith("idd/") or "__pycache__" in rel
 
 
 def _names_in_type(handler: SourceFragment) -> set[str]:

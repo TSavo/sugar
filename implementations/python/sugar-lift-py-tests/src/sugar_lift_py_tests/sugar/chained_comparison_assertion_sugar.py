@@ -65,17 +65,11 @@ class ChainedComparisonAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             owner_sugar=cls.__name__,
             family="chained-comparison",
             truthful=WitnessSource(
-                source=(
-                    "def test_device():\n"
-                    "    assert 'cpu' == 'cpu' == 'cpu'\n"
-                ),
+                source=("def test_device():\n" "    assert 'cpu' == 'cpu' == 'cpu'\n"),
                 expected="sat",
             ),
             lying=WitnessSource(
-                source=(
-                    "def test_device():\n"
-                    "    assert 'cpu' == 'cpu' == 'gpu'\n"
-                ),
+                source=("def test_device():\n" "    assert 'cpu' == 'cpu' == 'gpu'\n"),
                 expected="unsat",
             ),
         )

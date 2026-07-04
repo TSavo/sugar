@@ -201,10 +201,7 @@ def _stmt(term: Json) -> ast.stmt:
         if not args:
             raise ValueError("python:import needs at least one bound name")
         return ast.Import(
-            names=[
-                ast.alias(name=_const_string(arg), asname=None)
-                for arg in args
-            ]
+            names=[ast.alias(name=_const_string(arg), asname=None) for arg in args]
         )
     if name == "python:nested_funcdef":
         return ast.FunctionDef(
@@ -309,7 +306,9 @@ def _expr(term: Json) -> ast.expr:
             comparators=[_expr(args[2])],
         )
     if name == "python:ifexp":
-        return ast.IfExp(test=_expr(args[0]), body=_expr(args[1]), orelse=_expr(args[2]))
+        return ast.IfExp(
+            test=_expr(args[0]), body=_expr(args[1]), orelse=_expr(args[2])
+        )
     if name == "python:call":
         positional: list[ast.expr] = []
         keywords: list[ast.keyword] = []
@@ -678,8 +677,10 @@ def _const_string(term: Json) -> str:
 
 
 def _is_string_const(term: Any) -> bool:
-    return isinstance(term, dict) and term.get("kind") == "const" and isinstance(
-        term.get("value"), str
+    return (
+        isinstance(term, dict)
+        and term.get("kind") == "const"
+        and isinstance(term.get("value"), str)
     )
 
 

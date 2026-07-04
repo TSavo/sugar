@@ -286,8 +286,6 @@ mod from_src_tests {
     /// Structural: a Call with 2 args has call_arg_count() != 1 and is rejected.
     #[test]
     fn from_src_call_with_two_args_is_rejected_by_arg_count_gate() {
-        let src = "fn f(a: u8, b: u8) -> u8 { a.clamp(0u8, b) }";
-        let file = parse_file(src);
         // clamp is a MethodCall; use a plain call shape with 2 args instead.
         let src2 = "fn f(a: u32, b: u32) -> u32 { u32::min(a, b) }";
         let file2 = parse_file(src2);

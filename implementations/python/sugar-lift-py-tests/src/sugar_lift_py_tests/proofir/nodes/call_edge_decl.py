@@ -76,7 +76,9 @@ class CallEdgeDecl(ProofIRNode):
         object.__setattr__(self, "_provenance", provenance)
 
     def denotation(self):
-        return self.bridge.evidence_term.ir_formula if self.bridge.evidence_term else None
+        return (
+            self.bridge.evidence_term.ir_formula if self.bridge.evidence_term else None
+        )
 
     def provenance(self) -> Provenance:
         return self._provenance
@@ -118,7 +120,9 @@ class CallEdgeDecl(ProofIRNode):
                         target_symbol="call:A",
                         call_site_locus=Locus("witness.py", 1, 0),
                     ),
-                    provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
+                    provenance=_witness_provenance(
+                        cls.node_class, warrants=("Derived",)
+                    ),
                 ),
             ),
             lying=VerdictWitnessCase(
@@ -126,7 +130,9 @@ class CallEdgeDecl(ProofIRNode):
                 expected="construction-refusal",
                 construct=lambda: cls(
                     bridge={"kind": "call-edge"},
-                    provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
+                    provenance=_witness_provenance(
+                        cls.node_class, warrants=("Derived",)
+                    ),
                 ),
             ),
         )

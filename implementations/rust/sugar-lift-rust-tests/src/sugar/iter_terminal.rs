@@ -1405,10 +1405,13 @@ impl IterTerminalSugar {
                     Expr::MethodCall(call) => call.receiver.as_ref(),
                     _ => &chunk_expr,
                 };
-                iter_terminal_gap(&format!(
-                    "chunk/window count source `{}` has no literal sequence floor",
-                    token_key(receiver)
-                ));
+                return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
+                    boundary: token_key(receiver),
+                    reason: format!(
+                        "chunk source is runtime slice, not literal: `{}` has no literal sequence floor",
+                        token_key(receiver)
+                    ),
+                });
             }
         }
         let static_empty_sequence = method_family::literal_sequence_static_len_in_scope(

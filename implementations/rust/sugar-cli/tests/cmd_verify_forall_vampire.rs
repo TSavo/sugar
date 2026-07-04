@@ -11,7 +11,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, Value as CValue};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ContractBody, ContractMemento, Ed25519Seed,
     FlatAtom, ProofEnvelopeInput, ProofGraph,
@@ -230,7 +230,7 @@ version = "5.x"
         signer_seed,
         declared_at: "2026-06-09T00:00:00.000Z".into(),
     });
-    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&built.cid).unwrap();
     fs::write(proof_dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");
     dir
 }

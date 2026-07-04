@@ -14,7 +14,12 @@ from sugar_lift_py_tests.factory.proofir_provenance_diagnostic import (
     proofir_formula_provenance_diagnostic,
 )
 from sugar_lift_py_tests.kit_rpc import BodyUniverseDto, FactoryWalkRowDto
-from sugar_lift_py_tests.proofir import ClaimFormula, ConstructionSite, Derived, Provenance
+from sugar_lift_py_tests.proofir import (
+    ClaimFormula,
+    ConstructionSite,
+    Derived,
+    Provenance,
+)
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -45,10 +50,7 @@ def test_proofir_vocab_instruments_pin_surviving_counters() -> None:
     report = collect_proofir_vocabulary_frontier(ROOT)
 
     assert report.formula_fragments_without_provenance == 0
-    assert (
-        report.formula_fragments_without_provenance
-        == len(report.provenance.missing)
-    )
+    assert report.formula_fragments_without_provenance == len(report.provenance.missing)
     assert report.proofir_classes_without_verdict_witnesses == 0
     assert report.naked_formula_boundary_crossings == 0
     assert report.unknown_sort_equality_seats == 1
@@ -136,7 +138,9 @@ def test_proofir_vocab_provenance_counter_is_payload_diagnostic_shape() -> None:
 
 def test_proofir_vocab_verdict_witness_counter_flags_missing_class_witness() -> None:
     witnesses = [
-        ProofIrVocabularyWitness(node_class="EqualityFact", truthful_sat=True, lying_unsat=True)
+        ProofIrVocabularyWitness(
+            node_class="EqualityFact", truthful_sat=True, lying_unsat=True
+        )
     ]
 
     report = proofir_classes_without_verdict_witnesses(witnesses)
@@ -148,7 +152,9 @@ def test_proofir_vocab_verdict_witness_counter_flags_missing_class_witness() -> 
 
 def test_proofir_vocab_verdict_witness_bad_twin_flags_dummy_class() -> None:
     witnesses = [
-        ProofIrVocabularyWitness(node_class="EqualityFact", truthful_sat=True, lying_unsat=True)
+        ProofIrVocabularyWitness(
+            node_class="EqualityFact", truthful_sat=True, lying_unsat=True
+        )
     ]
 
     report = proofir_classes_without_verdict_witnesses(

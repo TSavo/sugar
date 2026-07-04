@@ -2,7 +2,7 @@
   "cid": "blake3-512:302eaf8cb0d37a72c72bffda4b4ce284ea5531418a54bde01ee995464385cae4c5aa11f755d05d6da0245ab8750f00d04a3838f935a4d3dd8bc44984e78d50ad",
   "confidence_basis_points": 10000,
   "extension_fields": {
-    "function_symbol": "resolved_sort_to_proofir_sort@deleted_deleted proofir bridge",
+    "function_symbol": "resolved_sort_to_proofir_sort@proofir_bridge.rs",
     "inner_type": "ResolvedSort",
     "lifetime": "_",
     "return_type": "Result<Sort, BridgeError>",

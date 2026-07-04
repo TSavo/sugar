@@ -5141,6 +5141,10 @@ impl TemporalScope {
         self.temporal_rewrite.borrow().unknown_mutation_reason(name)
     }
 
+    pub(crate) fn mutable_alias_base(&self, name: &str) -> Option<String> {
+        self.temporal_rewrite.borrow().mutable_alias_base(name)
+    }
+
     pub(crate) fn temporal_cell_kind(&self, name: &str) -> Option<sugar::assign_op::CellKind> {
         self.temporal_rewrite.borrow().cell_kind(name)
     }
@@ -5489,10 +5493,12 @@ impl TemporalScope {
         self.plan.mut_locals.contains(name)
     }
 
-    /// Whether `name` is MUTATED through a `&mut` alias the temporal replay ledger did
-    /// not resolve. Such a local's tracked value is stale, so a read of it must REFUSE
-    /// rather than lift the stale literal (the no-false-refutation gate). Literal
-    /// assignments replayed through `TemporalRewriteState` are not stale and may lift.
+    /// Whether `name` was mutated through a `&mut` alias without an independent exact
+    /// replay. A direct literal alias assignment like `*p = 1` is an exact replay and
+    /// remains a valid post-state witness. An unreplayed alias mutation has only the
+    /// stale pre-state, while a compound alias mutation like `*p += 1` reuses that prior
+    /// tracked value as part of its own testimony. Both cases must REFUSE rather than
+    /// lift a stale or self-corroborating value (the no-false-refutation gate).
     pub(crate) fn is_alias_deref_mutated(&self, name: &str) -> bool {
         self.alias_deref_mutation_needs_refusal(name)
     }
@@ -5503,7 +5509,8 @@ impl TemporalScope {
         }
         let temporal_rewrite = self.temporal_rewrite.borrow();
         temporal_rewrite.unknown_mutation_reason(name).is_none()
-            && !temporal_rewrite.replayed_mutable_alias_base(name)
+            && (!temporal_rewrite.replayed_mutable_alias_base(name)
+                || temporal_rewrite.compound_alias_rewrite_needs_refusal(name))
     }
 
     /// Whether `name` is a TEMPORALLY-UNSTABLE loop counter (mutated in a loop the tracker
@@ -6934,6 +6941,26 @@ fn peel_fold_adaptors_inner<'a>(
                                     &source,
                                 ),
                             })
+                        })
+                    }
+                    ("next" | "next_back", 0) => {
+                        let method = name;
+                        Box::new(move |inner, _fcx| {
+                            sugar::iter_next::sequence_consumption_adaptor(inner, &method, 1)
+                                .unwrap_or_else(|| {
+                                    panic!("iter_next wrapper could not construct {method} adaptor")
+                                })
+                        })
+                    }
+                    ("nth" | "nth_back", 1) => {
+                        let n: usize = const_int(&m.args[0])?.try_into().ok()?;
+                        let count = n.checked_add(1)?;
+                        let method = name;
+                        Box::new(move |inner, _fcx| {
+                            sugar::iter_next::sequence_consumption_adaptor(inner, &method, count)
+                                .unwrap_or_else(|| {
+                                    panic!("iter_next wrapper could not construct {method} adaptor")
+                                })
                         })
                     }
                     ("scan", 2) => match &m.args[1] {
@@ -9428,6 +9455,20 @@ enum Effect {
     /// stay on the method-key floor; non-path receivers have no single binding identity
     /// to version, so the load source owns the runtime boundary.
     AtomicLoad { boundary: String },
+    /// RUNTIME-SLICE-SOURCE: std slice/array accessor sugar (`first`, `last`, `get`,
+    /// `contains`, `starts_with`, `ends_with`) reached a receiver proved slice-shaped by
+    /// visible source/type shape, but the receiver has no text-determined literal sequence
+    /// floor. The accessor surface owns the stop before the generic method bridge can mint
+    /// an unconstrained `method:*` fact.
+    RuntimeSliceSource { boundary: String },
+    /// RUNTIME-SLICE-INDEX: a std slice accessor has a literal receiver but a non-literal
+    /// index argument. There is no concrete element to select; the accessor must refuse
+    /// instead of emitting an opaque `get(index)` equality.
+    RuntimeSliceIndex { boundary: String },
+    /// RUNTIME-CHUNK-SOURCE: slice chunk/window adaptor sugar reached a non-literal slice
+    /// receiver in term position. Composite literal receivers still reduce through the
+    /// sequence floor; runtime receivers stop here by name.
+    RuntimeChunkSource { boundary: String },
     /// FLOAT-IEEE-REFINEMENT: the source is float-shaped, but the exact IEEE proposition is
     /// outside the modeled floor: f16/f128, signed-zero as a Real, NaN/infinity requested as
     /// a finite Real, or another named float representation boundary. This is a real float
@@ -9548,8 +9589,9 @@ impl Effect {
                  invoked ({boundary}); the receiver's state has no single timeless `t`; refused"
             ),
             Effect::IfGuardRuntime { boundary } => format!(
-                "assertion under an if-guard over a runtime value `{boundary}` (not a constructible \
-                 predicate; the guard's truth is not fixed from source literals); refused"
+                "assertion under if context: assertion under an if-guard over a runtime value \
+                 `{boundary}` (not a constructible predicate; the guard's truth is not fixed from \
+                 source literals); refused"
             ),
             Effect::ConditionalBranchMutation { boundary } => format!(
                 "assertion in a side-effecting if branch `{boundary}` (mutates state before/around \
@@ -9657,6 +9699,17 @@ impl Effect {
                 "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state"
                     .to_string()
             }
+            Effect::RuntimeSliceSource { boundary } => {
+                format!("runtime slice source, not literal `{boundary}`")
+            }
+            Effect::RuntimeSliceIndex { boundary } => {
+                format!("runtime slice index, not literal `{boundary}`")
+            }
+            Effect::RuntimeChunkSource { boundary } => {
+                format!(
+                    "chunk source is runtime slice, not literal: `{boundary}` has no literal sequence floor"
+                )
+            }
             Effect::FloatIeeeRefinement { reason, .. } => reason.clone(),
             Effect::RepresentationCast { boundary, kind } => format!(
                 "unsupported term `{boundary}`: effectful / raw-pointer / mutable-reference term \
@@ -9727,6 +9780,9 @@ impl Effect {
             | Effect::RuntimeFloatOperand { boundary, .. }
             | Effect::RuntimeMonadicPayload { boundary, .. }
             | Effect::AtomicLoad { boundary }
+            | Effect::RuntimeSliceSource { boundary }
+            | Effect::RuntimeSliceIndex { boundary }
+            | Effect::RuntimeChunkSource { boundary }
             | Effect::FloatIeeeRefinement { boundary, .. }
             | Effect::RepresentationCast { boundary, .. }
             | Effect::RuntimeArgument { boundary, .. }
@@ -11618,6 +11674,14 @@ fn panic_freedom_direct_method_callsite_effect(
 ) -> Option<Effect> {
     let method = call.method.to_string();
     if let Some(receiver) = panic_freedom_iterator_consumption_receiver(call) {
+        if let Some(base) = scope.mutable_alias_base(&receiver) {
+            return Some(Effect::AmbiguousTemporalIdentity {
+                boundary: base.clone(),
+                reason: format!(
+                    "ambiguous temporal identity for receiver `{base}`; skipped assertion"
+                ),
+            });
+        }
         if scope.temporal_rewrite_expr_for(&receiver).is_some() {
             return None;
         }
@@ -13411,8 +13475,16 @@ fn collect_assertion_entries<'a>(
                             // the engine conjoins it ambiently.
                             emit_desugared(desugared, entries, macros_lifted);
                         }
-                        Outcome::Incomplete(effect) => {
-                            let reason = effect.reason();
+                        Outcome::Incomplete(_effect) => {
+                            let reason = for_context_refusal_reason(
+                                f,
+                                &for_scope,
+                                options,
+                                reducer,
+                                float_widths,
+                                macro_depth,
+                                factory_audits,
+                            );
                             for _ in 0..count {
                                 skipped.push(reason.clone());
                             }

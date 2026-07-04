@@ -150,9 +150,7 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     assertion_warrant = assertion_contract["proofirProvenance"]
     assert assertion_warrant["kind"] == "proofir-provenance"
     assert assertion_warrant["nodeClass"] == "EqualityFact"
-    assert [warrant["kind"] for warrant in assertion_warrant["warrants"]] == [
-        "Stated"
-    ]
+    assert [warrant["kind"] for warrant in assertion_warrant["warrants"]] == ["Stated"]
     assert assertion_contract["sourceWarrants"][0]["sourceFunctionName"] == (
         "test_encode_base64"
     )

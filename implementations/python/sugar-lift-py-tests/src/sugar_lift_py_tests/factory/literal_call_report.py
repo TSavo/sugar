@@ -1278,12 +1278,12 @@ def _require_proofir_emission_node(
 ):
     """ProofIR Slice 3 return-type seam: raw formula rows must become nodes."""
     from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
-    FactoryGapInfo,
-    GapKind,
-    GapLocus,
-)
+        FactoryAuditRow,
+        FactoryGap,
+        FactoryGapInfo,
+        GapKind,
+        GapLocus,
+    )
     from sugar_lift_py_tests.proofir import ProofIRNode
 
     if isinstance(value, ProofIRNode):

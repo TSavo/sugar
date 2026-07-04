@@ -27,9 +27,7 @@ def collect_factory_spine_frontier(root: Path) -> FactorySpineReport:
     call_sugar = kit_src / _CALL_SUGAR
     if call_sugar.exists():
         offenders.extend(
-            _call_sugar_offenders(
-                call_sugar.read_text(encoding="utf-8").splitlines()
-            )
+            _call_sugar_offenders(call_sugar.read_text(encoding="utf-8").splitlines())
         )
     offenders.extend(_xsugar_build_bypass_offenders(kit_src))
     return FactorySpineReport(offenders=sorted(offenders, key=_sort_key))
@@ -77,7 +75,7 @@ def _function_lines(
 
 
 def _prior_assignment_replay_offenders(
-    span: list[tuple[int, str]]
+    span: list[tuple[int, str]],
 ) -> list[FactorySpineOffender]:
     for line_no, text in span:
         if "build_body(" in text and ".reduce(" in text:
@@ -93,7 +91,7 @@ def _prior_assignment_replay_offenders(
 
 
 def _construct_callsite_offenders(
-    span: list[tuple[int, str]]
+    span: list[tuple[int, str]],
 ) -> list[FactorySpineOffender]:
     offenders: list[FactorySpineOffender] = []
     projection_lines: list[int] = []
@@ -135,7 +133,7 @@ def _construct_callsite_offenders(
 
 
 def _block_of_callee_body_reduce_offenders(
-    span: list[tuple[int, str]]
+    span: list[tuple[int, str]],
 ) -> list[FactorySpineOffender]:
     return [
         _offender(
@@ -150,7 +148,7 @@ def _block_of_callee_body_reduce_offenders(
 
 
 def _concrete_return_projection_offenders(
-    span: list[tuple[int, str]]
+    span: list[tuple[int, str]],
 ) -> list[FactorySpineOffender]:
     for line_no, text in span:
         if "isinstance(statements[0], ReturnValue)" in text:
@@ -158,8 +156,7 @@ def _concrete_return_projection_offenders(
                 _offender(
                     "projection_ladders",
                     line_no,
-                    "isinstance ladder over ReturnValue in _concrete_"
-                    + "return_value",
+                    "isinstance ladder over ReturnValue in _concrete_" + "return_value",
                     "move concrete-return projection to project_callsite_with floor arms",
                 )
             ]
@@ -167,7 +164,7 @@ def _concrete_return_projection_offenders(
 
 
 def _assert_consumer_offenders(
-    span: list[tuple[int, str]]
+    span: list[tuple[int, str]],
 ) -> list[FactorySpineOffender]:
     for line_no, text in span:
         if "_construct_callsite(" in text:

@@ -126,7 +126,6 @@ mod tests {
     // asserts. No parse_quote!, no StubTerm, no run().
     // Proves: recognize body has zero as_expr/raw-syn; struct holds only
     // SugarBody<TermFloor> x2 + String -- no raw syn fields.
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     /// Navigate to the tail expression in the first function's body.

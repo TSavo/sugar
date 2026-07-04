@@ -115,7 +115,9 @@ class VendorConjoin(ProofIRNode):
                 construct=lambda: cls(
                     fact={"kind": "atomic"},
                     universe=None,
-                    provenance=_witness_provenance(cls.node_class, warrants=("Stated",)),
+                    provenance=_witness_provenance(
+                        cls.node_class, warrants=("Stated",)
+                    ),
                 ),
             ),
         )

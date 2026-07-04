@@ -9,12 +9,12 @@ _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.temporal."
 
 def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
     from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
-    FactoryGapInfo,
-    GapKind,
-    GapLocus,
-)
+        FactoryAuditRow,
+        FactoryGap,
+        FactoryGapInfo,
+        GapKind,
+        GapLocus,
+    )
 
     operation_name = type(operation).__name__
     method_name = getattr(operation, "method_name", None)
@@ -58,12 +58,12 @@ def _missing_temporal_floor_gap(
     method_name: str,
 ):
     from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
-    FactoryGapInfo,
-    GapKind,
-    GapLocus,
-)
+        FactoryAuditRow,
+        FactoryGap,
+        FactoryGapInfo,
+        GapKind,
+        GapLocus,
+    )
 
     observed = type(receiver).__name__
     info = FactoryGapInfo(

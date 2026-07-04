@@ -31,7 +31,9 @@ class ConstructorStrategy:
                 raise TypeError("ConstructorStrategy fields must be factory-built")
         for _name, body in self.class_fields:
             if not isinstance(body, SugarBody):
-                raise TypeError("ConstructorStrategy class fields must be factory-built")
+                raise TypeError(
+                    "ConstructorStrategy class fields must be factory-built"
+                )
         for argument in self.arguments:
             if not isinstance(argument, SugarBody):
                 raise TypeError("ConstructorStrategy arguments must be factory-built")

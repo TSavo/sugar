@@ -32,15 +32,19 @@ pub fn raise_ir_formula(formula: &Rc<Formula>) -> IrFormula {
 
 pub fn raise_guarded_return_ir(guarded_return: GuardedReturn) -> IrTerm {
     let (guards, term) = guarded_return.into_parts();
-    guards.into_iter().rev().fold(raise_ir(&term), |value, guard| {
-        let guard = formula_to_legacy_guard_term(raise_ir_formula(&guard)).unwrap_or_else(|| {
-            panic!("ControlFlowGuardOperation produced non-term branch guard")
-        });
-        IrTerm::Ctor {
-            name: "cf_guarded".to_string(),
-            args: vec![guard, value],
-        }
-    })
+    guards
+        .into_iter()
+        .rev()
+        .fold(raise_ir(&term), |value, guard| {
+            let guard =
+                formula_to_legacy_guard_term(raise_ir_formula(&guard)).unwrap_or_else(|| {
+                    panic!("ControlFlowGuardOperation produced non-term branch guard")
+                });
+            IrTerm::Ctor {
+                name: "cf_guarded".to_string(),
+                args: vec![guard, value],
+            }
+        })
 }
 
 fn formula_to_legacy_guard_term(formula: IrFormula) -> Option<IrTerm> {

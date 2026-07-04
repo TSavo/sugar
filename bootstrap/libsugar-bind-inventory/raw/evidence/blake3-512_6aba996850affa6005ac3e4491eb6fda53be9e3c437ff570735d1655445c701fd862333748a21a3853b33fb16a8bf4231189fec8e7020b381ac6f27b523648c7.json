@@ -2,7 +2,7 @@
   "cid": "blake3-512:6aba996850affa6005ac3e4491eb6fda53be9e3c437ff570735d1655445c701fd862333748a21a3853b33fb16a8bf4231189fec8e7020b381ac6f27b523648c7",
   "confidence_basis_points": 10000,
   "extension_fields": {
-    "function_symbol": "local_cid_fixture_check@deleted_deleted proofir bridge",
+    "function_symbol": "proofir_resolve@proofir_bridge.rs",
     "inner_type": "ProofirTerm",
     "lifetime": "_",
     "return_type": "Result<ResolvedTerm, BridgeError>",

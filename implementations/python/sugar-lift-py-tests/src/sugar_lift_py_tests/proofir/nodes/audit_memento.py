@@ -127,7 +127,9 @@ class AuditMemento(ProofIRNode):
                             source_memento={"kind": "source-memento"},
                         ),
                     ),
-                    provenance=_witness_provenance(cls.node_class, warrants=("Stated",)),
+                    provenance=_witness_provenance(
+                        cls.node_class, warrants=("Stated",)
+                    ),
                 ),
             ),
             lying=VerdictWitnessCase(
@@ -139,7 +141,9 @@ class AuditMemento(ProofIRNode):
                     file="witness.py",
                     source_function_name="test_a",
                     loci=({"line": 1},),
-                    provenance=_witness_provenance(cls.node_class, warrants=("Stated",)),
+                    provenance=_witness_provenance(
+                        cls.node_class, warrants=("Stated",)
+                    ),
                 ),
             ),
         )

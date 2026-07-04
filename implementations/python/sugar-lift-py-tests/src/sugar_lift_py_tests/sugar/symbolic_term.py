@@ -174,15 +174,17 @@ def symbolic_term(
                 ctor(
                     "python:dict_entry",
                     [
-                        ctor("None", [])
-                        if key is None
-                        else symbolic_term(
-                            key,
-                            owner=owner,
-                            import_aliases=import_aliases,
-                            from_imports=from_imports,
-                            name_resolver=name_resolver,
-                            external_bridge_sink=external_bridge_sink,
+                        (
+                            ctor("None", [])
+                            if key is None
+                            else symbolic_term(
+                                key,
+                                owner=owner,
+                                import_aliases=import_aliases,
+                                from_imports=from_imports,
+                                name_resolver=name_resolver,
+                                external_bridge_sink=external_bridge_sink,
+                            )
                         ),
                         symbolic_term(
                             value,

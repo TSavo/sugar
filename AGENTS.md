@@ -408,6 +408,65 @@ hit it — because that agent, reading that message, IS the system's
 intelligence at that moment. A failure that must be debugged is a failure
 message that wasn't finished.
 
+## Ask the floor: dispatch, don't interrogate
+
+What does `let x = 1; let y = x;` desugar to? You don't know, and you must not
+try to know. Ask the floor. It's clearly aliased.
+
+Every binding is alias formation: a value just acquired a second name. Whether
+that binding SEVERS (an independent value equal to me — the Copy answer),
+SHARES (another name for my place — same value node, two names), or REFUSES
+(opaque provenance) is knowledge that belongs to the *value*, not to the
+syntax walker reading `let`. The walker emits the event — bind, write-through,
+read, consume — and the floor replays it against its own semantics. What is
+this thing floor to? Doesn't matter. Just dispatch, let it replay through the
+floor, see what comes back.
+
+What comes back is a closed, typed result: **reduced value | typed effect |
+refusal.** Callers are exhaustive over OUTPUTS, never over KINDS. A `match` on
+what-kind-of-thing-is-this — or its relocated cousin, a `matches!` predicate —
+is an asker, and askers are the disease: every kind-ladder in the census and
+every stringly side-table (`aliases: HashMap<String, _>`, refuse-on-read
+boolean sets) is a hand-rolled fragment of the dispatch the floor gives by
+construction. The default is shared identity; severance is a property the
+floor GRANTS, never a walker default — two map entries over one place is how a
+stale copy falsely refutes a true assertion, and that bug class is
+unrepresentable when the alias is a floor value pointing at one node.
+
+The tooth cuts both ways, and the compiler holds it: a planted new FLOOR kind
+requires zero caller changes (callers are already total over results); a
+planted new RESULT variant fails to compile at every caller. Names are sugar
+over identity — `x` and `y` are two names on one value node, exactly as
+CID-canonical form strips function names. The floor algebra is the identity
+layer; a walker deciding what `let y = x` means is a name asking a name.
+
+## The domain precondition: rustc already did the work
+
+The kit's domain of definition is COMPILING programs. If rustc says yes, we
+guarantee a correctness membrane: total classification, every assertion
+lifted or honestly refused, zero lies discharged, verdicts only through the
+CLI. If rustc says no, our behavior is **undefined — in the C sense.** We
+might text your wife your girlfriend's number.
+
+This is enforceable, not rhetorical. If someone writes a rustc-rejected
+expression, the code path we take is NOT "is this even valid Rust?" — it is
+`void*` to a random place in memory, `jnz`. The lift never spends a branch,
+an arm, an error message, or a polite refusal on input the vendor's compiler
+rejects. Every rustc invariant — no use-after-move, `&mut` exclusivity, type
+correctness, bound names — is assumed unconditionally, everywhere, forever.
+An arm that handles a non-compiling shape is worse than dead code: it is a
+false claim that the shape can arrive, and it is where wildcard arms and fake
+generality breed. Delete it; the domain precondition covers it.
+
+Do not confuse the two red doors. UNRECOGNIZED-BUT-VALID Rust — a shape rustc
+accepts that the factory has no recognizer for — gets the sacred panic:
+"write more Sugar for this AST," loud, owned, a coverage row on the floor.
+INVALID Rust gets nothing at all, not even the question. The first door is
+the honest frontier; the second door does not exist. This is safe in a way
+C's own UB never was: the record's front door is the witnessed build, so
+no-compile means no test run, no vendor claim, no memento — the demons
+cannot sign the proof chain.
+
 The manifesto above is the operating model. The rest of this file is local
 mechanics for applying it in this checkout.
 

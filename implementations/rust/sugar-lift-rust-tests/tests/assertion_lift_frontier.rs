@@ -17,60 +17,12 @@ use serde_json::json;
 
 const EXPECTED_RED: &[(&str, &str)] = &[
     (
-        "alias_deref_mutated_read_refuses_not_false_refutation",
-        "floor-gap:mutable-alias-state",
-    ),
-    (
-        "alias_receiver_identity_is_ambiguous_and_skipped",
-        "floor-gap:mutable-alias-state",
-    ),
-    (
-        "bounded_next_binding_bad_remaining_len_refutes",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "bounded_next_binding_snapshots_return_and_advances_receiver_state",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "broad_functional_warrant_carries_const_bound_assertions",
-        "floor-gap:macro-visible-source",
-    ),
-    (
-        "catch_unwind_array_map_drop_on_panic_side_effect_is_named_refused",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "chained_next_next_len_bad_twin_refutes",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "chained_next_next_len_over_literal_iterator_grounds_remaining_len",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
         "closure_capture_mut_local_post_closure_read_refuses_not_false_refutation",
         "floor-gap:mutable-alias-state",
     ),
     (
         "closure_driver_invocation_recurses_body_per_temporal_callsite",
         "floor-gap:temporal-closure-adaptor",
-    ),
-    (
-        "forloop_runtime_body_read_refuses_with_named_body_effect",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "forloop_runtime_valued_accumulator_refuses_with_named_accum_effect",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "iter_scan_last_over_literal_digs_with_teeth",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "iter_scan_sum_over_literal_digs_with_teeth",
-        "floor-gap:iterator-temporal-state",
     ),
     (
         "iterator_clone_binding_uses_runtime_iterator_source_floor",
@@ -91,10 +43,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     (
         "literal_runtime_element_named_refused_with_twin",
         "floor-gap:literal-domain-edge",
-    ),
-    (
-        "literal_slice_chunk_window_zip_collects_ground_with_teeth",
-        "floor-gap:temporal-closure-adaptor",
     ),
     (
         "macro_expansion_terminal_runtime_effect_is_refused_not_support_only",
@@ -125,31 +73,11 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:iterator-temporal-state",
     ),
     (
-        "runtime_if_guard_stays_refused_not_fake_complete",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "slice_accessor_runtime_source_or_index_refuses_named_boundary",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "slice_chunk_window_count_runtime_source_refuses_named_boundary",
-        "floor-gap:slice-chunk-window-terminal",
-    ),
-    (
-        "slice_chunk_window_runtime_source_refuses_named_boundary",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
         "slice_mut_index_methods_refuse_runtime_mutable_slice_sources",
         "floor-gap:mutable-alias-state",
     ),
     (
         "temporal_closure_adaptor_runtime_boundaries_decline",
-        "floor-gap:temporal-closure-adaptor",
-    ),
-    (
-        "temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth",
         "floor-gap:temporal-closure-adaptor",
     ),
     (
@@ -173,7 +101,7 @@ const CLASS_DISPOSITIONS: &[(&str, ClassDisposition)] = &[
             bucket: "unlifted-construct",
             owner: "#3378 temporal-floor S5",
             follow_up: "iterator terminal/adaptor floors",
-            note: "next/nth/peekable/scan/rev rows need counted temporal-floor standing, not derived-testimony repair",
+            note: "remaining next/nth/peekable/rev rows need counted temporal-floor standing, not derived-testimony repair",
         },
     ),
     (

@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping
 from sugar_lift_py_tests.ir import _Atomic, _Connective, _Quantifier
 from sugar_lift_py_tests.ir import Formula as IrFormula
 from sugar_lift_py_tests.proofir._errors import proofir_construction_gap
-from sugar_lift_py_tests.proofir.formulas import Formula, formula_from_ir, formula_to_rpc
+from sugar_lift_py_tests.proofir.formulas import (
+    Formula,
+    formula_from_ir,
+    formula_to_rpc,
+)
 from sugar_lift_py_tests.proofir.sorts import Sort
 
 if TYPE_CHECKING:
@@ -26,7 +30,11 @@ class ClosedFormula:
         allowed_vars: Iterable[str] = (),
     ) -> None:
         if not isinstance(formula, Formula):
-            observed = "naked ir.Formula" if _is_ir_formula(formula) else type(formula).__name__
+            observed = (
+                "naked ir.Formula"
+                if _is_ir_formula(formula)
+                else type(formula).__name__
+            )
             proofir_construction_gap(
                 owner="proofir.scope.ClosedFormula",
                 observed=observed,
@@ -141,7 +149,9 @@ class ScopedFormula:
         *,
         allowed_vars: Mapping[str, Sort],
     ) -> None:
-        open_formula = formula if isinstance(formula, OpenFormula) else OpenFormula(formula)
+        open_formula = (
+            formula if isinstance(formula, OpenFormula) else OpenFormula(formula)
+        )
         _require_sorted_scope(
             open_formula.formula,
             formals=allowed_vars,
@@ -175,9 +185,7 @@ class ProvenancedFormula:
                 requested="ScopedFormula",
                 fix="scope the formula before adding provenance",
             )
-        _require_node_provenance(
-            provenance, owner="proofir.scope.ProvenancedFormula"
-        )
+        _require_node_provenance(provenance, owner="proofir.scope.ProvenancedFormula")
         object.__setattr__(self, "scoped", scoped)
         object.__setattr__(self, "provenance", provenance)
 
@@ -351,7 +359,9 @@ def _require_sorted_scope(
             requested="free vars only from declared formals plus out",
             fix="declare the variable in the contract scope or remove it from the formula",
         )
-    unsorted = sorted(name for name in formula.free_vars if name not in formula.free_var_sorts)
+    unsorted = sorted(
+        name for name in formula.free_vars if name not in formula.free_var_sorts
+    )
     if unsorted:
         proofir_construction_gap(
             owner=owner,

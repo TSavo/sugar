@@ -110,7 +110,7 @@ fn ci_workflow_arms_synthetic_rss_floor_smoke_job() {
         "CI RSS smoke job must generate the synthetic 120-bridge fixture"
     );
     assert!(
-        workflow.contains("tools/perf/verify-rss.sh") && workflow.contains("--reference-kib 33096"),
-        "CI RSS smoke job must arm verify-rss with the Battleaxe Linux median reference"
+        workflow.contains("tools/perf/verify-rss.sh") && workflow.contains("--reference-kib 37376"),
+        "CI RSS smoke job must arm verify-rss with the CI Linux reference for the provenance-carrying fixture (re-pinned 2026-07-03: the fixture now mints required source-memento warrants)"
     );
 }

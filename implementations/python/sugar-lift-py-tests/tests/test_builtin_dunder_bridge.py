@@ -14,6 +14,7 @@ from sugar_lift_py_tests.ir import ctor, num, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
+
 def _ctx_for_module(
     source: str,
     *,
@@ -124,7 +125,9 @@ class Box:
     )
 
 
-def test_divmod_builtin_projects_right_object_to_reflected_dunder_method_bridge() -> None:
+def test_divmod_builtin_projects_right_object_to_reflected_dunder_method_bridge() -> (
+    None
+):
     source = """\
 class Box:
     def __rdivmod__(self, other):

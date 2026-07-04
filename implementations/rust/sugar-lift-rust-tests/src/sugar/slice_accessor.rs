@@ -15,7 +15,7 @@
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
-use syn::Expr;
+use syn::{Expr, ExprCall, ReturnType, Type};
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic;
@@ -51,7 +51,11 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     let kind = recognize_kind_frag(&stripped)?;
     let receiver_frag = stripped.call_receiver()?;
     if !receiver_frag.slice_receiver_shape_frag(fcx) {
-        return None;
+        if let Some(boundary) = runtime_chunk_source_boundary(&receiver_frag, fcx) {
+            return Some(Box::new(RuntimeChunkSourceSugar { boundary }));
+        }
+        return runtime_slice_source_boundary(&receiver_frag, fcx)
+            .map(|boundary| Box::new(RuntimeSliceSourceSugar { boundary }) as Box<dyn Sugar>);
     }
     let receiver = receiver_frag.sequence_body_frag(fcx);
     let args = stripped.call_args();
@@ -60,7 +64,10 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         AccessKind::Get | AccessKind::Contains => {
             let arg_frag = args.first()?;
             let stripped_arg = arg_frag.strip_refs_groups();
-            SliceAccessorArg::Term(SugarBody::term_frag(&stripped_arg, fcx))
+            SliceAccessorArg::Term {
+                body: SugarBody::term_frag(&stripped_arg, fcx),
+                boundary: stripped_arg.token_str(),
+            }
         }
         AccessKind::StartsWith | AccessKind::EndsWith => {
             let arg_frag = args.first()?;
@@ -95,8 +102,35 @@ struct SliceAccessorSugar {
 
 enum SliceAccessorArg {
     None,
-    Term(SugarBody<TermFloor>),
+    Term {
+        body: SugarBody<TermFloor>,
+        boundary: String,
+    },
     Sequence(SugarBody<CompositeFloor>),
+}
+
+struct RuntimeSliceSourceSugar {
+    boundary: String,
+}
+
+struct RuntimeChunkSourceSugar {
+    boundary: String,
+}
+
+impl Sugar for RuntimeSliceSourceSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeSliceSource {
+            boundary: self.boundary.clone(),
+        })
+    }
+}
+
+impl Sugar for RuntimeChunkSourceSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeChunkSource {
+            boundary: self.boundary.clone(),
+        })
+    }
 }
 
 impl Sugar for SliceAccessorSugar {
@@ -182,13 +216,18 @@ impl SliceAccessorSugar {
     }
 
     fn int_arg(&self, ctx: &SugarCtx) -> Result<i128, Outcome> {
-        let term = match &self.arg {
-            SliceAccessorArg::Term(body) => term_from_body(body, ctx, "slice accessor scalar arg")?,
+        let (term, boundary) = match &self.arg {
+            SliceAccessorArg::Term { body, boundary } => (
+                term_from_body(body, ctx, "slice accessor scalar arg")?,
+                boundary.as_str(),
+            ),
             _ => slice_accessor_gap("slice accessor constructed without scalar arg"),
         };
-        Ok(const_fold_int_term(&term).unwrap_or_else(|| {
-            slice_accessor_gap("slice accessor scalar arg did not reduce to an integer literal")
-        }))
+        const_fold_int_term(&term).ok_or_else(|| {
+            Outcome::Incomplete(Effect::RuntimeSliceIndex {
+                boundary: boundary.to_string(),
+            })
+        })
     }
 
     fn sequence_arg(
@@ -230,6 +269,85 @@ fn recognize_kind_frag(frag: &SourceFragment) -> Option<AccessKind> {
         "ends_with" if arg_count == 1 => AccessKind::EndsWith,
         _ => return None,
     })
+}
+
+fn runtime_slice_source_boundary(receiver: &SourceFragment, fcx: &SugarBuildCtx) -> Option<String> {
+    let expr = receiver.as_expr()?;
+    runtime_slice_source_expr(expr, fcx, 0).then(|| receiver.token_str())
+}
+
+fn runtime_chunk_source_boundary(receiver: &SourceFragment, fcx: &SugarBuildCtx) -> Option<String> {
+    let expr = receiver.as_expr()?;
+    crate::sugar::slice_chunk_window::runtime_chunk_window_source_expr(expr, fcx, 0)
+        .then(|| receiver.token_str())
+}
+
+fn runtime_slice_source_expr(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Reference(reference) => runtime_slice_source_expr(&reference.expr, fcx, depth + 1),
+        Expr::Paren(paren) => runtime_slice_source_expr(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => runtime_slice_source_expr(&group.expr, fcx, depth + 1),
+        Expr::Call(call) => call_returns_slice_like(call, fcx),
+        Expr::MethodCall(call)
+            if matches!(
+                call.method.to_string().as_str(),
+                "as_slice" | "to_vec" | "to_owned" | "into_vec"
+            ) =>
+        {
+            runtime_slice_source_expr(&call.receiver, fcx, depth + 1)
+        }
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            fcx.let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                .or_else(|| fcx.scope().let_binding_for_audit(&name))
+                .is_some_and(|init| runtime_slice_source_expr(init, fcx, depth + 1))
+        }
+        _ => false,
+    }
+}
+
+fn call_returns_slice_like(call: &ExprCall, fcx: &SugarBuildCtx) -> bool {
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return false;
+    };
+    if path.qself.is_some() {
+        return false;
+    }
+    let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+        return false;
+    };
+    let Some(helper) = fcx.scope().visible_fn(&name) else {
+        return false;
+    };
+    return_type_is_slice_like(&helper.sig.output)
+}
+
+fn return_type_is_slice_like(output: &ReturnType) -> bool {
+    let ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+    type_is_slice_like(ty)
+}
+
+fn type_is_slice_like(ty: &Type) -> bool {
+    match ty {
+        Type::Array(_) | Type::Slice(_) => true,
+        Type::Reference(reference) => type_is_slice_like(&reference.elem),
+        Type::Path(path) if path.qself.is_none() => path
+            .path
+            .segments
+            .iter()
+            .any(|segment| matches!(segment.ident.to_string().as_str(), "Vec" | "Box")),
+        _ => false,
+    }
 }
 
 fn sequence_from_body(
@@ -295,7 +413,6 @@ fn slice_accessor_gap(reason: &str) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     /// Extract the expression fragment of the first statement in the body of the

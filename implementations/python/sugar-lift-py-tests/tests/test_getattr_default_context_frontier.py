@@ -28,8 +28,7 @@ def test_context_getattr_default_frontier_flags_planted_context_default(
     kit_src = tmp_path / "src" / "sugar_lift_py_tests" / "sugar"
     kit_src.mkdir(parents=True)
     (kit_src / "planted_context_default.py").write_text(
-        "def leak(ctx):\n"
-        "    return getattr(ctx, 'name_resolver', {})\n",
+        "def leak(ctx):\n" "    return getattr(ctx, 'name_resolver', {})\n",
         encoding="utf-8",
     )
 
@@ -60,8 +59,7 @@ def test_context_getattr_default_frontier_ignores_non_context_reflection(
     kit_src = tmp_path / "src" / "sugar_lift_py_tests" / "factory"
     kit_src.mkdir(parents=True)
     (kit_src / "ast_position.py").write_text(
-        "def line_for(node):\n"
-        "    return getattr(node, 'lineno', 0)\n",
+        "def line_for(node):\n" "    return getattr(node, 'lineno', 0)\n",
         encoding="utf-8",
     )
 

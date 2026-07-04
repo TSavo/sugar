@@ -68,7 +68,7 @@ def test_comparison_assertion_lifts_non_eq_call_with_bytes() -> None:
     report = build_literal_call_report(
         source=(
             "def test_derive_key(alg):\n"
-            "    assert alg.derive_key(b\"raaaa\") != b\"raaaa\"\n"
+            '    assert alg.derive_key(b"raaaa") != b"raaaa"\n'
         ),
         filename="test_token_padding.py",
         memento_file="test_token_padding.py",

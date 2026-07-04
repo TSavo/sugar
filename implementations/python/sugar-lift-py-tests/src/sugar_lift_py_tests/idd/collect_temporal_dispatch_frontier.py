@@ -13,7 +13,9 @@ def collect_temporal_dispatch_frontier(root: Path) -> TemporalDispatchReport:
     offenders: list[TemporalDispatchOffender] = []
     for path in sorted(kit_src.rglob("*.py")):
         rel = path.relative_to(kit_src).as_posix()
-        root_fragment = SourceFragment.from_source(path.read_text(encoding="utf-8"), rel)
+        root_fragment = SourceFragment.from_source(
+            path.read_text(encoding="utf-8"), rel
+        )
         in_temporal_package = rel.startswith("temporal/")
         in_context_package = rel.startswith("context/")
         for fragment in root_fragment.walk():
@@ -98,7 +100,9 @@ def _is_temporal_replace_call(fragment: SourceFragment) -> bool:
 
 
 def _is_temporal_rewrite_switch(fragment: SourceFragment) -> bool:
-    return fragment.observed == "FunctionDef" and fragment.function_name() == "apply_step"
+    return (
+        fragment.observed == "FunctionDef" and fragment.function_name() == "apply_step"
+    )
 
 
 def _is_direct_context_minting(fragment: SourceFragment) -> bool:
@@ -112,8 +116,7 @@ def _is_direct_context_minting(fragment: SourceFragment) -> bool:
     else:
         name = ""
     return name == "ReduceContext" and any(
-        keyword.keyword_arg_name() == "temporal"
-        for keyword in fragment.call_keywords()
+        keyword.keyword_arg_name() == "temporal" for keyword in fragment.call_keywords()
     )
 
 

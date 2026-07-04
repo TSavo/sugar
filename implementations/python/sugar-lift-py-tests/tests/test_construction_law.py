@@ -342,7 +342,10 @@ def test_refusal_diagnostics_route_through_refusal_record(monkeypatch) -> None:
         violation: FloorContractAgreementViolation,
     ) -> dict[str, object]:
         routed.append(("agreement", violation))
-        return {"kind": "floor-contract-agreement-violation", "callee": violation.callee}
+        return {
+            "kind": "floor-contract-agreement-violation",
+            "callee": violation.callee,
+        }
 
     monkeypatch.setattr(
         RefusalRecord,
@@ -425,11 +428,14 @@ def test_universe_mint_requires_claim_formula_and_preserves_wire_shape() -> None
     assert UniverseMint.__module__.endswith(".proofir.nodes.universe_mint")
     assert mint.denotation() == formula.ir_formula
     assert mint.to_body_universe().inv == formula
-    assert mint.to_declaration() == BodyUniverseDto(
-        name="module::test::assertion",
-        out_binding="out",
-        inv=formula,
-    ).to_rpc()
+    assert (
+        mint.to_declaration()
+        == BodyUniverseDto(
+            name="module::test::assertion",
+            out_binding="out",
+            inv=formula,
+        ).to_rpc()
+    )
 
     with pytest.raises(TypeError, match="ClaimFormula"):
         UniverseMint(
@@ -451,12 +457,15 @@ def test_universe_mint_requires_claim_formula_and_preserves_wire_shape() -> None
 def test_body_universe_dto_requires_claim_formula_slots() -> None:
     formula = _claim_formula()
 
-    assert BodyUniverseDto(name="module::typed::assertion", inv=formula).to_rpc()[
-        "inv"
-    ] == formula.to_rpc()
+    assert (
+        BodyUniverseDto(name="module::typed::assertion", inv=formula).to_rpc()["inv"]
+        == formula.to_rpc()
+    )
 
     for slot in ("pre", "post", "inv"):
-        with pytest.raises(TypeError, match=f"BodyUniverseDto.{slot} must be ClaimFormula"):
+        with pytest.raises(
+            TypeError, match=f"BodyUniverseDto.{slot} must be ClaimFormula"
+        ):
             BodyUniverseDto(
                 name=f"module::raw::{slot}",
                 **{slot: {"kind": "atomic", "name": "=", "args": []}},

@@ -12,6 +12,21 @@
 
 pub const BLAKE3_512_PREFIX: &str = "blake3-512:";
 
+/// Borrow the digest portion of a canonical in-memory BLAKE3-512 CID.
+///
+/// This helper owns the string tag knowledge for colon-form CIDs. It only
+/// strips the tag; callers that need validation keep their existing length and
+/// hex checks so lenient fallback call sites do not tighten silently.
+pub fn cid_hex(cid: &str) -> Option<&str> {
+    cid.strip_prefix(BLAKE3_512_PREFIX)
+}
+
+/// Validate the canonical in-memory BLAKE3-512 CID spelling.
+pub fn is_blake3_512_cid(cid: &str) -> bool {
+    cid_hex(cid)
+        .is_some_and(|hex| hex.len() == 128 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 /// Hash arbitrary bytes into the self-identifying string form.
 pub fn blake3_512_of(bytes: &[u8]) -> String {
     let mut hasher = blake3::Hasher::new();

@@ -52,9 +52,7 @@ class DictSugar(Sugar, role=SugarRole.TERM):
         return cls(
             entries=tuple(
                 DictEntryBody(
-                    key=None
-                    if key is None
-                    else ctx.build_body(key, SugarRole.TERM),
+                    key=None if key is None else ctx.build_body(key, SugarRole.TERM),
                     value=ctx.build_body(value, SugarRole.TERM),
                 )
                 for key, value in site.dict_entries()

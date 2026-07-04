@@ -59,12 +59,9 @@ class NonFolOptOutAudit:
             "r": {
                 "pinned_but_unmarked": len(self.pinned_but_unmarked),
                 "marked_but_unpinned": len(self.marked_but_unpinned),
-                "total": len(self.pinned_but_unmarked)
-                + len(self.marked_but_unpinned),
+                "total": len(self.pinned_but_unmarked) + len(self.marked_but_unpinned),
             },
-            "pinnedButUnmarked": [
-                row.to_json() for row in self.pinned_but_unmarked
-            ],
+            "pinnedButUnmarked": [row.to_json() for row in self.pinned_but_unmarked],
             "markedButUnpinned": list(self.marked_but_unpinned),
         }
 
@@ -140,9 +137,7 @@ class SugarWitnessSeedReport:
                 "total": self.witness_triples_failing
                 + self.witnesses_not_dispatching_to_owner,
             },
-            "tripleFailures": [
-                failure.to_json() for failure in self.triple_failures
-            ],
+            "tripleFailures": [failure.to_json() for failure in self.triple_failures],
             "nonCircularityFailures": [
                 failure.to_json() for failure in self.non_circularity_failures
             ],
@@ -171,9 +166,7 @@ class SugarWitnessFrontierReport:
             "kind": "sugar-witness-frontier",
             "r": {
                 "unenrolled_sugars": len(self.unenrolled_sugars),
-                "witness_triples_failing": (
-                    self.seed_report.witness_triples_failing
-                ),
+                "witness_triples_failing": (self.seed_report.witness_triples_failing),
                 "witnesses_not_dispatching_to_owner": (
                     self.seed_report.witnesses_not_dispatching_to_owner
                 ),
@@ -443,17 +436,12 @@ def render_text(report: SugarWitnessFrontierReport) -> str:
     lines = ["Python sugar witness frontier\n"]
     r = report.to_json()["r"]
     lines.append(f"R(unenrolled-sugars): {r['unenrolled_sugars']}\n")
-    lines.append(
-        f"R(witness-triples-failing): {r['witness_triples_failing']}\n"
-    )
+    lines.append(f"R(witness-triples-failing): {r['witness_triples_failing']}\n")
     lines.append(
         "R(witnesses-not-dispatching-to-owner): "
         f"{r['witnesses_not_dispatching_to_owner']}\n"
     )
-    lines.append(
-        "R(non-fol-opt-out-drift): "
-        f"{r['non_fol_opt_out_drift']}\n"
-    )
+    lines.append("R(non-fol-opt-out-drift): " f"{r['non_fol_opt_out_drift']}\n")
     lines.append(f"R(temporal-opt-outs): {r['temporal_opt_outs']}\n")
     lines.append(
         "seed coverage: "
@@ -491,9 +479,7 @@ def render_text(report: SugarWitnessFrontierReport) -> str:
     if report.temporal_opt_outs:
         lines.append("temporal opt-outs:\n")
         for row in report.temporal_opt_outs:
-            lines.append(
-                f"  - {row.sugar_name}: {row.retirement_condition}\n"
-            )
+            lines.append(f"  - {row.sugar_name}: {row.retirement_condition}\n")
     return "".join(lines)
 
 
@@ -549,8 +535,10 @@ def _claim_has_witness_or_opt_out(claim) -> bool:
     witness = _claim_witnesses(claim)
     if isinstance(witness, SugarWitnessPair):
         return True
-    if isinstance(witness, tuple) and witness and all(
-        isinstance(item, SugarWitnessPair) for item in witness
+    if (
+        isinstance(witness, tuple)
+        and witness
+        and all(isinstance(item, SugarWitnessPair) for item in witness)
     ):
         return True
     if isinstance(witness, NotVerdictBearing):

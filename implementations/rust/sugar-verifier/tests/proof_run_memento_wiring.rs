@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sugar_canonicalizer::blake3_512_of;
+use sugar_canonicalizer::{blake3_512_of, cid_hex};
 use sugar_ir_types::{ProofRunEnvelope, StageReceiptHeader, StageReceiptMetadata, StageVerdict};
 use sugar_ir_types::{ProofRunMemento, StageReceipt};
 use sugar_proof_envelope::{
@@ -39,7 +39,7 @@ fn write_empty_fixture_proof(project_root: &Path) -> String {
         signer_seed,
         declared_at: "2026-05-13T00:00:00.000Z".into(),
     });
-    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&built.cid).unwrap();
     fs::write(project_root.join(format!("{hex}.proof")), built.bytes).expect("write fixture");
     built.cid
 }
