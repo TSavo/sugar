@@ -28,6 +28,9 @@ class FormatValueOperation:
         del ctx
         return Complete(
             SymbolicValue(
-                ctor("py.format", [receiver.term, str_const(self.spec), num(self.conversion)])
+                ctor(
+                    "py.format",
+                    [receiver.term, str_const(self.spec), num(self.conversion)],
+                )
             )
         )

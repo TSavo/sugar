@@ -31,10 +31,7 @@ def test_pass_support_does_not_swallow_following_return():
 def test_lift_source_builds_statement_fragment_as_statement_support():
     result = lift_source(
         "f.py",
-        "try:\n"
-        "    risky()\n"
-        "except ImportError:\n"
-        "    pass\n",
+        "try:\n" "    risky()\n" "except ImportError:\n" "    pass\n",
     )
 
     assert result.audit_row.role == "statement"
