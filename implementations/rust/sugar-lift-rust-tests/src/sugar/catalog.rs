@@ -1311,6 +1311,41 @@ mod tests {
     }
 
     #[test]
+    fn scan_terminal_prioritizes_iter_terminal_before_generic_method_sugar() {
+        let expr: Expr = syn::parse_str(
+            "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
+        )
+        .unwrap();
+
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("iter_terminal"),
+            "scan terminal chains must ground through IterTerminalSugar before generic method fallback"
+        );
+    }
+
+    #[test]
+    fn scan_terminal_translates_to_ground_term_before_assertion_support() {
+        let expr: Expr = syn::parse_str(
+            "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
+        )
+        .unwrap();
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let term = crate::sugar::term_dispatch::translate_assertion_term_in_scope_with_audits(
+            &expr, &scope, None,
+        )
+        .expect("scan terminal must translate as a grounded assertion term");
+
+        match term.as_ref() {
+            sugar_ir_symbolic::Term::Const {
+                value: sugar_ir_symbolic::ConstValue::Int(value),
+                ..
+            } => assert_eq!(*value, 10),
+            other => panic!("scan terminal must ground to integer 10, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn literal_iterator_quantifier_owns_constraint_before_bool_method_fallback() {
         let inline: Expr = syn::parse_str("[1, 2, 3].iter().all(|&x| x < 10)").unwrap();
         assert_eq!(

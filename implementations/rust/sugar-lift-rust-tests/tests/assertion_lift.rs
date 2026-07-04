@@ -17875,6 +17875,12 @@ fn lift_eq_decl(lhs: &str, rhs: &str, file: &str) -> sugar_ir_symbolic::Contract
         .expect("the monadic equality must lift to a consistency contract")
 }
 
+fn lift_eq_warranted_decl(lhs: &str, rhs: &str, file: &str) -> sugar_ir_symbolic::ContractDecl {
+    let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
+    let out = lift_file(&parse(&src), file);
+    single_warranted_decl(&out).clone()
+}
+
 #[test]
 fn monadic_some_equal_is_sat_and_bad_twin_is_unsat() {
     // `Some(1) == Some(1)` is consistent (SAT); the bad twin `Some(1) == Some(2)`
@@ -30512,7 +30518,7 @@ fn iter_reduce_empty_source_is_none() {
 fn iter_scan_last_over_literal_digs_with_teeth() {
     // POSITIVE: cumsum [1,3,6]; `.last()` = Some(6).
     // `opt:some(6) == opt:some(6)` → SAT.
-    let good = lift_eq_decl(
+    let good = lift_eq_warranted_decl(
         "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).last()",
         "Some(6i32)",
         "tests/iter_scan_last_good.rs",
@@ -30528,7 +30534,7 @@ fn iter_scan_last_over_literal_digs_with_teeth() {
         assert!(sat, "opt:some(6)==opt:some(6) must be SAT");
     }
     // TEETH: wrong expected (7) must be z3-UNSAT.
-    let bad = lift_eq_decl(
+    let bad = lift_eq_warranted_decl(
         "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).last()",
         "Some(7i32)",
         "tests/iter_scan_last_bad.rs",
@@ -30546,7 +30552,7 @@ fn iter_scan_last_over_literal_digs_with_teeth() {
 fn iter_scan_sum_over_literal_digs_with_teeth() {
     // POSITIVE: cumsum [1,3,6]; `.sum::<i32>()` = 1+3+6 = 10.
     // Grounded `10 == 10` → SAT.
-    let good = lift_eq_decl(
+    let good = lift_eq_warranted_decl(
         "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
         "10i32",
         "tests/iter_scan_sum_good.rs",
@@ -30562,7 +30568,7 @@ fn iter_scan_sum_over_literal_digs_with_teeth() {
         assert!(sat, "10==10 must be SAT");
     }
     // TEETH: wrong total (11) must be z3-UNSAT.
-    let bad = lift_eq_decl(
+    let bad = lift_eq_warranted_decl(
         "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
         "11i32",
         "tests/iter_scan_sum_bad.rs",

@@ -1342,11 +1342,17 @@ fn relation_constraint_from_bodies(
     if let Some(effect) = relation_source_capability_effect(rhs_expr) {
         return Outcome::Incomplete(effect);
     }
-    if let Some(effect) = crate::panic_freedom_expr_callsite_effect(lhs_expr, ctx.scope) {
-        return Outcome::Incomplete(effect);
+    let lhs_panic_effect = crate::panic_freedom_expr_callsite_effect(lhs_expr, ctx.scope);
+    if let Some(effect) = lhs_panic_effect.as_ref() {
+        if !relation_side_may_ground_scan_terminal(lhs_expr) {
+            return Outcome::Incomplete(effect.clone());
+        }
     }
-    if let Some(effect) = crate::panic_freedom_expr_callsite_effect(rhs_expr, ctx.scope) {
-        return Outcome::Incomplete(effect);
+    let rhs_panic_effect = crate::panic_freedom_expr_callsite_effect(rhs_expr, ctx.scope);
+    if let Some(effect) = rhs_panic_effect.as_ref() {
+        if !relation_side_may_ground_scan_terminal(rhs_expr) {
+            return Outcome::Incomplete(effect.clone());
+        }
     }
     let lhs = match term_payload(lhs, ctx) {
         Ok(term) => term,
@@ -1356,6 +1362,16 @@ fn relation_constraint_from_bodies(
         Ok(term) => term,
         Err(outcome) => return outcome,
     };
+    if let Some(effect) = lhs_panic_effect {
+        if !relation_side_grounded_scan_terminal(lhs_expr, lhs.as_ref(), &effect) {
+            return Outcome::Incomplete(effect);
+        }
+    }
+    if let Some(effect) = rhs_panic_effect {
+        if !relation_side_grounded_scan_terminal(rhs_expr, rhs.as_ref(), &effect) {
+            return Outcome::Incomplete(effect);
+        }
+    }
     if let Some(effect) = relation_operand_capability_effect(lhs_expr, &lhs) {
         return Outcome::Incomplete(effect);
     }
@@ -1376,6 +1392,36 @@ fn relation_constraint_from_bodies(
         kind,
         warrant: Warrant { name: entry.name },
     })
+}
+
+fn relation_side_may_ground_scan_terminal(expr: &Expr) -> bool {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    if !matches!(call.method.to_string().as_str(), "sum" | "last") {
+        return false;
+    }
+    matches!(strip_refs_groups(&call.receiver), Expr::MethodCall(receiver) if receiver.method == "scan")
+}
+
+fn relation_side_grounded_scan_terminal(expr: &Expr, term: &Term, effect: &Effect) -> bool {
+    matches!(effect, Effect::Mutation { .. })
+        && relation_side_may_ground_scan_terminal(expr)
+        && relation_term_is_closed_ground(term)
+}
+
+fn relation_term_is_closed_ground(term: &Term) -> bool {
+    match term {
+        Term::Const { .. } => true,
+        Term::Ctor { name, args } => {
+            !name.starts_with("call:")
+                && !name.starts_with("method:")
+                && args
+                    .iter()
+                    .all(|arg| relation_term_is_closed_ground(arg.as_ref()))
+        }
+        Term::Var { .. } | Term::Lambda { .. } | Term::Let { .. } => false,
+    }
 }
 
 fn relation_side_is_unreduced_iterator_quantifier(term: &Term, expr: &Expr) -> bool {
@@ -1729,6 +1775,46 @@ mod tests {
         assert_eq!(variant_name, "variant_of");
         assert_eq!(variant_args.len(), 1);
         assert_str_term(args[1].as_ref(), "variant::Poll::Ready");
+    }
+
+    #[test]
+    fn relation_macro_surface_warrants_grounded_scan_terminal() {
+        let expr: Expr = syn::parse_str(
+            "assert_eq!([1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>(), 10i32)",
+        )
+        .expect("parse scan assertion surface");
+        let scope = TemporalScope::new("scan-assertion-surface-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let reducer = ReductionCtx::from_items_with_imports(&[], scope.macro_registry());
+        let mut float_widths = FloatWidthScope::new();
+        let ctx =
+            sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
+
+        let outcome = crate::sugar::factory::build_assertion_surface(&expr, &fcx).desugar(&ctx);
+
+        let Outcome::Complete(Desugared::Constraints { atom, kind, .. }) = outcome else {
+            panic!("expected scan terminal assertion surface to emit a constraint");
+        };
+        assert_eq!(kind, AssertionFactKind::Warranted);
+        let Formula::Atomic { name, args } = atom.as_ref() else {
+            panic!("expected scan terminal equality, got {atom:?}");
+        };
+        assert_eq!(name, "=");
+        assert_eq!(args.len(), 2);
+        for arg in args {
+            assert!(
+                matches!(
+                    arg.as_ref(),
+                    Term::Const {
+                        value: ConstValue::Int(10),
+                        ..
+                    }
+                ),
+                "scan terminal assertion should ground both sides to 10, got {arg:?}"
+            );
+        }
     }
 
     #[test]
