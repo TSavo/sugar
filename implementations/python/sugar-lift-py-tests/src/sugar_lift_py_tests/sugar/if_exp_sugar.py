@@ -88,7 +88,9 @@ class IfExpSugar(Sugar, role=SugarRole.TERM):
     def desugar(self, ctx) -> Outcome:
         if isinstance(self.plan, _RuntimeIfExp):
             return _runtime_condition_effect(self.blame, self.plan.reason)
-        branch = self.plan.true_branch if self.plan.condition else self.plan.false_branch
+        branch = (
+            self.plan.true_branch if self.plan.condition else self.plan.false_branch
+        )
         return branch.reduce(ctx)
 
 

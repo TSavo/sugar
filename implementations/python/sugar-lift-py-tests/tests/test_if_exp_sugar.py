@@ -66,7 +66,9 @@ def test_literal_ifexp_bad_twin_flips(tmp_path: Path) -> None:
 
 def test_runtime_condition_ifexp_is_typed_runtime_effect() -> None:
     ctx = FactoryBuildContext(filename="if_exp.py", catalog=default_catalog())
-    body = ctx.build_body(ast.parse("1 if flag else 2", mode="eval").body, SugarRole.TERM)
+    body = ctx.build_body(
+        ast.parse("1 if flag else 2", mode="eval").body, SugarRole.TERM
+    )
     reduce_ctx = replace(
         ReduceContext.root(owner="if-exp-test"),
         temporal=TemporalContext.empty().bind_value(
