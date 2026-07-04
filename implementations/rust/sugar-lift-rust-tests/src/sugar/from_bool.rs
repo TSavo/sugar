@@ -140,7 +140,6 @@ impl ScalarFloorVisitor for PrimitiveFromVisitor<'_> {
 
     fn visit_runtime(self, _term: &Rc<Term>) -> Self::Output {
         Outcome::Incomplete(Effect::RuntimeNumericOperand {
-            boundary: self.site.to_string(),
             operation: "From".to_string(),
             kind: self.dst.name.to_string(),
         })

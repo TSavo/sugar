@@ -133,7 +133,6 @@ impl UnwrapVisitor<'_> {
 
     fn literal_panic(self, kind: &str) -> Outcome {
         Outcome::Incomplete(Effect::LiteralPanic {
-            boundary: self.site_key.to_string(),
             reason: format!(
                 "monadic `{}` on literal `{kind}` panics; refused",
                 self.method

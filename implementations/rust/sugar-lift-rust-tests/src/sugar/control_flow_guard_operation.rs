@@ -214,7 +214,6 @@ fn desugared_floor_name(desugared: &Desugared) -> &'static str {
         Desugared::LiteralCStr(_) => "LiteralCStr",
         Desugared::FormatValue(_) => "FormatValue",
         Desugared::TupleComponents(_) => "TupleComponents",
-        Desugared::ObjectValue(_) => "ObjectValue",
         Desugared::PredicateValue(_) => "PredicateValue",
         Desugared::StmtSupport => "StmtSupport",
         Desugared::StmtBound(_) => "StmtBound",

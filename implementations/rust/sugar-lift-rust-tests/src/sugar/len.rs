@@ -94,7 +94,6 @@ impl Sugar for LenSugar {
                     return Outcome::Complete(Desugared::Term(num(0)));
                 }
                 return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                    boundary: name.clone(),
                     reason: format!(
                         "consumed-iterator local `{name}` -- \
                      `.len()` is a temporally unstable stale pre-consumption length read"

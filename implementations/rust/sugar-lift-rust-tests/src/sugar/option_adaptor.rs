@@ -1281,7 +1281,6 @@ fn ensure_grounded_payload(
         return Ok(());
     }
     Err(Outcome::Incomplete(Effect::RuntimeMonadicPayload {
-        boundary: format!("{method} over {ctor}"),
         method: method.to_string(),
         ctor: ctor.to_string(),
     }))

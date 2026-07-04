@@ -115,10 +115,7 @@ impl Sugar for ConsumedFoldSugar {
                     self.receiver, self.site
                 )
             });
-        Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-            boundary: self.receiver.clone(),
-            reason,
-        })
+        Outcome::Incomplete(Effect::AmbiguousTemporalIdentity { reason })
     }
 }
 
@@ -199,9 +196,7 @@ impl Sugar for FoldSugar {
         // makes it terminal. Scan the FULL closure body (tail included), exactly as
         // the procedural defolder did.
         if closure_body_is_side_effecting(&self.closure_body) {
-            return Outcome::Incomplete(Effect::Mutation {
-                boundary: token_key(&self.closure_body),
-            });
+            return Outcome::Incomplete(Effect::Mutation);
         }
         // Lift the body ONCE, free in acc_var / elem_var / idx_var. All-or-nothing.
         let mut body_entries = Vec::new();
@@ -460,7 +455,6 @@ fn fold_gap(reason: &str) -> ! {
 
 fn fold_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::fold".to_string(),
         reason: err.to_string(),
     })
 }

@@ -477,7 +477,6 @@ mod tests {
         impl Sugar for ChildEffect {
             fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
                 Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                    boundary: "child".to_string(),
                     reason: self.reason.to_string(),
                 })
             }

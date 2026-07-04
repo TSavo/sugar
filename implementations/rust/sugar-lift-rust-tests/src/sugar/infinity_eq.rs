@@ -314,10 +314,7 @@ fn inactive_debug_assertion(name: &str, debug_gated: bool, ctx: &SugarCtx) -> Op
         ))),
         CfgDisposition::Ambiguous(reason) => {
             let reason = format!("ambiguous cfg: {name}!: cfg(debug_assertions) skipped: {reason}");
-            Some(Outcome::Incomplete(Effect::Configuration {
-                boundary: format!("{name}!: cfg(debug_assertions)"),
-                reason,
-            }))
+            Some(Outcome::Incomplete(Effect::Configuration { reason }))
         }
     }
 }

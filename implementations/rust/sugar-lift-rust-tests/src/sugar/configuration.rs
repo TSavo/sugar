@@ -210,7 +210,6 @@ impl Sugar for ConfigurationSugar {
             // No pinned target facts -> we cannot resolve the predicate. The no-scan law:
             // a named, terminal Incomplete, never a silent skip.
             CfgDisposition::Ambiguous(reason) => Outcome::Incomplete(Effect::Configuration {
-                boundary: render_cfg_attrs(&self.attrs),
                 reason: format!("ambiguous cfg: {reason}"),
             }),
         }
@@ -333,11 +332,7 @@ mod tests {
         // The no-scan law: it RETURNS INCOMPLETE, it is not a silent skip.
         let options = LiftOptions::default();
         match run(vec![cfg_attr(quote::quote!(target_os = "linux"))], &options) {
-            Outcome::Incomplete(Effect::Configuration { boundary, reason }) => {
-                assert_eq!(
-                    boundary, "# [cfg (target_os = \"linux\")]",
-                    "configuration effect names the cfg boundary"
-                );
+            Outcome::Incomplete(Effect::Configuration { reason }) => {
                 assert!(
                     reason.starts_with("ambiguous cfg: "),
                     "ambiguous cfg names its boundary, got {reason:?}"

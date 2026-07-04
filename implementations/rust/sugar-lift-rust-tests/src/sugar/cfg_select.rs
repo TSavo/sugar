@@ -205,7 +205,6 @@ impl Sugar for CfgSelectSugar {
                     }
                     CfgDisposition::Ambiguous(reason) => {
                         return Outcome::Incomplete(Effect::Configuration {
-                            boundary: self.site.clone(),
                             reason: format!(
                                 "macro `cfg_select`: ambiguous cfg branch `{predicate}`: {reason}; refused"
                             ),

@@ -209,7 +209,6 @@ pub(crate) fn nan_comparison_effect(
         nan_comparison_boundary(rhs, ctx, &mut seen, 0)
     })?;
     Some(Effect::FloatIeeeRefinement {
-        boundary: boundary.clone(),
         reason: format!(
             "{owner}: NaN comparison `{boundary}` uses Rust float PartialEq/PartialOrd \
              semantics, not ordinary total-order/equality semantics; refused"
@@ -366,7 +365,7 @@ impl Sugar for IeeeFloatSugar {
             IeeeFloatSource::Runtime {
                 boundary,
                 operation,
-            } => runtime_float(boundary, operation),
+            } => runtime_float(boundary),
             IeeeFloatSource::IeeeRefinement { boundary, reason } => {
                 ieee_refinement(boundary, reason.clone())
             }
@@ -575,7 +574,7 @@ pub(crate) fn reduce_bits(
             };
             const_fold_u128_term(&term)
                 .or_else(|| const_fold_int_term(&term).and_then(|n| u128::try_from(n).ok()))
-                .ok_or_else(|| runtime_float(site, operation))
+                .ok_or_else(|| runtime_float(site))
         }
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
@@ -592,11 +591,11 @@ fn reduce_i32(
             let Some(term) = desugared.into_term() else {
                 float_floor_gap("float exponent source completed as non-term");
             };
-            const_fold_int_term(&term).ok_or_else(|| runtime_float(site, operation))?
+            const_fold_int_term(&term).ok_or_else(|| runtime_float(site))?
         }
         Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
     };
-    i32::try_from(value).map_err(|_| runtime_float(site, operation))
+    i32::try_from(value).map_err(|_| runtime_float(site))
 }
 
 fn int_width_term(value: i128, sort: &str) -> Rc<Term> {
@@ -1012,18 +1011,14 @@ fn ieee_refinement_source(boundary: String, reason: String) -> IeeeFloatSource {
     IeeeFloatSource::IeeeRefinement { boundary, reason }
 }
 
-pub(crate) fn runtime_float(boundary: &str, operation: &str) -> Outcome {
+pub(crate) fn runtime_float(boundary: &str) -> Outcome {
     Outcome::Incomplete(Effect::RuntimeFloatOperand {
         boundary: boundary.to_string(),
-        operation: operation.to_string(),
     })
 }
 
-pub(crate) fn ieee_refinement(boundary: &str, reason: String) -> Outcome {
-    Outcome::Incomplete(Effect::FloatIeeeRefinement {
-        boundary: boundary.to_string(),
-        reason,
-    })
+pub(crate) fn ieee_refinement(_boundary: &str, reason: String) -> Outcome {
+    Outcome::Incomplete(Effect::FloatIeeeRefinement { reason })
 }
 
 fn float_floor_gap(reason: &str) -> ! {

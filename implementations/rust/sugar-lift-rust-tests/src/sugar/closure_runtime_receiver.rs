@@ -31,10 +31,7 @@ struct ClosureRuntimeReceiverSugar {
 impl Sugar for ClosureRuntimeReceiverSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         if self.site.has_runtime_receiver(ctx.scope) {
-            return Outcome::Incomplete(Effect::OpaqueRuntime {
-                boundary: self.site.boundary().to_owned(),
-                accessor: false,
-            });
+            return Outcome::Incomplete(Effect::OpaqueRuntime { accessor: false });
         }
         closure_runtime_receiver_gap("recognized site no longer has a runtime receiver")
     }

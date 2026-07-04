@@ -181,7 +181,6 @@ impl ChainFloor {
 
 fn chain_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::chain".to_string(),
         reason: err.to_string(),
     })
 }

@@ -247,10 +247,7 @@ impl Sugar for IndexSugar {
                     })));
                 }
                 Err(reason) => {
-                    return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                        boundary: self.boundary_token_str.clone(),
-                        reason,
-                    });
+                    return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity { reason });
                 }
             }
         }

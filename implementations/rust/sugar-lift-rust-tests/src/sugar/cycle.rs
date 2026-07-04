@@ -78,7 +78,6 @@ fn cycle_prefix(
     }
     if count > SUGAR_SEQ_CAP as usize {
         return Err(Outcome::Incomplete(Effect::LiteralDomain {
-            boundary: boundary.to_string(),
             reason: OVERSIZE_DOMAIN_REASON.to_string(),
         }));
     }

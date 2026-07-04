@@ -458,9 +458,7 @@ fn type_key_from_type_id_term(term: &Rc<Term>) -> Option<String> {
 }
 
 fn dyn_any_unknown() -> Outcome {
-    Outcome::Incomplete(Effect::DynAnyConcreteType {
-        boundary: "dyn Any concrete type not statically determined".to_string(),
-    })
+    Outcome::Incomplete(Effect::DynAnyConcreteType {})
 }
 
 fn dyn_any_gap(reason: &str) -> ! {

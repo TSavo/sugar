@@ -122,7 +122,6 @@ impl Sugar for IntMidpointSugar {
 
 fn runtime_midpoint_operand(term: &Rc<Term>, kind: IntKind) -> Outcome {
     Outcome::Incomplete(Effect::RuntimeNumericOperand {
-        boundary: canonical_term_sig(term),
         operation: "midpoint".to_string(),
         kind: kind.name.to_string(),
     })

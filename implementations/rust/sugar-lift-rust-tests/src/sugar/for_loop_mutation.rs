@@ -32,8 +32,6 @@ struct ForLoopMutationSugar {
 
 impl Sugar for ForLoopMutationSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Incomplete(Effect::Mutation {
-            boundary: self.boundary.clone(),
-        })
+        Outcome::Incomplete(Effect::Mutation)
     }
 }

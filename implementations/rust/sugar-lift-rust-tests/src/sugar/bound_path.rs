@@ -190,7 +190,6 @@ struct BoundPathGapSugar {
 impl Sugar for BoundPathTemporalEffectSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-            boundary: self.boundary.clone(),
             reason: self.reason.clone(),
         })
     }
@@ -207,7 +206,6 @@ impl Sugar for BoundPathConsumedIteratorStateSugar {
 impl Sugar for BoundPathRuntimeDestructuredSourceSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::RuntimeDestructuredSource {
-            boundary: self.boundary.clone(),
             reason: self.reason.clone(),
         })
     }

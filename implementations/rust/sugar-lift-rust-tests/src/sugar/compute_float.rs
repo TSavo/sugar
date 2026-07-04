@@ -116,7 +116,6 @@ impl Sugar for ComputeFloatSugar {
 impl ComputeFloatSugar {
     fn runtime_operand(&self, kind: &str) -> Outcome {
         Outcome::Incomplete(Effect::RuntimeNumericOperand {
-            boundary: self.site.clone(),
             operation: format!("compute_float::<{}>", self.width.type_name()),
             kind: kind.to_string(),
         })

@@ -194,7 +194,6 @@ impl ScalarFloorVisitor for IntoPrimitiveVisitor<'_> {
 
     fn visit_runtime(self, _term: &Rc<Term>) -> Self::Output {
         Outcome::Incomplete(Effect::RuntimeNumericOperand {
-            boundary: self.site.to_string(),
             operation: "into".to_string(),
             kind: self.target.name.to_string(),
         })
@@ -216,7 +215,7 @@ impl IeeeFloatVisitor for IntoFloatVisitor<'_> {
     }
 
     fn visit_non_float(self, _term: &Rc<Term>) -> Self::Output {
-        runtime_float(self.site, "into")
+        runtime_float(self.site)
     }
 }
 

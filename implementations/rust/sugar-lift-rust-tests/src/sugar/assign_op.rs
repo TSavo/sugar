@@ -22,9 +22,9 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    const_eval, const_fold_int_term, const_int, literal_string_value, num, parse_int_lit,
-    parse_macro_args, simple_path_name, strip_refs_groups, token_key, AssertionFactKind, Desugared,
-    Outcome, Sugar, SugarCtx, Warrant,
+    const_eval, const_int, literal_string_value, num, parse_int_lit, parse_macro_args,
+    simple_path_name, strip_refs_groups, token_key, AssertionFactKind, Desugared, Outcome, Sugar,
+    SugarCtx, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -90,7 +90,6 @@ pub(crate) enum TemporalRewriteAction {
     CompoundAssign {
         lhs: Expr,
         rhs: SugarBody<TermFloor>,
-        op: BinOpKind,
     },
 }
 
@@ -101,11 +100,13 @@ impl TemporalRewriteAction {
                 lhs: assign.left.as_ref().clone(),
                 rhs: SugarBody::term(&assign.right, fcx),
             }),
-            Expr::Binary(binary) => Some(Self::CompoundAssign {
-                lhs: binary.left.as_ref().clone(),
-                rhs: SugarBody::term(&binary.right, fcx),
-                op: assignment_op(&binary.op)?,
-            }),
+            Expr::Binary(binary) => {
+                assignment_op(&binary.op)?;
+                Some(Self::CompoundAssign {
+                    lhs: binary.left.as_ref().clone(),
+                    rhs: SugarBody::term(&binary.right, fcx),
+                })
+            }
             _ => None,
         }
     }
@@ -459,17 +460,6 @@ impl TemporalRewriteState {
             }
         }
         out
-    }
-
-    pub(crate) fn term_bindings(&self) -> BTreeMap<String, Rc<Term>> {
-        self.term_values
-            .iter()
-            .filter(|(name, _)| {
-                !self.unknown_consumed_iterators.contains_key(*name)
-                    && !self.unknown_mutations.contains_key(*name)
-            })
-            .map(|(name, term)| (name.clone(), Rc::clone(term)))
-            .collect()
     }
 
     pub(crate) fn apply_statement(&mut self, stmt: &Stmt) -> bool {
@@ -1368,40 +1358,6 @@ impl TemporalRewriteState {
         applied
     }
 
-    pub(crate) fn apply_assign_term(&mut self, lhs: &Expr, term: Rc<Term>) -> bool {
-        let Some(target) = self.target_for_lhs(lhs) else {
-            return false;
-        };
-        let target_base = target_base(&target);
-        let applied = self.set_target_term(target, term);
-        if applied {
-            self.compound_alias_rewrites.remove(&target_base);
-        }
-        applied
-    }
-
-    pub(crate) fn apply_compound_assign_term(
-        &mut self,
-        lhs: &Expr,
-        op: BinOpKind,
-        rhs: Rc<Term>,
-    ) -> bool {
-        let Some(target) = self.target_for_lhs(lhs) else {
-            return false;
-        };
-        let Some(old) = self.target_term(&target) else {
-            return false;
-        };
-        let target_base = target_base(&target);
-        let needs_compound_refusal = target_needs_compound_alias_refusal(&target);
-        let updated = compose_assignment_term(op, old, rhs);
-        let applied = self.set_target_term(target, updated);
-        if applied && needs_compound_refusal {
-            self.compound_alias_rewrites.insert(target_base);
-        }
-        applied
-    }
-
     fn apply_compound_assign(&mut self, binary: &syn::ExprBinary, emit_trace: bool) -> bool {
         let Some(op) = assignment_op(&binary.op) else {
             return false;
@@ -1563,32 +1519,6 @@ impl TemporalRewriteState {
                 index,
                 replayable_alias,
             } => self.set_aggregate_element(&base, index, value, replayable_alias),
-        }
-    }
-
-    fn set_target_term(&mut self, target: Target, term: Rc<Term>) -> bool {
-        match target {
-            Target::Scalar {
-                name,
-                replayable_alias,
-            } => {
-                self.values.remove(&name);
-                if replayable_alias {
-                    self.rewritten_bases.insert(name.clone());
-                }
-                self.term_values.insert(name, term);
-                true
-            }
-            Target::Element {
-                base,
-                index,
-                replayable_alias,
-            } => {
-                let Some(value) = int_expr_from_term(&term) else {
-                    return false;
-                };
-                self.set_aggregate_element(&base, index, value, replayable_alias)
-            }
         }
     }
 
@@ -2715,18 +2645,6 @@ fn alias_effect_reason(effect: &AliasTypedEffect) -> String {
                  alias state; refused",
                 place.base()
             ),
-            AliasMutationCause::OpaqueCall { site } => format!(
-                "ambiguous temporal identity for `{}` after AliasFloor opaque call `{site}`: \
-                 owner #3482; illegal shape may write through a mutable capability; \
-                 replacement is a typed AliasFloor UnknownMutation effect; refused",
-                place.base()
-            ),
-            AliasMutationCause::IteratorConsumption { method } => format!(
-                "ambiguous temporal identity for `{}` after AliasFloor iterator consumption \
-                 `.{method}()`: owner #3482; illegal shape advances through alias state with no \
-                 literal replay; replacement is a typed AliasFloor UnknownMutation effect; refused",
-                place.base()
-            ),
         },
     }
 }
@@ -2782,35 +2700,8 @@ fn apply_int_op(kind: BinOpKind, left: i128, right: i128) -> Option<i128> {
     }
 }
 
-fn compose_assignment_term(kind: BinOpKind, left: Rc<Term>, right: Rc<Term>) -> Rc<Term> {
-    let term = Rc::new(Term::Ctor {
-        name: binop_kind_term_name(kind).to_string(),
-        args: vec![left, right],
-    });
-    const_fold_int_term(&term).map(num).unwrap_or(term)
-}
-
 fn expr_term_floor(expr: &Expr, state: &TemporalRewriteState) -> Option<Rc<Term>> {
     state.int_value(expr).map(num)
-}
-
-fn int_expr_from_term(term: &Rc<Term>) -> Option<Expr> {
-    const_fold_int_term(term).and_then(int_expr)
-}
-
-fn binop_kind_term_name(kind: BinOpKind) -> &'static str {
-    match kind {
-        BinOpKind::Add => "+",
-        BinOpKind::Sub => "-",
-        BinOpKind::Mul => "*",
-        BinOpKind::Div => "int-div",
-        BinOpKind::Rem => "int-rem",
-        BinOpKind::BitAnd => "bit-and",
-        BinOpKind::BitOr => "bit-or",
-        BinOpKind::BitXor => "bit-xor",
-        BinOpKind::Shl => "shift-left",
-        BinOpKind::Shr => "shift-right",
-    }
 }
 
 fn aggregate_elems(expr: &Expr) -> Option<(AggregateKind, Vec<Expr>)> {
@@ -3171,26 +3062,6 @@ mod tests {
         );
         assert!(state.replayed_mutable_alias_base("r"));
         assert!(state.expr_for("p").is_none(), "block-local alias leaked");
-    }
-
-    #[test]
-    fn term_replay_updates_disjoint_element_alias() {
-        let mut state = TemporalRewriteState::default();
-        state.record_literal_value("v", syn::parse_quote!(vec![1, 2, 3]));
-        state.aliases.insert(
-            "a".to_string(),
-            alias_bound_result(AliasFloor::element("v", 2).bind()),
-        );
-        let lhs: Expr = syn::parse_quote!(*a);
-
-        assert!(state.apply_compound_assign_term(&lhs, BinOpKind::Add, int_term(10)));
-        assert_eq!(
-            state
-                .expr_for_index("v", 2)
-                .and_then(|expr| const_int(&expr)),
-            Some(13)
-        );
-        assert!(state.replayed_mutable_alias_base("v"));
     }
 
     #[test]

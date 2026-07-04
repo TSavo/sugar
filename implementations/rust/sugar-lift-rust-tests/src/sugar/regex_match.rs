@@ -406,10 +406,7 @@ fn regex_pattern_effect(
     error: sugar_ir_compiler_smt_lib::regex_regln::RegexError,
 ) -> Effect {
     let reason = regex_pattern_error_reason(&pattern, error);
-    Effect::RegexPattern {
-        boundary: pattern,
-        reason,
-    }
+    Effect::RegexPattern { reason }
 }
 
 fn regex_pattern_error_reason(

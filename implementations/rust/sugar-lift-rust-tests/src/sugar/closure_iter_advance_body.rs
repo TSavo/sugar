@@ -29,8 +29,6 @@ struct ClosureIterAdvanceBodySugar {
 
 impl Sugar for ClosureIterAdvanceBodySugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Incomplete(Effect::IterAdvance {
-            boundary: self.site.boundary().to_owned(),
-        })
+        Outcome::Incomplete(Effect::IterAdvance)
     }
 }

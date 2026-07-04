@@ -430,7 +430,6 @@ fn append_body_components(
                     Ok(())
                 }
                 None => Err(Outcome::Incomplete(Effect::LiteralDomain {
-                    boundary: "aggregate element".to_string(),
                     reason: "aggregate element: literal array element is not text-determined"
                         .to_string(),
                 })),

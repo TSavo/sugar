@@ -109,7 +109,6 @@ impl Sugar for LiteralSugar {
         // the generic backstop. PURE RECLASSIFICATION -- only declines are ever named.
         if let Some(reason) = classify_unwarrantable_literal(&self.base) {
             return Outcome::Incomplete(Effect::LiteralDomain {
-                boundary: token_key(&self.base),
                 reason: reason.to_string(),
             });
         }

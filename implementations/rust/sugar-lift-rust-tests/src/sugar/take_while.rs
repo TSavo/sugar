@@ -169,7 +169,6 @@ impl TakeWhileFloor {
 
 fn take_while_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::take_while".to_string(),
         reason: err.to_string(),
     })
 }

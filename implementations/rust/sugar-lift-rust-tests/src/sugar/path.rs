@@ -130,10 +130,7 @@ impl Sugar for PathSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match ctx.scope.path_name_str(&self.path_key) {
             Ok(name) => Outcome::Complete(Desugared::Term(make_var(name))),
-            Err(reason) => Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                boundary: self.boundary.clone(),
-                reason,
-            }),
+            Err(reason) => Outcome::Incomplete(Effect::AmbiguousTemporalIdentity { reason }),
         }
     }
 }

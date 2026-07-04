@@ -679,7 +679,6 @@ fn primitive_int_gap(reason: &str) -> ! {
 fn runtime_numeric_operand(term: &Rc<Term>) -> Option<Outcome> {
     numeric_floor_from_term(term).is_none().then(|| {
         Outcome::Incomplete(Effect::RuntimeNumericOperand {
-            boundary: canonical_term_sig(term),
             operation: String::new(),
             kind: String::new(),
         })

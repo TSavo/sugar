@@ -241,7 +241,6 @@ fn flat_map_gap(reason: &str) -> ! {
 
 fn flat_map_literal_domain(reason: &str) -> Outcome {
     Outcome::Incomplete(Effect::LiteralDomain {
-        boundary: "flat_map".to_string(),
         reason: reason.to_string(),
     })
 }

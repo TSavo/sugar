@@ -133,7 +133,7 @@ impl Sugar for StrMethodSugar {
                     StringMethodKind::ToUppercase | StringMethodKind::ToLowercase
                 ) && !recv.is_ascii()
                 {
-                    return Outcome::Incomplete(Effect::UnicodeStringCase { boundary: recv });
+                    return Outcome::Incomplete(Effect::UnicodeStringCase);
                 }
                 match self.compute_string_kind(kind, recv, ctx) {
                     Ok(value) => str_const(value),

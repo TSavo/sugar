@@ -898,21 +898,18 @@ fn format_value_from_term_floor(term: &Rc<Term>, owner: &str) -> FmtValue {
 
 fn runtime_format_argument_effect(boundary: &str) -> Effect {
     Effect::FormatArgument {
-        boundary: boundary.to_string(),
         reason: format!("runtime format argument `{boundary}`, not literal-determined; refused"),
     }
 }
 
 fn format_arithmetic_effect(reason: &str) -> Effect {
     Effect::FormatArgument {
-        boundary: "format integer arithmetic".to_string(),
         reason: reason.to_string(),
     }
 }
 
 fn format_pointer_effect(boundary: &str) -> Effect {
     Effect::FormatArgument {
-        boundary: boundary.to_string(),
         reason: format!("format pointer address `{boundary}` is runtime address identity; refused"),
     }
 }

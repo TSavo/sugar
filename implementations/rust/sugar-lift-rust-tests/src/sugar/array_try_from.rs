@@ -107,7 +107,6 @@ impl Sugar for ArrayTryFromSugar {
         for elem in seq {
             let Some(term) = elem.value.as_ref().and_then(const_val_term) else {
                 return Outcome::Incomplete(Effect::LiteralDomain {
-                    boundary: self.site.clone(),
                     reason: "array TryFrom source element not literal-determined".to_string(),
                 });
             };
