@@ -1,16 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
-    FactoryGapInfo,
-    GapKind,
-    GapLocus,
-)
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import BoolValue, DictLiteralValue, FloorValue
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.ir import Term
@@ -93,14 +86,14 @@ class DictCompSugar(Sugar, role=SugarRole.TERM):
 
     def desugar(self, ctx) -> Outcome:
         if isinstance(self.plan, _RuntimeDictComp):
-            _runtime_iterable_refusal(self.blame, self.plan.reason)
+            return _runtime_iterable_effect(self.blame, self.plan.reason)
         iterable_outcome = self.plan.iterable.reduce(ctx)
         if isinstance(iterable_outcome, Incomplete):
             return iterable_outcome
         iterable = complete_value(iterable_outcome, owner="DictCompSugar iterable")
         items = _finite_items(iterable)
         if items is None:
-            _runtime_iterable_refusal(
+            return _runtime_iterable_effect(
                 self.blame,
                 f"dict comprehension iterable reduced to {type(iterable).__name__}, "
                 "not a finite literal sequence",
@@ -182,39 +175,23 @@ def _guards_pass(
             return outcome
         value = complete_value(outcome, owner=f"{label.title()}CompSugar guard")
         if not isinstance(value, BoolValue):
-            _runtime_iterable_refusal(
+            return _runtime_iterable_effect(
                 blame,
                 f"{label} comprehension guard reduced to {type(value).__name__}, "
-                "not BoolValue",
+                "guard truthiness for non-bool floors is runtime here; "
+                "narrower truthiness dispatch may own this later",
             )
         if not value.value:
             return False
     return True
 
 
-def _runtime_iterable_refusal(blame: str, reason: str) -> NoReturn:
-    message = (
-        "dict comprehension runtime iterable: "
-        f"{reason}. Python dict comprehensions evaluate the iterable and guards "
-        "at runtime; use a literal finite domain for reduction or add a "
-        "runtime/effect recognizer for this shape."
+def _runtime_iterable_effect(blame: str, reason: str) -> Incomplete:
+    return Incomplete(
+        RuntimeEffect(
+            "dict comprehension runtime boundary: "
+            f"{reason}. Python evaluates the iterable/guards at runtime; keep "
+            "as typed red until a narrower vendor-cited reduction owns the "
+            f"shape. blame={blame}"
+        )
     )
-    info = FactoryGapInfo(
-        owner="DictCompSugar",
-        blame=blame,
-        observed="DictComp.runtime_iterable",
-        requested="literal finite domain",
-        fix=message,
-        gap_kind=GapKind.SUGAR,
-        gap_locus=GapLocus.CONSTRUCTION,
-    )
-    audit = FactoryAuditRow(
-        role="term",
-        status="refused",
-        observed=info.observed,
-        blame=blame,
-        selected="DictCompSugar",
-        candidates=["DictCompSugar"],
-        message=info.message,
-    )
-    raise FactoryGap(info, audit)

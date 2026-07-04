@@ -3,15 +3,15 @@ from __future__ import annotations
 import ast
 from dataclasses import replace
 
-import pytest
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.floor import DictLiteralValue, SetLiteralValue, SymbolicValue
 from sugar_lift_py_tests.ir import make_var, num
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -110,7 +110,7 @@ def test_comprehension_cardinality_bad_twins_refute(tmp_path) -> None:
     assert "SetSugar" in set_literal_lie.selected_sugars
 
 
-def test_comprehension_runtime_iterables_refuse() -> None:
+def test_comprehension_runtime_iterables_are_typed_runtime_effects() -> None:
     reduce_ctx = ReduceContext.root(owner="comprehension-test")
     reduce_ctx = replace(
         reduce_ctx,
@@ -119,20 +119,21 @@ def test_comprehension_runtime_iterables_refuse() -> None:
         ),
     )
 
-    for source, observed, selected in (
-        ("{x: x for x in items}", "DictComp.runtime_iterable", "DictCompSugar"),
-        ("{x for x in items}", "SetComp.runtime_iterable", "SetCompSugar"),
+    for source, label in (
+        ("{x: x for x in items}", "dict comprehension runtime boundary"),
+        ("{x for x in items}", "set comprehension runtime boundary"),
     ):
         ctx = FactoryBuildContext(filename="comprehension.py", catalog=default_catalog())
         body = ctx.build_body(ast.parse(source, mode="eval").body, SugarRole.TERM)
 
-        with pytest.raises(FactoryGap) as raised:
-            body.reduce(reduce_ctx)
+        outcome = body.reduce(reduce_ctx)
 
-        assert raised.value.audit_row.status == "refused"
-        assert raised.value.audit_row.selected == selected
-        assert raised.value.info["observed"] == observed
-        assert "literal finite domain" in raised.value.info["fix"]
+        assert isinstance(outcome, Incomplete)
+        assert isinstance(outcome.effect, RuntimeEffect)
+        assert label in outcome.effect.reason
+        assert "runtime iterable `Name`" in outcome.effect.reason
+        assert "typed red" in outcome.effect.reason
+        assert "blame=" in outcome.effect.reason
 
 
 def test_comprehension_factory_selects_shape_recognizers() -> None:

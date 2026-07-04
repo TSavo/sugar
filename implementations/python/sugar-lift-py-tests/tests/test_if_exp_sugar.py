@@ -11,6 +11,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Incomplete
@@ -97,3 +98,23 @@ def test_ifexp_factory_selects_shape_recognizer() -> None:
 
     assert result.audit_row.selected == "IfExpSugar"
     assert result.audit_row.status == "selected"
+
+
+def test_callsite_literal_ifexp_runtime_effect_emits_effect_payload() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def f(x):\n"
+            "    return x\n"
+            "\n"
+            "def test_value(flag):\n"
+            "    assert f(1) == ('abc' if flag > 0 else 'def')[0]\n"
+        ),
+        filename="if_exp_callsite.py",
+        memento_file="if_exp_callsite.py",
+    )
+
+    assert report is not None
+    assert len(report.payload.effects) == 1
+    effect = report.payload.effects[0].effect
+    assert isinstance(effect, RuntimeEffect)
+    assert "conditional expression runtime boundary" in effect.reason
