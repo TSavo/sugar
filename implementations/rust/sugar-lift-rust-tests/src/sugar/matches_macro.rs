@@ -12,7 +12,7 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     callsite_assertion_name, lit_membership_term, strict_variant_path, token_key,
-    AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
+    AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, eq, str_const, Formula, Term};
 use syn::parse::{ParseStream, Parser};
@@ -78,11 +78,10 @@ impl Sugar for MatchesMacroSugar {
             Err(outcome) => return outcome,
         };
         let Some(atom) = pattern_atom(&subject, &self.pattern) else {
-            matches_macro_gap(&format!(
-                "matches! pattern is not an unambiguous qualified variant \
-                 (binding/wildcard/single-segment/or-pattern): `{}`",
-                self.site
-            ));
+            return Outcome::Incomplete(Effect::UnencodedMacroPattern {
+                macro_name: "matches".to_string(),
+                boundary: self.site.clone(),
+            });
         };
         constraint(
             atom,
@@ -222,4 +221,80 @@ fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>,
 
 fn matches_macro_gap(reason: &str) -> ! {
     panic!("matches_macro did not reach a lawful floor: {reason}")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use syn::{parse_quote, Expr};
+
+    use super::*;
+    use crate::{
+        refusal_disposition, sugar_ctx, Disposition, FloatWidthScope, LiftOptions, ReductionCtx,
+        TemporalPlan, TemporalScope,
+    };
+
+    fn run(expr: &Expr) -> Outcome {
+        let scope = TemporalScope::new("matches-macro-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let frag = SourceFragment::expr(expr, "<src>");
+        let node = recognize(&frag, &fcx).expect("matches! is owned by matches_macro");
+        let items = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+        node.desugar(&ctx)
+    }
+
+    #[test]
+    fn qualified_variant_pattern_still_completes() {
+        let expr: Expr = parse_quote!(matches!(status, Status::Ready));
+        match run(&expr) {
+            Outcome::Complete(Desugared::Constraints { .. }) => {}
+            _ => panic!("qualified variant pattern must complete"),
+        }
+    }
+
+    #[test]
+    fn literal_or_pattern_is_typed_macro_pattern_effect() {
+        let expr: Expr = parse_quote!(matches!(name, ".git" | "target"));
+        let Outcome::Incomplete(Effect::UnencodedMacroPattern {
+            macro_name,
+            boundary,
+        }) = run(&expr)
+        else {
+            panic!("literal or-pattern must be a typed matches! pattern effect")
+        };
+        assert_eq!(macro_name, "matches");
+        assert!(
+            boundary.contains("\".git\""),
+            "boundary names pattern: {boundary}"
+        );
+        let reason = (Effect::UnencodedMacroPattern {
+            macro_name,
+            boundary,
+        })
+        .reason();
+        assert_eq!(refusal_disposition(&reason), Disposition::TerminalEffect);
+    }
+
+    #[test]
+    fn binding_pattern_is_not_swallowed_as_qualified_variant() {
+        let expr: Expr = parse_quote!(matches!(name, value));
+        let Outcome::Incomplete(Effect::UnencodedMacroPattern {
+            macro_name,
+            boundary,
+        }) = run(&expr)
+        else {
+            panic!("binding-style pattern must not be treated as a variant")
+        };
+        assert_eq!(macro_name, "matches");
+        assert!(
+            boundary.contains("value"),
+            "boundary carries the unsupported binding pattern: {boundary}"
+        );
+    }
 }

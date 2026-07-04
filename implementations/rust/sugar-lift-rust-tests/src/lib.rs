@@ -400,6 +400,7 @@ pub type FactoryAuditLog = RefCell<Vec<FactoryAudit>>;
 #[derive(Debug, Clone)]
 pub struct LiftOptions {
     pub target_cfg: Option<TargetCfg>,
+    package_env: BTreeMap<String, String>,
     panic_freedom: bool,
 }
 
@@ -407,6 +408,7 @@ impl Default for LiftOptions {
     fn default() -> Self {
         Self {
             target_cfg: None,
+            package_env: BTreeMap::new(),
             panic_freedom: true,
         }
     }
@@ -416,8 +418,18 @@ impl LiftOptions {
     pub fn for_target_cfg(target_cfg: TargetCfg) -> Self {
         Self {
             target_cfg: Some(target_cfg),
+            package_env: BTreeMap::new(),
             panic_freedom: true,
         }
+    }
+
+    pub fn with_package_env(mut self, package_env: BTreeMap<String, String>) -> Self {
+        self.package_env = package_env;
+        self
+    }
+
+    pub(crate) fn package_env_value(&self, key: &str) -> Option<&str> {
+        self.package_env.get(key).map(String::as_str)
     }
 
     fn without_panic_freedom(mut self) -> Self {
@@ -542,9 +554,9 @@ pub enum Disposition {
 /// shapes, which are terminal below), `reachable only via call-site
 /// inlining` for a CONCRETE scalar/slice helper (call queueing -- a closed-literal
 /// call site CAN pin it), `bin-1` literal domains, let-init/nested/unenumerated
-/// positions, unsupported macros (incl. `no rule matched` when the matcher SHOULD match
+/// positions, unsupported macros with visible source (incl. `no rule matched` when the matcher SHOULD match
 /// but our matcher's grammar coverage missed it -- a fixable matcher gap, not a non-match),
-/// `has no visible source` (the helper's body may be
+/// helper `has no visible source` (the helper's body may be
 /// loadable by better resolution -- e.g. a fn-local helper nested in a `#[test]` fn
 /// the reducer does not yet register, so it is reach, not a source property), and
 /// `ambiguous cfg` (a missing target input, recoverable by pinning the cfg).
@@ -730,6 +742,14 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // TERMINAL: builtin `panic!` diverges by unwinding/aborting. It has no source-visible
         // macro_rules body here and no returned value floor to hand upward.
         || reason.contains("panic! macro divergence")
+        // TERMINAL: a term-position macro invocation has no visible macro_rules body and
+        // no typed builtin authority. Guessing the expansion would be vendor semantics
+        // authored by the lift; visible macro_rules bodies still expand first.
+        || reason.contains("opaque macro expansion")
+        // TERMINAL: matches! is a compiler macro over Rust pattern semantics. The matches
+        // sugar owns only the cited qualified-variant/literal-payload subset; other pattern
+        // shapes are named instead of simulated.
+        || reason.contains("unsupported matches! pattern")
         // TERMINAL: the asserted value flows through OPAQUE COMPILE-TIME REFLECTION
         // (`Type::of::<T>()` / `TypeId::of::<T>()` read through `.kind` + a `match` arm).
         // A `TypeId` is a target/compiler-determined identity, not a value constructed
@@ -9189,6 +9209,20 @@ enum Effect {
     /// available when the future is driven/awaited. The macro has no source-visible
     /// `macro_rules!` body here, and its output is not a timeless source value.
     FutureJoin { boundary: String },
+    /// OPAQUE-MACRO-EXPANSION: a term-position macro invocation has no visible
+    /// `macro_rules!` body and no typed builtin authority. The lift must not invent vendor
+    /// expansion semantics; visible source macros still route through the registry first.
+    OpaqueMacroExpansion {
+        macro_name: String,
+        boundary: String,
+    },
+    /// UNENCODED-MACRO-PATTERN: `matches!` owns only the explicitly modeled
+    /// qualified-variant/literal-payload subset. Other pattern shapes are compiler matcher
+    /// semantics, not an atom the lift can guess.
+    UnencodedMacroPattern {
+        macro_name: String,
+        boundary: String,
+    },
     /// PANIC-MACRO: builtin `panic!` diverges by unwinding or aborting at runtime. There is
     /// no source-visible `macro_rules!` body here and no returned value floor to hand upward.
     PanicMacro { boundary: String },
@@ -9459,6 +9493,24 @@ impl Effect {
                 "join! future construction `{boundary}`: std future join constructs a runtime \
                  future whose output is produced only when driven or awaited; no single timeless \
                  source value is available here; refused"
+            ),
+            Effect::OpaqueMacroExpansion {
+                macro_name,
+                boundary,
+            } => format!(
+                "opaque macro expansion `{macro_name}!` at `{boundary}`: no visible macro_rules \
+                 source or typed builtin expansion authority; owner=rust.macro_term; \
+                 shape=macro-term; replacement=register the source macro_rules body or add cited \
+                 builtin macro sugar"
+            ),
+            Effect::UnencodedMacroPattern {
+                macro_name,
+                boundary,
+            } => format!(
+                "unsupported {macro_name}! pattern at `{boundary}`: pattern is not an \
+                 unambiguous qualified variant or modeled literal payload; \
+                 owner=rust.matches_macro; shape=matches-pattern; replacement=qualify a variant \
+                 pattern or add cited pattern sugar"
             ),
             Effect::PanicMacro { boundary } => format!(
                 "panic! macro divergence `{boundary}`: builtin panic! diverges by unwinding or \
