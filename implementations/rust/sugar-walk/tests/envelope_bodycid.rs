@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sugar_canonicalizer::blake3_512_of;
+use sugar_canonicalizer::{blake3_512_of, cid_hex};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ClaimContractMemento, ProofEnvelopeInput,
     ProofGraph,
@@ -53,10 +53,7 @@ fn write_proof(dir: &Path, graph: ProofGraph) {
         signer_seed: DEV_SIGNER_SEED,
         declared_at: "2026-07-01T00:00:00Z".to_string(),
     });
-    let hex = proof
-        .cid
-        .strip_prefix("blake3-512:")
-        .expect("proof cid prefix");
+    let hex = cid_hex(&proof.cid).expect("proof cid prefix");
     fs::write(dir.join(format!("{hex}.proof")), proof.bytes).expect("write proof");
 }
 

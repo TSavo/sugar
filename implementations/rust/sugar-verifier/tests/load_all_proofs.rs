@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, jcs_cid_of_json, Value as CValue};
 use sugar_claim_envelope::{mint_bridge, MintBridgeArgs, MintedEnvelope};
 use sugar_ir_symbolic::{forall, gt, must, num, reset_collector, Int};
 use sugar_proof_envelope::{
@@ -87,7 +87,7 @@ fn write_minimal_member_proof(dir: &Path, member_cid: &str, member_bytes: &[u8])
     cbor_encode_bstr(&mut proof_bytes, member_bytes);
 
     let proof_cid = blake3_512_of(&proof_bytes);
-    let hex = proof_cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&proof_cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &proof_bytes).expect("write proof");
     proof_cid
 }
@@ -164,7 +164,7 @@ fn publish_parseint_proof(dir: &Path) -> String {
         declared_at: declared_at.into(),
     };
     let built = build_proof_envelope(&input);
-    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&built.cid).unwrap();
     let path = dir.join(format!("{hex}.proof"));
     fs::write(&path, &built.bytes).expect("write proof");
     built.cid
@@ -213,7 +213,7 @@ fn publish_parseint_proof_with_target_proof_cid(dir: &Path, target_proof_cid: St
         declared_at: declared_at.into(),
     };
     let built = build_proof_envelope(&input);
-    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&built.cid).unwrap();
     let path = dir.join(format!("{hex}.proof"));
     fs::write(&path, &built.bytes).expect("write proof");
     built.cid
@@ -293,7 +293,7 @@ fn catalog_graph_sections_load_flat_atoms_and_pointer_bodies_by_cid() {
         signer_seed,
         declared_at: "2026-04-30T00:00:00.000Z".into(),
     });
-    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&built.cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write");
 
     let pool = load_all_proofs::run(&dir);
@@ -420,7 +420,7 @@ fn unsigned_member_still_loads() {
 
 #[test]
 fn loads_colon_free_underscore_filename() {
-    use sugar_proof_envelope::proof_filename;
+    use sugar_proof_envelope::{cid_from_proof_stem, proof_filename};
 
     let dir = make_unique_dir("colon-free-filename");
     let cid = publish_parseint_proof(&dir);
@@ -439,9 +439,13 @@ fn loads_colon_free_underscore_filename() {
         !underscore_name.contains(':'),
         "on-disk filename must be colon-free for Windows: {underscore_name}"
     );
-    assert!(
-        underscore_name.starts_with("blake3-512_"),
-        "on-disk filename must retain the blake3-512_ prefix: {underscore_name}"
+    let underscore_stem = underscore_name
+        .strip_suffix(".proof")
+        .expect("proof filename suffix");
+    assert_eq!(
+        cid_from_proof_stem(underscore_stem).as_deref(),
+        Some(cid.as_str()),
+        "on-disk filename must retain the proof-stem CID: {underscore_name}"
     );
     let renamed = dir.join(&underscore_name);
     fs::rename(&original, &renamed).unwrap();
@@ -592,7 +596,7 @@ fn garbage_proof_file_with_correct_filename_lands_in_load_errors() {
     let dir = make_unique_dir("garbage");
     let bogus = b"this is not CBOR".to_vec();
     let cid = blake3_512_of(&bogus);
-    let hex = cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &bogus).expect("write");
 
     let pool = load_all_proofs::run(&dir);
@@ -634,7 +638,7 @@ fn multiple_proofs_in_one_dir_all_loaded() {
         signer_seed,
         declared_at: declared_at.into(),
     });
-    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&built.cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write");
 
     let pool = load_all_proofs::run(&dir);

@@ -47,7 +47,7 @@ use libsugar::core::{
     HashMapInputCatalog, Input, InputCatalog, Kit, KitError, Path as CorePath, PathAlgebra,
     PathDocument, Term, Verb, Verdict,
 };
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, Value as CValue};
 use sugar_claim_envelope::{
     body_discharge_policy_from_fields, compute_contract_set_cid, contract_cid, mint_authority,
     mint_bridge, mint_contract_with_body_cid, mint_implication, Authoring,
@@ -4155,9 +4155,7 @@ fn emit_witnesses_by_contract(
 
 fn deterministic_signer_seed(principal: &str) -> Ed25519Seed {
     let digest = blake3_512_of(format!("sugar-signer:{principal}").as_bytes());
-    let hex = digest
-        .strip_prefix("blake3-512:")
-        .expect("blake3_512_of returns tagged digest");
+    let hex = cid_hex(&digest).expect("blake3_512_of returns tagged digest");
     let mut seed = [0u8; 32];
     for (idx, slot) in seed.iter_mut().enumerate() {
         let hi = hex_nibble(hex.as_bytes()[idx * 2]);

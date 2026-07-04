@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, Value as CValue};
 use sugar_claim_envelope::{
     mint_bridge, mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
     MintedEnvelope,
@@ -120,7 +120,7 @@ fn write_proof(dir: &Path, name: &str, graph: ProofGraph) -> String {
         signer_seed,
         declared_at: "2026-05-29T00:00:00.000Z".into(),
     });
-    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&built.cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");
     built.cid
 }

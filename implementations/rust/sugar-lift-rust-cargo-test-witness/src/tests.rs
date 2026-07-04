@@ -349,8 +349,12 @@ fn anti_tamper_refuses_before_running_when_memento_does_not_reconstruct() {
 
 #[test]
 fn cid_filename_replaces_colon_with_underscore() {
+    let proof_name = sugar_proof_envelope::proof_filename("blake3-512:abc");
+    let proof_stem = proof_name
+        .strip_suffix(".proof")
+        .expect("proof filename suffix");
     assert_eq!(
         cid_filename("blake3-512:abc", ".witness"),
-        "blake3-512_abc.witness"
+        format!("{proof_stem}.witness")
     );
 }

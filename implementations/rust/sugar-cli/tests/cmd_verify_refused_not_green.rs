@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, Value as CValue};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, member_field, ContractBody, ContractMemento,
     Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
@@ -167,7 +167,7 @@ fn publish_inv_project(suffix: &str, solver_fixture: SolverFixture) -> PathBuf {
         signer_seed,
         declared_at: declared_at.into(),
     });
-    let hex = built.cid.strip_prefix("blake3-512:").expect("cid prefix");
+    let hex = cid_hex(&built.cid).expect("cid prefix");
     fs::write(proof_dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");
     dir
 }

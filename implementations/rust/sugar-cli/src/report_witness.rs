@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, Value as CValue};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, proof_filename, Ed25519Seed,
     MementoCid, ProofEnvelopeInput, ProofGraph, WitnessMemento,
@@ -591,7 +591,7 @@ fn collect_cid_strings_inner(
     out: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     match value {
-        Json::String(s) if s.strip_prefix("blake3-512:").is_some() => {
+        Json::String(s) if cid_hex(s).is_some() => {
             out.insert(parse_memento_cid(path, s)?.to_string());
         }
         Json::Array(items) => {

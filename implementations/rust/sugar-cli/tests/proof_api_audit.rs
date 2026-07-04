@@ -49,6 +49,29 @@ fn rust_sources(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+fn all_rust_sources(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name == "target" || name == ".git" {
+                    continue;
+                }
+                stack.push(p);
+            } else if p.extension().and_then(|x| x.to_str()) == Some("rs") {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
 /// Classify a source line as an api-bypass offender on the member axis.
 /// The decode axis is compiler-enforced (cbor_decode::decode is pub(crate));
 /// only the stringly member-shape patterns still require grep.
@@ -89,6 +112,83 @@ struct ExpectedRawPoolMemberOffender {
 }
 
 const EXPECTED_RAW_POOL_MEMBER_ACCESS: &[ExpectedRawPoolMemberOffender] = &[];
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct HandRolledCidParserOffender {
+    path: String,
+    line: usize,
+    axis: &'static str,
+    text: String,
+}
+
+#[derive(Debug, Clone)]
+struct ExpectedHandRolledCidParserOffender {
+    path: &'static str,
+    line: usize,
+    axis: &'static str,
+    owner: &'static str,
+    replacement: &'static str,
+    needle: &'static str,
+}
+
+const EXPECTED_HAND_ROLLED_CID_PARSERS: &[ExpectedHandRolledCidParserOffender] = &[];
+
+fn hand_rolled_cid_parser_axis(line: &str) -> Option<&'static str> {
+    let t = line.trim();
+    if t.starts_with("//") || t.starts_with('*') || t.starts_with("//!") {
+        return None;
+    }
+    if t.contains(".strip_prefix(\"blake3-512") || t.contains(".strip_prefix(BLAKE3_512_PREFIX") {
+        return Some("colon-prefix-strip");
+    }
+    if (t.contains(".starts_with(\"blake3-512_")
+        || t.contains(".strip_prefix(\"blake3-512_")
+        || t.contains(".contains(\"blake3-512_"))
+        && !t.contains("format!(\"blake3-512_")
+    {
+        return Some("filename-stem-prefix");
+    }
+    if (t.contains("len() == 128") || t.contains("len() != 128")) && t.contains("is_ascii_hexdigit")
+    {
+        return Some("cid-hex-validation");
+    }
+    None
+}
+
+fn is_cid_parser_owner(rel: &str) -> bool {
+    rel == "sugar-canonicalizer/src/hash.rs"
+        || rel == "sugar-proof-envelope/src/filename.rs"
+        || rel == "sugar-cli/tests/proof_api_audit.rs"
+}
+
+fn scan_hand_rolled_cid_parsers(workspace: &Path) -> Vec<HandRolledCidParserOffender> {
+    let mut offenders = Vec::new();
+    for path in all_rust_sources(workspace) {
+        let rel = path
+            .strip_prefix(workspace)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if is_cid_parser_owner(&rel) {
+            continue;
+        }
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for (i, line) in src.lines().enumerate() {
+            if let Some(axis) = hand_rolled_cid_parser_axis(line) {
+                offenders.push(HandRolledCidParserOffender {
+                    path: rel.clone(),
+                    line: i + 1,
+                    axis,
+                    text: line.trim().to_string(),
+                });
+            }
+        }
+    }
+    offenders.sort();
+    offenders
+}
 
 fn is_production_source(rel: &str) -> bool {
     rel.contains("/src/") && !rel.contains("/tests/")
@@ -351,6 +451,112 @@ fn raw_pool_member_access_frontier_is_pinned() {
         per_owner
     );
     for row in EXPECTED_RAW_POOL_MEMBER_ACCESS {
+        eprintln!(
+            "  {}:{} [{}] owner={} replacement={} needle={}",
+            row.path, row.line, row.axis, row.owner, row.replacement, row.needle
+        );
+    }
+}
+
+#[test]
+fn hand_rolled_cid_parsers_are_zero_or_pinned() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .to_path_buf();
+
+    let actual = scan_hand_rolled_cid_parsers(&workspace);
+    let expected_keys: BTreeSet<_> = EXPECTED_HAND_ROLLED_CID_PARSERS
+        .iter()
+        .map(|row| (row.path.to_string(), row.line, row.axis))
+        .collect();
+    let actual_keys: BTreeSet<_> = actual
+        .iter()
+        .map(|row| (row.path.clone(), row.line, row.axis))
+        .collect();
+
+    let missing: Vec<_> = expected_keys.difference(&actual_keys).cloned().collect();
+    let unexpected: Vec<_> = actual_keys.difference(&expected_keys).cloned().collect();
+    let mut bad_needles = Vec::new();
+    for expected in EXPECTED_HAND_ROLLED_CID_PARSERS {
+        if let Some(row) = actual.iter().find(|row| {
+            row.path == expected.path && row.line == expected.line && row.axis == expected.axis
+        }) {
+            if !row.text.contains(expected.needle) {
+                bad_needles.push((
+                    expected.path,
+                    expected.line,
+                    expected.needle,
+                    row.text.clone(),
+                ));
+            }
+        }
+    }
+
+    if !missing.is_empty() || !unexpected.is_empty() || !bad_needles.is_empty() {
+        let mut report = String::new();
+        report.push_str(&format!(
+            "\nR(hand-rolled-cid-parsers) = {} measured offenders; pinned R = {}.\n\
+             CID format knowledge has two owners only: \
+             sugar_canonicalizer::cid_hex for in-memory colon-form CIDs, \
+             sugar_proof_envelope::cid_from_proof_stem for proof filename stems.\n\
+             Replacement: colon-prefix-strip/cid-hex-validation -> cid_hex; \
+             filename-stem-prefix -> cid_from_proof_stem.\n\n",
+            actual.len(),
+            EXPECTED_HAND_ROLLED_CID_PARSERS.len()
+        ));
+        if !unexpected.is_empty() {
+            report.push_str("Unexpected offenders:\n");
+            for (path, line, axis) in &unexpected {
+                let text = actual
+                    .iter()
+                    .find(|row| row.path == *path && row.line == *line && row.axis == *axis)
+                    .map(|row| row.text.as_str())
+                    .unwrap_or("");
+                report.push_str(&format!("  {path}:{line} [{axis}] {text}\n"));
+            }
+            report.push('\n');
+        }
+        if !missing.is_empty() {
+            report.push_str("Missing pinned offenders:\n");
+            for (path, line, axis) in &missing {
+                report.push_str(&format!("  {path}:{line} [{axis}]\n"));
+            }
+            report.push('\n');
+        }
+        if !bad_needles.is_empty() {
+            report.push_str("Pinned offenders whose line text changed:\n");
+            for (path, line, needle, text) in &bad_needles {
+                report.push_str(&format!(
+                    "  {path}:{line} expected to contain `{needle}`, saw `{text}`\n"
+                ));
+            }
+            report.push('\n');
+        }
+        report.push_str("Measured frontier by file:\n");
+        let mut per_file: BTreeMap<&str, Vec<&HandRolledCidParserOffender>> = BTreeMap::new();
+        for offender in &actual {
+            per_file.entry(&offender.path).or_default().push(offender);
+        }
+        for (path, rows) in per_file {
+            report.push_str(&format!("  {path}  R={}\n", rows.len()));
+            for row in rows {
+                report.push_str(&format!("      {} [{}] {}\n", row.line, row.axis, row.text));
+            }
+        }
+        panic!("{report}");
+    }
+
+    let mut per_owner: BTreeMap<&str, usize> = BTreeMap::new();
+    for row in EXPECTED_HAND_ROLLED_CID_PARSERS {
+        *per_owner.entry(row.owner).or_default() += 1;
+    }
+    eprintln!(
+        "R(hand-rolled-cid-parsers) = {} pinned offenders by owner: {:?}",
+        EXPECTED_HAND_ROLLED_CID_PARSERS.len(),
+        per_owner
+    );
+    for row in EXPECTED_HAND_ROLLED_CID_PARSERS {
         eprintln!(
             "  {}:{} [{}] owner={} replacement={} needle={}",
             row.path, row.line, row.axis, row.owner, row.replacement, row.needle

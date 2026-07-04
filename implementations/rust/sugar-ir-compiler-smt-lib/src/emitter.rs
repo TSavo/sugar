@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, Value as CValue};
 use sugar_ir_compiler::{CompileError, CompiledFormula, FreeVar, OpacityEntry, OpacityManifest};
 use sugar_ir_types::*;
 
@@ -1519,7 +1519,7 @@ fn identity_const_name_suffix(value: &serde_json::Value, sort_name: &str) -> Str
             .as_bytes(),
     );
     let full = blake3_512_of(&bytes);
-    let hex_part = full.strip_prefix("blake3-512:").unwrap_or(&full);
+    let hex_part = cid_hex(&full).unwrap_or(&full);
     let short: String = hex_part
         .chars()
         .filter(|c| c.is_ascii_hexdigit())

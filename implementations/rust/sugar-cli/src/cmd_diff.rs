@@ -1329,7 +1329,7 @@ mod tests {
             signer_seed,
             declared_at: "2026-04-30T00:00:00.000Z".into(),
         });
-        let hex = built.cid.strip_prefix("blake3-512:").unwrap_or(&built.cid);
+        let hex = sugar_canonicalizer::cid_hex(&built.cid).unwrap_or(&built.cid);
         assert!(!hex.contains(':'), "proof filename stem must be colon-free");
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");

@@ -35,7 +35,7 @@ fn emit(ir: &Json) -> Result<String, String> {
 // encoding. Kept self-contained (the production helper is module-private).
 fn legacy_string_lit_name(s: &str) -> String {
     let full = sugar_canonicalizer::blake3_512_of(s.as_bytes());
-    let hex_part = full.strip_prefix("blake3-512:").unwrap_or(&full);
+    let hex_part = sugar_canonicalizer::cid_hex(&full).unwrap_or(&full);
     let prefix: String = hex_part
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
