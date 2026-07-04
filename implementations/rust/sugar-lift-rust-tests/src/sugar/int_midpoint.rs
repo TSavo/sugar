@@ -16,7 +16,7 @@ use crate::sugar::int_literal::{
     numeric_floor_from_term, primitive_int_kind, IntKind, MidpointVisitor,
 };
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{canonical_term_sig, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "int_midpoint",
@@ -91,11 +91,11 @@ impl Sugar for IntMidpointSugar {
         };
         let lhs_floor = match numeric_floor_from_term(&lhs) {
             Some(floor) => floor,
-            None => return runtime_midpoint_operand(&lhs, self.kind),
+            None => return runtime_midpoint_operand(self.kind),
         };
         let rhs_floor = match numeric_floor_from_term(&rhs) {
             Some(floor) => floor,
-            None => return runtime_midpoint_operand(&rhs, self.kind),
+            None => return runtime_midpoint_operand(self.kind),
         };
         let Some(result) = lhs_floor.accept(MidpointVisitor {
             rhs: rhs_floor,
@@ -120,7 +120,7 @@ impl Sugar for IntMidpointSugar {
     }
 }
 
-fn runtime_midpoint_operand(term: &Rc<Term>, kind: IntKind) -> Outcome {
+fn runtime_midpoint_operand(kind: IntKind) -> Outcome {
     Outcome::Incomplete(Effect::RuntimeNumericOperand {
         operation: "midpoint".to_string(),
         kind: kind.name.to_string(),

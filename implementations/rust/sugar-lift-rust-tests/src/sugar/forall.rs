@@ -469,10 +469,6 @@ impl ForAllSugar {
         })
     }
 
-    fn body_boundary(&self, ctx: &SugarCtx) -> String {
-        format!("{}::{}::{}", ctx.scope.local_scope(), self.kind, self.var)
-    }
-
     fn runtime_domain_effect(&self, ctx: &SugarCtx) -> Option<Effect> {
         let reason = match &self.domain {
             ForAllDomain::Runtime(ForAllRuntimeDomain::OpaqueCollection) => Some(

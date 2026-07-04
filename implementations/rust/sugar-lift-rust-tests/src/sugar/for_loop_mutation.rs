@@ -22,13 +22,11 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
 );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let boundary = frag.for_loop_mutation_boundary(fcx)?;
-    Some(Box::new(ForLoopMutationSugar { boundary }))
+    frag.for_loop_mutation_boundary(fcx)?;
+    Some(Box::new(ForLoopMutationSugar))
 }
 
-struct ForLoopMutationSugar {
-    boundary: String,
-}
+struct ForLoopMutationSugar;
 
 impl Sugar for ForLoopMutationSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {

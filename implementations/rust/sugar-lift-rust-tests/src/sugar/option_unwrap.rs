@@ -56,14 +56,12 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     Some(Box::new(OptionUnwrapSugar {
         method,
         receiver: SugarBody::term_frag(&receiver_frag, fcx),
-        site_key: frag.token_str(),
     }))
 }
 
 struct OptionUnwrapSugar {
     method: String,
     receiver: SugarBody<TermFloor>,
-    site_key: String,
 }
 
 impl Sugar for OptionUnwrapSugar {
@@ -80,7 +78,6 @@ impl Sugar for OptionUnwrapSugar {
         };
         receiver.accept_monadic_floor(UnwrapVisitor {
             method: &self.method,
-            site_key: &self.site_key,
         })
     }
 
@@ -91,7 +88,6 @@ impl Sugar for OptionUnwrapSugar {
 
 struct UnwrapVisitor<'a> {
     method: &'a str,
-    site_key: &'a str,
 }
 
 impl MonadicFloorVisitor for UnwrapVisitor<'_> {

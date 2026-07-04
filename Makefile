@@ -22,6 +22,7 @@ PYTHON := $(shell command -v '$(PYTHON)' 2>/dev/null || printf '%s\n' '$(PYTHON)
 LOCAL_BIN ?= /tmp/sugar-local-bin
 BCARGO ?= $(CURDIR)/bin/bcargo
 CARGO_LOCAL ?= cargo
+RUSTFLAGS ?= -D warnings
 PYTHON_KIT_VENV ?= /tmp/sugar-python-kit-env
 PYTHON_KIT_BIN := $(PYTHON_KIT_VENV)/bin
 PYTHON_KIT := $(PYTHON_KIT_BIN)/python
@@ -52,6 +53,7 @@ endif
 BCARGO_ACTIVE := $(filter bcargo,$(notdir $(firstword $(CARGO))))
 CARGO_SYNC_BINS = $(if $(BCARGO_ACTIVE),$(CARGO) $(foreach bin,$(1),--sync-bin $(bin)),$(CARGO))
 export PATH := $(LOCAL_BIN):$(PATH)
+export RUSTFLAGS
 
 .PHONY: help
 help:

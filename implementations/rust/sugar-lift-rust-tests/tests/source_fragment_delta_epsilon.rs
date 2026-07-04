@@ -92,9 +92,9 @@ fn expected_frontier_counts() -> BTreeMap<&'static str, (usize, usize)> {
         // source_fragment_escape_accessor moving 94 files / 151 lines ->
         // 95 files / 154 lines. The related raw AST signature / variant
         // growth below is the same new lift footprint, not silent drift.
-        ("raw_ast_signature", (142, 1139)),
-        ("raw_ast_variant_pattern", (117, 1957)),
-        ("raw_syn_import", (123, 123)),
+        ("raw_ast_signature", (141, 1110)),
+        ("raw_ast_variant_pattern", (114, 1925)),
+        ("raw_syn_import", (120, 120)),
         ("source_fragment_escape_accessor", (95, 154)),
     ])
 }

@@ -97,11 +97,9 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         }
     }
 
-    // General path: capture the path key and boundary string from the fragment.
-    // Both are pre-computed from the SourceFragment here so PathSugar holds no raw syn.
+    // General path: capture the path key from the fragment so PathSugar holds no raw syn.
     let path_key = frag.path_full_name()?;
-    let boundary = frag.path_token_str()?;
-    Some(Box::new(PathSugar { path_key, boundary }))
+    Some(Box::new(PathSugar { path_key }))
 }
 
 /// A path read in TERM position (`x`, `Foo::BAR`). LEAF: produces a `Term::Var`
@@ -115,10 +113,6 @@ pub(crate) struct PathSugar {
     /// is `"x"`; for `Foo::BAR` it is `"Foo::BAR"`. `desugar` passes this to
     /// `ctx.scope.path_name_str` for shadowing-correct temporal resolution.
     pub(crate) path_key: String,
-    /// Token-stream representation of the original path expression (e.g. `"Foo :: BAR"`).
-    /// Carried in `AmbiguousTemporalIdentity.boundary` for diagnostics, mirroring the
-    /// original `quote::ToTokens::to_token_stream(&self.path).to_string()` call.
-    pub(crate) boundary: String,
 }
 
 impl Sugar for PathSugar {
@@ -172,19 +166,11 @@ mod tests {
             .expect("path_full_name on a Name frag");
         assert_eq!(path_key, "x");
 
-        // path_token_str gives the boundary string
-        let boundary = path_frag
-            .path_token_str()
-            .expect("path_token_str on a Name frag");
-        assert_eq!(boundary, "x");
-
         // Build: PathSugar holds only Strings -- no raw syn field
         let node = PathSugar {
             path_key: path_key.clone(),
-            boundary: boundary.clone(),
         };
         assert_eq!(node.path_key, "x");
-        assert_eq!(node.boundary, "x");
     }
 
     /// from_src: multi-segment path (`std::u8::MAX` style read via a local alias).
@@ -210,7 +196,6 @@ mod tests {
 
         let node = PathSugar {
             path_key: path_key.clone(),
-            boundary: path_frag.path_token_str().unwrap(),
         };
         assert_eq!(node.path_key, "u8::MAX");
         // struct holds zero raw-syn fields -- just Strings
@@ -232,8 +217,6 @@ mod tests {
         assert_eq!(lit_frag.observed(), "PrimitiveLiteral");
         // path_full_name is None for a non-path fragment
         assert!(lit_frag.path_full_name().is_none());
-        // path_token_str is None for a non-path fragment
-        assert!(lit_frag.path_token_str().is_none());
     }
 
     /// Structural: `path_simple_ident` returns None for a multi-segment path.

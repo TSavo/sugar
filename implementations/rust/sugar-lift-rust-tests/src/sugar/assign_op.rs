@@ -3011,13 +3011,6 @@ mod tests {
         local
     }
 
-    fn int_term(value: i128) -> Rc<Term> {
-        Rc::new(Term::Const {
-            value: ConstValue::Int(value),
-            sort: Sort::int(),
-        })
-    }
-
     #[test]
     fn scoped_block_replays_mut_ref_assignment_to_outer_base() {
         let block: syn::Block = syn::parse_quote!({

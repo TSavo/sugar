@@ -54,7 +54,6 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     let receiver_frag = frag.call_receiver()?;
     Some(Box::new(IntSqrtSugar {
         kind,
-        site: frag.token_str(),
         receiver: SugarBody::term_frag(&receiver_frag, fcx),
     }))
 }
@@ -76,7 +75,6 @@ impl Kind {
 
 struct IntSqrtSugar {
     kind: Kind,
-    site: String,
     receiver: SugarBody<TermFloor>,
 }
 

@@ -58,7 +58,7 @@ impl Sugar for DurationValueSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         match &self.decision {
             DurationDecision::Complete(term) => Outcome::Complete(Desugared::Term(Rc::clone(term))),
-            DurationDecision::Refused { boundary, reason } => {
+            DurationDecision::Refused { reason } => {
                 Outcome::Incomplete(Effect::DurationCarrierEmbedding {
                     reason: reason.clone(),
                 })
@@ -69,7 +69,7 @@ impl Sugar for DurationValueSugar {
 
 enum DurationDecision {
     Complete(Rc<Term>),
-    Refused { boundary: String, reason: String },
+    Refused { reason: String },
 }
 
 fn duration_decision_from_frag(frag: &SourceFragment) -> Option<DurationDecision> {
@@ -86,7 +86,6 @@ fn duration_decision_from_frag(frag: &SourceFragment) -> Option<DurationDecision
     if ty_name != "Duration" {
         return None;
     }
-    let boundary = frag.token_str();
     let args = frag
         .call_args()
         .iter()
@@ -98,7 +97,6 @@ fn duration_decision_from_frag(frag: &SourceFragment) -> Option<DurationDecision
             let nanos = i128::try_from(*nanos).ok()?;
             if !(0..NANOS_PER_SEC).contains(&nanos) {
                 return Some(DurationDecision::Refused {
-                    boundary,
                     reason: format!(
                         "Duration CarrierEmbedding non-canonical constructor nanos={nanos}; \
                          expected 0 <= nanos < {NANOS_PER_SEC}"

@@ -1275,13 +1275,6 @@ fn census_row_from_bail(helper: String, cause: sugar::callsite::BailCause) -> Ca
             sample_reasons: Vec::new(),
             committed: false,
         },
-        BailCause::FullyReduced => CallsiteCensusRow {
-            helper,
-            category: ResidueCategory::PureUntranslatedTerm,
-            added_unclassified: 0,
-            sample_reasons: Vec::new(),
-            committed: true,
-        },
         BailCause::UnclassifiedResidue {
             added_unclassified,
             sample_reasons,

@@ -61,7 +61,6 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     if frag.macro_contains_mut_local(scope) {
         return Some(Box::new(MacroSugar {
             body: MacroTermBody::MutLocalTemporalEffect {
-                boundary: token_str.clone(),
                 reason: format!(
                     "macro in term position references a `let mut` local; \
                      temporally unstable — refused: `{token_str}`"
@@ -72,10 +71,7 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     if frag.macro_name().as_deref() == Some("cfg") {
         return Some(Box::new(MacroSugar {
             body: match frag.macro_parse_cfg_predicate() {
-                Some(Ok(predicate)) => MacroTermBody::CfgPredicate {
-                    predicate,
-                    site: token_str,
-                },
+                Some(Ok(predicate)) => MacroTermBody::CfgPredicate { predicate },
                 Some(Err(error)) => MacroTermBody::Unconstructible(format!(
                     "cfg! term predicate did not parse: {error}; write more Sugar for this AST"
                 )),
@@ -98,14 +94,8 @@ pub(crate) struct MacroSugar {
 }
 
 enum MacroTermBody {
-    MutLocalTemporalEffect {
-        boundary: String,
-        reason: String,
-    },
-    CfgPredicate {
-        predicate: CfgPredicate,
-        site: String,
-    },
+    MutLocalTemporalEffect { reason: String },
+    CfgPredicate { predicate: CfgPredicate },
     BuiltinFile,
     Expanded(SugarBody<TermFloor>),
     Unconstructible(String),
@@ -167,12 +157,12 @@ fn build_macro_body_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> MacroTer
 impl Sugar for MacroSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match &self.body {
-            MacroTermBody::MutLocalTemporalEffect { boundary, reason } => {
+            MacroTermBody::MutLocalTemporalEffect { reason } => {
                 Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
                     reason: reason.clone(),
                 })
             }
-            MacroTermBody::CfgPredicate { predicate, site } => {
+            MacroTermBody::CfgPredicate { predicate } => {
                 match configuration::resolve_predicate(predicate, ctx.options) {
                     CfgDisposition::Present => Outcome::Complete(Desugared::Term(bool_const(true))),
                     CfgDisposition::Absent(_) => {

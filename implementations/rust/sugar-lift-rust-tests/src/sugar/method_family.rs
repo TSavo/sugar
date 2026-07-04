@@ -122,7 +122,6 @@ fn build_owned_sequence_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
             Some(Box::new(RepeatSequenceSugar {
                 inner: SugarBody::from_node(build_literal_sequence_composite(&call.receiver, fcx)?),
                 count,
-                boundary: crate::token_key(expr),
             }))
         }
         "collect" if call.args.is_empty() && collects_vec_like(call) => {
@@ -135,7 +134,6 @@ fn build_owned_sequence_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
 struct RepeatSequenceSugar {
     inner: SugarBody<CompositeFloor>,
     count: usize,
-    boundary: String,
 }
 
 impl Sugar for RepeatSequenceSugar {

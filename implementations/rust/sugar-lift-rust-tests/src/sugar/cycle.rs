@@ -11,7 +11,7 @@ use crate::sugar::factory::{CompositeFloor, FloorRead, SugarBody, SugarBuildCtx}
 use crate::sugar::literal::OVERSIZE_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
+use crate::{Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
     "cycle_take",
@@ -45,14 +45,12 @@ pub(crate) fn recognize_cycle_take_composite(
     Some(Box::new(CycleTakeSugar {
         receiver: SugarBody::composite(&cycle.receiver, fcx),
         count,
-        boundary: token_key(expr),
     }))
 }
 
 struct CycleTakeSugar {
     receiver: SugarBody<CompositeFloor>,
     count: usize,
-    boundary: String,
 }
 
 impl Sugar for CycleTakeSugar {
@@ -61,18 +59,14 @@ impl Sugar for CycleTakeSugar {
             FloorRead::Complete(seq) => seq,
             FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
-        match cycle_prefix(seq, self.count, &self.boundary) {
+        match cycle_prefix(seq, self.count) {
             Ok(seq) => Outcome::Complete(Desugared::Seq(seq)),
             Err(outcome) => outcome,
         }
     }
 }
 
-fn cycle_prefix(
-    seq: Vec<DesugaredElem>,
-    count: usize,
-    boundary: &str,
-) -> Result<Vec<DesugaredElem>, Outcome> {
+fn cycle_prefix(seq: Vec<DesugaredElem>, count: usize) -> Result<Vec<DesugaredElem>, Outcome> {
     if count == 0 || seq.is_empty() {
         return Ok(Vec::new());
     }

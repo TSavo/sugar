@@ -9,7 +9,7 @@ use syn::{visit::Visit, Expr};
 
 use crate::{
     bounded_domain_from_expr, closure_body_advances_iterator, closure_body_is_side_effecting,
-    count_asserts_in_expr, peel_fold_adaptors, token_key, TemporalScope, PURE_CLOSURE_ADAPTORS,
+    count_asserts_in_expr, peel_fold_adaptors, TemporalScope, PURE_CLOSURE_ADAPTORS,
 };
 
 /// A closure-bearing method statement and the pre-computed data every closure-adaptor
@@ -18,9 +18,6 @@ use crate::{
 /// holds NO raw syn after this rework.
 #[derive(Clone)]
 pub(crate) struct ClosureAdaptorSite {
-    /// Pre-computed `token_key` string for the full statement expr. Used as the
-    /// `boundary` in every closure-adaptor `Effect` variant at desugar time.
-    boundary: String,
     /// The closure-bearing method name (`for_each` / `with` / `fold` / ...). The ACCESSOR
     /// leaf: a non-pure adaptor is itself the opaque/effectful boundary.
     method: String,
@@ -36,11 +33,6 @@ pub(crate) struct ClosureAdaptorSite {
 }
 
 impl ClosureAdaptorSite {
-    /// The pre-computed `token_key` string of the full statement expr.
-    pub(crate) fn boundary(&self) -> &str {
-        &self.boundary
-    }
-
     /// ACCESSOR detector: `.with` is the thread-local accessor boundary.
     pub(crate) fn has_tls_accessor(&self) -> bool {
         !PURE_CLOSURE_ADAPTORS.contains(&self.method.as_str()) && self.method == "with"
@@ -121,14 +113,12 @@ pub(crate) fn decompose_closure_adaptor(
         return None;
     }
     // Pre-compute all derived values so the Sugar struct holds no raw syn.
-    let boundary = token_key(expr);
     let side_effecting = closure_body_is_side_effecting(&closure.body);
     let advances_iterator = side_effecting && closure_body_advances_iterator(&closure.body);
     let resolves_literal = peel_fold_adaptors(&receiver, let_inits, 0)
         .and_then(|(base, _)| bounded_domain_from_expr(base, scope))
         .is_some();
     Some(ClosureAdaptorSite {
-        boundary,
         method,
         side_effecting,
         advances_iterator,

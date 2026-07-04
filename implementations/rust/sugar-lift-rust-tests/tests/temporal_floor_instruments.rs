@@ -231,17 +231,12 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[ExpectedCompositionPath] = &[
     ),
     expected_composition!(
         "float_refinement.rs",
-        311,
+        230,
         r#"if call.method == "unwrap" {"#
     ),
     expected_composition!(
         "float_refinement.rs",
-        336,
-        r#"if call.method == "unwrap" {"#
-    ),
-    expected_composition!(
-        "float_refinement.rs",
-        364,
+        252,
         r#"if call.method == "unwrap" {"#
     ),
     expected_composition!(

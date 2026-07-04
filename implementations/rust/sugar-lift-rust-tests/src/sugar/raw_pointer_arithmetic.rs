@@ -11,9 +11,7 @@ use syn::{Expr, Type};
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{
-    canonical_term_sig, simple_path_name, strip_refs_groups, Effect, Outcome, Sugar, SugarCtx,
-};
+use crate::{simple_path_name, strip_refs_groups, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "raw_pointer_arithmetic",
@@ -63,10 +61,12 @@ struct RawPointerArithmeticSugar {
 
 impl Sugar for RawPointerArithmeticSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let receiver = match self.receiver.reduce(ctx) {
-            Outcome::Complete(d) => d
-                .into_term()
-                .unwrap_or_else(|| panic!("raw pointer arithmetic receiver completed as non-term")),
+        match self.receiver.reduce(ctx) {
+            Outcome::Complete(d) => {
+                d.into_term().unwrap_or_else(|| {
+                    panic!("raw pointer arithmetic receiver completed as non-term")
+                });
+            }
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         match self.rhs.reduce(ctx) {

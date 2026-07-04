@@ -303,7 +303,6 @@ enum IeeeFloatSource {
     },
     Runtime {
         boundary: String,
-        operation: String,
     },
     IeeeRefinement {
         boundary: String,
@@ -362,10 +361,7 @@ impl Sugar for IeeeFloatSugar {
                 };
                 Outcome::Complete(Desugared::Term(value.term()))
             }
-            IeeeFloatSource::Runtime {
-                boundary,
-                operation,
-            } => runtime_float(boundary),
+            IeeeFloatSource::Runtime { boundary } => runtime_float(boundary),
             IeeeFloatSource::IeeeRefinement { boundary, reason } => {
                 ieee_refinement(boundary, reason.clone())
             }
@@ -565,7 +561,7 @@ pub(crate) fn reduce_bits(
     bits: &SugarBody<TermFloor>,
     ctx: &SugarCtx,
     site: &str,
-    operation: &str,
+    _operation: &str,
 ) -> Result<u128, Outcome> {
     match bits.reduce(ctx) {
         Outcome::Complete(desugared) => {
@@ -584,7 +580,7 @@ fn reduce_i32(
     exponent: &SugarBody<TermFloor>,
     ctx: &SugarCtx,
     site: &str,
-    operation: &str,
+    _operation: &str,
 ) -> Result<i32, Outcome> {
     let value = match exponent.reduce(ctx) {
         Outcome::Complete(desugared) => {
@@ -1000,11 +996,8 @@ fn runtime_source(expr: &Expr, operation: &'static str) -> IeeeFloatSource {
     runtime_source_from_site(token_key(expr.clone()), operation)
 }
 
-fn runtime_source_from_site(site: String, operation: &'static str) -> IeeeFloatSource {
-    IeeeFloatSource::Runtime {
-        boundary: site,
-        operation: operation.to_string(),
-    }
+fn runtime_source_from_site(site: String, _operation: &'static str) -> IeeeFloatSource {
+    IeeeFloatSource::Runtime { boundary: site }
 }
 
 fn ieee_refinement_source(boundary: String, reason: String) -> IeeeFloatSource {

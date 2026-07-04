@@ -267,9 +267,6 @@ pub(crate) enum BailCause {
     /// helper (no inlinable opportunity at this site). Includes runtime-opaque-param
     /// helpers, ambiguous helpers, arity mismatch, self-receivers, depth exhaustion.
     NotInlinable,
-    /// The substituted body fully reduced but `desugar` was invoked with the trial
-    /// gate -- this is never returned; kept for exhaustiveness clarity. (Unused.)
-    FullyReduced,
     /// The substituted body left N assertions UNCLASSIFIED. The categorization splits
     /// that residue by the reason SHAPE so the census can report what each blocked
     /// body actually hits. `added_unclassified` is the count; `sample_reasons` are

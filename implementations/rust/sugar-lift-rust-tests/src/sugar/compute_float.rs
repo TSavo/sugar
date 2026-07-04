@@ -54,7 +54,6 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         width,
         q: SugarBody::term_frag(&args[0], fcx),
         w: SugarBody::term_frag(&args[1], fcx),
-        site: frag.token_str(),
     }))
 }
 
@@ -62,7 +61,6 @@ struct ComputeFloatSugar {
     width: ComputeFloatWidth,
     q: SugarBody<TermFloor>,
     w: SugarBody<TermFloor>,
-    site: String,
 }
 
 impl Sugar for ComputeFloatSugar {
