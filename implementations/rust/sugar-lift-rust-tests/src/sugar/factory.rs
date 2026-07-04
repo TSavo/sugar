@@ -835,7 +835,7 @@ impl FactoryAuditSeed {
             Outcome::Incomplete(effect) => {
                 let reason = effect.reason();
                 match refusal_disposition(&reason) {
-                    Disposition::Refused => (FactoryDisposition::Refused, "effect", Some(reason)),
+                    Disposition::TerminalEffect => (FactoryDisposition::Effect, "effect", Some(reason)),
                     Disposition::Inactive => (
                         FactoryDisposition::Support,
                         "inactive",
@@ -900,7 +900,7 @@ impl Sugar for AccountedSugar {
         let audit = self.seed.audit_result(&outcome);
         if matches!(
             audit.disposition,
-            FactoryDisposition::Refused | FactoryDisposition::Unresolved
+            FactoryDisposition::Effect | FactoryDisposition::Unresolved
         ) {
             warn!(
                 ast_kind = audit.ast_kind,
@@ -992,7 +992,7 @@ mod tests {
         });
 
         let audit = seed.audit_result(&outcome);
-        assert_eq!(audit.disposition, FactoryDisposition::Refused);
+        assert_eq!(audit.disposition, FactoryDisposition::Effect);
         assert_eq!(audit.output, "effect");
     }
 }

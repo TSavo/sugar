@@ -37,6 +37,35 @@ const SHOULD_PANIC_OPAQUE_TERMINAL_REASON: &str =
 const SOURCE_LOCATION_RUNTIME_REASON: &str =
     "source location runtime-determined, not text-determined";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceLedgerStatus {
+    Warranted,
+    Effect,
+    Inactive,
+    Unresolved,
+}
+
+impl SourceLedgerStatus {
+    fn as_wire(self) -> &'static str {
+        match self {
+            SourceLedgerStatus::Warranted => "warranted",
+            SourceLedgerStatus::Effect => "refused",
+            SourceLedgerStatus::Inactive => "inactive",
+            SourceLedgerStatus::Unresolved => "unresolved",
+        }
+    }
+}
+
+fn source_ledger_status_from_wire(status: &str) -> SourceLedgerStatus {
+    match status {
+        "warranted" => SourceLedgerStatus::Warranted,
+        "refused" => SourceLedgerStatus::Effect,
+        "inactive" => SourceLedgerStatus::Inactive,
+        "unresolved" => SourceLedgerStatus::Unresolved,
+        other => panic!("unknown source ledger status `{other}`"),
+    }
+}
+
 fn current_rss_kib() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
@@ -485,78 +514,83 @@ fn lift(params: &Value) -> Value {
             //   | inactive (not part of this target).
             // Any other status is dark: it fires a panic naming the locus and requesting
             // a classifier. The path to green is adding Sugar, not silencing the alarm.
-            let (status, reason): (&str, Option<String>) = if file_decls_refused && is_test {
-                // The whole file's decl emit was refused (size bound) -- its assertions
-                // have no usable pin, so each is honestly REFUSED with the bound reason.
-                ("refused", Some(file_decl_emit_bound_refusal_reason()))
-            } else if is_test {
-                match warning {
-                    // Unsupported vendor pins remain unresolved unless the failure reason
-                    // is one of the clean values-not-in-text boundaries this lane owns.
-                    Some(w) => {
-                        let classification = source_test_body_warning_classification(
-                            rel, &name, &w.reason, fr.block,
-                        )
-                        .or_else(|| clean_source_warning_classification(rel, &name, &w.reason));
-                        match classification {
-                            Some(SourceWarningClassification::Refused(category)) => (
-                                "refused",
-                                Some(named_source_refusal_reason(
-                                    category,
-                                    &format!("vendor pin not liftable: {}", w.reason),
-                                )),
-                            ),
-                            Some(SourceWarningClassification::Inactive(category)) => (
-                                "inactive",
-                                Some(named_source_inactive_reason(
-                                    category,
-                                    &format!(
-                                        "source locus is inactive in this target: {}",
-                                        w.reason
-                                    ),
-                                )),
-                            ),
-                            Some(SourceWarningClassification::Warranted(category)) => (
-                                "warranted",
-                                Some(named_source_warrant_reason(
-                                    category,
-                                    &format!("vendor pin is text-determined: {}", w.reason),
-                                )),
-                            ),
-                            None => (
-                                "unresolved",
-                                Some(format!("vendor pin not liftable: {}", w.reason)),
-                            ),
+            let (status, reason): (SourceLedgerStatus, Option<String>) =
+                if file_decls_refused && is_test {
+                    // The whole file's decl emit was refused (size bound) -- its assertions
+                    // have no usable pin, so each is honestly REFUSED with the bound reason.
+                    (
+                        SourceLedgerStatus::Effect,
+                        Some(file_decl_emit_bound_refusal_reason()),
+                    )
+                } else if is_test {
+                    match warning {
+                        // Unsupported vendor pins remain unresolved unless the failure reason
+                        // is one of the clean values-not-in-text boundaries this lane owns.
+                        Some(w) => {
+                            let classification = source_test_body_warning_classification(
+                                rel, &name, &w.reason, fr.block,
+                            )
+                            .or_else(|| clean_source_warning_classification(rel, &name, &w.reason));
+                            match classification {
+                                Some(SourceWarningClassification::Refused(category)) => (
+                                    SourceLedgerStatus::Effect,
+                                    Some(named_source_refusal_reason(
+                                        category,
+                                        &format!("vendor pin not liftable: {}", w.reason),
+                                    )),
+                                ),
+                                Some(SourceWarningClassification::Inactive(category)) => (
+                                    SourceLedgerStatus::Inactive,
+                                    Some(named_source_inactive_reason(
+                                        category,
+                                        &format!(
+                                            "source locus is inactive in this target: {}",
+                                            w.reason
+                                        ),
+                                    )),
+                                ),
+                                Some(SourceWarningClassification::Warranted(category)) => (
+                                    SourceLedgerStatus::Warranted,
+                                    Some(named_source_warrant_reason(
+                                        category,
+                                        &format!("vendor pin is text-determined: {}", w.reason),
+                                    )),
+                                ),
+                                None => (
+                                    SourceLedgerStatus::Unresolved,
+                                    Some(format!("vendor pin not liftable: {}", w.reason)),
+                                ),
+                            }
                         }
+                        None => source_test_body_static_refusal_reason(rel, &name, fr.block)
+                            .map(|reason| (SourceLedgerStatus::Effect, Some(reason)))
+                            .unwrap_or((SourceLedgerStatus::Warranted, None)),
                     }
-                    None => source_test_body_static_refusal_reason(rel, &name, fr.block)
-                        .map(|reason| ("refused", Some(reason)))
-                        .unwrap_or(("warranted", None)),
-                }
-            } else {
-                // NON-TEST body: ONE decision point (`classify_nontest_fn`). Warranting
-                // still wins first; only then may a body terminate as a named refusal for
-                // clean values-not-in-text boundaries. Plain missing sugar/no assertion
-                // surface stays the honest unresolved dark.
-                let (s, r, entry) = classify_nontest_fn(
-                    &name,
-                    fr.sig,
-                    fr.block,
-                    out.reduced_helpers.contains(&name),
-                    &memento_json,
-                );
-                if let Some(entry) = entry.filter(|_| !report_summary) {
-                    value_entries.push(entry);
-                }
-                (s, r)
-            };
+                } else {
+                    // NON-TEST body: ONE decision point (`classify_nontest_fn`). Warranting
+                    // still wins first; only then may a body terminate as a named refusal for
+                    // clean values-not-in-text boundaries. Plain missing sugar/no assertion
+                    // surface stays the honest unresolved dark.
+                    let (s, r, entry) = classify_nontest_fn(
+                        &name,
+                        fr.sig,
+                        fr.block,
+                        out.reduced_helpers.contains(&name),
+                        &memento_json,
+                    );
+                    if let Some(entry) = entry.filter(|_| !report_summary) {
+                        value_entries.push(entry);
+                    }
+                    (source_ledger_status_from_wire(s), r)
+                };
+            let status_wire = status.as_wire();
             let mut locus = json!({
                 "file": rel,
                 "role": "rust-test-assertions",
                 "ast_kind": if is_test { "test-fn" } else { "fn" },
                 "ast_path": name,
                 "line": memento.span.start_line,
-                "status": status,
+                "status": status_wire,
             });
             if let Some(r) = reason {
                 locus["reason"] = json!(r);
@@ -569,7 +603,7 @@ fn lift(params: &Value) -> Value {
                         assertion_source,
                         file: rel.to_string(),
                         line: memento.span.start_line,
-                        source_status: status.to_string(),
+                        source_status: status_wire.to_string(),
                         reason: locus
                             .get("reason")
                             .and_then(Value::as_str)
@@ -1524,13 +1558,13 @@ fn classify_nontest_fn(
         );
     }
     if let Some(reason) = source_body_runtime_ffi_refusal_reason(name, block) {
-        return ("refused", Some(reason), None);
+        return (SourceLedgerStatus::Effect.as_wire(), Some(reason), None);
     }
     if let Some(decl) = sugar_lift_rust_tests::broad_functional_warrant(name, sig, block) {
         // We THINK it constrains -> WARRANT it, broadly. The decl flows into the IR;
         // the universe is built from these demands. The vendor is the referee.
         let entry = function_contract_entry_from_decl(name, sig, &decl, source_memento);
-        return ("warranted", None, Some(entry));
+        return (SourceLedgerStatus::Warranted.as_wire(), None, Some(entry));
     }
     if reduced {
         // A consumed method with no output has no contract to emit, but it was still
@@ -1538,21 +1572,21 @@ fn classify_nontest_fn(
         // accounting. Value-returning
         // methods take the branch above and own their semantics as contracts.
         return (
-            "warranted",
+            SourceLedgerStatus::Warranted.as_wire(),
             Some("auxiliary executable method consumed by a resolved universe".to_string()),
             None,
         );
     }
     if let Some(reason) = source_body_named_refusal_reason(name, sig, block) {
-        return ("refused", Some(reason), None);
+        return (SourceLedgerStatus::Effect.as_wire(), Some(reason), None);
     }
     if sugar_lift_rust_tests::sig_returns_unit(sig) {
         if let Some(decl) = text_determined_unit_body_contract(name, block) {
             let entry = function_contract_entry_from_decl(name, sig, &decl, source_memento);
-            return ("warranted", None, Some(entry));
+            return (SourceLedgerStatus::Warranted.as_wire(), None, Some(entry));
         }
         return (
-            "refused",
+            SourceLedgerStatus::Effect.as_wire(),
             Some(named_source_refusal_reason(
                 "runtime unit body value boundary",
                 &format!(
@@ -1566,7 +1600,7 @@ fn classify_nontest_fn(
     // this body's value to a literal yet, so it falls through to UNRESOLVED -- honest,
     // visible work the campaign drives to 0.
     (
-        "unresolved",
+        SourceLedgerStatus::Unresolved.as_wire(),
         Some("no Sugar resolves this body's value to a literal yet (no value pin)".to_string()),
         None,
     )
@@ -6878,7 +6912,7 @@ fn literal_counter_while_literal_twin() {
             emitted_formula: None,
         };
         let refused = FactoryAudit {
-            disposition: sugar_lift_rust_tests::FactoryDisposition::Refused,
+            disposition: sugar_lift_rust_tests::FactoryDisposition::Effect,
             site: "runtime()".to_string(),
             reason: Some("runtime".to_string()),
             ..duplicate.clone()

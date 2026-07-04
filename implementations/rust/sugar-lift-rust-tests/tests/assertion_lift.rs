@@ -3484,7 +3484,7 @@ fn runtime_range_is_empty_declines_to_fold() {
     assert!(
         out.factory_audits.iter().any(|a| {
             a.selected == Some("is_empty")
-                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Refused
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Effect
                 && a.reason.as_deref().is_some_and(|reason| {
                     reason.contains("literal range bound is not text-determined")
                 })
@@ -5831,7 +5831,7 @@ fn slice_get_unchecked_out_of_domain_refuses() {
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "unchecked out-of-domain indexing is terminal UB, not future work: {reason}"
     );
     assert!(
@@ -5909,7 +5909,7 @@ fn slice_mut_index_methods_refuse_runtime_mutable_slice_sources() {
             });
         assert_eq!(
             sugar_lift_rust_tests::refusal_disposition(reason),
-            sugar_lift_rust_tests::Disposition::Refused,
+            sugar_lift_rust_tests::Disposition::TerminalEffect,
             "{label} refusal must be terminal: {reason}"
         );
         assert!(
@@ -9466,7 +9466,7 @@ fn pointer_cast_result() {
         });
     assert_eq!(
         disp2(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "raw-pointer casts must be terminal: {r}"
     );
 }
@@ -9499,7 +9499,7 @@ fn clone_to_uninit_block() {
         });
     assert_eq!(
         disp2(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "unsafe memory block must be terminal: {r}"
     );
 }
@@ -11777,7 +11777,7 @@ fn assert_factory_refusal_for_site(
         out.factory_audits.iter().any(|audit| {
             audit.selected == Some(selected)
                 && audit.site.contains(site_needle)
-                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Refused
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Effect
                 && audit
                     .reason
                     .as_deref()
@@ -12321,7 +12321,7 @@ fn t() {
             r.contains("runtime expression-statement")
                 && r.contains("mutation")
                 && sugar_lift_rust_tests::refusal_disposition(r)
-                    == sugar_lift_rust_tests::Disposition::Refused
+                    == sugar_lift_rust_tests::Disposition::TerminalEffect
         }),
         "method-call assignment statement should be refused with a named mutation/runtime boundary, not left unclassified: {:?}",
         out.skip_reasons
@@ -12713,7 +12713,7 @@ fn eff() {
     assert!(
         refusal_reasons(&out).iter().all(|r| {
             sugar_lift_rust_tests::refusal_disposition(r)
-                == sugar_lift_rust_tests::Disposition::Refused
+                == sugar_lift_rust_tests::Disposition::TerminalEffect
                 && r.contains("runtime non-scalar result")
         }),
         "both arm asserts must be terminal-REFUSED as a runtime-scrutinee match: {:?}",
@@ -13160,7 +13160,7 @@ fn t() {
             .iter()
             .any(|r| r.contains("monomorphization")
                 && sugar_lift_rust_tests::refusal_disposition(r)
-                    == sugar_lift_rust_tests::Disposition::Refused),
+                    == sugar_lift_rust_tests::Disposition::TerminalEffect),
         "the generic helper's refusal must remain the terminal monomorphization reason: {:?}",
         out.skip_reasons
     );
@@ -13932,7 +13932,7 @@ fn t() {
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "future handoff boundary must classify TERMINAL refused"
     );
 }
@@ -17443,7 +17443,7 @@ fn join_try() {
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "try/async control-flow block must classify TERMINAL refused, not unclassified work"
     );
 }
@@ -17497,7 +17497,7 @@ fn test_join() {
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "free-fn block_on(async) future handoff must classify TERMINAL refused"
     );
 }
@@ -17533,7 +17533,7 @@ fn test_arrays() {
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "reflection-match body asserts must classify TERMINAL refused, not unclassified"
     );
     // Both body asserts are accounted as reflection (none left unenumerated).
@@ -18828,7 +18828,7 @@ fn literal_slice_split_chunk_destructure_warrants_and_bad_twin_refutes() {
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "runtime destructured source must be a terminal named effect: {reason}"
     );
     assert!(
@@ -19823,12 +19823,10 @@ fn t() {
     assert_eq!(out.assertions_lifted, 0, "{:?}", out.decls);
     assert_eq!(out.assertions_refused, 1, "{:?}", out.skip_reasons);
     assert!(
-        out.skip_reasons.iter().any(|reason| {
-            reason.contains("Duration CarrierEmbedding")
-                && reason.contains("non-canonical")
-                && reason.contains("nanos")
-        }),
-        "non-canonical Duration projection must be refused by name: {:?}",
+        out.skip_reasons.iter().any(|reason| reason
+            == "unsupported term: Duration CarrierEmbedding non-canonical constructor \
+                nanos=1000000000; expected 0 <= nanos < 1000000000; refused"),
+        "non-canonical Duration projection must keep its legacy display string: {:?}",
         out.skip_reasons
     );
 }
@@ -21027,7 +21025,7 @@ fn t(n: usize) {
         });
     assert_eq!(
         disp(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "the runtime-endpoint for-loop must be TERMINAL refused, not unclassified"
     );
 }
@@ -21062,7 +21060,7 @@ fn t() {
         });
     assert_eq!(
         disp(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "a literal-domain loop over runtime body/accumulator must be TERMINAL refused"
     );
 }
@@ -21099,7 +21097,7 @@ fn t() {
         });
     assert_eq!(
         disp(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "a runtime-valued (non-counter) accumulator loop must be TERMINAL refused"
     );
 }
@@ -21208,7 +21206,7 @@ fn t() {
         });
     assert_eq!(
         disp2(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "must be terminal: {r}"
     );
     assert_eq!(
@@ -21244,7 +21242,7 @@ fn t() {
         });
     assert_eq!(
         disp2(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "must be terminal: {r}"
     );
 }
@@ -21357,7 +21355,7 @@ fn t_type_inferred_parse() {
         });
     assert_eq!(
         disp2(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "must be terminal: {r}"
     );
     assert_warranted_decls_not_refuted(&out, "type_inferred_parse");
@@ -21409,7 +21407,7 @@ fn t() {
         });
     assert_eq!(
         disp2(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "must be terminal: {r}"
     );
 }
@@ -21463,7 +21461,7 @@ fn t() {
         });
     assert_eq!(
         disp2(r),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "must be terminal: {r}"
     );
 }
@@ -21707,7 +21705,7 @@ fn t() {
     assert!(
         matches!(
             sugar_lift_rust_tests::refusal_disposition(reason),
-            sugar_lift_rust_tests::Disposition::Refused
+            sugar_lift_rust_tests::Disposition::TerminalEffect
         ),
         "runtime-searcher macro expansion must be refused, not unclassified: {reason}"
     );
@@ -21749,7 +21747,7 @@ fn t() {
     assert!(
         matches!(
             sugar_lift_rust_tests::refusal_disposition(reason),
-            sugar_lift_rust_tests::Disposition::Refused
+            sugar_lift_rust_tests::Disposition::TerminalEffect
         ),
         "terminal macro expansion must be refused, not unclassified: {reason}"
     );
@@ -21869,7 +21867,7 @@ fn t() {
     assert!(
         matches!(
             sugar_lift_rust_tests::refusal_disposition(reason),
-            sugar_lift_rust_tests::Disposition::Refused
+            sugar_lift_rust_tests::Disposition::TerminalEffect
         ),
         "panic-locus unliftable subject must be terminal refused: {reason}"
     );
@@ -21921,7 +21919,7 @@ fn t() {
     assert!(
         matches!(
             sugar_lift_rust_tests::refusal_disposition(reason),
-            sugar_lift_rust_tests::Disposition::Refused
+            sugar_lift_rust_tests::Disposition::TerminalEffect
         ),
         "nested terminal macro expansion must be refused, not unclassified: {reason}"
     );
@@ -22062,7 +22060,7 @@ fn assert_nan_comparison_factory_rows_are_terminal(out: &AdapterOutput) {
     );
     assert!(
         rows.iter().all(|audit| {
-            audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Refused
+            audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Effect
                 && audit.output == "effect"
                 && audit
                     .reason
@@ -22769,7 +22767,7 @@ fn case3_decode_utf16_size_hint_loop_is_refused_bail() {
         });
     assert_eq!(
         refusal_disposition(check_refusal),
-        Disposition::Refused,
+        Disposition::TerminalEffect,
         "the runtime-iterator `check` is a TERMINAL (bin-2) refusal"
     );
     // DISCRIMINATION: the OTHER nested `check` (concrete `input as u32 == expect`
@@ -26893,7 +26891,7 @@ fn peekable_runtime_slice_source_is_named_refused_not_work() {
             reason.contains("runtime slice source, not literal")
                 && matches!(
                     sugar_lift_rust_tests::refusal_disposition(reason),
-                    sugar_lift_rust_tests::Disposition::Refused
+                    sugar_lift_rust_tests::Disposition::TerminalEffect
                 )
         }),
         "runtime peekable source must be terminal refused by name: {:?}",
@@ -26945,7 +26943,7 @@ fn peekable_runtime_nth_after_peek_is_named_refused_not_work() {
             reason.contains("runtime slice source, not literal")
                 && matches!(
                     sugar_lift_rust_tests::refusal_disposition(reason),
-                    sugar_lift_rust_tests::Disposition::Refused
+                    sugar_lift_rust_tests::Disposition::TerminalEffect
                 )
         }),
         "runtime peekable nth source must be terminal refused by name: {:?}",
@@ -29109,7 +29107,7 @@ fn catch_unwind_letinit_side_effecting_closure_body_terminalizes() {
     // array.rs::array_map_drop_safety, exact shape. The `.map` closure body does
     // `nth += 1` (mutates a captured local), so the asserted `nth` is a per-iteration
     // varying value -- not a single timeless point-wise claim. It must terminalize as a
-    // SIDE-EFFECTING closure body (Disposition::Refused), NOT fake-lift and NOT stay the
+    // SIDE-EFFECTING closure body (Disposition::TerminalEffect), NOT fake-lift and NOT stay the
     // generic unclassified let-initializer reason.
     let src = r#"
 #[test]
@@ -29153,7 +29151,7 @@ fn t() {
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
-        sugar_lift_rust_tests::Disposition::Refused,
+        sugar_lift_rust_tests::Disposition::TerminalEffect,
         "a side-effecting closure body is a TERMINAL source property (refused), not unclassified work: {:?}",
         out.skip_reasons
     );
@@ -29164,7 +29162,7 @@ fn catch_unwind_letinit_runtime_receiver_closure_body_terminalizes() {
     // array.rs::array_map_drops_unmapped_elements_on_panic, shape. The `.map` receiver is
     // a runtime `array::from_fn(..)` aggregate (not a finite construction from source
     // literals), so the iterated `x` is runtime data. It must terminalize as a NAMED
-    // runtime boundary (Disposition::Refused) through the catch_unwind peel, NOT fake-lift,
+    // runtime boundary (Disposition::TerminalEffect) through the catch_unwind peel, NOT fake-lift,
     // NOT the generic unclassified let-init reason.
     let src = r#"
 #[test]
@@ -29200,7 +29198,7 @@ fn t() {
     for r in &out.skip_reasons {
         assert_eq!(
             sugar_lift_rust_tests::refusal_disposition(r),
-            sugar_lift_rust_tests::Disposition::Refused,
+            sugar_lift_rust_tests::Disposition::TerminalEffect,
             "every refusal under the peeled catch_unwind must be TERMINAL, not unclassified: {r:?}"
         );
     }
@@ -29258,7 +29256,7 @@ fn t() {
     {
         assert_eq!(
             sugar_lift_rust_tests::refusal_disposition(r),
-            sugar_lift_rust_tests::Disposition::Refused,
+            sugar_lift_rust_tests::Disposition::TerminalEffect,
             "drop-on-panic side-effect refusal must be terminal, not unclassified: {r:?}"
         );
     }
@@ -31451,7 +31449,7 @@ fn opaque_mut_borrow_call_read_refuses_not_false_refutation() {
             r.contains("opaque mutable borrow call")
                 && matches!(
                     sugar_lift_rust_tests::refusal_disposition(r),
-                    sugar_lift_rust_tests::Disposition::Refused
+                    sugar_lift_rust_tests::Disposition::TerminalEffect
                 )
         }),
         "opaque `&mut` call invalidation must be a named terminal refusal: {:?}",
@@ -31483,7 +31481,7 @@ fn iter_mut_loop_receiver_read_refuses_not_false_refutation() {
             r.contains("mutable view")
                 && matches!(
                     sugar_lift_rust_tests::refusal_disposition(r),
-                    sugar_lift_rust_tests::Disposition::Refused
+                    sugar_lift_rust_tests::Disposition::TerminalEffect
                 )
         }),
         "mutable-view receiver invalidation must be a named terminal refusal: {:?}",
@@ -31519,7 +31517,7 @@ fn interior_mutating_method_receiver_read_refuses_not_false_refutation() {
             r.contains("mutating method")
                 && matches!(
                     sugar_lift_rust_tests::refusal_disposition(r),
-                    sugar_lift_rust_tests::Disposition::Refused
+                    sugar_lift_rust_tests::Disposition::TerminalEffect
                 )
         }),
         "mutating receiver method invalidation must be a named terminal refusal: {:?}",
@@ -31874,7 +31872,7 @@ fn frozen_loop_counter_read_refuses_not_false_refutation() {
             r.contains("temporally unstable post-loop read")
                 && matches!(
                     sugar_lift_rust_tests::refusal_disposition(r),
-                    sugar_lift_rust_tests::Disposition::Refused
+                    sugar_lift_rust_tests::Disposition::TerminalEffect
                 )
         }),
         "the frozen-counter read must REFUSE as a terminal `temporally unstable` \
@@ -34245,7 +34243,7 @@ fn slice_tuple_pattern_destructure_runtime_sources_are_named_refused() {
             });
         assert_eq!(
             sugar_lift_rust_tests::refusal_disposition(reason),
-            sugar_lift_rust_tests::Disposition::Refused,
+            sugar_lift_rust_tests::Disposition::TerminalEffect,
             "{label}: runtime destructured source must be terminal: {reason}"
         );
         assert!(

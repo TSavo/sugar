@@ -1706,7 +1706,7 @@ impl IterTerminalSugar {
             | Terminal::TryFold { .. } => {
                 let reason = self.closure_refusal.clone()?;
                 match refusal_disposition(&reason) {
-                    Disposition::Refused => {
+                    Disposition::TerminalEffect => {
                         Some(Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
                             reason,
                         }))

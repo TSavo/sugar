@@ -346,7 +346,7 @@ pub struct AdapterOutput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FactoryDisposition {
     Warranted,
-    Refused,
+    Effect,
     Support,
     /// Top-level value-proposition present but no Sugar recognizer has reduced it yet
     /// (recognizer gap — the residual dark). Drive to zero by adding recognizers.
@@ -357,7 +357,7 @@ impl FactoryDisposition {
     pub fn as_str(self) -> &'static str {
         match self {
             FactoryDisposition::Warranted => "warranted",
-            FactoryDisposition::Refused => "refused",
+            FactoryDisposition::Effect => "refused",
             FactoryDisposition::Support => "support",
             FactoryDisposition::Unresolved => "unresolved",
         }
@@ -500,7 +500,7 @@ pub fn lift_file(file: &syn::File, source_path: &str) -> AdapterOutput {
 /// single `t` to read). UNCLASSIFIED means a property of OUR lifter -- an AST
 /// shape, term, or call we have not taught yet; it is WORK, not closure.
 ///
-/// Refused is a WHITELIST: a reason must MATCH a terminal pattern to be refused.
+/// TerminalEffect is a WHITELIST: a reason must MATCH a terminal pattern to reach it.
 /// Everything else -- including any future reason we forget to classify --
 /// defaults to Unclassified, so the only way into `refused` is a reason that
 /// survives the challenge "why couldn't you lift this?". This makes the ledger
@@ -509,7 +509,7 @@ pub fn lift_file(file: &syn::File, source_path: &str) -> AdapterOutput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disposition {
     /// Terminal: closed with a damn good reason (a source property).
-    Refused,
+    TerminalEffect,
     /// A lifter limitation -- WORK. The only thing the goal drives to zero.
     Unclassified,
     /// Not part of THIS target's universe (a `cfg`-disabled test/assert). Not work
@@ -519,7 +519,7 @@ pub enum Disposition {
 }
 
 /// Classify a refusal reason string as a terminal Refusal or Unclassified work.
-/// The terminal whitelist is intentionally short -- a reason earns `Refused` only
+/// The terminal whitelist is intentionally short -- a reason earns `TerminalEffect` only
 /// when it names a SOURCE property no better lifter could lift:
 ///   * `bin-2`             -- iterated/asserted values are RUNTIME data, not source
 ///                            literals (no construction to walk).
@@ -610,7 +610,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("literal array element is not text-determined")
         || reason.contains("RangeBounds over runtime value")
     {
-        return Disposition::Refused;
+        return Disposition::TerminalEffect;
     }
     // TERMINAL (source property). `temporally unstable` joins `ambiguous temporal
     // identity`: a term reading a mutated local has no single `t`, so it cannot be
@@ -1022,7 +1022,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // runtime-state, not missing Sugar.
         || reason.contains("unknown iterator consumption");
     if terminal {
-        Disposition::Refused
+        Disposition::TerminalEffect
     } else {
         Disposition::Unclassified
     }
@@ -4177,7 +4177,7 @@ fn try_macro_expansion_entries(
     {
         if let Some(reason) = temp_skipped
             .iter()
-            .find(|reason| matches!(refusal_disposition(reason), Disposition::Refused))
+            .find(|reason| matches!(refusal_disposition(reason), Disposition::TerminalEffect))
         {
             let terminal_reason = format!(
                 "macro `{name}` expansion reached assertion surface but terminal effect blocked all warranted facts: {reason}"
@@ -4200,7 +4200,7 @@ fn try_macro_expansion_entries(
     {
         if let Some(reason) = temp_skipped
             .iter()
-            .find(|reason| matches!(refusal_disposition(reason), Disposition::Refused))
+            .find(|reason| matches!(refusal_disposition(reason), Disposition::TerminalEffect))
         {
             let terminal_reason = format!(
                 "macro `{name}` expansion reached nested assertion surface but terminal effect blocked all warranted facts: {reason}"
@@ -9070,6 +9070,9 @@ enum Effect {
     /// proved more than one temporal identity could own that name. The path leaf owns the
     /// refusal because a `Term::Var` key would otherwise pick one state arbitrarily.
     AmbiguousTemporalIdentity { reason: String },
+    /// CLOSURE-AMBIGUOUS-CAPTURE: a closure captures a local whose temporal identity is
+    /// ambiguous at the capture site. There is no single timeless capture key to emit.
+    ClosureAmbiguousCapture { name: String },
     /// CONTROL-FLOW: a `try { .. }` / `async { .. }` block or a `?` operator in term
     /// position. None of these is a single timeless point-wise VALUE: a `try` block
     /// short-circuits on `Err` (control flow), an `async` block is a deferred future, and
@@ -9291,6 +9294,10 @@ enum Effect {
     /// literal rendering. The format macro composes and bubbles; this boundary is owned by
     /// the format-value floor.
     FormatArgument { reason: String },
+    /// RUNTIME-FORMAT-ARGUMENT: a format capture reduced to runtime/non-literal data.
+    RuntimeFormatArgument { boundary: String },
+    /// FORMAT-POINTER-ADDRESS: pointer formatting asks for runtime address identity.
+    FormatPointerAddress { boundary: String },
     /// RUNTIME-CALLABLE-ELEMENT: a literal-domain adaptor invokes the iterated element as
     /// a callable (`|f| (*f)()`). The domain is finite, but the returned value is produced by
     /// dynamic dispatch through the element, not by literal construction.
@@ -9308,7 +9315,7 @@ enum Effect {
     /// did not satisfy the canonical projection refinement required by #3125
     /// (`0 <= nanos < 1e9`). Duration remains a refinement of Int; non-canonical
     /// constructor spellings are refused rather than silently treated as peer-sort values.
-    DurationCarrierEmbedding { reason: String },
+    DurationCarrierEmbedding { nanos: i128 },
 }
 
 impl Effect {
@@ -9363,6 +9370,10 @@ impl Effect {
                  constructed from source literals); refused"
             ),
             Effect::AmbiguousTemporalIdentity { reason } => reason.clone(),
+            Effect::ClosureAmbiguousCapture { name } => {
+                let disposition = "refused";
+                format!("closure captures ambiguous local `{name}`; {disposition}")
+            }
             Effect::CoverageGap { reason } => reason.clone(),
             Effect::ControlFlow { boundary } => format!(
                 "unsupported term `{boundary}`: effectful control-flow block (try/async/`?`) is not a \
@@ -9516,14 +9527,29 @@ impl Effect {
                  ({kind}) is not a constructible timeless value; refused"
             ),
             Effect::FormatArgument { reason } => reason.clone(),
+            Effect::RuntimeFormatArgument { boundary } => {
+                let disposition = "refused";
+                format!(
+                    "runtime format argument `{boundary}`, not literal-determined; {disposition}"
+                )
+            }
+            Effect::FormatPointerAddress { boundary } => {
+                let disposition = "refused";
+                format!("format pointer address `{boundary}` is runtime address identity; {disposition}")
+            }
             Effect::RuntimeCallableElement { reason } => reason.clone(),
             Effect::UnicodeStringCase => {
                 "Unicode string case mapping is not modeled for non-ASCII receivers; refused"
                     .to_string()
             }
             Effect::Configuration { reason } => reason.clone(),
-            Effect::DurationCarrierEmbedding { reason } => {
-                format!("unsupported term: {reason}; refused")
+            Effect::DurationCarrierEmbedding { nanos } => {
+                let disposition = "refused";
+                let nanos_per_sec = 1_000_000_000;
+                format!(
+                    "unsupported term: Duration CarrierEmbedding non-canonical constructor \
+                     nanos={nanos}; expected 0 <= nanos < {nanos_per_sec}; {disposition}"
+                )
             }
         }
     }
@@ -23554,7 +23580,7 @@ fn t() {
         assert!(
             runtime_call_reasons
                 .iter()
-                .all(|reason| matches!(refusal_disposition(reason), Disposition::Refused)),
+                .all(|reason| matches!(refusal_disposition(reason), Disposition::TerminalEffect)),
             "runtime closure call reasons must be terminal refused: {:?}",
             runtime_call_reasons
         );
@@ -23603,7 +23629,7 @@ fn t() {
                 !r.contains("not yet lifted")
                     && matches!(
                         refusal_disposition(r),
-                        Disposition::Refused | Disposition::Inactive
+                        Disposition::TerminalEffect | Disposition::Inactive
                     )
             }),
             "the mutating map body must not remain in the generic adaptor work bucket: {:?}",
@@ -23719,12 +23745,12 @@ fn t() {
             "the side-effecting case must NOT stay in the generic unclassified bucket: {:?}",
             out.skip_reasons
         );
-        // and its disposition is terminal (Refused), not Unclassified work.
+        // and its disposition is terminal (TerminalEffect), not Unclassified work.
         assert!(
             out.skip_reasons
                 .iter()
                 .filter(|r| r.contains("side-effecting closure body"))
-                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+                .all(|r| matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "side-effecting closure body reason must be a terminal disposition"
         );
     }
@@ -23752,7 +23778,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .filter(|r| r.contains("opaque/effectful accessor"))
-                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+                .all(|r| matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "opaque-accessor reason must be a terminal disposition"
         );
     }
@@ -23773,7 +23799,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .any(|r| r.contains("future handoff")
-                    && matches!(refusal_disposition(r), Disposition::Refused)),
+                    && matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "a nested async assertion in a let initializer must report the non-axiomatic future driver boundary: {:?}",
             out.skip_reasons
         );
@@ -23800,7 +23826,7 @@ fn t() {
 
         assert!(
             out.skip_reasons.iter().any(|r| r.contains("future handoff")
-                && matches!(refusal_disposition(r), Disposition::Refused)),
+                && matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "a method named block_on must report a dynamic future-driver boundary: {:?}",
             out.skip_reasons
         );
@@ -23850,7 +23876,7 @@ fn t() {
         for e in &effects {
             assert_eq!(
                 refusal_disposition(&e.reason()),
-                Disposition::Refused,
+                Disposition::TerminalEffect,
                 "typed Effect reason must be terminal: {}",
                 e.reason()
             );
@@ -23884,7 +23910,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .filter(|r| r.contains("side-effecting closure body"))
-                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+                .all(|r| matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "the mutation SideEffect must be a terminal disposition (refused): {:?}",
             out.skip_reasons
         );
@@ -23918,7 +23944,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .filter(|r| r.contains("side-effecting closure body"))
-                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+                .all(|r| matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "the iter-advance SideEffect must be terminal (refused): {:?}",
             out.skip_reasons
         );
@@ -23948,7 +23974,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .filter(|r| r.contains("bin-2"))
-                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+                .all(|r| matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "the opaque-runtime SideEffect must be terminal (refused): {:?}",
             out.skip_reasons
         );
@@ -24006,7 +24032,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .filter(|r| r.contains("mutable container is not temporally stable"))
-                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+                .all(|r| matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "THE DRAIN: the mutable-container read must now be TERMINAL refused, not unclassified: {:?}",
             out.skip_reasons
         );
@@ -24145,7 +24171,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .any(|r| r.contains("opaque runtime receiver")
-                    && matches!(refusal_disposition(r), Disposition::Refused)),
+                    && matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "an opaque-receiver fold body assert must be TERMINAL refused (bin-2): {:?}",
             out.skip_reasons
         );
@@ -24175,7 +24201,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .any(|r| r.contains("side-effecting closure body")
-                    && matches!(refusal_disposition(r), Disposition::Refused)),
+                    && matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "a side-effecting fold body assert must be TERMINAL refused: {:?}",
             out.skip_reasons
         );
@@ -24356,7 +24382,7 @@ fn t() {
         assert!(
             out.skip_reasons.iter().any(|r| {
                 r.contains("opaque runtime")
-                    && matches!(refusal_disposition(r), Disposition::Refused)
+                    && matches!(refusal_disposition(r), Disposition::TerminalEffect)
             }),
             "runtime predicate must bubble a named OpaqueRuntime refusal: {:?}",
             out.skip_reasons
@@ -24568,7 +24594,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .any(|r| r.contains("under an if-guard over a runtime value")
-                    && refusal_disposition(r) == Disposition::Refused),
+                    && refusal_disposition(r) == Disposition::TerminalEffect),
             "the side-effecting-guard assert must be a named if-guard runtime refusal: {:?}",
             out.skip_reasons
         );
@@ -24601,7 +24627,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .any(|r| r.contains("side-effecting if branch")
-                    && refusal_disposition(r) == Disposition::Refused),
+                    && refusal_disposition(r) == Disposition::TerminalEffect),
             "the mutating branch must be a named conditional-branch effect: {:?}",
             out.skip_reasons
         );
@@ -25208,7 +25234,7 @@ fn t() {
             "assertion in a side-effecting if branch `then branch guarded by `x > 0`` (mutates state before/around the assertion; not a pure point-wise claim); refused",
             "ambiguous cfg: no explicit target cfg facts for `miri`",
         ] {
-            assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
+            assert_eq!(refusal_disposition(r), TerminalEffect, "should be terminal: {r}");
         }
         // INACTIVE (cfg-disabled -- not in this build's universe).
         for r in [
@@ -25269,7 +25295,7 @@ fn t() {
             "consumed iterator `it` has no replayable temporal rewrite at this point; refused";
         assert_eq!(
             refusal_disposition(reason),
-            Disposition::Refused,
+            Disposition::TerminalEffect,
             "consumed iterator state must be a named terminal Effect, not an \
              AmbiguousTemporalIdentity catch-all or an unclassified refusal string; add a \
              ConsumedIteratorState effect and classify this exact terminal boundary"
@@ -25350,7 +25376,7 @@ fn t() {
         assert!(
             out.skip_reasons.iter().any(|r| r
                 .contains("reachable only at runtime when the method is invoked")
-                && refusal_disposition(r) == Disposition::Refused),
+                && refusal_disposition(r) == Disposition::TerminalEffect),
             "the nested-impl-method assert must be REFUSED with its named runtime cause: {:?}",
             out.skip_reasons
         );
@@ -25377,7 +25403,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .any(|r| r.contains("runtime expression-statement")
-                    && refusal_disposition(r) == Disposition::Refused),
+                    && refusal_disposition(r) == Disposition::TerminalEffect),
             "the mut-borrow tuple-statement assert must be REFUSED with its named cause: {:?}",
             out.skip_reasons
         );
@@ -25407,7 +25433,7 @@ fn t() {
         assert!(
             out.skip_reasons.iter().any(|r| r
                 .contains("signed zero float literal remains an IEEE refinement")
-                && refusal_disposition(r) == Disposition::Refused),
+                && refusal_disposition(r) == Disposition::TerminalEffect),
             "the -0.0 literal must be REFUSED with its named signed-zero cause: {:?}",
             out.skip_reasons
         );
@@ -25451,7 +25477,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .any(|r| r.contains("f16 NaN width not modeled")
-                    && refusal_disposition(r) == Disposition::Refused),
+                    && refusal_disposition(r) == Disposition::TerminalEffect),
             "the f16 refinement predicate must be REFUSED with its named unknown-width cause: {:?}",
             out.skip_reasons
         );
@@ -25595,7 +25621,7 @@ fn t() {
             out.skip_reasons
                 .iter()
                 .any(|r| r.contains("under an if-guard over a runtime value")
-                    && refusal_disposition(r) == Disposition::Refused),
+                    && refusal_disposition(r) == Disposition::TerminalEffect),
             "a `&mut`-borrow if-guard must be REFUSED with its named runtime cause: {:?}",
             out.skip_reasons
         );
@@ -25614,7 +25640,7 @@ fn t() {
         assert!(helper_is_runtime_parametric(&closure_helper));
         assert_eq!(
             refusal_disposition(&callsite_inlining_reason("check", &closure_helper)),
-            Refused,
+            TerminalEffect,
             "closure-param helper is bin-2 terminal"
         );
         // generic Iterator param
@@ -25623,7 +25649,7 @@ fn t() {
         assert!(helper_is_runtime_parametric(&iter_helper));
         assert_eq!(
             refusal_disposition(&callsite_inlining_reason("drive", &iter_helper)),
-            Refused,
+            TerminalEffect,
             "iterator-param helper is bin-2 terminal"
         );
         // NOT runtime-parametric -> stays UNCLASSIFIED (dissolution/inlining can close it):
@@ -25673,7 +25699,7 @@ fn t() {
         assert!(!helper_is_runtime_parametric(&test_num));
         assert_eq!(
             refusal_disposition(&callsite_inlining_reason("test_num", &test_num)),
-            Refused,
+            TerminalEffect,
             "generic type-param helper is monomorphization terminal"
         );
         // REFUSE: a generic TYPE param via a `where` clause (num/mod.rs
@@ -25683,7 +25709,7 @@ fn t() {
         assert!(helper_is_generic_parametric(&test_parse));
         assert_eq!(
             refusal_disposition(&callsite_inlining_reason("test_parse", &test_parse)),
-            Refused,
+            TerminalEffect,
             "where-clause generic helper is monomorphization terminal"
         );
         // REFUSE: a CONST generic param (map_windows.rs `check_size_hint<const N: usize>`,
@@ -25696,7 +25722,7 @@ fn t() {
                 "check_size_hint",
                 &check_size_hint
             )),
-            Refused,
+            TerminalEffect,
             "const-generic helper is monomorphization terminal"
         );
         // REFUSE: a generic MARKER type param with NO param of that type (mem.rs
@@ -25705,7 +25731,7 @@ fn t() {
         assert!(helper_is_generic_parametric(&inner));
         assert_eq!(
             refusal_disposition(&callsite_inlining_reason("inner", &inner)),
-            Refused,
+            TerminalEffect,
             "marker-type-param helper is monomorphization terminal"
         );
         // DISCRIMINATION 1 -- a CONCRETE scalar helper (hash/sip.rs `zero_byte(val: u64,
@@ -25818,7 +25844,7 @@ fn t() {
         assert!(
             out.skip_reasons.iter().all(|r| matches!(
                 refusal_disposition(r),
-                Disposition::Refused | Disposition::Inactive
+                Disposition::TerminalEffect | Disposition::Inactive
             )),
             "mut-receiver starts_with must be TERMINAL: {:?}",
             out.skip_reasons
@@ -26170,7 +26196,7 @@ fn t() {
         assert!(
             out.skip_reasons.iter().all(|r| matches!(
                 refusal_disposition(r),
-                Disposition::Refused | Disposition::Inactive
+                Disposition::TerminalEffect | Disposition::Inactive
             )),
             "mut-capture `.any` must be TERMINAL: {:?}",
             out.skip_reasons

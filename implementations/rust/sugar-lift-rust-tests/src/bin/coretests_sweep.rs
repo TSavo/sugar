@@ -495,7 +495,7 @@ fn main() {
         let mut file_inactive = 0usize;
         for reason in &out.skip_reasons {
             let (tag, disp) = match refusal_disposition(reason) {
-                Disposition::Refused => {
+                Disposition::TerminalEffect => {
                     file_terminal += 1;
                     ("[refused]", ())
                 }
