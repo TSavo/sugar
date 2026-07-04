@@ -502,6 +502,46 @@ unhandled case continue is a place incompleteness got dressed as completeness.
 Hunt them; convert each to a panic, a named typed effect, or the sacred
 coverage panic. Never to a benign default. See #3500.
 
+## The entire product is one match expression
+
+```
+match(Sugar) {
+    Some(s) => cite_or_effect(s),
+    None    => panic!(),
+}
+```
+
+That is the whole lift. Everything above and below in this file is a
+consequence of this one expression:
+
+- **`None => panic!()`** — no third arm. Not `refuse`, not a catch-all, not a
+  benign default. This is refused-is-impossible-at-lift and I-want-the-panic
+  as one construct. The panic is not error handling; it is the worklist
+  generator. R is the measure of the `None` arm's reach over a corpus — which
+  is why the frontier can be censused, bucketed, and drained in parallel.
+  Every recognizer ever written is "add an arm to the match."
+- **`Some(s) => cite_or_effect(s)`** — the arms are where trust lives. The
+  panic makes incompleteness loud, but says nothing about the arms being
+  honest: `Some(s) => forged_green` type-checks fine and is worse than any
+  panic. Every arm terminates in exactly two outputs: a warrant CITED from the
+  vendor (green) or a TYPED effect (red). The compiler cannot check this
+  clause — only a flipping bad-twin can. That is why every recognizer ships
+  with its twin.
+- **It is `match`, not `if`-soup** — dispatch on shape, exhaustive by intent,
+  no fallthrough. Classify-by-shape-never-grep, factory-or-side-door, and
+  no-scanning are structural consequences of choosing `match` as the
+  primitive.
+- **The product ships the match's trace.** `sugar lift --report --visual` is
+  nothing but this expression pretty-printed over your code: every `Some` arm
+  renders green-with-citation or red-with-effect, and completeness of the
+  report equals totality of the match. The north star is a property of this
+  one expression.
+
+The boundary: this is the LIFT. Verify is the referee and legitimately has a
+third verdict — "refused: insufficient evidence" is an honest ruling there,
+and only there. The framing's discipline is precisely that refusal was
+evicted from lift and given its one legitimate home at verify.
+
 The manifesto above is the operating model. The rest of this file is local
 mechanics for applying it in this checkout.
 
