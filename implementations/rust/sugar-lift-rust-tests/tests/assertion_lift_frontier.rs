@@ -17,24 +17,12 @@ use serde_json::json;
 
 const EXPECTED_RED: &[(&str, &str)] = &[
     (
-        "catch_unwind_array_map_drop_on_panic_side_effect_is_named_refused",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
         "closure_capture_mut_local_post_closure_read_refuses_not_false_refutation",
         "floor-gap:mutable-alias-state",
     ),
     (
         "closure_driver_invocation_recurses_body_per_temporal_callsite",
         "floor-gap:temporal-closure-adaptor",
-    ),
-    (
-        "forloop_runtime_body_read_refuses_with_named_body_effect",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "forloop_runtime_valued_accumulator_refuses_with_named_accum_effect",
-        "floor-gap:runtime-boundary-refusal",
     ),
     (
         "iterator_clone_binding_uses_runtime_iterator_source_floor",
@@ -83,18 +71,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     (
         "reversed_literal_range_terminals_and_step_collect_have_teeth",
         "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "runtime_if_guard_stays_refused_not_fake_complete",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "slice_accessor_runtime_source_or_index_refuses_named_boundary",
-        "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "slice_chunk_window_runtime_source_refuses_named_boundary",
-        "floor-gap:runtime-boundary-refusal",
     ),
     (
         "slice_mut_index_methods_refuse_runtime_mutable_slice_sources",
