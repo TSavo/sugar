@@ -130,6 +130,10 @@ def test_tuple_repetition_by_symbolic_count_is_typed_floor_effect():
     assert outcome.effect.gap_kind == "Floor"
     assert outcome.effect.gap_locus == "Construction"
     assert operation_log == [
-        ("TupleLiteralSugar", "construct_sequence_with", "SequenceConstructionOperation"),
+        (
+            "TupleLiteralSugar",
+            "construct_sequence_with",
+            "SequenceConstructionOperation",
+        ),
         ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
     ]

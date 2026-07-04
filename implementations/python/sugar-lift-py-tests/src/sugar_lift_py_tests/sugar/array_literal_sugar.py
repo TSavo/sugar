@@ -78,9 +78,7 @@ class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSu
                     element=element,
                 )
             )
-        return Complete(
-            ArrayLiteral(tuple(items))
-        )
+        return Complete(ArrayLiteral(tuple(items)))
 
 
 def _array_element(value, *, element: SugarBody):

@@ -821,7 +821,9 @@ def _is_external_bridge_call(fragment, ctx) -> bool:
     if fragment.observed != "Call":
         return False
     return (
-        fragment.call_import_target_name(ctx.import_aliases or {}, ctx.from_imports or {})
+        fragment.call_import_target_name(
+            ctx.import_aliases or {}, ctx.from_imports or {}
+        )
         is not None
     )
 

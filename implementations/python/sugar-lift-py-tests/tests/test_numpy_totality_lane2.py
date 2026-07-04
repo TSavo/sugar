@@ -279,12 +279,7 @@ def test_inherited_opaque_constructor_argument_becomes_typed_effect():
 
 
 def test_plain_zero_init_constructor_with_arguments_still_refuses_named():
-    source = (
-        "class Plain:\n"
-        "    pass\n"
-        "def t():\n"
-        "    assert f(Plain(3)) == 1\n"
-    )
+    source = "class Plain:\n" "    pass\n" "def t():\n" "    assert f(Plain(3)) == 1\n"
 
     with pytest.raises(FactoryGap) as raised:
         build_literal_call_report(

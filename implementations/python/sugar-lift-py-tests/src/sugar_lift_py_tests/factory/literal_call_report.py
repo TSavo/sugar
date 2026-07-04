@@ -1098,9 +1098,7 @@ def _proofir_effect_lift(
         Incomplete(
             FactoryGapEffect(
                 owner="literal_call_report.equality_fact",
-                blame=(
-                    f"{memento_file}:{stmt.line}:{stmt.col}"
-                ),
+                blame=(f"{memento_file}:{stmt.line}:{stmt.col}"),
                 observed=observed,
                 requested=requested,
                 fix=fix,
