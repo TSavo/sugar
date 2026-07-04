@@ -157,8 +157,13 @@ pub fn lift_options_from_rust_build_cfg(
 
     let target_cfg = TargetCfg::from_rustc_cfg_facts(facts.iter().map(String::as_str))
         .map_err(|e| format!("invalid rust build cfg facts: {e}"))?;
+    let package_env = manifest_path
+        .as_deref()
+        .map(cargo_package_env_from_manifest_path)
+        .transpose()?
+        .unwrap_or_default();
     Ok((
-        LiftOptions::for_target_cfg(target_cfg),
+        LiftOptions::for_target_cfg(target_cfg).with_package_env(package_env),
         RustBuildCfgReport {
             manifest_path,
             rustc_fact_count,
@@ -166,6 +171,76 @@ pub fn lift_options_from_rust_build_cfg(
             facts,
         },
     ))
+}
+
+fn cargo_package_env_from_manifest_path(
+    manifest_path: &Path,
+) -> Result<BTreeMap<String, String>, String> {
+    let text = std::fs::read_to_string(manifest_path)
+        .map_err(|e| format!("read {}: {e}", manifest_path.display()))?;
+    let doc: toml::Value =
+        toml::from_str(&text).map_err(|e| format!("parse {}: {e}", manifest_path.display()))?;
+    let Some(package) = doc.get("package").and_then(toml::Value::as_table) else {
+        return Ok(BTreeMap::new());
+    };
+    let mut out = BTreeMap::new();
+    insert_string_env(&mut out, package, "CARGO_PKG_NAME", "name");
+    insert_string_env(&mut out, package, "CARGO_PKG_VERSION", "version");
+    insert_string_env(&mut out, package, "CARGO_PKG_DESCRIPTION", "description");
+    insert_string_env(&mut out, package, "CARGO_PKG_HOMEPAGE", "homepage");
+    insert_string_env(&mut out, package, "CARGO_PKG_REPOSITORY", "repository");
+    insert_string_env(&mut out, package, "CARGO_PKG_LICENSE", "license");
+    insert_string_env(&mut out, package, "CARGO_PKG_LICENSE_FILE", "license-file");
+    insert_string_env(&mut out, package, "CARGO_PKG_RUST_VERSION", "rust-version");
+    let authors = package
+        .get("authors")
+        .and_then(toml::Value::as_array)
+        .map(|authors| {
+            authors
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(":")
+        })
+        .unwrap_or_default();
+    out.insert("CARGO_PKG_AUTHORS".to_string(), authors);
+    if let Some(version) = out.get("CARGO_PKG_VERSION").cloned() {
+        let (core, pre) = version
+            .split_once('-')
+            .map(|(core, pre)| (core, pre))
+            .unwrap_or((version.as_str(), ""));
+        let mut parts = core.split('.');
+        out.insert(
+            "CARGO_PKG_VERSION_MAJOR".to_string(),
+            parts.next().unwrap_or("0").to_string(),
+        );
+        out.insert(
+            "CARGO_PKG_VERSION_MINOR".to_string(),
+            parts.next().unwrap_or("0").to_string(),
+        );
+        out.insert(
+            "CARGO_PKG_VERSION_PATCH".to_string(),
+            parts.next().unwrap_or("0").to_string(),
+        );
+        out.insert("CARGO_PKG_VERSION_PRE".to_string(), pre.to_string());
+    }
+    Ok(out)
+}
+
+fn insert_string_env(
+    out: &mut BTreeMap<String, String>,
+    package: &toml::map::Map<String, toml::Value>,
+    env_key: &str,
+    manifest_key: &str,
+) {
+    out.insert(
+        env_key.to_string(),
+        package
+            .get(manifest_key)
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    );
 }
 
 fn rustc_cfg_facts() -> Result<Vec<String>, String> {

@@ -5276,12 +5276,21 @@ mod tests {
         (root, params)
     }
 
-    fn json_macro_gap_source(test_name: &str) -> String {
+    fn visible_macro_gap_source(test_name: &str) -> String {
         format!(
             r#"
+macro_rules! local_gap {{
+    () => {{
+        match std::env::args().len() {{
+            0 => true,
+            _ => false,
+        }}
+    }};
+}}
+
 #[test]
 fn {test_name}() {{
-    assert!(json!({{"k": 1}}).is_object());
+    assert!(local_gap!());
 }}
 "#
         )
@@ -5289,7 +5298,7 @@ fn {test_name}() {{
 
     #[test]
     fn audit_only_records_same_construction_gap_that_production_panics_on() {
-        let source = json_macro_gap_source("first");
+        let source = visible_macro_gap_source("first");
         let (root, params) = construction_gap_fixture(
             "audit_only_records_same_construction_gap_that_production_panics_on",
             &source,
@@ -5299,7 +5308,7 @@ fn {test_name}() {{
         let production_message =
             panic_message(production.expect_err("production lift must keep panicking"));
         assert!(
-            production_message.contains("macro `json` has no visible macro_rules source"),
+            production_message.contains("observed=Macro requested=Constraint"),
             "{production_message}"
         );
         assert!(
@@ -5322,11 +5331,8 @@ fn {test_name}() {{
         assert_eq!(gap["kind"], "audit-only-construction-gap");
         assert_eq!(gap["label"], "src/lib.rs::<lift>");
         assert_eq!(gap["gap"]["owner"], "rust.factory");
-        assert_eq!(
-            gap["gap"]["observed"],
-            "macro `json` has no visible macro_rules source"
-        );
-        assert_eq!(gap["gap"]["requested"], "Unknown");
+        assert_eq!(gap["gap"]["observed"], "Macro");
+        assert_eq!(gap["gap"]["requested"], "Constraint");
         assert_eq!(gap["gap"]["gap_kind"], "Sugar");
         assert_eq!(gap["gap"]["gap_locus"], "AST");
         assert!(gap["gap"]["observed"]
@@ -5341,10 +5347,13 @@ fn {test_name}() {{
         let root =
             unique_temp_dir("audit_only_collects_multiple_construction_gaps_in_stable_order");
         std::fs::create_dir_all(root.join("src")).expect("mkdir src");
-        std::fs::write(root.join("src/first.rs"), json_macro_gap_source("first"))
+        std::fs::write(root.join("src/first.rs"), visible_macro_gap_source("first"))
             .expect("write first source");
-        std::fs::write(root.join("src/second.rs"), json_macro_gap_source("second"))
-            .expect("write second source");
+        std::fs::write(
+            root.join("src/second.rs"),
+            visible_macro_gap_source("second"),
+        )
+        .expect("write second source");
         let params = json!({
             "workspace_root": root,
             "source_paths": ["src/first.rs", "src/second.rs"],
@@ -5370,7 +5379,7 @@ fn {test_name}() {{
             vec!["src/first.rs::<lift>", "src/second.rs::<lift>"]
         );
         assert!(gaps.iter().all(|gap| {
-            gap["gap"]["observed"] == "macro `json` has no visible macro_rules source"
+            gap["gap"]["observed"] == "Macro" && gap["gap"]["requested"] == "Constraint"
         }));
 
         let _ = std::fs::remove_dir_all(root);
