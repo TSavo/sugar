@@ -97,3 +97,28 @@ def test_ifexp_factory_selects_shape_recognizer() -> None:
 
     assert result.audit_row.selected == "IfExpSugar"
     assert result.audit_row.status == "selected"
+
+
+def test_runtime_condition_inside_bridge_body_stays_typed_effect() -> None:
+    module = ast.parse(
+        "def choose(flag):\n"
+        "    value = 1 if flag == 1 else 2\n"
+        "    return value\n"
+        "\n"
+        "choose(1)\n"
+    )
+    function_node = module.body[0]
+    call_node = module.body[1].value
+    ctx = FactoryBuildContext(
+        filename="if_exp.py",
+        catalog=default_catalog(),
+        name_resolver={"choose": function_node},
+    )
+
+    body = ctx.build_body(call_node, SugarRole.TERM)
+    outcome = body.reduce(ReduceContext.root(owner="if-exp-bridge-test"))
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "conditional expression runtime boundary" in outcome.reason
+    assert "condition `Compare` is evaluated at runtime" in outcome.reason

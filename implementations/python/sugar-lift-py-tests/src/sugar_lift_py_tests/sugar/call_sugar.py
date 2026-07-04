@@ -110,10 +110,13 @@ class BridgeStrategy:
         )
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        arg_values = tuple(
-            complete_value(argument.reduce(ctx), owner="BridgeStrategy argument")
-            for argument in self.arguments
-        )
+        arg_values = []
+        for argument in self.arguments:
+            outcome = argument.reduce(ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            arg_values.append(complete_value(outcome, owner="BridgeStrategy argument"))
+        arg_values = tuple(arg_values)
         term = euf_call_term(
             self.target_name,
             [
