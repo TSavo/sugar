@@ -50,7 +50,6 @@ fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box
         }
         Expr::MethodCall(call) if by_ref_unknown_composite_handoff(call, fcx) => {
             Some(Box::new(RuntimeIteratorByRefHandoffSugar {
-                boundary: token_key(expr),
                 receiver: token_key(&call.receiver),
             }))
         }
@@ -76,7 +75,6 @@ struct RuntimeIteratorSourceSugar {
 }
 
 struct RuntimeIteratorByRefHandoffSugar {
-    boundary: String,
     receiver: String,
 }
 

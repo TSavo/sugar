@@ -118,10 +118,7 @@ fn recognize_get(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn S
     if let Expr::Path(path) = strip_refs_groups(&call.receiver) {
         if let Some((_, konst)) = nonzero_assoc_const_path(path) {
             if !matches!(konst.as_str(), "MIN" | "MAX") {
-                return Some(Box::new(NonZeroGetAssocConstRefusal {
-                    konst,
-                    site: token_key(expr),
-                }));
+                return Some(Box::new(NonZeroGetAssocConstRefusal { konst }));
             }
         }
     }
@@ -163,7 +160,6 @@ struct NonZeroNewSugar {
 
 struct NonZeroGetAssocConstRefusal {
     konst: String,
-    site: String,
 }
 
 impl Sugar for NonZeroNewSugar {

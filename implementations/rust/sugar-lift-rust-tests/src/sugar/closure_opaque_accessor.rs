@@ -20,12 +20,10 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let site = closure_adaptor::decompose_closure_adaptor_frag(frag, fcx.let_inits(), fcx.scope())?;
     site.has_opaque_accessor()
-        .then(|| Box::new(ClosureOpaqueAccessorSugar { site }) as Box<dyn Sugar>)
+        .then(|| Box::new(ClosureOpaqueAccessorSugar) as Box<dyn Sugar>)
 }
 
-struct ClosureOpaqueAccessorSugar {
-    site: closure_adaptor::ClosureAdaptorSite,
-}
+struct ClosureOpaqueAccessorSugar;
 
 impl Sugar for ClosureOpaqueAccessorSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {

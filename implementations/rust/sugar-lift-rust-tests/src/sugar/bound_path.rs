@@ -170,7 +170,6 @@ enum BoundPathSugar {
 }
 
 struct BoundPathTemporalEffectSugar {
-    boundary: String,
     reason: String,
 }
 
@@ -179,7 +178,6 @@ struct BoundPathConsumedIteratorStateSugar {
 }
 
 struct BoundPathRuntimeDestructuredSourceSugar {
-    boundary: String,
     reason: String,
 }
 
@@ -217,11 +215,8 @@ impl Sugar for BoundPathGapSugar {
     }
 }
 
-fn temporal_effect(name: &str, reason: String) -> Box<dyn Sugar> {
-    Box::new(BoundPathTemporalEffectSugar {
-        boundary: name.to_string(),
-        reason,
-    })
+fn temporal_effect(_name: &str, reason: String) -> Box<dyn Sugar> {
+    Box::new(BoundPathTemporalEffectSugar { reason })
 }
 
 impl BoundPathSugar {
@@ -432,7 +427,6 @@ fn runtime_destructured_source_refusal(name: &str, fcx: &SugarBuildCtx) -> Optio
              refused"
         );
         Box::new(BoundPathRuntimeDestructuredSourceSugar {
-            boundary: name.to_string(),
             reason,
         }) as Box<dyn Sugar>
     })

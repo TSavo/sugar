@@ -22,14 +22,10 @@ pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<B
     if !frag.is_atomic_load_method() {
         return None;
     }
-    Some(Box::new(AtomicLoadSugar {
-        boundary: frag.token_str(),
-    }))
+    Some(Box::new(AtomicLoadSugar))
 }
 
-struct AtomicLoadSugar {
-    boundary: String,
-}
+struct AtomicLoadSugar;
 
 impl Sugar for AtomicLoadSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {

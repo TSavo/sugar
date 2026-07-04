@@ -687,18 +687,6 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
-    /// The token-stream string for an `Expr::Path` node (e.g. `"Foo :: BAR"`).
-    /// Used for diagnostic `boundary` strings in `AmbiguousTemporalIdentity`
-    /// effects. Returns `None` for non-path nodes.
-    pub(crate) fn path_token_str(&self) -> Option<String> {
-        match &self.node {
-            FragNode::Expr(syn::Expr::Path(p)) => {
-                Some(quote::ToTokens::to_token_stream(p).to_string())
-            }
-            _ => None,
-        }
-    }
-
     /// For an `Expr::Path` with NO qualified self and a single bare ident,
     /// returns that ident string. Returns `None` for qualified paths
     /// (`<T as Trait>::Assoc`), multi-segment paths, or non-path nodes.

@@ -81,7 +81,6 @@ enum CollectPlan {
         kind: CollectKind,
     },
     RuntimeCallableMap {
-        boundary: String,
         reason: String,
     },
 }
@@ -141,13 +140,11 @@ impl CollectPlan {
             return None;
         }
         let domain = crate::token_key(&call.receiver);
-        let boundary = crate::token_key(expr);
         let kind = match kind {
             CollectKind::Option => "Option",
             CollectKind::Result => "Result",
         };
         Some(Self::RuntimeCallableMap {
-            boundary,
             reason: format!(
                 "iterator/option adaptor `.map(|..| ..).collect::<{kind}<Vec<_>>` over {domain} whose closure body \
                  performs a runtime call through closure body parameter (bin-2: dynamic \
@@ -227,11 +224,9 @@ impl CollectPlan {
                     CollectKind::Result => monadic::ok_term(vec),
                 }))
             }
-            CollectPlan::RuntimeCallableMap { boundary, reason } => {
-                Err(Effect::RuntimeCallableElement {
-                    reason: reason.clone(),
-                })
-            }
+            CollectPlan::RuntimeCallableMap { reason } => Err(Effect::RuntimeCallableElement {
+                reason: reason.clone(),
+            }),
         }
     }
 }

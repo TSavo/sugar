@@ -87,7 +87,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
         file: "src/sugar/block_sugar.rs",
         line: 241,
         enclosing_fn: "statement_floor_name",
-        max_floor_arms: 17,
+        max_floor_arms: 16,
         patterns: &[
             "Seq",
             "TermSeq",
@@ -97,7 +97,6 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
             "LiteralCStr",
             "FormatValue",
             "TupleComponents",
-            "ObjectValue",
             "PredicateValue",
             "StmtSupport",
             "StmtBound",
@@ -141,7 +140,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
         file: "src/sugar/factory.rs",
         line: 821,
         enclosing_fn: "disposition_outcome",
-        max_floor_arms: 18,
+        max_floor_arms: 17,
         patterns: &[
             "Constraints",
             "Term",
@@ -149,7 +148,6 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
             "LiteralCStr",
             "FormatValue",
             "TupleComponents",
-            "ObjectValue",
             "PredicateValue",
             "TermSeq",
             "Seq",

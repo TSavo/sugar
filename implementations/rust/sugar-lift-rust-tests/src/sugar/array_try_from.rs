@@ -53,7 +53,6 @@ struct ArrayTryFromSugar {
     source: SugarBody<CompositeFloor>,
     len: usize,
     dest: Dest,
-    site: String,
 }
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -68,7 +67,6 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         source: source_body_frag(arg_frag, fcx),
         len,
         dest,
-        site: frag.token_str(),
     }))
 }
 
