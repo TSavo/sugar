@@ -124,10 +124,14 @@ pub(crate) fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Opti
 
 pub(crate) struct MapClosure {
     expr: syn::ExprClosure,
+    term_binding: Option<MapTermBinding>,
+    u128_shift_hint: bool,
+}
+
+struct MapTermBinding {
     param: String,
     curry_param: String,
     body: SugarBody<TermFloor>,
-    u128_shift_hint: bool,
 }
 
 impl MapClosure {
@@ -136,20 +140,29 @@ impl MapClosure {
         fcx: &SugarBuildCtx,
         u128_shift_hint: bool,
     ) -> Option<Self> {
-        let param = closure_single_param_name(&expr).or_else(|| {
-            closure_single_wildcard_literal_sequence(&expr, fcx).then(|| "_".to_string())
-        })?;
-        let curry_param = curry_param_name(&param);
-        let body_scope = fcx
-            .scope()
-            .fork_with_stable_term_binding(&param, curry_param_term(&param));
-        let body_fcx = fcx.with_scope(&body_scope);
-        let body = SugarBody::<TermFloor>::term(expr.body.as_ref(), &body_fcx);
+        if expr.inputs.len() != 1 {
+            return None;
+        }
+        let term_binding = closure_single_param_name(&expr)
+            .or_else(|| {
+                closure_single_wildcard_literal_sequence(&expr, fcx).then(|| "_".to_string())
+            })
+            .map(|param| {
+                let curry_param = curry_param_name(&param);
+                let body_scope = fcx
+                    .scope()
+                    .fork_with_stable_term_binding(&param, curry_param_term(&param));
+                let body_fcx = fcx.with_scope(&body_scope);
+                let body = SugarBody::<TermFloor>::term(expr.body.as_ref(), &body_fcx);
+                MapTermBinding {
+                    param,
+                    curry_param,
+                    body,
+                }
+            });
         Some(Self {
             expr,
-            param,
-            curry_param,
-            body,
+            term_binding,
             u128_shift_hint,
         })
     }
@@ -518,16 +531,23 @@ fn curry_map_body_for_term(
     ctx: &SugarCtx,
     elem_label: String,
 ) -> Result<Rc<Term>, Outcome> {
-    let curried_floor = match mapper.body.reduce(ctx) {
+    let Some(binding) = &mapper.term_binding else {
+        return Err(Outcome::Incomplete(Effect::CoverageGap {
+            boundary: "Iterator::map".to_string(),
+            reason: "map closure pattern is value-only; exact value reduction failed before a term floor could be built"
+                .to_string(),
+        }));
+    };
+    let curried_floor = match binding.body.reduce(ctx) {
         Outcome::Complete(d) => d.accept_desugared_floor(CurryVisitor {
-            param: &mapper.curry_param,
+            param: &binding.curry_param,
             arg: elem_term,
             occurrence: ctx.scope.temporal_curry_occurrence("map", ordinal),
         }),
         Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
     };
     let curried_floor = curried_floor.accept_desugared_floor(CurryVisitor {
-        param: &mapper.param,
+        param: &binding.param,
         arg: elem_term,
         occurrence: ctx.scope.temporal_curry_occurrence("map", ordinal),
     });

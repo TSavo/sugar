@@ -216,7 +216,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        6572,
+        6492,
         "not-mine",
         "lift_post RPC targets top-level free functions by exact name",
         "sugar-walk::bin::walk_rpc",
@@ -224,7 +224,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        6597,
+        6517,
         "not-mine",
         "contract RPC targets top-level free functions by exact name",
         "sugar-walk::bin::walk_rpc",
@@ -232,7 +232,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        6683,
+        6603,
         "not-mine",
         "parse_fn helper targets top-level free functions by exact name",
         "sugar-walk::bin::walk_rpc",
@@ -240,7 +240,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        7729,
+        7649,
         "not-mine",
         "typed local binding name requires a single identifier pattern",
         "sugar-walk::bin::walk_rpc",
@@ -248,7 +248,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        7733,
+        7653,
         "not-mine",
         "local binding names only exist for single-name local patterns",
         "sugar-walk::bin::walk_rpc",
@@ -256,7 +256,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        8169,
+        8089,
         "not-mine",
         "local free-function index records only non-test free functions and inline modules",
         "sugar-walk::bin::walk_rpc",
@@ -264,7 +264,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        8226,
+        8146,
         "not-mine",
         "function contract targets are functions, liftable methods, and inline modules",
         "sugar-walk::bin::walk_rpc",
@@ -272,7 +272,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        8299,
+        8219,
         "not-mine",
         "bind lift targets are functions, liftable methods, and inline modules",
         "sugar-walk::bin::walk_rpc",
@@ -280,7 +280,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        8503,
+        8423,
         "not-mine",
         "unrecognized docstring pattern kinds carry no verifier role",
         "sugar-walk::bin::walk_rpc",
@@ -288,7 +288,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        8517,
+        8437,
         "not-mine",
         "only docstrings and type signatures infer evidence roles",
         "sugar-walk::bin::walk_rpc",
@@ -296,7 +296,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        8774,
+        8694,
         "not-mine",
         "sugar param_types describe typed value parameters, not receivers",
         "sugar-walk::bin::walk_rpc",
@@ -304,7 +304,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        8798,
+        8718,
         "not-mine",
         "original param_types describe typed value parameters, not receivers",
         "sugar-walk::bin::walk_rpc",
@@ -312,7 +312,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        8913,
+        8833,
         "not-mine",
         "body source lookup only searches functions in inline modules",
         "sugar-walk::bin::walk_rpc",
@@ -320,7 +320,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        9397,
+        9317,
         "not-mine",
         "#3017 item 2 leaves non-scalar literals outside operand symbols",
         "sugar-walk::bin::walk_rpc",
@@ -328,7 +328,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        9502,
+        9422,
         "not-mine",
         "local binding symbols only exist for single-name local patterns",
         "sugar-walk::bin::walk_rpc",
@@ -336,7 +336,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        9542,
+        9462,
         "not-mine",
         "local binding sorts only exist for single-name local patterns",
         "sugar-walk::bin::walk_rpc",
@@ -344,7 +344,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10271,
+        10191,
         "not-mine",
         "#3017 item 2 leaves non-primitive type names outside scalar shape sorts",
         "sugar-walk::bin::walk_rpc",
@@ -352,7 +352,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10586,
+        10506,
         "not-mine",
         "test fixture memento minting searches top-level free functions only",
         "sugar-walk::bin::walk_rpc",
@@ -360,7 +360,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10618,
+        10538,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -368,7 +368,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10636,
+        10556,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -376,7 +376,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10665,
+        10585,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -384,7 +384,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10683,
+        10603,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -392,7 +392,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10722,
+        10642,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -400,7 +400,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10724,
+        10644,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -408,7 +408,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10747,
+        10667,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -416,7 +416,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10760,
+        10680,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -424,7 +424,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10773,
+        10693,
         "not-mine",
         "test body-source fixture reads its top-level free function",
         "sugar-walk::bin::walk_rpc",
@@ -432,7 +432,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        10809,
+        10729,
         "not-mine",
         "test panic-locus helper reads the first top-level free function fixture",
         "sugar-walk::bin::walk_rpc",
@@ -440,7 +440,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        11279,
+        11199,
         "not-mine",
         "test body-source fixture reads its top-level free function",
         "sugar-walk::bin::walk_rpc",
@@ -448,7 +448,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        11320,
+        11240,
         "not-mine",
         "test body-template fixture reads its top-level free function",
         "sugar-walk::bin::walk_rpc",
@@ -456,7 +456,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        12656,
+        12576,
         "not-mine",
         "test comment-surface walker only descends JSON object and array nodes",
         "sugar-walk::bin::walk_rpc",
@@ -464,7 +464,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        12693,
+        12613,
         "not-mine",
         "test forbidden-field assertion only descends JSON object and array nodes",
         "sugar-walk::bin::walk_rpc",
@@ -472,7 +472,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        12713,
+        12633,
         "not-mine",
         "test op_cid collector only descends JSON object and array nodes",
         "sugar-walk::bin::walk_rpc",
@@ -480,7 +480,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        12749,
+        12669,
         "not-mine",
         "test fn_name assertion only descends JSON object and array nodes",
         "sugar-walk::bin::walk_rpc",
@@ -488,7 +488,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        12855,
+        12775,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -496,7 +496,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        12906,
+        12826,
         "default-ok",
         "test tempdir cleanup is best-effort after assertions",
         "sugar-walk::bin::walk_rpc",
@@ -560,7 +560,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/lift.rs",
-        1873,
+        1875,
         "not-mine",
         "non-matching partial/guard pairs must not discharge",
         "sugar-walk::lift",
@@ -568,7 +568,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/lift.rs",
-        3435,
+        3437,
         "not-mine",
         "only assert! contributes a checked precondition",
         "sugar-walk::lift",
@@ -576,7 +576,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/lift.rs",
-        4289,
+        4291,
         "not-mine",
         "non-comparison predicates negate as explicit Not nodes",
         "sugar-walk::lift",
@@ -584,7 +584,7 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/lift.rs",
-        4349,
+        4351,
         "not-mine",
         "test helper searches one top-level free function",
         "sugar-walk::lift",
