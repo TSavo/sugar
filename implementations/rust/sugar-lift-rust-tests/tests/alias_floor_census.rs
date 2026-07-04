@@ -598,12 +598,6 @@ const EXPECTED_BIND_EVENTS_NOT_FLOOR_DISPATCHED: &[(&str, &str, &str, &str)] = &
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/lib.rs",
-        "record_temporal_rewrite_local",
-        "bind-event",
-        "fn record_temporal_rewrite_local(",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/lib.rs",
         "record_temporal_rewrite_value",
         "bind-event",
         "fn record_temporal_rewrite_value(",

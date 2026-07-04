@@ -31043,6 +31043,52 @@ fn alias_deref_mutated_read_warrants_aliasfloor_post_value() {
 }
 
 #[test]
+fn copy_binding_severance_uses_vendor_copy_trait() {
+    let src = r#"
+        #[test]
+        fn t_copy_severance() {
+            let mut x = 5;
+            let y = x;
+            x += 1;
+            assert_eq!(y, 5);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/copy_binding_severance.rs");
+    assert_warranted_decl_count(&out, 1);
+    let sat = fast_smt_smoke_check(
+        &inv_json(single_warranted_decl(&out)),
+        "copy_binding_severance_truth",
+    );
+    assert!(
+        sat,
+        "Copy severance must be vendor-granted: `let y = x` over Copy leaves y == 5"
+    );
+
+    let lie = r#"
+        #[test]
+        fn t_copy_severance_lie() {
+            let mut x = 5;
+            let y = x;
+            x += 1;
+            assert_eq!(y, 6);
+        }
+    "#;
+    let lie_out = lift_file(
+        &parse(lie),
+        "coretests/borrow/copy_binding_severance_lie.rs",
+    );
+    assert_warranted_decl_count(&lie_out, 1);
+    let lie_sat = fast_smt_smoke_check(
+        &inv_json(single_warranted_decl(&lie_out)),
+        "copy_binding_severance_lie",
+    );
+    assert!(
+        !lie_sat,
+        "Copy severance lie must refute: mutating x must not move y"
+    );
+}
+
+#[test]
 fn inline_deref_mut_borrow_then_read_refuses() {
     let src = r#"
         #[test]
