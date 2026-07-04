@@ -15,7 +15,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
-    names: tuple[str, ...]
+    bindings: tuple[tuple[str, tuple[int, ...]], ...]
     receiver: SugarBody
     blame: str
 
@@ -28,10 +28,7 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
             return False
         if site.assign_value().observed in {"Tuple", "List"}:
             return False
-        target_items = targets[0].terms()
-        return bool(target_items) and all(
-            item.observed == "Name" for item in target_items
-        )
+        return bool(_target_bindings(targets[0]))
 
     @classmethod
     def build(cls, site, ctx) -> "TupleUnpackAssignSugar":
@@ -39,9 +36,8 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
             raise TypeError(
                 "TupleUnpackAssignSugar claim built a non-unpack assignment"
             )
-        target_items = site.assign_targets()[0].terms()
         return cls(
-            names=tuple(item.name_id() for item in target_items),
+            bindings=_target_bindings(site.assign_targets()[0]),
             receiver=ctx.build_body(site.assign_value(), SugarRole.TERM),
             blame=site.blame,
         )
@@ -56,17 +52,46 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
                 tuple(
                     BoundVar(
                         name,
-                        SugarBody(
-                            TupleUnpackProjection(
-                                self.receiver,
-                                index,
-                                blame=self.blame,
-                            ),
-                            SugarRole.TERM,
-                        ),
+                        _projection_body(self.receiver, path, blame=self.blame),
                         scope=ctx,
                     )
-                    for index, name in enumerate(self.names)
+                    for name, path in self.bindings
                 )
             )
         )
+
+
+def _target_bindings(
+    target,
+    path: tuple[int, ...] = (),
+) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    if target.observed == "Name":
+        return ((target.name_id(), path),)
+    if target.observed not in {"Tuple", "List"}:
+        return ()
+    bindings: list[tuple[str, tuple[int, ...]]] = []
+    for index, item in enumerate(target.terms()):
+        nested = _target_bindings(item, path + (index,))
+        if not nested:
+            return ()
+        bindings.extend(nested)
+    return tuple(bindings)
+
+
+def _projection_body(
+    receiver: SugarBody,
+    path: tuple[int, ...],
+    *,
+    blame: str,
+) -> SugarBody:
+    body = receiver
+    for index in path:
+        body = SugarBody(
+            TupleUnpackProjection(
+                body,
+                index,
+                blame=blame,
+            ),
+            SugarRole.TERM,
+        )
+    return body

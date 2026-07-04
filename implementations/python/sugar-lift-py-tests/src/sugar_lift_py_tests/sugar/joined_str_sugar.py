@@ -4,9 +4,9 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.floor import StringValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import Term, ctor, num, str_const
-from sugar_lift_py_tests.operations import MethodCallOperation, StrCoercionOperation
+from sugar_lift_py_tests.floor import StringValue, SymbolicValue
+from sugar_lift_py_tests.ir import Term, ctor, str_const
+from sugar_lift_py_tests.operations import FormatValueOperation, StrCoercionOperation
 from sugar_lift_py_tests.operations.perform_operation import perform_operation
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -174,27 +174,13 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
                     self.blame,
                     f"formatted string literal uses unknown conversion {part.conversion}",
                 )
-            if isinstance(value, SymbolicValue):
-                symbolic_parts.append(
-                    ctor(
-                        "py.format",
-                        [value.term, str_const(part.spec), num(part.conversion)],
-                    )
-                )
-                continue
-            if not isinstance(value, (StringValue, TermValue)):
-                return _runtime_format_effect(
-                    self.blame,
-                    f"formatted string literal field reduced to {type(value).__name__}; "
-                    "__format__ for that floor is runtime/opaque here",
-                )
             formatted = perform_operation(
                 owner="JoinedStrSugar",
                 blame=self.blame,
                 receiver=value,
-                operation=MethodCallOperation(
-                    name="__format__",
-                    arguments=(StringValue(part.spec),),
+                operation=FormatValueOperation(
+                    spec=part.spec,
+                    conversion=part.conversion,
                     owner="JoinedStrSugar",
                     blame=self.blame,
                 ),
@@ -203,10 +189,15 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
             if isinstance(formatted, Incomplete):
                 return formatted
             formatted_value = complete_value(formatted, owner="JoinedStrSugar format")
+            if isinstance(formatted_value, SymbolicValue):
+                symbolic_parts.append(formatted_value.term)
+                continue
             if not isinstance(formatted_value, StringValue):
                 return _runtime_format_effect(
                     self.blame,
-                    f"__format__ returned {type(formatted_value).__name__}, not StringValue",
+                    f"formatted string literal field reduced to "
+                    f"{type(formatted_value).__name__}; __format__ for that floor "
+                    "is runtime/opaque here",
                 )
             pieces.append(formatted_value.value)
             symbolic_parts.append(str_const(formatted_value.value))

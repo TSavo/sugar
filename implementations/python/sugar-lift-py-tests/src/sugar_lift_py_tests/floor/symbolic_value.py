@@ -44,6 +44,9 @@ class SymbolicValue(FloorValue):
     def str_with(self, operation, ctx):
         return operation.str_symbolic(self, ctx)
 
+    def format_value_with(self, operation, ctx):
+        return operation.format_symbolic(self, ctx)
+
     def bitwise_with(self, operation, ctx):
         return operation.bitwise_symbolic(self, ctx)
 

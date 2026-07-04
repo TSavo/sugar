@@ -53,6 +53,60 @@ def test_tuple_unpack_assign_selects_dedicated_sugar_for_non_literal_rhs() -> No
     assert result.audit_row.selected == "TupleUnpackAssignSugar"
 
 
+def test_tuple_unpack_assign_binds_nested_projection_from_symbolic_rhs() -> None:
+    assert compose_block(
+        "    x, (y, z), w = values\n    return z\n",
+        binds={"values": SymbolicValue(make_var("values"))},
+    ) == BlockValue(
+        (
+            ReturnValue(
+                SymbolicValue(
+                    ctor(
+                        "py.unpack",
+                        [
+                            ctor("py.unpack", [make_var("values"), num(1)]),
+                            num(1),
+                        ],
+                    )
+                )
+            ),
+        )
+    )
+
+
+def test_list_unpack_assign_binds_nested_list_projection_from_symbolic_rhs() -> None:
+    assert compose_block(
+        "    [x, [y, z]] = values\n    return y\n",
+        binds={"values": SymbolicValue(make_var("values"))},
+    ) == BlockValue(
+        (
+            ReturnValue(
+                SymbolicValue(
+                    ctor(
+                        "py.unpack",
+                        [
+                            ctor("py.unpack", [make_var("values"), num(1)]),
+                            num(0),
+                        ],
+                    )
+                )
+            ),
+        )
+    )
+
+
+def test_tuple_unpack_assign_keeps_starred_targets_refused() -> None:
+    with pytest.raises(FactoryGap) as raised:
+        build_node(
+            ast.parse("x, *rest = values").body[0],
+            filename="f.py",
+            role=SugarRole.STATEMENT,
+        )
+
+    assert raised.value.info["observed"] == "Assign"
+    assert raised.value.info["requested"] == "statement"
+
+
 def _compose_block_with_log(body_src: str, binds: dict | None = None):
     fn = ast.parse(f"def f(x):\n{body_src}").body[0]
     block = Block.of(fn.body)

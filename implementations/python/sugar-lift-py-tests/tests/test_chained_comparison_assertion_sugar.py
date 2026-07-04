@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 
@@ -272,21 +269,26 @@ def test_chained_assertion_accepts_bound_subscript_and_complex_call_operand() ->
     ]
 
 
-def test_chained_assertion_requires_module_binding_to_construct() -> None:
-    with pytest.raises(FactoryGap) as exc:
-        build_literal_call_report(
-            source=(
-                "info = f'{label}'\n"
-                "\n"
-                "def test_default_device():\n"
-                "    assert info == 'cpu' == 'cpu'\n"
-            ),
-            filename="test_array_api_info.py",
-            memento_file="test_array_api_info.py",
-        )
+def test_chained_assertion_accepts_module_joined_str_binding() -> None:
+    report = build_literal_call_report(
+        source=(
+            "info = f'{label}'\n"
+            "\n"
+            "def test_default_device():\n"
+            "    assert info == 'cpu' == 'cpu'\n"
+        ),
+        filename="test_array_api_info.py",
+        memento_file="test_array_api_info.py",
+    )
 
-    assert exc.value.info["observed"] == "JoinedStr"
-    assert exc.value.info["requested"] == "term"
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == (
+        "python.chained-comparison-assertion-sugar"
+    )
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ChainedComparisonAssertionSugar"
+    ]
 
 
 def test_chained_assertion_accepts_factory_built_local_binding() -> None:
@@ -313,17 +315,22 @@ def test_chained_assertion_accepts_factory_built_local_binding() -> None:
     ]
 
 
-def test_chained_assertion_requires_local_binding_to_construct() -> None:
-    with pytest.raises(FactoryGap) as exc:
-        build_literal_call_report(
-            source=(
-                "def test_default_device():\n"
-                "    info = f'{label}'\n"
-                "    assert info == 'cpu' == 'cpu'\n"
-            ),
-            filename="test_array_api_info.py",
-            memento_file="test_array_api_info.py",
-        )
+def test_chained_assertion_accepts_local_joined_str_binding() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_default_device():\n"
+            "    info = f'{label}'\n"
+            "    assert info == 'cpu' == 'cpu'\n"
+        ),
+        filename="test_array_api_info.py",
+        memento_file="test_array_api_info.py",
+    )
 
-    assert exc.value.info["observed"] == "JoinedStr"
-    assert exc.value.info["requested"] == "term"
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == (
+        "python.chained-comparison-assertion-sugar"
+    )
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ChainedComparisonAssertionSugar"
+    ]

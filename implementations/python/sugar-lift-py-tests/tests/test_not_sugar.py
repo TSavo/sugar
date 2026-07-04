@@ -103,6 +103,95 @@ def test_unary_not_lifts_as_not_wrapped_child_fact() -> None:
     assert [row.selected for row in report.payload.factory_walk] == ["NotSugar"]
 
 
+def test_unary_not_lifts_call_equality_as_stated_membrane() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_not_call_equality(dtype, int32):\n"
+            "    assert not dtype(int32) == 7\n"
+        ),
+        filename="test_not.py",
+        memento_file="test_not.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == "python.not-sugar"
+    assert contract.inv == {
+        "kind": "not",
+        "operands": [
+            {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {
+                        "kind": "ctor",
+                        "name": "call:dtype",
+                        "args": [{"kind": "var", "name": "int32"}],
+                    },
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "Int"},
+                        "value": 7,
+                    },
+                ],
+            }
+        ],
+    }
+    assert [row.selected for row in report.payload.factory_walk] == ["NotSugar"]
+
+
+def test_unary_not_lifts_symbolic_bitand_truthiness_as_stated_membrane() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_not_intersection(characters):\n"
+            "    assert not (set('ab') & set(characters))\n"
+        ),
+        filename="test_not.py",
+        memento_file="test_not.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == "python.not-sugar"
+    assert contract.inv == {
+        "kind": "not",
+        "operands": [
+            {
+                "kind": "atomic",
+                "name": "py.truthy",
+                "args": [
+                    {
+                        "kind": "ctor",
+                        "name": "&",
+                        "args": [
+                            {
+                                "kind": "ctor",
+                                "name": "call:set",
+                                "args": [
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "String",
+                                        },
+                                        "value": "ab",
+                                    }
+                                ],
+                            },
+                            {
+                                "kind": "ctor",
+                                "name": "call:set",
+                                "args": [{"kind": "var", "name": "characters"}],
+                            },
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    assert [row.selected for row in report.payload.factory_walk] == ["NotSugar"]
+
+
 def test_is_not_lifts_fstring_identity_fact() -> None:
     report = build_literal_call_report(
         source=("def test_label(x, label):\n" "    assert x is not f'{label}'\n"),

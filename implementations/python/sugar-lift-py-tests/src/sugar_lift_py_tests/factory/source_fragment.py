@@ -501,6 +501,10 @@ class SourceFragment:
         """Return True if this node has line and column position attributes."""
         return hasattr(self.node, "lineno") and hasattr(self.node, "col_offset")
 
+    def is_statement_site(self) -> bool:
+        """Return True when the fragment is a statement/suite dispatch site."""
+        return isinstance(self.node, (ast.stmt, Block))
+
     @property
     def end_line(self) -> int:
         """The end line number of this node, or lineno if end_lineno is absent."""

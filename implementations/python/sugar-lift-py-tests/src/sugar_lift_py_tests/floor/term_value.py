@@ -49,6 +49,9 @@ class TermValue(FloorValue):
     def str_with(self, operation: Any, ctx: Any) -> Any:
         return operation.str_term(self, ctx)
 
+    def format_value_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.format_term(self, ctx)
+
     def bitwise_with(self, operation: Any, ctx: Any) -> Any:
         return operation.bitwise_term(self, ctx)
 
