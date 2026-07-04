@@ -78,25 +78,6 @@ fn resolve_vec_literal_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) ->
     }
 }
 
-fn eval_vec_builder_source(
-    expr: &Expr,
-    ctx: &SugarCtx,
-    depth: usize,
-) -> Option<Vec<DesugaredElem>> {
-    if depth > 8 {
-        return None;
-    }
-    match strip_refs_groups(expr) {
-        Expr::Block(block) => eval_vec_builder_block(&block.block.stmts),
-        Expr::Path(path) if path.qself.is_none() => {
-            let name = path.path.get_ident()?.to_string();
-            let init = ctx.scope.stable_let_binding_for_term(&name)?;
-            eval_vec_builder_source(init, ctx, depth + 1)
-        }
-        _ => None,
-    }
-}
-
 fn eval_vec_builder_source_static(expr: &Expr) -> Option<Vec<DesugaredElem>> {
     let Expr::Block(block) = strip_refs_groups(expr) else {
         return None;
@@ -130,13 +111,6 @@ fn eval_vec_builder_block(stmts: &[Stmt]) -> Option<Vec<DesugaredElem>> {
             })
         })
         .collect()
-}
-
-fn vec_builder_pattern(expr: &Expr) -> Option<VecBuilderPattern> {
-    let Expr::Block(block) = strip_refs_groups(expr) else {
-        return None;
-    };
-    vec_builder_pattern_from_stmts(&block.block.stmts)
 }
 
 fn vec_builder_pattern_from_stmts(stmts: &[Stmt]) -> Option<VecBuilderPattern> {

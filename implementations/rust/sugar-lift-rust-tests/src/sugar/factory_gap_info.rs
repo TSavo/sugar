@@ -12,8 +12,6 @@
 //! structured data in the `unsupported` reason string, so a factory panic
 //! always carries full gap detail.
 
-use serde_json::{Map, Value};
-
 use crate::sugar::source_fragment::SourceFragment;
 
 /// A structured, queryable coverage gap.
@@ -67,17 +65,6 @@ impl CoverageGapInfo {
             self.requested,
             self.fix,
         )
-    }
-
-    /// JSON map of the five identity fields. Mirrors Python `to_json()`.
-    pub(crate) fn to_json(&self) -> Map<String, Value> {
-        let mut m = Map::new();
-        m.insert("owner".into(), Value::String(self.owner.clone()));
-        m.insert("blame".into(), Value::String(self.blame.clone()));
-        m.insert("observed".into(), Value::String(self.observed.clone()));
-        m.insert("requested".into(), Value::String(self.requested.clone()));
-        m.insert("fix".into(), Value::String(self.fix.clone()));
-        m
     }
 }
 
@@ -163,29 +150,6 @@ mod tests {
         assert!(msg.contains("observed=PrimitiveLiteral"), "msg={msg}");
         assert!(msg.contains("requested=Term"), "msg={msg}");
         assert!(msg.contains("fix=sugar::primitive_literal"), "msg={msg}");
-    }
-
-    // -----------------------------------------------------------------------
-    // to_json() exposes all five identity fields
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn gap_info_to_json_has_all_five_fields() {
-        let src = "fn f(a: i32, b: i32) -> i32 { a + b }";
-        let file = parse_file(src);
-        let frag = tail_frag(&file, "json_test.rs");
-        let gap = collect_gap(&frag, "Composite");
-        let json = gap.to_json();
-
-        assert_eq!(json["owner"].as_str().unwrap(), "rust.factory", "owner");
-        assert_eq!(json["observed"].as_str().unwrap(), "BinOp", "observed");
-        assert_eq!(
-            json["requested"].as_str().unwrap(),
-            "Composite",
-            "requested"
-        );
-        assert_eq!(json["fix"].as_str().unwrap(), "sugar::bin_op", "fix");
-        assert!(json.contains_key("blame"), "blame missing from json");
     }
 
     // -----------------------------------------------------------------------

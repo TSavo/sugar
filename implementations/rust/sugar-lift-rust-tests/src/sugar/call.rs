@@ -36,9 +36,9 @@ use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{
-    assoc_call_key, const_eval, const_fold_int_term, const_fold_u128_term, const_val_term,
-    expr_head_key, num, resolve_value_call_inline, type_id_of_call_term, u128_term, Desugared,
-    Effect, Outcome, Sugar, SugarCtx, MAX_VALUE_CALL_INLINE_DEPTH,
+    assoc_call_key, const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
+    resolve_value_call_inline, type_id_of_call_term, u128_term, Desugared, Effect, Outcome, Sugar,
+    SugarCtx, MAX_VALUE_CALL_INLINE_DEPTH,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -281,21 +281,6 @@ pub(crate) enum CallSugar {
     },
 }
 
-impl CallSugar {
-    #[allow(dead_code)]
-    pub(crate) fn new(head_key: impl Into<String>, args: Vec<SugarBody<TermFloor>>) -> Self {
-        CallSugar::Constructive {
-            head_key: head_key.into(),
-            args,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn from_func(func: &Expr, args: Vec<SugarBody<TermFloor>>) -> Self {
-        CallSugar::new(expr_head_key(func), args)
-    }
-}
-
 fn type_id_of_call_decision(func: &Expr, arg_len: usize) -> Option<Result<(), String>> {
     if arg_len != 0 {
         return None;
@@ -450,8 +435,8 @@ mod tests {
     // No parse_quote!, no StubTerm, no run().
     use super::*;
     use crate::{
-        sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
-        TemporalPlan, TemporalScope,
+        expr_head_key, sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome,
+        ReductionCtx, Sugar, TemporalPlan, TemporalScope,
     };
     use sugar_ir_symbolic::Term;
     use syn::Item;
@@ -513,7 +498,10 @@ mod tests {
     fn emits_call_ctor_with_args_in_order() {
         // `f(x, y)` -> `Ctor { name: "call:f", args: [Var(x), Var(y)] }` -- the exact
         // ctor the `Expr::Call` constructive tail emits, args in SOURCE ORDER.
-        let node = CallSugar::new("f", vec![term_body("x"), term_body("y")]);
+        let node = CallSugar::Constructive {
+            head_key: "f".to_string(),
+            args: vec![term_body("x"), term_body("y")],
+        };
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -528,7 +516,10 @@ mod tests {
     #[test]
     fn nullary_call_emits_empty_args() {
         // `g()` -> `Ctor { name: "call:g", args: [] }`.
-        let node = CallSugar::new("g", Vec::new());
+        let node = CallSugar::Constructive {
+            head_key: "g".to_string(),
+            args: Vec::new(),
+        };
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -543,7 +534,10 @@ mod tests {
 
     #[test]
     fn imported_from_u32_folds_to_char_option() {
-        let node = CallSugar::new("from_u32", vec![term_body("97")]);
+        let node = CallSugar::Constructive {
+            head_key: "from_u32".to_string(),
+            args: vec![term_body("97")],
+        };
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -568,7 +562,10 @@ mod tests {
         // `from_func` is the construction-time adapter that turns syntax into the
         // stable head key. `desugar` never retains or reopens the raw function expr.
         let func = expr("h");
-        let node = CallSugar::from_func(&func, vec![term_body("a")]);
+        let node = CallSugar::Constructive {
+            head_key: expr_head_key(&func),
+            args: vec![term_body("a")],
+        };
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -582,10 +579,10 @@ mod tests {
     fn propagates_child_hit_verbatim() {
         // A child that returns Incomplete aborts the whole node with that SAME
         // `Incomplete`; call sugar owns no effects of its own.
-        let node = CallSugar::new(
-            "f",
-            vec![term_body("x"), effect_body("synthetic child effect")],
-        );
+        let node = CallSugar::Constructive {
+            head_key: "f".to_string(),
+            args: vec![term_body("x"), effect_body("synthetic child effect")],
+        };
         match run(&node) {
             Outcome::Incomplete(effect) => {
                 let reason = effect.reason();

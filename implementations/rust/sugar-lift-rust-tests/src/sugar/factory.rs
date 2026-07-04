@@ -89,25 +89,8 @@ pub(crate) struct FormatValueFloor;
 pub(crate) struct BoolFloor;
 pub(crate) struct IeeeFloatFloor;
 pub(crate) struct IpAddrFloor;
-/// BoundVar floor family. A let-bound name aliases a source body plus the
-/// definition-scope snapshot used when recomposing that source.
-#[allow(dead_code)]
-pub(crate) struct BoundVarFloor;
-/// RaiseValue floor family. A raise-like control-flow exit can flow through
-/// block composition as data until a RouteRaisesOperation consumes it.
-#[allow(dead_code)]
-pub(crate) struct RaiseValueFloor;
-/// SymbolicValue floor family. Carries a sort-neutral symbolic variable; the
-/// backend chooses the carrier sort from surrounding operations.
-#[allow(dead_code)]
-pub(crate) struct SymbolicValueFloor;
-/// CarrierEmbedding floor family. #3125 slice 2 implements the Duration
-/// refinement; MonoidFold still reports this family for unimplemented carriers.
-#[allow(dead_code)]
-pub(crate) struct CarrierEmbeddingFloor;
 /// PredicateValue floor family. Carries assertion-position formulas distinctly
 /// from bool-sorted data terms.
-#[allow(dead_code)]
 pub(crate) struct PredicateValueFloor;
 
 impl BodyFloor for TermFloor {}
@@ -123,10 +106,6 @@ impl BodyFloor for FormatValueFloor {}
 impl BodyFloor for BoolFloor {}
 impl BodyFloor for IeeeFloatFloor {}
 impl BodyFloor for IpAddrFloor {}
-impl BodyFloor for BoundVarFloor {}
-impl BodyFloor for RaiseValueFloor {}
-impl BodyFloor for SymbolicValueFloor {}
-impl BodyFloor for CarrierEmbeddingFloor {}
 impl BodyFloor for PredicateValueFloor {}
 
 /// A factory-built child/body for a parent Sugar.
@@ -581,15 +560,6 @@ pub(crate) fn build_expr(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> B
     catalog::build_expr_role(expr, fcx, role)
 }
 
-pub(crate) fn reduce_expr(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-    role: SugarRole,
-    ctx: &SugarCtx,
-) -> Outcome {
-    build_expr(expr, fcx, role).reduce(ctx)
-}
-
 pub(crate) fn has_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> bool {
     !catalog::matching_expr_claims_for_role(expr, fcx, role).is_empty()
 }
@@ -606,20 +576,12 @@ pub(crate) fn build_term(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Term)
 }
 
-pub(crate) fn reduce_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Outcome {
-    reduce_expr(expr, fcx, SugarRole::Term, ctx)
-}
-
 /// Compatibility COMPOSITE wrapper: ask the unified candidate catalog, then return the
 /// first candidate whose old source-position role is `Composite`, else the structural
 /// gap sentinel. Total: an unowned shape becomes the loud factory-gap node; recognizers
 /// must not manufacture that node from their own failed construction.
 pub(crate) fn build_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Composite)
-}
-
-pub(crate) fn reduce_composite(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Outcome {
-    reduce_expr(expr, fcx, SugarRole::Composite, ctx)
 }
 
 pub(crate) fn has_composite(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
@@ -632,10 +594,6 @@ pub(crate) fn has_composite(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
 /// constraint terminal.
 pub(crate) fn build_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Constraint)
-}
-
-pub(crate) fn reduce_constraint(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Outcome {
-    reduce_expr(expr, fcx, SugarRole::Constraint, ctx)
 }
 
 pub(crate) fn has_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
@@ -763,7 +721,6 @@ impl FactoryAuditSeed {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn stmt(
         stmt: &Stmt,
         requested_role: SugarRole,

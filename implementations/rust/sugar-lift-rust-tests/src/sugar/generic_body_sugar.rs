@@ -66,27 +66,17 @@ pub(crate) enum GenericBodyFold {
 
 #[derive(Clone)]
 pub(crate) struct GenericBodyEufHandoff {
-    function: String,
     term: Rc<Term>,
-    reason: String,
 }
 
 impl GenericBodyEufHandoff {
     fn new(name: &str, sig: &syn::Signature) -> Self {
         Self {
-            function: name.to_string(),
             term: Rc::new(Term::Ctor {
                 name: format!("call:{name}"),
                 args: sig_param_vars(sig),
             }),
-            reason: format!(
-                "GenericBodySugar declined strong encoder shape for `{name}`; recorded EUF handoff"
-            ),
         }
-    }
-
-    pub(crate) fn function(&self) -> &str {
-        &self.function
     }
 
     pub(crate) fn term(&self) -> &Rc<Term> {
@@ -95,10 +85,6 @@ impl GenericBodyEufHandoff {
 
     pub(crate) fn into_term(self) -> Rc<Term> {
         self.term
-    }
-
-    pub(crate) fn reason(&self) -> &str {
-        &self.reason
     }
 }
 
@@ -587,11 +573,6 @@ mod unit_tests {
         let GenericBodyFold::EufHandoff(handoff) = fold else {
             panic!("plain non-encoder body must record an EUF handoff");
         };
-        assert_eq!(handoff.function(), "plain");
-        assert!(
-            handoff.reason().contains("GenericBodySugar"),
-            "handoff reason should name the declined strong recognizer"
-        );
         let Term::Ctor { name, args } = handoff.term().as_ref() else {
             panic!("EUF handoff must carry a call ctor");
         };

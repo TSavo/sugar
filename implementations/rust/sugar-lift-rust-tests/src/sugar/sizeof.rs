@@ -16,7 +16,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use sugar_ir_symbolic::num;
-use syn::{PathArguments, Type};
 use tracing::{debug, warn};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
@@ -104,48 +103,6 @@ impl Sugar for SizeOfSugar {
             boundary: format!("mem::size_of::<{}>()", self.ty_key),
         })
     }
-}
-
-/// The `core::sync::atomic` types have a layout GUARANTEED by the standard library to
-/// equal their underlying primitive (e.g. `AtomicU32` "has the same in-memory
-/// representation as the underlying integer type, `u32`"; `AtomicPtr<T>` is
-/// pointer-sized). That is a COMPILER/std PROMISE, not an opaque fact -- so
-/// `size_of::<AtomicU32>()` is `size_of::<u32>()`, read out loud. We seed the table
-/// here rather than lean on the rustc harness, which fails when the source names the
-/// atomic via a `use` import the monomorphic harness does not carry. Matching the LAST
-/// path segment admits both the imported (`AtomicU32`) and fully-qualified
-/// (`core::sync::atomic::AtomicU32`) spellings. Sizes are computed from the underlying
-/// primitive's host `size_of` (matching the corpus-pinned 64-bit target), exactly as
-/// `primitive_size_of` already does for `usize`/`isize`.
-fn core_atomic_size_of(ty: &Type) -> Option<i128> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    if path.qself.is_some() {
-        return None;
-    }
-    let segment = path.path.segments.last()?;
-    let ident = segment.ident.to_string();
-    // `AtomicPtr<T>` carries a type argument and is pointer-sized regardless of `T`;
-    // the integer atomics carry NO argument and equal their underlying primitive.
-    let size = match ident.as_str() {
-        "AtomicBool" => std::mem::size_of::<bool>(),
-        "AtomicU8" | "AtomicI8" => std::mem::size_of::<u8>(),
-        "AtomicU16" | "AtomicI16" => std::mem::size_of::<u16>(),
-        "AtomicU32" | "AtomicI32" => std::mem::size_of::<u32>(),
-        "AtomicU64" | "AtomicI64" => std::mem::size_of::<u64>(),
-        "AtomicUsize" => std::mem::size_of::<usize>(),
-        "AtomicIsize" => std::mem::size_of::<isize>(),
-        "AtomicPtr" => std::mem::size_of::<*const ()>(),
-        _ => return None,
-    };
-    // Only `AtomicPtr` may carry a type argument; an integer atomic with arguments is
-    // not the atomic we know (a same-named user type, say) -> decline, let the harness
-    // or refuse decide. (finite-or-refuse: never warrant a shape we cannot pin.)
-    if ident != "AtomicPtr" && !matches!(segment.arguments, PathArguments::None) {
-        return None;
-    }
-    Some(size as i128)
 }
 
 fn rustc_size_of_type(ty_key: &str, ty_src: &str, prelude: &str) -> Option<i128> {
@@ -295,10 +252,6 @@ mod tests {
         assert!(reason.contains("monomorphic size_of harness"));
     }
 
-    fn ty(src: &str) -> Type {
-        syn::parse_str::<Type>(src).expect("parse type")
-    }
-
     // -- Phase-3 from_src test ------------------------------------------------
     // source -> SourceFragment -> observed -> call_size_of_type_parts -> floor.
     // No parse_quote! / StubTerm / run().
@@ -383,32 +336,5 @@ mod tests {
             "AtomicU32 is not a primitive"
         );
         assert_eq!(parts.atomic_size, Some(4), "AtomicU32 atomic size is 4");
-    }
-
-    #[test]
-    fn core_atomic_layout_equals_underlying_primitive() {
-        // The std layout guarantee, read out loud: each atomic == its underlying int.
-        assert_eq!(core_atomic_size_of(&ty("AtomicBool")), Some(1));
-        assert_eq!(core_atomic_size_of(&ty("AtomicU8")), Some(1));
-        assert_eq!(core_atomic_size_of(&ty("AtomicI16")), Some(2));
-        assert_eq!(core_atomic_size_of(&ty("AtomicU32")), Some(4));
-        assert_eq!(core_atomic_size_of(&ty("AtomicU64")), Some(8));
-        // Fully-qualified spelling resolves via the LAST segment.
-        assert_eq!(
-            core_atomic_size_of(&ty("core::sync::atomic::AtomicU32")),
-            Some(4)
-        );
-        // Pointer-width atomics, matching the corpus-pinned 64-bit target.
-        assert_eq!(
-            core_atomic_size_of(&ty("AtomicUsize")),
-            Some(std::mem::size_of::<usize>() as i128)
-        );
-        assert_eq!(
-            core_atomic_size_of(&ty("AtomicPtr<u8>")),
-            Some(std::mem::size_of::<*const ()>() as i128)
-        );
-        // Not an atomic we know -> decline (finite-or-refuse).
-        assert_eq!(core_atomic_size_of(&ty("u32")), None);
-        assert_eq!(core_atomic_size_of(&ty("AtomicU32<T>")), None);
     }
 }

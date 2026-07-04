@@ -149,18 +149,6 @@ mod tests {
     use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
-    fn path_frag_from_body<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
-        let item = &file.items[0];
-        let fn_frag = SourceFragment::from_node(FragNode::Item(item), file_str);
-        let body = fn_frag.function_body().unwrap();
-        let stmts = body.statements();
-        let tail = &stmts[0];
-        // tail is an Expr stmt; terms() yields the inner expression fragment(s)
-        let terms = tail.terms();
-        // return a copy that lives as long as 'a via the file
-        terms.into_iter().next().expect("path expr in tail")
-    }
-
     /// from_src: source -> fragment -> observed == "Name" -> path_full_name is the ident.
     /// Proves the struct holds `path_key: String` (a bare ident name), not raw syn.
     #[test]

@@ -4,20 +4,14 @@
 // pointer capability constructor. Construction itself is inert; consumers own
 // any temporal effect when the capability is used or escapes.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{
-    assertion_entry_from_eq, bool_const, sugar_ctx_with_factory_audits, token_key, AssertionEntry,
-    Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
-    TemporalScope,
-};
+use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 use sugar_ir_symbolic::Term;
-use syn::{Expr, Item};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
@@ -119,60 +113,6 @@ impl Sugar for PointerEqTermSugar {
     }
 }
 
-pub(crate) fn pointer_eq_assertion_entry(
-    expr: &Expr,
-    scope: &TemporalScope,
-) -> Result<Option<AssertionEntry>, Effect> {
-    match expr {
-        Expr::Paren(paren) => pointer_eq_assertion_entry(&paren.expr, scope),
-        Expr::Group(group) => pointer_eq_assertion_entry(&group.expr, scope),
-        Expr::Call(call) => {
-            let Some(callee) = pointer_eq_callee(&call.func) else {
-                return Ok(None);
-            };
-            if call.args.len() != 2 {
-                panic!("ptr::eq expects two arguments; write more Sugar for this AST");
-            }
-            let args = call
-                .args
-                .iter()
-                .map(|arg| pointer_identity_term(arg, scope))
-                .collect::<Result<Vec<_>, _>>()?;
-            let term = Rc::new(Term::Ctor {
-                name: format!("call:{callee}"),
-                args,
-            });
-            Ok(Some(assertion_entry_from_eq(term, bool_const(true), scope)))
-        }
-        _ => Ok(None),
-    }
-}
-
-pub(crate) fn pointer_identity_term(
-    expr: &Expr,
-    scope: &TemporalScope,
-) -> Result<Rc<Term>, Effect> {
-    match expr {
-        Expr::Reference(reference) if reference.mutability.is_some() => {
-            Err(mutable_reference_identity_effect(&token_key(expr)))
-        }
-        Expr::Reference(reference) if reference.mutability.is_none() => Ok(Rc::new(Term::Ctor {
-            name: "ref".to_string(),
-            args: vec![pointer_identity_term(&reference.expr, scope)?],
-        })),
-        Expr::Index(index) => Ok(Rc::new(Term::Ctor {
-            name: "index".to_string(),
-            args: vec![
-                pointer_identity_term(&index.expr, scope)?,
-                pointer_identity_term(&index.index, scope)?,
-            ],
-        })),
-        Expr::Paren(paren) => pointer_identity_term(&paren.expr, scope),
-        Expr::Group(group) => pointer_identity_term(&group.expr, scope),
-        other => reduce_term_in_scope(other, scope),
-    }
-}
-
 fn mutable_reference_identity_effect(boundary: &str) -> Effect {
     Effect::RepresentationCast {
         boundary: boundary.to_string(),
@@ -182,51 +122,6 @@ fn mutable_reference_identity_effect(boundary: &str) -> Effect {
 
 fn is_mutable_reference_identity(term: &Rc<Term>) -> bool {
     matches!(term.as_ref(), Term::Ctor { name, .. } if name == "ref_mut")
-}
-
-fn reduce_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, Effect> {
-    let options = LiftOptions::default();
-    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-    let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
-    let body: SugarBody<TermFloor> = SugarBody::term(expr, &fcx);
-    let items: Vec<Item> = Vec::new();
-    let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
-    let mut float_widths = FloatWidthScope::new();
-    let ctx = sugar_ctx_with_factory_audits(scope, &options, &reducer, &mut float_widths, 0, None);
-    match body.reduce(&ctx) {
-        Outcome::Complete(desugared) => match desugared.into_term() {
-            Some(term) => Ok(term),
-            None => {
-                panic!(
-                    "raw pointer identity term `{}` completed a non-Term floor",
-                    token_key(expr)
-                );
-            }
-        },
-        Outcome::Incomplete(effect) => Err(effect),
-    }
-}
-
-// Raw-syn callee recognizer used by the assertion pathway (pointer_eq_assertion_entry).
-// The recognize body uses pointer_eq_callee_frag instead.
-fn pointer_eq_callee(expr: &Expr) -> Option<String> {
-    let name = match expr {
-        Expr::Path(path) if path.qself.is_none() => plain_path_name(&path.path)?,
-        Expr::Paren(paren) => return pointer_eq_callee(&paren.expr),
-        Expr::Group(group) => return pointer_eq_callee(&group.expr),
-        _ => return None,
-    };
-    matches!(name.as_str(), "core::ptr::eq" | "ptr::eq" | "std::ptr::eq").then_some(name)
-}
-
-fn plain_path_name(path: &syn::Path) -> Option<String> {
-    path.segments
-        .iter()
-        .map(|segment| {
-            matches!(segment.arguments, syn::PathArguments::None).then(|| segment.ident.to_string())
-        })
-        .collect::<Option<Vec<_>>>()
-        .map(|segments| segments.join("::"))
 }
 
 #[cfg(test)]

@@ -269,7 +269,6 @@ pub(crate) enum BailCause {
     NotInlinable,
     /// The substituted body fully reduced but `desugar` was invoked with the trial
     /// gate -- this is never returned; kept for exhaustiveness clarity. (Unused.)
-    #[allow(dead_code)]
     FullyReduced,
     /// The substituted body left N assertions UNCLASSIFIED. The categorization splits
     /// that residue by the reason SHAPE so the census can report what each blocked

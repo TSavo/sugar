@@ -22,6 +22,7 @@ use syn::spanned::Spanned;
 /// fragment that puts a suite on the stack as ONE composite, so `BlockSugar` composes it
 /// instead of an external loop -- exactly like the Python synthetic `Block`.
 #[derive(Clone, Copy)]
+#[cfg(test)]
 pub(crate) struct BlockFrag<'a> {
     pub(crate) stmts: &'a [syn::Stmt],
     pub(crate) line: usize,
@@ -31,11 +32,13 @@ pub(crate) struct BlockFrag<'a> {
 /// The node a fragment wraps. Borrowed -- a fragment never owns AST.
 #[derive(Clone, Copy)]
 pub(crate) enum FragNode<'a> {
+    #[cfg(test)]
     File(&'a syn::File),
     Item(&'a syn::Item),
     Stmt(&'a syn::Stmt),
     Expr(&'a syn::Expr),
     /// Synthetic suite (a `&[Stmt]` body/branch). See `BlockFrag`.
+    #[cfg(test)]
     Block(BlockFrag<'a>),
 }
 
@@ -107,6 +110,7 @@ impl<'a> SourceFragment<'a> {
         Self::from_node(FragNode::Item(i), file)
     }
 
+    #[cfg(test)]
     pub(crate) fn block(stmts: &'a [syn::Stmt], file: &'a str) -> Self {
         let (line, col) = stmts
             .first()
@@ -124,7 +128,9 @@ impl<'a> SourceFragment<'a> {
     /// non_exhaustive wildcard -- never a silent drop).
     pub(crate) fn observed(&self) -> String {
         match &self.node {
+            #[cfg(test)]
             FragNode::File(_) => "File".into(),
+            #[cfg(test)]
             FragNode::Block(_) => "Block".into(),
             FragNode::Item(i) => item_kind(i).into(),
             FragNode::Stmt(s) => stmt_kind(s).into(),
@@ -151,6 +157,7 @@ impl<'a> SourceFragment<'a> {
     /// The immediate child fragments, in source order. A `&[Stmt]` suite (a function
     /// body / if-branch) becomes ONE Block fragment so it can be composed at the
     /// STATEMENT role by BlockSugar. Mirrors Python `SourceFragment.fragments()`.
+    #[cfg(test)]
     pub(crate) fn fragments(&self) -> Vec<SourceFragment<'a>> {
         match &self.node {
             // A synthetic Block decomposes into its statements.
@@ -190,6 +197,7 @@ impl<'a> SourceFragment<'a> {
 
     /// This fragment's statement children -- a body's lines. A `&[Stmt]` suite is one
     /// `Block` fragment (it composes its own statements at the STATEMENT role).
+    #[cfg(test)]
     pub(crate) fn statements(&self) -> Vec<SourceFragment<'a>> {
         match &self.node {
             FragNode::Block(b) => b.stmts.iter().map(|s| Self::stmt(s, self.file)).collect(),
@@ -215,6 +223,7 @@ impl<'a> SourceFragment<'a> {
 
     /// This fragment as a series of expression children (the TERM role).
     /// Mirrors Python `SourceFragment.terms()`.
+    #[cfg(test)]
     pub(crate) fn terms(&self) -> Vec<SourceFragment<'a>> {
         self.fragments()
             .into_iter()
@@ -227,6 +236,7 @@ impl<'a> SourceFragment<'a> {
     // -----------------------------------------------------------------------
 
     /// The function body as a `Block` fragment (FunctionDef/ItemFn body).
+    #[cfg(test)]
     pub(crate) fn function_body(&self) -> Option<SourceFragment<'a>> {
         match &self.node {
             FragNode::Item(syn::Item::Fn(f)) => Some(Self::block(&f.block.stmts, self.file)),
@@ -470,18 +480,6 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
-    // -- Compare accessors (syn merges binary + compare into Expr::Binary) -
-
-    /// For `Expr::Binary` nodes that represent comparisons, same as `binop_left`.
-    pub(crate) fn compare_left(&self) -> Option<SourceFragment<'a>> {
-        self.binop_left()
-    }
-
-    /// For `Expr::Binary` comparison nodes, same as `binop_right` (single comparator).
-    pub(crate) fn compare_right(&self) -> Option<SourceFragment<'a>> {
-        self.binop_right()
-    }
-
     // -- Call accessors ----------------------------------------------------
 
     /// The function being called (as a fragment). Works for both `Call` and `MethodCall`.
@@ -622,6 +620,7 @@ impl<'a> SourceFragment<'a> {
     /// The literal source text for a `PrimitiveLiteral` node. Returns the token's
     /// `.to_string()` representation. For typed accessors (parse as int/float/str)
     /// callers should match the inner `syn::Lit` themselves via `literal_value_str`.
+    #[cfg(test)]
     pub(crate) fn literal_value_str(&self) -> Option<String> {
         match &self.node {
             FragNode::Expr(syn::Expr::Lit(l)) => Some(lit_display(&l.lit)),
@@ -645,6 +644,7 @@ impl<'a> SourceFragment<'a> {
     // -- Assign accessor (let-binding) ------------------------------------
 
     /// The name bound in a `let` statement (single-ident patterns only).
+    #[cfg(test)]
     pub(crate) fn assign_target_name(&self) -> Option<String> {
         match &self.node {
             FragNode::Stmt(syn::Stmt::Local(l)) => match &l.pat {
@@ -663,6 +663,7 @@ impl<'a> SourceFragment<'a> {
     }
 
     /// The initialiser expression of a `let` statement.
+    #[cfg(test)]
     pub(crate) fn assign_value(&self) -> Option<SourceFragment<'a>> {
         match &self.node {
             FragNode::Stmt(syn::Stmt::Local(l)) => l
@@ -932,13 +933,6 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
-    pub(crate) fn as_item(&self) -> Option<&syn::Item> {
-        match &self.node {
-            FragNode::Item(i) => Some(i),
-            _ => None,
-        }
-    }
-
     // -- Node-kind guard (non-shim; no raw syn returned) ----------------------
 
     /// Returns `true` if this fragment wraps an expression node
@@ -946,6 +940,7 @@ impl<'a> SourceFragment<'a> {
     /// `as_expr()?` when the body does not need the raw `&syn::Expr` (i.e.
     /// all subsequent field access goes through typed accessors). All raw
     /// syn is absent from the return type; the check is purely structural.
+    #[cfg(test)]
     pub(crate) fn is_expr(&self) -> bool {
         matches!(self.node, FragNode::Expr(_))
     }
@@ -996,7 +991,9 @@ impl<'a> SourceFragment<'a> {
             FragNode::Expr(e) => quote::ToTokens::to_token_stream(e),
             FragNode::Stmt(s) => quote::ToTokens::to_token_stream(s),
             FragNode::Item(i) => quote::ToTokens::to_token_stream(i),
+            #[cfg(test)]
             FragNode::File(f) => quote::ToTokens::to_token_stream(f),
+            #[cfg(test)]
             FragNode::Block(block) => {
                 let mut ts = proc_macro2::TokenStream::new();
                 for stmt in block.stmts {
@@ -2119,27 +2116,6 @@ impl<'a> SourceFragment<'a> {
             FragNode::Expr(syn::Expr::Block(_)) | FragNode::Expr(syn::Expr::Unsafe(_))
         )
     }
-
-    // -- literal owned-string accessor (used by intersperse_collect_string) --
-
-    /// Returns the string value if this fragment is a `&str` / `String` literal,
-    /// or a `.to_owned()`/`.to_string()` call on a literal string. Strips
-    /// `Reference`/`Paren`/`Group` wrappers. Returns `None` for non-string or
-    /// runtime expressions. All raw syn access lives in `literal_owned_string_impl`.
-    pub(crate) fn literal_owned_string_frag(&self) -> Option<String> {
-        literal_owned_string_impl(self.as_expr()?)
-    }
-
-    // -- to_string closure detector (used by intersperse_collect_string) -----
-
-    /// Returns `true` if this fragment is a closure of the form
-    /// `|param| param.to_string()` (single-ident parameter, body is
-    /// `param.to_string()` optionally wrapped in a single-statement block).
-    /// Strips `Reference`/`Paren`/`Group` wrappers on the body.
-    /// All raw syn access lives in `closure_recognizes_to_string_impl`.
-    pub(crate) fn closure_recognizes_to_string(&self) -> bool {
-        closure_recognizes_to_string_impl(self.as_expr())
-    }
 }
 
 fn is_non_value_tail_control_expr(expr: &syn::Expr) -> bool {
@@ -2165,64 +2141,6 @@ fn loop_tail_has_single_unlabeled_break_payload(loop_expr: &syn::ExprLoop) -> bo
         loop_expr.body.stmts.as_slice(),
         [syn::Stmt::Expr(syn::Expr::Break(break_expr), _)]
             if break_expr.label.is_none() && break_expr.expr.is_some()
-    )
-}
-
-// ---------------------------------------------------------------------------
-// literal_owned_string helper (used by SourceFragment::literal_owned_string_frag)
-// ---------------------------------------------------------------------------
-
-fn literal_owned_string_impl(expr: &syn::Expr) -> Option<String> {
-    match crate::strip_refs_groups(expr) {
-        syn::Expr::Lit(lit) => match &lit.lit {
-            syn::Lit::Str(s) => Some(s.value()),
-            _ => None,
-        },
-        syn::Expr::MethodCall(call)
-            if matches!(call.method.to_string().as_str(), "to_owned" | "to_string")
-                && call.args.is_empty() =>
-        {
-            literal_owned_string_impl(&call.receiver)
-        }
-        _ => None,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// closure_recognizes_to_string helper (used by closure_recognizes_to_string)
-// ---------------------------------------------------------------------------
-
-fn closure_recognizes_to_string_impl(expr: Option<&syn::Expr>) -> bool {
-    let Some(expr) = expr else {
-        return false;
-    };
-    let syn::Expr::Closure(closure) = crate::strip_refs_groups(expr) else {
-        return false;
-    };
-    if closure.inputs.len() != 1 {
-        return false;
-    }
-    let Some(param) = crate::closure_single_param_ident(&closure.inputs[0]) else {
-        return false;
-    };
-    let body: &syn::Expr = match crate::strip_refs_groups(&closure.body) {
-        syn::Expr::Block(block) => match block.block.stmts.as_slice() {
-            [syn::Stmt::Expr(inner, None)] => inner,
-            _ => return false,
-        },
-        other => other,
-    };
-    let syn::Expr::MethodCall(call) = crate::strip_refs_groups(body) else {
-        return false;
-    };
-    if call.method != "to_string" || !call.args.is_empty() {
-        return false;
-    }
-    let receiver = crate::strip_refs_groups(&call.receiver);
-    matches!(
-        receiver,
-        syn::Expr::Path(path)
-            if path.path.get_ident().is_some_and(|ident| ident == param.as_str())
     )
 }
 
@@ -2364,6 +2282,7 @@ fn primitive_int_type_kind_from_syn(ty: &syn::Type) -> Option<crate::sugar::int_
 
 /// Parse Rust source and return the root `File` fragment. Test/entry constructor; the
 /// returned fragment borrows from `parsed`, so callers hold the `syn::File` alive.
+#[cfg(test)]
 pub(crate) fn parse_file(source: &str) -> syn::File {
     syn::parse_file(source).expect("source_fragment: parse_file failed")
 }
@@ -2492,7 +2411,9 @@ fn scalar_ordered_value_expr(expr: &syn::Expr) -> Option<i128> {
 
 fn node_position(node: &FragNode<'_>) -> (usize, usize) {
     let span = match node {
+        #[cfg(test)]
         FragNode::File(_) => return (0, 0),
+        #[cfg(test)]
         FragNode::Block(b) => return (b.line, b.col),
         FragNode::Item(i) => i.span(),
         FragNode::Stmt(s) => s.span(),
@@ -2622,6 +2543,7 @@ fn binop_kind(op: &syn::BinOp) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn lit_display(lit: &syn::Lit) -> String {
     match lit {
         syn::Lit::Str(s) => s.value(),
@@ -2637,6 +2559,7 @@ fn lit_display(lit: &syn::Lit) -> String {
 /// Child fragments of a statement node. A `Stmt::Expr(e, _)` wraps `e` as ONE child
 /// (the expression itself), not its sub-expressions -- that matches Python where
 /// `ast.Expr(value=BinOp(...))` has `BinOp` as its sole AST child via iter_fields.
+#[cfg(test)]
 fn stmt_child_fragments<'a>(s: &'a syn::Stmt, file: &'a str) -> Vec<SourceFragment<'a>> {
     match s {
         syn::Stmt::Local(l) => {
@@ -2655,6 +2578,7 @@ fn stmt_child_fragments<'a>(s: &'a syn::Stmt, file: &'a str) -> Vec<SourceFragme
 }
 
 /// Child expression fragments of an expression node (hand-matched decomposition).
+#[cfg(test)]
 fn expr_child_fragments<'a>(e: &'a syn::Expr, file: &'a str) -> Vec<SourceFragment<'a>> {
     use syn::Expr::*;
     match e {

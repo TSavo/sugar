@@ -93,7 +93,6 @@ impl SugarWitnesses {
 /// A Sugar's claim that it knows how to recognize one source-expression position.
 #[derive(Clone, Copy)]
 pub struct ExprSugarClaim {
-    #[allow(dead_code)]
     name: &'static str,
     role: SugarRole,
     comes_before: &'static [&'static str],
@@ -240,14 +239,6 @@ impl ExprSugarClaim {
         )
     }
 
-    pub(crate) const fn closure_adaptor_verdict(
-        name: &'static str,
-        witnesses: SugarWitnesses,
-        recognize: ExprRecognizer,
-    ) -> Self {
-        Self::new(name, SugarRole::ClosureAdaptorVerdict, witnesses, recognize)
-    }
-
     pub(crate) const fn closure_adaptor_verdict_before(
         name: &'static str,
         comes_before: &'static [&'static str],
@@ -319,7 +310,6 @@ impl ExprSugarClaim {
 /// A Sugar's claim that it knows how to recognize one source-item position.
 #[derive(Clone, Copy)]
 pub struct ItemSugarClaim {
-    #[allow(dead_code)]
     name: &'static str,
     role: SugarRole,
     comes_before: &'static [&'static str],
@@ -396,7 +386,6 @@ impl ItemSugarClaim {
 /// -- a statement is lifted ONLY through a claim, never by a hand-rolled block walker.
 #[derive(Clone, Copy)]
 pub struct StmtSugarClaim {
-    #[allow(dead_code)]
     name: &'static str,
     role: SugarRole,
     comes_before: &'static [&'static str],
@@ -405,7 +394,6 @@ pub struct StmtSugarClaim {
     recognize: StmtRecognizer,
 }
 
-#[allow(dead_code)]
 impl StmtSugarClaim {
     pub(crate) const fn new(
         name: &'static str,
@@ -513,7 +501,6 @@ pub(crate) struct SugarCandidate {
 }
 
 impl SugarCandidate {
-    #[allow(dead_code)]
     pub(crate) fn name(&self) -> &'static str {
         self.name
     }

@@ -704,7 +704,6 @@ mod tests {
 
         assert_eq!(output.mapped, vec![1, 3, 5]);
         assert_eq!(output.standing().member(), "MapOutput");
-        assert_eq!(output.standing().provenance(), IterProvenance::Derived);
         assert_eq!(output.standing().count(), 3);
     }
 
