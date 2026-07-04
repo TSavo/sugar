@@ -163,46 +163,18 @@ struct ExpectedUbDomainRichnessException {
     compiling_input_witness: &'static str,
 }
 
-const EXPECTED_UB_DOMAIN_RICHNESS: &[ExpectedUbDomainRichnessOffender] = &[
-    ExpectedUbDomainRichnessOffender {
-        path: "sugar-lift-rust-tests/src/bin/discharge_sweep.rs",
-        line: 619,
-        axis: "parse-validity-result-plumbing",
-        owner: "#3483",
-        replacement: "collapse to unwrap/panic; domain precondition covers this",
-        needle: "syn::parse_file(&src).is_err()",
-        why: "guard tests whether generated Rust parses and then recovers by skipping the sweep row",
-    },
-    ExpectedUbDomainRichnessOffender {
+const EXPECTED_UB_DOMAIN_RICHNESS: &[ExpectedUbDomainRichnessOffender] = &[];
+
+const EXPECTED_UB_DOMAIN_RICHNESS_EXCEPTIONS: &[ExpectedUbDomainRichnessException] =
+    &[ExpectedUbDomainRichnessException {
         path: "sugar-lift-rust-tests/src/sugar/format.rs",
         line: 1311,
         axis: "crafted-invalid-rust-diagnostic",
         owner: "#3483",
-        replacement: "collapse to unwrap/panic; domain precondition covers this",
         needle: "malformed / unsupported brace use",
-        why: "recovery branch handles malformed format syntax instead of relying on rustc's format checks",
-    },
-    ExpectedUbDomainRichnessOffender {
-        path: "sugar-walk/src/bin/walk_rpc.rs",
-        line: 8815,
-        axis: "crafted-invalid-rust-diagnostic",
-        owner: "#3483",
-        replacement: "collapse to unwrap/panic; domain precondition covers this",
-        needle: "unparsable Rust source",
-        why: "diagnostic prose explains rustc-rejected source instead of the one-line UB-domain panic",
-    },
-    ExpectedUbDomainRichnessOffender {
-        path: "sugar-walk/src/lift.rs",
-        line: 1100,
-        axis: "crafted-invalid-rust-diagnostic",
-        owner: "#3483",
-        replacement: "collapse to unwrap/panic; domain precondition covers this",
-        needle: "unparsable assert! condition",
-        why: "diagnostic prose explains an assert macro condition that compiling Rust already guarantees",
-    },
-];
-
-const EXPECTED_UB_DOMAIN_RICHNESS_EXCEPTIONS: &[ExpectedUbDomainRichnessException] = &[];
+        reason: "also reached by compiling but unsupported format syntax; keep a bail until the formatter owns those arms",
+        compiling_input_witness: r#"format!("{:>9}", 1)"#,
+    }];
 
 fn hand_rolled_cid_parser_axis(line: &str) -> Option<&'static str> {
     let t = line.trim();

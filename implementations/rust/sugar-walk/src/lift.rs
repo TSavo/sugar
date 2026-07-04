@@ -1097,7 +1097,7 @@ fn assert_macro_condition(mac: &Macro) -> Option<Expr> {
     }
     let parsed_cond = match syn::parse2::<Expr>(first_macro_arg_tokens(mac.tokens.clone())) {
         Ok(expr) => expr,
-        Err(err) => panic!("sugar-walk refused unparsable assert! condition: {err}"),
+        Err(err) => panic!("{err}"),
     };
     // Keep the prior tuple fallback for already-parenthesized conditions.
     match parsed_cond {

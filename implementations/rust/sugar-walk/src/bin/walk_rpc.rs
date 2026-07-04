@@ -8812,7 +8812,7 @@ fn function_body_source(src: &str, fn_name: &str) -> Option<String> {
     let file = match syn::parse_file(src) {
         Ok(file) => file,
         Err(err) => {
-            panic!("sugar-walk refused unparsable Rust source while extracting body for `{fn_name}`: {err}")
+            panic!("{err}")
         }
     };
     let item_fn = find_item_fn_by_name(&file.items, fn_name)?;
