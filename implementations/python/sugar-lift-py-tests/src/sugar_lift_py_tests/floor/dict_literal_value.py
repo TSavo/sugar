@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.ir import Term, ctor
 
 from .floor_value import FloorValue
@@ -36,49 +37,25 @@ class DictLiteralValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(len(self.entries)))
-        _call_method_gap(
-            owner=operation.owner,
+        return _call_method_effect(
             blame=operation.blame,
             observed=f"DictLiteralValue.{operation.name}",
-            requested="dict builtin method floor",
-            fix=f"add DictLiteralValue method floor for `{operation.name}`",
         )
 
 
-def _call_method_gap(
+def _call_method_effect(
     *,
-    owner: str,
     blame: str,
     observed: str,
-    requested: str,
-    fix: str,
 ):
-    from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
-        FactoryGap,
-        FactoryGapInfo,
-        GapKind,
-        GapLocus,
-    )
+    from sugar_lift_py_tests.outcome import Incomplete
 
-    info = FactoryGapInfo(
-        owner=owner,
-        blame=blame,
-        observed=observed,
-        requested=requested,
-        fix=fix,
-        gap_kind=GapKind.FLOOR,
-        gap_locus=GapLocus.CONSTRUCTION,
-    )
-    raise FactoryGap(
-        info,
-        FactoryAuditRow(
-            role=requested,
-            status="floor-gap",
-            observed=observed,
-            blame=blame,
-            selected=None,
-            candidates=[],
-            message=info.message,
-        ),
+    return Incomplete(
+        RuntimeEffect(
+            "dict builtin method runtime boundary: "
+            f"{observed} has no reduced floor semantics in this tranche. "
+            "Python dictionary method results can expose runtime view/mutation "
+            "semantics; keep as typed red until a narrower vendor-cited "
+            f"reduction owns the shape. blame={blame}"
+        )
     )

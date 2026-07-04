@@ -138,6 +138,48 @@ def test_comprehension_runtime_iterables_are_typed_runtime_effects() -> None:
         assert "blame=" in outcome.effect.reason
 
 
+def test_dict_literal_unsupported_method_is_typed_runtime_effect() -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "d", DictLiteralValue(((num(1), num(2)),))
+    )
+    ctx = FactoryBuildContext(
+        filename="comprehension.py",
+        catalog=default_catalog(),
+        temporal=temporal,
+    )
+    body = ctx.build_body(ast.parse("d.keys()", mode="eval").body, SugarRole.TERM)
+
+    outcome = body.reduce(ReduceContext.derived(ctx, owner="comprehension-test"))
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "dict builtin method runtime boundary" in outcome.effect.reason
+    assert "DictLiteralValue.keys" in outcome.effect.reason
+    assert "typed red" in outcome.effect.reason
+    assert "blame=" in outcome.effect.reason
+
+
+def test_set_literal_unsupported_method_is_typed_runtime_effect() -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "s", SetLiteralValue((num(1), num(2)))
+    )
+    ctx = FactoryBuildContext(
+        filename="comprehension.py",
+        catalog=default_catalog(),
+        temporal=temporal,
+    )
+    body = ctx.build_body(ast.parse("s.pop()", mode="eval").body, SugarRole.TERM)
+
+    outcome = body.reduce(ReduceContext.derived(ctx, owner="comprehension-test"))
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "set builtin method runtime boundary" in outcome.effect.reason
+    assert "SetLiteralValue.pop" in outcome.effect.reason
+    assert "typed red" in outcome.effect.reason
+    assert "blame=" in outcome.effect.reason
+
+
 def test_comprehension_factory_selects_shape_recognizers() -> None:
     ctx = FactoryBuildContext(filename="comprehension.py", catalog=default_catalog())
 
