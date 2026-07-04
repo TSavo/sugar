@@ -70,7 +70,9 @@ def test_literal_list_comp_bad_twin_flips(tmp_path: Path) -> None:
 
 def test_runtime_iterable_list_comp_is_typed_runtime_effect() -> None:
     ctx = FactoryBuildContext(filename="list_comp.py", catalog=default_catalog())
-    body = ctx.build_body(ast.parse("[x for x in xs]", mode="eval").body, SugarRole.TERM)
+    body = ctx.build_body(
+        ast.parse("[x for x in xs]", mode="eval").body, SugarRole.TERM
+    )
     reduce_ctx = replace(
         ReduceContext.root(owner="list-comp-test"),
         temporal=TemporalContext.empty().bind_value(
@@ -100,7 +102,9 @@ def test_non_bool_guard_list_comp_is_conservative_runtime_effect() -> None:
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, RuntimeEffect)
     assert "list comprehension runtime boundary" in outcome.effect.reason
-    assert "guard truthiness for non-bool floors is runtime here" in outcome.effect.reason
+    assert (
+        "guard truthiness for non-bool floors is runtime here" in outcome.effect.reason
+    )
     assert "narrower truthiness dispatch may own this later" in outcome.effect.reason
 
 

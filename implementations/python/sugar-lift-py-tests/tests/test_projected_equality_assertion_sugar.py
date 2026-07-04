@@ -329,8 +329,7 @@ def test_projected_equality_lifts_fstring_rhs_attribute() -> None:
 def test_projected_equality_rhs_runtime_effect_stays_typed_effect() -> None:
     report = build_literal_call_report(
         source=(
-            "def test_values(arr, xs):\n"
-            "    assert arr.values == [x for x in xs]\n"
+            "def test_values(arr, xs):\n" "    assert arr.values == [x for x in xs]\n"
         ),
         filename="test_values.py",
         memento_file="test_values.py",

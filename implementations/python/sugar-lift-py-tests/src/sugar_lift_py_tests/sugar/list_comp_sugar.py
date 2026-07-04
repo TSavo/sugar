@@ -170,9 +170,7 @@ def _finite_items(value: FloorValue) -> tuple[FloorValue, ...] | None:
     return None
 
 
-def _guards_pass(
-    guards: tuple[SugarBody, ...], ctx, blame: str
-) -> bool | Incomplete:
+def _guards_pass(guards: tuple[SugarBody, ...], ctx, blame: str) -> bool | Incomplete:
     for guard in guards:
         outcome = guard.reduce(ctx)
         if isinstance(outcome, Incomplete):
