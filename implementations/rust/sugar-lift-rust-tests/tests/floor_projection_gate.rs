@@ -171,7 +171,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/map.rs",
-        line: 338,
+        line: 351,
         enclosing_fn: "reduce_map_body",
         max_floor_arms: 2,
         owner: "MapSugar receiver sequence projection",
