@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 
 use serde_json::json;
 
-const EXPECTED_RED: &[(&str, &str)] = &[
+const EXPECTED_RED_COMMON: &[(&str, &str)] = &[
     (
         "closure_capture_mut_local_post_closure_read_refuses_not_false_refutation",
         "floor-gap:mutable-alias-state",
@@ -23,6 +23,10 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     (
         "closure_driver_invocation_recurses_body_per_temporal_callsite",
         "floor-gap:temporal-closure-adaptor",
+    ),
+    (
+        "direct_literal_range_for_loop_scalar_accumulator_has_teeth",
+        "floor-gap:literal-for-loop-accumulator",
     ),
     (
         "iterator_clone_binding_uses_runtime_iterator_source_floor",
@@ -41,16 +45,36 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:literal-domain-edge",
     ),
     (
+        "literal_bound_range_for_loop_scalar_accumulator_bad_twin_is_unsat",
+        "floor-gap:literal-for-loop-accumulator",
+    ),
+    (
+        "literal_for_loop_scalar_accumulator_bad_twin_is_unsat",
+        "floor-gap:literal-for-loop-accumulator",
+    ),
+    (
+        "literal_for_loop_scalar_accumulator_post_read_warrants",
+        "floor-gap:literal-for-loop-accumulator",
+    ),
+    (
+        "literal_oversize_domain_named_refused_with_twin",
+        "floor-gap:literal-domain-edge",
+    ),
+    (
+        "literal_runtime_bound_named_refused_with_twin",
+        "floor-gap:literal-domain-edge",
+    ),
+    (
         "literal_runtime_element_named_refused_with_twin",
+        "floor-gap:literal-domain-edge",
+    ),
+    (
+        "literal_unbounded_range_named_refused_with_twin",
         "floor-gap:literal-domain-edge",
     ),
     (
         "macro_expansion_terminal_runtime_effect_is_refused_not_support_only",
         "floor-gap:macro-visible-source",
-    ),
-    (
-        "mut_borrow_deref_after_mutation_is_not_falsely_discharged",
-        "floor-gap:mutable-alias-state",
     ),
     (
         "nested_macro_terminal_effect_is_not_swallowed_as_inert",
@@ -84,6 +108,10 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "top_level_scanner_discovers_vendor_surface_by_macro_body_shape",
         "floor-gap:macro-visible-source",
     ),
+    (
+        "unexpandable_term_position_macro_is_gap_not_opaque_var",
+        "floor-gap:macro-visible-source",
+    ),
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -111,6 +139,15 @@ const CLASS_DISPOSITIONS: &[(&str, ClassDisposition)] = &[
             owner: "#3378 temporal-floor S5",
             follow_up: "literal iter standing/refusal",
             note: "RangeLiteral/ArrayLiteral count/refusal edges; #3407 range-bound derived testimony is no longer in this frontier",
+        },
+    ),
+    (
+        "floor-gap:literal-for-loop-accumulator",
+        ClassDisposition {
+            bucket: "unlifted-construct",
+            owner: "#3378 temporal-floor S5",
+            follow_up: "literal for-loop accumulator standing",
+            note: "literal range for-loop accumulator rows need counted temporal standing and bad-twin teeth, not derived-testimony repair",
         },
     ),
     (
@@ -221,6 +258,15 @@ const CLASS_DISPOSITIONS: &[(&str, ClassDisposition)] = &[
             note: "future pattern/type/call-edge reds route through catalog claims instead of syntactic projection ladders",
         },
     ),
+    (
+        "harness-gap:production-cli-precondition",
+        ClassDisposition {
+            bucket: "harness-gap",
+            owner: "#3448 production CLI verdict gate",
+            follow_up: "build or locate the production sugar CLI before the assertion_lift soundness gate",
+            note: "the assertion_lift production-CLI representative gate is inherited red when no target sugar binary exists",
+        },
+    ),
 ];
 
 const ZERO_BUCKETS: &[(&str, &str, &str)] = &[
@@ -273,6 +319,22 @@ fn run_assertion_lift_frontier() -> FrontierReport {
         .parent()
         .expect("sugar-lift-rust-tests crate has a workspace parent");
     let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let mut args = vec!["test"];
+    if !cfg!(debug_assertions) {
+        args.push("--release");
+    }
+    args.extend([
+        "-p",
+        "sugar-lift-rust-tests",
+        "--test",
+        "assertion_lift",
+        "--color",
+        "never",
+        "--",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1",
+    ]);
     let output = Command::new(cargo)
         .current_dir(workspace_dir)
         .env("NO_COLOR", "1")
@@ -281,18 +343,7 @@ fn run_assertion_lift_frontier() -> FrontierReport {
         // The target owns a few RPC subprocess tests whose failure identities can
         // flap under parallel test scheduling. The frontier is a ratchet, so run
         // the child target serially and pin the stable R vector.
-        .args([
-            "test",
-            "-p",
-            "sugar-lift-rust-tests",
-            "--test",
-            "assertion_lift",
-            "--color",
-            "never",
-            "--",
-            "--nocapture",
-            "--test-threads=1",
-        ])
+        .args(args)
         .output()
         .expect("run assertion_lift frontier target");
 
@@ -323,7 +374,7 @@ fn run_assertion_lift_frontier() -> FrontierReport {
 }
 
 fn expected_keys() -> Vec<FrontierKey> {
-    let mut keys = EXPECTED_RED
+    let mut keys = active_expected_red()
         .iter()
         .map(|(test, class)| FrontierKey {
             test: (*test).to_string(),
@@ -335,9 +386,13 @@ fn expected_keys() -> Vec<FrontierKey> {
 }
 
 fn expected_class_for(test: &str) -> Option<&'static str> {
-    EXPECTED_RED
-        .iter()
-        .find_map(|(name, class)| (*name == test).then_some(*class))
+    active_expected_red()
+        .into_iter()
+        .find_map(|(name, class)| (name == test).then_some(class))
+}
+
+fn active_expected_red() -> Vec<(&'static str, &'static str)> {
+    EXPECTED_RED_COMMON.to_vec()
 }
 
 fn class_disposition(class: &str) -> Option<&'static ClassDisposition> {
@@ -548,6 +603,7 @@ impl FrontierReport {
             .collect::<Vec<_>>();
         serde_json::to_string_pretty(&json!({
             "target": "assertion_lift",
+            "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
             "total": self.rows.len(),
             "is_zero": self.is_zero(),
             "status_code": self.status_code,
@@ -566,7 +622,7 @@ impl FrontierReport {
     fn to_expected_red_literal(&self) -> String {
         let mut keys = self.observed_keys();
         keys.sort();
-        let mut out = String::from("const EXPECTED_RED: &[(&str, &str)] = &[\n");
+        let mut out = String::from("const EXPECTED_RED_COMMON: &[(&str, &str)] = &[\n");
         for key in keys {
             out.push_str(&format!("    ({:?}, {:?}),\n", key.test, key.class));
         }

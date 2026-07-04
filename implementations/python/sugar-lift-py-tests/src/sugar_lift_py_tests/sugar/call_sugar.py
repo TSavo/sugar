@@ -67,6 +67,15 @@ class RefuseStrategy:
 
 
 @dataclass(frozen=True)
+class RuntimeEffectStrategy:
+    outcome: Incomplete
+
+    def emit(self, sugar: "CallSugar", ctx) -> Outcome:
+        del sugar, ctx
+        return self.outcome
+
+
+@dataclass(frozen=True)
 class BridgeStrategy:
     """A RESOLVED call. It carries the callee's contract -- the UNIVERSE (`f(args)`, the body
     walked over the formals) -- which the dig mints as the `::callable` function-contract, and
@@ -101,10 +110,13 @@ class BridgeStrategy:
         )
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        arg_values = tuple(
-            complete_value(argument.reduce(ctx), owner="BridgeStrategy argument")
-            for argument in self.arguments
-        )
+        arg_values = []
+        for argument in self.arguments:
+            outcome = argument.reduce(ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            arg_values.append(complete_value(outcome, owner="BridgeStrategy argument"))
+        arg_values = tuple(arg_values)
         term = euf_call_term(
             self.target_name,
             [
@@ -587,6 +599,8 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         )
                     )
                 )
+            if isinstance(body, Incomplete):
+                return cls(strategy=RuntimeEffectStrategy(body))
             return cls(
                 strategy=BridgeStrategy(
                     target_name=target,

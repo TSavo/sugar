@@ -92,8 +92,14 @@ fn expected_frontier_counts() -> BTreeMap<&'static str, (usize, usize)> {
         // source_fragment_escape_accessor moving 94 files / 151 lines ->
         // 95 files / 154 lines. The related raw AST signature / variant
         // growth below is the same new lift footprint, not silent drift.
-        ("raw_ast_signature", (141, 1110)),
-        ("raw_ast_variant_pattern", (114, 1925)),
+        //
+        // Current main also carries the ExtractIfSugar replay recognizer
+        // footprint in extract_if.rs. It accounts for the additional raw AST
+        // signature / variant-pattern lines below; the migration owner remains
+        // #2927, and this pin keeps the floor legible while that drain is still
+        // outstanding.
+        ("raw_ast_signature", (141, 1112)),
+        ("raw_ast_variant_pattern", (114, 1941)),
         ("raw_syn_import", (120, 120)),
         ("source_fragment_escape_accessor", (95, 154)),
     ])
