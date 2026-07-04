@@ -30703,15 +30703,33 @@ fn deref_of_shared_borrow_of_index_warrants_pointee() {
     }
 }
 
-// SOUNDNESS GATE: a `&mut` deref whose pointee was MUTATED through the alias must NOT be
-// cancelled. `let mut x=5; let r=&mut x; *r+=1; assert_eq!(*r,5)` is a FALSE assertion
-// (*r is 6 post-mutation). Cancelling its binding-time `ref_mut(5)` to `5` would make
-// `5 == 5` SAT -- a cardinal-sin false discharge of a false claim. The shared-only
-// cancellation must leave `ref_mut` intact (so the read stays uninterpreted / the
-// mutation stays refused), never collapsing it to a bare equality.
+// SOUNDNESS GATE: a `&mut` deref whose pointee was mutated through the same
+// scalar alias must read the post-mutation value. AliasFloor makes the alias
+// identity explicit, so this no longer needs to refuse to avoid the old
+// binding-time `ref_mut(5)` false discharge.
 #[test]
-fn mut_borrow_deref_after_mutation_is_not_falsely_discharged() {
+fn mut_borrow_deref_after_mutation_uses_aliasfloor_post_value() {
     let src = r#"
+        #[test]
+        fn t_mut_deref_mutated() {
+            let mut x = 5;
+            let r = &mut x;
+            *r += 1;
+            assert_eq!(*r, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/mut_deref_mutated.rs");
+    assert_warranted_decl_count(&out, 1);
+    let sat = fast_smt_smoke_check(
+        &inv_json(single_warranted_decl(&out)),
+        "mut_borrow_deref_after_mutation_truth",
+    );
+    assert!(
+        sat,
+        "AliasFloor must reduce `*r` to the post-mutation scalar value"
+    );
+
+    let lie = r#"
         #[test]
         fn t_mut_deref_mutated() {
             let mut x = 5;
@@ -30720,20 +30738,17 @@ fn mut_borrow_deref_after_mutation_is_not_falsely_discharged() {
             assert_eq!(*r, 5);
         }
     "#;
-    let out = lift_file(&parse(src), "coretests/borrow/mut_deref_mutated.rs");
-    let dump = format!("{:?}", out.decls);
-    assert!(
-        dump.contains("ref_mut"),
-        "a `&mut` deref over a mutated alias must NOT be cancelled (ref_mut must survive, \
-         read stays uninterpreted) -- collapsing to a bare `5 == 5` would false-discharge a \
-         false claim: {dump}"
+    let lie_out = lift_file(&parse(lie), "coretests/borrow/mut_deref_mutated_lie.rs");
+    assert_warranted_decl_count(&lie_out, 1);
+    let lie_sat = fast_smt_smoke_check(
+        &inv_json(single_warranted_decl(&lie_out)),
+        "mut_borrow_deref_after_mutation_lie",
     );
     assert!(
-        out.skip_reasons
-            .iter()
-            .any(|r| r.contains("runtime expression-statement") || r.contains("&mut")),
-        "the mutation `*r += 1` must remain refused: {:?}",
-        out.skip_reasons
+        !lie_sat,
+        "AliasFloor must refute stale binding-time reads after `*r += 1`: facts={:?} decls={:?}",
+        lie_out.assertion_facts,
+        warranted_decls(&lie_out)
     );
 }
 
@@ -30966,22 +30981,21 @@ fn literal_runtime_element_named_refused_with_twin() {
 }
 
 // ---------------------------------------------------------------------------
-// NO-FALSE-REFUTATION GATE: a local MUTATED through a `&mut` alias the tracker cannot
-// resolve (`let r = &mut x; *r += 1;`) has a STALE tracked value (the alias-deref
-// mutation is refused, so the rewrite never applies it). A read of that local must
-// REFUSE -- lifting the pre-mutation literal would refute a TRUE assertion
-// (`assert_eq!(x, 6)` -> `5 == 6` UNSAT), the inverse cardinal sin / a fake dragon over
-// correct code. Conservative refuse-tightening (no new warrant). (`collect_alias_deref_
-// mutated` pre-scan + `bound_path` gate.)
+// NO-FALSE-REFUTATION GATE: a local mutated through a scalar `&mut` alias
+// (`let r = &mut x; *r += 1;`) used to be refused because the tracker could
+// not resolve the write-through without risking the stale `5 == 6` false
+// refutation. AliasFloor owns that scalar identity now: the truthful post-state
+// warrants, and the lying twin refutes.
 
 #[test]
-fn alias_deref_mutated_read_refuses_not_false_refutation() {
+fn alias_deref_mutated_read_warrants_aliasfloor_post_value() {
     let src = r#"
         #[test]
         fn t_alias_mut() {
             let mut x = 5;
             let r = &mut x;
             *r += 1;
+            assert_eq!(x, 6);
             assert_eq!(x, 6);
         }
     "#;
@@ -30992,27 +31006,39 @@ fn alias_deref_mutated_read_refuses_not_false_refutation() {
         "the read of `x` must NOT lift the stale `5 == 6` (false refutation): {dump}"
     );
     assert!(
-        out.skip_reasons
-            .iter()
-            .any(|r| r.contains("mutated through a `&mut` alias")),
-        "the read of a `&mut`-alias-mutated local must REFUSE by name: skips={:?} seen={} lifted={} assertions_lifted={} assertions_refused={} facts={:?}",
-        out.skip_reasons,
-        out.seen,
-        out.lifted,
-        out.assertions_lifted,
-        out.assertions_refused,
-        out.assertion_facts
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "AliasFloor scalar write-through must warrant the post-state read: skips={:?} seen={} lifted={} assertions_lifted={} assertions_refused={} facts={:?}",
+        out.skip_reasons, out.seen, out.lifted, out.assertions_lifted, out.assertions_refused, out.assertion_facts
+    );
+    let sat = fast_smt_smoke_check(
+        &inv_json(single_warranted_decl(&out)),
+        "alias_floor_scalar_truth",
+    );
+    assert!(sat, "AliasFloor scalar write-through should prove x == 6");
+
+    let lie = r#"
+        #[test]
+        fn t_alias_mut() {
+            let mut x = 5;
+            let r = &mut x;
+            *r += 1;
+            assert_eq!(x, 6);
+            assert_eq!(x, 7);
+        }
+    "#;
+    let lie_out = lift_file(&parse(lie), "coretests/borrow/alias_mut_read_lie.rs");
+    assert!(
+        lie_out.assertions_lifted >= 1 && lie_out.assertions_refused == 0,
+        "AliasFloor scalar write-through must emit the lying post-state assertion too: skips={:?} facts={:?}",
+        lie_out.skip_reasons, lie_out.assertion_facts
+    );
+    let lie_sat = fast_smt_smoke_check(
+        &inv_json(single_warranted_decl(&lie_out)),
+        "alias_floor_scalar_lie",
     );
     assert!(
-        out.skip_reasons.iter().any(|r| {
-            r.contains("mutated through a `&mut` alias")
-                && matches!(
-                    sugar_lift_rust_tests::refusal_disposition(r),
-                    sugar_lift_rust_tests::Disposition::Refused
-                )
-        }),
-        "the alias-deref-mutated refusal must classify as a terminal Refused dragon: {:?}",
-        out.skip_reasons
+        !lie_sat,
+        "AliasFloor scalar write-through must refute x == 7"
     );
 }
 
