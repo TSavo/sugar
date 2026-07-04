@@ -14,7 +14,7 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "unsafe_memory",
     SugarRole::Term,
     crate::sugar::claim::SugarWitnesses::reasoned_bucket(
-        "unsafe-memory expression effect; no stable proof relation yet",
+        "unsafe-memory expression effect; vendor tags this region undecidable -- no proof relation",
     ),
     recognize,
 );
@@ -23,7 +23,7 @@ pub(crate) const STATEMENT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "statement_unsafe_memory",
     SugarRole::StatementEffect,
     crate::sugar::claim::SugarWitnesses::reasoned_bucket(
-        "unsafe-memory statement effect; no stable proof relation yet",
+        "unsafe-memory statement effect; vendor tags this region undecidable -- no proof relation",
     ),
     recognize,
 );
