@@ -16,7 +16,7 @@ use tracing::{debug, trace};
 
 use crate::sugar::alias_floor::{
     AliasFloor, AliasFloorResult, AliasMutationCause, AliasRead, AliasReducedValue,
-    AliasTypedEffect, AliasWriteTarget,
+    AliasTypedEffect, AliasWriteTarget, CopySeveranceFact,
 };
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
@@ -272,6 +272,7 @@ impl TemporalRewriteState {
             }
             Ok(AliasRead::Element { .. }) => None,
             Err(AliasTypedEffect::UnroutableAliasShape { .. }) => None,
+            Err(AliasTypedEffect::UnknownSeverance { .. }) => None,
             Err(AliasTypedEffect::UnknownMutation { .. }) => None,
         }
     }
@@ -316,6 +317,7 @@ impl TemporalRewriteState {
             }
             Ok(AliasRead::Scalar(_)) => None,
             Err(AliasTypedEffect::UnroutableAliasShape { .. }) => None,
+            Err(AliasTypedEffect::UnknownSeverance { .. }) => None,
             Err(AliasTypedEffect::UnknownMutation { .. }) => None,
         }
     }
@@ -1056,6 +1058,14 @@ impl TemporalRewriteState {
     }
 
     pub(crate) fn record_local(&mut self, local: &syn::Local) {
+        self.record_local_with_copy_fact(local, None);
+    }
+
+    pub(crate) fn record_local_with_copy_fact(
+        &mut self,
+        local: &syn::Local,
+        copy_fact: Option<CopySeveranceFact>,
+    ) {
         let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
             return;
         };
@@ -1102,6 +1112,12 @@ impl TemporalRewriteState {
         }
 
         self.aliases.remove(&name);
+        if let Some(base) = simple_path_name(&init.expr).filter(|base| base != &name) {
+            if let Some(copy_fact) = copy_fact {
+                self.record_path_binding_with_copy_fact(&name, &base, copy_fact);
+                return;
+            }
+        }
         if let Some((kind, value)) = self.cell_constructor_value(&init.expr) {
             let value_label = value
                 .as_ref()
@@ -1170,6 +1186,36 @@ impl TemporalRewriteState {
                 }
             }
             self.clear_value(&name);
+        }
+    }
+
+    fn record_path_binding_with_copy_fact(
+        &mut self,
+        name: &str,
+        base: &str,
+        copy_fact: CopySeveranceFact,
+    ) {
+        match copy_fact {
+            CopySeveranceFact::Copy => {
+                if let Some(value) = self.expr_for(base) {
+                    self.record_literal_value(name, value);
+                } else {
+                    self.clear_value(name);
+                }
+            }
+            CopySeveranceFact::NotCopy { .. } => {
+                self.clear_value(name);
+                if self.values.contains_key(base) || self.aliases.contains_key(base) {
+                    let alias = alias_bound_result(AliasFloor::scalar(base).bind());
+                    self.aliases.insert(name.to_string(), alias);
+                }
+            }
+            CopySeveranceFact::UnknownSeverance { reason } => {
+                self.clear_value(name);
+                let effect = AliasFloor::scalar(name).unknown_severance(reason);
+                self.unknown_mutations
+                    .insert(name.to_string(), alias_unknown_mutation_reason(effect));
+            }
         }
     }
 
@@ -2567,6 +2613,7 @@ fn alias_base_identity(result: AliasFloorResult) -> Option<String> {
             panic!("AliasFloor consume event returned write target `{base}[{index}]`")
         }
         AliasFloorResult::TypedEffect(AliasTypedEffect::UnroutableAliasShape { .. }) => None,
+        AliasFloorResult::TypedEffect(AliasTypedEffect::UnknownSeverance { .. }) => None,
         AliasFloorResult::TypedEffect(AliasTypedEffect::UnknownMutation { .. }) => None,
     }
 }
@@ -2612,6 +2659,9 @@ fn alias_unknown_mutation_reason(result: AliasFloorResult) -> String {
         AliasFloorResult::TypedEffect(effect @ AliasTypedEffect::UnknownMutation { .. }) => {
             alias_effect_reason(&effect)
         }
+        AliasFloorResult::TypedEffect(effect @ AliasTypedEffect::UnknownSeverance { .. }) => {
+            alias_effect_reason(&effect)
+        }
         AliasFloorResult::TypedEffect(AliasTypedEffect::UnroutableAliasShape { event, place }) => {
             alias_effect_reason(&AliasTypedEffect::UnroutableAliasShape { event, place })
         }
@@ -2649,6 +2699,12 @@ fn alias_effect_reason(effect: &AliasTypedEffect) -> String {
             "AliasFloor coverage gap for `{}` during `{event:?}`: owner #3482; \
              illegal shape `{place:?}` has no typed AliasFloor result for this event; \
              replacement is an AliasFloor event arm carrying ReducedValue or TypedEffect; refused",
+            place.base()
+        ),
+        AliasTypedEffect::UnknownSeverance { place, reason } => format!(
+            "AliasFloor UnknownSeverance effect for `{}`: owner #3482; illegal shape has no \
+             resolved vendor Copy fact, so the replacement is a typed AliasFloor \
+             UnknownSeverance effect rather than guessed copy or move; probe={reason}; refused",
             place.base()
         ),
         AliasTypedEffect::UnknownMutation { place, cause } => match cause {
@@ -3056,6 +3112,14 @@ fn bool_term(value: bool) -> Rc<Term> {
 mod tests {
     use super::*;
 
+    fn parse_local(src: &str) -> syn::Local {
+        let stmt = syn::parse_str::<Stmt>(src).expect("local statement parses");
+        let Stmt::Local(local) = stmt else {
+            panic!("expected local statement");
+        };
+        local
+    }
+
     fn int_term(value: i128) -> Rc<Term> {
         Rc::new(Term::Const {
             value: ConstValue::Int(value),
@@ -3183,6 +3247,80 @@ mod tests {
         assert!(
             state.expr_for("r").is_none(),
             "unknown scalar alias mutation must not leave a stale readable value"
+        );
+    }
+
+    #[test]
+    fn copy_bind_event_severs_independent_value() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("x", syn::parse_quote!(5));
+        let local = parse_local("let y = x;");
+
+        state.record_local_with_copy_fact(&local, Some(CopySeveranceFact::Copy));
+        let inc: Expr = syn::parse_quote!(x += 1);
+        assert!(state.apply_with_trace(&inc, false));
+
+        assert_eq!(
+            state.expr_for("x").and_then(|expr| const_int(&expr)),
+            Some(6)
+        );
+        assert_eq!(
+            state.expr_for("y").and_then(|expr| const_int(&expr)),
+            Some(5),
+            "Copy severance must snapshot an independent value"
+        );
+    }
+
+    #[test]
+    fn not_copy_bind_event_shares_identity() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("x", syn::parse_quote!(5));
+        let local = parse_local("let y = x;");
+
+        state.record_local_with_copy_fact(
+            &local,
+            Some(CopySeveranceFact::NotCopy {
+                diagnostic: "error[E0277]: the trait bound `Token: Copy` is not satisfied"
+                    .to_string(),
+            }),
+        );
+        let inc: Expr = syn::parse_quote!(x += 1);
+        assert!(state.apply_with_trace(&inc, false));
+
+        assert_eq!(
+            state.expr_for("x").and_then(|expr| const_int(&expr)),
+            Some(6)
+        );
+        assert_eq!(
+            state.expr_for("y").and_then(|expr| const_int(&expr)),
+            Some(6),
+            "NotCopy move semantics share the identity node; rustc owns old-name death"
+        );
+    }
+
+    #[test]
+    fn unknown_copy_fact_records_unknown_severance_effect() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("x", syn::parse_quote!(5));
+        let local = parse_local("let y = x;");
+
+        state.record_local_with_copy_fact(
+            &local,
+            Some(CopySeveranceFact::UnknownSeverance {
+                reason: "probe failed with E0425 before Copy could be adjudicated".to_string(),
+            }),
+        );
+
+        assert!(
+            state.expr_for("y").is_none(),
+            "UnknownSeverance must not guess a copy or move value"
+        );
+        let reason = state
+            .unknown_mutation_reason("y")
+            .expect("unknown severance becomes a typed effect");
+        assert!(
+            reason.contains("UnknownSeverance") && reason.contains("E0425"),
+            "missing Copy-fact infrastructure must be named, got: {reason}"
         );
     }
 

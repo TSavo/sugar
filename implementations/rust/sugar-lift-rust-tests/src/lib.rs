@@ -2127,7 +2127,7 @@ fn source_assertion_entries_in_stmts(
             if let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) {
                 record_destructured_let_bindings(&mut temporal_scope, &local.pat, &init.expr);
             }
-            temporal_scope.record_temporal_rewrite_local(local);
+            temporal_scope.dispatch_temporal_rewrite_local(local);
             record_const_expanded_temporal_rewrite_local(&mut temporal_scope, local);
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
@@ -2648,6 +2648,7 @@ impl<'a> ReductionCtx<'a> {
                     }
                 }
                 Item::Impl(imp) => {
+                    self.layout_types.insert_item(item.clone());
                     self.insert_impl_values(imp);
                 }
                 Item::Struct(_) | Item::Enum(_) | Item::Union(_) | Item::Type(_) => {
@@ -3522,6 +3523,15 @@ impl LayoutTypeRegistry {
             }
         }
         items.join("\n")
+    }
+
+    pub(crate) fn full_visible_prelude(&self) -> String {
+        self.items
+            .values()
+            .chain(self.aux_items.values())
+            .map(|item| item.to_token_stream().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub(crate) fn array_len_for_type(&self, ty: &Type) -> Option<usize> {
@@ -4960,6 +4970,24 @@ impl TemporalScope {
         self.layout_type_registry.offset_prelude_for_type(ty)
     }
 
+    fn copy_severance_fact_for_local(
+        &self,
+        local: &syn::Local,
+    ) -> Option<sugar::alias_floor::CopySeveranceFact> {
+        let init = local.init.as_ref().filter(|init| init.diverge.is_none())?;
+        let name = simple_pat_name(&local.pat)?;
+        let base = simple_path_name(&init.expr)?;
+        if base == name {
+            return None;
+        }
+        let value = self.temporal_rewrite.borrow().expr_for(&base)?;
+        let visible_prelude = self.layout_type_registry.full_visible_prelude();
+        Some(sugar::alias_floor::probe_copy_severance_for_expr(
+            &visible_prelude,
+            &token_key(&value),
+        ))
+    }
+
     pub(crate) fn array_len_for_type(&self, ty: &Type) -> Option<usize> {
         self.layout_type_registry.array_len_for_type(ty)
     }
@@ -5394,8 +5422,11 @@ impl TemporalScope {
         self.unresolved_destructured_locals.insert(name.to_string());
     }
 
-    fn record_temporal_rewrite_local(&mut self, local: &syn::Local) {
-        self.temporal_rewrite.borrow_mut().record_local(local);
+    fn dispatch_temporal_rewrite_local(&mut self, local: &syn::Local) {
+        let copy_fact = self.copy_severance_fact_for_local(local);
+        self.temporal_rewrite
+            .borrow_mut()
+            .record_local_with_copy_fact(local, copy_fact);
     }
 
     fn record_temporal_rewrite_value(&mut self, name: &str, value: Expr) {
@@ -11275,7 +11306,7 @@ pub(crate) fn should_panic_temporal_callsite_records(
         }
         if let Stmt::Local(local) = stmt {
             record_simple_value_binding(&mut temporal_scope, local);
-            temporal_scope.record_temporal_rewrite_local(local);
+            temporal_scope.dispatch_temporal_rewrite_local(local);
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
     }
@@ -13321,7 +13352,7 @@ fn collect_assertion_entries<'a>(
                 if let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) {
                     record_destructured_let_bindings(&mut temporal_scope, &local.pat, &init.expr);
                 }
-                temporal_scope.record_temporal_rewrite_local(local);
+                temporal_scope.dispatch_temporal_rewrite_local(local);
                 record_const_expanded_temporal_rewrite_local(&mut temporal_scope, local);
             }
             Stmt::Macro(m) => {
@@ -21342,7 +21373,7 @@ mod lifter_key_tests {
             panic!("expected RefCell local");
         };
         record_simple_value_binding(&mut scope, x_local);
-        scope.record_temporal_rewrite_local(x_local);
+        scope.dispatch_temporal_rewrite_local(x_local);
         let Stmt::Local(split_local) = &f.block.stmts[1] else {
             panic!("expected map_split local");
         };
@@ -21385,7 +21416,7 @@ mod lifter_key_tests {
         for stmt in f.block.stmts.iter().take(3) {
             if let Stmt::Local(local) = stmt {
                 record_simple_value_binding(&mut scope, local);
-                scope.record_temporal_rewrite_local(local);
+                scope.dispatch_temporal_rewrite_local(local);
             }
             advance_temporal_scope_for_stmt(stmt, &mut scope);
         }
