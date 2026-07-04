@@ -60,6 +60,26 @@ That is what you get. Behind it, in the order they had to happen, are the nine i
 
 The White Queen managed to believe six impossible things before breakfast. Sugar does nine, and signs them.
 
+## Who rules on what your code means
+
+When your code says `.map`, someone has to say what that means. Every tool you've ever used answers this the same way: it becomes the authority itself. The linter has opinions. The analyzer has a model. The checker has its own idea of your language, which is why it disagrees with your compiler in the corners, and why you learn to ignore it.
+
+Sugar refuses the throne twice.
+
+The `sugar` CLI is Switzerland. It owns no language semantics, holds no opinion about any line of code. It dispatches, composes, hashes, checks, and reports. If the CLI ever grew an opinion about what `.map` means, it would be one more authority you'd have to trust, and the entire point is that there isn't one.
+
+**Kits** are where meaning lives, one per language surface: the Rust kit, the Python kit, the Java kit. A kit is an arbiter, and an arbiter must rule; "I don't know" is not a ruling, which is why an unrecognized shape panics instead of shrugging. But a kit rules the way a faithful judge rules: by citing the vendor, never by fiat. "This `.map` means that, on this receiver" is only ever warranted as "because Python says so": the vendor's own semantics, the vendor's own passing tests, the vendor's own compiler. A kit that invented meaning would be a bespoke language authority wearing a robe, the one thing a kit is forbidden to become. Every ruling lands in the `.proof` with its citation attached, which is exactly what the report prints next to your line.
+
+And the kit is yours. You own your kit, your solver, your policy; every part is replaceable; a kit you don't trust is a kit you can fork, because its rulings carry their citations with them. Nothing is central. Nothing is registered. Nobody has to be believed.
+
+## How a proof crosses a language boundary
+
+Your Rust service calls into a Python library. Two compilers, two type systems, two test suites, zero shared vocabulary. Every correctness tool you know stops at this border, because each one is built *inside* a language. Carrying a guarantee across it is impossible.
+
+Here is how it crosses. Each kit lifts its own surface into the same logic: vendor-tested assertions become first-order formulas over shared sorts, order thrown away, canonicalized, content-addressed. At the bottom there is no Rust and no Python; there is a theory, `A ∧ B ∧ C`, and a theory doesn't remember what language it was born in. An `Int` that came from `i64` and an `Int` that came from a Python `int` meet in the same sort, with the platform width carried as a refinement in the sidecar, not baked into the meaning.
+
+So when `sugar prove` runs, it enumerates your callsites, resolves your dependencies' `.proof` files through their kits, and conjoins the contracts that name the same behavior, no matter which language swore them. Your Rust caller's assumption and numpy's Python contract land in one z3 query: can all of this be true at once? If your assumption contradicts what the library proved about itself, you are refused at the callsite, in your language, against testimony given in theirs. The witnesses recompute on your machine, with the kit oracle untrusted. Nothing translated your code. Nothing modeled either language. The border was never crossed, because at the level where the proof lives, there was never a border.
+
 ## The mechanism, in one expression
 
 For the mechanically minded, the entire lift is:
