@@ -175,6 +175,19 @@ cleanup_remote_root() {
   run_ssh "rm -rf $(quote_sh "$remote_root")"
 }
 
+# Reap orphaned sibling roots. Remote roots are per-checkout (see above), so a
+# deleted local worktree leaves its remote root behind forever; 97 of those
+# once filled the disk to 0 and stalled every build on the box. Each run
+# touches its own root (marking it live) and removes sugar-bcargo-* siblings
+# nobody has touched in BCARGO_REAP_DAYS days. Best-effort and backgrounded on
+# the remote so it never blocks or fails the build. Set BCARGO_REAP_DAYS=0 to
+# disable.
+reap_days="${BCARGO_REAP_DAYS:-2}"
+reap_stale_remote_roots() {
+  [[ "$reap_days" == "0" ]] && return 0
+  run_ssh "mkdir -p $(quote_sh "$remote_root") && touch $(quote_sh "$remote_root") && nohup find /home/tsavo/remote -mindepth 1 -maxdepth 1 -name 'sugar-bcargo-*' ! -path $(quote_sh "$remote_root") -mtime +$(quote_sh "$reap_days") -exec rm -rf {} + >/dev/null 2>&1 &" || true
+}
+
 exclude_args=(
   --exclude='target/'
   --exclude='.git/'
@@ -272,6 +285,8 @@ warn_foreign_synced_binary() {
   desc="${desc:-unknown binary format}"
   echo "bcargo: refusing to deposit foreign-platform binary: crime=foreign-platform-binary owner=bin/bcargo shape=$desc path=$local_bin replacement=run the binary on $remote_host through bcargo, or cargo clean and rebuild locally with RUSTC_WRAPPER='' before local verdict checks" >&2
 }
+
+reap_stale_remote_roots
 
 sync_file Cargo.toml
 sync_file Cargo.lock
