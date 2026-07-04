@@ -112,7 +112,6 @@ impl Sugar for IntSqrtSugar {
                 Outcome::Complete(Desugared::Term(term))
             }
             (Kind::Sqrt, NumericSqrt::Negative) => Outcome::Incomplete(Effect::LiteralPanic {
-                boundary: self.site.clone(),
                 reason: format!(
                     "primitive integer `isqrt` on negative literal `{}` panics; refused",
                     receiver_label(&receiver)

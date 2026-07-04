@@ -33,8 +33,6 @@ struct AtomicLoadSugar {
 
 impl Sugar for AtomicLoadSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Incomplete(Effect::AtomicLoad {
-            boundary: self.boundary.clone(),
-        })
+        Outcome::Incomplete(Effect::AtomicLoad)
     }
 }

@@ -176,7 +176,6 @@ impl FilterMapFloor {
 
 fn filter_map_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::filter_map".to_string(),
         reason: err.to_string(),
     })
 }

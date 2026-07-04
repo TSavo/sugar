@@ -207,7 +207,6 @@ impl ZipFloor {
 
 fn zip_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::zip".to_string(),
         reason: err.to_string(),
     })
 }

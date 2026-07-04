@@ -60,7 +60,6 @@ impl Sugar for DurationValueSugar {
             DurationDecision::Complete(term) => Outcome::Complete(Desugared::Term(Rc::clone(term))),
             DurationDecision::Refused { boundary, reason } => {
                 Outcome::Incomplete(Effect::DurationCarrierEmbedding {
-                    boundary: boundary.clone(),
                     reason: reason.clone(),
                 })
             }

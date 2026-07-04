@@ -117,13 +117,11 @@ fn assertion_entry_method(
             format!("{unstable_width} bit-width not modeled")
         };
         return Err(Effect::FloatIeeeRefinement {
-            boundary: site.clone(),
             reason: format!("float refinement predicate `{method}` {width_reason} `{site}`"),
         });
     }
     let Some(width) = float_refinement_receiver_width(&call.receiver, scope) else {
         return Err(Effect::FloatIeeeRefinement {
-            boundary: site.clone(),
             reason: format!(
                 "float refinement predicate `{method}` requires known f32/f64 receiver width `{site}`"
             ),
@@ -172,7 +170,6 @@ impl Sugar for FloatRefinementSugar {
                     format!("{unstable_width} bit-width not modeled")
                 };
                 return Outcome::Incomplete(Effect::FloatIeeeRefinement {
-                    boundary: self.site.clone(),
                     reason: format!(
                         "float refinement predicate `{}` {width_reason} `{}`",
                         self.method, self.site
@@ -181,7 +178,6 @@ impl Sugar for FloatRefinementSugar {
             }
             FloatWidthResolution::Unknown => {
                 return Outcome::Incomplete(Effect::FloatIeeeRefinement {
-                    boundary: self.site.clone(),
                     reason: format!(
                         "float refinement predicate `{}` requires known f32/f64 receiver width `{}`",
                         self.method, self.site

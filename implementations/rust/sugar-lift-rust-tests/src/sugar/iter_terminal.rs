@@ -1364,10 +1364,7 @@ impl IterTerminalSugar {
         // Consumed-iterator gate: apply it lazily, with the live temporal rewrite table.
         if let Some(name) = simple_path_name(&self.receiver.source_expr) {
             if let Some(reason) = ctx.scope.unknown_iterator_consumption_reason(&name) {
-                return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                    boundary: name,
-                    reason,
-                });
+                return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity { reason });
             }
             if ctx.scope.is_consumed_iterator_local(&name)
                 && ctx.scope.temporal_rewrite_expr_for(&name).is_none()
@@ -1406,7 +1403,6 @@ impl IterTerminalSugar {
                     _ => &chunk_expr,
                 };
                 return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                    boundary: token_key(receiver),
                     reason: format!(
                         "chunk source is runtime slice, not literal: `{}` has no literal sequence floor",
                         token_key(receiver)
@@ -1712,7 +1708,6 @@ impl IterTerminalSugar {
                 match refusal_disposition(&reason) {
                     Disposition::Refused => {
                         Some(Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                            boundary: self.site_key.clone(),
                             reason,
                         }))
                     }

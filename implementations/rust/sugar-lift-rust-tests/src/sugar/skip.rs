@@ -126,7 +126,6 @@ impl SkipFloor {
 
 fn skip_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::skip".to_string(),
         reason: err.to_string(),
     })
 }

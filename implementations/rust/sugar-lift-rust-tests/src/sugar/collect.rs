@@ -229,7 +229,6 @@ impl CollectPlan {
             }
             CollectPlan::RuntimeCallableMap { boundary, reason } => {
                 Err(Effect::RuntimeCallableElement {
-                    boundary: boundary.clone(),
                     reason: reason.clone(),
                 })
             }

@@ -628,12 +628,6 @@ const EXPECTED_BIND_EVENTS_NOT_FLOOR_DISPATCHED: &[(&str, &str, &str, &str)] = &
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "apply_compound_assign_term",
-        "write-through",
-        "self.compound_alias_rewrites.insert(target_base)",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
         "apply_consumption_expr",
         "consume",
         "if let Some(base) = self.mutable_alias_base(&name)",
@@ -695,12 +689,6 @@ const EXPECTED_BIND_EVENTS_NOT_FLOOR_DISPATCHED: &[(&str, &str, &str, &str)] = &
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
         "set_target",
-        "write-through",
-        "self.rewritten_bases.insert(name.clone())",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "set_target_term",
         "write-through",
         "self.rewritten_bases.insert(name.clone())",
     ),

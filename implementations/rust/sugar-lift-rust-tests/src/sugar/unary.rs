@@ -408,13 +408,9 @@ mod tests {
     fn child_hit_propagates_verbatim() {
         // A child that returns Incomplete a named effect propagates UNCHANGED through the seam --
         // the same boundary the inner `?` would have surfaced.
-        let child = Outcome::Incomplete(Effect::OpaqueRuntime {
-            boundary: "child-boundary".to_string(),
-            accessor: false,
-        });
+        let child = Outcome::Incomplete(Effect::OpaqueRuntime { accessor: false });
         match child_term_or_hit(child) {
-            Err(Outcome::Incomplete(Effect::OpaqueRuntime { boundary, accessor })) => {
-                assert_eq!(boundary, "child-boundary");
+            Err(Outcome::Incomplete(Effect::OpaqueRuntime { accessor })) => {
                 assert!(!accessor);
             }
             _ => panic!("expected the child Incomplete, propagated verbatim"),

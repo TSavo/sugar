@@ -386,7 +386,6 @@ mod tests {
     impl Sugar for StubIncomplete {
         fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
             Outcome::Incomplete(Effect::LiteralPanic {
-                boundary: "monadic-child".to_string(),
                 reason: "literal child panic; refused".to_string(),
             })
         }

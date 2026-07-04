@@ -171,7 +171,6 @@ impl SliceAccessorSugar {
         }
         let method = self.kind.method_name().to_string();
         Some(Effect::MutableLocalSlicePredicate {
-            boundary: format!("{receiver}.{method}(..)"),
             method,
             receiver: receiver.clone(),
         })

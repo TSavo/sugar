@@ -228,7 +228,6 @@ impl Sugar for ZeroedSugar {
 
         let ty = quote::ToTokens::to_token_stream(&self.ty).to_string();
         Outcome::Incomplete(Effect::InvalidBitPattern {
-            boundary: ty.clone(),
             reason: format!(
                 "all-zeros bit-pattern is not a determinate valid value for `{ty}`; refused"
             ),

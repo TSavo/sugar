@@ -293,7 +293,6 @@ impl MapFloor {
             .collect::<Result<Vec<_>, _>>()?;
         if mapped.len() != operand.count() {
             return Err(Outcome::Incomplete(Effect::CoverageGap {
-                boundary: "Iterator::map".to_string(),
                 reason: format!(
                     "temporal map floor count mismatch: operand standing had {} tick(s), \
                      real map produced {} tick(s); refused",
@@ -342,9 +341,7 @@ fn captured_mutation_refusal(mapper: &MapClosure) -> Option<Outcome> {
     {
         return None;
     }
-    Some(Outcome::Incomplete(Effect::Mutation {
-        boundary: token_key(&source),
-    }))
+    Some(Outcome::Incomplete(Effect::Mutation))
 }
 
 fn reduce_map_body(
@@ -442,7 +439,6 @@ fn trace_map_floor_output(standing: &IterStanding) {
 
 fn map_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::map".to_string(),
         reason: err.to_string(),
     })
 }
@@ -537,7 +533,6 @@ fn curry_map_body_for_term(
 ) -> Result<Rc<Term>, Outcome> {
     let Some(binding) = &mapper.term_binding else {
         return Err(Outcome::Incomplete(Effect::CoverageGap {
-            boundary: "Iterator::map".to_string(),
             reason: "map closure pattern is value-only; exact value reduction failed before a term floor could be built"
                 .to_string(),
         }));

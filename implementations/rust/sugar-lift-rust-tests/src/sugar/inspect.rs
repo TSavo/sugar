@@ -209,7 +209,6 @@ impl InspectFloor {
 
 fn inspect_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::inspect".to_string(),
         reason: err.to_string(),
     })
 }

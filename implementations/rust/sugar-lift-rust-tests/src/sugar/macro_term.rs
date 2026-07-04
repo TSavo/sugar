@@ -169,7 +169,6 @@ impl Sugar for MacroSugar {
         match &self.body {
             MacroTermBody::MutLocalTemporalEffect { boundary, reason } => {
                 Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                    boundary: boundary.clone(),
                     reason: reason.clone(),
                 })
             }
@@ -181,7 +180,6 @@ impl Sugar for MacroSugar {
                     }
                     CfgDisposition::Ambiguous(reason) => {
                         Outcome::Incomplete(Effect::Configuration {
-                            boundary: site.clone(),
                             reason: format!("ambiguous cfg: {reason}"),
                         })
                     }
@@ -241,9 +239,7 @@ mod from_src_tests {
         let mut float_widths = FloatWidthScope::new();
         let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
         match node.desugar(&ctx) {
-            Outcome::Incomplete(Effect::Configuration { boundary, .. }) => {
-                assert_eq!(boundary, "cfg ! (target_os = \"linux\")");
-            }
+            Outcome::Incomplete(Effect::Configuration { .. }) => {}
             _other => panic!("expected Configuration incomplete for cfg! without target facts"),
         }
     }
@@ -324,8 +320,7 @@ mod tests {
     fn cfg_macro_term_incompletes_when_target_facts_are_absent() {
         let expr: Expr = parse_quote!(cfg!(target_os = "linux"));
         match run(&expr, &LiftOptions::default()) {
-            Outcome::Incomplete(Effect::Configuration { boundary, reason }) => {
-                assert_eq!(boundary, "cfg ! (target_os = \"linux\")");
+            Outcome::Incomplete(Effect::Configuration { reason }) => {
                 assert!(
                     reason.starts_with("ambiguous cfg: "),
                     "configuration refusal names the ambiguous predicate: {reason}"

@@ -136,7 +136,6 @@ impl TakeFloor {
 
 fn take_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::take".to_string(),
         reason: err.to_string(),
     })
 }

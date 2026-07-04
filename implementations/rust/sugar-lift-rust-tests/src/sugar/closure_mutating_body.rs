@@ -40,9 +40,7 @@ struct ClosureMutatingBodySugar {
 impl Sugar for ClosureMutatingBodySugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         if self.site.has_mutating_body() {
-            return Outcome::Incomplete(Effect::Mutation {
-                boundary: self.site.boundary().to_owned(),
-            });
+            return Outcome::Incomplete(Effect::Mutation);
         }
         closure_mutating_body_gap("recognized site no longer has a mutating body")
     }

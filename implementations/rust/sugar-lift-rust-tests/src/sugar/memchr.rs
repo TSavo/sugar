@@ -86,7 +86,6 @@ impl Sugar for MemchrSugar {
             Ok(Some(byte)) => byte,
             Ok(None) => {
                 return Outcome::Incomplete(Effect::MemchrRuntime {
-                    boundary: token_key(&self.needle_site),
                     reason: format!(
                         "runtime memchr needle, not literal (bin-2: runtime data, not constructed \
                          from source literals); refused: `{}`",
@@ -269,7 +268,6 @@ fn const_int_value<'a>(expr: &Expr, let_inits: &BTreeMap<String, &'a Expr>) -> O
 
 fn runtime_slice_effect(expr: &Expr) -> Effect {
     Effect::MemchrRuntime {
-        boundary: token_key(expr),
         reason: format!(
             "runtime slice source, not literal `{}` (memchr haystack is not a pinned literal byte slice); refused",
             token_key(expr)

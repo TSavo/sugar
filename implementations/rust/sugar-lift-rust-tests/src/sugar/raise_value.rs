@@ -49,15 +49,12 @@ pub(crate) fn is_raise_like_effect(effect: &Effect) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{refusal_disposition, Disposition, RaiseEffect, RuntimeEffect};
+    use crate::RaiseEffect;
     use sugar_ir_symbolic::num;
 
     #[test]
     fn typed_raise_effect_family_is_raise_like_but_coverage_gap_is_not() {
         for effect in [
-            Effect::Raise(RaiseEffect::Panic {
-                boundary: "panic!(\"boom\")".to_string(),
-            }),
             Effect::Raise(RaiseEffect::ResultErr {
                 boundary: "fallible()?".to_string(),
             }),
@@ -70,35 +67,7 @@ mod tests {
         }
 
         assert!(!is_raise_like_effect(&Effect::CoverageGap {
-            boundary: "FutureFloor".to_string(),
             reason: "no routing arm".to_string(),
         }));
-    }
-
-    #[test]
-    fn observable_drop_is_named_runtime_effect_and_not_raise_like() {
-        let effect = Effect::Runtime(RuntimeEffect::ObservableDrop {
-            boundary: "DropCounter::drop".to_string(),
-            reason: "drop-on-panic side effect, runtime, not literal".to_string(),
-        });
-
-        assert!(!is_raise_like_effect(&effect));
-        let reason = effect.reason();
-        assert!(reason.contains("observable Drop effect"));
-        assert!(reason.contains("DropCounter::drop"));
-        assert_eq!(refusal_disposition(&reason), Disposition::Refused);
-    }
-
-    #[test]
-    fn finally_over_incomplete_is_named_runtime_effect_and_not_swallowed() {
-        let effect = Effect::Runtime(RuntimeEffect::FinallyOverIncomplete {
-            boundary: "finally cleanup over incomplete panic".to_string(),
-        });
-
-        assert!(!is_raise_like_effect(&effect));
-        let reason = effect.reason();
-        assert!(reason.contains("finally guarded return over incomplete incoming exit"));
-        assert!(reason.contains("finally cleanup over incomplete panic"));
-        assert_eq!(refusal_disposition(&reason), Disposition::Refused);
     }
 }

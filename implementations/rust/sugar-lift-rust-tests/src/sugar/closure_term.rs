@@ -29,7 +29,6 @@ struct ClosureAmbiguousCaptureSugar {
 impl Sugar for ClosureAmbiguousCaptureSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-            boundary: self.name.clone(),
             reason: format!("closure captures ambiguous local `{}`; refused", self.name),
         })
     }

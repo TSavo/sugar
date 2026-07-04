@@ -247,7 +247,6 @@ fn statement_floor_name(desugared: &Desugared) -> &'static str {
         Desugared::LiteralCStr(_) => "LiteralCStr",
         Desugared::FormatValue(_) => "FormatValue",
         Desugared::TupleComponents(_) => "TupleComponents",
-        Desugared::ObjectValue(_) => "ObjectValue",
         Desugared::PredicateValue(_) => "PredicateValue",
         Desugared::StmtSupport => "StmtSupport",
         Desugared::StmtBound(_) => "StmtBound",
@@ -320,7 +319,6 @@ mod tests {
     };
     use crate::sugar::factory::SugarBuildCtx;
     use crate::sugar::guarded_return::GuardedReturn;
-    use crate::sugar::object_value::ObjectValue;
     use crate::sugar::route_raises_operation::{
         RouteRaiseHandler, RouteRaisesAccept, RouteRaisesOperation,
     };
@@ -358,8 +356,8 @@ mod tests {
     }
 
     fn synthetic_open_edge_gap() -> Effect {
-        let floor = Desugared::ObjectValue(ObjectValue::new("PluginFloor", Vec::new(), Vec::new()));
-        match term_floor_dispatch(floor, "BlockSugarTest", "synthetic PluginFloor") {
+        let floor = Desugared::StmtSupport;
+        match term_floor_dispatch(floor, "BlockSugarTest", "synthetic StmtSupport") {
             FloorDispatch::Dispatched(_) => {
                 panic!("synthetic open-edge floor unexpectedly dispatched")
             }
@@ -428,12 +426,11 @@ mod tests {
             &mut pending,
         );
 
-        let Err(Outcome::Incomplete(Effect::CoverageGap { boundary, reason })) = result else {
+        let Err(Outcome::Incomplete(Effect::CoverageGap { reason })) = result else {
             panic!("coverage gap should propagate as an incomplete block outcome");
         };
-        assert_eq!(boundary, "ObjectValue");
         assert!(reason.contains("owner=BlockSugarTest"));
-        assert!(reason.contains("observed=ObjectValue"));
+        assert!(reason.contains("observed=StmtSupport"));
         assert!(emitted.is_empty());
         assert!(raised.is_empty());
         assert!(pending.is_empty());

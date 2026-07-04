@@ -29,8 +29,6 @@ struct ClosureTlsAccessorSugar {
 
 impl Sugar for ClosureTlsAccessorSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Incomplete(Effect::Tls {
-            boundary: self.site.boundary().to_owned(),
-        })
+        Outcome::Incomplete(Effect::Tls)
     }
 }

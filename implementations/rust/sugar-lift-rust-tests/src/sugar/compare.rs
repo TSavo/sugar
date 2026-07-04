@@ -105,9 +105,7 @@ mod tests {
     struct StubIncomplete;
     impl Sugar for StubIncomplete {
         fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Incomplete(Effect::Mutation {
-                boundary: "stub".to_string(),
-            })
+            Outcome::Incomplete(Effect::Mutation)
         }
     }
 
@@ -217,9 +215,7 @@ mod tests {
             rel: RelationOp::Lt,
         };
         match run(&node) {
-            Outcome::Incomplete(Effect::Mutation { boundary }) => {
-                assert_eq!(boundary, "stub");
-            }
+            Outcome::Incomplete(Effect::Mutation) => {}
             Outcome::Incomplete(_) => {
                 panic!("expected the left child's Mutation Incomplete, got a different Effect")
             }
@@ -235,9 +231,7 @@ mod tests {
             rel: RelationOp::Lt,
         };
         match run(&node) {
-            Outcome::Incomplete(Effect::Mutation { boundary }) => {
-                assert_eq!(boundary, "stub");
-            }
+            Outcome::Incomplete(Effect::Mutation) => {}
             Outcome::Incomplete(_) => {
                 panic!("expected the right child's Mutation Incomplete, got a different Effect")
             }

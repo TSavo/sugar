@@ -164,7 +164,6 @@ fn floor_dispatch_gap_info(
 
 fn floor_dispatch_gap_effect(gap: CoverageGapInfo) -> Effect {
     Effect::CoverageGap {
-        boundary: gap.observed.clone(),
         reason: gap.message(),
     }
 }
@@ -298,7 +297,6 @@ fn desugared_floor_name(floor: &Desugared) -> &'static str {
         Desugared::LiteralCStr(_) => "LiteralCStr",
         Desugared::FormatValue(_) => "FormatValue",
         Desugared::TupleComponents(_) => "TupleComponents",
-        Desugared::ObjectValue(_) => "ObjectValue",
         Desugared::PredicateValue(_) => "PredicateValue",
         Desugared::StmtSupport => "StmtSupport",
         Desugared::StmtBound(_) => "StmtBound",
@@ -326,11 +324,8 @@ pub(crate) fn literal_predicate_bool_or_runtime_effect(
     if let Some(value) = literal_predicate_bool(term) {
         return Ok(Some(value));
     }
-    if let Some(boundary) = runtime_occurrence_boundary(term) {
-        return Err(Effect::OpaqueRuntime {
-            boundary,
-            accessor: false,
-        });
+    if runtime_occurrence_boundary(term).is_some() {
+        return Err(Effect::OpaqueRuntime { accessor: false });
     }
     Ok(None)
 }
@@ -1059,14 +1054,10 @@ mod tests {
 
     #[test]
     fn synthetic_open_edge_floor_dispatches_to_coverage_gap() {
-        let floor = Desugared::ObjectValue(crate::sugar::object_value::ObjectValue::new(
-            "PluginFloor",
-            Vec::new(),
-            Vec::new(),
-        ));
+        let floor = Desugared::StmtSupport;
 
         let FloorDispatch::Gap(gap) =
-            term_floor_dispatch(floor, "synthetic.plugin", "synthetic PluginFloor")
+            term_floor_dispatch(floor, "synthetic.plugin", "synthetic StmtSupport")
         else {
             panic!("synthetic open-edge floor should dispatch to a coverage gap");
         };
@@ -1074,18 +1065,17 @@ mod tests {
         assert_eq!(gap.gap_kind, "FloorDispatch");
         assert_eq!(gap.gap_locus, "TermFloor");
         assert_eq!(gap.owner, "synthetic.plugin");
-        assert_eq!(gap.blame, "synthetic PluginFloor");
-        assert_eq!(gap.observed, "ObjectValue");
+        assert_eq!(gap.blame, "synthetic StmtSupport");
+        assert_eq!(gap.observed, "StmtSupport");
         assert_eq!(gap.requested, "TermFloor");
         assert_eq!(gap.fix, "sugar::term_dispatch");
 
         let effect = FloorDispatch::<Rc<Term>>::Gap(gap).into_result();
-        let Err(Effect::CoverageGap { boundary, reason }) = effect else {
+        let Err(Effect::CoverageGap { reason }) = effect else {
             panic!("FloorDispatch::Gap must lower to Effect::CoverageGap");
         };
-        assert_eq!(boundary, "ObjectValue");
         assert!(reason.contains("write more FloorDispatch for this TermFloor"));
-        assert!(reason.contains("observed=ObjectValue"));
+        assert!(reason.contains("observed=StmtSupport"));
         assert!(reason.contains("requested=TermFloor"));
     }
 

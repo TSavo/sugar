@@ -181,7 +181,6 @@ impl Sugar for NonZeroNewSugar {
 impl Sugar for NonZeroGetAssocConstRefusal {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::RuntimeNumericOperand {
-            boundary: self.site.clone(),
             operation: format!(
                 "NonZero::get associated const `{}` is not a NonZero value",
                 self.konst
@@ -219,7 +218,6 @@ impl ScalarFloorVisitor for NonZeroNewVisitor<'_> {
 
     fn visit_runtime(self, _term: &Rc<Term>) -> Self::Output {
         Outcome::Incomplete(Effect::RuntimeNumericOperand {
-            boundary: self.site.to_string(),
             operation: "NonZero::new".to_string(),
             kind: "scalar".to_string(),
         })
@@ -337,7 +335,6 @@ impl ScalarFloorVisitor for NonZeroGetScalarVisitor<'_> {
 
     fn visit_runtime(self, _term: &Rc<Term>) -> Self::Output {
         Outcome::Incomplete(Effect::RuntimeNumericOperand {
-            boundary: self.site.to_string(),
             operation: "NonZero::get".to_string(),
             kind: "scalar".to_string(),
         })

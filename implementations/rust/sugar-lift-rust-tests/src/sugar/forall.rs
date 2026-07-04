@@ -339,23 +339,17 @@ impl ForAllSugar {
         }
         if let Some(body) = &self.closure_body {
             if closure_body_advances_iterator(body) {
-                return Err(Outcome::Incomplete(Effect::IterAdvance {
-                    boundary: self.body_boundary(ctx),
-                }));
+                return Err(Outcome::Incomplete(Effect::IterAdvance));
             }
             if closure_body_is_side_effecting(body) {
-                return Err(Outcome::Incomplete(Effect::Mutation {
-                    boundary: self.body_boundary(ctx),
-                }));
+                return Err(Outcome::Incomplete(Effect::Mutation));
             }
         }
         if loop_body_mutates(&self.body_stmts) {
             if let Some(effect) = runtime_domain_effect {
                 return Err(Outcome::Incomplete(effect));
             }
-            return Err(Outcome::Incomplete(Effect::Mutation {
-                boundary: self.body_boundary(ctx),
-            }));
+            return Err(Outcome::Incomplete(Effect::Mutation));
         }
         // Translate the captured literal arrays' element exprs to TERMS so the body's
         // `index(ys, <const>)` reads (the LITERAL-INT RANGE unroll) can resolve to
@@ -423,7 +417,6 @@ impl ForAllSugar {
                         "forall sequence domain declined: empty or over cap"
                     );
                     return Err(Outcome::Incomplete(Effect::LiteralDomain {
-                        boundary: self.body_boundary(ctx),
                         reason: format!(
                             "forall sequence domain length {} exceeds sugar cap {}",
                             elems.len(),
@@ -503,10 +496,7 @@ impl ForAllSugar {
                 })
             }
         }?;
-        Some(Effect::LiteralDomain {
-            boundary: self.body_boundary(ctx),
-            reason,
-        })
+        Some(Effect::LiteralDomain { reason })
     }
 
     fn empty_loop_no_panic(&self, ctx: &SugarCtx) -> Desugared {

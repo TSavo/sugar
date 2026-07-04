@@ -259,7 +259,6 @@ fn desugared_floor_name(desugared: &Desugared) -> &'static str {
         Desugared::LiteralCStr(_) => "LiteralCStr",
         Desugared::FormatValue(_) => "FormatValue",
         Desugared::TupleComponents(_) => "TupleComponents",
-        Desugared::ObjectValue(_) => "ObjectValue",
         Desugared::PredicateValue(_) => "PredicateValue",
         Desugared::StmtSupport => "StmtSupport",
         Desugared::StmtBound(_) => "StmtBound",
@@ -276,7 +275,7 @@ mod tests {
     use sugar_ir_symbolic::{atomic_, num};
 
     use super::*;
-    use crate::{RaiseEffect, RuntimeEffect, TemporalPlan, TemporalScope};
+    use crate::{RaiseEffect, TemporalPlan, TemporalScope};
 
     struct PanicHandler;
 
@@ -396,43 +395,19 @@ mod tests {
     }
 
     #[test]
-    fn route_raises_operation_propagates_runtime_drop_effect_unchanged() {
-        let effect = Effect::Runtime(RuntimeEffect::ObservableDrop {
-            boundary: "DropCounter::drop".to_string(),
-            reason: "drop-on-panic side effect, runtime, not literal".to_string(),
-        });
+    fn route_raises_operation_propagates_coverage_gap_unchanged() {
+        let effect = Effect::CoverageGap {
+            reason: "open plugin floor has no handler".to_string(),
+        };
         let scope = TemporalScope::new("runtime-drop-test", TemporalPlan::default());
         let handler = PanicHandler;
         let routed = RouteRaisesOperation::new(vec![&handler], "test")
             .route_incomplete_with_scope(Outcome::Incomplete(effect.clone()), &scope);
 
-        let Outcome::Incomplete(Effect::Runtime(RuntimeEffect::ObservableDrop {
-            boundary,
-            reason,
-        })) = routed
-        else {
-            panic!("observable Drop runtime effect must propagate unchanged");
+        let Outcome::Incomplete(Effect::CoverageGap { reason }) = routed else {
+            panic!("CoverageGap must propagate unchanged");
         };
-        assert_eq!(boundary, "DropCounter::drop");
-        assert_eq!(reason, "drop-on-panic side effect, runtime, not literal");
-    }
-
-    #[test]
-    fn route_raises_operation_propagates_finally_over_incomplete_unchanged() {
-        let effect = Effect::Runtime(RuntimeEffect::FinallyOverIncomplete {
-            boundary: "finally cleanup over incomplete panic".to_string(),
-        });
-        let scope = TemporalScope::new("finally-over-incomplete-test", TemporalPlan::default());
-        let handler = PanicHandler;
-        let routed = RouteRaisesOperation::new(vec![&handler], "test")
-            .route_incomplete_with_scope(Outcome::Incomplete(effect.clone()), &scope);
-
-        let Outcome::Incomplete(Effect::Runtime(RuntimeEffect::FinallyOverIncomplete { boundary })) =
-            routed
-        else {
-            panic!("finally-over-incomplete runtime effect must propagate unchanged");
-        };
-        assert_eq!(boundary, "finally cleanup over incomplete panic");
+        assert_eq!(reason, "open plugin floor has no handler");
     }
 
     #[test]

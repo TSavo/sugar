@@ -162,7 +162,6 @@ pub mod sugar {
     pub mod method_family;
     pub mod monadic;
     pub mod nonzero;
-    pub mod object_value;
     pub mod offset_of;
     pub mod option_adaptor;
     pub mod option_predicate;
@@ -3413,15 +3412,6 @@ impl FnRegistry {
             self.insert(name, item.clone());
         }
     }
-
-    /// Number of distinct fn definitions held (for reporting).
-    pub(crate) fn len(&self) -> usize {
-        self.fns.len()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.fns.is_empty()
-    }
 }
 
 /// A stable structural signature of a fn definition (its token stream), used by
@@ -5205,23 +5195,6 @@ impl TemporalScope {
         self.temporal_rewrite.borrow_mut().apply(expr)
     }
 
-    pub(crate) fn apply_temporal_rewrite_assign_term(&self, lhs: &Expr, term: Rc<Term>) -> bool {
-        self.temporal_rewrite
-            .borrow_mut()
-            .apply_assign_term(lhs, term)
-    }
-
-    pub(crate) fn apply_temporal_rewrite_compound_term(
-        &self,
-        lhs: &Expr,
-        op: sugar::assign_op::BinOpKind,
-        rhs: Rc<Term>,
-    ) -> bool {
-        self.temporal_rewrite
-            .borrow_mut()
-            .apply_compound_assign_term(lhs, op, rhs)
-    }
-
     pub(crate) fn mark_temporal_loop_replayed(&self, name: &str) {
         self.temporal_rewrite.borrow_mut().mark_loop_replayed(name);
     }
@@ -5437,12 +5410,6 @@ impl TemporalScope {
 
     fn apply_temporal_rewrite_statement(&mut self, stmt: &Stmt) {
         self.temporal_rewrite.borrow_mut().apply_statement(stmt);
-    }
-
-    /// The closed scalar-literal elements of `name` if it is a `let`-bound literal
-    /// array in this scope; else `None`.
-    fn literal_array(&self, name: &str) -> Option<&[Expr]> {
-        self.literal_arrays.get(name).map(Vec::as_slice)
     }
 
     pub(crate) fn temporal_curry_occurrence<'a>(
@@ -6667,14 +6634,6 @@ impl<'a> PeeledExpr<'a> {
     }
 }
 
-/// Wrap `inner` in `RevSugar` (the `.rev()` adaptor, also the synthetic final `Rev`
-/// appended for `.rfold`).
-fn wrap_rev(inner: Box<dyn Sugar>) -> Box<dyn Sugar> {
-    Box::new(sugar::rev::RevSugar {
-        inner: sugar::factory::SugarBody::from_node(inner),
-    })
-}
-
 /// Peel iterator adaptors off a `.fold`/`.rfold` receiver and RESOLVE `let`-bound
 /// receivers through `let_inits`, reaching the base literal-domain expression PLUS the
 /// ordered adaptor chain (in APPLICATION order: base -> ... -> fold). Returns
@@ -7436,10 +7395,6 @@ pub(crate) fn curry_param_term(param: &str) -> Rc<Term> {
     make_var(curry_param_name(param))
 }
 
-pub(crate) fn term_is_curry_param(term: &Rc<Term>) -> bool {
-    matches!(term.as_ref(), Term::Var { name } if name.starts_with(CURRY_PARAM_PREFIX))
-}
-
 pub(crate) fn term_contains_curry_param(term: &Rc<Term>) -> bool {
     match term.as_ref() {
         Term::Var { name } => name.starts_with(CURRY_PARAM_PREFIX),
@@ -7687,41 +7642,6 @@ fn const_cast_value(value: ConstVal, ty: &str) -> Option<ConstVal> {
 }
 
 impl ConstVal {
-    fn as_i8_cast(&self) -> Option<i8> {
-        Some(self.as_i128_cast()? as i8)
-    }
-    fn as_i16_cast(&self) -> Option<i16> {
-        Some(self.as_i128_cast()? as i16)
-    }
-    fn as_i32_cast(&self) -> Option<i32> {
-        Some(self.as_i128_cast()? as i32)
-    }
-    fn as_i64_cast(&self) -> Option<i64> {
-        Some(self.as_i128_cast()? as i64)
-    }
-    fn as_i128_cast(&self) -> Option<i128> {
-        match self {
-            ConstVal::Int(n) => Some(*n),
-            ConstVal::PrimitiveInt { raw, kind } => primitive_int_i128(*raw, *kind),
-            ConstVal::UInt128(n) => Some(*n as i128),
-            _ => None,
-        }
-    }
-    fn as_isize_cast(&self) -> Option<isize> {
-        Some(self.as_i128_cast()? as isize)
-    }
-    fn as_u8_cast(&self) -> Option<u8> {
-        Some(self.as_i128_cast()? as u8)
-    }
-    fn as_u16_cast(&self) -> Option<u16> {
-        Some(self.as_i128_cast()? as u16)
-    }
-    fn as_u32_cast(&self) -> Option<u32> {
-        Some(self.as_i128_cast()? as u32)
-    }
-    fn as_u64_cast(&self) -> Option<u64> {
-        Some(self.as_i128_cast()? as u64)
-    }
     fn as_u128_cast(&self) -> Option<u128> {
         match self {
             ConstVal::Int(n) => Some(*n as u128),
@@ -7735,9 +7655,6 @@ impl ConstVal {
             ConstVal::Char(c) => Some(u128::from(u32::from(*c))),
             _ => None,
         }
-    }
-    fn as_usize_cast(&self) -> Option<usize> {
-        Some(self.as_u128_cast()? as usize)
     }
 }
 
@@ -8878,9 +8795,6 @@ pub(crate) enum Desugared {
     /// `tuple_decomp` consumes this to emit component-wise scalar equalities while
     /// the producer sugar owns the decomposition semantics.
     TupleComponents(Vec<Rc<Term>>),
-    /// A constructed object floor whose receiver owns attribute and method
-    /// dispatch via ObjectValue operations. Mirrors Python `ObjectValue`.
-    ObjectValue(sugar::object_value::ObjectValue),
     /// A predicate-position formula floor. This is distinct from a bool-sorted
     /// data term (`Term(bool)`), mirroring Python `PredicateValue` vs `BoolValue`.
     PredicateValue(sugar::predicate_value::PredicateValue),
@@ -8938,7 +8852,6 @@ impl Desugared {
             Desugared::LiteralCStr(_) => None,
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
-            Desugared::ObjectValue(_) => None,
             Desugared::PredicateValue(_) => None,
             // Statement-composition floor variants never flow into seq contexts.
             Desugared::StmtSupport
@@ -8967,7 +8880,6 @@ impl Desugared {
             Desugared::LiteralCStr(_) => None,
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
-            Desugared::ObjectValue(_) => None,
             Desugared::PredicateValue(_) => None,
             // Statement-composition floor variants never flow into term contexts.
             Desugared::StmtSupport
@@ -8990,8 +8902,7 @@ impl Desugared {
             | Desugared::LiteralString(_)
             | Desugared::LiteralCStr(_)
             | Desugared::FormatValue(_)
-            | Desugared::ObjectValue(_) => None,
-            Desugared::PredicateValue(_) => None,
+            | Desugared::PredicateValue(_) => None,
             // Statement-composition floor variants never flow into tuple contexts.
             Desugared::StmtSupport
             | Desugared::StmtBound(_)
@@ -9000,56 +8911,6 @@ impl Desugared {
             | Desugared::StmtRaise(_)
             | Desugared::StmtGuardedRaise(_)
             | Desugared::StmtBlock { .. } => None,
-        }
-    }
-
-    /// The single STRING LITERAL value this desugared to, or None. A regex
-    /// pattern child may bottom out as either a string `Term` through the
-    /// recursive term factory or as the older one-element `Seq`; both read the
-    /// same literal value. `None` for any non-string-literal payload (a
-    /// multi-element seq, a constraint terminal, a non-`LitStr` element) -- the
-    /// caller bails. This is the COMPOSITIONAL read: the regex node consumes
-    /// whatever its pattern child completed to, so a literal / const-string /
-    /// `concat!` / `format!` / pure helper call all flow through the same
-    /// `desugar` -> `as_string_literal` path.
-    pub(crate) fn as_string_literal(&self) -> Option<String> {
-        let seq = match self {
-            Desugared::LiteralString(s) => return Some(s.clone()),
-            Desugared::LiteralCStr(_) => return None,
-            Desugared::FormatValue(sugar::format::FmtValue::Str(s)) => return Some(s.clone()),
-            Desugared::FormatValue(_) => return None,
-            Desugared::Term(term) => {
-                return match term.as_ref() {
-                    Term::Const {
-                        value: ConstValue::String(s),
-                        sort,
-                    } if sort.name == "String" => Some(s.clone()),
-                    _ => None,
-                };
-            }
-            Desugared::Seq(s) => s,
-            Desugared::TermSeq(_) => return None,
-            Desugared::Constraints { .. } => return None,
-            Desugared::TupleComponents(_) => return None,
-            Desugared::ObjectValue(_) => return None,
-            Desugared::PredicateValue(_) => return None,
-            // Statement-composition floor variants never carry a string literal.
-            Desugared::StmtSupport
-            | Desugared::StmtBound(_)
-            | Desugared::StmtReturn(_)
-            | Desugared::StmtGuarded(_)
-            | Desugared::StmtRaise(_)
-            | Desugared::StmtGuardedRaise(_)
-            | Desugared::StmtBlock { .. } => return None,
-        };
-        let [only] = seq.as_slice() else {
-            return None;
-        };
-        match strip_refs_groups(&only.expr) {
-            Expr::Lit(ExprLit {
-                lit: Lit::Str(s), ..
-            }) => Some(s.value()),
-            _ => None,
         }
     }
 }
@@ -9104,11 +8965,10 @@ trait Sugar {
 // terminal verdict and is no longer part of the desugar contract.
 //
 // `Effect` is a FLAT enum of named order-loss boundaries (a mutation, an iterator
-// advance, an opaque runtime value, TLS, IO, a mutable read, ...), each a structural
+// advance, an opaque runtime value, TLS, a mutable read, ...), each a structural
 // property of the SOURCE (not a missing lift) that destroys the single timeless `t` a
 // point-wise value claim needs. `Effect::reason()` is the proto refusal string;
-// `Effect::boundary()` is the `SourceMemento` (the bail-side rope, mirroring the
-// complete-side `Warrant`). Adding an effect = adding one variant + one `reason()` arm.
+// adding an effect = adding one variant + one `reason()` arm.
 //
 // SOUNDNESS (the critical line, do NOT cross it): an `Effect` is ONLY for a PROVABLE
 // order-loss effect -- a syntactic mutation / `iter.next()` / `&mut` / `.push` on
@@ -9116,16 +8976,6 @@ trait Sugar {
 // IO), a mutable-container read. A PURE-BUT-UNTRANSLATED term (a pure stdlib method we
 // have not transcribed yet) is NOT an `Effect` we should NAME; it is construction work
 // that must fail at the factory/compile boundary until a real Sugar owns it.
-
-/// The bail-side rope: a `SourceMemento` ties a refusal to the source boundary that
-/// warrants it (the span / token-key of the offending construct). The mirror of the
-/// complete-side `Warrant` (which ropes a discharged constraint to the sugar that minted
-/// it). `boundary` is the rendered token-key / description of the order-loss site.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SourceMemento {
-    /// The source construct that is the order-loss boundary (token-key / description).
-    boundary: String,
-}
 
 /// The outcome of a lawful desugar reduction. `Complete` reached truth (a discharged
 /// `Desugared`); `Incomplete` struck a NAMED, WARRANTED order-loss boundary (an
@@ -9144,34 +8994,18 @@ enum Outcome {
 /// strings, and uses this family for newly-typed Result-Err / early-return cases.
 #[derive(Debug, Clone)]
 enum RaiseEffect {
-    Panic { boundary: String },
     ResultErr { boundary: String },
-    EarlyReturn { boundary: String },
     EarlyReturnValue { boundary: String, value: Rc<Term> },
 }
 
 impl RaiseEffect {
-    fn boundary(&self) -> &str {
-        match self {
-            RaiseEffect::Panic { boundary }
-            | RaiseEffect::ResultErr { boundary }
-            | RaiseEffect::EarlyReturn { boundary }
-            | RaiseEffect::EarlyReturnValue { boundary, .. } => boundary,
-        }
-    }
-
     fn reason(&self) -> String {
         match self {
-            RaiseEffect::Panic { boundary } => format!(
-                "panic! macro divergence `{boundary}`: builtin panic! diverges by unwinding or \
-                 aborting at runtime; no single timeless source value is available here; refused"
-            ),
             RaiseEffect::ResultErr { boundary } => format!(
                 "result error raise effect `{boundary}` exits the current block and may be \
                  routed by a matching handler; refused"
             ),
-            RaiseEffect::EarlyReturn { boundary }
-            | RaiseEffect::EarlyReturnValue { boundary, .. } => format!(
+            RaiseEffect::EarlyReturnValue { boundary, .. } => format!(
                 "early return raise effect `{boundary}` exits the current block and may be \
                  routed by a matching handler; refused"
             ),
@@ -9179,44 +9013,10 @@ impl RaiseEffect {
     }
 }
 
-/// Runtime effects that are not routeable raises.
-///
-/// Python's reference has a typed `RuntimeEffect` sibling and propagates it
-/// unchanged through `_route_incomplete`. Rust uses that same mechanism for
-/// Drop/finally refusal corners: named data, never simulated control flow.
-#[derive(Debug, Clone)]
-enum RuntimeEffect {
-    ObservableDrop { boundary: String, reason: String },
-    FinallyOverIncomplete { boundary: String },
-}
-
-impl RuntimeEffect {
-    fn boundary(&self) -> &str {
-        match self {
-            RuntimeEffect::ObservableDrop { boundary, .. }
-            | RuntimeEffect::FinallyOverIncomplete { boundary } => boundary,
-        }
-    }
-
-    fn reason(&self) -> String {
-        match self {
-            RuntimeEffect::ObservableDrop { boundary, reason } => {
-                format!("observable Drop effect `{boundary}`: {reason}; refused")
-            }
-            RuntimeEffect::FinallyOverIncomplete { boundary } => format!(
-                "finally guarded return over incomplete incoming exit `{boundary}`: add guarded \
-                 effect exit joining before lowering this shape; refused"
-            ),
-        }
-    }
-}
-
 /// A typed order-loss boundary -- the `Incomplete` side of `Outcome`. A FLAT enum: one variant
-/// per named effect (a mutation, an iterator advance, an opaque runtime value, TLS, IO, a
+/// per named effect (a mutation, an iterator advance, an opaque runtime value, TLS, a
 /// mutable read, ...), plus named unsupported terms. `reason()` returns the terminal refusal string
-/// (recognized by `refusal_disposition`); `boundary()` returns the `SourceMemento`
-/// warranting that the bail names a SOURCE property. Adding an effect = adding one variant
-/// + one `reason()` arm.
+/// (recognized by `refusal_disposition`). Adding an effect = adding one variant + one `reason()` arm.
 ///
 /// Each variant carries its `boundary` (the token-key / description of the order-loss
 /// site). The reason strings are kept BYTE-IDENTICAL to the proto strings the collector
@@ -9231,19 +9031,18 @@ enum Effect {
     /// RUNTIME-FAMILY: non-raise runtime effects that are first-class refusal data.
     /// These propagate through RouteRaisesOperation unchanged, mirroring Python
     /// RuntimeEffect rather than pretending Drop/finally is a handler-consumable raise.
-    Runtime(RuntimeEffect),
     /// MUTATION: the closure / loop body MUTATES captured or local state (`+=`, `&mut`,
     /// `.push`, an assignment). The asserted value varies per iteration independently of
     /// the bound var, so a single universal over it would be a false claim. A source
     /// property -- no value lifter could read a single timeless `t`. (HALF 2 of the
     /// fold-closure bucket.)
-    Mutation { boundary: String },
+    Mutation,
     /// ITER-ADVANCE: the body advances a captured iterator (`iter.next()` / `nth += 1`), a
     /// sequence/position-dependent side effect. Distinct CAUSE from `Mutation` (no
     /// captured-state assignment is needed), but the SAME terminal class -- the observed
     /// value is per-iteration, not timeless. (Carried under the side-effecting closure-body
     /// proto reason today; typed here as its own named boundary.)
-    IterAdvance { boundary: String },
+    IterAdvance,
     /// CONSUMED-ITERATOR-STATE: a local iterator has already been advanced or consumed, and
     /// the temporal replay ledger has no expression for the current iterator state. Reading a
     /// terminal such as `.next()` from that binding would invent a timeless value for a
@@ -9255,17 +9054,11 @@ enum Effect {
     /// `accessor` is true for an effectful ACCESSOR (`.with` / `.with_unfilled_buf`) over
     /// opaque state; false for a plain opaque RECEIVER (`coll.iter().for_each(..)` where
     /// `coll` is runtime). Selects the matching proto reason (both `bin-2` terminal).
-    OpaqueRuntime { boundary: String, accessor: bool },
+    OpaqueRuntime { accessor: bool },
     /// TLS: a `thread_local!` `.with(|x| ..)` -- the closure ranges over thread-local
     /// runtime state, an opaque non-constructed value. A specialization of the opaque
     /// accessor boundary (its proto reason). Named so the catalog records the TLS cause.
-    Tls { boundary: String },
-    /// IO: the body performs IO (a `write` / `send` to a runtime sink). The observed value
-    /// is a runtime effect, not a constructed literal. A source property; carried under the
-    /// opaque-accessor proto reason. (`write`/`send` are in `CLOSURE_BODY_MUTATING_METHODS`,
-    /// so an IO closure body is caught as a mutation today; named here so the catalog
-    /// records the IO cause.)
-    Io { boundary: String },
+    Tls,
     /// TEMPORAL-READ: a read of a MUTABLE container (`a[i]` where `a` is a provably-`mut`
     /// local that the `mut` oracle flags). The container may be index-assigned or
     /// method-mutated between program points, so `index(a, i)` has no single timeless `t`
@@ -9279,15 +9072,11 @@ enum Effect {
     /// mutation/instability. The predicate source construct owns this boundary: asking the
     /// receiver path for a timeless sequence would erase the method shape into a generic
     /// mutable-container read.
-    MutableLocalSlicePredicate {
-        boundary: String,
-        method: String,
-        receiver: String,
-    },
+    MutableLocalSlicePredicate { method: String, receiver: String },
     /// AMBIGUOUS-TEMPORAL-IDENTITY: a versioned local path is read after the collector
     /// proved more than one temporal identity could own that name. The path leaf owns the
     /// refusal because a `Term::Var` key would otherwise pick one state arbitrarily.
-    AmbiguousTemporalIdentity { boundary: String, reason: String },
+    AmbiguousTemporalIdentity { reason: String },
     /// CONTROL-FLOW: a `try { .. }` / `async { .. }` block or a `?` operator in term
     /// position. None of these is a single timeless point-wise VALUE: a `try` block
     /// short-circuits on `Err` (control flow), an `async` block is a deferred future, and
@@ -9298,7 +9087,7 @@ enum Effect {
     /// COVERAGE-GAP: an algebra operation reached a known floor but the requested
     /// member/arm has no owning implementation yet. This is live work, not a
     /// terminal source refusal; direct callers receive `Outcome::Incomplete`.
-    CoverageGap { boundary: String, reason: String },
+    CoverageGap { reason: String },
     /// REFLECTION: the asserted value flows through OPAQUE COMPILE-TIME REFLECTION over
     /// runtime type identity -- `Type::of::<T>()` / a `TypeId::of::<T>()` comparison, read
     /// through `.kind` and a `match` arm binding. A `TypeId` is an opaque, target-determined
@@ -9368,12 +9157,12 @@ enum Effect {
     /// REGEX-PATTERN: a resolved `Regex::new(<literal>)` pattern is malformed or uses a
     /// non-regular feature the shared RegLan lowering authority cannot represent. The
     /// pattern child completed; the regex language boundary itself is the named stop.
-    RegexPattern { boundary: String, reason: String },
+    RegexPattern { reason: String },
     /// DYN-ANY-CONCRETE-TYPE: a `dyn Any` predicate has no visible coercion or binding
     /// proving the erased concrete type. Visible `&expr as &dyn Any`/`Box<dyn Any>`
     /// coercions complete to structural type identity; runtime dyn dispatch earns this
     /// boundary.
-    DynAnyConcreteType { boundary: String },
+    DynAnyConcreteType,
     /// RUNTIME-IP-ADDR: an IP property predicate has a runtime/non-literal receiver.
     /// Literal constructors/macros complete; runtime network values have no source
     /// literal address for this lift to inspect.
@@ -9384,7 +9173,7 @@ enum Effect {
     RangeBoundsRuntimeValue { boundary: String },
     /// MEMCHR-RUNTIME: `memchr`/`memrchr` can ground literal needles and literal byte
     /// sequences. Runtime needles or haystacks are real runtime data, not a factory gap.
-    MemchrRuntime { boundary: String, reason: String },
+    MemchrRuntime { reason: String },
     /// FUTURE-HANDOFF: an assertion-bearing `async { .. }` future is handed to a
     /// call/method driver. `async` syntax itself is compiler-known and inert, but the
     /// driver call is library/runtime semantics unless dynamically learned from visible
@@ -9423,7 +9212,7 @@ enum Effect {
     /// literal tuple/array. Literal destructures complete by tracing the component floor;
     /// this fires only when the destructured source has no literal floor to hand to the
     /// binding.
-    RuntimeDestructuredSource { boundary: String, reason: String },
+    RuntimeDestructuredSource { reason: String },
     /// ARRAY-REPEAT (non-literal): an array-repeat `[elem; N]` whose length `N` is NOT a plain
     /// literal -- a const-generic param or a const expression (`[0u8; SIZE]`, `[(); SIZE - 1]`).
     /// With a NON-literal count there is no finite construction from the written literal to
@@ -9435,7 +9224,7 @@ enum Effect {
     /// empty, unbounded, over-cap, char-range-versioned, or non-text-determined
     /// array/range domains are genuine source boundaries owned by LiteralSugar. A
     /// nonempty finite literal domain completes before this effect can fire.
-    LiteralDomain { boundary: String, reason: String },
+    LiteralDomain { reason: String },
     /// STRUCT-UPDATE-REST: a struct literal using `..rest` does not write every field value
     /// at the literal site. Field projection facts are only derived from fully pinned
     /// `struct:*` ctor arguments; the rest source must be modeled explicitly before it can
@@ -9446,47 +9235,39 @@ enum Effect {
     /// source/runtime boundary, not a missing deconstruction and not an opaque support term:
     /// the child floors are known, and the operation itself proves there is no value floor to
     /// hand upward.
-    LiteralPanic { boundary: String, reason: String },
+    LiteralPanic { reason: String },
     /// INVALID-BIT-PATTERN: a fully-literal memory constructor asks Rust to produce a value
     /// from a bit pattern that is not valid for the target type
     /// (`MaybeUninit::<NonZeroU32>::zeroed().assume_init()`,
     /// `mem::zeroed::<NonZeroU32>()`, ...). Primitive zeroable types complete to their
     /// literal floor; invalid bit patterns stop here by name.
-    InvalidBitPattern { boundary: String, reason: String },
+    InvalidBitPattern { reason: String },
     /// UNDEFINED-BEHAVIOR: a fully-literal unsafe operation asks Rust for a value on a
     /// source path with no defined value (`get_unchecked` outside a literal slice domain).
     /// In-domain unsafe indexing completes to the literal floor; only the proved UB branch
     /// stops here by name.
-    UndefinedBehavior { boundary: String, reason: String },
+    UndefinedBehavior { reason: String },
     /// RUNTIME-NUMERIC-OPERAND: a stdlib/compiler numeric operation is defined only when its
     /// operands are literal-determined in this lift (`i8::midpoint(a, b)`, `u128::from(x)`,
     /// etc.). If a child completes to a non-literal term, there is no concrete numeric floor
     /// to compute here; the runtime value boundary is the honest terminal stop.
-    RuntimeNumericOperand {
-        boundary: String,
-        operation: String,
-        kind: String,
-    },
+    RuntimeNumericOperand { operation: String, kind: String },
     /// RUNTIME-FLOAT-OPERAND: an IEEE float operation (`to_bits`, `integer_decode`,
     /// literal float bit conversion) needs a concrete f32/f64 floor, but the receiver or
     /// bit-pattern source reduced to runtime data. This is the float sibling of
     /// `RuntimeNumericOperand`: the sender dispatches to the float floor and bubbles this
     /// only when no literal IEEE value exists.
-    RuntimeFloatOperand { boundary: String, operation: String },
+    RuntimeFloatOperand { boundary: String },
     /// RUNTIME-MONADIC-PAYLOAD: an Option/Result value-consuming adaptor (`map`,
     /// `and_then`, `unwrap_or`, ...) selected a concrete Some/Ok/Err branch, but the branch
     /// payload reduced to runtime/opaque data rather than a literal floor. Presence
     /// predicates can ignore payloads; value-consuming adaptors cannot fabricate a value.
-    RuntimeMonadicPayload {
-        boundary: String,
-        method: String,
-        ctor: String,
-    },
+    RuntimeMonadicPayload { method: String, ctor: String },
     /// ATOMIC-LOAD: `.load(Ordering::*)` reads interior-mutable atomic state through
     /// shared-reference semantics. Path receivers that the temporal planner can version
     /// stay on the method-key floor; non-path receivers have no single binding identity
     /// to version, so the load source owns the runtime boundary.
-    AtomicLoad { boundary: String },
+    AtomicLoad,
     /// RUNTIME-SLICE-SOURCE: std slice/array accessor sugar (`first`, `last`, `get`,
     /// `contains`, `starts_with`, `ends_with`) reached a receiver proved slice-shaped by
     /// visible source/type shape, but the receiver has no text-determined literal sequence
@@ -9505,46 +9286,41 @@ enum Effect {
     /// outside the modeled floor: f16/f128, signed-zero as a Real, NaN/infinity requested as
     /// a finite Real, or another named float representation boundary. This is a real float
     /// boundary, never the generic unsupported catch-all.
-    FloatIeeeRefinement { boundary: String, reason: String },
+    FloatIeeeRefinement { reason: String },
     /// REPRESENTATION-CAST: the cast itself asks Rust for address/provenance or
     /// representation semantics (`&x as *const T`, raw-pointer casts, or another
     /// non-scalar `as` shape). This is a real source boundary owned by CastSugar:
     /// it is not the child being opaque, and it is not missing sugar for a literal
     /// arithmetic cast.
     RepresentationCast { boundary: String, kind: String },
-    /// RUNTIME-ARGUMENT: a source function/input parameter is runtime data, e.g.
-    /// `fn f(x: i32) { x }`. Parent/compositor sugar must never construct this as a
-    /// generic "not literal" fallback; it can only bubble an effect that the boundary
-    /// owner already emitted.
-    RuntimeArgument { boundary: String, reason: String },
     /// FORMAT-ARGUMENT: `format!`/`to_string` needs a literal format-value floor, but the
     /// child reduced to runtime/non-literal data or to checked arithmetic with no single
     /// literal rendering. The format macro composes and bubbles; this boundary is owned by
     /// the format-value floor.
-    FormatArgument { boundary: String, reason: String },
+    FormatArgument { reason: String },
     /// RUNTIME-CALLABLE-ELEMENT: a literal-domain adaptor invokes the iterated element as
     /// a callable (`|f| (*f)()`). The domain is finite, but the returned value is produced by
     /// dynamic dispatch through the element, not by literal construction.
-    RuntimeCallableElement { boundary: String, reason: String },
+    RuntimeCallableElement { reason: String },
     /// UNICODE-STRING-CASE: Rust's full `str::to_uppercase` / `to_lowercase` over a
     /// non-ASCII string depends on Unicode case mapping tables. ASCII receivers complete
     /// through the literal string floor; the version-sensitive frontier is the named stop.
-    UnicodeStringCase { boundary: String },
+    UnicodeStringCase,
     /// CONFIGURATION: a cfg predicate selected source by target configuration, but this
     /// lift does not have enough pinned target facts to decide which branch exists. Active
     /// and inactive cfg arms complete; only genuinely ambiguous target configuration reaches
     /// this boundary.
-    Configuration { boundary: String, reason: String },
+    Configuration { reason: String },
     /// DURATION-CARRIER-EMBEDDING: a source Duration value reached the carrier floor but
     /// did not satisfy the canonical projection refinement required by #3125
     /// (`0 <= nanos < 1e9`). Duration remains a refinement of Int; non-canonical
     /// constructor spellings are refused rather than silently treated as peer-sort values.
-    DurationCarrierEmbedding { boundary: String, reason: String },
+    DurationCarrierEmbedding { reason: String },
 }
 
 impl Effect {
     pub(crate) fn is_literal_domain_reason(&self, expected: &str) -> bool {
-        matches!(self, Effect::LiteralDomain { reason, .. } if reason == expected)
+        matches!(self, Effect::LiteralDomain { reason } if reason == expected)
     }
 
     /// The terminal refusal string (recognized terminal by `refusal_disposition`), kept
@@ -9552,11 +9328,10 @@ impl Effect {
     fn reason(&self) -> String {
         match self {
             Effect::Raise(effect) => effect.reason(),
-            Effect::Runtime(effect) => effect.reason(),
             // The proto string the collector already emits for a side-effecting / iterator-
             // advancing closure body (kept verbatim so the CID is conserved). `Mutation` and
             // `IterAdvance` carry the SAME terminal class; typed apart records the cause.
-            Effect::Mutation { .. } | Effect::IterAdvance { .. } => {
+            Effect::Mutation | Effect::IterAdvance => {
                 "assertion in a side-effecting closure body (mutates captured state / \
                  advances an iterator); not a pure point-wise claim; refused"
                     .to_string()
@@ -9564,7 +9339,7 @@ impl Effect {
             Effect::ConsumedIteratorState { boundary } => format!(
                 "consumed iterator `{boundary}` has no replayable temporal rewrite at this point; refused"
             ),
-            Effect::OpaqueRuntime { accessor, .. } => {
+            Effect::OpaqueRuntime { accessor } => {
                 if *accessor {
                     "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
                      data, not constructible from source literals); refused"
@@ -9576,7 +9351,7 @@ impl Effect {
                 }
             }
             // TLS / IO are specializations of the opaque-accessor boundary (same proto reason).
-            Effect::Tls { .. } | Effect::Io { .. } => {
+            Effect::Tls => {
                 "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
                  data, not constructible from source literals); refused"
                     .to_string()
@@ -9588,14 +9363,14 @@ impl Effect {
                 "unsupported term `{boundary}`: mutable container is not temporally stable"
             ),
             Effect::MutableLocalSlicePredicate {
-                method, receiver, ..
+                method, receiver
             } => format!(
                 "{method} predicate over a MUTABLE-local receiver `{receiver}` \
                  (bin-2: a slice/string mutated by side-effecting iteration, not \
                  constructed from source literals); refused"
             ),
-            Effect::AmbiguousTemporalIdentity { reason, .. } => reason.clone(),
-            Effect::CoverageGap { reason, .. } => reason.clone(),
+            Effect::AmbiguousTemporalIdentity { reason } => reason.clone(),
+            Effect::CoverageGap { reason } => reason.clone(),
             Effect::ControlFlow { boundary } => format!(
                 "unsupported term `{boundary}`: effectful control-flow block (try/async/`?`) is not a \
                  timeless point-wise value; refused"
@@ -9642,8 +9417,8 @@ impl Effect {
                 "Result inspect callback `{boundary}` is not provably no-op; refusing to erase \
                  possible callback effects"
             ),
-            Effect::RegexPattern { reason, .. } => reason.clone(),
-            Effect::DynAnyConcreteType { .. } => {
+            Effect::RegexPattern { reason } => reason.clone(),
+            Effect::DynAnyConcreteType => {
                 "dyn Any concrete type not statically determined".to_string()
             }
             Effect::RuntimeIpAddr { boundary } => {
@@ -9652,7 +9427,7 @@ impl Effect {
             Effect::RangeBoundsRuntimeValue { boundary } => {
                 format!("RangeBounds over runtime value {boundary}")
             }
-            Effect::MemchrRuntime { reason, .. } => reason.clone(),
+            Effect::MemchrRuntime { reason } => reason.clone(),
             Effect::FutureHandoff { boundary } => format!(
                 "future handoff boundary `{boundary}`: assertion inside an async future handed to \
                  a non-axiomatic driver; driver semantics must be learned dynamically from \
@@ -9689,7 +9464,7 @@ impl Effect {
             Effect::PanicPayload { boundary } => format!(
                 "panic payload downcast reads runtime exception state `{boundary}`; refused"
             ),
-            Effect::RuntimeDestructuredSource { reason, .. } => reason.clone(),
+            Effect::RuntimeDestructuredSource { reason } => reason.clone(),
             // Carries the existing "array-repeat ... non-literal length ... refused by name"
             // substring verbatim so a single whitelist entry recognizes it; the emit site's
             // `assert_eq!:` / `assert!:` prefix is preserved by the caller.
@@ -9697,16 +9472,16 @@ impl Effect {
                 "array-repeat length runtime, not const -- array-repeat `[_; N]` has a non-literal length -- not a finite \
                  construction from the literal; refused by name: `{boundary}`"
             ),
-            Effect::LiteralDomain { reason, .. } => reason.clone(),
+            Effect::LiteralDomain { reason } => reason.clone(),
             Effect::StructUpdateRest { boundary } => format!(
                 "struct literal with `..rest` is not fully pinned from the literal: `{boundary}` \
                  (bin-2: rest fields are not constructed by this literal); owner=rust.struct_term; \
                  shape=struct-update-literal; replacement=derive field projection facts only from \
                  fully pinned `struct:*` ctor arguments; refused"
             ),
-            Effect::LiteralPanic { reason, .. } => reason.clone(),
-            Effect::InvalidBitPattern { reason, .. } => reason.clone(),
-            Effect::UndefinedBehavior { reason, .. } => reason.clone(),
+            Effect::LiteralPanic { reason } => reason.clone(),
+            Effect::InvalidBitPattern { reason } => reason.clone(),
+            Effect::UndefinedBehavior { reason } => reason.clone(),
             Effect::RuntimeNumericOperand {
                 operation, kind, ..
             } => {
@@ -9721,13 +9496,13 @@ impl Effect {
                     format!("runtime {descriptor} operand, not literal-determined")
                 }
             }
-            Effect::RuntimeFloatOperand { boundary, .. } => {
+            Effect::RuntimeFloatOperand { boundary } => {
                 format!("runtime float operand, not literal `{boundary}`")
             }
-            Effect::RuntimeMonadicPayload { method, ctor, .. } => {
+            Effect::RuntimeMonadicPayload { method, ctor } => {
                 format!("runtime Option/Result payload, not literal (`{method}` over `{ctor}`)")
             }
-            Effect::AtomicLoad { .. } => {
+            Effect::AtomicLoad => {
                 "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state"
                     .to_string()
             }
@@ -9742,89 +9517,22 @@ impl Effect {
                     "chunk source is runtime slice, not literal: `{boundary}` has no literal sequence floor"
                 )
             }
-            Effect::FloatIeeeRefinement { reason, .. } => reason.clone(),
+            Effect::FloatIeeeRefinement { reason } => reason.clone(),
             Effect::RepresentationCast { boundary, kind } => format!(
                 "unsupported term `{boundary}`: effectful / raw-pointer / mutable-reference term \
                  ({kind}) is not a constructible timeless value; refused"
             ),
-            Effect::RuntimeArgument { reason, .. } => reason.clone(),
-            Effect::FormatArgument { reason, .. } => reason.clone(),
-            Effect::RuntimeCallableElement { reason, .. } => reason.clone(),
-            Effect::UnicodeStringCase { .. } => {
+            Effect::FormatArgument { reason } => reason.clone(),
+            Effect::RuntimeCallableElement { reason } => reason.clone(),
+            Effect::UnicodeStringCase => {
                 "Unicode string case mapping is not modeled for non-ASCII receivers; refused"
                     .to_string()
             }
-            Effect::Configuration { reason, .. } => reason.clone(),
-            Effect::DurationCarrierEmbedding { reason, .. } => {
+            Effect::Configuration { reason } => reason.clone(),
+            Effect::DurationCarrierEmbedding { reason } => {
                 format!("unsupported term: {reason}; refused")
             }
         }
-    }
-
-    /// The `SourceMemento` warranting that the bail names a SOURCE property -- the bail-side
-    /// rope (mirror of the complete-side `Warrant`).
-    fn boundary(&self) -> SourceMemento {
-        let boundary = match self {
-            Effect::Raise(effect) => effect.boundary().to_string(),
-            Effect::Runtime(effect) => effect.boundary().to_string(),
-            Effect::Mutation { boundary }
-            | Effect::IterAdvance { boundary }
-            | Effect::ConsumedIteratorState { boundary }
-            | Effect::OpaqueRuntime { boundary, .. }
-            | Effect::Tls { boundary }
-            | Effect::Io { boundary }
-            | Effect::TemporalRead { boundary }
-            | Effect::MutableLocalSlicePredicate { boundary, .. }
-            | Effect::AmbiguousTemporalIdentity { boundary, .. }
-            | Effect::ControlFlow { boundary }
-            | Effect::CoverageGap { boundary, .. }
-            | Effect::Reflection { boundary }
-            | Effect::SourceLocation { boundary }
-            | Effect::TypeLayout { boundary }
-            | Effect::LoopAdvance { boundary }
-            | Effect::ImplMethod { boundary }
-            | Effect::IfGuardRuntime { boundary }
-            | Effect::ConditionalBranchMutation { boundary }
-            | Effect::RuntimeExprStmt { boundary }
-            | Effect::NestedAssertionValue { boundary }
-            | Effect::CellRuntimeAliased { boundary }
-            | Effect::ResultInspectCallback { boundary }
-            | Effect::RegexPattern { boundary, .. }
-            | Effect::DynAnyConcreteType { boundary }
-            | Effect::RuntimeIpAddr { boundary }
-            | Effect::RangeBoundsRuntimeValue { boundary }
-            | Effect::MemchrRuntime { boundary, .. }
-            | Effect::FutureHandoff { boundary }
-            | Effect::DormantFuture { boundary }
-            | Effect::FutureJoin { boundary }
-            | Effect::PanicMacro { boundary }
-            | Effect::RuntimeMatchScrutinee { boundary }
-            | Effect::TypeInferredParseResult { boundary, .. }
-            | Effect::PanicPayload { boundary }
-            | Effect::RuntimeDestructuredSource { boundary, .. }
-            | Effect::ArrayRepeat { boundary }
-            | Effect::LiteralDomain { boundary, .. }
-            | Effect::StructUpdateRest { boundary }
-            | Effect::LiteralPanic { boundary, .. }
-            | Effect::InvalidBitPattern { boundary, .. }
-            | Effect::UndefinedBehavior { boundary, .. }
-            | Effect::RuntimeNumericOperand { boundary, .. }
-            | Effect::RuntimeFloatOperand { boundary, .. }
-            | Effect::RuntimeMonadicPayload { boundary, .. }
-            | Effect::AtomicLoad { boundary }
-            | Effect::RuntimeSliceSource { boundary }
-            | Effect::RuntimeSliceIndex { boundary }
-            | Effect::RuntimeChunkSource { boundary }
-            | Effect::FloatIeeeRefinement { boundary, .. }
-            | Effect::RepresentationCast { boundary, .. }
-            | Effect::RuntimeArgument { boundary, .. }
-            | Effect::FormatArgument { boundary, .. }
-            | Effect::RuntimeCallableElement { boundary, .. }
-            | Effect::UnicodeStringCase { boundary }
-            | Effect::Configuration { boundary, .. }
-            | Effect::DurationCarrierEmbedding { boundary, .. } => boundary.clone(),
-        };
-        SourceMemento { boundary }
     }
 }
 
@@ -11097,7 +10805,6 @@ fn emit_desugared(
         Desugared::LiteralCStr(_) => false,
         Desugared::FormatValue(_) => false,
         Desugared::TupleComponents(_) => false,
-        Desugared::ObjectValue(_) => false,
         Desugared::PredicateValue(_) => false,
         // Statement-composition floor variants are not emitted here; BlockSugar
         // consumes them internally and emits a Constraints when it closes.
@@ -11708,7 +11415,6 @@ fn panic_freedom_direct_method_callsite_effect(
     if let Some(receiver) = panic_freedom_iterator_consumption_receiver(call) {
         if let Some(base) = scope.mutable_alias_base(&receiver) {
             return Some(Effect::AmbiguousTemporalIdentity {
-                boundary: base.clone(),
                 reason: format!(
                     "ambiguous temporal identity for receiver `{base}`; skipped assertion"
                 ),
@@ -11718,7 +11424,6 @@ fn panic_freedom_direct_method_callsite_effect(
             return None;
         }
         return Some(Effect::AmbiguousTemporalIdentity {
-            boundary: receiver.clone(),
             reason: format!(
                 "unknown iterator consumption for `{receiver}` via `{method}`: a prior iterator \
                  operation advanced this mutable iterator by an unknown or by_ref-adaptor \
@@ -11731,7 +11436,6 @@ fn panic_freedom_direct_method_callsite_effect(
         if let Some(receiver) = simple_path_name(&call.receiver) {
             if scope.temporal_cell_kind(&receiver) == Some(sugar::assign_op::CellKind::Cell) {
                 return Some(Effect::AmbiguousTemporalIdentity {
-                    boundary: receiver.clone(),
                     reason: format!(
                         "temporally unstable mutating method read of `{receiver}` after \
                          `.{method}()`: the method may write receiver state outside the literal \
@@ -11774,15 +11478,12 @@ fn panic_freedom_closure_callsite_effect(call: &syn::ExprMethodCall) -> Option<E
     if closure_body_is_side_effecting(&closure.body)
         || closure_constructs_drop_side_effect_value(closure)
     {
-        return Some(Effect::Mutation {
-            boundary: token_key(&closure_expr),
-        });
+        return Some(Effect::Mutation);
     }
     if closure_body_calls_through_param(&closure_expr) {
         let method = call.method.to_string();
         let domain = for_iter_domain(iter_adaptor_base(&call.receiver));
         return Some(Effect::RuntimeCallableElement {
-            boundary: token_key(&closure_expr),
             reason: format!(
                 "iterator/option adaptor `.{method}(|..| ..)` over {domain} whose closure body \
                  performs a runtime call through closure body parameter (bin-2: dynamic \
@@ -12285,21 +11986,6 @@ fn const_fold_bool_guard(cond: &Expr, options: &LiftOptions) -> Option<bool> {
         _ => return None,
     };
     Some(if negate { !base } else { base })
-}
-
-/// The first method name in an `impl` block that carries at least one assertion (for the
-/// `ImplMethodEffect` boundary description). Returns None if no method body carries an
-/// assert (so a pure impl block -- e.g. a `const`-only or assert-free impl declared as a
-/// statement -- is NOT refused; it stays on the generic unclassified path).
-fn impl_block_method_name(imp: &syn::ItemImpl) -> Option<String> {
-    imp.items.iter().find_map(|it| {
-        if let syn::ImplItem::Fn(m) = it {
-            if count_asserts_in_stmts(&m.block.stmts) > 0 {
-                return Some(m.sig.ident.to_string());
-            }
-        }
-        None
-    })
 }
 
 /// Thin node-router: a bare statement-position expression whose asserted value flows through
@@ -17913,24 +17599,6 @@ fn impl_value_param_names(method: &syn::ImplItemFn, expect_receiver: bool) -> Op
     Some(params)
 }
 
-fn resolve_known_value_projection(
-    expr: &Expr,
-    scope: &TemporalScope,
-    options: &LiftOptions,
-) -> Expr {
-    let mut cur = expr.clone();
-    for _ in 0..MAX_VALUE_CALL_INLINE_DEPTH {
-        let Expr::Field(field) = strip_refs_groups(&cur) else {
-            return cur;
-        };
-        let Some(next) = resolve_field_projection(field, scope, options, 0) else {
-            return cur;
-        };
-        cur = next;
-    }
-    cur
-}
-
 fn resolve_field_projection(
     field: &syn::ExprField,
     scope: &TemporalScope,
@@ -19680,18 +19348,6 @@ fn callsite_child_fallback_term(expr: &Expr, scope: &TemporalScope) -> Option<Rc
     }))
 }
 
-fn method_call_assertion_name(
-    method: &str,
-    args: Vec<Rc<Term>>,
-    local_scope: &str,
-) -> Option<String> {
-    let term = Term::Ctor {
-        name: format!("method:{method}"),
-        args,
-    };
-    callsite_assertion_name(&term, local_scope)
-}
-
 /// Strip redundant outer shared-`ref` ctors from a RELATIONAL operand. A shared borrow
 /// is value-equal to its pointee -- Rust's `PartialEq for &T` compares pointees, so
 /// `&a == &b` <=> `a == b` (and `&&a == &&b` <=> `a == b`). The `reference_term`
@@ -20310,23 +19966,6 @@ fn is_unqualified_local_name(name: &str) -> bool {
     !name.contains("::")
 }
 
-fn is_refinement_predicate_term(term: &Term) -> bool {
-    matches!(
-        term,
-        Term::Ctor { name, .. }
-            if matches!(
-                name.as_str(),
-                "method:is_nan"
-                    | "method:is_finite"
-                    | "method:is_infinite"
-                    | "method:is_normal"
-                    | "method:is_subnormal"
-                    | "method:is_sign_positive"
-                    | "method:is_sign_negative"
-            )
-    )
-}
-
 fn term_key(term: &Term) -> String {
     format!("{term:?}")
         .split_whitespace()
@@ -20370,44 +20009,6 @@ fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bo
         }
     }
     false
-}
-
-fn const_index_term_in_scope(
-    index: &syn::ExprIndex,
-    scope: &TemporalScope,
-) -> Result<Option<Rc<Term>>, String> {
-    let Some(index_value) = const_int(&index.index) else {
-        return Ok(None);
-    };
-    let Some(base_name) = const_index_base_name(&index.expr, scope)? else {
-        return Ok(None);
-    };
-    Ok(Some(Rc::new(Term::Ctor {
-        name: "index".to_string(),
-        args: vec![make_var(base_name), num(index_value)],
-    })))
-}
-
-fn const_index_base_name(expr: &Expr, scope: &TemporalScope) -> Result<Option<String>, String> {
-    match expr {
-        Expr::Path(path) if path.qself.is_none() && is_const_like_path(&path.path) => {
-            scope.path_name(&path.path).map(Some)
-        }
-        Expr::Paren(paren) => const_index_base_name(&paren.expr, scope),
-        Expr::Group(group) => const_index_base_name(&group.expr, scope),
-        _ => Ok(None),
-    }
-}
-
-fn is_const_like_path(path: &syn::Path) -> bool {
-    let Some(final_segment) = path.segments.last() else {
-        return false;
-    };
-    let ident = final_segment.ident.to_string();
-    ident.chars().any(|ch| ch.is_ascii_uppercase())
-        && ident
-            .chars()
-            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 fn scope_const_block_locals(term: Rc<Term>, local_scope: &str) -> Rc<Term> {
@@ -20512,37 +20113,6 @@ fn const_len_value_in_scope(expr: &Expr, scope: &TemporalScope, depth: usize) ->
         }
         _ => None,
     }
-}
-
-fn literal_aggregate_term_in_scope<'a>(
-    kind: &str,
-    elems: impl Iterator<Item = &'a Expr>,
-    source: &Expr,
-    scope: &TemporalScope,
-) -> Result<Rc<Term>, String> {
-    let _ = source;
-    let mut args = Vec::new();
-    let mut all_literal = true;
-    for elem in elems {
-        // Each element is translated through the same sound term path. An
-        // element that cannot be translated (e.g. a &mut borrow) propagates its
-        // refusal via `?`, so the aggregate is only built from accountable terms.
-        let term = translate_term_in_scope(elem, scope).map_err(|effect| effect.reason())?;
-        if !is_literal_identity_term(term.as_ref()) {
-            all_literal = false;
-        }
-        args.push(term);
-    }
-    let inner = args
-        .iter()
-        .map(|arg| canonical_term_sig(arg))
-        .collect::<Vec<_>>()
-        .join(",");
-    // All-literal aggregates keep the literal: key (byte-identical to before).
-    // Aggregates with non-literal elements are an uninterpreted constructor over
-    // their element terms (agg:), congruence-keyed so contradictions are caught.
-    let prefix = if all_literal { "literal" } else { "agg" };
-    Ok(make_var(format!("{prefix}:{kind}({inner})")))
 }
 
 pub(crate) fn is_literal_identity_term(term: &Term) -> bool {
@@ -20775,22 +20345,6 @@ fn bytes_literal_term_from_bytes(bytes: &[u8]) -> Rc<Term> {
     make_var(format!("literal:bytes({})", bytes_to_hex(bytes)))
 }
 
-/// Extract a byte-string literal from `expr` as an opaque content-keyed
-/// Term::Var, if `expr` is exactly a `b"..."` literal (or a parenthesised /
-/// grouped wrapper around one).  Returns `None` for all other expression
-/// shapes.
-fn bytes_literal_term(expr: &Expr) -> Option<Rc<Term>> {
-    match expr {
-        Expr::Lit(ExprLit {
-            lit: Lit::ByteStr(bs),
-            ..
-        }) => Some(bytes_literal_term_from_bytes(&bs.value())),
-        Expr::Paren(paren) => bytes_literal_term(&paren.expr),
-        Expr::Group(group) => bytes_literal_term(&group.expr),
-        _ => None,
-    }
-}
-
 fn parse_int_lit(lit: &syn::LitInt) -> Result<i128, String> {
     // i128 carrier: a wide Rust literal (u64::MAX, u128 within i128 range,
     // large isize) is an EXACT mathematical-Int constant -- the FOL/SMT `Int`
@@ -20824,31 +20378,6 @@ fn int_lit_radix_digits(lit: &syn::LitInt) -> (u32, String) {
     }
 }
 
-fn string_or_char_literal_term(expr: &Expr) -> Option<Rc<Term>> {
-    match expr {
-        Expr::Lit(ExprLit {
-            lit: Lit::Str(s), ..
-        }) => Some(str_const(s.value())),
-        Expr::Lit(ExprLit {
-            lit: Lit::Char(c), ..
-        }) => Some(str_const(c.value().to_string())),
-        Expr::Paren(paren) => string_or_char_literal_term(&paren.expr),
-        Expr::Group(group) => string_or_char_literal_term(&group.expr),
-        _ => None,
-    }
-}
-
-fn char_literal_term(expr: &Expr) -> Option<Rc<Term>> {
-    match expr {
-        Expr::Lit(ExprLit {
-            lit: Lit::Char(c), ..
-        }) => Some(str_const(c.value().to_string())),
-        Expr::Paren(paren) => char_literal_term(&paren.expr),
-        Expr::Group(group) => char_literal_term(&group.expr),
-        _ => None,
-    }
-}
-
 fn char_literal_value(expr: &Expr) -> Option<char> {
     match expr {
         Expr::Lit(ExprLit {
@@ -20856,53 +20385,6 @@ fn char_literal_value(expr: &Expr) -> Option<char> {
         }) => Some(c.value()),
         Expr::Paren(paren) => char_literal_value(&paren.expr),
         Expr::Group(group) => char_literal_value(&group.expr),
-        _ => None,
-    }
-}
-
-/// Extract a concrete `char` from a char literal `'x'` OR a byte literal `b'x'`.
-/// Used by ASCII char-class predicates to get the exact char so we can evaluate
-/// the predicate on the host and lower the result to a bool constant.
-fn char_or_byte_literal_value(expr: &Expr) -> Option<char> {
-    match expr {
-        Expr::Lit(ExprLit {
-            lit: Lit::Char(c), ..
-        }) => Some(c.value()),
-        Expr::Lit(ExprLit {
-            lit: Lit::Byte(b), ..
-        }) => Some(char::from(b.value())),
-        Expr::Paren(paren) => char_or_byte_literal_value(&paren.expr),
-        Expr::Group(group) => char_or_byte_literal_value(&group.expr),
-        _ => None,
-    }
-}
-
-/// Extract the string value from a string literal (`"..."`) or char literal (`'x'`).
-/// Used by `eq_ignore_ascii_case` so we can evaluate the predicate on the host.
-fn string_literal_string_value_in_lib(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Lit(ExprLit {
-            lit: Lit::Str(s), ..
-        }) => Some(s.value()),
-        Expr::Lit(ExprLit {
-            lit: Lit::Char(c), ..
-        }) => Some(c.value().to_string()),
-        Expr::Paren(paren) => string_literal_string_value_in_lib(&paren.expr),
-        Expr::Group(group) => string_literal_string_value_in_lib(&group.expr),
-        _ => None,
-    }
-}
-
-fn term_single_char_value(term: &Rc<Term>) -> Option<char> {
-    match term.as_ref() {
-        Term::Const {
-            value: ConstValue::String(value),
-            ..
-        } => {
-            let mut chars = value.chars();
-            let ch = chars.next()?;
-            chars.next().is_none().then_some(ch)
-        }
         _ => None,
     }
 }
@@ -21003,18 +20485,6 @@ fn normalize_decimal_digits(text: &str) -> String {
     }
 }
 
-fn const_float(expr: &Expr) -> Result<Option<String>, String> {
-    match expr {
-        Expr::Lit(ExprLit {
-            lit: Lit::Float(lit),
-            ..
-        }) => Ok(Some(canonical_float_literal(lit)?)),
-        Expr::Paren(paren) => const_float(&paren.expr),
-        Expr::Group(group) => const_float(&group.expr),
-        _ => Ok(None),
-    }
-}
-
 fn real_literal_is_zero(text: &str) -> bool {
     let text = text.strip_prefix('-').unwrap_or(text);
     let mut saw_digit = false;
@@ -21112,17 +20582,6 @@ pub(crate) fn const_acc_init_value(
 
 fn const_int_acc_init(expr: &Expr, let_inits: &BTreeMap<String, &Expr>) -> Option<i64> {
     const_acc_init_value(expr, let_inits).and_then(|value| const_val_i64(&value))
-}
-
-/// Peel transparent `(..)` / proc-macro `Group` wrappers off an expression so the
-/// inner shape can be matched. Source `(a[0] < b[0])` parses to `Paren(Binary)`;
-/// callers that branch on the binary op need the unwrapped node.
-fn unwrap_paren_group(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(p) => unwrap_paren_group(&p.expr),
-        Expr::Group(g) => unwrap_paren_group(&g.expr),
-        other => other,
-    }
 }
 
 pub(crate) fn term_binop_name(op: &BinOp) -> Option<&'static str> {
@@ -24371,35 +23830,17 @@ fn t() {
     #[test]
     fn typed_side_effect_catalog_reasons_are_all_terminal() {
         // Every named `Effect`'s `reason()` is recognized terminal by
-        // `refusal_disposition` (the bail is a CLAIM, earned). `boundary()` ropes the
-        // refusal to the source construct that warrants it (the bail-side `SourceMemento`,
-        // mirror of the complete-side `Warrant`).
+        // `refusal_disposition` (the bail is a CLAIM, earned).
         let effects: Vec<Effect> = vec![
-            Effect::Mutation {
-                boundary: "v.push(x)".to_string(),
-            },
-            Effect::IterAdvance {
-                boundary: "iter.next()".to_string(),
-            },
-            Effect::OpaqueRuntime {
-                boundary: "p.iter().for_each(..)".to_string(),
-                accessor: false,
-            },
-            Effect::OpaqueRuntime {
-                boundary: "buf.with_unfilled_buf(..)".to_string(),
-                accessor: true,
-            },
-            Effect::Tls {
-                boundary: "DROPS.with(..)".to_string(),
-            },
-            Effect::Io {
-                boundary: "out.write(..)".to_string(),
-            },
+            Effect::Mutation,
+            Effect::IterAdvance,
+            Effect::OpaqueRuntime { accessor: false },
+            Effect::OpaqueRuntime { accessor: true },
+            Effect::Tls,
             Effect::TemporalRead {
                 boundary: "a[i]".to_string(),
             },
             Effect::MutableLocalSlicePredicate {
-                boundary: "a.starts_with(..)".to_string(),
                 method: "starts_with".to_string(),
                 receiver: "a".to_string(),
             },
@@ -24419,11 +23860,6 @@ fn t() {
                 Disposition::Refused,
                 "typed Effect reason must be terminal: {}",
                 e.reason()
-            );
-            // The boundary memento carries the source construct (non-empty rope).
-            assert!(
-                !e.boundary().boundary.is_empty(),
-                "boundary memento must rope to a source construct"
             );
         }
     }

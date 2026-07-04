@@ -432,9 +432,7 @@ impl RouteRaiseHandler for SourcePanicNoNormalExitHandler {
     fn matches(&self, effect: &crate::Effect) -> bool {
         matches!(
             effect,
-            crate::Effect::PanicMacro { .. }
-                | crate::Effect::LiteralPanic { .. }
-                | crate::Effect::Raise(RaiseEffect::Panic { .. })
+            crate::Effect::PanicMacro { .. } | crate::Effect::LiteralPanic { .. }
         )
     }
 

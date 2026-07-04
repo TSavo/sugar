@@ -42,7 +42,6 @@ struct WriteMacroSugar {
 impl Sugar for WriteMacroSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-            boundary: self.boundary.clone(),
             reason: format!(
                 "mutable-local state machine driven by fmt-write `{}`: write!/writeln! \
                  mutates its receiver and returns fmt::Result, so the term has no single \

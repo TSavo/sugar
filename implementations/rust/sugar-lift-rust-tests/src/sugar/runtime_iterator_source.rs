@@ -95,7 +95,6 @@ impl Sugar for RuntimeIteratorBindingSugar {
 impl Sugar for RuntimeIteratorSourceSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-            boundary: self.boundary.clone(),
             reason: format!(
                 "unknown iterator consumption for `{}` via `{}`: OPAQUE runtime iterator source \
                  state is produced by a generator/closure/call, so there is no single timeless \
@@ -109,7 +108,6 @@ impl Sugar for RuntimeIteratorSourceSugar {
 impl Sugar for RuntimeIteratorByRefHandoffSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-            boundary: self.boundary.clone(),
             reason: format!(
                 "unknown iterator consumption for `{}` via `by_ref`: `.by_ref()` hands out a \
                  mutable iterator borrow whose downstream consumption is runtime state, so there \

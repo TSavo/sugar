@@ -29,9 +29,6 @@ struct ClosureOpaqueAccessorSugar {
 
 impl Sugar for ClosureOpaqueAccessorSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Incomplete(Effect::OpaqueRuntime {
-            boundary: self.site.boundary().to_owned(),
-            accessor: true,
-        })
+        Outcome::Incomplete(Effect::OpaqueRuntime { accessor: true })
     }
 }

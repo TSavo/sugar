@@ -145,7 +145,6 @@ impl EnumerateFloor {
 
 fn enumerate_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
-        boundary: "Iterator::enumerate".to_string(),
         reason: err.to_string(),
     })
 }

@@ -150,7 +150,6 @@ impl Sugar for RepeatSequenceSugar {
             Some(len) if len <= SUGAR_SEQ_CAP as usize => len,
             _ => {
                 return Outcome::Incomplete(Effect::LiteralDomain {
-                    boundary: self.boundary.clone(),
                     reason: OVERSIZE_DOMAIN_REASON.to_string(),
                 })
             }

@@ -77,7 +77,6 @@ impl Sugar for SliceIndexSugar {
             (MethodKind::Get, Some(selection)) => monadic::some_term(select_term(&seq, selection)),
             (MethodKind::Index, None) => {
                 return Outcome::Incomplete(Effect::LiteralPanic {
-                    boundary: self.boundary.clone(),
                     reason: format!(
                         "slice index `{}` is out of bounds for a literal slice; refused",
                         self.boundary
@@ -87,7 +86,6 @@ impl Sugar for SliceIndexSugar {
             (MethodKind::Index, Some(selection)) => select_term(&seq, selection),
             (MethodKind::Unchecked, None) => {
                 return Outcome::Incomplete(Effect::UndefinedBehavior {
-                    boundary: self.boundary.clone(),
                     reason: format!(
                         "out-of-bounds unchecked slice indexing `{}` is undefined behavior with no determinate value; refused",
                         self.boundary

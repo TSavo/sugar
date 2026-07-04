@@ -85,17 +85,13 @@ pub(crate) enum CopySeveranceFact {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AliasEvent {
-    Bind,
     Read,
     WriteThrough,
-    Consume,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AliasMutationCause {
     UntrackableRhs { lhs: String, rhs: String },
-    OpaqueCall { site: String },
-    IteratorConsumption { method: String },
 }
 
 impl AliasFloor {
@@ -216,20 +212,6 @@ impl AliasFloor {
             place: self.place.clone(),
             reason,
         })
-    }
-}
-
-impl AliasTypedEffect {
-    pub(crate) fn place(&self) -> &Place {
-        match self {
-            AliasTypedEffect::UnroutableAliasShape { place, .. }
-            | AliasTypedEffect::UnknownSeverance { place, .. }
-            | AliasTypedEffect::UnknownMutation { place, .. } => place,
-        }
-    }
-
-    pub(crate) fn base(&self) -> &str {
-        self.place().base()
     }
 }
 

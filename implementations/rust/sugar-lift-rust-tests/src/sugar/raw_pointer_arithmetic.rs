@@ -77,7 +77,6 @@ impl Sugar for RawPointerArithmeticSugar {
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         }
         Outcome::Incomplete(Effect::RuntimeNumericOperand {
-            boundary: canonical_term_sig(&receiver),
             operation: self.method.clone(),
             kind: "raw pointer".to_string(),
         })
