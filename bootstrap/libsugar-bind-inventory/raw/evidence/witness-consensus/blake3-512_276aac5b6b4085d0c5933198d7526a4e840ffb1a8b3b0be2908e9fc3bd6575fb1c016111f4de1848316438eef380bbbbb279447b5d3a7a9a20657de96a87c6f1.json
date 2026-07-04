@@ -7,11 +7,11 @@
       "mapped_site_count": 30,
       "ordinal": 19,
       "reported_cardinality": 35,
-      "source": "bootstrap/libsugar-bind-inventory/raw"
+      "source": "bootstrap/libprovekit-bind-inventory/raw"
     },
     "observer": {
       "language": "rust",
-      "library_tag": "libsugar",
+      "library_tag": "libprovekit",
       "loss_dims_exercised": []
     },
     "row_schema": {

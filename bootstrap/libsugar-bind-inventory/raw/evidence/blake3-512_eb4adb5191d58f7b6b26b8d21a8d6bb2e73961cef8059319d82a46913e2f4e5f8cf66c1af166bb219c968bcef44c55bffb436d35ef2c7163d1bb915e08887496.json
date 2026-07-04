@@ -2,7 +2,7 @@
   "cid": "blake3-512:eb4adb5191d58f7b6b26b8d21a8d6bb2e73961cef8059319d82a46913e2f4e5f8cf66c1af166bb219c968bcef44c55bffb436d35ef2c7163d1bb915e08887496",
   "confidence_basis_points": 10000,
   "extension_fields": {
-    "function_symbol": "read_to_string@deleted_deleted proofir bridge",
+    "function_symbol": "read_to_string@proofir_bridge.rs",
     "inner_type": "Path",
     "lifetime": "_",
     "return_type": "Result<String, CatalogLoadError>",

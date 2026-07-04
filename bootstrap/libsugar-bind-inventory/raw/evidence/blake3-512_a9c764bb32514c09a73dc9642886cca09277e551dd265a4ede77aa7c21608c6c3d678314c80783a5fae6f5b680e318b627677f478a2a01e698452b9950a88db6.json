@@ -2,7 +2,7 @@
   "cid": "blake3-512:a9c764bb32514c09a73dc9642886cca09277e551dd265a4ede77aa7c21608c6c3d678314c80783a5fae6f5b680e318b627677f478a2a01e698452b9950a88db6",
   "confidence_basis_points": 10000,
   "extension_fields": {
-    "function_symbol": "normalize_sort_value@deleted_deleted proofir bridge",
+    "function_symbol": "normalize_sort_value@proofir_bridge.rs",
     "role": "post",
     "synthesis_rule_id": "wp_rule.guard-then-commit.v0"
   },

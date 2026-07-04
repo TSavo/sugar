@@ -3,7 +3,7 @@
   "confidence_basis_points": 10000,
   "extension_fields": {
     "err_type": "BridgeError",
-    "function_symbol": "proofir_sort_to_resolved_sort@deleted_deleted proofir bridge",
+    "function_symbol": "proofir_sort_to_resolved_sort@proofir_bridge.rs",
     "ok_type": "ResolvedSort",
     "return_type": "Result<ResolvedSort, BridgeError>",
     "role": "post",
