@@ -2,7 +2,7 @@
 name = "v1-3-fields-probe"
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 description = "Emit JCS bytes + BLAKE3-512 hashes for all v1.3.0 protocol-additive fields, matching test_cross_impl_v1_3_fields.py inputs."
 
 [[bin]]

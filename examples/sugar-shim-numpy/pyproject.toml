@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sugar-shim-numpy"
 version = "0.1.0"
 description = "Sugar sugar shim for numpy. Symbol-keyed, concept-free, sugar-only: carries body_text + ast_template for each numpy operation (numpy.add, ...). Contracts are NOT here — they come from numpy's own test suite; the CLI marries sugar and contract by symbol at the linker."
-license = { text = "Apache-2.0" }
+license = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.8"
 authors = [{ name = "Sugar" }]
 keywords = ["numpy", "sugar", "proofchain", "sugar", "boundary-realization"]

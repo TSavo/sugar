@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # serde-value-totality-fixture: standalone fixture demonstrating Phase 2
 # Tier D-lib panic-freedom (the serde_json::Value totality contract).
@@ -23,7 +23,7 @@
 name = "sugar-serde-value-totality-fixture"
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 publish = false
 description = "Sugar Phase 2 Tier D-lib fixture: serde_json::Value totality contract + callee-post discharge."
 

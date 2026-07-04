@@ -2,7 +2,7 @@
 name = "voltron-demo"
 version = "0.0.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 description = "M-file two-vendor Sugar demo. Threads sugar-shim-serde-json-rust + sugar-shim-rusqlite through one program graph spanning ingest/persist/report modules with user-side contracts. After materialize+mint+prove, the substrate unions THREE .proof envelopes (the demo's own + two vendor lions) and discharges across every cross-vendor seam."
 
 [lib]
