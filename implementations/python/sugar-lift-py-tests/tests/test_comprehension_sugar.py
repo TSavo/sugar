@@ -123,7 +123,9 @@ def test_comprehension_runtime_iterables_are_typed_runtime_effects() -> None:
         ("{x: x for x in items}", "dict comprehension runtime boundary"),
         ("{x for x in items}", "set comprehension runtime boundary"),
     ):
-        ctx = FactoryBuildContext(filename="comprehension.py", catalog=default_catalog())
+        ctx = FactoryBuildContext(
+            filename="comprehension.py", catalog=default_catalog()
+        )
         body = ctx.build_body(ast.parse(source, mode="eval").body, SugarRole.TERM)
 
         outcome = body.reduce(reduce_ctx)
