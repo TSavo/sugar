@@ -12,30 +12,6 @@ use crate::{
 };
 use syn::{BinOp, Expr, ExprMacro, Type, UnOp};
 
-pub(crate) fn is_const_bound_assertion(expr: &Expr) -> bool {
-    let Expr::Macro(ExprMacro { mac, .. }) = expr else {
-        return false;
-    };
-    let Some(name) = mac.path.segments.last().map(|seg| seg.ident.to_string()) else {
-        return false;
-    };
-    let Ok(args) = parse_macro_args(mac.tokens.clone()) else {
-        return false;
-    };
-    match name.as_str() {
-        "assert" => args
-            .exprs
-            .first()
-            .is_some_and(|expr| is_const_bound_expr(expr)),
-        "assert_eq" | "assert_ne" => {
-            args.exprs.len() >= 2
-                && is_const_bound_expr(&args.exprs[0])
-                && is_const_bound_expr(&args.exprs[1])
-        }
-        _ => false,
-    }
-}
-
 pub(crate) fn lift_const_bound_assertion(
     expr: &Expr,
     scope: &TemporalScope,

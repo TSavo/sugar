@@ -498,14 +498,6 @@ fn return_type_is_vec(output: &syn::ReturnType) -> bool {
     )
 }
 
-#[allow(dead_code)]
-pub(crate) fn literal_sequence_static_len<'a>(
-    expr: &Expr,
-    let_inits: &BTreeMap<String, &'a Expr>,
-) -> Option<usize> {
-    literal_sequence_static_len_inner(expr, let_inits, None, None, 0)
-}
-
 pub(crate) fn literal_sequence_static_len_in_scope<'a>(
     expr: &Expr,
     let_inits: &BTreeMap<String, &'a Expr>,

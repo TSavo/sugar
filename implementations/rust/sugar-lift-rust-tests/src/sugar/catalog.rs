@@ -289,7 +289,6 @@ const ITEM_CLAIMS: &[&ItemSugarClaim] = &[&const_item::ITEM_SUGAR, &impl_method:
 /// Order: non-fallback claims come before the SupportSugar fallback automatically
 /// via the `fallback_well` ordering mechanism. `block_sugar` uses `statement_before`
 /// to ensure it precedes `stmt_support` even when both would match the same stmt.
-#[allow(dead_code)]
 const STMT_CLAIMS: &[&StmtSugarClaim] = &[
     &return_sugar::STMT_SUGAR,
     &assign_sugar::STMT_SUGAR,
@@ -414,7 +413,6 @@ pub(crate) fn matching_item_claims_for_role(
 /// Dispatch a single STATEMENT through the factory by role -- the Stmt analogue of
 /// `build_expr_role`/`build_item_role`. The body->post composition uses THIS; there is
 /// no other sanctioned way to lift a statement.
-#[allow(dead_code)]
 pub(crate) fn build_stmt_role(stmt: &Stmt, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
     let mut candidates = matching_stmt_claims_for_role(stmt, fcx, role);
     let selected_index = candidates
@@ -438,7 +436,6 @@ pub(crate) fn build_stmt_role(stmt: &Stmt, fcx: &SugarBuildCtx, role: SugarRole)
     AccountedSugar::new(seed, node)
 }
 
-#[allow(dead_code)]
 pub(crate) fn matching_stmt_claims_for_role(
     stmt: &Stmt,
     fcx: &SugarBuildCtx,

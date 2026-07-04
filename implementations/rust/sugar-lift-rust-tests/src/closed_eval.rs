@@ -926,20 +926,6 @@ fn collect_block_asserts(
         }
     }
 
-    // Rebuild an assert macro with the loop variable substituted (loopvar -> value)
-    // throughout its token stream. Substitution is VALUE-POSITION aware: an ident equal
-    // to `var` is replaced ONLY when it denotes a value, NOT when it is a method/field
-    // name (immediately after `.`) or a path segment (immediately after `::`). The loop
-    // variable `sign` must not rewrite the method call `.sign(..)` to `.None(..)`. Still
-    // fully backstopped: a wrong substitution can only yield a non-parse / non-green
-    // harness -> not dissolved (safe); it can never false-discharge.
-    fn subst_macro(m: &syn::Macro, var: &str, value: &Expr) -> Option<syn::Macro> {
-        let val_tokens = quote::quote!(#value);
-        let mut m2 = m.clone();
-        m2.tokens = replace_value_ident(m.tokens.clone(), var, &val_tokens);
-        Some(m2)
-    }
-
     // Token-substitute `var -> value` throughout an arbitrary statement (used to
     // specialize a loop body to one concrete iteration value). Re-parses the rewritten
     // tokens as a `syn::Stmt`; `None` if the rewrite fails to parse (safe -- the point

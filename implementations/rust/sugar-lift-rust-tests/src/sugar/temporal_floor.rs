@@ -78,25 +78,6 @@ impl TemporalFloor {
         }
     }
 
-    fn mint_binding_alias<'a>(
-        &self,
-        doorway: BindDoorway<'a>,
-    ) -> Result<TemporalBinding, TemporalFloorRefusal> {
-        if doorway.name.is_empty() {
-            return Err(TemporalFloorRefusal::new(
-                "missing standing",
-                "TemporalFloor",
-                "bind doorway carried an empty name",
-                "route the freshly bound temporal name into BindDoorway",
-            ));
-        }
-        Ok(TemporalBinding {
-            name: doorway.name.to_string(),
-            value: doorway.name.to_string(),
-            doorway: TemporalDoorwayKind::Bind,
-        })
-    }
-
     fn mint_rewrite_alias<'a>(
         &self,
         doorway: RewriteDoorway<'a>,
@@ -110,9 +91,7 @@ impl TemporalFloor {
             ));
         }
         Ok(TemporalBinding {
-            name: doorway.name.to_string(),
             value: format!("{}@def{}", doorway.name, doorway.version),
-            doorway: TemporalDoorwayKind::Rewrite,
         })
     }
 }
@@ -121,25 +100,6 @@ pub(crate) trait TemporalDoorway {
     type Alias;
 
     fn alias_through(self, floor: &TemporalFloor) -> Result<Self::Alias, TemporalFloorRefusal>;
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct BindDoorway<'a> {
-    name: &'a str,
-}
-
-impl<'a> BindDoorway<'a> {
-    pub(crate) fn new(name: &'a str) -> Self {
-        Self { name }
-    }
-}
-
-impl<'a> TemporalDoorway for BindDoorway<'a> {
-    type Alias = TemporalBinding;
-
-    fn alias_through(self, floor: &TemporalFloor) -> Result<Self::Alias, TemporalFloorRefusal> {
-        floor.mint_binding_alias(self)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -228,96 +188,32 @@ impl ConsumingRewriteAlias {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TemporalDoorwayKind {
-    Bind,
-    Rewrite,
-    Curry,
-}
-
-impl TemporalDoorwayKind {
-    pub(crate) fn parse(name: &str) -> Result<Self, TemporalFloorRefusal> {
-        match name {
-            "bind" => Ok(Self::Bind),
-            "rewrite" => Ok(Self::Rewrite),
-            "curry" => Ok(Self::Curry),
-            other => Err(TemporalFloorRefusal::new(
-                "unknown doorway",
-                "TemporalFloor",
-                format!("doorway `{other}`"),
-                "use one of: bind, rewrite, curry",
-            )),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TemporalBinding {
-    name: String,
     value: String,
-    doorway: TemporalDoorwayKind,
 }
 
 impl TemporalBinding {
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
     pub(crate) fn value(&self) -> &str {
         &self.value
-    }
-
-    pub(crate) fn doorway(&self) -> TemporalDoorwayKind {
-        self.doorway
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct TemporalContext {
-    bindings: Vec<TemporalBinding>,
-}
-
-impl TemporalContext {
-    pub(crate) fn bind(&self, binding: TemporalBinding) -> Self {
-        let mut bindings = self.bindings.clone();
-        bindings.push(binding);
-        Self { bindings }
-    }
-
-    pub(crate) fn value_for(&self, name: &str) -> Result<&TemporalBinding, TemporalFloorRefusal> {
-        self.bindings
-            .iter()
-            .rev()
-            .find(|binding| binding.name() == name)
-            .ok_or_else(|| {
-                TemporalFloorRefusal::new(
-                    "resolution miss",
-                    "TemporalContext",
-                    format!("no temporal binding for `{name}`"),
-                    "thread the binding through TemporalContext::bind before resolving it",
-                )
-            })
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum IterProvenance {
-    Literal,
-    Stated,
     Derived,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IterStanding {
     member: &'static str,
-    provenance: IterProvenance,
     count: usize,
 }
 
 impl IterStanding {
     pub(crate) fn new(
         member: &'static str,
-        provenance: IterProvenance,
+        _provenance: IterProvenance,
         count: Option<usize>,
     ) -> Result<Self, TemporalFloorRefusal> {
         let Some(count) = count else {
@@ -328,19 +224,11 @@ impl IterStanding {
                 "construct IterStanding with the member's own count before aliasing it",
             ));
         };
-        Ok(Self {
-            member,
-            provenance,
-            count,
-        })
+        Ok(Self { member, count })
     }
 
     pub(crate) fn member(&self) -> &'static str {
         self.member
-    }
-
-    pub(crate) fn provenance(&self) -> IterProvenance {
-        self.provenance
     }
 
     pub(crate) fn count(&self) -> usize {
@@ -353,74 +241,15 @@ pub(crate) trait IterFloorMember {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct LiteralIterMember {
-    member: &'static str,
-    count: usize,
-}
-
-impl LiteralIterMember {
-    pub(crate) fn array(count: usize) -> Self {
-        Self {
-            member: "ArrayLiteral",
-            count,
-        }
-    }
-
-    pub(crate) fn tuple(count: usize) -> Self {
-        Self {
-            member: "TupleLiteral",
-            count,
-        }
-    }
-
-    pub(crate) fn string_chars(count: usize) -> Self {
-        Self {
-            member: "StringLiteral.chars",
-            count,
-        }
-    }
-
-    pub(crate) fn string_bytes(count: usize) -> Self {
-        Self {
-            member: "StringLiteral.bytes",
-            count,
-        }
-    }
-
-    pub(crate) fn range(count: usize) -> Self {
-        Self {
-            member: "RangeLiteral",
-            count,
-        }
-    }
-}
-
-impl IterFloorMember for LiteralIterMember {
-    fn standing(&self) -> Result<IterStanding, TemporalFloorRefusal> {
-        IterStanding::new(self.member, IterProvenance::Literal, Some(self.count))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CollectionIterMember {
     member: &'static str,
-    provenance: IterProvenance,
     count: usize,
 }
 
 impl CollectionIterMember {
-    pub(crate) fn stated(count: usize) -> Self {
-        Self {
-            member: "StatedCollection",
-            provenance: IterProvenance::Stated,
-            count,
-        }
-    }
-
     pub(crate) fn derived(count: usize) -> Self {
         Self {
             member: "DerivedCollection",
-            provenance: IterProvenance::Derived,
             count,
         }
     }
@@ -428,7 +257,7 @@ impl CollectionIterMember {
 
 impl IterFloorMember for CollectionIterMember {
     fn standing(&self) -> Result<IterStanding, TemporalFloorRefusal> {
-        IterStanding::new(self.member, self.provenance, Some(self.count))
+        IterStanding::new(self.member, IterProvenance::Derived, Some(self.count))
     }
 }
 
@@ -621,15 +450,10 @@ pub(crate) struct FoldFloor {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FoldTick<E> {
-    accumulator_alias: TemporalBinding,
     emission: E,
 }
 
 impl<E> FoldTick<E> {
-    pub(crate) fn accumulator_alias(&self) -> &TemporalBinding {
-        &self.accumulator_alias
-    }
-
     pub(crate) fn emission(&self) -> &E {
         &self.emission
     }
@@ -639,7 +463,6 @@ impl<E> FoldTick<E> {
 pub(crate) struct FoldFloorOutput<A, E> {
     final_accumulator: A,
     ticks: Vec<FoldTick<E>>,
-    standing: IterStanding,
 }
 
 impl<A, E> FoldFloorOutput<A, E> {
@@ -649,10 +472,6 @@ impl<A, E> FoldFloorOutput<A, E> {
 
     pub(crate) fn ticks(&self) -> &[FoldTick<E>] {
         &self.ticks
-    }
-
-    pub(crate) fn standing(&self) -> &IterStanding {
-        &self.standing
     }
 }
 
@@ -696,10 +515,7 @@ impl FoldFloor {
                         let alias =
                             temporal.alias(RewriteDoorway::new(accumulator_name, idx + 1))?;
                         let (emission, next_accumulator) = step(idx, &accumulator, item, &alias);
-                        ticks.push(FoldTick {
-                            accumulator_alias: alias,
-                            emission,
-                        });
+                        ticks.push(FoldTick { emission });
                         Ok((next_accumulator, ticks))
                     })
                 })?;
@@ -720,7 +536,6 @@ impl FoldFloor {
         Ok(FoldFloorOutput {
             final_accumulator: accumulator,
             ticks,
-            standing: operand,
         })
     }
 }
@@ -796,73 +611,11 @@ mod tests {
     }
 
     #[test]
-    fn doorway_kinds_are_closed_and_unknown_refuses_loudly() {
-        let err = TemporalDoorwayKind::parse("freeze").expect_err("unknown doorway refuses");
-        let msg = err.to_string();
-
-        assert!(msg.contains("crime=unknown doorway"));
-        assert!(msg.contains("owner=TemporalFloor"));
-        assert!(msg.contains("shape=doorway `freeze`"));
-        assert!(msg.contains("replacement=use one of: bind, rewrite, curry"));
-    }
-
-    #[test]
-    fn temporal_context_resolves_by_reverse_scan_only() {
-        let floor = TemporalFloor::default();
-        let first = floor
-            .alias(BindDoorway::new("x"))
-            .expect("bind doorway aliases");
-        let second = floor
-            .alias(RewriteDoorway::new("x", 1))
-            .expect("rewrite doorway aliases");
-
-        let ctx = TemporalContext::default().bind(first).bind(second);
-        let resolved = ctx.value_for("x").expect("latest binding resolves");
-
-        assert_eq!(resolved.value(), "x@def1");
-        assert_eq!(resolved.doorway(), TemporalDoorwayKind::Rewrite);
-    }
-
-    #[test]
-    fn temporal_context_miss_is_floor_kind_gap() {
-        let err = TemporalContext::default()
-            .value_for("missing")
-            .expect_err("missing temporal binding refuses");
-        let msg = err.to_string();
-
-        assert!(msg.contains("crime=resolution miss"));
-        assert!(msg.contains("owner=TemporalContext"));
-        assert!(msg.contains("shape=no temporal binding for `missing`"));
-        assert!(msg.contains("replacement=thread the binding through TemporalContext::bind"));
-    }
-
-    #[test]
-    fn iter_floor_literal_and_collection_members_report_count_with_provenance() {
-        let floor = IterFloor;
-        let members = [
-            floor.alias(&LiteralIterMember::array(2)).unwrap(),
-            floor.alias(&LiteralIterMember::tuple(3)).unwrap(),
-            floor.alias(&LiteralIterMember::string_chars(4)).unwrap(),
-            floor.alias(&LiteralIterMember::string_bytes(5)).unwrap(),
-            floor.alias(&LiteralIterMember::range(6)).unwrap(),
-            floor.alias(&CollectionIterMember::stated(7)).unwrap(),
-            floor.alias(&CollectionIterMember::derived(8)).unwrap(),
-        ];
-
-        assert_eq!(members[0].member(), "ArrayLiteral");
-        assert_eq!(members[0].provenance(), IterProvenance::Literal);
-        assert_eq!(members[0].count(), 2);
-        assert_eq!(members[5].provenance(), IterProvenance::Stated);
-        assert_eq!(members[6].provenance(), IterProvenance::Derived);
-    }
-
-    #[test]
     fn iter_floor_counts_map_output_as_derived() {
         let floor = IterFloor;
         let standing = floor.alias(&MapOutputIterMember::new(2)).unwrap();
 
         assert_eq!(standing.member(), "MapOutput");
-        assert_eq!(standing.provenance(), IterProvenance::Derived);
         assert_eq!(standing.count(), 2);
     }
 
@@ -898,15 +651,12 @@ mod tests {
         assert_eq!(members[7].member(), "TakeWhileOutput");
         assert_eq!(members[8].member(), "SkipWhileOutput");
         assert_eq!(members[9].member(), "InspectOutput");
-        assert!(members
-            .iter()
-            .all(|standing| standing.provenance() == IterProvenance::Derived));
         assert_eq!(members[9].count(), 11);
     }
 
     #[test]
     fn iter_floor_missing_standing_refuses_loudly() {
-        let err = IterStanding::new("ArrayLiteral", IterProvenance::Literal, None)
+        let err = IterStanding::new("ArrayLiteral", IterProvenance::Derived, None)
             .expect_err("missing member count refuses");
         let msg = err.to_string();
 
@@ -914,18 +664,6 @@ mod tests {
         assert!(msg.contains("owner=IterFloor"));
         assert!(msg.contains("shape=ArrayLiteral carried no finite member count"));
         assert!(msg.contains("replacement=construct IterStanding"));
-    }
-
-    #[test]
-    fn wrong_doorway_is_observably_a_different_theory() {
-        let floor = TemporalFloor::default();
-        let bound = floor.alias(BindDoorway::new("x")).unwrap();
-        let rewritten = floor.alias(RewriteDoorway::new("x", 1)).unwrap();
-        let curry = floor.alias(CurryDoorway::new("x", 0)).unwrap();
-
-        assert_ne!(bound.value(), rewritten.value());
-        assert_ne!(bound.value(), curry.suffix());
-        assert_ne!(rewritten.value(), curry.suffix());
     }
 
     #[test]
@@ -975,13 +713,6 @@ mod tests {
             .expect("fold floor desugars through temporal floor rewrites");
 
         assert_eq!(*out.final_accumulator(), 6);
-        assert_eq!(
-            out.ticks()
-                .iter()
-                .map(|tick| tick.accumulator_alias().value().to_string())
-                .collect::<Vec<_>>(),
-            vec!["acc@def1", "acc@def2", "acc@def3"]
-        );
         assert_eq!(
             out.ticks()
                 .iter()

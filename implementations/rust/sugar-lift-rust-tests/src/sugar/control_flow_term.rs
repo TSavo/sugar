@@ -171,34 +171,6 @@ pub(crate) fn decompose_control_flow_term(
     }
 }
 
-pub(crate) struct RoutedQuestionMarkTerm<'a> {
-    boundary: String,
-    inner: SugarBody<TermFloor>,
-    handlers: Vec<&'a dyn RouteRaiseHandler>,
-}
-
-impl Sugar for RoutedQuestionMarkTerm<'_> {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        reduce_question_mark(&self.inner, &self.boundary, ctx, self.handlers.clone())
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn decompose_control_flow_term_with_handlers<'a>(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-    handlers: Vec<&'a dyn RouteRaiseHandler>,
-) -> Option<RoutedQuestionMarkTerm<'a>> {
-    match expr {
-        Expr::Try(try_expr) => Some(RoutedQuestionMarkTerm {
-            boundary: token_key(expr),
-            inner: SugarBody::term(&try_expr.expr, fcx),
-            handlers,
-        }),
-        _ => None,
-    }
-}
-
 fn reduce_question_mark(
     inner: &SugarBody<TermFloor>,
     boundary: &str,
@@ -268,10 +240,9 @@ impl QuestionMarkVisitor<'_> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use sugar_ir_symbolic::{num, ConstValue, Term};
+    use sugar_ir_symbolic::{ConstValue, Term};
 
     use super::*;
-    use crate::sugar::route_raises_operation::RouteRaiseHandler;
     use crate::{Desugared, LiftOptions, RaiseEffect, ReductionCtx, TemporalPlan, TemporalScope};
 
     fn ctx() -> (TemporalScope, LiftOptions) {
@@ -332,54 +303,5 @@ mod tests {
             boundary.contains("Err"),
             "boundary should name the question-mark source, got {boundary}"
         );
-    }
-
-    struct CatchResultErr;
-
-    impl RouteRaiseHandler for CatchResultErr {
-        fn matches(&self, effect: &Effect) -> bool {
-            matches!(effect, Effect::Raise(RaiseEffect::ResultErr { .. }))
-        }
-
-        fn reduce(&self, _scope: &TemporalScope, _effect: &Effect) -> Outcome {
-            Outcome::Complete(Desugared::StmtReturn(num(99)))
-        }
-    }
-
-    #[test]
-    fn question_mark_err_path_can_be_caught_by_wrapping_handler() {
-        let expr: Expr = syn::parse_str("Err(9)?").expect("question-mark expr parses");
-        let (scope, options) = ctx();
-        let let_inits = BTreeMap::new();
-        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let sugar = decompose_control_flow_term_with_handlers(
-            &expr,
-            &fcx,
-            vec![&CatchResultErr as &dyn RouteRaiseHandler],
-        )
-        .expect("question mark recognized");
-        let items: Vec<syn::Item> = Vec::new();
-        let reducer = ReductionCtx::from_items(&items);
-        let mut float_widths = crate::FloatWidthScope::new();
-        let sugar_ctx = crate::sugar_ctx_with_factory_audits(
-            &scope,
-            &options,
-            &reducer,
-            &mut float_widths,
-            0,
-            None,
-        );
-
-        let Outcome::Complete(Desugared::StmtReturn(term)) = sugar.reduce(&sugar_ctx) else {
-            panic!("matching handler should route Err(_)? to its return floor");
-        };
-        let Term::Const {
-            value: ConstValue::Int(got),
-            ..
-        } = term.as_ref()
-        else {
-            panic!("handler returned non-int term");
-        };
-        assert_eq!(*got, 99);
     }
 }

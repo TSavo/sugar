@@ -16,9 +16,8 @@ use crate::sugar::float_floor::{
 };
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, callsite_assertion_name, eq, strip_refs_groups, sugar_ctx_with_factory_audits,
-    token_key, AssertionEntry, AssertionFactKind, Desugared, Effect, FloatWidthScope, LiftOptions,
-    Outcome, ReductionCtx, Sugar, SugarCtx, Warrant,
+    bool_const, callsite_assertion_name, eq, strip_refs_groups, AssertionFactKind, Desugared,
+    Effect, Outcome, Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{atomic_, Formula, Term};
 use syn::{Expr, ExprLit, ExprMethodCall, Lit};
@@ -81,82 +80,6 @@ fn recognize_method_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<B
         receiver: SugarBody::term_frag(&receiver_frag, fcx),
         site: frag.token_str(),
     }))
-}
-
-pub(crate) fn assertion_entry(
-    expr: &Expr,
-    scope: &crate::TemporalScope,
-    _float_widths: &FloatWidthScope,
-) -> Result<Option<AssertionEntry>, Effect> {
-    match expr {
-        Expr::Paren(paren) => assertion_entry(&paren.expr, scope, _float_widths),
-        Expr::Group(group) => assertion_entry(&group.expr, scope, _float_widths),
-        Expr::MethodCall(call) if is_liftable_float_refinement_method(&call.method.to_string()) => {
-            assertion_entry_method(call, scope).map(Some)
-        }
-        Expr::MethodCall(_) => Ok(None),
-        _ => Ok(None),
-    }
-}
-
-fn assertion_entry_method(
-    call: &ExprMethodCall,
-    scope: &crate::TemporalScope,
-) -> Result<AssertionEntry, Effect> {
-    let method = call.method.to_string();
-    let site = token_key(Expr::MethodCall(call.clone()));
-    if !call.args.is_empty() {
-        float_refinement_gap(&format!(
-            "float refinement predicate takes arguments `{site}`"
-        ));
-    }
-    if let Some(unstable_width) = float_refinement_receiver_unstable_width(&call.receiver) {
-        let width_reason = if unstable_width == "f16" && method == "is_nan" {
-            "f16 NaN width not modeled".to_string()
-        } else {
-            format!("{unstable_width} bit-width not modeled")
-        };
-        return Err(Effect::FloatIeeeRefinement {
-            reason: format!("float refinement predicate `{method}` {width_reason} `{site}`"),
-        });
-    }
-    let Some(width) = float_refinement_receiver_width(&call.receiver, scope) else {
-        return Err(Effect::FloatIeeeRefinement {
-            reason: format!(
-                "float refinement predicate `{method}` requires known f32/f64 receiver width `{site}`"
-            ),
-        });
-    };
-    if let Some(value) = literal_float_refinement_value(&method, &call.receiver) {
-        return Ok(AssertionEntry {
-            name: None,
-            atom: eq(bool_const(value), bool_const(true)),
-            fact_span: None,
-            kind: AssertionFactKind::Warranted,
-            claim_count: 1,
-        });
-    }
-
-    let options = LiftOptions::default();
-    let reducer = ReductionCtx::from_items(&[]);
-    let let_inits = std::collections::BTreeMap::new();
-    let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
-    let mut local_float_widths = FloatWidthScope::new();
-    let ctx =
-        sugar_ctx_with_factory_audits(scope, &options, &reducer, &mut local_float_widths, 0, None);
-    let receiver = match SugarBody::term(&call.receiver, &fcx).reduce(&ctx) {
-        Outcome::Complete(desugared) => desugared
-            .into_term()
-            .unwrap_or_else(|| float_refinement_gap("receiver reduced to a non-term floor")),
-        Outcome::Incomplete(effect) => return Err(effect),
-    };
-    Ok(AssertionEntry {
-        name: callsite_assertion_name(receiver.as_ref(), scope.local_scope()),
-        atom: atomic_(float_predicate_atom_name(width, &method), vec![receiver]),
-        fact_span: None,
-        kind: AssertionFactKind::Warranted,
-        claim_count: 1,
-    })
 }
 
 impl Sugar for FloatRefinementSugar {
@@ -317,37 +240,6 @@ fn float_refinement_receiver_static_width(expr: &Expr) -> Option<IeeeFloatWidth>
         }) => stable_width_from_suffix(lit.suffix()),
         Expr::Paren(paren) => float_refinement_receiver_static_width(&paren.expr),
         Expr::Group(group) => float_refinement_receiver_static_width(&group.expr),
-        _ => None,
-    }
-}
-
-fn float_refinement_receiver_width(
-    expr: &Expr,
-    scope: &crate::TemporalScope,
-) -> Option<IeeeFloatWidth> {
-    match expr {
-        Expr::MethodCall(call) => stable_width_from_method_name(&call.method.to_string())
-            .or_else(|| stable_width_from_method_turbofish(call))
-            .or_else(|| {
-                if call.method == "unwrap" {
-                    float_refinement_receiver_width(&call.receiver, scope)
-                } else {
-                    None
-                }
-            }),
-        Expr::Path(path) => {
-            let name = path_to_name(&path.path);
-            scope
-                .let_binding_expected_type(&name)
-                .and_then(stable_width_from_type_key)
-                .or_else(|| stable_width_from_path(&path.path))
-        }
-        Expr::Lit(ExprLit {
-            lit: Lit::Float(lit),
-            ..
-        }) => stable_width_from_suffix(lit.suffix()),
-        Expr::Paren(paren) => float_refinement_receiver_width(&paren.expr, scope),
-        Expr::Group(group) => float_refinement_receiver_width(&group.expr, scope),
         _ => None,
     }
 }
@@ -542,10 +434,10 @@ mod tests {
             FloatReceiverWidth::ScopePath(name) => assert_eq!(name, "value"),
             _ => panic!("expected typed receiver to be recognized as a bound path"),
         }
-        assert_eq!(
-            float_refinement_receiver_width(&call.receiver, &scope),
-            Some(IeeeFloatWidth::F64)
-        );
+        assert!(matches!(
+            float_receiver_width_source(&call.receiver).resolve(&scope),
+            FloatWidthResolution::Known(IeeeFloatWidth::F64)
+        ));
     }
 
     #[test]

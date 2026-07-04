@@ -21,13 +21,6 @@ pub(crate) struct GuardedRaise {
 }
 
 impl GuardedRaise {
-    pub(crate) fn new(guards: Vec<Rc<Formula>>, effect: Effect, scope: TemporalScope) -> Self {
-        Self {
-            guards,
-            raise: RaiseValue::new(effect, scope),
-        }
-    }
-
     pub(crate) fn from_raise(guards: Vec<Rc<Formula>>, raise: RaiseValue) -> Self {
         Self { guards, raise }
     }

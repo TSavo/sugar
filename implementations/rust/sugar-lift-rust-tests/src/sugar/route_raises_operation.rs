@@ -275,6 +275,7 @@ mod tests {
     use sugar_ir_symbolic::{atomic_, num};
 
     use super::*;
+    use crate::sugar::raise_value::RaiseValue;
     use crate::{RaiseEffect, TemporalPlan, TemporalScope};
 
     struct PanicHandler;
@@ -290,22 +291,26 @@ mod tests {
     }
 
     fn panic_raise(guards: Vec<Rc<Formula>>) -> GuardedRaise {
-        GuardedRaise::new(
+        GuardedRaise::from_raise(
             guards,
-            Effect::PanicMacro {
-                boundary: "panic!()".to_string(),
-            },
-            TemporalScope::new("route-raise-test", TemporalPlan::default()),
+            RaiseValue::new(
+                Effect::PanicMacro {
+                    boundary: "panic!()".to_string(),
+                },
+                TemporalScope::new("route-raise-test", TemporalPlan::default()),
+            ),
         )
     }
 
     fn result_err_raise(guards: Vec<Rc<Formula>>) -> GuardedRaise {
-        GuardedRaise::new(
+        GuardedRaise::from_raise(
             guards,
-            Effect::Raise(RaiseEffect::ResultErr {
-                boundary: "fallible()?".to_string(),
-            }),
-            TemporalScope::new("route-result-err-test", TemporalPlan::default()),
+            RaiseValue::new(
+                Effect::Raise(RaiseEffect::ResultErr {
+                    boundary: "fallible()?".to_string(),
+                }),
+                TemporalScope::new("route-result-err-test", TemporalPlan::default()),
+            ),
         )
     }
 
@@ -419,12 +424,14 @@ mod tests {
             }
 
             fn reduce(&self, scope: &TemporalScope, _effect: &Effect) -> Outcome {
-                Outcome::Complete(Desugared::StmtGuardedRaise(GuardedRaise::new(
+                Outcome::Complete(Desugared::StmtGuardedRaise(GuardedRaise::from_raise(
                     vec![atomic_("inner", vec![])],
-                    Effect::PanicMacro {
-                        boundary: "reraised".to_string(),
-                    },
-                    scope.clone(),
+                    RaiseValue::new(
+                        Effect::PanicMacro {
+                            boundary: "reraised".to_string(),
+                        },
+                        scope.clone(),
+                    ),
                 )))
             }
         }

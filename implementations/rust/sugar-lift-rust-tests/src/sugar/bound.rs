@@ -50,9 +50,6 @@ use crate::{Outcome, Sugar, SugarCtx};
 /// `Sugar`; unresolved init -> the consumer's existing fallback `Sugar`); `name` is
 /// the binding's provenance. `desugar` collapses to whatever `inner` collapses to.
 pub(crate) struct BoundSugar {
-    /// The `let`-bound identifier this reference named -- the binding provenance rope
-    /// (`name was bound to this`), tying the resolved outcome back to its `let` site.
-    pub(crate) name: String,
     /// The `Sugar` built from the binding's initializer. `desugar` is delegated to it
     /// verbatim: the binding reference resolves to EXACTLY what its init resolves to.
     pub(crate) inner: Box<dyn Sugar>,
@@ -72,16 +69,8 @@ impl BoundSugar {
     /// Wrap an init `Sugar` with its binding provenance. The consumer calls this when
     /// it resolves an operand reference to a `let`-bound name: it hands the resulting
     /// `BoundSugar` to the complete instead of inlining a `let_bindings.get(name)` lookup.
-    pub(crate) fn new(name: impl Into<String>, inner: Box<dyn Sugar>) -> Box<dyn Sugar> {
-        Box::new(BoundSugar {
-            name: name.into(),
-            inner,
-        })
-    }
-
-    /// The binding provenance: the `let`-bound name this reference resolved through.
-    pub(crate) fn name(&self) -> &str {
-        &self.name
+    pub(crate) fn new(_name: impl Into<String>, inner: Box<dyn Sugar>) -> Box<dyn Sugar> {
+        Box::new(BoundSugar { inner })
     }
 }
 
@@ -106,17 +95,6 @@ mod tests {
             // Never invoked in these (ctx-free) tests; present so `Sentinel: Sugar`.
             Outcome::Complete(Desugared::Seq(Vec::new()))
         }
-    }
-
-    #[test]
-    fn carries_binding_provenance() {
-        // The node ropes the resolved outcome to the `let`-bound name it resolved
-        // through -- the complete-side provenance (`name was bound to this`).
-        let node = BoundSugar {
-            name: "pat".to_string(),
-            inner: Box::new(Sentinel),
-        };
-        assert_eq!(node.name(), "pat");
     }
 
     #[test]

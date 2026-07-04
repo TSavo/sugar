@@ -154,10 +154,6 @@ fn receiver_label(receiver: &Rc<Term>) -> String {
     const_fold_int_term(receiver).map_or_else(|| format!("{receiver:?}"), |value| value.to_string())
 }
 
-pub(crate) fn term_as_int(term: &Rc<Term>) -> Option<i128> {
-    const_fold_int_term(term)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
