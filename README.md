@@ -80,6 +80,28 @@ Here is how it crosses. Each kit lifts its own surface into the same logic: vend
 
 So when `sugar prove` runs, it enumerates your callsites, resolves your dependencies' `.proof` files through their kits, and conjoins the contracts that name the same behavior, no matter which language swore them. Your Rust caller's assumption and numpy's Python contract land in one z3 query: can all of this be true at once? If your assumption contradicts what the library proved about itself, you are refused at the callsite, in your language, against testimony given in theirs. The witnesses recompute on your machine, with the kit oracle untrusted. Nothing translated your code. Nothing modeled either language. The border was never crossed, because at the level where the proof lives, there was never a border.
 
+## Who answers for a binding
+
+`let y = x;` What does that mean? You'd say "y is x", and every static analyzer would agree with you, and both of you would be guessing. Whether that binding made an independent copy (an integer), a second name for the same place (a reference), or something with provenance too murky to call, is not a fact about the syntax. It is a fact about the *value*, and in Rust it is a fact the compiler already ruled on when it decided Copy.
+
+So Sugar never asks the syntax. Bindings, writes, reads, and consumes are dispatched as events to the **floor**: the typed algebra where values live. The floor replays the event against its own semantics and returns a closed answer: this binding severs (independent value, equal to me), this one shares (two names, one node), this one is a typed effect (opaque provenance, honestly red). The walker that read `let` never decides anything; a syntax walker deciding what a binding means would be a name asking a name. And when severance matters, the floor doesn't model Rust's Copy rules; it asks rustc, the way everything here asks the vendor. Two names on one value node is also why a stale copy can never falsely refute a true assertion: the bug class isn't caught, it's unrepresentable.
+
+## Correctness composes, and the edges are the product
+
+One proof of one function is a fact. Software is composition, and composition is where every correctness story you've heard goes quiet: you proved `B`, you proved `A`, and nobody proved that B's output is acceptable to A.
+
+Sugar makes that edge a first-class object. A contract is a pre/post over an operation. Composing two operations, `A(B())`, is licensed by exactly one obligation: `post(B) → pre(A)`, the producer's postcondition implies the consumer's precondition. That arrow is an **implication**, and `sugar implicate` mints it as a memento: a signed, content-addressed record that this edge holds, antecedent CID to consequent CID, checked by z3. This is Hoare's rule of composition, content-addressed.
+
+So the whole system is a graph: operations are the nodes, contracts are the node labels, implications are the edges. A proven `P → Q` is a lemma, durable and reusable; it never expires, because it is a value, not an event. Your program's correctness is not a monolithic re-verification of everything; it is a walk over edges that already exist, minting only the ones that don't. Correctness accumulates the way a mathematics does: nobody re-proves the lemmas.
+
+## Two kinds of testimony
+
+Every warrant in a `.proof` declares where its authority came from, and the report shows you the difference.
+
+**Stated** is the vendor swearing: `assert np.add(2,3) == 5` in numpy's own test suite is numpy telling you, under its own oath, what its function returns. Sugar transports that oath; it never checks the arithmetic, because impeaching the vendor is not its jurisdiction, and `call: f(args) == literal` sworn by f's own vendor is exactly the fact you wanted. **Derived** is what the kit computed from sworn facts by cited rules: if the vendor swore the parts, arithmetic composes the whole, and the composition carries its derivation. The two never blur. A bad twin makes the distinction do its work: claim the lie, and the truthful value shows up Derived from the vendor's testimony while your lie stands alone as Stated by nobody but you, and z3 refuses the pair. You can always see which kind of ground you are standing on, because the warrant says so next to the line.
+
+Every verdict also pins what it is about: the kit that ruled, the corpus it ruled over, the toolchain it ran under, each by CID. A verdict that names its own inputs cannot be quietly reused against different ones; recompute it anywhere and it either reproduces or it was never real.
+
 ## The mechanism, in one expression
 
 For the mechanically minded, the entire lift is:
@@ -96,6 +118,10 @@ Every recognized shape terminates in exactly two outputs: a warrant cited from t
 Sugar contains zero code for anything the vendor's compiler ensures. rustc's yes is the precondition, so every type composition is correct by construction, and uncompilable input is undefined behavior by design: we make no guarantees about code the vendor makes no guarantees about. And everything in the system, every proof, contract, source file, and memento, is a BLAKE3-512 content address: h = h(p), p = l(h). No RNG, no clocks. Artifacts are values, not events, re-verifiable by anyone, forever.
 
 The full doctrine lives in [AGENTS.md](AGENTS.md).
+
+## Where this goes
+
+The papers take each impossible thing to its conclusion. The ladder starts at the [whitepaper](docs/papers/01-whitepaper.md) and climbs through a sequence of *After X* arguments: what reputation looks like when software is federated truth claims, what verification looks like when bug classes are missing edges, what types look like when the invariant solver replaces trust in logs, how protocols actually evolve, what a commit is when change carries proof, how ProofIR represents every language, what a programming language is when grammars are content-addressed algebras, and what trust means when the universal correctness bundle exists and the author doesn't matter. The full ladder is [docs/papers/](docs/papers/README.md).
 
 The rest of this page is how you run it.
 
