@@ -467,6 +467,19 @@ C's own UB never was: the record's front door is the witnessed build, so
 no-compile means no test run, no vendor claim, no memento — the demons
 cannot sign the proof chain.
 
+State the contract's edge precisely: **we make no guarantees about code the
+vendor makes no guarantees about.** On uncompilable input, at best we panic;
+at worst we report green where red belonged — and even that is CORRECT BY
+DESIGN, because the red for uncompilable code is rustc's error, and rustc is
+the thing that reports it. Every warrant we emit is a conditional claim —
+"IF the vendor's checker returned Some, THEN this assertion carries this
+warrant" — and a false antecedent tells no lie; the green is vacuous, not
+wrong. Whoever bypasses the vendor's checker has not found a hole in the
+membrane; they have stepped outside the system, where undefined means
+undefined: no witness, no memento, no signature, no claim from us at all.
+The referee closes the loop — verify demands the build witness, so a vacuous
+green can never seal.
+
 ## I want the panic
 
 Most developers are allergic to panics. Here, panic is the point. A panic is
