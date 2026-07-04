@@ -542,6 +542,21 @@ third verdict — "refused: insufficient evidence" is an honest ruling there,
 and only there. The framing's discipline is precisely that refusal was
 evicted from lift and given its one legitimate home at verify.
 
+The invariant this encodes: **we have ZERO code for type checking, and all
+type compositions are correct BY CONSTRUCTION — because rustc doesn't panic.
+It is the same demand stated twice.** rustc's type checker is itself a match
+over the program, and a type error is its panic arm firing. The domain
+precondition chains the two matches: ours only ever runs on inputs where
+rustc's already returned `Some` at every node, so type-correctness enters the
+system as a witnessed INPUT — vendor testimony — never as a judgment we
+compute. This is why the axis-drift into "a second rust-analyzer" or "a type
+checker" is not merely forbidden but structurally impossible: there is no
+type-checking code to drift. The same shape repeats all the way down (the
+Copy severance probe asks rustc rather than modeling traits; the witnessed
+build is the record's front door). One demand, two matches: every checker in
+the chain must be total over its domain, panic on its gap, and be CITED —
+never reimplemented — by the match downstream of it.
+
 The manifesto above is the operating model. The rest of this file is local
 mechanics for applying it in this checkout.
 
