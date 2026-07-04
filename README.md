@@ -119,6 +119,10 @@ Sugar contains zero code for anything the vendor's compiler ensures. rustc's yes
 
 The full doctrine lives in [AGENTS.md](AGENTS.md).
 
+## The object
+
+Compressed to 64 bytes, verified in nanoseconds, composed at every edge, compositional by design, impossible to misconstruct, signed, sealed, and delivered in every software vendor's package as the indispensable, unrefutable object of universal correctness, infinitely recomputable, and honest by axiom.
+
 ## Where this goes
 
 The papers take each impossible thing to its conclusion. The ladder starts at the [whitepaper](docs/papers/01-whitepaper.md) and climbs through a sequence of *After X* arguments: what reputation looks like when software is federated truth claims, what verification looks like when bug classes are missing edges, what types look like when the invariant solver replaces trust in logs, how protocols actually evolve, what a commit is when change carries proof, how ProofIR represents every language, what a programming language is when grammars are content-addressed algebras, and what trust means when the universal correctness bundle exists and the author doesn't matter. The full ladder is [docs/papers/](docs/papers/README.md).

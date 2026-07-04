@@ -111,6 +111,20 @@ In practice: we do not gate. We instrument, fire, measure impact, and fire again
 
 ## The enforcement ladder: every instrument wants to become the compiler
 
+**Every regression wants to become a type.** Every unit test that says "code
+should be shaped this way" is a missing type wearing a test's clothes — a bug
+that wants to be seen by the compiler and is stuck being seen by a test
+runner instead. The test is the confession; the type is the absolution. A
+shape-assertion in a suite is the system admitting it knows an invariant it
+has not yet told the compiler about — and everything the compiler has not
+been told, someone must police forever, at runtime, in CI, with eyeballs,
+fallibly. The compiler polices always, before the commit exists. Worked
+example, same day it was written: 43 "refused" rows at lift were not a census
+to ratchet down — they were 43 compiler errors waiting for the codomain type
+to be narrowed to its two lawful constructors. The census tooth built that
+morning was deleted the same evening, superseded by the type. Every census,
+ratchet, and tooth is a larval type; when one hatches, delete the shell.
+
 Instruments are not all equal. They form a ladder, and each rung up, the red
 arrives earlier and costs less to keep:
 

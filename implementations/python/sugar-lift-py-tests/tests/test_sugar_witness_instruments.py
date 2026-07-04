@@ -35,8 +35,8 @@ from sugar_lift_py_tests.witness_harness import (
 
 ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 0
-EXPECTED_SEED_CASES = 57
-EXPECTED_SEED_OWNER_COUNT = 44
+EXPECTED_SEED_CASES = 56
+EXPECTED_SEED_OWNER_COUNT = 43
 EXPECTED_TRIPLE_FAILURES = 0
 EXPECTED_MIGRATED_SEED_NAMES = {
     "add_method_return",
@@ -59,7 +59,6 @@ EXPECTED_MIGRATED_SEED_NAMES = {
     "divmod_subscript_return",
     "format_int_return",
     "identity_assertion_boolop",
-    "if_exp_literal_condition_return",
     "if_return",
     "isinstance_assertion_boolop",
     "joined_str_literal_return",
@@ -111,6 +110,7 @@ EXPECTED_OPT_OUT_SUGARS = {
     "ListLiteralSugar",
     "OrdByteSugar",
     "PassSugar",
+    "StarredSugar",
     "SubscriptAssignSugar",
     "SubscriptDeleteSugar",
 }
@@ -252,23 +252,22 @@ def test_sugar_declared_social_opt_out_is_not_a_mechanism() -> None:
     assert claim_has_witness_or_opt_out(claim) is False
 
 
-def test_temporal_opt_outs_are_pinned_as_retirable_deferrals() -> None:
-    rows = temporal_opt_outs()
-
-    assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 5
-    assert all(row.retirement_condition for row in rows)
-    assert {
-        row.sugar_name
-        for row in EXPECTED_NON_FOL_OPT_OUTS
-        if row.retirement_condition is None
-    } == EXPECTED_OPT_OUT_SUGARS - EXPECTED_TEMPORAL_OPT_OUT_SUGARS
+def test_no_temporal_opt_out_deferrals() -> None:
+    # IDD invariant: a temporal opt-out is debt, not a ledger to maintain. Every
+    # sugar must carry a real witness or an honest refusal; a deferral — however
+    # documented its retirement condition — is an unmet gap. Red until zero
+    # sugars defer. Pinning "there are exactly 5 retirable deferrals" was the
+    # green badge on that debt.
+    assert temporal_opt_outs() == []
 
 
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
-    assert seed_report.seed_count == EXPECTED_SEED_CASES
-    assert seed_report.unique_owner_count == EXPECTED_SEED_OWNER_COUNT
-    assert seed_report.catalog_count == 59
+    # IDD invariant: seed coverage is a canceling pair, not a pinned magnitude.
+    # Every catalog sugar must own a seed case — (catalog - seed-covered) == 0.
+    # This self-updates (a 58th sugar raises both sides) and is red until full
+    # coverage. Pinning seed_count / catalog_count == 57 asserted nothing about
+    # correctness and forced a hand-edit on every catalog change.
+    assert seed_report.catalog_count - seed_report.unique_owner_count == 0
     assert seed_report.witness_triples_failing == EXPECTED_TRIPLE_FAILURES
     assert seed_report.witnesses_not_dispatching_to_owner == 0
     assert [
@@ -718,22 +717,20 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "witness_triples_failing": EXPECTED_TRIPLE_FAILURES,
         "witnesses_not_dispatching_to_owner": 0,
         "non_fol_opt_out_drift": 0,
-        "temporal_opt_outs": len(EXPECTED_TEMPORAL_OPT_OUT_SUGARS),
-        "total": EXPECTED_UNENROLLED_SUGARS
-        + EXPECTED_TRIPLE_FAILURES
-        + len(EXPECTED_TEMPORAL_OPT_OUT_SUGARS),
+        # IDD invariant: temporal opt-outs are a gap, not a pinned baseline.
+        # The whole residue vector must cancel to zero.
+        "temporal_opt_outs": 0,
+        "total": 0,
     }
     assert "R(unenrolled-sugars): 0" in text
     assert "R(witness-triples-failing): 0" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
-    assert "R(temporal-opt-outs): 5" in text
-    assert "seed coverage: 55 seed cases, 42/57 catalog sugars" in text
+    assert "R(temporal-opt-outs): 0" in text
     assert "unenrolled sugars:" not in text
-    assert "temporal opt-outs:" in text
 
 
-def test_sugar_witness_cli_exits_red_for_temporal_opt_out_frontier(
+def test_sugar_witness_cli_exits_clean_only_when_residue_is_zero(
     seed_report,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -743,12 +740,14 @@ def test_sugar_witness_cli_exits_red_for_temporal_opt_out_frontier(
 
     status = cli.main(["--root", str(ROOT), "--sugar-witness-frontier"])
 
-    assert status == 1
+    # IDD invariant: the frontier exits clean only when every residue is zero.
+    # Red until the temporal-opt-out debt is actually retired — not pinned at 5.
     stdout = capsys.readouterr().out
     assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
-    assert "R(temporal-opt-outs): 5" in stdout
+    assert "R(temporal-opt-outs): 0" in stdout
+    assert status == 0
 
 
 def test_witness_pipeline_solver_absence_is_loud() -> None:
