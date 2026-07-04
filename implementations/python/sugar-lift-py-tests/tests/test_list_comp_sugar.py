@@ -5,15 +5,15 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.floor import ArrayLiteral, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -78,13 +78,30 @@ def test_runtime_iterable_list_comp_is_typed_runtime_effect() -> None:
         ),
     )
 
-    with pytest.raises(FactoryGap) as raised:
-        body.reduce(reduce_ctx)
+    outcome = body.reduce(reduce_ctx)
 
-    assert raised.value.audit_row.status == "refused"
-    assert raised.value.audit_row.selected == "ListCompSugar"
-    assert "list comprehension runtime iterable" in raised.value.info["fix"]
-    assert "use a literal finite domain" in raised.value.info["fix"]
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "list comprehension runtime boundary" in outcome.effect.reason
+    assert "runtime iterable `Name`" in outcome.effect.reason
+    assert "typed red" in outcome.effect.reason
+    assert "blame=" in outcome.effect.reason
+
+
+def test_non_bool_guard_list_comp_is_conservative_runtime_effect() -> None:
+    ctx = FactoryBuildContext(filename="list_comp.py", catalog=default_catalog())
+    body = ctx.build_body(
+        ast.parse("[x for x in [1] if 1]", mode="eval").body,
+        SugarRole.TERM,
+    )
+
+    outcome = body.reduce(ReduceContext.root(owner="list-comp-test"))
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "list comprehension runtime boundary" in outcome.effect.reason
+    assert "guard truthiness for non-bool floors is runtime here" in outcome.effect.reason
+    assert "narrower truthiness dispatch may own this later" in outcome.effect.reason
 
 
 def test_list_comp_factory_selects_shape_recognizer() -> None:

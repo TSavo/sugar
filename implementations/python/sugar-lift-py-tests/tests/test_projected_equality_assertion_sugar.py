@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 
@@ -323,3 +324,25 @@ def test_projected_equality_lifts_fstring_rhs_attribute() -> None:
             },
         ],
     }
+
+
+def test_projected_equality_rhs_runtime_effect_stays_typed_effect() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_values(arr, xs):\n"
+            "    assert arr.values == [x for x in xs]\n"
+        ),
+        filename="test_values.py",
+        memento_file="test_values.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    effect = report.payload.effects[0]
+    assert isinstance(effect.effect, RuntimeEffect)
+    assert "list comprehension runtime boundary" in effect.effect.reason
+    assert "runtime iterable `Name`" in effect.effect.reason
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ProjectedEqualityAssertionSugar"
+    ]
