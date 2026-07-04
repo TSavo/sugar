@@ -616,9 +616,7 @@ fn collect_rs_files(root: &Path) -> Vec<(String, String)> {
         let Ok(src) = std::fs::read_to_string(path) else {
             continue;
         };
-        if syn::parse_file(&src).is_err() {
-            continue;
-        }
+        syn::parse_file(&src).unwrap();
         let rel = path
             .strip_prefix(root)
             .unwrap_or(path)
