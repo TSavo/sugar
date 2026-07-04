@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.effect import (
-    CoverageGapEffect,
+    DigRefusalEffect,
     Effect,
+    FactoryGapEffect,
     RuntimeEffect,
     effect_kind,
     effect_reason,
@@ -37,14 +38,11 @@ class RefusalRecord:
     node_class: ClassVar[str] = "RefusalRecord"
 
     effect: Effect = field(init=False)
-    effect_kind: str = field(init=False)
-    reason: str = field(init=False)
     _provenance: Provenance = field(init=False, repr=False)
 
     def __init__(self, *, effect: Effect, provenance: Provenance) -> None:
         _require_provenance(provenance, owner=self.node_class)
         resolved_effect = require_effect(effect)
-        kind = effect_kind(resolved_effect)
         reason = effect_reason(resolved_effect)
         if not reason:
             _proofir_gap(
@@ -54,9 +52,15 @@ class RefusalRecord:
                 fix="preserve the refusal reason when constructing RefusalRecord",
             )
         object.__setattr__(self, "effect", resolved_effect)
-        object.__setattr__(self, "effect_kind", kind)
-        object.__setattr__(self, "reason", reason)
         object.__setattr__(self, "_provenance", provenance)
+
+    @property
+    def effect_kind(self) -> str:
+        return effect_kind(self.effect)
+
+    @property
+    def reason(self) -> str:
+        return effect_reason(self.effect)
 
     @classmethod
     def from_incomplete(
@@ -78,18 +82,12 @@ class RefusalRecord:
     ) -> RefusalRecord:
         if isinstance(gap, FactoryGap):
             return cls(
-                effect=CoverageGapEffect(
-                    boundary=str(gap.info.get("owner", "FactoryGap")),
-                    reason=str(gap),
-                ),
+                effect=FactoryGapEffect.from_gap(gap),
                 provenance=provenance,
             )
         if isinstance(gap, DigRefusal):
             return cls(
-                effect=CoverageGapEffect(
-                    boundary=f"dig:{gap.callee}",
-                    reason=gap.reason,
-                ),
+                effect=DigRefusalEffect.from_refusal(gap),
                 provenance=provenance,
             )
         raise TypeError("RefusalRecord.from_gap requires FactoryGap or DigRefusal")
@@ -112,13 +110,7 @@ class RefusalRecord:
     def dig_refusal_diagnostic(refusal: DigRefusal) -> dict[str, Any]:
         if not isinstance(refusal, DigRefusal):
             raise TypeError("dig_refusal_diagnostic requires DigRefusal")
-        return {
-            "kind": "dig-refusal",
-            "callee": refusal.callee,
-            "blame": refusal.blame,
-            "caught": refusal.caught,
-            "reason": refusal.reason,
-        }
+        return DigRefusalEffect.from_refusal(refusal).to_diagnostic()
 
     @staticmethod
     def agreement_violation_diagnostic(

@@ -18,6 +18,7 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceMementoDto,
     SourceSpanDto,
 )
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.proofir import (
     ClaimFormula,
     ConstructionSite,
@@ -110,7 +111,7 @@ def test_python_dtos_emit_rpc_report_shapes() -> None:
     )
     effect = EffectDto(
         name="python.red.effect",
-        reason="write more floor for this effect",
+        effect=RuntimeEffect("write more floor for this effect"),
         source_memento=source,
     )
     implication = ImplicationDto(
@@ -171,6 +172,8 @@ def test_python_dtos_emit_rpc_report_shapes() -> None:
     assert rpc["planMementos"][0]["planAtoms"][1]["role"] == "proofir-compiler"
     assert rpc["implications"][0]["antecedentSlot"] == "post"
     assert rpc["effects"][0]["kind"] == "effect"
+    assert rpc["effects"][0]["status"] == "refused"
+    assert rpc["effects"][0]["reason"] == "write more floor for this effect"
 
 
 def test_factory_walk_dto_refuses_inline_side_doors() -> None:

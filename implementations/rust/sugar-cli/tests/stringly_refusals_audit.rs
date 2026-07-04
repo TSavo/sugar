@@ -139,16 +139,6 @@ const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/libsugar/src/core/path_executor.rs", line: 166, needle: ".ok_or_else(|| PathExecutionError::Refused(Box::new(missing_kit_refusal(step))))?;", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
     ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/libsugar/src/core/path_executor.rs", line: 236, needle: "Err(PathExecutionError::Refused(Box::new(", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
     ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/libsugar/src/core/path_executor.rs", line: 344, needle: "PathExecutionError::Refused(Box::new(prove_not_supported_refusal(step)))", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
-    ExpectedSite { ground: "python-bind-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_rpc.py", line: 240, needle: "\"outcome\": \"refused\",", replacement: "PythonBindEffect::{MissingBinding,BoundaryBodyShape}" },
-    ExpectedSite { ground: "python-bind-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_rpc.py", line: 251, needle: "\"outcome\": \"refused\",", replacement: "PythonBindEffect::{MissingBinding,BoundaryBodyShape}" },
-    ExpectedSite { ground: "python-kit-effect-dto-status", path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/effect_dto.py", line: 15, needle: "status: str = \"refused\"", replacement: "Python EffectDto typed status/effect variant, not status string" },
-    ExpectedSite { ground: "python-proofir-refusal-record", path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py", line: 36, needle: "class RefusalRecord:", replacement: "ProofIREffect node with typed effect_kind and provenance" },
-    ExpectedSite { ground: "python-proofir-refusal-record", path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py", line: 62, needle: "def from_incomplete(", replacement: "ProofIREffect node with typed effect_kind and provenance" },
-    ExpectedSite { ground: "python-proofir-refusal-record", path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py", line: 73, needle: "def from_gap(", replacement: "ProofIREffect node with typed effect_kind and provenance" },
-    ExpectedSite { ground: "python-proofir-refusal-record", path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py", line: 105, needle: "\"kind\": \"refusal-record\",", replacement: "ProofIREffect node with typed effect_kind and provenance" },
-    ExpectedSite { ground: "python-proofir-refusal-record", path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py", line: 112, needle: "def dig_refusal_diagnostic(refusal: DigRefusal) -> dict[str, Any]:", replacement: "ProofIREffect node with typed effect_kind and provenance" },
-    ExpectedSite { ground: "python-source-oracle-effect", path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", line: 323, needle: "def _source_refusal_status(reason: str) -> str:", replacement: "SourceOracleEffect::{Absent,Drifted} carrying source memento" },
-    ExpectedSite { ground: "python-source-oracle-effect", path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", line: 343, needle: "\"status\": _source_refusal_status(reason),", replacement: "SourceOracleEffect::{Absent,Drifted} carrying source memento" },
     ExpectedSite { ground: "python-unsupported-syntax-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/lifter.py", line: 757, needle: "raise _UnsupportedSyntax(", replacement: "PythonLiftEffect variant for the refused syntax ground" },
     ExpectedSite { ground: "python-unsupported-syntax-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/lifter.py", line: 780, needle: "raise _UnsupportedSyntax(", replacement: "PythonLiftEffect variant for the refused syntax ground" },
     ExpectedSite { ground: "python-unsupported-syntax-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/lifter.py", line: 785, needle: "raise _UnsupportedSyntax(", replacement: "PythonLiftEffect variant for the refused syntax ground" },
@@ -209,7 +199,7 @@ const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs", line: 1527, needle: "return (\"refused\", Some(reason), None);", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
     ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs", line: 1547, needle: "return (\"refused\", Some(reason), None);", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
     ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 9172, needle: "format!(\"observable Drop effect `{boundary}`: {reason}; refused\")", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 9701, needle: "format!(\"unsupported term: {reason}; refused\")", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
+    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 9727, needle: "format!(\"unsupported term: {reason}; refused\")", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
     ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/cell_refcell.rs", line: 74, needle: "CellValue::Refused(reason) => {", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
     ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/cell_refcell.rs", line: 107, needle: "Err(reason) => CellValue::Refused(reason),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
     ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/closure_term.rs", line: 33, needle: "reason: format!(\"closure captures ambiguous local `{}`; refused\", self.name),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
@@ -378,9 +368,6 @@ fn classify_emission(path: &str, line: &str, context: &str) -> Option<&'static s
     if path.contains("sugar_lift_python_source/value_pins.py") && is_value_pin_refusal(line) {
         return Some("python-value-pin-effect");
     }
-    if path.contains("proofir/nodes/refusal_record.py") && is_refusal_record_site(line) {
-        return Some("python-proofir-refusal-record");
-    }
     if path.contains("sugar_lift_py_tests/kit_rpc/effect_dto.py")
         && line.contains("status: str = \"refused\"")
     {
@@ -514,14 +501,6 @@ fn is_value_pin_refusal(line: &str) -> bool {
         || line.contains("scan.refusals.append(_pin_refusal")
         || line.contains("VALUE_PIN_REFUSAL_KIND =")
         || line.contains("ENUM_PIN_REFUSAL_KIND =")
-}
-
-fn is_refusal_record_site(line: &str) -> bool {
-    line.contains("class RefusalRecord")
-        || line.contains("def from_incomplete")
-        || line.contains("def from_gap")
-        || line.contains("def dig_refusal_diagnostic")
-        || line.contains("kind\": \"refusal-record\"")
 }
 
 fn is_rust_lift_refusal_effect(line: &str) -> bool {
@@ -817,4 +796,25 @@ fn planted(effect: VerifyEffect) -> &'static str {
         "planted wildcard over VerifyEffect must be a frontier row"
     );
     assert_eq!(sites[0].ground, "effect-enum-wildcard-arm");
+}
+
+#[test]
+fn planted_python_stringly_refusal_emission_is_detected() {
+    let source = r#"
+def planted():
+    return {
+        "outcome": "refused",
+        "reason": "planted python prose ground",
+    }
+"#;
+    let sites = collect_stringly_refusal_emissions_from_source(
+        "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_rpc.py",
+        source,
+    );
+    assert_eq!(
+        sites.len(),
+        1,
+        "planted Python refused outcome must be a frontier row"
+    );
+    assert_eq!(sites[0].ground, "python-bind-effect");
 }

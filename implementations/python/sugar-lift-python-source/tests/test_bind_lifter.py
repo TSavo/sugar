@@ -17,6 +17,11 @@ if str(PKG_SRC) not in sys.path:
     sys.path.insert(0, str(PKG_SRC))
 
 from sugar_lift_python_source.bind_lifter import _operand_slot, lift_source
+from sugar_lift_python_source.bind_effects import (
+    BoundaryBodyShapeEffect,
+    MissingBindingEffect,
+    bind_effect_result,
+)
 from sugar_lift_python_source.bind_rpc import dispatch, initialize_result
 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.op_cid import local_op_cid
@@ -873,6 +878,34 @@ def test_bind_rpc_lift_returns_ir_document(tmp_path: Path) -> None:
     assert response["result"]["diagnostics"] == []
     assert "concept_annotation" not in response["result"]["ir"][0]
     assert "fn_name" not in response["result"]["ir"][0]
+
+
+def test_bind_effects_lower_to_legacy_materialize_results_once() -> None:
+    missing = bind_effect_result(
+        MissingBindingEffect(symbol="numpy.missing"),
+        file="app.py",
+        function="my_add",
+    )
+    assert missing == {
+        "file": "app.py",
+        "function": "my_add",
+        "symbol": "numpy.missing",
+        "outcome": "refused",
+        "reason": "no sugar binding for symbol `numpy.missing` in scope",
+    }
+
+    boundary = bind_effect_result(
+        BoundaryBodyShapeEffect(symbol="numpy.add"),
+        file="app.py",
+        function="my_add",
+    )
+    assert boundary == {
+        "file": "app.py",
+        "function": "my_add",
+        "symbol": "numpy.add",
+        "outcome": "refused",
+        "reason": "boundary body must be on its own line(s)",
+    }
 
 
 def test_bind_lift_recovers_contract_comment_witness() -> None:

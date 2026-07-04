@@ -4,7 +4,14 @@ from dataclasses import dataclass
 from typing import Never, NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import CoverageGapEffect, RaiseEffect, RuntimeEffect
+from sugar_lift_py_tests.effect import (
+    CoverageGapEffect,
+    DigRefusalEffect,
+    FactoryGapEffect,
+    RaiseEffect,
+    RuntimeEffect,
+    SourceOracleEffect,
+)
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.operations import (
     FinallyFallthroughOperation,
@@ -194,6 +201,12 @@ def _route_incomplete_effect(outcome: Incomplete, *, handlers: tuple, ctx) -> Ou
     if isinstance(effect, RuntimeEffect):
         return outcome
     if isinstance(effect, CoverageGapEffect):
+        return outcome
+    if isinstance(effect, FactoryGapEffect):
+        return outcome
+    if isinstance(effect, DigRefusalEffect):
+        return outcome
+    if isinstance(effect, SourceOracleEffect):
         return outcome
     return _unhandled_effect(effect)
 

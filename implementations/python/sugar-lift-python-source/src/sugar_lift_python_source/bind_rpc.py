@@ -9,6 +9,11 @@ import traceback
 from typing import Any
 
 from .ast_template import expr_to_template, function_body_template, function_param_names
+from .bind_effects import (
+    BoundaryBodyShapeEffect,
+    MissingBindingEffect,
+    bind_effect_result,
+)
 from .bind_lifter import lift_paths
 from .canonical import template_cid_of_json
 
@@ -233,24 +238,20 @@ def materialize_impl(params: dict[str, Any]) -> dict[str, Any]:
             binding = by_symbol.get(symbol)
             if binding is None:
                 results.append(
-                    {
-                        "file": rel_path,
-                        "function": node.name,
-                        "symbol": symbol,
-                        "outcome": "refused",
-                        "reason": f"no sugar binding for symbol `{symbol}` in scope",
-                    }
+                    bind_effect_result(
+                        MissingBindingEffect(symbol=symbol),
+                        file=rel_path,
+                        function=node.name,
+                    )
                 )
                 continue
             if not node.body or node.body[0].lineno <= node.lineno:
                 results.append(
-                    {
-                        "file": rel_path,
-                        "function": node.name,
-                        "symbol": symbol,
-                        "outcome": "refused",
-                        "reason": "boundary body must be on its own line(s)",
-                    }
+                    bind_effect_result(
+                        BoundaryBodyShapeEffect(symbol=symbol),
+                        file=rel_path,
+                        function=node.name,
+                    )
                 )
                 continue
             edits.append((node, binding["body_text"], symbol))
