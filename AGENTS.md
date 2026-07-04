@@ -467,6 +467,41 @@ C's own UB never was: the record's front door is the witnessed build, so
 no-compile means no test run, no vendor claim, no memento — the demons
 cannot sign the proof chain.
 
+## I want the panic
+
+Most developers are allergic to panics. Here, panic is the point. A panic is
+not a crash — it is the program telling the truth about its own boundary. The
+incompleteness exists whether you panic or not; the only choice is *loud and
+known* versus *silent and shipped*. A graceful fallback — `unwrap_or_default`,
+a catch-all `_ =>` that returns something benign, an `Option` swallowed into a
+no-op, an `if let ... else { return }` that continues quietly — does not remove
+the incompleteness. It relocates it from a known gap to a FALSE GREEN. And a
+false green in a correctness substrate is not a bug; it is a certified lie:
+unfinished work wearing the certificate that says finished. That is the one
+unforgivable thing, because the whole product is the promise that what is green
+is true.
+
+So the silent success is the failure mode, and the panic is the cure. It is
+also the only note that survives a reset: a `TODO` is forgotten by morning, a
+silent fallback is read by no one, but a panic re-fires every run, at a
+stranger, forever, until the work is actually done. Memory enforced by
+refusal-to-proceed.
+
+**PANIC when:**
+1. the code is incomplete (a partial function reached its unhandled case);
+2. it encounters sugar with no recognizer (`write more Sugar for this AST` —
+   the compiler is unfinished here, an ICE, an owned frontier row);
+3. it produces an effect not yet registered (`incomplete Outcome has an
+   unclassified Effect` — the completeness law);
+4. there is work left to do — and there is definitely still work left to do,
+   so `R>0 ⇒ CI red` is honest and the red floor is never suppressed.
+
+The enemy has a name: the **silent swallow**. Every `_ => Ok(())`,
+`unwrap_or_default`, empty-vec-on-error, or quiet `else` that lets an
+unhandled case continue is a place incompleteness got dressed as completeness.
+Hunt them; convert each to a panic, a named typed effect, or the sacred
+coverage panic. Never to a benign default. See #3500.
+
 The manifesto above is the operating model. The rest of this file is local
 mechanics for applying it in this checkout.
 
