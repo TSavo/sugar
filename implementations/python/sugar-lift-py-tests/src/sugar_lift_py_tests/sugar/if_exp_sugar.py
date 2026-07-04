@@ -1,17 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
-    FactoryGapInfo,
-    GapKind,
-    GapLocus,
-)
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -94,34 +87,17 @@ class IfExpSugar(Sugar, role=SugarRole.TERM):
 
     def desugar(self, ctx) -> Outcome:
         if isinstance(self.plan, _RuntimeIfExp):
-            _runtime_condition_refusal(self.blame, self.plan.reason)
+            return _runtime_condition_effect(self.blame, self.plan.reason)
         branch = self.plan.true_branch if self.plan.condition else self.plan.false_branch
         return branch.reduce(ctx)
 
 
-def _runtime_condition_refusal(blame: str, reason: str) -> NoReturn:
-    message = (
-        "conditional expression runtime condition: "
-        f"{reason}. Python conditional expressions choose a branch only after "
-        "evaluating the condition; use a literal boolean condition for reduction "
-        "or add a runtime/effect recognizer for this shape."
+def _runtime_condition_effect(blame: str, reason: str) -> Incomplete:
+    return Incomplete(
+        RuntimeEffect(
+            "conditional expression runtime boundary: "
+            f"{reason}. Python evaluates the condition at runtime before "
+            "choosing a branch; keep as typed red until a narrower "
+            f"vendor-cited reduction owns the shape. blame={blame}"
+        )
     )
-    info = FactoryGapInfo(
-        owner="IfExpSugar",
-        blame=blame,
-        observed="IfExp.runtime_condition",
-        requested="literal boolean condition",
-        fix=message,
-        gap_kind=GapKind.SUGAR,
-        gap_locus=GapLocus.CONSTRUCTION,
-    )
-    audit = FactoryAuditRow(
-        role="term",
-        status="refused",
-        observed=info.observed,
-        blame=blame,
-        selected="IfExpSugar",
-        candidates=["IfExpSugar"],
-        message=info.message,
-    )
-    raise FactoryGap(info, audit)

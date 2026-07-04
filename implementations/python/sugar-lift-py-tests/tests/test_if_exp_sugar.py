@@ -5,15 +5,15 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -64,7 +64,7 @@ def test_literal_ifexp_bad_twin_flips(tmp_path: Path) -> None:
     assert "IfExpSugar" in lying.selected_sugars
 
 
-def test_runtime_condition_ifexp_refuses() -> None:
+def test_runtime_condition_ifexp_is_typed_runtime_effect() -> None:
     ctx = FactoryBuildContext(filename="if_exp.py", catalog=default_catalog())
     body = ctx.build_body(ast.parse("1 if flag else 2", mode="eval").body, SugarRole.TERM)
     reduce_ctx = replace(
@@ -74,13 +74,14 @@ def test_runtime_condition_ifexp_refuses() -> None:
         ),
     )
 
-    with pytest.raises(FactoryGap) as raised:
-        body.reduce(reduce_ctx)
+    outcome = body.reduce(reduce_ctx)
 
-    assert raised.value.audit_row.status == "refused"
-    assert raised.value.audit_row.selected == "IfExpSugar"
-    assert raised.value.info["observed"] == "IfExp.runtime_condition"
-    assert "use a literal boolean condition" in raised.value.info["fix"]
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "conditional expression runtime boundary" in outcome.effect.reason
+    assert "condition `Name` is evaluated at runtime" in outcome.effect.reason
+    assert "typed red" in outcome.effect.reason
+    assert "blame=" in outcome.effect.reason
 
 
 def test_ifexp_factory_selects_shape_recognizer() -> None:
