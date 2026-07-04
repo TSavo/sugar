@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, ClassVar, NoReturn
 
-from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.effect import FactoryGapEffect, RuntimeEffect
 from sugar_lift_py_tests.factory import (
     FactoryAuditRow,
     FactoryGap,
@@ -105,6 +105,8 @@ class BinaryOperatorOperation:
         del ctx
         if self.operator == "*" and isinstance(self.right, TermValue):
             return self._repeat_tuple(receiver, self.right)
+        if self.operator == "*" and isinstance(self.right, SymbolicValue):
+            return self._symbolic_tuple_repeat_effect()
         self._floor_gap(receiver="TupleLiteralValue")
 
     def binary_encoded_string(
@@ -175,6 +177,22 @@ class BinaryOperatorOperation:
             RuntimeEffect(
                 "sequence repetition by non-int "
                 f"({type(count.value).__name__}): a runtime TypeError effect"
+            )
+        )
+
+    def _symbolic_tuple_repeat_effect(self) -> Outcome:
+        return Incomplete(
+            FactoryGapEffect(
+                owner=self.owner,
+                blame=self.blame,
+                observed="TupleLiteralValue*SymbolicValue",
+                requested="concrete tuple repetition count",
+                fix=(
+                    "only fold tuple repetition when the repeat count is a "
+                    "concrete int; carry symbolic/runtime counts as a typed effect"
+                ),
+                gap_kind="Floor",
+                gap_locus="Construction",
             )
         )
 

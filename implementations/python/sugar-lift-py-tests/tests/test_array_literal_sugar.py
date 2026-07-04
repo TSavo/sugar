@@ -3,12 +3,10 @@ for nested lists."""
 
 from __future__ import annotations
 
-import pytest
-
 from factory_reduce import fol, reduce_term, reduce_value
 
-from sugar_lift_py_tests.factory import FactoryGap
-from sugar_lift_py_tests.ir import ctor, num
+from sugar_lift_py_tests.floor import BoolValue, StringValue, TermValue
+from sugar_lift_py_tests.ir import bool_const, ctor, num, str_const
 
 
 def test_flat_list_reduces_to_array_ctor():
@@ -29,16 +27,27 @@ def test_tuple_element_reduces_to_tuple_inside_array_ctor():
     assert fol(reduce_term("[(1, 2)]")) == fol(expected)
 
 
-def test_array_element_floor_gap_blames_the_element_source():
-    with pytest.raises(FactoryGap) as raised:
-        reduce_value("['x']")
+def test_string_element_reduces_to_string_const_inside_array_ctor():
+    expected = ctor("array", [str_const("x")])
 
-    assert raised.value.info == {
-        "owner": "ArrayLiteralSugar",
-        "blame": "t.py:1:1",
-        "observed": "StringValue",
-        "requested": "array element floor",
-        "fix": "add ArrayLiteral element floor for StringValue",
-        "gap_kind": "Floor",
-        "gap_locus": "Construction",
-    }
+    assert fol(reduce_term("['x']")) == fol(expected)
+
+
+def test_string_array_element_is_structural_not_swallowed():
+    value = reduce_value("['x']")
+
+    assert value.items == (StringValue("x"),)
+    assert value.items != (TermValue(0),)
+
+
+def test_bool_element_reduces_to_bool_const_inside_array_ctor():
+    expected = ctor("array", [bool_const(True)])
+
+    assert fol(reduce_term("[True]")) == fol(expected)
+
+
+def test_bool_array_element_is_structural_not_swallowed():
+    value = reduce_value("[True]")
+
+    assert value.items == (BoolValue(True),)
+    assert value.items != (TermValue(1),)

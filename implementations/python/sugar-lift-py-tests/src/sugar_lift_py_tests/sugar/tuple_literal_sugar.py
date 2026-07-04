@@ -8,7 +8,7 @@ from sugar_lift_py_tests.operations.perform_operation import perform_operation
 from sugar_lift_py_tests.operations.sequence_construction_operation import (
     SequenceConstructionOperation,
 )
-from sugar_lift_py_tests.outcome import Outcome, complete_value
+from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import (
     tuple_literal_subscript_return_witness,
@@ -43,10 +43,13 @@ class TupleLiteralSugar(Sugar, role=SugarRole.TERM):
         return tuple_literal_subscript_return_witness()
 
     def desugar(self, ctx) -> Outcome:
-        elements = tuple(
-            complete_value(element.reduce(ctx), owner="TupleLiteralSugar element")
-            for element in self.elements
-        )
+        values = []
+        for element in self.elements:
+            outcome = element.reduce(ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            values.append(complete_value(outcome, owner="TupleLiteralSugar element"))
+        elements = tuple(values)
         return perform_operation(
             owner="TupleLiteralSugar",
             blame=self.blame,

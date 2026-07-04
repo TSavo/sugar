@@ -32,12 +32,14 @@ from sugar_lift_py_tests.ir import (
 )
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
+    EffectDto,
     FactoryWalkRowDto,
     LiftReportPayloadDto,
     SourceMementoDto,
     SourceSpanDto,
 )
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.proofir import (
     AuditLocus,
@@ -126,14 +128,15 @@ def euf_callsite_name(callee_name: str, euf_term, *, suffix: str) -> str:
     return f"{callee_name}#euf#{_canonical_term_sig(euf_term)}{suffix}"
 
 
-# One lift, returned as five parallel lists: (contracts, source_mementos,
-# source_audits, factory_walk_rows, call_edges).
+# One lift, returned as six parallel lists: (contracts, source_mementos,
+# source_audits, factory_walk_rows, call_edges, effects).
 LiftResult = tuple[
     list[Any],
     list[SourceMementoDto],
     list[dict[str, Any]],
     list[FactoryWalkRowDto],
     list[dict[str, Any]],
+    list[EffectDto],
 ]
 
 
@@ -276,6 +279,7 @@ def build_literal_call_report(
     factory_audits: list[Any] = []
     factory_walk: list[FactoryWalkRowDto] = []
     call_edges: list[dict[str, Any]] = []
+    effects: list[EffectDto] = []
     dig_refusals: list[DigRefusal] = []
     agreement_violations: list[FloorContractAgreementViolation] = []
     local_functions = {
@@ -322,13 +326,14 @@ def build_literal_call_report(
             )
             # _lift_assert never returns None now: it lifts the assert or PANICS
             # (FactoryGap). A silent skip here would be the cardinal crime.
-            lifted_contracts, mementos, audits, rows, edges = lifted
+            lifted_contracts, mementos, audits, rows, edges, effect_rows = lifted
             contracts = _merge_contract_rows([*contracts, *lifted_contracts])
             source_mementos.extend(mementos)
             source_audits.extend(audits)
             factory_walk.extend(rows)
             call_edges.extend(edges)
-    if not contracts:
+            effects.extend(effect_rows)
+    if not contracts and not effects:
         return None
     materialized_contracts = _materialize_contract_rows(contracts)
     enforce_floor_contract_agreement_gate(agreement_violations)
@@ -338,6 +343,8 @@ def build_literal_call_report(
     memento_payload.extend(source_mementos)
     walk_payload: list[FactoryWalkRowDto | dict[str, Any]] = []
     walk_payload.extend(factory_walk)
+    effect_payload: list[EffectDto | dict[str, Any]] = []
+    effect_payload.extend(effects)
     return SourceReportBuild(
         LiftReportPayloadDto(
             ir=ir_payload,
@@ -346,6 +353,7 @@ def build_literal_call_report(
             source_audits=source_audits,
             factory_audits=factory_audits,
             factory_walk=walk_payload,
+            effects=effect_payload,
             call_edges=call_edges,
             diagnostics=[
                 *[refusal.to_json() for refusal in dig_refusals],
@@ -639,6 +647,18 @@ def _lift_assertion_via_factory(
         "source_role",
         f"python.{type(result.sugar).__name__}",
     )
+    if isinstance(formula, Incomplete):
+        return _effect_lift(
+            stmt,
+            fn,
+            formula,
+            stmt=stmt,
+            selected=result.audit_row.selected or type(result.sugar).__name__,
+            requested_role="AssertionSurface",
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+        )
     lifted = _emit_assertion_surface_fact(
         stmt,
         fn,
@@ -657,7 +677,14 @@ def _lift_assertion_via_factory(
             memento_file=memento_file,
             contract_bindings=contract_bindings,
         )
-        lifted = (lifted[0], lifted[1], lifted[2], lifted[3], [*lifted[4], *edges])
+        lifted = (
+            lifted[0],
+            lifted[1],
+            lifted[2],
+            lifted[3],
+            [*lifted[4], *edges],
+            lifted[5],
+        )
     universe = _factory_assertion_derived_context(
         stmt,
         fn=fn,
@@ -978,6 +1005,17 @@ def _lift_literal_via_factory(
     """Lift a literal operand of a callsite equality THROUGH THE FACTORY: the
     catalog's literal sugars (PrimitiveLiteral, ...) build and reduce it, and an
     unhandled shape panics via the catalog's own mouth. No special-casing per type."""
+    value = _literal_floor_via_factory(frag, filename, ctx=ctx)
+    if isinstance(value, Incomplete):
+        raise TypeError(
+            "callsite literal reduced to a typed effect: " f"{value.reason}"
+        )
+    return floor_to_term(value, owner="literal_call_report")
+
+
+def _literal_floor_via_factory(
+    frag: SourceFragment, filename: str, *, ctx: FactoryBuildContext | None = None
+):
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
     from sugar_lift_py_tests.claim import SugarRole as _Role
 
@@ -985,9 +1023,112 @@ def _lift_literal_via_factory(
 
     ctx = ctx or FactoryBuildContext(filename=filename, catalog=default_catalog())
     body = ctx.build_body(frag, _Role.TERM)
-    return floor_to_term(
-        complete_value(body.reduce(ctx), owner="callsite literal"),
-        owner="literal_call_report",
+    outcome = body.reduce(ctx)
+    if isinstance(outcome, Incomplete):
+        return outcome
+    return complete_value(outcome, owner="callsite literal")
+
+
+def _effect_lift(
+    frag: SourceFragment,
+    fn: SourceFragment,
+    incomplete: Incomplete,
+    *,
+    stmt: SourceFragment,
+    selected: str,
+    requested_role: str,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> LiftResult:
+    effect_name = (
+        f"{Path(memento_file).stem}::{fn.function_name()}::"
+        f"effect:{frag.line}:{frag.col}"
+    )
+    memento = _statement_source_memento(
+        stmt,
+        fn,
+        memento_file,
+        source_lines,
+        contract_name=effect_name,
+        role="python.literal-call-sugar",
+    )
+    walk = FactoryWalkRowDto(
+        file=filename,
+        line=frag.line,
+        requested_role=requested_role,
+        ast_kind=frag.observed,
+        selected=selected,
+        status="refused",
+        output={"effect": type(incomplete.effect).__name__},
+        source_memento=memento,
+        span=SourceSpanDto(
+            start_line=frag.line,
+            start_col=frag.col,
+            end_line=frag.end_line,
+            end_col=frag.end_col,
+        ),
+        reason=incomplete.reason,
+    )
+    return (
+        [],
+        [memento],
+        [],
+        [walk],
+        [],
+        [EffectDto(name=effect_name, effect=incomplete.effect, source_memento=memento)],
+    )
+
+
+def _proofir_effect_lift(
+    frag: SourceFragment,
+    fn: SourceFragment,
+    *,
+    stmt: SourceFragment,
+    observed: str,
+    requested: str,
+    fix: str,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> LiftResult:
+    return _effect_lift(
+        frag,
+        fn,
+        Incomplete(
+            FactoryGapEffect(
+                owner="literal_call_report.equality_fact",
+                blame=(
+                    f"{memento_file}:{stmt.line}:{stmt.col}"
+                ),
+                observed=observed,
+                requested=requested,
+                fix=fix,
+                gap_kind="ProofIR",
+                gap_locus="ConstructionLaw",
+            )
+        ),
+        stmt=stmt,
+        selected="TypedEffect",
+        requested_role="ProofIRConstructionLaw",
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+    )
+
+
+def _free_vars_in_ir_term(term: Term) -> frozenset[str]:
+    if isinstance(term, _Var):
+        return frozenset({term.name})
+    if isinstance(term, _Ctor):
+        return frozenset().union(*(_free_vars_in_ir_term(arg) for arg in term.args))
+    return frozenset()
+
+
+def _open_equality_fact_vars(arg_terms: list[Term], value_term: Term) -> frozenset[str]:
+    return frozenset().union(
+        _free_vars_in_ir_term(value_term),
+        *(_free_vars_in_ir_term(arg_term) for arg_term in arg_terms),
     )
 
 
@@ -1117,9 +1258,10 @@ def _integer_floor_for_numpy_literal_arg(
     from sugar_lift_py_tests.floor import TermValue
 
     body = ctx.build_body(frag, SugarRole.TERM)
-    value = complete_value(
-        body.reduce(ctx), owner="literal_call_report.numpy_integer_ufunc_arg"
-    )
+    outcome = body.reduce(ctx)
+    if isinstance(outcome, Incomplete):
+        return None
+    value = complete_value(outcome, owner="literal_call_report.numpy_integer_ufunc_arg")
     if not isinstance(value, TermValue):
         return None
     if type(value.value) is not int:
@@ -1151,9 +1293,21 @@ def _lift_callsite_assertion(
     # The expected value composes through the factory's literal sugars (string,
     # int, ...). Anything the catalog can't build panics via its own mouth, which
     # names the next sugar -- no string-only special case here.
-    expected_term = _lift_literal_via_factory(
-        comparison.compare_comparators()[0], filename, ctx=ctx
-    )
+    expected_frag = comparison.compare_comparators()[0]
+    expected_value = _literal_floor_via_factory(expected_frag, filename, ctx=ctx)
+    if isinstance(expected_value, Incomplete):
+        return _effect_lift(
+            expected_frag,
+            fn,
+            expected_value,
+            stmt=stmt,
+            selected="TypedEffect",
+            requested_role="CallsiteExpected",
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+        )
+    expected_term = floor_to_term(expected_value, owner="literal_call_report")
     # Each arg composes through the factory's literal sugars (string, int, array,
     # ...) -- the same path as the expected. A literal the catalog reduces but can't
     # yet shape into a term (e.g. a nested array) is turned into a clean mouth-panic
@@ -1161,7 +1315,20 @@ def _lift_callsite_assertion(
     arg_terms = []
     for arg_frag in callsite.call_args():
         try:
-            arg_terms.append(_lift_literal_via_factory(arg_frag, filename, ctx=ctx))
+            arg_value = _literal_floor_via_factory(arg_frag, filename, ctx=ctx)
+            if isinstance(arg_value, Incomplete):
+                return _effect_lift(
+                    arg_frag,
+                    fn,
+                    arg_value,
+                    stmt=stmt,
+                    selected="TypedEffect",
+                    requested_role="CallsiteArg",
+                    filename=filename,
+                    memento_file=memento_file,
+                    source_lines=source_lines,
+                )
+            arg_terms.append(floor_to_term(arg_value, owner="literal_call_report"))
         except TypeError as exc:
             _panic_no_sugar(
                 arg_frag,
@@ -1213,10 +1380,27 @@ def _emit_euf_fact(
         term_from_ir,
     )
 
-    rhs_term = term_from_ir(value_term)
     call_sort = call_return_sort or UnknownSort(
         reason=f"no function-contract return sort available for call:{callee_name}"
     )
+    open_vars = _open_equality_fact_vars(list(arg_terms), value_term)
+    if open_vars:
+        return _proofir_effect_lift(
+            stmt,
+            fn,
+            stmt=stmt,
+            observed=f"open term variable(s): {', '.join(sorted(open_vars))}",
+            requested="closed EqualityFact terms",
+            fix=(
+                "route symbolic/open callsite facts through a scoped ProofIR "
+                "member or emit a typed effect; do not construct EqualityFact "
+                "from open terms"
+            ),
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+        )
+    rhs_term = term_from_ir(value_term, sort=call_sort)
     call_term = CallTerm(
         callee_name,
         tuple(term_from_ir(arg_term) for arg_term in arg_terms),
@@ -1267,7 +1451,14 @@ def _emit_euf_fact(
         role="python.literal-call-sugar",
         ast_kind="Assert",
     )
-    return ([EqualityFactEmission(member, (memento,))], [memento], [audit], [walk], [])
+    return (
+        [EqualityFactEmission(member, (memento,))],
+        [memento],
+        [audit],
+        [walk],
+        [],
+        [],
+    )
 
 
 def _require_proofir_emission_node(
@@ -1380,11 +1571,11 @@ def _emit_assertion_surface_fact(
         role=role,
         ast_kind="Assert",
     )
-    return ([contract], [memento], [audit], [walk], [])
+    return ([contract], [memento], [audit], [walk], [], [])
 
 
 def _empty_lift() -> LiftResult:
-    return ([], [], [], [], [])
+    return ([], [], [], [], [], [])
 
 
 def _merge_many(lifts: list[LiftResult]) -> LiftResult:
@@ -2064,6 +2255,7 @@ def _function_universe(
         [audit],
         walk_rows,
         [],
+        [],
     )
 
 
@@ -2251,6 +2443,7 @@ def _dig_universe(
         [audit],
         walk_rows,
         [],
+        [],
     )
 
 
@@ -2299,6 +2492,7 @@ def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResu
         [*universe[2], *assertion[2]],
         [*universe[3], *assertion[3]],
         [*universe[4], *assertion[4]],
+        [*universe[5], *assertion[5]],
     )
 
 

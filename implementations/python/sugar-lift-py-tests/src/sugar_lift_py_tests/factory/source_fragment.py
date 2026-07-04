@@ -484,6 +484,12 @@ class SourceFragment:
         self._require(ast.ClassDef)
         return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
 
+    def class_base_names(self) -> tuple[str | None, ...]:
+        """Return dotted base names for a ClassDef; None means dynamic/unnamed base."""
+        self._require(ast.ClassDef)
+        node = cast(ast.ClassDef, self.node)
+        return tuple(_dotted_expr_name(base) for base in node.bases)
+
     # ------------------------------------------------------------------
     # Additional accessors added in numpy-import-sugar sweep
     # ------------------------------------------------------------------

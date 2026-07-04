@@ -115,3 +115,21 @@ def test_list_multiplication_repeats_literal_array():
 def test_reversed_sequence_multiplication_repeats_literal_sequence():
     assert fol(reduce_term("3 * (1,)")) == fol(ctor("tuple", [num(1), num(1), num(1)]))
     assert fol(reduce_term("3 * [1]")) == fol(ctor("array", [num(1), num(1), num(1)]))
+
+
+def test_tuple_repetition_by_symbolic_count_is_typed_floor_effect():
+    outcome, operation_log = _reduce_outcome_with_log(
+        "(1,) * count",
+        {"count": SymbolicValue(make_var("count"))},
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "FactoryGapEffect"
+    assert outcome.effect.observed == "TupleLiteralValue*SymbolicValue"
+    assert outcome.effect.requested == "concrete tuple repetition count"
+    assert outcome.effect.gap_kind == "Floor"
+    assert outcome.effect.gap_locus == "Construction"
+    assert operation_log == [
+        ("TupleLiteralSugar", "construct_sequence_with", "SequenceConstructionOperation"),
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
+    ]

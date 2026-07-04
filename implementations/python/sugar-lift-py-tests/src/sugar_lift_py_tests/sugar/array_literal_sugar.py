@@ -12,12 +12,14 @@ from sugar_lift_py_tests.factory import (
 )
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
+    BoolValue,
     ObjectValue,
+    StringValue,
     SymbolicValue,
     TermValue,
 )
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
-from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -65,22 +67,34 @@ class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSu
         return cls(elements=elements)
 
     def desugar(self, ctx=None) -> Outcome:
-        return Complete(
-            ArrayLiteral(
-                tuple(
-                    _array_element(
-                        complete_value(element.reduce(ctx), owner="ArrayLiteralSugar"),
-                        element=element,
-                    )
-                    for element in self.elements
+        items = []
+        for element in self.elements:
+            element_outcome = element.reduce(ctx)
+            if isinstance(element_outcome, Incomplete):
+                return element_outcome
+            items.append(
+                _array_element(
+                    complete_value(element_outcome, owner="ArrayLiteralSugar"),
+                    element=element,
                 )
             )
+        return Complete(
+            ArrayLiteral(tuple(items))
         )
 
 
 def _array_element(value, *, element: SugarBody):
     if not isinstance(
-        value, (TermValue, ObjectValue, SymbolicValue, ArrayLiteral, TupleLiteralValue)
+        value,
+        (
+            TermValue,
+            BoolValue,
+            ObjectValue,
+            StringValue,
+            SymbolicValue,
+            ArrayLiteral,
+            TupleLiteralValue,
+        ),
     ):
         blame = _element_blame(element)
         info = FactoryGapInfo(

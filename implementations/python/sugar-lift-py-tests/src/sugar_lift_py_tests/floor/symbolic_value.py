@@ -29,6 +29,48 @@ class SymbolicValue(FloorValue):
     def project_callsite_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
 
+    def call_method_with(self, operation, ctx):
+        del ctx
+        if operation.name == "__format__" and len(operation.arguments) == 1:
+            from sugar_lift_py_tests.floor.string_value import StringValue
+            from sugar_lift_py_tests.ir import ctor, str_const
+            from sugar_lift_py_tests.outcome import Complete
+
+            spec = operation.arguments[0]
+            if isinstance(spec, StringValue):
+                return Complete(
+                    SymbolicValue(ctor("py.format", [self.term, str_const(spec.value)]))
+                )
+        if operation.name == "__int__" and not operation.arguments:
+            from sugar_lift_py_tests.ir import _ConstStr, _Ctor, ctor
+            from sugar_lift_py_tests.outcome import Complete
+
+            if isinstance(self.term, _Ctor) and self.term.name == "py.format":
+                if (
+                    len(self.term.args) == 2
+                    and isinstance(self.term.args[1], _ConstStr)
+                    and self.term.args[1].value == ""
+                ):
+                    return Complete(SymbolicValue(self.term.args[0]))
+                return Complete(SymbolicValue(ctor("py.int", [self.term])))
+        from sugar_lift_py_tests.effect import FactoryGapEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            FactoryGapEffect(
+                owner=operation.owner,
+                blame=operation.blame,
+                observed=f"SymbolicValue.{operation.name}",
+                requested="symbolic receiver method floor",
+                fix=(
+                    f"add cited warrant for SymbolicValue.{operation.name} "
+                    "or keep the opaque runtime method as a typed effect"
+                ),
+                gap_kind="Floor",
+                gap_locus="Construction",
+            )
+        )
+
     def binary_operator_with(self, operation, ctx):
         return operation.binary_symbolic(self, ctx)
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BoundVar
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import name_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -42,7 +42,10 @@ class NameSugar(Sugar, role=SugarRole.TERM):
         return cls._from_site(site, _ctx)
 
     def desugar(self, ctx) -> Outcome:
-        value = ctx.temporal.value_for(self.identifier)
+        outcome = ctx.temporal.value_outcome_for(self.identifier)
+        if isinstance(outcome, Incomplete):
+            return outcome
+        value = outcome.value
         if isinstance(value, BoundVar):
             # The name aliases an expression -- recompose the source so the reference IS
             # that expression. Recompose against the binding's DEFINITION scope (where
