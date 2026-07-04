@@ -349,6 +349,21 @@ class SourceFragment:
         self._require(ast.If)
         return [SourceFragment.from_node(s, self.filename) for s in self.node.orelse]  # type: ignore[attr-defined]
 
+    def ifexp_test(self) -> "SourceFragment":
+        """Return the condition expression of an IfExp."""
+        self._require(ast.IfExp)
+        return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
+
+    def ifexp_body(self) -> "SourceFragment":
+        """Return the true-branch expression of an IfExp."""
+        self._require(ast.IfExp)
+        return SourceFragment.from_node(self.node.body, self.filename)  # type: ignore[attr-defined]
+
+    def ifexp_orelse(self) -> "SourceFragment":
+        """Return the false-branch expression of an IfExp."""
+        self._require(ast.IfExp)
+        return SourceFragment.from_node(self.node.orelse, self.filename)  # type: ignore[attr-defined]
+
     def try_body(self) -> "SourceFragment":
         """Return a Block SourceFragment for the Try body suite."""
         from .block import Block
