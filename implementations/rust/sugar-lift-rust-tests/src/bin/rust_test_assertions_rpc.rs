@@ -257,6 +257,22 @@ const FILE_DECL_EMIT_BYTE_BOUND: usize = 4_000_000;
 /// refusal marker (the memento is refused, the rest of the file still lifts).
 const MEMENTO_EMIT_BYTE_BOUND: usize = 1_000_000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RpcMode {
+    Production,
+    AuditOnlyConstructionGaps,
+}
+
+impl RpcMode {
+    fn from_args(args: impl IntoIterator<Item = String>) -> Self {
+        if args.into_iter().any(|arg| arg == "--audit-only") {
+            Self::AuditOnlyConstructionGaps
+        } else {
+            Self::Production
+        }
+    }
+}
+
 fn lift(params: &Value) -> Value {
     trace_lift_rpc_checkpoint("lift.start", &Value::Null);
     let workspace_root = params
@@ -730,6 +746,564 @@ fn lift(params: &Value) -> Value {
         rss_delta_kib(before, current_rss_kib()),
     );
     response
+}
+
+fn audit_only_lift_reply(id: &Value, params: &Value) -> Value {
+    let gaps = audit_only_construction_gaps(params);
+    if gaps.is_empty() {
+        return json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "kind": "ir-document",
+                "diagnostics": [],
+                "auditOnlyGaps": [],
+            },
+        });
+    }
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": -32603,
+            "message": "audit-only construction gaps",
+            "data": {
+                "auditOnlyGaps": gaps,
+            },
+        },
+    })
+}
+
+fn audit_only_construction_gaps(params: &Value) -> Vec<Value> {
+    trace_lift_rpc_checkpoint("lift.audit_only.start", &Value::Null);
+    let workspace_root = params
+        .get("workspace_root")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let requested: Vec<String> = match params.get("source_paths").and_then(Value::as_array) {
+        Some(arr) if !arr.is_empty() => arr
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        _ => vec![".".to_string()],
+    };
+
+    let mut rel_paths = Vec::new();
+    for entry in &requested {
+        let abs = workspace_root.join(entry);
+        if abs.is_dir() {
+            for rel in enumerate_rs_files(&abs) {
+                let joined = if entry == "." {
+                    rel
+                } else {
+                    format!("{}/{}", entry.trim_end_matches('/'), rel)
+                };
+                rel_paths.push(joined);
+            }
+        } else {
+            rel_paths.push(entry.clone());
+        }
+    }
+    rel_paths.sort();
+    rel_paths.dedup();
+
+    let mut diagnostics = Vec::new();
+    let options = lift_options_from_rust_build_context(&workspace_root, params).unwrap_or_default();
+    let parsed_sources = read_parsed_sources(&workspace_root, &rel_paths, &mut diagnostics);
+    let macro_imports = MacroRegistry::new();
+    let const_imports = build_const_source_registry(&parsed_sources);
+    let fn_imports = build_function_source_registry(&parsed_sources);
+
+    let mut gaps = Vec::new();
+    for source in &parsed_sources {
+        collect_file_lift_construction_gaps(
+            source,
+            &options,
+            &macro_imports,
+            &const_imports,
+            &fn_imports,
+            &mut gaps,
+        );
+    }
+    sort_and_dedup_audit_only_gaps(gaps)
+}
+
+fn collect_file_lift_construction_gaps(
+    source: &ParsedSource,
+    options: &LiftOptions,
+    macro_imports: &MacroRegistry,
+    const_imports: &ConstSourceRegistry,
+    fn_imports: &FunctionSourceRegistry,
+    gaps: &mut Vec<Value>,
+) {
+    let label = format!("{}::<lift>", source.rel);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        lift_file_with_all_source_imports(
+            &source.file,
+            &source.rel,
+            options,
+            macro_imports,
+            const_imports,
+            fn_imports,
+        )
+    }));
+    match result {
+        Ok(out) => {
+            for audit in &out.factory_audits {
+                if let Some(gap) = audit_only_gap_from_factory_audit(&source.rel, audit) {
+                    gaps.push(gap);
+                }
+            }
+        }
+        Err(payload) => {
+            let message = panic_payload_message(payload);
+            if let Some(gap) = audit_only_gap_from_panic_message(&message, &label) {
+                gaps.push(gap);
+            } else {
+                std::panic::panic_any(message);
+            }
+        }
+    }
+}
+
+fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        return (*message).to_string();
+    }
+    "<non-string panic>".to_string()
+}
+
+fn audit_only_gap_from_factory_audit(file: &str, audit: &FactoryAudit) -> Option<Value> {
+    if audit.disposition != sugar_lift_rust_tests::FactoryDisposition::Unresolved {
+        return None;
+    }
+    let requested = audit.requested_role.as_str();
+    let observed = audit.site.as_str();
+    let label = format!("{}::{}:{}:{}", file, audit.ast_kind, requested, observed);
+    let line = format!(
+        "write more Sugar for this AST: owner=rust.factory blame={label} observed={observed} requested={requested} fix=sugar::other"
+    );
+    Some(json!({
+        "kind": "audit-only-construction-gap",
+        "label": label,
+        "message": line,
+        "gap": {
+            "owner": "rust.factory",
+            "blame": label,
+            "observed": observed,
+            "requested": requested,
+            "fix": "sugar::other",
+            "gap_kind": "Sugar",
+            "gap_locus": audit.ast_kind,
+        },
+        "auditRow": {
+            "kind": "factory-audit-row",
+            "role": requested,
+            "status": "sugar-gap",
+            "observed": observed,
+            "blame": label,
+            "selected": audit.selected,
+            "candidates": audit.candidates.iter().map(|candidate| {
+                json!({
+                    "name": candidate.name,
+                    "role": candidate.role,
+                    "comesBefore": candidate.comes_before,
+                    "selected": candidate.selected,
+                })
+            }).collect::<Vec<_>>(),
+            "message": line,
+        },
+    }))
+}
+
+fn audit_only_gap_from_panic_message(message: &str, label: &str) -> Option<Value> {
+    let mut offset = 0usize;
+    while let Some(relative_start) = message[offset..].find("write more ") {
+        let start = offset + relative_start;
+        let candidate = &message[start..];
+        if let Some(gap) = parse_audit_only_gap_tail(candidate, label) {
+            return Some(gap);
+        }
+        offset = start + "write more ".len();
+    }
+    parse_audit_only_unstructured_construction_gap(message, label)
+        .or_else(|| parse_audit_only_dispatch_gap(message, label))
+        .or_else(|| parse_audit_only_owning_sugar_gap(message, label))
+        .or_else(|| parse_audit_only_lawful_floor_gap(message, label))
+        .or_else(|| parse_audit_only_unclassified_effect_gap(message, label))
+        .or_else(|| parse_audit_only_literal_reduction_gap(message, label))
+        .or_else(|| parse_audit_only_destructured_source_gap(message, label))
+}
+
+fn parse_audit_only_unstructured_construction_gap(message: &str, label: &str) -> Option<Value> {
+    let gap_kind = ["Sugar", "Floor", "ProofIR", "Constructor"]
+        .into_iter()
+        .find(|kind| message.contains(&format!("write more {kind} for this AST")))?;
+    let requested = message
+        .split_once(" for role ")
+        .and_then(|(_, rest)| rest.split_once(" at ").map(|(role, _)| role.trim()))
+        .filter(|role| !role.is_empty())
+        .unwrap_or("Unknown");
+    let observed = message
+        .split_once("; write more ")
+        .map(|(head, _)| head.trim())
+        .unwrap_or(message.trim())
+        .strip_prefix("factory structural gap: ")
+        .unwrap_or_else(|| {
+            message
+                .split_once("; write more ")
+                .map(|(head, _)| head.trim())
+                .unwrap_or(message.trim())
+        })
+        .to_string();
+    let fix = if observed.starts_with("macro `") {
+        "sugar::macro"
+    } else {
+        match gap_kind {
+            "Sugar" => "sugar::other",
+            "Floor" => "floor::other",
+            "ProofIR" => "proofir::other",
+            "Constructor" => "constructor::other",
+            _ => "unknown::other",
+        }
+    };
+    let status = audit_only_status_for_gap_kind(gap_kind);
+    let line = format!(
+        "write more {gap_kind} for this AST: owner=rust.factory blame={label} observed={observed} requested={requested} fix={fix}"
+    );
+    Some(json!({
+        "kind": "audit-only-construction-gap",
+        "label": label,
+        "message": line,
+        "gap": {
+            "owner": "rust.factory",
+            "blame": label,
+            "observed": observed,
+            "requested": requested,
+            "fix": fix,
+            "gap_kind": gap_kind,
+            "gap_locus": "AST",
+        },
+        "auditRow": {
+            "kind": "factory-audit-row",
+            "role": requested,
+            "status": status,
+            "observed": observed,
+            "blame": label,
+            "selected": Value::Null,
+            "candidates": [],
+            "message": line,
+        },
+    }))
+}
+
+fn parse_audit_only_dispatch_gap(message: &str, label: &str) -> Option<Value> {
+    let (observed, requested) = message
+        .split_once(" did not dispatch to ")
+        .map(|(observed, requested)| (observed.trim(), requested.trim()))?;
+    let line = format!(
+        "write more Floor for this AST: owner=rust.floor blame={label} observed={observed} requested={requested} fix=floor::dispatch"
+    );
+    Some(json!({
+        "kind": "audit-only-construction-gap",
+        "label": label,
+        "message": line,
+        "gap": {
+            "owner": "rust.floor",
+            "blame": label,
+            "observed": observed,
+            "requested": requested,
+            "fix": "floor::dispatch",
+            "gap_kind": "Floor",
+            "gap_locus": "AST",
+        },
+        "auditRow": {
+            "kind": "factory-audit-row",
+            "role": requested,
+            "status": "floor-gap",
+            "observed": observed,
+            "blame": label,
+            "selected": Value::Null,
+            "candidates": [],
+            "message": line,
+        },
+    }))
+}
+
+fn parse_audit_only_owning_sugar_gap(message: &str, label: &str) -> Option<Value> {
+    let (observed, _) = message.split_once("; write the owning Sugar before Outcome")?;
+    let observed = observed.trim();
+    let line = format!(
+        "write more Sugar for this AST: owner=rust.factory blame={label} observed={observed} requested=Outcome fix=sugar::owner"
+    );
+    Some(json!({
+        "kind": "audit-only-construction-gap",
+        "label": label,
+        "message": line,
+        "gap": {
+            "owner": "rust.factory",
+            "blame": label,
+            "observed": observed,
+            "requested": "Outcome",
+            "fix": "sugar::owner",
+            "gap_kind": "Sugar",
+            "gap_locus": "AST",
+        },
+        "auditRow": {
+            "kind": "factory-audit-row",
+            "role": "Outcome",
+            "status": "sugar-gap",
+            "observed": observed,
+            "blame": label,
+            "selected": Value::Null,
+            "candidates": [],
+            "message": line,
+        },
+    }))
+}
+
+fn parse_audit_only_lawful_floor_gap(message: &str, label: &str) -> Option<Value> {
+    let (observed, reason) = message.split_once(" did not reach a lawful ")?;
+    let (floor, rest) = reason.split_once("floor")?;
+    if !floor
+        .chars()
+        .all(|ch| ch.is_ascii_alphabetic() || ch.is_ascii_whitespace() || ch == '-' || ch == '/')
+    {
+        return None;
+    }
+    let reason = rest.strip_prefix(": ").unwrap_or(rest).trim();
+    let observed = observed.trim();
+    let full_observed = if reason.is_empty() {
+        observed.to_string()
+    } else {
+        format!("{observed}: {reason}")
+    };
+    let line = format!(
+        "write more Floor for this AST: owner=rust.floor blame={label} observed={full_observed} requested=LawfulFloor fix=floor::lawful"
+    );
+    Some(json!({
+        "kind": "audit-only-construction-gap",
+        "label": label,
+        "message": line,
+        "gap": {
+            "owner": "rust.floor",
+            "blame": label,
+            "observed": full_observed,
+            "requested": "LawfulFloor",
+            "fix": "floor::lawful",
+            "gap_kind": "Floor",
+            "gap_locus": "AST",
+        },
+        "auditRow": {
+            "kind": "factory-audit-row",
+            "role": "LawfulFloor",
+            "status": "floor-gap",
+            "observed": full_observed,
+            "blame": label,
+            "selected": Value::Null,
+            "candidates": [],
+            "message": line,
+        },
+    }))
+}
+
+fn parse_audit_only_destructured_source_gap(message: &str, label: &str) -> Option<Value> {
+    if !message.contains("destructured source trace unresolved")
+        || !message.contains("has not traced the destructured source")
+    {
+        return None;
+    }
+    let observed = message.trim();
+    let line = format!(
+        "write more Sugar for this AST: owner=rust.factory blame={label} observed={observed} requested=DestructuredSource fix=sugar::destructured-source"
+    );
+    Some(json!({
+        "kind": "audit-only-construction-gap",
+        "label": label,
+        "message": line,
+        "gap": {
+            "owner": "rust.factory",
+            "blame": label,
+            "observed": observed,
+            "requested": "DestructuredSource",
+            "fix": "sugar::destructured-source",
+            "gap_kind": "Sugar",
+            "gap_locus": "AST",
+        },
+        "auditRow": {
+            "kind": "factory-audit-row",
+            "role": "DestructuredSource",
+            "status": "sugar-gap",
+            "observed": observed,
+            "blame": label,
+            "selected": Value::Null,
+            "candidates": [],
+            "message": line,
+        },
+    }))
+}
+
+fn parse_audit_only_unclassified_effect_gap(message: &str, label: &str) -> Option<Value> {
+    let (observed, _) = message
+        .strip_prefix("incomplete Outcome has an unclassified Effect: ")?
+        .split_once("; all Incomplete Outcomes must carry a named terminal Effect")?;
+    let observed = observed.trim();
+    let line = format!(
+        "write more Constructor for this AST: owner=rust.constructor blame={label} observed={observed} requested=TerminalEffect fix=constructor::effect"
+    );
+    Some(json!({
+        "kind": "audit-only-construction-gap",
+        "label": label,
+        "message": line,
+        "gap": {
+            "owner": "rust.constructor",
+            "blame": label,
+            "observed": observed,
+            "requested": "TerminalEffect",
+            "fix": "constructor::effect",
+            "gap_kind": "Constructor",
+            "gap_locus": "Outcome",
+        },
+        "auditRow": {
+            "kind": "factory-audit-row",
+            "role": "TerminalEffect",
+            "status": "constructor-gap",
+            "observed": observed,
+            "blame": label,
+            "selected": Value::Null,
+            "candidates": [],
+            "message": line,
+        },
+    }))
+}
+
+fn parse_audit_only_literal_reduction_gap(message: &str, label: &str) -> Option<Value> {
+    if !message.contains("did not reduce to an integer literal") {
+        return None;
+    }
+    let observed = message.trim();
+    let line = format!(
+        "write more Floor for this AST: owner=rust.floor blame={label} observed={observed} requested=IntegerLiteral fix=floor::literal"
+    );
+    Some(json!({
+        "kind": "audit-only-construction-gap",
+        "label": label,
+        "message": line,
+        "gap": {
+            "owner": "rust.floor",
+            "blame": label,
+            "observed": observed,
+            "requested": "IntegerLiteral",
+            "fix": "floor::literal",
+            "gap_kind": "Floor",
+            "gap_locus": "AST",
+        },
+        "auditRow": {
+            "kind": "factory-audit-row",
+            "role": "IntegerLiteral",
+            "status": "floor-gap",
+            "observed": observed,
+            "blame": label,
+            "selected": Value::Null,
+            "candidates": [],
+            "message": line,
+        },
+    }))
+}
+
+fn parse_audit_only_gap_tail(candidate: &str, label: &str) -> Option<Value> {
+    let line = candidate.lines().next().unwrap_or(candidate).trim();
+    let (prefix, fields) = line.split_once(": owner=")?;
+    let rest = prefix.strip_prefix("write more ")?;
+    let (gap_kind, gap_locus) = rest.split_once(" for this ")?;
+    let fields = format!("owner={fields}");
+    let owner = audit_only_field(&fields, "owner", &["blame"])?;
+    let blame = audit_only_field(&fields, "blame", &["observed"])?;
+    let observed = audit_only_field(&fields, "observed", &["requested"])?;
+    let requested = audit_only_field(&fields, "requested", &["fix"])?;
+    let fix = audit_only_field(&fields, "fix", &[])?;
+    let status = audit_only_status_for_gap_kind(gap_kind);
+    Some(json!({
+        "kind": "audit-only-construction-gap",
+        "label": label,
+        "message": line,
+        "gap": {
+            "owner": owner,
+            "blame": blame,
+            "observed": observed,
+            "requested": requested,
+            "fix": fix,
+            "gap_kind": gap_kind,
+            "gap_locus": gap_locus,
+        },
+        "auditRow": {
+            "kind": "factory-audit-row",
+            "role": requested,
+            "status": status,
+            "observed": observed,
+            "blame": blame,
+            "selected": Value::Null,
+            "candidates": [],
+            "message": line,
+        },
+    }))
+}
+
+fn audit_only_field(fields: &str, key: &str, next_keys: &[&str]) -> Option<String> {
+    let marker = format!("{key}=");
+    let start = fields.find(&marker)? + marker.len();
+    let rest = &fields[start..];
+    let end = next_keys
+        .iter()
+        .filter_map(|next| rest.find(&format!(" {next}=")))
+        .min()
+        .unwrap_or(rest.len());
+    let value = rest[..end].trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn audit_only_status_for_gap_kind(gap_kind: &str) -> String {
+    match gap_kind {
+        "Sugar" => "sugar-gap".to_string(),
+        "Floor" => "floor-gap".to_string(),
+        "ProofIR" => "proofir-gap".to_string(),
+        "Constructor" => "constructor-gap".to_string(),
+        other => format!("{}-gap", other.to_ascii_lowercase()),
+    }
+}
+
+fn sort_and_dedup_audit_only_gaps(gaps: Vec<Value>) -> Vec<Value> {
+    let mut keyed: BTreeMap<String, Value> = BTreeMap::new();
+    for gap in gaps {
+        keyed.entry(audit_only_gap_key(&gap)).or_insert(gap);
+    }
+    keyed.into_values().collect()
+}
+
+fn audit_only_gap_key(gap: &Value) -> String {
+    let s = |pointer: &str| -> String {
+        gap.pointer(pointer)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    [
+        s("/label"),
+        s("/gap/gap_kind"),
+        s("/gap/gap_locus"),
+        s("/gap/owner"),
+        s("/gap/blame"),
+        s("/gap/observed"),
+        s("/gap/requested"),
+        s("/gap/fix"),
+        s("/message"),
+    ]
+    .join("\u{1f}")
 }
 
 struct ParsedSource {
@@ -4525,7 +5099,7 @@ fn err_reply(id: &Value, msg: String) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": msg}})
 }
 
-fn handle(id: &Value, method: &str, params: &Value) -> Value {
+fn handle_with_mode(id: &Value, method: &str, params: &Value, mode: RpcMode) -> Value {
     debug!(method, "rust-test-assertions rpc request");
     let before = current_rss_kib();
     let response = match method {
@@ -4536,6 +5110,7 @@ fn handle(id: &Value, method: &str, params: &Value) -> Value {
         COMPONENT_PLAN_RPC_METHOD => {
             json!({"jsonrpc": "2.0", "id": id, "result": component_plan_result(params)})
         }
+        "lift" if mode == RpcMode::AuditOnlyConstructionGaps => audit_only_lift_reply(id, params),
         "lift" => json!({"jsonrpc": "2.0", "id": id, "result": lift(params)}),
         RESOLVE_PROOF_BY_CID_RPC_METHOD => {
             let workspace_root = params
@@ -4567,7 +5142,11 @@ fn handle(id: &Value, method: &str, params: &Value) -> Value {
 
 fn main() {
     init_tracing();
-    info!("rust-test-assertions-rpc listening on stdio");
+    let mode = RpcMode::from_args(std::env::args().skip(1));
+    info!(
+        audit_only = mode == RpcMode::AuditOnlyConstructionGaps,
+        "rust-test-assertions-rpc listening on stdio"
+    );
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
@@ -4586,7 +5165,7 @@ fn main() {
         let id = req.get("id").cloned().unwrap_or(Value::Null);
         let method = req.get("method").and_then(Value::as_str).unwrap_or("");
         let params = req.get("params").cloned().unwrap_or(Value::Null);
-        let reply = handle(&id, method, &params);
+        let reply = handle_with_mode(&id, method, &params, mode);
         send(&reply);
         if method == "shutdown" {
             break;
@@ -4683,6 +5262,291 @@ mod tests {
             "source_paths": ["src/lib.rs"]
         }));
         (root, response)
+    }
+
+    fn construction_gap_fixture(name: &str, body: &str) -> (PathBuf, Value) {
+        let root = unique_temp_dir(name);
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src/lib.rs"), body).expect("write rust source");
+        let params = json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"],
+            "options": {"reportSummary": true},
+        });
+        (root, params)
+    }
+
+    fn json_macro_gap_source(test_name: &str) -> String {
+        format!(
+            r#"
+#[test]
+fn {test_name}() {{
+    assert!(json!({{"k": 1}}).is_object());
+}}
+"#
+        )
+    }
+
+    #[test]
+    fn audit_only_records_same_construction_gap_that_production_panics_on() {
+        let source = json_macro_gap_source("first");
+        let (root, params) = construction_gap_fixture(
+            "audit_only_records_same_construction_gap_that_production_panics_on",
+            &source,
+        );
+
+        let production = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lift(&params)));
+        let production_message =
+            panic_message(production.expect_err("production lift must keep panicking"));
+        assert!(
+            production_message.contains("macro `json` has no visible macro_rules source"),
+            "{production_message}"
+        );
+        assert!(
+            production_message.contains("write more Sugar for this AST"),
+            "{production_message}"
+        );
+
+        let response = handle_with_mode(
+            &json!(1),
+            "lift",
+            &params,
+            RpcMode::AuditOnlyConstructionGaps,
+        );
+        let gaps = response
+            .pointer("/error/data/auditOnlyGaps")
+            .and_then(Value::as_array)
+            .expect("audit-only lift returns construction gap vector");
+        assert_eq!(gaps.len(), 1, "{response}");
+        let gap = &gaps[0];
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["label"], "src/lib.rs::<lift>");
+        assert_eq!(gap["gap"]["owner"], "rust.factory");
+        assert_eq!(
+            gap["gap"]["observed"],
+            "macro `json` has no visible macro_rules source"
+        );
+        assert_eq!(gap["gap"]["requested"], "Unknown");
+        assert_eq!(gap["gap"]["gap_kind"], "Sugar");
+        assert_eq!(gap["gap"]["gap_locus"], "AST");
+        assert!(gap["gap"]["observed"]
+            .as_str()
+            .is_some_and(|observed| production_message.contains(observed)));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_only_collects_multiple_construction_gaps_in_stable_order() {
+        let root =
+            unique_temp_dir("audit_only_collects_multiple_construction_gaps_in_stable_order");
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src/first.rs"), json_macro_gap_source("first"))
+            .expect("write first source");
+        std::fs::write(root.join("src/second.rs"), json_macro_gap_source("second"))
+            .expect("write second source");
+        let params = json!({
+            "workspace_root": root,
+            "source_paths": ["src/first.rs", "src/second.rs"],
+            "options": {"reportSummary": true},
+        });
+
+        let response = handle_with_mode(
+            &json!(1),
+            "lift",
+            &params,
+            RpcMode::AuditOnlyConstructionGaps,
+        );
+        let gaps = response
+            .pointer("/error/data/auditOnlyGaps")
+            .and_then(Value::as_array)
+            .expect("audit-only lift returns construction gap vector");
+        let labels: Vec<&str> = gaps
+            .iter()
+            .filter_map(|gap| gap.get("label").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["src/first.rs::<lift>", "src/second.rs::<lift>"]
+        );
+        assert!(gaps.iter().all(|gap| {
+            gap["gap"]["observed"] == "macro `json` has no visible macro_rules source"
+        }));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_only_factory_audit_unresolved_rows_become_content_keyed_gaps() {
+        let audit = FactoryAudit {
+            ast_kind: "expr",
+            site: "json ! ({ \"k\" : v })".to_string(),
+            line: 42,
+            span: None,
+            requested_role: "Term".to_string(),
+            selected: None,
+            candidates: Vec::new(),
+            disposition: sugar_lift_rust_tests::FactoryDisposition::Unresolved,
+            output: "effect",
+            reason: Some("no Sugar candidate".to_string()),
+            emitted_formula: None,
+        };
+
+        let gap = audit_only_gap_from_factory_audit("src/lib.rs", &audit)
+            .expect("unresolved audit row should become an audit-only construction gap");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["label"], "src/lib.rs::expr:Term:json ! ({ \"k\" : v })");
+        assert_eq!(gap["gap"]["owner"], "rust.factory");
+        assert_eq!(gap["gap"]["gap_locus"], "expr");
+        assert_eq!(gap["gap"]["requested"], "Term");
+        assert_eq!(gap["auditRow"]["status"], "sugar-gap");
+    }
+
+    #[test]
+    fn audit_only_gap_parser_rejects_unstructured_panics() {
+        assert!(
+            audit_only_gap_from_panic_message("ordinary panic", "src/lib.rs::f").is_none(),
+            "audit-only mode must not relabel arbitrary panics as construction gaps"
+        );
+    }
+
+    #[test]
+    fn audit_only_gap_parser_records_unstructured_construction_panics() {
+        let gap = audit_only_gap_from_panic_message(
+            "macro `json` has no visible macro_rules source; write more Sugar for this AST",
+            "src/lib.rs::f",
+        )
+        .expect("unstructured construction panic should become an audit gap");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["label"], "src/lib.rs::f");
+        assert_eq!(gap["gap"]["owner"], "rust.factory");
+        assert_eq!(
+            gap["gap"]["observed"],
+            "macro `json` has no visible macro_rules source"
+        );
+        assert_eq!(gap["gap"]["requested"], "Unknown");
+        assert_eq!(gap["gap"]["gap_kind"], "Sugar");
+        assert_eq!(gap["auditRow"]["status"], "sugar-gap");
+    }
+
+    #[test]
+    fn audit_only_gap_parser_records_floor_dispatch_panics() {
+        let gap = audit_only_gap_from_panic_message(
+            "binary boolean operator did not dispatch to BoolLiteral: v:behavior_ok",
+            "src/lib.rs::f",
+        )
+        .expect("floor dispatch panic should become an audit gap");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["gap"]["owner"], "rust.floor");
+        assert_eq!(gap["gap"]["observed"], "binary boolean operator");
+        assert_eq!(gap["gap"]["requested"], "BoolLiteral: v:behavior_ok");
+        assert_eq!(gap["gap"]["gap_kind"], "Floor");
+        assert_eq!(gap["auditRow"]["status"], "floor-gap");
+    }
+
+    #[test]
+    fn audit_only_gap_parser_records_owning_sugar_panics() {
+        let gap = audit_only_gap_from_panic_message(
+            "to_ascii_lowercase receiver did not reduce to a literal char; write the owning Sugar before Outcome",
+            "src/lib.rs::f",
+        )
+        .expect("owning Sugar panic should become an audit gap");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["gap"]["owner"], "rust.factory");
+        assert_eq!(
+            gap["gap"]["observed"],
+            "to_ascii_lowercase receiver did not reduce to a literal char"
+        );
+        assert_eq!(gap["gap"]["requested"], "Outcome");
+        assert_eq!(gap["gap"]["gap_kind"], "Sugar");
+        assert_eq!(gap["auditRow"]["status"], "sugar-gap");
+    }
+
+    #[test]
+    fn audit_only_gap_parser_records_lawful_floor_panics() {
+        let gap = audit_only_gap_from_panic_message(
+            "iterator terminal did not reach a lawful floor: iterator/option adaptor `.any(|..| ..)` over a LITERAL array",
+            "src/lib.rs::f",
+        )
+        .expect("lawful floor panic should become an audit gap");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["gap"]["owner"], "rust.floor");
+        assert_eq!(gap["gap"]["requested"], "LawfulFloor");
+        assert_eq!(gap["gap"]["gap_kind"], "Floor");
+        assert_eq!(gap["auditRow"]["status"], "floor-gap");
+        assert!(gap["gap"]["observed"]
+            .as_str()
+            .expect("observed string")
+            .contains("iterator/option adaptor"));
+    }
+
+    #[test]
+    fn audit_only_gap_parser_records_typed_lawful_floor_panics() {
+        let gap = audit_only_gap_from_panic_message(
+            "filter predicate did not reach a lawful bool floor: predicate floor did not reduce to literal bool: c:cmp:eq(v:x,i:1)",
+            "src/lib.rs::f",
+        )
+        .expect("typed lawful floor panic should become an audit gap");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["gap"]["owner"], "rust.floor");
+        assert_eq!(gap["gap"]["requested"], "LawfulFloor");
+        assert_eq!(gap["gap"]["gap_kind"], "Floor");
+        assert_eq!(gap["auditRow"]["status"], "floor-gap");
+        assert!(gap["gap"]["observed"]
+            .as_str()
+            .expect("observed string")
+            .contains("predicate floor did not reduce"));
+    }
+
+    #[test]
+    fn audit_only_gap_parser_records_destructured_source_panics() {
+        let gap = audit_only_gap_from_panic_message(
+            "destructured source trace unresolved for `route`: pattern binding participates in the assertion, but SSA has not traced the destructured source to literal components yet",
+            "src/lib.rs::f",
+        )
+        .expect("destructured source panic should become an audit gap");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["gap"]["owner"], "rust.factory");
+        assert_eq!(gap["gap"]["requested"], "DestructuredSource");
+        assert_eq!(gap["gap"]["gap_kind"], "Sugar");
+        assert_eq!(gap["auditRow"]["status"], "sugar-gap");
+    }
+
+    #[test]
+    fn audit_only_gap_parser_records_unclassified_effect_panics() {
+        let gap = audit_only_gap_from_panic_message(
+            "incomplete Outcome has an unclassified Effect: closure captures ambiguous local `status`; refused; all Incomplete Outcomes must carry a named terminal Effect",
+            "src/lib.rs::f",
+        )
+        .expect("unclassified effect panic should become an audit gap");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["gap"]["owner"], "rust.constructor");
+        assert_eq!(gap["gap"]["requested"], "TerminalEffect");
+        assert_eq!(gap["gap"]["gap_kind"], "Constructor");
+        assert_eq!(gap["auditRow"]["status"], "constructor-gap");
+    }
+
+    #[test]
+    fn audit_only_gap_parser_records_literal_reduction_panics() {
+        let gap = audit_only_gap_from_panic_message(
+            "str repeat count did not reduce to an integer literal",
+            "src/lib.rs::f",
+        )
+        .expect("literal reduction panic should become an audit gap");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["gap"]["owner"], "rust.floor");
+        assert_eq!(gap["gap"]["requested"], "IntegerLiteral");
+        assert_eq!(gap["gap"]["gap_kind"], "Floor");
+        assert_eq!(gap["auditRow"]["status"], "floor-gap");
     }
 
     #[test]
