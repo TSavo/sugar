@@ -13,6 +13,7 @@ from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
@@ -22,7 +23,7 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
 
 NONE = ctor("None", [])
@@ -127,6 +128,26 @@ def test_string_slice_uses_python_string_value():
     assert reduce_value("'abcdef'[1:3]") == StringValue("bc")
     assert reduce_value("'abcdef'[::2]") == StringValue("ace")
     assert reduce_value("'abcdef'[-2:]") == StringValue("ef")
+
+
+def test_subscript_receiver_runtime_effect_bubbles() -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "flag", SymbolicValue(make_var("flag"))
+    )
+    build_ctx = replace(
+        FactoryBuildContext(filename="t.py", catalog=default_catalog()),
+        temporal=temporal,
+    )
+    body = build_ctx.build_body(
+        ast.parse("('abc' if flag else 'def')[0]", mode="eval").body,
+        SugarRole.TERM,
+    )
+
+    outcome = body.reduce(ReduceContext(temporal=temporal))
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "conditional expression runtime boundary" in outcome.effect.reason
 
 
 def test_symbolic_string_slice_bound_reaches_named_floor_gap():
