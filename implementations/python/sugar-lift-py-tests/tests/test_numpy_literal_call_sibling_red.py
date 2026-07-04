@@ -57,9 +57,7 @@ def test_numpy_integer_literal_call_reduces_to_sibling_fact(
 
     lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
     assert _rhs_values(lying_rows) == [truth, lie]
-    assert {
-        _rhs_value(row): _warrant_kinds(row) for row in lying_rows
-    } == {
+    assert {_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
         truth: {"Derived"},
         lie: {"Stated"},
     }
@@ -138,9 +136,7 @@ def test_numpy_mod_and_floor_divide_follow_python_sign_convention(
 
     lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
     assert _rhs_values(lying_rows) == sorted([truth, lie])
-    assert {
-        _rhs_value(row): _warrant_kinds(row) for row in lying_rows
-    } == {
+    assert {_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
         truth: {"Derived"},
         lie: {"Stated"},
     }
@@ -174,9 +170,7 @@ def test_numpy_power_reduces_only_when_integer_result_is_int64_exact(
 
     lying_rows = _numpy_euf_rows(lying.result, "numpy.power")
     assert _rhs_values(lying_rows) == [8, 9]
-    assert {
-        _rhs_value(row): _warrant_kinds(row) for row in lying_rows
-    } == {
+    assert {_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
         8: {"Derived"},
         9: {"Stated"},
     }
@@ -229,8 +223,7 @@ def test_uncomputed_numpy_ops_stay_opaque(
 
     assert observed.verdict.startswith("error:")
     assert not any(
-        "Derived" in _warrant_kinds(row)
-        for row in _all_euf_rows(observed.result)
+        "Derived" in _warrant_kinds(row) for row in _all_euf_rows(observed.result)
     )
 
 
@@ -325,10 +318,7 @@ def _summarize_euf_row(row: dict) -> dict[str, object]:
 
 def _rhs_summary(row: dict) -> object:
     rhs = row["inv"]["args"][1]
-    if (
-        rhs.get("kind") == "const"
-        and rhs.get("sort", {}).get("name") == "Int"
-    ):
+    if rhs.get("kind") == "const" and rhs.get("sort", {}).get("name") == "Int":
         return rhs["value"]
     return rhs.get("name") or rhs.get("kind") or rhs
 
@@ -345,7 +335,4 @@ def _rhs_value(row: dict) -> int:
 
 
 def _warrant_kinds(row: dict) -> set[str]:
-    return {
-        warrant["kind"]
-        for warrant in row["proofirProvenance"]["warrants"]
-    }
+    return {warrant["kind"] for warrant in row["proofirProvenance"]["warrants"]}
