@@ -992,8 +992,17 @@ def _lift_literal_via_factory(
 
 
 _COMPUTABLE_NUMPY_INTEGER_UFUNCS = frozenset(
-    {"numpy.add", "numpy.multiply", "numpy.subtract"}
+    {
+        "numpy.add",
+        "numpy.floor_divide",
+        "numpy.mod",
+        "numpy.multiply",
+        "numpy.power",
+        "numpy.subtract",
+    }
 )
+_NUMPY_INT64_MIN = -(2**63)
+_NUMPY_INT64_MAX = 2**63 - 1
 
 
 def _numpy_integer_literal_call_derived_fact(
@@ -1034,13 +1043,8 @@ def _numpy_integer_literal_call_derived_fact(
         arg_terms.append(_lift_literal_via_factory(arg_frag, filename, ctx=ctx))
 
     left, right = values
-    if callee_name == "numpy.add":
-        result = left + right
-    elif callee_name == "numpy.multiply":
-        result = left * right
-    elif callee_name == "numpy.subtract":
-        result = left - right
-    else:
+    result = _numpy_integer_ufunc_result(callee_name, left, right)
+    if result is None:
         return None
 
     from sugar_lift_py_tests.ir import num
@@ -1061,6 +1065,50 @@ def _numpy_integer_literal_call_derived_fact(
     )
 
 
+def _numpy_integer_ufunc_result(
+    callee_name: str,
+    left: int,
+    right: int,
+) -> int | None:
+    if not (_fits_numpy_int64(left) and _fits_numpy_int64(right)):
+        return None
+    if callee_name == "numpy.add":
+        result = left + right
+    elif callee_name == "numpy.multiply":
+        result = left * right
+    elif callee_name == "numpy.subtract":
+        result = left - right
+    elif callee_name == "numpy.mod":
+        if right == 0:
+            return None
+        result = left % right
+    elif callee_name == "numpy.floor_divide":
+        if right == 0:
+            return None
+        result = left // right
+    elif callee_name == "numpy.power":
+        result = _numpy_integer_power_result(left, right)
+        if result is None:
+            return None
+    else:
+        return None
+    if not _fits_numpy_int64(result):
+        return None
+    return result
+
+
+def _numpy_integer_power_result(left: int, right: int) -> int | None:
+    if right < 0:
+        return None
+    if left not in {-1, 0, 1} and right > 63:
+        return None
+    return left**right
+
+
+def _fits_numpy_int64(value: int) -> bool:
+    return _NUMPY_INT64_MIN <= value <= _NUMPY_INT64_MAX
+
+
 def _integer_floor_for_numpy_literal_arg(
     frag: SourceFragment,
     *,
@@ -1075,6 +1123,8 @@ def _integer_floor_for_numpy_literal_arg(
     if not isinstance(value, TermValue):
         return None
     if type(value.value) is not int:
+        return None
+    if not _fits_numpy_int64(value.value):
         return None
     return value.value
 

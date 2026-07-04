@@ -94,8 +94,110 @@ def test_numpy_integer_literal_call_accepts_constant_bound_args(
 
 
 @pytest.mark.parametrize(
+    ("op", "left", "right", "truth", "lie"),
+    [
+        ("mod", 7, 3, 1, 2),
+        ("mod", -7, 3, 2, -1),
+        ("mod", 7, -3, -2, 1),
+        ("floor_divide", 7, 3, 2, 3),
+        ("floor_divide", -7, 3, -3, -2),
+        ("floor_divide", 7, -3, -3, -2),
+    ],
+)
+def test_numpy_mod_and_floor_divide_follow_python_sign_convention(
+    tmp_path: Path,
+    op: str,
+    left: int,
+    right: int,
+    truth: int,
+    lie: int,
+) -> None:
+    truthful = _run_numpy_binary_case(
+        tmp_path / f"{op}-{left}-{right}-truthful",
+        op,
+        left,
+        right,
+        truth,
+    )
+    lying = _run_numpy_binary_case(
+        tmp_path / f"{op}-{left}-{right}-lying",
+        op,
+        left,
+        right,
+        lie,
+    )
+    observed = {"truthful": truthful.to_json(), "lying": lying.to_json()}
+    print(json.dumps(observed, indent=2, sort_keys=True))
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+    truthful_rows = _numpy_euf_rows(truthful.result, f"numpy.{op}")
+    assert _rhs_values(truthful_rows) == [truth]
+    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+
+    lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
+    assert _rhs_values(lying_rows) == sorted([truth, lie])
+    assert {
+        _rhs_value(row): _warrant_kinds(row) for row in lying_rows
+    } == {
+        truth: {"Derived"},
+        lie: {"Stated"},
+    }
+
+
+def test_numpy_power_reduces_only_when_integer_result_is_int64_exact(
+    tmp_path: Path,
+) -> None:
+    truthful = _run_numpy_binary_case(tmp_path / "power-truthful", "power", 2, 3, 8)
+    lying = _run_numpy_binary_case(tmp_path / "power-lying", "power", 2, 3, 9)
+    overflow = _run_numpy_binary_case(
+        tmp_path / "power-overflow",
+        "power",
+        2,
+        63,
+        0,
+    )
+    observed = {
+        "truthful": truthful.to_json(),
+        "lying": lying.to_json(),
+        "overflow": overflow.to_json(),
+    }
+    print(json.dumps(observed, indent=2, sort_keys=True))
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+    truthful_rows = _numpy_euf_rows(truthful.result, "numpy.power")
+    assert _rhs_values(truthful_rows) == [8]
+    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+
+    lying_rows = _numpy_euf_rows(lying.result, "numpy.power")
+    assert _rhs_values(lying_rows) == [8, 9]
+    assert {
+        _rhs_value(row): _warrant_kinds(row) for row in lying_rows
+    } == {
+        8: {"Derived"},
+        9: {"Stated"},
+    }
+
+    assert overflow.verdict.startswith("error:")
+    assert not any(
+        "Derived" in _warrant_kinds(row)
+        for row in _numpy_euf_rows(overflow.result, "numpy.power")
+    )
+
+
+@pytest.mark.parametrize(
     ("label", "source"),
     [
+        (
+            "divide",
+            "import numpy as np\n"
+            "\n"
+            "def test_np_divide_opaque():\n"
+            "    assert np.divide(4, 2) == 2\n",
+        ),
         (
             "sin",
             "import numpy as np\n"
@@ -175,6 +277,22 @@ def _run_case(project: Path, source: str) -> CaseResult:
             return CaseResult(f"error: {exc}", result)
     except WitnessPipelineError as exc:
         return CaseResult(f"error: {exc}", None)
+
+
+def _run_numpy_binary_case(
+    project: Path,
+    op: str,
+    left: int,
+    right: int,
+    expected: int,
+) -> CaseResult:
+    return _run_case(
+        project,
+        "import numpy as np\n"
+        "\n"
+        f"def test_np_{op}_{abs(left)}_{abs(right)}_{abs(expected)}():\n"
+        f"    assert np.{op}({left}, {right}) == {expected}\n",
+    )
 
 
 def _numpy_euf_rows(result: WitnessPipelineResult | None, callee: str) -> list[dict]:
