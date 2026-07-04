@@ -345,3 +345,25 @@ def test_projected_equality_rhs_runtime_effect_stays_typed_effect() -> None:
     assert [row.selected for row in report.payload.factory_walk] == [
         "ProjectedEqualityAssertionSugar"
     ]
+
+
+def test_projected_equality_runtime_receiver_records_typed_absence() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def helper():\n"
+            "    return 1\n"
+            "\n"
+            "def test_dynamic(d):\n"
+            "    assert helper() == 1\n"
+            "    assert d[...].flags.writeable == True\n"
+        ),
+        filename="test_dynamic.py",
+        memento_file="test_dynamic.py",
+    )
+
+    assert report is not None
+    assert len(report.payload.ir) == 1
+    assert any(
+        "attribute lookup runtime boundary" in effect.effect.reason
+        for effect in report.payload.effects
+    )

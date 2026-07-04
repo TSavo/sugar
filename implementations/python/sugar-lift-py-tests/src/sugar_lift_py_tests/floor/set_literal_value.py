@@ -10,38 +10,29 @@ from .term_value import TermValue
 
 
 @dataclass(frozen=True)
-class DictLiteralValue(FloorValue):
-    """A structural Python dict literal term.
-
-    Dict literals are useful evidence payloads and call arguments, but the current
-    production solver path does not give dict constructor equality an independent
-    verdict witness. The floor is therefore a typed non-FOL support carrier, while
-    still projecting to a term for enclosing claims.
-    """
+class SetLiteralValue(FloorValue):
+    """A structural Python set literal term with deterministic support order."""
 
     non_fol_support = True
 
-    entries: tuple[tuple[Term, Term], ...]
+    items: tuple[Term, ...]
 
     def to_term(self, *, owner: str) -> Term:
         del owner
-        return ctor(
-            "python:dict",
-            [ctor("python:dict_entry", [key, value]) for key, value in self.entries],
-        )
+        return ctor("python:set", list(self.items))
 
     def call_method_with(self, operation: Any, ctx: object) -> Any:
         del ctx
         if operation.name == "__len__" and not operation.arguments:
             from sugar_lift_py_tests.outcome import Complete
 
-            return Complete(TermValue(len(self.entries)))
+            return Complete(TermValue(len(self.items)))
         _call_method_gap(
             owner=operation.owner,
             blame=operation.blame,
-            observed=f"DictLiteralValue.{operation.name}",
-            requested="dict builtin method floor",
-            fix=f"add DictLiteralValue method floor for `{operation.name}`",
+            observed=f"SetLiteralValue.{operation.name}",
+            requested="set builtin method floor",
+            fix=f"add SetLiteralValue method floor for `{operation.name}`",
         )
 
 

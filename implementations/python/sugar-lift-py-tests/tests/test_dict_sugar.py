@@ -32,5 +32,5 @@ def test_dict_literal_order_and_kind_are_structural() -> None:
 
 
 def test_dict_literal_propagates_refused_entry_shape() -> None:
-    with pytest.raises(FactoryGap, match="observed=Set"):
-        reduce_term('{"bad": {1}}')
+    with pytest.raises(FactoryGap, match="observed=GeneratorExp"):
+        reduce_term('{"bad": (x for x in xs)}')

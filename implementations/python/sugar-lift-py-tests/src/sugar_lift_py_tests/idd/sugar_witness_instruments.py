@@ -271,6 +271,14 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
     ),
     NonFolOptOut(
+        sugar_name="DictCompSugar",
+        floor_name="DictLiteralValue",
+        reason=(
+            "dict comprehensions reduce to structural dict support; "
+            "dict-constructor equality is not currently a standalone solver verdict"
+        ),
+    ),
+    NonFolOptOut(
         sugar_name="ExprSugar",
         floor_name="SupportValue",
         reason="expression statements evaluate for effects and leave no FOL claim",
@@ -299,6 +307,30 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         sugar_name="PassSugar",
         floor_name="SupportValue",
         reason="pass is inert control-flow support",
+    ),
+    NonFolOptOut(
+        sugar_name="SetCompSugar",
+        floor_name="SetLiteralValue",
+        reason=(
+            "set comprehensions reduce to structural set support; "
+            "set-constructor equality is not currently a standalone solver verdict"
+        ),
+    ),
+    NonFolOptOut(
+        sugar_name="SetSugar",
+        floor_name="SetLiteralValue",
+        reason=(
+            "set literals are structural term support; set-constructor equality "
+            "is not currently a standalone solver verdict"
+        ),
+    ),
+    NonFolOptOut(
+        sugar_name="StarredSugar",
+        floor_name="SupportValue",
+        reason=(
+            "starred expression expansion is runtime call/display support, "
+            "not a standalone FOL claim"
+        ),
     ),
     NonFolOptOut(
         sugar_name="SubscriptAssignSugar",
