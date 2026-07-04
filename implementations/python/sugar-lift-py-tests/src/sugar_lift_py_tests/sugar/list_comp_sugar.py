@@ -205,8 +205,8 @@ def _runtime_iterable_effect(blame: str, reason: str) -> Incomplete:
     return Incomplete(
         RuntimeEffect(
             "list comprehension runtime boundary: "
-            f"{reason}. Python evaluates the iterable/guards at runtime; keep "
-            "as typed red until a narrower vendor-cited reduction owns the "
-            f"shape. blame={blame}"
+            f"{reason}. Python evaluates list comprehension iterables and guards "
+            "at runtime; keep as typed red until a narrower vendor-cited "
+            f"reduction owns the shape. blame={blame}"
         )
     )

@@ -22,5 +22,5 @@ def test_expression_statement_does_not_replace_docstring_comment_sugar() -> None
 
 
 def test_expression_statement_propagates_refused_inner_expression() -> None:
-    with pytest.raises(FactoryGap, match="observed=Set"):
-        compose_block("    {1}\n    return 2\n")
+    with pytest.raises(FactoryGap, match="observed=GeneratorExp"):
+        compose_block("    (x for x in xs)\n    return 2\n")

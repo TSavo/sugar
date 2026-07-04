@@ -11,9 +11,9 @@ from sugar_lift_py_tests.idd.dispatch_matrix_audit import (
     collect_dispatch_matrix,
 )
 
-EXPECTED_FLOOR_COUNT = 26
+EXPECTED_FLOOR_COUNT = 27
 EXPECTED_OPERATION_COUNT = 32
-EXPECTED_MISSING_CELL_COUNT = 713
+EXPECTED_MISSING_CELL_COUNT = 741
 EXPECTED_MATRIX = """\
 floor | add_with | async_context_manager_with | async_iter_with | async_next_with | attribute_assign_with | attribute_delete_with | attribute_with | await_with | binary_operator_with | bitwise_with | call_method_with | construct_sequence_with | contains_with | context_manager_with | delitem_with | descriptor_with | format_value_with | guard_with | inplace_binary_operator_with | map_with | materialize_with | merge_finally_with | missing_with | next_with | project_callsite_with | project_sequence_with | reflected_binary_operator_with | route_raises_with | setitem_with | str_with | subscript_with | unary_operator_with
 ArrayLiteral | I | M | M | M | M | M | M | M | I | M | I | M | I | M | M | M | M | M | R | I | M | M | M | M | I | I | M | M | M | M | I | M
@@ -23,7 +23,7 @@ BoundVar | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M
 BuilderState | I | M | M | M | M | M | M | M | M | M | I | M | M | M | M | M | M | M | R | I | I | M | M | M | R | M | M | M | M | M | M | M
 Bv32Value | M | M | M | M | M | M | M | M | M | I | M | M | M | M | M | M | M | M | R | M | M | M | M | M | I | M | M | M | M | I | M | M
 CallSiteValue | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | R | M | M | M | M | M | I | M | M | M | M | M | M | M
-DictLiteralValue | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
+DictLiteralValue | M | M | M | M | M | M | M | M | M | M | I | M | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
 EncodedStringValue | M | M | M | M | M | M | M | M | I | M | M | M | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
 FunctionCallable | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
 GuardedRaise | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
@@ -36,6 +36,7 @@ PredicateValue | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M |
 RaiseValue | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
 ReturnValue | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | R | M | M | M | M | M | I | M | M | M | M | M | M | M
 SequenceConstructor | M | M | M | M | M | M | M | M | M | M | M | I | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
+SetLiteralValue | M | M | M | M | M | M | M | M | M | M | I | M | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
 SliceValue | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
 StringValue | M | M | M | M | M | M | M | M | I | M | I | M | I | M | M | M | I | M | R | M | M | M | M | M | I | M | M | M | M | I | I | M
 SupportValue | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | M | R | M | M | M | M | M | R | M | M | M | M | M | M | M
@@ -110,5 +111,5 @@ def test_dispatch_matrix_cli_reports_the_confession_vector(capsys) -> None:
     assert status == 1
     stdout = capsys.readouterr().out
     assert "Law 8 dispatch-matrix annotation" in stdout
-    assert "R(dispatch-matrix-missing-cells): 713" in stdout
+    assert "R(dispatch-matrix-missing-cells): 741" in stdout
     assert "BoundVar |" in stdout
