@@ -408,6 +408,38 @@ hit it — because that agent, reading that message, IS the system's
 intelligence at that moment. A failure that must be debugged is a failure
 message that wasn't finished.
 
+## Ask the floor: dispatch, don't interrogate
+
+What does `let x = 1; let y = x;` desugar to? You don't know, and you must not
+try to know. Ask the floor. It's clearly aliased.
+
+Every binding is alias formation: a value just acquired a second name. Whether
+that binding SEVERS (an independent value equal to me — the Copy answer),
+SHARES (another name for my place — same value node, two names), or REFUSES
+(opaque provenance) is knowledge that belongs to the *value*, not to the
+syntax walker reading `let`. The walker emits the event — bind, write-through,
+read, consume — and the floor replays it against its own semantics. What is
+this thing floor to? Doesn't matter. Just dispatch, let it replay through the
+floor, see what comes back.
+
+What comes back is a closed, typed result: **reduced value | typed effect |
+refusal.** Callers are exhaustive over OUTPUTS, never over KINDS. A `match` on
+what-kind-of-thing-is-this — or its relocated cousin, a `matches!` predicate —
+is an asker, and askers are the disease: every kind-ladder in the census and
+every stringly side-table (`aliases: HashMap<String, _>`, refuse-on-read
+boolean sets) is a hand-rolled fragment of the dispatch the floor gives by
+construction. The default is shared identity; severance is a property the
+floor GRANTS, never a walker default — two map entries over one place is how a
+stale copy falsely refutes a true assertion, and that bug class is
+unrepresentable when the alias is a floor value pointing at one node.
+
+The tooth cuts both ways, and the compiler holds it: a planted new FLOOR kind
+requires zero caller changes (callers are already total over results); a
+planted new RESULT variant fails to compile at every caller. Names are sugar
+over identity — `x` and `y` are two names on one value node, exactly as
+CID-canonical form strips function names. The floor algebra is the identity
+layer; a walker deciding what `let y = x` means is a name asking a name.
+
 The manifesto above is the operating model. The rest of this file is local
 mechanics for applying it in this checkout.
 
