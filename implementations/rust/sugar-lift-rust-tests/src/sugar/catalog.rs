@@ -560,7 +560,7 @@ fn order_candidates_or_panic(candidates: &mut Vec<SugarCandidate>) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, rc::Rc};
 
     use syn::{Expr, Item, Stmt};
 
@@ -568,9 +568,9 @@ mod tests {
     use crate::sugar::factory::SugarBuildCtx;
     use crate::sugar::source_fragment::SourceFragment;
     use crate::{
-        item_scope_fn_registry, record_simple_value_binding, FactoryAuditLog, FactoryDisposition,
-        LiftOptions, MacroRegistry, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalPlan,
-        TemporalScope,
+        item_scope_fn_registry, record_simple_value_binding, ConstRegistry, FactoryAuditLog,
+        FactoryDisposition, LiftOptions, MacroRegistry, Outcome, ReductionCtx, Sugar, SugarCtx,
+        TemporalPlan, TemporalScope,
     };
 
     struct NoopSugar;
@@ -2324,6 +2324,29 @@ fn int_sqrt_chain_axioms() {
     }
 
     #[test]
+    fn local_binding_shadows_const_path_before_const_sugar() {
+        let mut consts = ConstRegistry::new();
+        consts.insert("x", Rc::new(syn::parse_str("99_i32").unwrap()));
+        let mut scope =
+            TemporalScope::new("catalog-test", TemporalPlan::default()).with_const_registry(consts);
+        let stmt: syn::Stmt = syn::parse_quote! { let x = runtime_value(); };
+        let syn::Stmt::Local(local) = stmt else {
+            panic!("catalog shadowing fixture must parse as a local binding")
+        };
+        record_simple_value_binding(&mut scope, &local);
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr = syn::parse_str("x").unwrap();
+        let names: Vec<_> = super::matching_expr_claims_for_role(&expr, &fcx, SugarRole::Term)
+            .into_iter()
+            .map(|candidate| candidate.name())
+            .collect();
+
+        assert_eq!(names, vec!["bound_path", "const", "path"]);
+    }
+
+    #[test]
     fn option_map_over_literal_some_is_owned_by_option_map_before_sequence_map() {
         let expr: Expr = syn::parse_str("Some(1).map(|x| x + 1)").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Term);
@@ -2679,6 +2702,60 @@ fn int_sqrt_chain_axioms() {
         assert_eq!(
             selected_candidate_name_for_role(&expr, SugarRole::Term),
             Some("match_value_term")
+        );
+    }
+
+    #[test]
+    fn match_value_term_accepts_returning_error_arm() {
+        let expr: Expr = syn::parse_str(
+            "match resolve_target(args.target.as_ref()) { Ok(t) => t, Err(e) => { eprintln!(\"{e}\"); return EXIT_USER_ERROR; } }",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+
+        assert!(
+            names.contains(&"match_value_term"),
+            "a match with one value arm and one returning error arm must stay a term owner: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("match_value_term")
+        );
+    }
+
+    #[test]
+    fn runtime_interior_match_term_is_owned_by_match_value_term() {
+        let expr: Expr = syn::parse_str(
+            "match target { Some(p) => { if p.is_absolute() { p.clone() } else { std::env::current_dir()?.join(p) } }, None => std::env::current_dir()? }",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+
+        assert!(
+            names.contains(&"match_value_term"),
+            "a runtime-interior value match must be owned as a typed red match term: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("match_value_term")
+        );
+    }
+
+    #[test]
+    fn field_of_runtime_call_match_term_is_runtime_scrutinee() {
+        let init: Expr = syn::parse_str("Cli::parse()").unwrap();
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert("cli".to_string(), init);
+        let expr: Expr = syn::parse_str(
+            "match cli.cmd { Cmd::Prove(a) => cmd_prove::run(a), Cmd::Hash(a) => cmd_hash::run(a) }",
+        )
+        .unwrap();
+        let names = candidate_names_for_role_with_let_inits(&expr, SugarRole::Term, &let_inits);
+
+        assert_eq!(names, vec!["match_scrutinee_term"]);
+        assert_eq!(
+            selected_candidate_name_for_role_with_let_inits(&expr, SugarRole::Term, &let_inits),
+            Some("match_scrutinee_term")
         );
     }
 
