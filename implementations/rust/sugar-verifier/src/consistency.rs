@@ -67,6 +67,7 @@ use rayon::prelude::*;
 use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
+use crate::effects::{VerifyEffect, WitnessDischargeGround};
 use crate::solvers::{
     run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan, SolverSeat,
 };
@@ -84,6 +85,7 @@ pub struct ConsistencyResult {
     /// `Undecidable` => encoding STOP (must be surfaced, never silently passed).
     pub verdict: ObligationVerdict,
     pub reason: String,
+    pub effect: Option<VerifyEffect>,
     /// True when the verdict came from an EXECUTION WITNESS discharged by
     /// recompute (k(I)=t), NOT from a symbolic solver. Kept distinct so the
     /// report never reads witnessed-by-execution as proven-by-solver.
@@ -93,10 +95,12 @@ pub struct ConsistencyResult {
 
 const CONSISTENT_REASON: &str = "test assertions mutually consistent about callsite";
 const CONTRADICTORY_REASON: &str = "test assertions contradictory about callsite";
-const VACUOUS_SINGLE_REASON: &str =
-    "consistency check vacuous: single constraint has no sibling to contradict — not a substantive discharge";
-const MISSING_INDEPENDENT_KIND_REASON: &str =
-    "consistency check lacks an independent-KIND witness: Stated testimony cannot corroborate Stated testimony";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VacuityRefusalKind {
+    NoSiblingToContradict,
+    MissingIndependentKindWitness,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ProofIrProvenanceKind {
@@ -270,18 +274,42 @@ fn axiom_context_formula(body: &Json) -> Json {
 
 /// Invert a raw-satisfiability solver verdict into a consistency verdict.
 /// See the SOLVER POLARITY note at the top of the module.
-fn consistency_verdict(raw: ObligationVerdict) -> (ObligationVerdict, &'static str) {
+fn consistency_verdict(
+    raw: ObligationVerdict,
+    property_name: &str,
+    raw_reason: &str,
+) -> (ObligationVerdict, String, Option<VerifyEffect>) {
     match raw {
         // raw `sat`  -> solver said Unsatisfied -> the inv IS satisfiable -> consistent
-        ObligationVerdict::Unsatisfied => (ObligationVerdict::Discharged, CONSISTENT_REASON),
+        ObligationVerdict::Unsatisfied => (
+            ObligationVerdict::Discharged,
+            format!("{CONSISTENT_REASON} `{property_name}` [{raw_reason}]"),
+            None,
+        ),
         // raw `unsat` -> solver said Discharged -> the inv is contradictory -> refuse
-        ObligationVerdict::Discharged => (ObligationVerdict::Unsatisfied, CONTRADICTORY_REASON),
-        // An honest refusal (no sound discharger) passes through as a refusal --
-        // it carries its own named reason from the solver layer, never overwritten
+        ObligationVerdict::Discharged => (
+            ObligationVerdict::Unsatisfied,
+            format!("{CONTRADICTORY_REASON} `{property_name}` [{raw_reason}]"),
+            None,
+        ),
+        // An honest refusal passes through as a typed effect, never overwritten
         // with the generic encoding-STOP message.
-        ObligationVerdict::Refused => (ObligationVerdict::Refused, "refused: no sound discharger"),
+        ObligationVerdict::Refused => {
+            let effect = VerifyEffect::ConsistencyNoSoundDischarger {
+                property_name: property_name.to_string(),
+                solver_reason: raw_reason.to_string(),
+            };
+            let boundary = effect.to_legacy_boundary();
+            (boundary.verdict, boundary.reason, Some(effect))
+        }
         // unknown / error -> encoding STOP, surfaced loud
-        other => (other, "consistency check undecidable (encoding STOP)"),
+        other => (
+            other,
+            format!(
+                "consistency check undecidable (encoding STOP) `{property_name}` [{raw_reason}]"
+            ),
+            None,
+        ),
     }
 }
 
@@ -551,6 +579,7 @@ fn try_witness_discharge(
         property_name: property_name.clone(),
         verdict: ObligationVerdict::Undecidable,
         reason: reason.clone(),
+        effect: None,
         witnessed: false,
         verification: Some(json!({
             "kind": "witness",
@@ -588,19 +617,20 @@ fn try_witness_discharge(
     let outcome = match resolve_witness_package(&resolvers, Path::new(&project), &claim) {
         Ok(o) => o,
         Err(e) => {
-            let reason = format!("witness REFUSED by rust package recompute: {e}");
+            let effect = VerifyEffect::UnwitnessedDischarge {
+                contract_cid: contract_cid.clone(),
+                property_name: property_name.clone(),
+                ground: WitnessDischargeGround::PackageRecompute { error: e },
+            };
+            let boundary = effect.to_legacy_boundary();
             return Some(ConsistencyResult {
                 contract_cid,
                 property_name,
-                verdict: ObligationVerdict::Unsatisfied,
-                reason: reason.clone(),
+                verdict: boundary.verdict,
+                reason: boundary.reason,
+                effect: Some(effect),
                 witnessed: false,
-                verification: Some(json!({
-                    "kind": "witness",
-                    "witnessed": false,
-                    "verdict": ObligationVerdict::Unsatisfied.as_str(),
-                    "reason": reason,
-                })),
+                verification: boundary.verification,
             });
         }
     };
@@ -614,6 +644,7 @@ fn try_witness_discharge(
             property_name,
             verdict: ObligationVerdict::Discharged,
             reason: reason.clone(),
+            effect: None,
             witnessed: true,
             verification: Some(json!({
                 "kind": "witness",
@@ -632,36 +663,26 @@ fn try_witness_discharge(
             .take(6)
             .cloned()
             .collect::<Vec<_>>();
-        let more = if outcome.failed_tests.len() > shown.len() {
-            format!(" (+{} more)", outcome.failed_tests.len() - shown.len())
-        } else {
-            String::new()
+        let effect = VerifyEffect::UnwitnessedDischarge {
+            contract_cid: contract_cid.clone(),
+            property_name: property_name.clone(),
+            ground: WitnessDischargeGround::PackageBody {
+                resolved_by: outcome.resolved_by,
+                failed: outcome.failed,
+                count: outcome.count,
+                failed_tests: shown,
+                omitted: outcome.failed_tests.len().saturating_sub(6),
+            },
         };
-        let reason = format!(
-            "witness REFUSED by rust package body: bundle reproduced via {}; \
-             {}/{} outcomes failed: {}{}",
-            outcome.resolved_by,
-            outcome.failed,
-            outcome.count,
-            shown.join(", "),
-            more
-        );
+        let boundary = effect.to_legacy_boundary();
         ConsistencyResult {
             contract_cid,
             property_name,
-            verdict: ObligationVerdict::Unsatisfied,
-            reason: reason.clone(),
+            verdict: boundary.verdict,
+            reason: boundary.reason,
+            effect: Some(effect),
             witnessed: false,
-            verification: Some(json!({
-                "kind": "witness",
-                "witnessed": false,
-                "verdict": ObligationVerdict::Unsatisfied.as_str(),
-                "resolvedBy": outcome.resolved_by,
-                "outcomes": outcome.count,
-                "failed": outcome.failed,
-                "failedTests": shown,
-                "reason": reason,
-            })),
+            verification: boundary.verification,
         }
     })
 }
@@ -947,7 +968,11 @@ fn resolve_witness_body(
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        return Err(format!("oracle refused resolution: {msg}"));
+        return Err(VerifyEffect::WitnessOracleResolution {
+            resolver: resolver.argv.first().cloned(),
+            message: msg.to_string(),
+        }
+        .to_string());
     }
     let result = reply.get("result").ok_or("reply missing result")?;
     let body_b64 = result
@@ -1032,22 +1057,20 @@ fn is_witness_member(body: &Json) -> bool {
 
 fn provenance_kind_refusal(cid: String, body: &Json, reason: String) -> ConsistencyResult {
     let property_name = contract_property_name(body).to_string();
-    let verdict = ObligationVerdict::Refused;
-    let full_reason = format!(
-        "consistency check refused: contract `{property_name}` lacks required provenance KIND for ambient testimony ({reason})"
-    );
+    let effect = VerifyEffect::MissingProvenanceKind {
+        contract_cid: cid.clone(),
+        property_name: property_name.clone(),
+        detail: reason,
+    };
+    let boundary = effect.to_legacy_boundary();
     ConsistencyResult {
         contract_cid: cid,
-        property_name: property_name.clone(),
-        verdict,
-        reason: full_reason.clone(),
+        property_name,
+        verdict: boundary.verdict,
+        reason: boundary.reason,
+        effect: Some(effect),
         witnessed: false,
-        verification: Some(json!({
-            "kind": "consistency-provenance-kind",
-            "property": property_name,
-            "finalVerdict": verdict.as_str(),
-            "reason": full_reason,
-        })),
+        verification: boundary.verification,
     }
 }
 
@@ -1239,7 +1262,7 @@ fn check_inv_consistency(
         plan,
         registry,
         compilers,
-        VACUOUS_SINGLE_REASON,
+        VacuityRefusalKind::NoSiblingToContradict,
     )
 }
 
@@ -1251,7 +1274,7 @@ fn check_inv_consistency_with_vacuity_reason(
     plan: &SolverPlan,
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
-    vacuity_reason: &'static str,
+    vacuity_kind: VacuityRefusalKind,
 ) -> ConsistencyResult {
     let t_local = std::time::Instant::now();
     let inv = with_local_forall_instances(canonicalize_formula_json(&inv), property_name);
@@ -1262,21 +1285,37 @@ fn check_inv_consistency_with_vacuity_reason(
     // value. Refuse early so a lone opaque equality like `=(call:foo(x), 99)` is
     // never counted as a substantive discharge. Conjunctions (count >= 2) proceed:
     // two constraints CAN contradict each other, making SAT genuinely informative.
-    if count_top_level_constraints(&inv) < 2 {
-        let verdict = ObligationVerdict::Refused;
+    let constraint_count = count_top_level_constraints(&inv);
+    if constraint_count < 2 {
+        let effect = match vacuity_kind {
+            VacuityRefusalKind::NoSiblingToContradict => VerifyEffect::NoSiblingToContradict {
+                contract_cid: cid.clone(),
+                property_name: property_name.to_string(),
+                constraint_count,
+            },
+            VacuityRefusalKind::MissingIndependentKindWitness => {
+                VerifyEffect::MissingIndependentKindWitness {
+                    contract_cid: cid.clone(),
+                    property_name: property_name.to_string(),
+                }
+            }
+        };
+        let boundary = effect.to_legacy_boundary();
+        let solver_reason = effect.legacy_solver_reason();
         return ConsistencyResult {
             contract_cid: cid,
             property_name: property_name.to_string(),
-            verdict,
-            reason: format!("{vacuity_reason} `{property_name}`"),
+            verdict: boundary.verdict,
+            reason: boundary.reason,
+            effect: Some(effect),
             witnessed: false,
             verification: Some(consistency_verification_detail(
                 property_name,
                 &inv,
                 &linked_posts,
                 None,
-                verdict,
-                Some(vacuity_reason),
+                boundary.verdict,
+                solver_reason,
                 &[],
             )),
         };
@@ -1288,6 +1327,7 @@ fn check_inv_consistency_with_vacuity_reason(
             property_name: property_name.to_string(),
             verdict,
             reason: format!("{CONTRADICTORY_REASON} `{property_name}` [structural: {reason}]"),
+            effect: None,
             witnessed: false,
             verification: Some(consistency_verification_detail(
                 property_name,
@@ -1322,8 +1362,7 @@ fn check_inv_consistency_with_vacuity_reason(
             "verifier/timing: obligation phases (local-instantiate vs compile+solve)"
         );
     }
-    let (verdict, label) = consistency_verdict(raw);
-    let reason = format!("{label} `{property_name}` [{raw_reason}]");
+    let (verdict, reason, effect) = consistency_verdict(raw, property_name, &raw_reason);
     if verdict == ObligationVerdict::Undecidable {
         warn!(
             contract = %property_name,
@@ -1337,6 +1376,7 @@ fn check_inv_consistency_with_vacuity_reason(
         property_name: property_name.to_string(),
         verdict,
         reason,
+        effect,
         witnessed: false,
         verification: Some(consistency_verification_detail(
             property_name,
@@ -1516,7 +1556,10 @@ fn suppress_standalone_support_vacuity(
     result: &ConsistencyResult,
 ) -> bool {
     result.verdict == ObligationVerdict::Refused
-        && result.reason.starts_with(VACUOUS_SINGLE_REASON)
+        && matches!(
+            &result.effect,
+            Some(VerifyEffect::NoSiblingToContradict { .. })
+        )
         && is_derived_ground_callsite_support(property_name, candidate, original_inv)
 }
 
@@ -2373,7 +2416,7 @@ pub fn verify_consistency(
                         plan,
                         registry,
                         compilers,
-                        MISSING_INDEPENDENT_KIND_REASON,
+                        VacuityRefusalKind::MissingIndependentKindWitness,
                     ));
                 } else {
                     out.push(check_inv_consistency(
@@ -2415,7 +2458,7 @@ pub fn verify_consistency(
                             plan,
                             registry,
                             compilers,
-                            MISSING_INDEPENDENT_KIND_REASON,
+                            VacuityRefusalKind::MissingIndependentKindWitness,
                         )
                     } else {
                         check_inv_consistency(

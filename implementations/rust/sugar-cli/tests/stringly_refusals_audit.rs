@@ -135,11 +135,6 @@ const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "coverage-panic-wording", path: "implementations/rust/sugar-walk/src/type_decl.rs", line: 665, needle: "_ => panic!(\"sugar-walk type_decl refused unknown syn::Item variant\"),", replacement: "coverage ICE/panic with typed frontier owner; do not encode as refused prose" },
     ExpectedSite { ground: "coverage-panic-wording", path: "implementations/rust/sugar-walk/src/walk.rs", line: 557, needle: "_ => panic!(\"sugar-walk WP walker refused unknown syn::Expr variant\"),", replacement: "coverage ICE/panic with typed frontier owner; do not encode as refused prose" },
     ExpectedSite { ground: "coverage-panic-wording", path: "implementations/rust/sugar-walk/src/walk.rs", line: 645, needle: "_ => panic!(\"sugar-walk WP pattern collector refused unknown syn::Pat variant\"),", replacement: "coverage ICE/panic with typed frontier owner; do not encode as refused prose" },
-    ExpectedSite { ground: "missing-provenance-kind-effect", path: "implementations/rust/sugar-verifier/src/consistency.rs", line: 1035, needle: "let verdict = ObligationVerdict::Refused;", replacement: "VerifyEffect::InsufficientEvidence{missing: ProvenanceKind}" },
-    ExpectedSite { ground: "no-sibling-to-contradict-effect", path: "implementations/rust/sugar-verifier/src/consistency.rs", line: 1266, needle: "let verdict = ObligationVerdict::Refused;", replacement: "VerifyEffect::NoSiblingToContradict{obligation}" },
-    ExpectedSite { ground: "no-sound-discharger-effect", path: "implementations/rust/sugar-verifier/src/consistency.rs", line: 282, needle: "ObligationVerdict::Refused => (ObligationVerdict::Refused, \"refused: no sound discharger\"),", replacement: "VerifyEffect::NoSoundDischarger{solver}" },
-    ExpectedSite { ground: "no-sound-discharger-effect", path: "implementations/rust/sugar-verifier/src/solvers/plan.rs", line: 407, needle: "ObligationVerdict::Refused => {", replacement: "VerifyEffect::NoSoundDischarger{solver}" },
-    ExpectedSite { ground: "no-sound-discharger-effect", path: "implementations/rust/sugar-verifier/src/solvers/plan.rs", line: 408, needle: "format!(\"solver '{}' refused: no sound discharger\", r.solver_name)", replacement: "VerifyEffect::NoSoundDischarger{solver}" },
     ExpectedSite { ground: "outlives-region-refusal-effect", path: "implementations/rust/sugar-verifier/src/outlives.rs", line: 70, needle: "DischargeOutcome::Refused {", replacement: "VerifyEffect::OutlivesNotProvable{longer,shorter}" },
     ExpectedSite { ground: "outlives-region-refusal-effect", path: "implementations/rust/sugar-verifier/src/outlives.rs", line: 133, needle: "if matches!(caller_graph.check(a, b), DischargeOutcome::Refused { .. }) {", replacement: "VerifyEffect::OutlivesNotProvable{longer,shorter}" },
     ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/libsugar/src/core/path_executor.rs", line: 166, needle: ".ok_or_else(|| PathExecutionError::Refused(Box::new(missing_kit_refusal(step))))?;", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
@@ -221,8 +216,8 @@ const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/closure_term.rs", line: 33, needle: "reason: format!(\"closure captures ambiguous local `{}`; refused\", self.name),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
     ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/duration_value.rs", line: 73, needle: "Refused { boundary: String, reason: String },", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
     ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/duration_value.rs", line: 101, needle: "return Some(DurationDecision::Refused {", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/format.rs", line: 896, needle: "reason: format!(\"runtime format argument `{boundary}`, not literal-determined; refused\"),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/format.rs", line: 910, needle: "reason: format!(\"format pointer address `{boundary}` is runtime address identity; refused\"),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
+    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/format.rs", line: 902, needle: "reason: format!(\"runtime format argument `{boundary}`, not literal-determined; refused\"),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
+    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/format.rs", line: 916, needle: "reason: format!(\"format pointer address `{boundary}` is runtime address identity; refused\"),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
     ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/bin/coretests_sweep.rs", line: 498, needle: "Disposition::Refused => {", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
     ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 360, needle: "FactoryDisposition::Refused => \"refused\",", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
     ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 613, needle: "return Disposition::Refused;", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
@@ -236,15 +231,6 @@ const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "solver-batch-refusal-effect", path: "implementations/rust/sugar-verifier/src/solvers/batch.rs", line: 168, needle: "raw: ObligationVerdict::Refused,", replacement: "SolverEffect::BatchRefused carrying solver and job" },
     ExpectedSite { ground: "solver-unsupported-construct-effect", path: "implementations/rust/sugar-verifier/src/solvers/subprocess.rs", line: 211, needle: "ObligationVerdict::Refused,", replacement: "SolverEffect::UnsupportedConstruct{symbol}" },
     ExpectedSite { ground: "solver-unsupported-construct-effect", path: "implementations/rust/sugar-verifier/src/solvers/subprocess.rs", line: 225, needle: "} else if verdict == ObligationVerdict::Refused {", replacement: "SolverEffect::UnsupportedConstruct{symbol}" },
-    ExpectedSite { ground: "unwitnessed-discharge-effect", path: "implementations/rust/sugar-verifier/src/consistency.rs", line: 591, needle: "let reason = format!(\"witness REFUSED by rust package recompute: {e}\");", replacement: "VerifyEffect::UnwitnessedDischarge{witness_cid,ground}" },
-    ExpectedSite { ground: "witness-oracle-resolution-effect", path: "implementations/rust/sugar-cli/src/witness_verify.rs", line: 518, needle: "return Err(format!(\"oracle refused resolution: {msg}\"));", replacement: "VerifyEffect::WitnessOracleRefused{resolver,reason}" },
-    ExpectedSite { ground: "witness-oracle-resolution-effect", path: "implementations/rust/sugar-verifier/src/consistency.rs", line: 950, needle: "return Err(format!(\"oracle refused resolution: {msg}\"));", replacement: "VerifyEffect::WitnessOracleRefused{resolver,reason}" },
-    ExpectedSite { ground: "witness-verification-effect", path: "implementations/rust/sugar-cli/src/witness_verify.rs", line: 75, needle: "verdict: \"refused\".to_string(),", replacement: "VerifyEffect::WitnessVerificationRefused{check,ground}" },
-    ExpectedSite { ground: "witness-verification-effect", path: "implementations/rust/sugar-cli/src/witness_verify.rs", line: 116, needle: "verdict: \"refused\".to_string(),", replacement: "VerifyEffect::WitnessVerificationRefused{check,ground}" },
-    ExpectedSite { ground: "witness-verification-effect", path: "implementations/rust/sugar-cli/src/witness_verify.rs", line: 166, needle: "verdict: \"refused\".to_string(),", replacement: "VerifyEffect::WitnessVerificationRefused{check,ground}" },
-    ExpectedSite { ground: "witness-verification-effect", path: "implementations/rust/sugar-cli/src/witness_verify.rs", line: 180, needle: "verdict: \"refused\".to_string(),", replacement: "VerifyEffect::WitnessVerificationRefused{check,ground}" },
-    ExpectedSite { ground: "witness-verification-effect", path: "implementations/rust/sugar-cli/src/witness_verify.rs", line: 197, needle: "verdict: \"refused\".to_string(),", replacement: "VerifyEffect::WitnessVerificationRefused{check,ground}" },
-    ExpectedSite { ground: "witness-verification-effect", path: "implementations/rust/sugar-cli/src/witness_verify.rs", line: 226, needle: "verdict: \"refused\".to_string(),", replacement: "VerifyEffect::WitnessVerificationRefused{check,ground}" },
     ExpectedSite { ground: "wp-refusal-effect", path: "implementations/rust/libsugar/src/wp.rs", line: 139, needle: "pub enum Refusal {", replacement: "WpEffect::{OpaqueLoop,OpaqueCall} surfaced through typed evidence verdict" },
     ExpectedSite { ground: "wp-refusal-effect", path: "implementations/rust/libsugar/src/wp.rs", line: 1291, needle: "Err(WpError::Refused(_)) => Ok(EvidenceVerdict {", replacement: "WpEffect::{OpaqueLoop,OpaqueCall} surfaced through typed evidence verdict" },
 ];
@@ -474,8 +460,7 @@ fn classify_emission(path: &str, line: &str, context: &str) -> Option<&'static s
         return Some("solver-unsupported-construct-effect");
     }
     if path.contains("sugar-verifier/src/solvers/plan.rs")
-        && (line.contains("ObligationVerdict::Refused")
-            || line.contains("refused: no sound discharger"))
+        && line.contains("refused: no sound discharger")
     {
         return Some("no-sound-discharger-effect");
     }
@@ -577,6 +562,58 @@ fn collect_stringly_refusal_consumers(root: &Path) -> Result<Vec<Site>, String> 
     }
     out.sort();
     Ok(out)
+}
+
+fn collect_effect_enum_wildcard_arms(root: &Path) -> Result<Vec<Site>, String> {
+    let mut out = Vec::new();
+    for source_root in source_roots(root) {
+        for path in source_files_under(&source_root)? {
+            let rel = path
+                .strip_prefix(root)
+                .map_err(|err| format!("strip {}: {err}", path.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let source = fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", rel))?;
+            out.extend(collect_effect_enum_wildcard_arms_from_source(&rel, &source));
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+fn collect_effect_enum_wildcard_arms_from_source(path: &str, source: &str) -> Vec<Site> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut out = Vec::new();
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("_ =>") {
+            continue;
+        }
+        let context = context_window(&lines, idx);
+        if let Some(enum_name) = effect_enum_named_in_context(&context) {
+            out.push(Site {
+                ground: "effect-enum-wildcard-arm".to_string(),
+                path: path.to_string(),
+                line: idx + 1,
+                text: format!("{enum_name}: {trimmed}"),
+            });
+        }
+    }
+    out
+}
+
+fn effect_enum_named_in_context(context: &str) -> Option<&'static str> {
+    for enum_name in [
+        "VerifyEffect",
+        "WitnessVerificationOutcome",
+        // Future effect/result enums join this sweep here as they land.
+    ] {
+        let variant_prefix = format!("{enum_name}::");
+        if context.contains(&variant_prefix) {
+            return Some(enum_name);
+        }
+    }
+    None
 }
 
 fn classify_consumer(line: &str) -> Option<()> {
@@ -727,6 +764,18 @@ fn stringly_refusal_consumer_census_is_reportable() {
 }
 
 #[test]
+fn effect_enum_wildcard_arm_frontier_is_stable_zero() {
+    let root = repo_root();
+    let wildcards =
+        collect_effect_enum_wildcard_arms(&root).expect("collect effect enum wildcard arms");
+    assert!(
+        wildcards.is_empty(),
+        "R(wildcard-arms-over-effect-enums) must stay 0; typed effect consumers must match each ground explicitly\n\nObserved sites:\n{}",
+        report_sites(&wildcards),
+    );
+}
+
+#[test]
 fn planted_stringly_refusal_emission_is_detected() {
     let source = r#"
 fn planted() {
@@ -746,4 +795,26 @@ fn planted() {
         "planted refused status must be a frontier row"
     );
     assert_eq!(sites[0].ground, "generic-status-refused-effect");
+}
+
+#[test]
+fn planted_effect_enum_wildcard_arm_is_detected() {
+    let source = r#"
+fn planted(effect: VerifyEffect) -> &'static str {
+    match effect {
+        VerifyEffect::MissingProvenanceKind { .. } => "missing",
+        _ => "swallowed",
+    }
+}
+"#;
+    let sites = collect_effect_enum_wildcard_arms_from_source(
+        "implementations/rust/sugar-verifier/src/planted.rs",
+        source,
+    );
+    assert_eq!(
+        sites.len(),
+        1,
+        "planted wildcard over VerifyEffect must be a frontier row"
+    );
+    assert_eq!(sites[0].ground, "effect-enum-wildcard-arm");
 }

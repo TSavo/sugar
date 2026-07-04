@@ -26,22 +26,58 @@ use serde_json::{json, Value};
 
 use sugar_canonicalizer::blake3_512_of;
 use sugar_proof_envelope::{ed25519_verify_string, Signature};
-use sugar_verifier::{MemberKind, MementoPool};
+use sugar_verifier::{
+    MemberKind, MementoPool, VerifyEffect, WitnessVerificationCheck, WitnessVerificationOutcome,
+};
 
 /// One witness-memento's verdict from the rust verifier.
 #[derive(Debug, Clone)]
 pub struct WitnessVerifyResult {
     pub witness_cid: String,
-    /// "verified" | "refused" | "broken-oracle"
-    pub verdict: String,
+    pub outcome: WitnessVerificationOutcome,
     /// The checks rust performed and passed, e.g. ["signature", "content-address:recompute"].
     pub checks: Vec<String>,
-    pub reason: String,
 }
 
 impl WitnessVerifyResult {
+    fn verified(witness_cid: String, checks: Vec<String>, resolved_by: String) -> Self {
+        Self {
+            witness_cid,
+            outcome: WitnessVerificationOutcome::Verified { resolved_by },
+            checks,
+        }
+    }
+
+    fn refused(witness_cid: String, checks: Vec<String>, check: WitnessVerificationCheck) -> Self {
+        let effect = VerifyEffect::WitnessVerification {
+            witness_cid: witness_cid.clone(),
+            check,
+        };
+        Self {
+            witness_cid,
+            outcome: WitnessVerificationOutcome::Refused(effect),
+            checks,
+        }
+    }
+
+    fn broken_oracle(witness_cid: String, checks: Vec<String>, reason: String) -> Self {
+        Self {
+            witness_cid,
+            outcome: WitnessVerificationOutcome::BrokenOracle { reason },
+            checks,
+        }
+    }
+
     pub fn is_ok(&self) -> bool {
-        self.verdict == "verified"
+        self.outcome.is_ok()
+    }
+
+    pub fn verdict(&self) -> &'static str {
+        self.outcome.verdict()
+    }
+
+    pub fn reason(&self) -> String {
+        self.outcome.reason()
     }
 }
 
@@ -66,16 +102,18 @@ pub fn verify_witnesses_with_options(
         Ok(resolvers) => resolvers,
         Err(reason) => {
             for (_, member) in pool.witness_memento_members() {
-                out.push(WitnessVerifyResult {
-                    witness_cid: member
-                        .field("witnessCid")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    verdict: "refused".to_string(),
-                    checks: Vec::new(),
-                    reason: format!("component plan failed while resolving witnesses: {reason}"),
-                });
+                let witness_cid = member
+                    .field("witnessCid")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                out.push(WitnessVerifyResult::refused(
+                    witness_cid,
+                    Vec::new(),
+                    WitnessVerificationCheck::ComponentPlanFailed {
+                        reason: reason.clone(),
+                    },
+                ));
             }
             return out;
         }
@@ -111,13 +149,11 @@ pub fn verify_witnesses_with_options(
             .and_then(|v| v.as_str())
             .unwrap_or("");
         if body_cid != witness_cid {
-            out.push(WitnessVerifyResult {
+            out.push(WitnessVerifyResult::refused(
                 witness_cid,
-                verdict: "refused".to_string(),
                 checks,
-                reason: "envelope integrity: body witness_cid disagrees with header metadata"
-                    .to_string(),
-            });
+                WitnessVerificationCheck::EnvelopeIntegrityMismatch,
+            ));
             continue;
         }
 
@@ -161,12 +197,11 @@ pub fn verify_witnesses_with_options(
             }
         };
         if !signature_ok {
-            out.push(WitnessVerifyResult {
+            out.push(WitnessVerifyResult::refused(
                 witness_cid,
-                verdict: "refused".to_string(),
                 checks,
-                reason: "signature invalid -- cannot trust the mark".to_string(),
-            });
+                WitnessVerificationCheck::InvalidSignature,
+            ));
             continue;
         }
         checks.push("signature".to_string());
@@ -175,12 +210,11 @@ pub fn verify_witnesses_with_options(
         // a valid CID + signature. Refuse it. Witnesses with no `outcome` (a poem,
         // a CI log, a compiler report) skip this check and proceed to recompute.
         if member.field("outcome").and_then(|v| v.as_str()) == Some("failed") {
-            out.push(WitnessVerifyResult {
+            out.push(WitnessVerifyResult::refused(
                 witness_cid,
-                verdict: "refused".to_string(),
                 checks,
-                reason: "witness records a FAILED run -- not a discharge".to_string(),
-            });
+                WitnessVerificationCheck::FailedOutcome,
+            ));
             continue;
         }
 
@@ -192,41 +226,33 @@ pub fn verify_witnesses_with_options(
         // unrelated kit's manifest sorted first. If none hash, report the most
         // informative refusal seen (broken package > honest drift > resolve error).
         if resolvers.is_empty() {
-            out.push(WitnessVerifyResult {
+            out.push(WitnessVerifyResult::refused(
                 witness_cid,
-                verdict: "refused".to_string(),
                 checks,
-                reason: "no witness resolver declared (manifest `resolve_witness_command`); \
-                         cannot resolve the body to recompute"
-                    .to_string(),
-            });
+                WitnessVerificationCheck::NoResolverDeclared,
+            ));
             continue;
         }
         match resolve_over_resolvers(&resolvers, project_root, &body, &witness_cid) {
             Resolution::Verified { resolved_by } => {
                 checks.push(format!("content-address:{resolved_by}"));
-                out.push(WitnessVerifyResult {
-                    witness_cid: witness_cid.clone(),
-                    verdict: "verified".to_string(),
+                out.push(WitnessVerifyResult::verified(
+                    witness_cid.clone(),
                     checks,
-                    reason: format!(
-                        "oracle resolved via {resolved_by}; rust recomputed the CID and it matched"
-                    ),
-                });
+                    resolved_by,
+                ));
             }
-            Resolution::BrokenOracle { reason } => out.push(WitnessVerifyResult {
-                witness_cid: witness_cid.clone(),
-                verdict: "broken-oracle".to_string(),
+            Resolution::BrokenOracle { reason } => out.push(WitnessVerifyResult::broken_oracle(
+                witness_cid.clone(),
                 checks,
                 reason,
-            }),
+            )),
             Resolution::Drift { reason } | Resolution::Unresolved { reason } => {
-                out.push(WitnessVerifyResult {
-                    witness_cid: witness_cid.clone(),
-                    verdict: "refused".to_string(),
+                out.push(WitnessVerifyResult::refused(
+                    witness_cid.clone(),
                     checks,
-                    reason,
-                })
+                    WitnessVerificationCheck::ReplayRefused { reason },
+                ))
             }
         }
     }
@@ -515,7 +541,11 @@ fn resolve_body(
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        return Err(format!("oracle refused resolution: {msg}"));
+        return Err(VerifyEffect::WitnessOracleResolution {
+            resolver: argv.first().cloned(),
+            message: msg.to_string(),
+        }
+        .to_string());
     }
     let result = reply.get("result").ok_or("reply missing `result`")?;
     let body_b64 = result

@@ -16,6 +16,7 @@ use sugar_ir_compiler::CompiledFormula;
 use sugar_ir_compiler::CompilerInput;
 use sugar_ir_compiler::FrontendErrorPayload;
 
+use crate::effects::VerifyEffect;
 use crate::solvers::{
     dispatch_for_formula, DispatchConfig, PortfolioMode, SolveResult, Solver, SolverExitKind,
     SolverExitMetadata, SolverHandle, SolverIdentity, SolverPlan, SolverSeat,
@@ -402,11 +403,12 @@ fn reason_for(r: &SolveResult) -> String {
             ObligationVerdict::Disagreement => {
                 format!("solver '{}' produced disagreement", r.solver_name)
             }
-            // Refusals always carry a named reason in `r.error` (handled above);
-            // this is the exhaustive fallback.
-            ObligationVerdict::Refused => {
-                format!("solver '{}' refused: no sound discharger", r.solver_name)
+            // Refusals normally carry a named reason in `r.error` (handled above);
+            // this exhaustive fallback still constructs the typed ground first.
+            ObligationVerdict::Refused => VerifyEffect::SolverNoSoundDischarger {
+                solver_name: r.solver_name.clone(),
             }
+            .to_string(),
         }
     }
 }
