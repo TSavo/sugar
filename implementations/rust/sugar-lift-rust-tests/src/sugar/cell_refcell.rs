@@ -61,7 +61,7 @@ struct CellRefCellSugar {
 enum CellValue {
     Body(SugarBody<TermFloor>),
     Missing,
-    Refused(String),
+    RuntimeAliased(String),
 }
 
 impl Sugar for CellRefCellSugar {
@@ -71,7 +71,7 @@ impl Sugar for CellRefCellSugar {
             CellValue::Missing => {
                 cell_refcell_gap("tracked Cell/RefCell read has no temporal value")
             }
-            CellValue::Refused(reason) => {
+            CellValue::RuntimeAliased(reason) => {
                 return Outcome::Incomplete(Effect::CellRuntimeAliased {
                     boundary: reason.clone(),
                 })
@@ -104,7 +104,7 @@ fn cell_value_frag(
     match fcx.scope().temporal_cell_value_expr(&name, kind) {
         Ok(Some(value)) => CellValue::Body(SugarBody::term(&value, fcx)),
         Ok(None) => CellValue::Missing,
-        Err(reason) => CellValue::Refused(reason),
+        Err(reason) => CellValue::RuntimeAliased(reason),
     }
 }
 

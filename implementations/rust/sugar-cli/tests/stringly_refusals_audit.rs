@@ -192,29 +192,6 @@ const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 221, needle: "_pin_refusal(", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
     ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 230, needle: "_pin_refusal(", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
     ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 240, needle: "scan.refusals.append(_pin_refusal(candidate, exc.reason))", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "rust-lift-duration-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/duration_value.rs", line: 61, needle: "DurationDecision::Refused { reason } => {", replacement: "RustLiftEffect::DurationCarrierEmbedding carrying boundary and carrier ground" },
-    ExpectedSite { ground: "rust-lift-duration-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/duration_value.rs", line: 154, needle: "DurationDecision::Refused { .. } => None,", replacement: "RustLiftEffect::DurationCarrierEmbedding carrying boundary and carrier ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs", line: 491, needle: "(\"refused\", Some(file_decl_emit_bound_refusal_reason()))", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs", line: 533, needle: ".map(|reason| (\"refused\", Some(reason)))", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs", line: 1527, needle: "return (\"refused\", Some(reason), None);", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs", line: 1547, needle: "return (\"refused\", Some(reason), None);", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 9526, needle: "format!(\"unsupported term: {reason}; refused\")", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/cell_refcell.rs", line: 74, needle: "CellValue::Refused(reason) => {", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/cell_refcell.rs", line: 107, needle: "Err(reason) => CellValue::Refused(reason),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/closure_term.rs", line: 32, needle: "reason: format!(\"closure captures ambiguous local `{}`; refused\", self.name),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/duration_value.rs", line: 72, needle: "Refused { reason: String },", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/duration_value.rs", line: 99, needle: "return Some(DurationDecision::Refused {", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/format.rs", line: 901, needle: "reason: format!(\"runtime format argument `{boundary}`, not literal-determined; refused\"),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-effect", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/format.rs", line: 913, needle: "reason: format!(\"format pointer address `{boundary}` is runtime address identity; refused\"),", replacement: "RustLiftEffect variant carrying the source/runtime ground" },
-    ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/bin/coretests_sweep.rs", line: 498, needle: "Disposition::Refused => {", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
-    ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 360, needle: "FactoryDisposition::Refused => \"refused\",", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
-    ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 613, needle: "return Disposition::Refused;", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
-    ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 1025, needle: "Disposition::Refused", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
-    ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 4180, needle: ".find(|reason| matches!(refusal_disposition(reason), Disposition::Refused))", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
-    ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/lib.rs", line: 4203, needle: ".find(|reason| matches!(refusal_disposition(reason), Disposition::Refused))", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
-    ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/factory.rs", line: 838, needle: "Disposition::Refused => (FactoryDisposition::Refused, \"effect\", Some(reason)),", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
-    ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/factory.rs", line: 903, needle: "FactoryDisposition::Refused | FactoryDisposition::Unresolved", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
-    ExpectedSite { ground: "rust-lift-terminal-classifier", path: "implementations/rust/sugar-lift-rust-tests/src/sugar/iter_terminal.rs", line: 1709, needle: "Disposition::Refused => {", replacement: "RustLiftEffect classifier enum instead of reason-prose whitelist" },
     ExpectedSite { ground: "rust-walk-source-effect-status", path: "implementations/rust/sugar-walk/src/bin/walk_rpc.rs", line: 18467, needle: "\"status\": \"refused\",", replacement: "RustWalk source effect status variant with source ledger ground" },
     ExpectedSite { ground: "solver-batch-refusal-effect", path: "implementations/rust/sugar-verifier/src/solvers/batch.rs", line: 168, needle: "raw: ObligationVerdict::Refused,", replacement: "SolverEffect::BatchRefused carrying solver and job" },
     ExpectedSite { ground: "solver-unsupported-construct-effect", path: "implementations/rust/sugar-verifier/src/solvers/subprocess.rs", line: 211, needle: "ObligationVerdict::Refused,", replacement: "SolverEffect::UnsupportedConstruct{symbol}" },
@@ -773,6 +750,27 @@ fn planted() {
         "planted refused status must be a frontier row"
     );
     assert_eq!(sites[0].ground, "generic-status-refused-effect");
+}
+
+#[test]
+fn planted_rust_lift_stringly_effect_emission_is_detected() {
+    let source = r#"
+fn planted(boundary: &str) -> Effect {
+    Effect::FormatArgument {
+        reason: format!("runtime format argument `{boundary}`, not literal-determined; refused"),
+    }
+}
+"#;
+    let sites = collect_stringly_refusal_emissions_from_source(
+        "implementations/rust/sugar-lift-rust-tests/src/sugar/planted.rs",
+        source,
+    );
+    assert_eq!(
+        sites.len(),
+        1,
+        "planted Rust lift stringly effect must be a frontier row"
+    );
+    assert_eq!(sites[0].ground, "rust-lift-effect");
 }
 
 #[test]

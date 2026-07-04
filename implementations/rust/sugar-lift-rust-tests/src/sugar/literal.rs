@@ -24,7 +24,7 @@ use crate::{
 // A `LiteralSugar` whose warrant attempt declines is, today, the GENERIC structural
 // backstop (`unresolved` -- reads like "missing lifter"). For the shapes below the decline
 // is NOT missing work -- it is a SOURCE property no better lifter could get past, so each is
-// NAMED with a precise reason here and whitelisted as `Disposition::Refused` in
+// NAMED with a precise reason here and whitelisted as `Disposition::TerminalEffect` in
 // `crate::refusal_disposition`. PURE RECLASSIFICATION: the warrant path (`build`) runs FIRST
 // and is byte-unchanged, so a finite/nonempty/text-determined domain STILL warrants -- the
 // naming below is only ever reached on a decline the old code already produced (no warrant

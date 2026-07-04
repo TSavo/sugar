@@ -926,7 +926,7 @@ mod tests {
         assert!(
             out.skip_reasons
                 .iter()
-                .any(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+                .any(|r| matches!(refusal_disposition(r), Disposition::TerminalEffect)),
             "a resolved runtime-body nested helper must be terminal-REFUSED (named effect): {:?}",
             out.skip_reasons
         );
@@ -1055,10 +1055,10 @@ mod tests {
             out.skip_reasons
         );
         assert!(
-            out.skip_reasons
-                .iter()
-                .any(|r| matches!(refusal_disposition(r), Disposition::Refused)
-                    && r.contains("collection")),
+            out.skip_reasons.iter().any(|r| matches!(
+                refusal_disposition(r),
+                Disposition::TerminalEffect
+            ) && r.contains("collection")),
             "a resolved collection-body nested helper must be terminal-REFUSED (bin-2): {:?}",
             out.skip_reasons
         );

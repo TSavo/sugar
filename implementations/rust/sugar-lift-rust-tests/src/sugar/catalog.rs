@@ -818,7 +818,7 @@ mod tests {
             .find(|audit| audit.site == "iter . by_ref ()" && audit.requested_role == "Composite")
             .unwrap_or_else(|| panic!("by_ref Composite handoff should be audited: {audits:?}"));
         assert_eq!(audit.selected, Some("runtime_iterator_source"));
-        assert_eq!(audit.disposition, FactoryDisposition::Refused);
+        assert_eq!(audit.disposition, FactoryDisposition::Effect);
         assert!(
             audit.reason.as_deref().is_some_and(|reason| {
                 reason.contains("unknown iterator consumption")
@@ -905,7 +905,7 @@ mod tests {
             .unwrap_or_else(|| panic!("join! term site should be audited: {audits:?}"));
 
         assert_eq!(audit.selected, Some("future_join"));
-        assert_eq!(audit.disposition, FactoryDisposition::Refused);
+        assert_eq!(audit.disposition, FactoryDisposition::Effect);
         assert!(
             audit
                 .reason
@@ -953,7 +953,7 @@ mod tests {
             .unwrap_or_else(|| panic!("unimplemented! term site should be audited: {audits:?}"));
 
         assert_eq!(audit.selected, Some("panic_macro"));
-        assert_eq!(audit.disposition, FactoryDisposition::Refused);
+        assert_eq!(audit.disposition, FactoryDisposition::Effect);
         assert!(
             audit
                 .reason
@@ -976,8 +976,8 @@ mod tests {
             .find(|audit| audit.selected == Some("block_term"))
             .unwrap_or_else(|| panic!("block should be audited as parent floor: {audits:?}"));
 
-        assert_eq!(child.disposition, FactoryDisposition::Refused);
-        assert_eq!(parent.disposition, FactoryDisposition::Refused);
+        assert_eq!(child.disposition, FactoryDisposition::Effect);
+        assert_eq!(parent.disposition, FactoryDisposition::Effect);
         assert!(
             child
                 .reason

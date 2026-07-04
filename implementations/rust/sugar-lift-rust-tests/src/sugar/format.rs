@@ -897,8 +897,8 @@ fn format_value_from_term_floor(term: &Rc<Term>, owner: &str) -> FmtValue {
 }
 
 fn runtime_format_argument_effect(boundary: &str) -> Effect {
-    Effect::FormatArgument {
-        reason: format!("runtime format argument `{boundary}`, not literal-determined; refused"),
+    Effect::RuntimeFormatArgument {
+        boundary: boundary.to_string(),
     }
 }
 
@@ -909,8 +909,8 @@ fn format_arithmetic_effect(reason: &str) -> Effect {
 }
 
 fn format_pointer_effect(boundary: &str) -> Effect {
-    Effect::FormatArgument {
-        reason: format!("format pointer address `{boundary}` is runtime address identity; refused"),
+    Effect::FormatPointerAddress {
+        boundary: boundary.to_string(),
     }
 }
 
@@ -4035,7 +4035,8 @@ mod tests {
             r#"format!("{s:p}")"#,
         ) {
             FloorRead::Complete(value) => panic!("pointer format should not complete: {value}"),
-            FloorRead::Incomplete(Effect::FormatArgument { reason, .. }) => {
+            FloorRead::Incomplete(effect @ Effect::FormatPointerAddress { .. }) => {
+                let reason = effect.reason();
                 assert!(reason.contains("runtime address identity"), "{reason}");
             }
             FloorRead::Incomplete(effect) => panic!("unexpected effect: {}", effect.reason()),

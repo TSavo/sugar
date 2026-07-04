@@ -58,10 +58,8 @@ impl Sugar for DurationValueSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         match &self.decision {
             DurationDecision::Complete(term) => Outcome::Complete(Desugared::Term(Rc::clone(term))),
-            DurationDecision::Refused { reason } => {
-                Outcome::Incomplete(Effect::DurationCarrierEmbedding {
-                    reason: reason.clone(),
-                })
+            DurationDecision::NonCanonicalConstructor { nanos } => {
+                Outcome::Incomplete(Effect::DurationCarrierEmbedding { nanos: *nanos })
             }
         }
     }
@@ -69,7 +67,7 @@ impl Sugar for DurationValueSugar {
 
 enum DurationDecision {
     Complete(Rc<Term>),
-    Refused { reason: String },
+    NonCanonicalConstructor { nanos: i128 },
 }
 
 fn duration_decision_from_frag(frag: &SourceFragment) -> Option<DurationDecision> {
@@ -96,12 +94,7 @@ fn duration_decision_from_frag(frag: &SourceFragment) -> Option<DurationDecision
             let secs = i128::try_from(*secs).ok()?;
             let nanos = i128::try_from(*nanos).ok()?;
             if !(0..NANOS_PER_SEC).contains(&nanos) {
-                return Some(DurationDecision::Refused {
-                    reason: format!(
-                        "Duration CarrierEmbedding non-canonical constructor nanos={nanos}; \
-                         expected 0 <= nanos < {NANOS_PER_SEC}"
-                    ),
-                });
+                return Some(DurationDecision::NonCanonicalConstructor { nanos });
             }
             secs.checked_mul(NANOS_PER_SEC)?.checked_add(nanos)?
         }
@@ -151,7 +144,7 @@ pub(crate) fn duration_total_nanos_from_expr(expr: &syn::Expr) -> Option<i128> {
     let frag = SourceFragment::expr(expr, "<duration-carrier>");
     match duration_decision_from_frag(&frag)? {
         DurationDecision::Complete(term) => duration_total_nanos_from_term(&term),
-        DurationDecision::Refused { .. } => None,
+        DurationDecision::NonCanonicalConstructor { .. } => None,
     }
 }
 
