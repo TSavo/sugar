@@ -716,6 +716,37 @@ class SourceFragment:
             for generator in self.node.generators  # type: ignore[attr-defined]
         ]
 
+    def setcomp_element(self) -> "SourceFragment":
+        """Return the element expression produced by a set comprehension."""
+        self._require(ast.SetComp)
+        return SourceFragment.from_node(self.node.elt, self.filename)  # type: ignore[attr-defined]
+
+    def setcomp_generators(self) -> "list[SourceFragment]":
+        """Return the comprehension clauses of a set comprehension."""
+        self._require(ast.SetComp)
+        return [
+            SourceFragment.from_node(generator, self.filename)
+            for generator in self.node.generators  # type: ignore[attr-defined]
+        ]
+
+    def dictcomp_key(self) -> "SourceFragment":
+        """Return the key expression produced by a dict comprehension."""
+        self._require(ast.DictComp)
+        return SourceFragment.from_node(self.node.key, self.filename)  # type: ignore[attr-defined]
+
+    def dictcomp_value(self) -> "SourceFragment":
+        """Return the value expression produced by a dict comprehension."""
+        self._require(ast.DictComp)
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+
+    def dictcomp_generators(self) -> "list[SourceFragment]":
+        """Return the comprehension clauses of a dict comprehension."""
+        self._require(ast.DictComp)
+        return [
+            SourceFragment.from_node(generator, self.filename)
+            for generator in self.node.generators  # type: ignore[attr-defined]
+        ]
+
     def comprehension_target(self) -> "SourceFragment":
         """Return the target bound by a comprehension clause."""
         self._require(ast.comprehension)
