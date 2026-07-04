@@ -35,6 +35,23 @@ enum Direction {
     Back,
 }
 
+pub(crate) fn sequence_consumption_adaptor(
+    inner: Box<dyn Sugar>,
+    method: &str,
+    count: usize,
+) -> Option<Box<dyn Sugar>> {
+    let direction = match method {
+        "next" | "nth" => Direction::Front,
+        "next_back" | "nth_back" => Direction::Back,
+        _ => return None,
+    };
+    Some(IterNextSugar::new(
+        SugarBody::from_node(inner),
+        direction,
+        count,
+    ))
+}
+
 pub(crate) fn recognize_composite(
     frag: &SourceFragment,
     fcx: &SugarBuildCtx,
