@@ -6,16 +6,14 @@ from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRowDto
 
 
 def test_unknown_status_panics_instead_of_defaulting():
-    row = FactoryWalkRowDto(
-        file="f.py",
-        line=1,
-        requested_role="TERM",
-        ast_kind="Call",
-        selected=None,
-        status="brand-new-status",
-        output=None,
-        source_memento={},
-    )
-
-    with pytest.raises(ValueError, match="brand-new-status"):
-        row.to_rpc()
+    with pytest.raises(TypeError, match="brand-new-status"):
+        FactoryWalkRowDto(
+            file="f.py",
+            line=1,
+            requested_role="TERM",
+            ast_kind="Call",
+            selected=None,
+            status="brand-new-status",
+            output=None,
+            source_memento={},
+        )

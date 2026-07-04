@@ -62,7 +62,8 @@ def test_try_callee_unhandled_raise_records_refusal_without_floor_fact() -> None
     assert facts["call:f"] == [9]
     assert any(
         row.get("callee") == "f"
-        and row.get("caught") == "FactoryGap"
+        and row.get("caught") == "TypeError"
         and "callsite floor projection refused this callee" in row.get("reason", "")
+        and "callsite reduced to Incomplete" in row.get("reason", "")
         for row in refusals
     )

@@ -5,6 +5,8 @@ from enum import Enum
 from typing import Dict
 from typing import Never, NoReturn
 
+from .factory_audit_row import FactoryAuditStatus
+
 
 class GapKind(str, Enum):
     FLOOR = "Floor"
@@ -106,7 +108,7 @@ def gap_locus_label(locus: GapLocus) -> str:
     return _unhandled_gap_locus(locus)
 
 
-def gap_kind_status(kind: GapKind) -> str:
+def gap_kind_status(kind: GapKind) -> FactoryAuditStatus:
     if kind is GapKind.FLOOR:
         return "floor-gap"
     if kind is GapKind.SUGAR:

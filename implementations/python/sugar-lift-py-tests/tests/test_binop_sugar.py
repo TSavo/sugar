@@ -104,6 +104,23 @@ def test_add_on_symbolic_operand_emits_the_operation_sort_silent():
     assert fol(result) == fol(ctor("+", [make_var("x"), num(1)]))
 
 
+def test_symbolic_binary_with_float_operand_is_typed_floor_effect():
+    outcome, operation_log = _reduce_outcome_with_log(
+        "x + 1.5",
+        {"x": SymbolicValue(make_var("x"))},
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "FactoryGapEffect"
+    assert outcome.effect.observed == "TermValue+symbolic operand"
+    assert outcome.effect.requested == "integer ProofIR term operand"
+    assert outcome.effect.gap_kind == "Floor"
+    assert outcome.effect.gap_locus == "Construction"
+    assert operation_log == [
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
+    ]
+
+
 def test_tuple_multiplication_repeats_literal_tuple():
     assert fol(reduce_term("(1,) * 3")) == fol(ctor("tuple", [num(1), num(1), num(1)]))
 

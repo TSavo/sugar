@@ -128,11 +128,25 @@ class BinaryOperatorOperation:
     def _emit_symbolic(
         self, left: TermValue | SymbolicValue, right: TermValue | SymbolicValue
     ) -> Outcome:
-        return Complete(
-            SymbolicValue(
-                ctor(self.operator, [_operand_term(left), _operand_term(right)])
+        left_term = _operand_term(left)
+        right_term = _operand_term(right)
+        if left_term is None or right_term is None:
+            bad = left if left_term is None else right
+            return Incomplete(
+                FactoryGapEffect(
+                    owner=self.owner,
+                    blame=self.blame,
+                    observed=f"{type(bad).__name__}{self.operator}symbolic operand",
+                    requested="integer ProofIR term operand",
+                    fix=(
+                        "add a Real-sorted binary term boundary before emitting "
+                        "symbolic operations over non-int concrete operands"
+                    ),
+                    gap_kind="Floor",
+                    gap_locus="Construction",
+                )
             )
-        )
+        return Complete(SymbolicValue(ctor(self.operator, [left_term, right_term])))
 
     def _reflect_binary(
         self, left: FloorValue, right: FloorValue, ctx: object
@@ -237,6 +251,4 @@ def _operand_term(value: FloorValue):
         and not isinstance(value.value, bool)
     ):
         return num(value.value)
-    raise TypeError(
-        f"BinOpSugar cannot lift operand `{type(value).__name__}` to a term"
-    )
+    return None

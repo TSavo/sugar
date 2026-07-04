@@ -11,7 +11,7 @@ import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap_info import (
     FactoryGapInfo,
@@ -20,6 +20,8 @@ from sugar_lift_py_tests.factory.factory_gap_info import (
     gap_kind_status,
 )
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome import complete_value
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,6 +136,19 @@ def test_gap_kind_status_handles_each_member() -> None:
     assert gap_kind_status(GapKind.PROOFIR) == "proofir-gap"
 
 
+def test_factory_audit_row_rejects_refused_lift_status() -> None:
+    with pytest.raises(TypeError, match="illegal='refused'"):
+        FactoryAuditRow(
+            role="term",
+            status="refused",
+            observed="call-builtin:sum",
+            blame="t.py:1:0",
+            selected="CallSugar",
+            candidates=["CallSugar"],
+            message="refusal belongs to verify, not lift",
+        )
+
+
 def test_gap_kind_missing_arm_is_a_pyright_error(tmp_path: Path) -> None:
     planted = tmp_path / "planted_gap_kind.py"
     planted.write_text(
@@ -192,7 +207,7 @@ def test_gap_kind_missing_arm_is_a_pyright_error(tmp_path: Path) -> None:
     assert "Never" in diagnostics
 
 
-def test_constructor_call_refusal_carries_structured_kind() -> None:
+def test_constructor_call_effect_carries_structured_kind() -> None:
     source = """\
 class Box:
     def __init__(self, value):
@@ -200,11 +215,12 @@ class Box:
 """
     body, ctx = _build_expr(source, "Box()")
 
-    with pytest.raises(FactoryGap) as raised:
-        body.reduce(ctx)
+    outcome = body.reduce(ctx)
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, FactoryGapEffect)
 
-    assert raised.value.info["requested"] == "1 constructor arguments"
-    assert raised.value.info["gap_kind"] == "Constructor"
+    assert outcome.effect.requested == "1 constructor arguments"
+    assert outcome.effect.gap_kind == "Constructor"
 
 
 def test_set_name_descriptor_gap_carries_structured_kind() -> None:

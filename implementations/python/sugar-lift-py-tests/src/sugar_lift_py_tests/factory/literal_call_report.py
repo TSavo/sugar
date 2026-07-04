@@ -39,6 +39,7 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceSpanDto,
 )
 from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.effect import effect_status
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.proofir import (
@@ -1059,7 +1060,7 @@ def _effect_lift(
         requested_role=requested_role,
         ast_kind=frag.observed,
         selected=selected,
-        status="refused",
+        status=effect_status(incomplete.effect),
         output={"effect": type(incomplete.effect).__name__},
         source_memento=memento,
         span=SourceSpanDto(
@@ -1500,7 +1501,7 @@ def _require_proofir_emission_node(
         info,
         FactoryAuditRow(
             role="ProofIRNode",
-            status="proofir-return-type-gap",
+            status="proofir-gap",
             observed=observed,
             blame=construction_site,
             selected=None,
@@ -2119,7 +2120,10 @@ def _function_universe(
     from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 
     from .build import default_catalog
-    from .sugar_constructors import build_control_flow_body_sugar
+    from .sugar_constructors import (
+        IncompleteFunctionBody,
+        build_control_flow_body_sugar,
+    )
 
     build_ctx = FactoryBuildContext(
         filename=filename,
@@ -2132,7 +2136,7 @@ def _function_universe(
         body_steps = universe_sugar.factory_steps(callee.node)
         body_formulas = universe_sugar.constraint_formulas()
         body_step_formulas = universe_sugar.constraint_formula_steps()
-    except (TypeError, ValueError, FactoryGap) as exc:
+    except (TypeError, ValueError, FactoryGap, IncompleteFunctionBody) as exc:
         _record_dig_refusal(
             dig_refusals,
             callee=callee.function_name(),

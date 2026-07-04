@@ -12,9 +12,10 @@ import ast
 import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.effect import FactoryGapEffect
 from sugar_lift_py_tests.factory.build import FactoryBuildContext, default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.call_sugar import (
     CallSugar,
     ExternalBridgeStrategy,
@@ -29,6 +30,13 @@ def _frag(expr: str) -> SourceFragment:
 def _build(expr: str):
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     return ctx.build_body(_frag(expr), SugarRole.TERM), ctx
+
+
+def _reduce_gap_effect(body, ctx) -> FactoryGapEffect:
+    outcome = body.reduce(ctx)
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, FactoryGapEffect)
+    return outcome.effect
 
 
 # --- owns is SHAPE ONLY -----------------------------------------------------------------
@@ -85,25 +93,23 @@ def test_import_bound_external_call_builds_bridge_strategy():
     assert body.sugar.strategy.target_name == "math.sqrt"
 
 
-# --- RefuseStrategy refuses LOUD and NAMED, never a silent lift --------------------------
+# --- RefuseStrategy emits a LOUD typed effect, never a silent lift ------------------------
 
 
-def test_refuse_strategy_raises_a_named_factory_gap_on_reduce():
+def test_refuse_strategy_emits_a_named_factory_gap_effect_on_reduce():
     body, ctx = _build("np.divide(6, 2)")
-    with pytest.raises(FactoryGap) as raised:
-        body.reduce(ctx)
-    assert raised.value.info["observed"] == "call-method:divide"
-    assert "divide" in raised.value.info["fix"]
+    effect = _reduce_gap_effect(body, ctx)
+    assert effect.observed == "call-method:divide"
+    assert "divide" in effect.fix
 
 
 def test_refuse_strategy_classifies_builtin_call_frontier():
     body, ctx = _build("sum(value)")
 
-    with pytest.raises(FactoryGap) as raised:
-        body.reduce(ctx)
+    effect = _reduce_gap_effect(body, ctx)
 
-    assert raised.value.info["observed"] == "call-builtin:sum"
-    assert raised.value.info["fix"] == (
+    assert effect.observed == "call-builtin:sum"
+    assert effect.fix == (
         "add builtin call sugar for `sum`, resolve a local body, "
         "link an imported .proof, or emit a real effect"
     )
@@ -112,11 +118,10 @@ def test_refuse_strategy_classifies_builtin_call_frontier():
 def test_refuse_strategy_classifies_method_call_frontier():
     body, ctx = _build("buffer.decode()")
 
-    with pytest.raises(FactoryGap) as raised:
-        body.reduce(ctx)
+    effect = _reduce_gap_effect(body, ctx)
 
-    assert raised.value.info["observed"] == "call-method:decode"
-    assert raised.value.info["fix"] == (
+    assert effect.observed == "call-method:decode"
+    assert effect.fix == (
         "add receiver-dispatched method sugar for `decode`, resolve a local body, "
         "link an imported .proof, or emit a real effect"
     )
@@ -125,17 +130,16 @@ def test_refuse_strategy_classifies_method_call_frontier():
 def test_refuse_strategy_classifies_unresolved_local_call_frontier():
     body, ctx = _build("my_int16(3)")
 
-    with pytest.raises(FactoryGap) as raised:
-        body.reduce(ctx)
+    effect = _reduce_gap_effect(body, ctx)
 
-    assert raised.value.info["observed"] == "call-local:my_int16"
-    assert raised.value.info["fix"] == (
+    assert effect.observed == "call-local:my_int16"
+    assert effect.fix == (
         "resolve local call `my_int16` to a body, link an imported .proof, "
         "add sugar, or emit a real effect"
     )
 
 
-def test_zero_arg_local_call_with_unlifted_body_refuses_named_not_raw_typeerror():
+def test_zero_arg_local_call_with_unlifted_body_emits_named_effect_not_raw_typeerror():
     module = ast.parse("def f():\n    if True:\n        return 1\nf()")
     function = module.body[0]
     call = module.body[1].value
@@ -149,8 +153,7 @@ def test_zero_arg_local_call_with_unlifted_body_refuses_named_not_raw_typeerror(
     assert isinstance(body.sugar, CallSugar)
     assert isinstance(body.sugar.strategy, RefuseStrategy)
 
-    with pytest.raises(FactoryGap) as raised:
-        body.reduce(ctx)
+    effect = _reduce_gap_effect(body, ctx)
 
-    assert raised.value.info["observed"] == "call-local:f"
-    assert raised.value.info["requested"] == "FunctionBodyConstraint"
+    assert effect.observed == "call-local:f"
+    assert effect.requested == "FunctionBodyConstraint"

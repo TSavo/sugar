@@ -6,8 +6,6 @@ from typing import Protocol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import FactoryGapEffect
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
-from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.factory.factory_gap_info import (
     FactoryGapInfo,
     GapKind,
@@ -46,24 +44,26 @@ class TypedEffectStrategy:
 
 @dataclass(frozen=True)
 class RefuseStrategy:
-    """Nothing resolves this call -- a clean, NAMED refusal (a FactoryGap), built where the
-    fragment's blame lives and raised on reduce. A refusal is sound: it says exactly what is
-    missing (a body, an imported `.proof`, or a sugar), never a silent lift, never a side door.
+    """Nothing resolves this call. The missing construction is a typed red effect:
+    it says exactly what is missing (a body, an imported `.proof`, or a sugar),
+    never a silent lift, never a side door, and never a lift-time refusal.
     """
 
     info: FactoryGapInfo
 
     def emit(self, sugar: "CallSugar", ctx) -> Outcome:
-        audit = FactoryAuditRow(
-            role="term",
-            status="refused",
-            observed=self.info.observed,
-            blame=self.info.blame,
-            selected="CallSugar",
-            candidates=["CallSugar"],
-            message=self.info.message,
+        del sugar, ctx
+        return Incomplete(
+            FactoryGapEffect(
+                owner=self.info.owner,
+                blame=self.info.blame,
+                observed=self.info.observed,
+                requested=self.info.requested,
+                fix=self.info.fix,
+                gap_kind=self.info.gap_kind.value,
+                gap_locus=self.info.gap_locus.value,
+            )
         )
-        raise FactoryGap(self.info, audit)
 
 
 @dataclass(frozen=True)

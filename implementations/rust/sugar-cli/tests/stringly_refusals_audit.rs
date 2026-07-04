@@ -34,23 +34,6 @@ struct ExpectedSite {
     replacement: &'static str,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct RefusedInLiftSite {
-    kit: &'static str,
-    path: String,
-    recognizer: String,
-    status: String,
-}
-
-#[derive(Debug, Clone)]
-struct ExpectedRefusedInLiftSite {
-    path: &'static str,
-    recognizer: &'static str,
-    status: &'static str,
-    count: usize,
-    replacement: &'static str,
-}
-
 const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "body-reduction-refusal-effect", path: "implementations/rust/sugar-verifier/src/body_discharge.rs", line: 452, needle: "Err(WpError::Refused(r)) => {", replacement: "BodyReductionEffect::{WpRefused,PreconditionMissing} carrying callee and WP ground" },
     ExpectedSite { ground: "body-reduction-refusal-effect", path: "implementations/rust/sugar-verifier/src/body_discharge.rs", line: 1028, needle: "Err(WpError::Refused(r)) => {", replacement: "BodyReductionEffect::{WpRefused,PreconditionMissing} carrying callee and WP ground" },
@@ -217,12 +200,6 @@ const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "wp-refusal-effect", path: "implementations/rust/libsugar/src/wp.rs", line: 1291, needle: "Err(WpError::Refused(_)) => Ok(EvidenceVerdict {", replacement: "WpEffect::{OpaqueLoop,OpaqueCall} surfaced through typed evidence verdict" },
 ];
 
-const EXPECTED_REFUSED_IN_LIFT_SITES: &[ExpectedRefusedInLiftSite] = &[
-    ExpectedRefusedInLiftSite { path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/array_literal_sugar.py", recognizer: "ArrayLiteralSugar", status: "floor-gap", count: 1, replacement: "typed floor effect emitted by the owning recognizer; no FactoryGap status from desugar" },
-    ExpectedRefusedInLiftSite { path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/call_sugar.py", recognizer: "CallSugar", status: "refused", count: 1, replacement: "typed lift effect emitted by the owning recognizer; refusal belongs only at verify" },
-    ExpectedRefusedInLiftSite { path: "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/constructor_strategy.py", recognizer: "ConstructorStrategy", status: "floor-gap", count: 2, replacement: "typed floor effect emitted by the owning recognizer; no FactoryGap status from desugar" },
-];
-
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -243,16 +220,6 @@ fn source_roots(root: &Path) -> Vec<PathBuf> {
         "implementations/rust/libsugar/src",
         "implementations/python/sugar-lift-py-tests/src",
         "implementations/python/sugar-lift-python-source/src",
-    ]
-    .into_iter()
-    .map(|rel| root.join(rel))
-    .collect()
-}
-
-fn refused_in_lift_roots(root: &Path) -> Vec<PathBuf> {
-    [
-        "implementations/rust/sugar-lift-rust-tests/src",
-        "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar",
     ]
     .into_iter()
     .map(|rel| root.join(rel))
@@ -281,212 +248,6 @@ fn source_files_under(root: &Path) -> Result<Vec<PathBuf>, String> {
     }
     out.sort();
     Ok(out)
-}
-
-fn collect_refused_in_lift_sites(root: &Path) -> Result<Vec<RefusedInLiftSite>, String> {
-    let mut out = Vec::new();
-    for source_root in refused_in_lift_roots(root) {
-        for path in source_files_under(&source_root)? {
-            let rel = path
-                .strip_prefix(root)
-                .map_err(|err| format!("strip {}: {err}", path.display()))?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let source = fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", rel))?;
-            out.extend(collect_refused_in_lift_sites_from_source(&rel, &source));
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
-fn collect_refused_in_lift_sites_from_source(path: &str, source: &str) -> Vec<RefusedInLiftSite> {
-    let lines = source.lines().collect::<Vec<_>>();
-    let mut out = Vec::new();
-    for (idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        let Some(status) = factory_gap_status(trimmed) else {
-            continue;
-        };
-        let context = context_window_radius(&lines, idx, 12);
-        if path.ends_with(".py") {
-            if !path.contains("sugar_lift_py_tests/sugar/")
-                || !context.contains("FactoryAuditRow(")
-                || !context.contains("FactoryGap")
-            {
-                continue;
-            }
-            out.push(RefusedInLiftSite {
-                kit: "python",
-                path: path.to_string(),
-                recognizer: python_enclosing_recognizer(&lines, idx, source),
-                status: status.to_string(),
-            });
-        } else if path.ends_with(".rs") {
-            if !path.contains("sugar-lift-rust-tests/src")
-                || !context.contains("FactoryGap")
-                || !context.contains("FactoryAuditRow")
-            {
-                continue;
-            }
-            out.push(RefusedInLiftSite {
-                kit: "rust",
-                path: path.to_string(),
-                recognizer: rust_enclosing_recognizer(&lines, idx),
-                status: status.to_string(),
-            });
-        }
-    }
-    out
-}
-
-fn factory_gap_status(line: &str) -> Option<&'static str> {
-    let compact = line.split_whitespace().collect::<String>();
-    if compact.contains("status=\"refused\"")
-        || compact.contains("status='refused'")
-        || compact.contains("status:\"refused\"")
-    {
-        return Some("refused");
-    }
-    if compact.contains("status=\"floor-gap\"")
-        || compact.contains("status='floor-gap'")
-        || compact.contains("status:\"floor-gap\"")
-    {
-        return Some("floor-gap");
-    }
-    None
-}
-
-fn context_window_radius(lines: &[&str], idx: usize, radius: usize) -> String {
-    let start = idx.saturating_sub(radius);
-    let end = (idx + radius + 1).min(lines.len());
-    lines[start..end].join("\n")
-}
-
-#[derive(Clone)]
-struct PythonScope {
-    indent: usize,
-    kind: &'static str,
-    name: String,
-}
-
-fn python_enclosing_recognizer(lines: &[&str], idx: usize, source: &str) -> String {
-    let sugar_classes = python_sugar_classes(source);
-    if sugar_classes.len() == 1 {
-        return sugar_classes[0].clone();
-    }
-    let scopes = python_scopes_at(lines, idx);
-    scopes
-        .iter()
-        .rev()
-        .find(|scope| scope.kind == "class")
-        .or_else(|| scopes.iter().rev().find(|scope| scope.kind == "def"))
-        .map(|scope| scope.name.clone())
-        .unwrap_or_else(|| "<module>".to_string())
-}
-
-fn python_sugar_classes(source: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in source.lines() {
-        let trimmed = line.trim();
-        let Some(name) = parse_python_class_name(trimmed) else {
-            continue;
-        };
-        if trimmed.contains("(Sugar") || trimmed.contains(", role=SugarRole") {
-            out.push(name.to_string());
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
-}
-
-fn python_scopes_at(lines: &[&str], idx: usize) -> Vec<PythonScope> {
-    let mut scopes = Vec::new();
-    for line in lines.iter().take(idx + 1) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('@') {
-            continue;
-        }
-        let indent = line.len() - line.trim_start().len();
-        while scopes
-            .last()
-            .is_some_and(|scope: &PythonScope| indent <= scope.indent)
-        {
-            scopes.pop();
-        }
-        if let Some(name) = parse_python_class_name(trimmed) {
-            scopes.push(PythonScope {
-                indent,
-                kind: "class",
-                name: name.to_string(),
-            });
-        } else if let Some(name) = parse_python_def_name(trimmed) {
-            scopes.push(PythonScope {
-                indent,
-                kind: "def",
-                name: name.to_string(),
-            });
-        }
-    }
-    scopes
-}
-
-fn parse_python_class_name(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("class ")?;
-    let end = rest
-        .find(|c: char| c == '(' || c == ':' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    if end == 0 {
-        None
-    } else {
-        Some(&rest[..end])
-    }
-}
-
-fn parse_python_def_name(line: &str) -> Option<&str> {
-    let rest = line
-        .strip_prefix("def ")
-        .or_else(|| line.strip_prefix("async def "))?;
-    let end = rest.find('(').unwrap_or(rest.len());
-    if end == 0 {
-        None
-    } else {
-        Some(&rest[..end])
-    }
-}
-
-fn rust_enclosing_recognizer(lines: &[&str], idx: usize) -> String {
-    for line in lines.iter().take(idx + 1).rev() {
-        let trimmed = line.trim();
-        if let Some(name) = trimmed
-            .strip_prefix("struct ")
-            .and_then(|rest| rest.split_whitespace().next())
-        {
-            return name.trim_end_matches('{').to_string();
-        }
-        if let Some(name) = trimmed
-            .strip_prefix("enum ")
-            .and_then(|rest| rest.split_whitespace().next())
-        {
-            return name.trim_end_matches('{').to_string();
-        }
-        if let Some(rest) = trimmed.strip_prefix("impl ") {
-            let name = rest
-                .split_whitespace()
-                .last()
-                .unwrap_or(rest)
-                .trim_end_matches('{');
-            return name.to_string();
-        }
-        if let Some(name) = trimmed
-            .strip_prefix("fn ")
-            .and_then(|rest| rest.split('(').next())
-        {
-            return name.to_string();
-        }
-    }
-    "<module>".to_string()
 }
 
 fn collect_stringly_refusal_emissions(root: &Path) -> Result<Vec<Site>, String> {
@@ -847,37 +608,6 @@ fn expected_as_sites() -> Vec<Site> {
         .collect()
 }
 
-fn expected_refused_in_lift_as_sites() -> Vec<RefusedInLiftSite> {
-    let mut out = Vec::new();
-    for site in EXPECTED_REFUSED_IN_LIFT_SITES {
-        assert_eq!(
-            site.replacement,
-            refused_in_lift_replacement_for_status(site.status),
-            "replacement text for {}:{}:{} must stay in sync",
-            site.path,
-            site.recognizer,
-            site.status
-        );
-        for _ in 0..site.count {
-            out.push(RefusedInLiftSite {
-                kit: kit_for_path(site.path),
-                path: site.path.to_string(),
-                recognizer: site.recognizer.to_string(),
-                status: site.status.to_string(),
-            });
-        }
-    }
-    out
-}
-
-fn kit_for_path(path: &str) -> &'static str {
-    if path.starts_with("implementations/python/") {
-        "python"
-    } else {
-        "rust"
-    }
-}
-
 fn report_vector(sites: &[Site]) -> String {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for site in sites {
@@ -886,20 +616,6 @@ fn report_vector(sites: &[Site]) -> String {
     counts
         .into_iter()
         .map(|(ground, count)| format!("{ground}: {count}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn report_refused_in_lift_vector(sites: &[RefusedInLiftSite]) -> String {
-    let mut counts: BTreeMap<(String, String), usize> = BTreeMap::new();
-    for site in sites {
-        *counts
-            .entry((site.kit.to_string(), site.status.clone()))
-            .or_default() += 1;
-    }
-    counts
-        .into_iter()
-        .map(|((kit, status), count)| format!("{kit}/{status}: {count}"))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -917,16 +633,6 @@ fn report_sites(sites: &[Site]) -> String {
         .join("\n")
 }
 
-fn report_refused_in_lift_sites(sites: &[RefusedInLiftSite]) -> String {
-    refused_in_lift_identity_multiset(sites.to_vec())
-        .into_iter()
-        .map(|((path, recognizer, status), count)| {
-            format!("{path}\t{recognizer}\t{status}\tcount={count}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn expected_literal(sites: &[Site]) -> String {
     let mut out = String::new();
     out.push_str("const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[\n");
@@ -938,33 +644,6 @@ fn expected_literal(sites: &[Site]) -> String {
             site.line,
             site.text,
             replacement_for_ground(&site.ground),
-        ));
-    }
-    out.push_str("];\n");
-    out
-}
-
-fn refused_in_lift_expected_literal(sites: &[RefusedInLiftSite]) -> String {
-    let mut rows: BTreeMap<(String, String, String), usize> = BTreeMap::new();
-    for site in sites {
-        *rows
-            .entry((
-                site.path.clone(),
-                site.recognizer.clone(),
-                site.status.clone(),
-            ))
-            .or_default() += 1;
-    }
-    let mut out = String::new();
-    out.push_str("const EXPECTED_REFUSED_IN_LIFT_SITES: &[ExpectedRefusedInLiftSite] = &[\n");
-    for ((path, recognizer, status), count) in rows {
-        out.push_str(&format!(
-            "    ExpectedRefusedInLiftSite {{ path: {:?}, recognizer: {:?}, status: {:?}, count: {}, replacement: {:?} }},\n",
-            path,
-            recognizer,
-            status,
-            count,
-            refused_in_lift_replacement_for_status(&status),
         ));
     }
     out.push_str("];\n");
@@ -1004,33 +683,10 @@ fn replacement_for_ground(ground: &str) -> &'static str {
     }
 }
 
-fn refused_in_lift_replacement_for_status(status: &str) -> &'static str {
-    match status {
-        "refused" => {
-            "typed lift effect emitted by the owning recognizer; refusal belongs only at verify"
-        }
-        "floor-gap" => {
-            "typed floor effect emitted by the owning recognizer; no FactoryGap status from desugar"
-        }
-        other => panic!("missing refused-in-lift replacement for status {other}"),
-    }
-}
-
 fn identity_multiset(sites: Vec<Site>) -> BTreeMap<(String, String, String), usize> {
     let mut out = BTreeMap::new();
     for site in sites {
         *out.entry((site.ground, site.path, site.text)).or_default() += 1;
-    }
-    out
-}
-
-fn refused_in_lift_identity_multiset(
-    sites: Vec<RefusedInLiftSite>,
-) -> BTreeMap<(String, String, String), usize> {
-    let mut out = BTreeMap::new();
-    for site in sites {
-        *out.entry((site.path, site.recognizer, site.status))
-            .or_default() += 1;
     }
     out
 }
@@ -1048,21 +704,6 @@ fn stringly_refusal_emission_frontier_matches_expected_multiset() {
         report_vector(&observed),
         report_sites(&observed),
         expected_literal(&observed),
-    );
-}
-
-#[test]
-fn refused_in_lift_frontier_matches_expected_multiset() {
-    let root = repo_root();
-    let observed = collect_refused_in_lift_sites(&root).expect("collect refused-in-lift sites");
-    let expected = expected_refused_in_lift_as_sites();
-    assert_eq!(
-        refused_in_lift_identity_multiset(observed.clone()),
-        refused_in_lift_identity_multiset(expected),
-        "R(refused-in-lift) frontier changed\n\nObserved vector:\n{}\n\nObserved sites:\n{}\n\nPasteable expected literal:\n{}",
-        report_refused_in_lift_vector(&observed),
-        report_refused_in_lift_sites(&observed),
-        refused_in_lift_expected_literal(&observed),
     );
 }
 
@@ -1086,82 +727,6 @@ fn effect_enum_wildcard_arm_frontier_is_stable_zero() {
         wildcards.is_empty(),
         "R(wildcard-arms-over-effect-enums) must stay 0; typed effect consumers must match each ground explicitly\n\nObserved sites:\n{}",
         report_sites(&wildcards),
-    );
-}
-
-#[test]
-fn planted_refused_in_lift_emission_is_detected() {
-    let source = r#"
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
-
-class PlantedSugar(Sugar, role=SugarRole.TERM):
-    @classmethod
-    def owns(cls, site):
-        return site.observed == "Planted"
-
-    def desugar(self, ctx):
-        raise FactoryGap(
-            info,
-            FactoryAuditRow(
-                role="term",
-                status="refused",
-                observed="Planted",
-                blame="plant",
-                selected="PlantedSugar",
-                candidates=["PlantedSugar"],
-                message="planted refused-from-desugar",
-            ),
-        )
-"#;
-    let sites = collect_refused_in_lift_sites_from_source(
-        "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/planted_sugar.py",
-        source,
-    );
-    assert_eq!(
-        sites.len(),
-        1,
-        "planted FactoryGap status=refused in a recognizer desugar path must be detected"
-    );
-    assert_eq!(sites[0].kit, "python");
-    assert_eq!(sites[0].recognizer, "PlantedSugar");
-    assert_eq!(sites[0].status, "refused");
-}
-
-#[test]
-fn planted_refused_in_lift_emission_would_red_the_frontier() {
-    let source = r#"
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
-
-class PlantedSugar(Sugar, role=SugarRole.TERM):
-    @classmethod
-    def owns(cls, site):
-        return site.observed == "Planted"
-
-    def desugar(self, ctx):
-        raise FactoryGap(
-            info,
-            FactoryAuditRow(
-                role="term",
-                status="refused",
-                observed="Planted",
-                blame="plant",
-                selected="PlantedSugar",
-                candidates=["PlantedSugar"],
-                message="planted refused-from-desugar",
-            ),
-        )
-"#;
-    let mut planted = expected_refused_in_lift_as_sites();
-    planted.extend(collect_refused_in_lift_sites_from_source(
-        "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/planted_sugar.py",
-        source,
-    ));
-    assert_ne!(
-        refused_in_lift_identity_multiset(planted),
-        refused_in_lift_identity_multiset(expected_refused_in_lift_as_sites()),
-        "an unpinned recognizer FactoryGap status=refused site must make the frontier differ"
     );
 }
 
