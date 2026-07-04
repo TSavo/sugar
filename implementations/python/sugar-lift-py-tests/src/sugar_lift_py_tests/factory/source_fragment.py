@@ -632,6 +632,50 @@ class SourceFragment:
         self._require(ast.keyword)
         return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
 
+    # --- formatted string literals ----------------------------------------
+
+    def joined_str_values(self) -> "list[SourceFragment]":
+        """Return the literal/formatted child fragments of an f-string."""
+        self._require(ast.JoinedStr)
+        return [
+            SourceFragment.from_node(value, self.filename)
+            for value in self.node.values  # type: ignore[attr-defined]
+        ]
+
+    def joined_str_static_text(self) -> "str | None":
+        """Return the f-string text when every segment is already literal text."""
+        self._require(ast.JoinedStr)
+        pieces: list[str] = []
+        for value in self.node.values:  # type: ignore[attr-defined]
+            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                return None
+            pieces.append(value.value)
+        return "".join(pieces)
+
+    def formatted_value_value(self) -> "SourceFragment":
+        """Return the expression inside an f-string formatted field."""
+        self._require(ast.FormattedValue)
+        value = self.node.value  # type: ignore[attr-defined]
+        return SourceFragment.from_node(value, self.filename)
+
+    def formatted_value_conversion(self) -> int:
+        """Return the ast.FormattedValue conversion code."""
+        self._require(ast.FormattedValue)
+        return self.node.conversion  # type: ignore[attr-defined]
+
+    def formatted_value_has_format_spec(self) -> bool:
+        """Return True when an f-string formatted field carries a format spec."""
+        self._require(ast.FormattedValue)
+        return self.node.format_spec is not None  # type: ignore[attr-defined]
+
+    def formatted_value_format_spec_static_text(self) -> "str | None":
+        """Return a literal format spec, or None for no spec or a dynamic spec."""
+        self._require(ast.FormattedValue)
+        spec = self.node.format_spec  # type: ignore[attr-defined]
+        if spec is None:
+            return None
+        return SourceFragment.from_node(spec, self.filename).joined_str_static_text()
+
     # --- annotated assignment ----------------------------------------------
 
     def annassign_target(self) -> "SourceFragment":
