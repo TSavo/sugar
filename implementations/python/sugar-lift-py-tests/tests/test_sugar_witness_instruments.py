@@ -108,6 +108,7 @@ EXPECTED_OPT_OUT_SUGARS = {
     "ExprSugar",
     "ListLiteralSugar",
     "OrdByteSugar",
+    "PassSugar",
     "SubscriptAssignSugar",
     "SubscriptDeleteSugar",
 }
@@ -265,7 +266,7 @@ def test_temporal_opt_outs_are_pinned_as_retirable_deferrals() -> None:
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
     assert seed_report.seed_count == EXPECTED_SEED_CASES
     assert seed_report.unique_owner_count == EXPECTED_SEED_OWNER_COUNT
-    assert seed_report.catalog_count == 56
+    assert seed_report.catalog_count == 57
     assert seed_report.witness_triples_failing == EXPECTED_TRIPLE_FAILURES
     assert seed_report.witnesses_not_dispatching_to_owner == 0
     assert [
@@ -725,7 +726,7 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
     assert "R(temporal-opt-outs): 5" in text
-    assert "seed coverage: 54 seed cases, 41/55 catalog sugars" in text
+    assert "seed coverage: 55 seed cases, 42/57 catalog sugars" in text
     assert "unenrolled sugars:" not in text
     assert "temporal opt-outs:" in text
 

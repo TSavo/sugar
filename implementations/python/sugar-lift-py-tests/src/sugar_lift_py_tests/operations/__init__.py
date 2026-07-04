@@ -18,6 +18,7 @@ from .delitem_operation import DelItemOperation
 from .descriptor_operation import DescriptorOperation
 from .dict_missing_operation import DictMissingOperation
 from .finally_fallthrough_operation import FinallyFallthroughOperation
+from .format_value_operation import FormatValueOperation
 from .inplace_binary_operator_operation import InplaceBinaryOperatorOperation
 from .map_operation import MapOperation
 from .materialize_operation import MaterializeOperation
@@ -51,6 +52,7 @@ __all__ = [
     "DescriptorOperation",
     "DictMissingOperation",
     "FinallyFallthroughOperation",
+    "FormatValueOperation",
     "InplaceBinaryOperatorOperation",
     "MapOperation",
     "MaterializeOperation",

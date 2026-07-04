@@ -29,7 +29,7 @@ def build_node(
     )
     return _build_site(
         site,
-        role=role,
+        role=_fallback_role(site, role),
         catalog=catalog,
         ctx=ctx
         or FactoryBuildContext(
@@ -64,7 +64,7 @@ def build_next(
     catalog = catalog or (ctx.catalog if ctx is not None else default_catalog())
     return _build_site(
         site,
-        role=role,
+        role=_fallback_role(site, role),
         catalog=catalog,
         ctx=ctx
         or FactoryBuildContext(
@@ -72,6 +72,12 @@ def build_next(
             catalog=catalog,
         ),
     )
+
+
+def _fallback_role(site: SourceFragment, requested: SugarRole) -> SugarRole:
+    if requested == SugarRole.TERM and site.is_statement_site():
+        return SugarRole.STATEMENT
+    return requested
 
 
 def _build_source_report(
