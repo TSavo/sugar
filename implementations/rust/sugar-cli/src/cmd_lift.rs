@@ -4618,7 +4618,7 @@ fn plan_role_label(role: &str) -> &'static str {
 }
 
 fn short_cid(cid: &str) -> String {
-    if let Some(rest) = cid.strip_prefix("blake3-512:") {
+    if let Some(rest) = sugar_canonicalizer::cid_hex(cid) {
         let short: String = rest.chars().take(12).collect();
         return format!("blake3-512:{short}");
     }

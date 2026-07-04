@@ -23,9 +23,7 @@
 
 use std::collections::BTreeMap;
 
-use sugar_ir_types::{
-    DomainClaim, DomainClaimProvenance, IrFormula, LossRecord, VerdictBody, VerdictKind,
-};
+use sugar_ir_types::{DomainClaim, DomainClaimProvenance, LossRecord, VerdictBody, VerdictKind};
 
 // 128 hex chars after the "blake3-512:" prefix; deterministic placeholders.
 const KIT_CID: &str = "blake3-512:kit00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a";

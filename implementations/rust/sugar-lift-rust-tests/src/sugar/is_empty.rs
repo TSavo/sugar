@@ -36,8 +36,8 @@ use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, simple_path_name, strip_refs_groups, Desugared, DesugaredElem, Effect, Outcome,
-    Sugar, SugarCtx,
+    bool_const, simple_path_name, strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar,
+    SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -78,12 +78,10 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     }
     let literal_empty = literal_empty_without_elements_frag(receiver);
     let static_len = literal_sequence_static_len_frag(receiver, fcx);
-    let static_collection_len = static_collection_len_source_frag(receiver, fcx);
     Some(IsEmptySugar::new(
         literal_empty,
         sequence_body_frag(receiver, fcx),
         static_len,
-        static_collection_len,
     ))
 }
 
@@ -141,12 +139,6 @@ struct IsEmptySugar {
     literal_empty: Option<bool>,
     receiver: SugarBody<CompositeFloor>,
     static_len: Option<usize>,
-    static_collection_len: Option<StaticLenSource>,
-}
-
-struct StaticLenSource {
-    len: usize,
-    source: SugarBody<CompositeFloor>,
 }
 
 impl Sugar for IsEmptySugar {
@@ -178,17 +170,6 @@ impl Sugar for IsEmptySugar {
                 is_empty_gap("is_empty receiver sequence helper returned unexpected Complete")
             }
             Err(Outcome::Incomplete(effect)) => return Outcome::Incomplete(effect),
-            Err(gap) => {
-                if let Some(static_len) = &self.static_collection_len {
-                    match source_reduces_to_sequence(&static_len.source, ctx) {
-                        Ok(true) => static_len.len == 0,
-                        Ok(false) => return gap,
-                        Err(outcome) => return outcome,
-                    }
-                } else {
-                    return gap;
-                }
-            }
         };
         debug!(
             target: "sugar_lift_rust_tests::sugar::is_empty",
@@ -204,13 +185,11 @@ impl IsEmptySugar {
         literal_empty: Option<bool>,
         receiver: SugarBody<CompositeFloor>,
         static_len: Option<usize>,
-        static_collection_len: Option<StaticLenSource>,
     ) -> Box<dyn Sugar> {
         Box::new(Self {
             literal_empty,
             receiver,
             static_len,
-            static_collection_len,
         })
     }
 }
@@ -238,19 +217,6 @@ fn sequence_from_body(
         Outcome::Complete(d) => d
             .into_seq()
             .ok_or_else(|| is_empty_gap(&format!("{label} reduced to non-sequence"))),
-        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
-    }
-}
-
-fn source_reduces_to_sequence(
-    body: &SugarBody<CompositeFloor>,
-    ctx: &SugarCtx,
-) -> Result<bool, Outcome> {
-    match body.reduce(ctx) {
-        Outcome::Complete(d) => Ok(d.into_seq().is_some()),
-        Outcome::Incomplete(effect) if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON) => {
-            Ok(true)
-        }
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
@@ -291,25 +257,6 @@ fn literal_sequence_static_len_frag(
         fcx.let_inits(),
         fcx.scope(),
     )
-}
-
-/// Returns a fully-built `StaticLenSource` for a length-only collection adapter.
-/// Delegates to `method_family::literal_collection_adapter_static_len_in_scope`;
-/// the raw `Expr` inside `StaticCollectionLen.source` never escapes into the
-/// recognize body.
-fn static_collection_len_source_frag(
-    frag: SourceFragment<'_>,
-    fcx: &SugarBuildCtx,
-) -> Option<StaticLenSource> {
-    let static_len = method_family::literal_collection_adapter_static_len_in_scope(
-        frag.as_expr()?,
-        fcx.let_inits(),
-        fcx.scope(),
-    )?;
-    Some(StaticLenSource {
-        len: static_len.len,
-        source: sequence_body(&static_len.source, fcx),
-    })
 }
 
 /// Builds the `SugarBody<CompositeFloor>` for a receiver fragment. Delegates to

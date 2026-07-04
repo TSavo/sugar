@@ -17,6 +17,7 @@ from sugar_lift_py_tests.sugar.object_rich_comparison_term_sugar import (
     ObjectRichComparisonTermSugar,
 )
 
+
 def _ctx_for_module(source: str) -> FactoryBuildContext:
     module = ast.parse(source)
     resolver = {

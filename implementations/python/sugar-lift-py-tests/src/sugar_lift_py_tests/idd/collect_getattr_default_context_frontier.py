@@ -5,7 +5,6 @@ from pathlib import Path
 
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
-
 _CONTEXT_RECEIVERS = ("ctx", "source", "temporal")
 
 

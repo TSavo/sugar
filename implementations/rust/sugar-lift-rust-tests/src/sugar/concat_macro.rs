@@ -37,7 +37,6 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     fn macro_expr_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {

@@ -223,7 +223,7 @@ test-python: build-python
 	(cd implementations/python/sugar-lift-py-tests && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
-		python -m pip install --quiet -e . pytest numpy pandas scikit-learn && \
+		python -m pip install --quiet -e . pytest numpy pandas scikit-learn pyright==1.1.411 && \
 		pytest) || failed="$$failed sugar-lift-py-tests"; \
 	(cd implementations/python/sugar-emit-python-pytest && \
 		python3 -m venv .venv && \
@@ -233,7 +233,7 @@ test-python: build-python
 	(cd implementations/python/sugar-lift-python-source && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
-		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest blake3 && \
+		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest blake3 numpy pandas && \
 		pytest) || failed="$$failed sugar-lift-python-source"; \
 	(cd implementations/python/sugar-lift-py-pytest-witness && \
 		python3 -m venv .venv && \

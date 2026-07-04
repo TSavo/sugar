@@ -171,7 +171,9 @@ class RefusalRecord:
                 refusal_absence=True,
                 construct=lambda: cls.from_incomplete(
                     _runtime_effect_incomplete("opaque runtime effect"),
-                    provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
+                    provenance=_witness_provenance(
+                        cls.node_class, warrants=("Derived",)
+                    ),
                 ),
             ),
             lying=VerdictWitnessCase(

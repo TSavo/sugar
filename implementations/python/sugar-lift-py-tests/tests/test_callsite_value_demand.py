@@ -69,7 +69,9 @@ def _reduce_function_return(source: str, name: str):
     return returned.value
 
 
-def _callsite_value(source: str, expr: str) -> tuple[CallSiteValue, FactoryBuildContext]:
+def _callsite_value(
+    source: str, expr: str
+) -> tuple[CallSiteValue, FactoryBuildContext]:
     ctx = _ctx_for_module(source)
     node = ast.parse(expr, mode="eval").body
     value = complete_value(

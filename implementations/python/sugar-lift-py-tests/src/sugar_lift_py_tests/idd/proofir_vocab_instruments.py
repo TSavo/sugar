@@ -301,7 +301,9 @@ def _source_root(root: Path) -> Path:
     for candidate in candidates:
         if (candidate / "proofir").is_dir() and (candidate / "idd").is_dir():
             return candidate
-    raise FileNotFoundError(f"could not find sugar_lift_py_tests source root under {root}")
+    raise FileNotFoundError(
+        f"could not find sugar_lift_py_tests source root under {root}"
+    )
 
 
 def render_text(report: ProofIrVocabularyFrontierReport) -> str:
@@ -318,16 +320,11 @@ def render_text(report: ProofIrVocabularyFrontierReport) -> str:
         "construction-law boundary scanner: retired "
         "(typed constructors and serializer visibility)\n"
     )
-    lines.append(
-        "R(unknown-sort-eq-seats): "
-        f"{report.unknown_sort_equality_seats}\n"
-    )
+    lines.append("R(unknown-sort-eq-seats): " f"{report.unknown_sort_equality_seats}\n")
     if report.provenance.missing:
         lines.append("formula fragments without provenance:\n")
         for fragment in report.provenance.missing:
-            lines.append(
-                f"  - {fragment.node_class} at {fragment.construction_site}\n"
-            )
+            lines.append(f"  - {fragment.node_class} at {fragment.construction_site}\n")
     if report.verdict_witnesses.missing_classes:
         lines.append("ProofIR classes without verdict witnesses:\n")
         for node_class in report.verdict_witnesses.missing_classes:

@@ -2728,11 +2728,8 @@ mod consistency_owned_callsite_tests {
         );
         assert_eq!(plans[0].cid().as_str(), plan_artifact.member_cid);
         assert_eq!(plans[0].bytes(), plan_artifact.member_bytes.as_slice());
-        let plan_member: Json = serde_json::from_slice(plans[0].bytes()).expect("plan member JSON");
         assert_eq!(
-            plan_member
-                .pointer("/header/planCid")
-                .and_then(Json::as_str),
+            plans[0].field("planCid").as_deref(),
             Some(plan_artifact.plan_cid.as_str())
         );
 

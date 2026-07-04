@@ -141,7 +141,6 @@ fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Ou
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     fn pow_expr_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {

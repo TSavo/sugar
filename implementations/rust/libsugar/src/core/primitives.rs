@@ -11,9 +11,7 @@ use crate::compose::{
 };
 
 use super::traits::{Canonical, Catalog};
-use super::types::{
-    Attestation, Boundary, Cid, Contract, DomainClaim, DomainKind, Refutation, Verdict,
-};
+use super::types::{Attestation, Cid, Contract, DomainClaim, DomainKind, Verdict};
 
 /// Signing-key type for primitive 8, `sign`.
 ///

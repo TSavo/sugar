@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
-from sugar_lift_py_tests.kit_rpc import BodyUniverseDto, CallsiteFactDto, SourceMementoDto
+from sugar_lift_py_tests.kit_rpc import (
+    BodyUniverseDto,
+    CallsiteFactDto,
+    SourceMementoDto,
+)
 from sugar_lift_py_tests.proofir.scope import ClaimFormula
 
 from . import (
@@ -17,7 +21,6 @@ from . import (
     _truthful_source,
     _witness_provenance,
 )
-
 
 UniverseSlot = Literal["pre", "post", "inv"]
 SourceWarrant = SourceMementoDto | dict[str, Any]
@@ -33,7 +36,9 @@ class UniverseMint(ProofIRNode):
     _provenance: Provenance = field(init=False, repr=False)
     out_binding: str = field(init=False, default="out")
     source_warrants: tuple[SourceWarrant, ...] = field(init=False, default=())
-    warranted_by: CallsiteFactDto | dict[str, Any] | None = field(init=False, default=None)
+    warranted_by: CallsiteFactDto | dict[str, Any] | None = field(
+        init=False, default=None
+    )
     formals: tuple[str, ...] = field(init=False, default=())
     kind: str = field(init=False, default="contract")
     bridge_source_symbol: str | None = field(init=False, default=None)
@@ -120,7 +125,9 @@ class UniverseMint(ProofIRNode):
                     name="module::truthful::assertion",
                     slot="inv",
                     formula=_witness_claim_formula(cls.node_class, value=0),
-                    provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
+                    provenance=_witness_provenance(
+                        cls.node_class, warrants=("Derived",)
+                    ),
                 ),
             ),
             lying=VerdictWitnessCase(
@@ -130,7 +137,9 @@ class UniverseMint(ProofIRNode):
                     name="module::lying::assertion",
                     slot="inv",
                     formula={"kind": "atomic"},
-                    provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
+                    provenance=_witness_provenance(
+                        cls.node_class, warrants=("Derived",)
+                    ),
                 ),
             ),
         )

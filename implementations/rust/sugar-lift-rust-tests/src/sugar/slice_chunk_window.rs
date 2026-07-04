@@ -11,7 +11,9 @@ use syn::Expr;
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
+use crate::{
+    strip_refs_groups, ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
@@ -20,6 +22,16 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
             "S5 adapter family: slice chunks/windows",
         ),
         recognize_composite,
+    );
+
+pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "slice_chunk_window_runtime",
+        &["method"],
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "runtime slice chunks/windows have no literal sequence floor",
+        ),
+        recognize_term,
     );
 
 #[derive(Clone, Copy)]
@@ -61,10 +73,32 @@ pub(crate) fn recognize_composite(
     }))
 }
 
+pub(crate) fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
+    if !runtime_chunk_window_source_expr(expr, fcx, 0) {
+        return None;
+    }
+    Some(Box::new(RuntimeChunkSourceSugar {
+        boundary: frag.token_str(),
+    }))
+}
+
 pub(crate) struct SliceChunkWindowSugar {
     pub(crate) inner: SugarBody<CompositeFloor>,
     pub(crate) kind: SliceChunkWindowKind,
     pub(crate) n: usize,
+}
+
+struct RuntimeChunkSourceSugar {
+    boundary: String,
+}
+
+impl Sugar for RuntimeChunkSourceSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeChunkSource {
+            boundary: self.boundary.clone(),
+        })
+    }
 }
 
 impl Sugar for SliceChunkWindowSugar {
@@ -132,6 +166,83 @@ fn chunk_window_sequence(
         }
     }
     Some(out)
+}
+
+fn parse_kind_and_size(call: &syn::ExprMethodCall) -> Option<(SliceChunkWindowKind, usize)> {
+    if call.args.len() != 1 {
+        return None;
+    }
+    let n: usize = crate::const_int(&call.args[0])?.try_into().ok()?;
+    if n == 0 {
+        return None;
+    }
+    let kind = match call.method.to_string().as_str() {
+        "chunks" | "chunks_mut" => SliceChunkWindowKind::Chunks,
+        "chunks_exact" | "chunks_exact_mut" => SliceChunkWindowKind::ChunksExact,
+        "rchunks" | "rchunks_mut" => SliceChunkWindowKind::RChunks,
+        "rchunks_exact" | "rchunks_exact_mut" => SliceChunkWindowKind::RChunksExact,
+        "windows" => SliceChunkWindowKind::Windows,
+        _ => return None,
+    };
+    Some((kind, n))
+}
+
+pub(crate) fn runtime_chunk_window_source_expr(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Reference(reference) => {
+            runtime_chunk_window_source_expr(&reference.expr, fcx, depth + 1)
+        }
+        Expr::Paren(paren) => runtime_chunk_window_source_expr(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => runtime_chunk_window_source_expr(&group.expr, fcx, depth + 1),
+        Expr::MethodCall(call) => {
+            parse_kind_and_size(call).is_some()
+                && !receiver_has_literal_sequence_floor(&call.receiver, fcx, depth + 1)
+        }
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            fcx.let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                .or_else(|| fcx.scope().let_binding_for_audit(&name))
+                .is_some_and(|init| runtime_chunk_window_source_expr(init, fcx, depth + 1))
+        }
+        _ => false,
+    }
+}
+
+fn receiver_has_literal_sequence_floor(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Array(_) | Expr::Repeat(_) | Expr::Index(_) => true,
+        Expr::Reference(reference) => {
+            receiver_has_literal_sequence_floor(&reference.expr, fcx, depth + 1)
+        }
+        Expr::Paren(paren) => receiver_has_literal_sequence_floor(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => receiver_has_literal_sequence_floor(&group.expr, fcx, depth + 1),
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            fcx.let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                .is_some_and(|init| receiver_has_literal_sequence_floor(init, fcx, depth + 1))
+        }
+        other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
+    }
 }
 
 fn slice_chunk_window_gap(reason: &str) -> ! {

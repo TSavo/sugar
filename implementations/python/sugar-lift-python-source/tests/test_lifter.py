@@ -174,9 +174,7 @@ def _subscript(value: dict[str, object], index: dict[str, object]) -> dict[str, 
     return {"kind": "ctor", "name": "python:subscript", "args": [value, index]}
 
 
-def _type_application(
-    base: str, annotation: dict[str, object]
-) -> dict[str, object]:
+def _type_application(base: str, annotation: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "ctor",
         "name": "python:type_application",
@@ -278,7 +276,9 @@ def _call(name: str, *args: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _call_term(callee: dict[str, object], *args: dict[str, object]) -> dict[str, object]:
+def _call_term(
+    callee: dict[str, object], *args: dict[str, object]
+) -> dict[str, object]:
     return {
         "kind": "ctor",
         "name": "python:call",
@@ -724,7 +724,7 @@ def test_float_constant_roundtrip_is_structurally_stable() -> None:
 
 
 def test_bytes_constant_lifts_to_tagged_floor_value() -> None:
-    result = lift_source("def f():\n    return b\"\\x00\\xff\"\n", "bytes_const.py")
+    result = lift_source('def f():\n    return b"\\x00\\xff"\n', "bytes_const.py")
 
     assert result.refusals == []
     assert _function_body(result) == _return(_bytes_const(b"\x00\xff"))
@@ -1319,7 +1319,7 @@ def test_simple_dict_literal_lifts_to_ordered_dict_entries() -> None:
 
 
 def test_dict_literal_with_computed_keys_and_values_lifts_terms() -> None:
-    source = "def f(x, y):\n    return {x + 1: y * 2, \"seen\": x}\n"
+    source = 'def f(x, y):\n    return {x + 1: y * 2, "seen": x}\n'
 
     result = lift_source(source, "dict_computed.py")
 
@@ -1492,7 +1492,7 @@ def test_fstring_format_spec_is_carried_as_nested_fstring() -> None:
 
 
 def test_nested_fstring_in_formatted_value_lifts_recursively() -> None:
-    source = 'def f(x):\n    return f"outer {f\'inner {x}\'}"\n'
+    source = "def f(x):\n    return f\"outer {f'inner {x}'}\"\n"
 
     result = lift_source(source, "fstring_nested.py")
 
@@ -1500,9 +1500,7 @@ def test_nested_fstring_in_formatted_value_lifts_recursively() -> None:
     assert _function_body(result) == _return(
         _fstring(
             _str_const("outer "),
-            _fstring_value(
-                _fstring(_str_const("inner "), _fstring_value(_var("x")))
-            ),
+            _fstring_value(_fstring(_str_const("inner "), _fstring_value(_var("x")))),
         )
     )
 
@@ -3819,7 +3817,9 @@ def test_b1_nonliteral_default_remains_refused_as_definition_time_hazard() -> No
 
 
 def test_b1_unary_name_default_remains_refused_as_definition_time_read() -> None:
-    result = lift_source("def f(x=-y):\n    return x\n", "b1_unary_name_default_refusal.py")
+    result = lift_source(
+        "def f(x=-y):\n    return x\n", "b1_unary_name_default_refusal.py"
+    )
 
     assert result.refusals == [
         {
@@ -4053,10 +4053,7 @@ def test_with_floor_discriminates_other_unhandled_statement_kinds() -> None:
 
 def test_match_statement_refuses_with_typed_pattern_kind() -> None:
     source = (
-        "def f(x):\n"
-        "    match x:\n"
-        "        case int():\n"
-        "            return 1\n"
+        "def f(x):\n" "    match x:\n" "        case int():\n" "            return 1\n"
     )
 
     result = lift_source(source, "match_class_refusal.py")
@@ -4146,7 +4143,9 @@ def test_delete_attribute_and_subscript_targets_route_through_target_terms() -> 
     assert {"kind": "panics"} in contract["effects"]
 
 
-def test_delete_target_refusal_propagates_and_plain_function_gets_no_delete_panic() -> None:
+def test_delete_target_refusal_propagates_and_plain_function_gets_no_delete_panic() -> (
+    None
+):
     refused = lift_source(
         "def f(xs, key):\n    del xs[(await key)]\n",
         "delete_target_refusal.py",
@@ -4252,12 +4251,7 @@ def test_overload_stub_body_mints_no_contract_or_body_fact() -> None:
 def test_calling_convention_decorators_lift_with_contract_marker(
     decorator: str, kind: str, expected_body: dict[str, object]
 ) -> None:
-    source = (
-        "class Box:\n"
-        f"    @{decorator}\n"
-        "    def f(x):\n"
-        "        return x\n"
-    )
+    source = "class Box:\n" f"    @{decorator}\n" "    def f(x):\n" "        return x\n"
     if decorator == "property":
         source = (
             "class Box:\n"
@@ -4456,11 +4450,7 @@ def test_starred_expression_lifts_inside_list_without_call_starred_arg() -> None
 
 
 def test_starred_call_argument_and_expression_position_keep_distinct_ctors() -> None:
-    source = (
-        "def f(a):\n"
-        "    value = make(*a)\n"
-        "    return [*a]\n"
-    )
+    source = "def f(a):\n" "    value = make(*a)\n" "    return [*a]\n"
 
     result = lift_source(source, "starred_distinct.py")
 
@@ -4489,7 +4479,9 @@ def test_starred_expression_inner_refusal_propagates_without_shape() -> None:
     ]
 
 
-def test_starred_expression_roundtrip_preserves_return_tuple_and_nested_unpack() -> None:
+def test_starred_expression_roundtrip_preserves_return_tuple_and_nested_unpack() -> (
+    None
+):
     term = _return(_tuple(_starred(_var("x")), _list(_starred(_var("y")))))
 
     compiled = compile_body_term(term, formals=["x", "y"])
@@ -4555,9 +4547,7 @@ def test_simple_chained_call_lifts_with_unresolved_chained_effect() -> None:
 
     assert result.refusals == []
     contract = _contract(result.ir, ".f")
-    assert _function_body(result) == _return(
-        _call_term(_call("factory"), _var("x"))
-    )
+    assert _function_body(result) == _return(_call_term(_call("factory"), _var("x")))
     assert {"kind": "unresolved_call", "name": "factory"} in contract["effects"]
     assert {"kind": "unresolved_call", "name": "(chained)"} in contract["effects"]
 
@@ -4579,22 +4569,19 @@ def test_method_chain_from_call_result_lifts_dynamic_attribute_callee() -> None:
 
 
 def test_triple_chained_call_lifts_nested_dynamic_callees() -> None:
-    result = lift_source("def f(factory):\n    return factory()()()\n", "triple_chain.py")
+    result = lift_source(
+        "def f(factory):\n    return factory()()()\n", "triple_chain.py"
+    )
 
     assert result.refusals == []
     contract = _contract(result.ir, ".f")
-    assert _function_body(result) == _return(
-        _call_term(_call_term(_call("factory")))
-    )
+    assert _function_body(result) == _return(_call_term(_call_term(_call("factory"))))
     assert {"kind": "unresolved_call", "name": "factory"} in contract["effects"]
     assert {"kind": "unresolved_call", "name": "(chained)"} in contract["effects"]
 
 
 def test_generic_subscript_callee_records_type_application() -> None:
-    source = (
-        "def f(Dict, str, int):\n"
-        "    return Dict[str, int]()\n"
-    )
+    source = "def f(Dict, str, int):\n" "    return Dict[str, int]()\n"
 
     result = lift_source(source, "generic_subscript_callee.py")
 
@@ -4748,10 +4735,7 @@ def test_callee_shapes_refuse_with_typed_kind(
     callee_expr: str, kind: str, reason: str
 ) -> None:
     module_name = kind.replace("-", "_")
-    source = (
-        "def f(factory, other, a, b, x):\n"
-        f"    return {callee_expr}\n"
-    )
+    source = "def f(factory, other, a, b, x):\n" f"    return {callee_expr}\n"
 
     result = lift_source(source, f"{module_name}.py")
 
@@ -5361,10 +5345,7 @@ def test_local_import_from_asname_binds_alias_not_original_name() -> None:
 
 def test_dotted_local_import_binds_head_name_only() -> None:
     source = (
-        'pkg = "global-pkg"\n'
-        "def f():\n"
-        "    import pkg.sub\n"
-        "    return pkg\n"
+        'pkg = "global-pkg"\n' "def f():\n" "    import pkg.sub\n" "    return pkg\n"
     )
 
     result = lift_source(source, "local_import_dotted.py")
@@ -5460,12 +5441,11 @@ def test_decorated_nested_function_uses_opaque_fork_and_local_binding() -> None:
     )
 
 
-def test_nested_function_refused_control_uses_opaque_fork_without_outer_refusal() -> None:
+def test_nested_function_refused_control_uses_opaque_fork_without_outer_refusal() -> (
+    None
+):
     source = (
-        "def outer():\n"
-        "    def inner():\n"
-        "        yield 1\n"
-        "    return inner\n"
+        "def outer():\n" "    def inner():\n" "        yield 1\n" "    return inner\n"
     )
 
     result = lift_source(source, "nested_refused_control.py")
@@ -5536,12 +5516,7 @@ def test_nested_function_name_used_after_definition_is_local_binding() -> None:
 
 
 def test_nested_classdef_lifts_opaque_term_local_binding_and_io_effect() -> None:
-    source = (
-        "def outer():\n"
-        "    class Local:\n"
-        "        pass\n"
-        "    return Local\n"
-    )
+    source = "def outer():\n" "    class Local:\n" "        pass\n" "    return Local\n"
 
     result = lift_source(source, "nested_classdef.py")
 
@@ -5624,11 +5599,7 @@ def test_simple_key_lambda_lifts_formal_scope_and_body_term() -> None:
 
 
 def test_lambda_captures_enclosing_locals_symbolically_without_global_read() -> None:
-    source = (
-        'x = "global"\n'
-        "def f(scale):\n"
-        "    return lambda x: x + scale\n"
-    )
+    source = 'x = "global"\n' "def f(scale):\n" "    return lambda x: x + scale\n"
 
     result = lift_source(source, "lambda_capture.py")
 
@@ -5895,10 +5866,7 @@ def test_effects_are_sorted_and_loop_cid_is_blake3_512() -> None:
 
 def test_while_loop_populates_opacity_report() -> None:
     source = (
-        "def countdown(n):\n"
-        "    while n:\n"
-        "        n = n - 1\n"
-        "    return n\n"
+        "def countdown(n):\n" "    while n:\n" "        n = n - 1\n" "    return n\n"
     )
 
     result = lift_source(source, "opaque_loop.py")

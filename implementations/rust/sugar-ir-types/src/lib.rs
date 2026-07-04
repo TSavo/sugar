@@ -3023,10 +3023,7 @@ fn reject_policy_cid_overlap(
 }
 
 fn is_blake3_512_cid(s: &str) -> bool {
-    let Some(hex) = s.strip_prefix("blake3-512:") else {
-        return false;
-    };
-    hex.len() == 128 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    sugar_canonicalizer::is_blake3_512_cid(s)
 }
 
 // ============================================================

@@ -24,6 +24,14 @@ use crate::sign::{
 };
 use crate::typed_member::{MemberError, MemberKind};
 
+#[derive(Debug, thiserror::Error)]
+pub enum PlanMemberBytesError {
+    #[error("plan member bytes not JSON: {0}")]
+    InvalidJson(serde_json::Error),
+    #[error("plan member kind is not `plan-memento`")]
+    WrongKind,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AtomCid(String);
 
@@ -216,11 +224,7 @@ serialize_cid_as_str!(ContractBodyCid);
 serialize_cid_as_str!(MementoCid);
 
 fn is_blake3_512_cid(cid: &str) -> bool {
-    const PREFIX: &str = "blake3-512:";
-    let Some(hex) = cid.strip_prefix(PREFIX) else {
-        return false;
-    };
-    hex.len() == 128 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    sugar_canonicalizer::is_blake3_512_cid(cid)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1562,6 +1566,22 @@ impl ProofGraph {
 
     pub fn push_plan(&mut self, memento: PlanMemento) {
         self.insert_member(memento.record);
+    }
+
+    /// Insert a raw plan-memento member without exposing member-envelope
+    /// discriminator parsing to callers. This is the non-panicking sibling of
+    /// `PlanMemento::new` for replay paths that need to refuse malformed
+    /// artifacts instead of aborting.
+    pub fn push_plan_member_bytes(&mut self, bytes: Vec<u8>) -> Result<(), PlanMemberBytesError> {
+        let value: Json =
+            serde_json::from_slice(&bytes).map_err(PlanMemberBytesError::InvalidJson)?;
+        if raw_member_kind(&value).and_then(|kind| kind.parse().ok())
+            != Some(MemberKind::PlanMemento)
+        {
+            return Err(PlanMemberBytesError::WrongKind);
+        }
+        self.insert_member(MemberRecord::new(MementoCid::from_bytes(&bytes), bytes));
+        Ok(())
     }
 
     pub fn push_proof_run(&mut self, memento: ProofRunMemento) {

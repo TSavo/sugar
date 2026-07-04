@@ -13,13 +13,13 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::Value as Json;
-use sugar_canonicalizer::blake3_512_of;
-use sugar_proof_envelope::{ed25519_verify_bytes, MemberKind, MemberView, ProofGraph};
+use sugar_canonicalizer::{blake3_512_of, cid_hex};
+use sugar_proof_envelope::{
+    cid_from_proof_stem, ed25519_verify_bytes, MemberKind, MemberView, ProofGraph,
+};
 
 use crate::cbor_decode::CborValue;
 use sugar_proof_envelope::decode_for_conformance;
-
-const HASH_TAG_PREFIX: &str = "blake3-512:";
 
 pub const PFCP_R1_FILENAME_CID: &str = "PFCP-R1-FILENAME-CID";
 pub const PFCP_R2_DETERMINISTIC_CBOR: &str = "PFCP-R2-DETERMINISTIC-CBOR";
@@ -246,7 +246,7 @@ fn validate_catalog_signature(
     };
     let signer_key = if signer.starts_with("ed25519:") {
         signer.to_string()
-    } else if signer.starts_with(HASH_TAG_PREFIX) {
+    } else if cid_hex(signer).is_some() {
         match authority_key_for_catalog_signer(signer, graph) {
             Ok(key) => key,
             Err(error) => {
@@ -311,12 +311,10 @@ fn empty_report(path: &Path, file_cid: &str) -> ProofFileConformanceReport {
 fn filename_cid(path: &Path) -> Option<String> {
     let filename = path.file_name()?.to_str()?;
     let stem = filename.strip_suffix(".proof").unwrap_or(filename);
-    if stem.starts_with(HASH_TAG_PREFIX) {
+    if cid_hex(stem).is_some() {
         Some(stem.to_string())
-    } else if stem.len() == 128 && stem.bytes().all(|b| b.is_ascii_hexdigit()) {
-        Some(format!("{HASH_TAG_PREFIX}{stem}"))
     } else {
-        None
+        cid_from_proof_stem(stem)
     }
 }
 
@@ -326,15 +324,15 @@ fn check_filename_cid(path: &Path, file_cid: &str, report: &mut ProofFileConform
         .and_then(|s| s.to_str())
         .unwrap_or_default();
     let stem = filename.strip_suffix(".proof").unwrap_or(filename);
-    let candidate = stem.strip_prefix(HASH_TAG_PREFIX).unwrap_or(stem);
-    if candidate.len() != 128 || !candidate.bytes().all(|b| b.is_ascii_hexdigit()) {
+    let Some(candidate_cid) = cid_from_proof_stem(stem) else {
         report.push_error(
             PFCP_R1_FILENAME_CID,
             format!("filename `{filename}` does not carry a blake3-512 CID"),
         );
         return;
-    }
-    let file_hex = file_cid.strip_prefix(HASH_TAG_PREFIX).unwrap_or(file_cid);
+    };
+    let candidate = cid_hex(&candidate_cid).unwrap_or(&candidate_cid);
+    let file_hex = cid_hex(file_cid).unwrap_or(file_cid);
     if candidate != file_hex {
         report.push_error(
             PFCP_R1_FILENAME_CID,
@@ -350,7 +348,7 @@ fn validate_member_view(
 ) {
     let cid = view.cid().as_str().to_string();
 
-    if !cid.starts_with(HASH_TAG_PREFIX) {
+    if cid_hex(&cid).is_none() {
         report.push_error(
             PFCP_R5_MEMBER_CID,
             format!("member key `{cid}` does not use blake3-512"),

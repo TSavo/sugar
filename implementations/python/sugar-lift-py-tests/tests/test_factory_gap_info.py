@@ -22,7 +22,6 @@ from sugar_lift_py_tests.factory.factory_gap_info import (
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.outcome import complete_value
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

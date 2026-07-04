@@ -5699,6 +5699,7 @@ fn resolve_method_calls_via_oracle(
                     callee = %cs.callee,
                     resolved_crate = %res.krate,
                     type_stem = ?res.type_stem,
+                    effect = %res.effect,
                     disambiguated = ?disambiguated,
                     file = %full_path.display(),
                     line = cs.line,
@@ -5827,87 +5828,6 @@ fn push_rust_binding_key_leaf(leaves: &mut Vec<String>, leaf: &str) {
 // oracle reconstructs the body from on-disk source IFF it recomputes to the
 // pinned CIDs, else REFUSES. Exact-or-refuse, no silent loss.
 // ---------------------------------------------------------------------------
-
-/// A vendor sugar binding the materializer can fill a boundary stub from: the
-/// `(library_tag, source_function_name)` key + the SourceMemento needed to
-/// resolve its body.
-struct VendorBinding {
-    library_tag: String,
-    source_function_name: String,
-    memento: SourceMemento,
-}
-
-/// Collect VendorBindings from the FROZEN vendor `.proof`s resolved for the
-/// project (the same proof sources `recognize` uses: `.sugar/imports/` +
-/// cargo-dependency proofs). The pin is frozen at mint time; the oracle later
-/// resolves it against LIVE vendor disk, so drift (frozen pin != live recompute)
-/// is detectable. This is the by-reference contract: re-lifting live source
-/// could never detect drift (the pin would track disk by construction).
-///
-/// Mirrors python `_vendor_proof_binding_templates` + `_resolve_via_source_oracle`.
-/// Materialize pulls the SourceMemento (locus + pins) and resolves the body via
-/// the oracle; recognize only needs the pinned `template_cid`.
-fn vendor_bindings_from_proofs(project_root: &Path) -> Result<Vec<VendorBinding>, String> {
-    let proof_paths = resolve_recognizer_proof_paths(project_root)?;
-    let mut bindings = Vec::new();
-    for path in proof_paths {
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        let Ok(graph) = sugar_proof_envelope::ProofGraph::read(&bytes) else {
-            continue;
-        };
-        for view in graph.members_view() {
-            let Ok(parsed) = serde_json::from_slice::<Value>(view.bytes()) else {
-                continue;
-            };
-            let body = match parsed.get("body") {
-                Some(body) => body,
-                None => &parsed,
-            };
-            if body.get("kind").and_then(Value::as_str) != Some("library-sugar-binding-entry") {
-                continue;
-            }
-            let Some(library_tag) = body
-                .get("target_library_tag")
-                .or_else(|| body.get("library_tag"))
-                .and_then(Value::as_str)
-                .filter(|tag| !tag.is_empty())
-            else {
-                return Err(format!(
-                    "vendor proof `{}` library-sugar-binding-entry missing target_library_tag",
-                    path.display()
-                ));
-            };
-            let Some(source_function_name) = body
-                .get("source_function_name")
-                .and_then(Value::as_str)
-                .filter(|name| !name.is_empty())
-            else {
-                return Err(format!(
-                    "vendor proof `{}` library-sugar-binding-entry missing source_function_name",
-                    path.display()
-                ));
-            };
-            let Some(body_source) = body.get("body_source") else {
-                continue;
-            };
-            let Some(memento) = SourceMemento::from_body_source(
-                Some(source_function_name.to_string()),
-                body_source,
-            ) else {
-                continue;
-            };
-            bindings.push(VendorBinding {
-                library_tag: library_tag.to_string(),
-                source_function_name: source_function_name.to_string(),
-                memento,
-            });
-        }
-    }
-    Ok(bindings)
-}
 
 fn lift_implications(params: &Value) -> Result<Value, String> {
     use std::collections::HashMap;
@@ -8892,7 +8812,7 @@ fn function_body_source(src: &str, fn_name: &str) -> Option<String> {
     let file = match syn::parse_file(src) {
         Ok(file) => file,
         Err(err) => {
-            panic!("sugar-walk refused unparsable Rust source while extracting body for `{fn_name}`: {err}")
+            panic!("{err}")
         }
     };
     let item_fn = find_item_fn_by_name(&file.items, fn_name)?;

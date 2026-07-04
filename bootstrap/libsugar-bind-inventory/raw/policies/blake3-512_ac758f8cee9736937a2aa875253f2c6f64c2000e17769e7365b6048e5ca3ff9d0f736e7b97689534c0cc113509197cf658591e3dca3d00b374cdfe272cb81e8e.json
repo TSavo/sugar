@@ -24,7 +24,7 @@
   "proof_artifact_schema": {
     "kind": "bind-admission"
   },
-  "proof_system": "sugar-bind",
+  "proof_system": "provekit-bind",
   "provenance_cid": "blake3-512:ff974f9abfbf0e8e468f8817944c838c827c49321ecf070ba7b31d8f4d76f2091d27a029b78556ec200123bf295100547b1c360b2f32ff093eab239962a21f0b",
   "refusal_rule": {
     "result": "rejected"

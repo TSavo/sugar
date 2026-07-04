@@ -224,7 +224,10 @@ def default_catalog() -> SugarCatalog:
     import pkgutil
 
     from sugar_lift_py_tests import sugar as _sugar_pkg
-    from sugar_lift_py_tests.sugar.sugar_base import registered_claims, validate_registry
+    from sugar_lift_py_tests.sugar.sugar_base import (
+        registered_claims,
+        validate_registry,
+    )
 
     for _mod in pkgutil.iter_modules(_sugar_pkg.__path__):
         importlib.import_module(f"sugar_lift_py_tests.sugar.{_mod.name}")

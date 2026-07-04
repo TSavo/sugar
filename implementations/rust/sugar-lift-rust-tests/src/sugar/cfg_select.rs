@@ -11,7 +11,7 @@ use proc_macro2::{TokenStream, TokenTree};
 use sugar_ir_symbolic::{and_, eq, Formula};
 use syn::parse::{Parse, ParseStream};
 use syn::visit::Visit;
-use syn::{Expr, ExprMacro, Stmt, Token};
+use syn::{Stmt, Token};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration::{resolve_predicate as cfg_resolve_predicate, CfgDisposition};
@@ -19,8 +19,8 @@ use crate::sugar::factory::{AssertionSurfaceFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::macro_assertion_surface::collect_assertion_surfaces_from_stmts;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, token_key, AssertionFactKind, CfgPredicate, Desugared, Effect, Outcome, Sugar,
-    SugarCtx, Warrant,
+    bool_const, AssertionFactKind, CfgPredicate, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    Warrant,
 };
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(

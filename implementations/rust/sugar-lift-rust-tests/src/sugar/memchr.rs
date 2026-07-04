@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use syn::{Expr, Lit, RangeLimits};
 
 use crate::sugar::claim::ExprSugarClaim;
-use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::factory::{SugarBody, TermFloor};
 use crate::sugar::format::stable_let_bindings;
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::source_fragment::SourceFragment;

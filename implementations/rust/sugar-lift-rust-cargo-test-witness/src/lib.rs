@@ -42,7 +42,9 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_ir_symbolic::{
     atomic_, serialize::marshal_declarations, ContractDecl, EvidenceCertificate, EvidenceTerm,
 };
-use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed};
+use sugar_proof_envelope::{
+    ed25519_pubkey_string, ed25519_sign_string, proof_filename, Ed25519Seed,
+};
 
 /// The DEV witness-signing seed (python `WITNESS_SIGNER_SEED` = `bytes([0x77])*32`).
 /// A witness is OUR signed mark; in PRODUCTION the seed MUST come from the
@@ -494,7 +496,11 @@ pub fn witness_package_contract_ir(
 
 /// CID -> on-disk filename (`:` -> `_`, the convention `.proof` files use).
 pub fn cid_filename(cid: &str, ext: &str) -> String {
-    format!("{}{ext}", cid.replace(':', "_"))
+    let proof_name = proof_filename(cid);
+    let stem = proof_name
+        .strip_suffix(".proof")
+        .expect("proof_filename emits .proof suffix");
+    format!("{stem}{ext}")
 }
 
 /// Write the bundle to `.sugar/witnesses/<cid>.witness`. Returns the path on

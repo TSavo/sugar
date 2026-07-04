@@ -76,7 +76,9 @@ def test_typed_effect_union_routes_each_three_exit_member() -> None:
             reason="no owning arm reached this floor",
         )
     )
-    assert _route_incomplete_effect(coverage, handlers=(Handler(),), ctx=None) is coverage
+    assert (
+        _route_incomplete_effect(coverage, handlers=(Handler(),), ctx=None) is coverage
+    )
 
 
 def test_unhandled_effect_kind_without_dispatch_arm_is_loud() -> None:

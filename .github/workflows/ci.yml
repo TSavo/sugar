@@ -48,10 +48,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install system deps (z3)
+      - name: Install system deps (z3, GNU time)
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends z3
+          sudo apt-get install -y --no-install-recommends z3 time
 
       - name: Build RSS smoke binaries
         working-directory: implementations/rust
@@ -67,10 +67,14 @@ jobs:
 
       - name: Verify sugar verify RSS floor
         run: |
+          # reference re-pinned 33096 -> 37376 (CI Linux, 2026-07-03): the
+          # synthetic fixture now mints the provenance KIND warrants the
+          # verifier REQUIRES (source-memento per contract, 240 contracts).
+          # The old reference measured a fixture the verifier refuses today.
           tools/perf/verify-rss.sh \
             --project-root "$RUNNER_TEMP/sugar-rss-synthetic-120" \
             --sugar implementations/rust/target/debug/sugar \
-            --reference-kib 33096 \
+            --reference-kib 37376 \
             --label ci-linux-synthetic-120 \
             -- --quiet
 

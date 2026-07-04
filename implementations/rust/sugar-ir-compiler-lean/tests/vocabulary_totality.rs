@@ -11,6 +11,10 @@ use vocabulary::{
 use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_lean::{LeanCompiler, DIALECT};
 
+// #3468 reconciliation: the post-b240323de corpus additions below are
+// legitimate red-pinned vocabulary, not leaks. `call:A` comes from the verifier
+// ambient-testimony fixtures in 728d61877; the serde_json/panic/ref rows come
+// from checked-in serde showcase re-mint artifacts in 98b8c34d5.
 const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("atom", "<predicate>", 1),
     ("atom", "CategoryTheory.Functor.map_id", 0),
@@ -88,6 +92,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "bv32.xor", 2),
     ("ctor", "c", 0),
     ("ctor", "c:callresult_enc_a1", 1),
+    ("ctor", "call:A", 0),
     ("ctor", "call:BooleanDtype", 0),
     ("ctor", "call:abs", 1),
     ("ctor", "call:answer", 0),
@@ -104,6 +109,8 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "call:g", 0),
     ("ctor", "call:make_value", 0),
     ("ctor", "call:new", 2),
+    ("ctor", "call:serde_json::to_string", 1),
+    ("ctor", "call:serde_json::to_string#panic_callsite", 1),
     ("ctor", "call:update", 0),
     ("ctor", "callval___repr___a1", 1),
     ("ctor", "cf_gt", 2),
@@ -122,6 +129,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "method:expect", 1),
     ("ctor", "method:to_digit", 2),
     ("ctor", "method:unwrap", 1),
+    ("ctor", "method:unwrap#panic_callsite", 1),
     ("ctor", "method:y", 1),
     ("ctor", "mutex:guard:m", 1),
     ("ctor", "option_expect", 1),
@@ -135,6 +143,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "python:attribute", 2),
     ("ctor", "python:floordiv", 2),
     ("ctor", "python:subscript", 2),
+    ("ctor", "ref", 1),
     ("ctor", "requires_positive", 1),
     ("ctor", "result_unwrap", 1),
     ("ctor", "return", 1),

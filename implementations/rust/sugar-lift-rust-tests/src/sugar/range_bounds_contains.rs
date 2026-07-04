@@ -135,7 +135,6 @@ mod tests {
     // call_target_name/call_arg_count/call_receiver/path_simple_ident/call_args ->
     // verify String floor. No parse_quote!, no StubTerm, no run().
     // Struct holds `receiver_name: String` + SugarBody children -- no raw syn.
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     /// Navigate to the tail MethodCall term in a one-statement fn body.

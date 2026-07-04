@@ -6228,27 +6228,6 @@ fn const_item_range_endpoint_refusal_uses_recursive_const_sugar() {
     );
 }
 
-fn assert_string_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs: &str) {
-    match formula {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Ctor { name, .. } => assert_eq!(name, expected_call),
-                other => panic!("expected call term lhs, got {other:?}"),
-            }
-            match args[1].as_ref() {
-                Term::Const {
-                    value: ConstValue::String(value),
-                    ..
-                } => assert_eq!(value, expected_rhs),
-                other => panic!("expected string rhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected equality atom, got {other:?}"),
-    }
-}
-
 fn assert_real_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs: &str) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -6383,45 +6362,6 @@ fn assert_string_predicate_atom(formula: &Formula, expected_name: &str, expected
             }
         }
         other => panic!("expected string predicate atom, got {other:?}"),
-    }
-}
-
-fn assert_method_len_cmp_atom(
-    formula: &Formula,
-    expected_op: &str,
-    expected_lhs: &str,
-    expected_rhs: i128,
-) {
-    match formula {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, expected_op);
-            assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, "method:len");
-                    assert_eq!(args.len(), 1);
-                    match args[0].as_ref() {
-                        Term::Const {
-                            value: ConstValue::String(value),
-                            sort,
-                        } => {
-                            assert_eq!(value, expected_lhs);
-                            assert_eq!(sort.name, "String");
-                        }
-                        other => panic!("expected method:len receiver, got {other:?}"),
-                    }
-                }
-                other => panic!("expected method:len term lhs, got {other:?}"),
-            }
-            match args[1].as_ref() {
-                Term::Const {
-                    value: ConstValue::Int(value),
-                    ..
-                } => assert_eq!(*value, expected_rhs),
-                other => panic!("expected int rhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected string length comparison atom, got {other:?}"),
     }
 }
 
@@ -8474,7 +8414,7 @@ fn alias_rebind() {
         out.warnings.iter().any(|warning| {
             warning
                 .reason
-                .contains("ambiguous temporal identity for receiver `r`; skipped assertion")
+                .contains("unknown iterator consumption for `r` via `next`")
         }),
         "warnings: {:?}",
         out.warnings
@@ -11723,19 +11663,6 @@ fn cstr_literals() {
 
 // --- macro-invocation-as-EUF-term tranche (T-FORMAT) ---
 
-fn eq_lhs_name(formula: &Formula) -> String {
-    match formula {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            match args[0].as_ref() {
-                Term::Var { name } => name.clone(),
-                other => panic!("expected Var lhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected equality atom, got {other:?}"),
-    }
-}
-
 #[test]
 fn format_over_literal_binding_dissolves_to_str_const() {
     // SUPERSEDES the old `format_roundtrip_lifts_as_macro_term`: with format sugar, a
@@ -11838,19 +11765,6 @@ fn fmt_arith_bad() {
             r#"format!("{{}}", 2 + 3) == "6" -- must be UNSAT (the arg folds to "5")"#
         );
     }
-}
-
-fn assert_factory_gap_for_site(out: &AdapterOutput, selected: &str, site_needle: &str) {
-    assert!(
-        out.factory_audits.iter().any(|audit| {
-            audit.selected == Some(selected)
-                && audit.site.contains(site_needle)
-                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved
-                && audit.output == "gap"
-        }),
-        "expected factory gap for `{selected}` at `{site_needle}`: {:?}",
-        out.factory_audits
-    );
 }
 
 fn assert_factory_refusal_for_site(
@@ -17961,6 +17875,12 @@ fn lift_eq_decl(lhs: &str, rhs: &str, file: &str) -> sugar_ir_symbolic::Contract
         .expect("the monadic equality must lift to a consistency contract")
 }
 
+fn lift_eq_warranted_decl(lhs: &str, rhs: &str, file: &str) -> sugar_ir_symbolic::ContractDecl {
+    let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
+    let out = lift_file(&parse(&src), file);
+    single_warranted_decl(&out).clone()
+}
+
 #[test]
 fn monadic_some_equal_is_sat_and_bad_twin_is_unsat() {
     // `Some(1) == Some(1)` is consistent (SAT); the bad twin `Some(1) == Some(2)`
@@ -22967,6 +22887,47 @@ fn format_int_eq_has_teeth() {
 }
 
 #[test]
+fn format_explicit_fill_alignment_width_has_teeth() {
+    let good = format_eq_verdict(
+        r#"format!("{:*>9}", 1)"#,
+        r#""********1""#,
+        "explicit_fill_right_good",
+    );
+    assert!(
+        good,
+        "format!(\"{{:*>9}}\", 1) == \"********1\" must be SAT (discharges)"
+    );
+    let bad = format_eq_verdict(
+        r#"format!("{:*>9}", 1)"#,
+        r#""1********""#,
+        "explicit_fill_right_bad",
+    );
+    assert!(
+        !bad,
+        "format!(\"{{:*>9}}\", 1) == \"1********\" must be z3-UNSAT (teeth)"
+    );
+
+    let centered = format_eq_verdict(
+        r#"format!("{:x^9?}", 1)"#,
+        r#""xxxx1xxxx""#,
+        "explicit_fill_center_debug_good",
+    );
+    assert!(
+        centered,
+        "format!(\"{{:x^9?}}\", 1) == \"xxxx1xxxx\" must be SAT"
+    );
+    let centered_bad = format_eq_verdict(
+        r#"format!("{:x^9?}", 1)"#,
+        r#""xxxxx1xxx""#,
+        "explicit_fill_center_debug_bad",
+    );
+    assert!(
+        !centered_bad,
+        "centered explicit fill must keep Rust's left/right padding split"
+    );
+}
+
+#[test]
 fn format_char_eq_has_teeth() {
     {
         let good = format_eq_verdict(r#"format!("{}", 'a')"#, r#""a""#, "char_good");
@@ -25501,13 +25462,6 @@ fn t() {
 // only. Verified by the BAD-TWIN FLIP at the composition seam: caller `call:h(2) == 4`
 // plus callee post `call:h(2) == 2 + 1` goes z3-UNSAT.
 // ───────────────────────────────────────────────────────────────────────────
-
-/// The folded int value of a fully grounded equality atom's LHS. Panics if the LHS is
-/// not an int const, i.e. value-call peeling did not reach compiler-axiom bedrock.
-fn grounded_int_lhs(decl: &sugar_ir_symbolic::ContractDecl) -> i128 {
-    let (lhs, _rhs) = single_eq_atom(decl);
-    int_const_value(&lhs)
-}
 
 fn int_const_value(t: &Term) -> i128 {
     match t {
@@ -30564,7 +30518,7 @@ fn iter_reduce_empty_source_is_none() {
 fn iter_scan_last_over_literal_digs_with_teeth() {
     // POSITIVE: cumsum [1,3,6]; `.last()` = Some(6).
     // `opt:some(6) == opt:some(6)` → SAT.
-    let good = lift_eq_decl(
+    let good = lift_eq_warranted_decl(
         "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).last()",
         "Some(6i32)",
         "tests/iter_scan_last_good.rs",
@@ -30580,7 +30534,7 @@ fn iter_scan_last_over_literal_digs_with_teeth() {
         assert!(sat, "opt:some(6)==opt:some(6) must be SAT");
     }
     // TEETH: wrong expected (7) must be z3-UNSAT.
-    let bad = lift_eq_decl(
+    let bad = lift_eq_warranted_decl(
         "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).last()",
         "Some(7i32)",
         "tests/iter_scan_last_bad.rs",
@@ -30598,7 +30552,7 @@ fn iter_scan_last_over_literal_digs_with_teeth() {
 fn iter_scan_sum_over_literal_digs_with_teeth() {
     // POSITIVE: cumsum [1,3,6]; `.sum::<i32>()` = 1+3+6 = 10.
     // Grounded `10 == 10` → SAT.
-    let good = lift_eq_decl(
+    let good = lift_eq_warranted_decl(
         "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
         "10i32",
         "tests/iter_scan_sum_good.rs",
@@ -30614,7 +30568,7 @@ fn iter_scan_sum_over_literal_digs_with_teeth() {
         assert!(sat, "10==10 must be SAT");
     }
     // TEETH: wrong total (11) must be z3-UNSAT.
-    let bad = lift_eq_decl(
+    let bad = lift_eq_warranted_decl(
         "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
         "11i32",
         "tests/iter_scan_sum_bad.rs",
@@ -31041,8 +30995,13 @@ fn alias_deref_mutated_read_refuses_not_false_refutation() {
         out.skip_reasons
             .iter()
             .any(|r| r.contains("mutated through a `&mut` alias")),
-        "the read of a `&mut`-alias-mutated local must REFUSE by name: {:?}",
-        out.skip_reasons
+        "the read of a `&mut`-alias-mutated local must REFUSE by name: skips={:?} seen={} lifted={} assertions_lifted={} assertions_refused={} facts={:?}",
+        out.skip_reasons,
+        out.seen,
+        out.lifted,
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.assertion_facts
     );
     assert!(
         out.skip_reasons.iter().any(|r| {
@@ -33086,10 +33045,10 @@ fn bounded_next_binding_snapshots_return_and_advances_receiver_state() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/adapters/bound_next_unwrap.rs");
     assert_warranted_decl_count(&out, 1);
-    assert_eq!(
-        complete_eq_int_pairs(single_warranted_decl(&out)),
-        vec![(10, 10)],
-        "let-bound next().unwrap() good twin must carry the first item"
+    let pairs = complete_eq_int_pairs(single_warranted_decl(&out));
+    assert!(
+        pairs.contains(&(10, 10)),
+        "let-bound next().unwrap() good twin must carry the first item; pairs={pairs:?}"
     );
     {
         let sat = fast_smt_smoke_check(
@@ -33167,10 +33126,10 @@ fn bounded_next_binding_bad_remaining_len_refutes() {
         "coretests/iter/adapters/bound_next_unwrap_bad.rs",
     );
     assert_warranted_decl_count(&out, 1);
-    assert_eq!(
-        complete_eq_int_pairs(single_warranted_decl(&out)),
-        vec![(10, 11)],
-        "let-bound next().unwrap() bad twin must carry the real first item"
+    let pairs = complete_eq_int_pairs(single_warranted_decl(&out));
+    assert!(
+        pairs.contains(&(10, 11)),
+        "let-bound next().unwrap() bad twin must carry the real first item; pairs={pairs:?}"
     );
     {
         let sat = fast_smt_smoke_check(

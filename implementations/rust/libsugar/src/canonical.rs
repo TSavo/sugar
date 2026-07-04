@@ -52,10 +52,7 @@ pub fn bare_local_operator_name(name: &str) -> &str {
 }
 
 pub fn is_blake3_512_cid(value: &str) -> bool {
-    let Some(hex) = value.strip_prefix("blake3-512:") else {
-        return false;
-    };
-    hex.len() == 128 && hex.chars().all(|c| c.is_ascii_hexdigit())
+    sugar_canonicalizer::is_blake3_512_cid(value)
 }
 
 fn json_to_cvalue(value: &Json) -> Result<Arc<CValue>> {

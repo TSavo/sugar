@@ -55,66 +55,363 @@ const REQUIRED_ITER_MEMBERS: &[&str] = &[
     "DerivedCollection",
 ];
 
-const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
-    "aggregate_decomp.rs:283",
-    "aggregate_decomp.rs:316",
-    "aggregate_decomp.rs:318",
-    "aggregate_decomp.rs:323",
-    "assign_op.rs:1684",
-    "assign_op.rs:2084",
-    "assign_op.rs:2123",
-    "assign_op.rs:2571",
-    "char_range_filter_map.rs:91",
-    "char_range_filter_map.rs:115",
-    "collect.rs:42",
-    "collect.rs:105",
-    "collect.rs:129",
-    "cycle.rs:98",
-    "extract_if.rs:219",
-    "flat_map.rs:46",
-    "flatten.rs:39",
-    "flatten.rs:61",
-    "float_refinement.rs:252",
-    "float_refinement.rs:299",
-    "float_refinement.rs:311",
-    "float_refinement.rs:336",
-    "float_refinement.rs:364",
-    "for_replay.rs:1641",
-    "forall.rs:592",
-    "forall.rs:668",
-    "function_map.rs:85",
-    "generic_body_sugar.rs:349",
-    "identity_map.rs:34",
-    "infinity_eq.rs:274",
-    "insert.rs:220",
-    "inspect.rs:63",
-    "inspect.rs:105",
-    "inspect.rs:249",
-    "intersperse_collect_string.rs:160",
-    "intersperse_collect_string.rs:178",
-    "intersperse_concat.rs:121",
-    "ip_addr.rs:309",
-    "ip_addr.rs:312",
-    "iter_terminal.rs:573",
-    "iter_terminal.rs:714",
-    "let_stmt.rs:65",
-    "map.rs:76",
-    "map.rs:103",
-    "method_family.rs:484",
-    "method_family.rs:650",
-    "method_family.rs:663",
-    "option_unwrap.rs:42",
-    "peekable.rs:57",
-    "peekable.rs:217",
-    "primitive_int.rs:479",
-    "primitive_int.rs:2016",
-    "result_predicate.rs:59",
-    "result_predicate.rs:279",
-    "rev.rs:29",
-    "scan.rs:72",
-    "step_by.rs:34",
-    "utf8_chunks.rs:264",
-    "utf8_chunks.rs:273",
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct CompositionPath {
+    file: String,
+    line: usize,
+    text: String,
+}
+
+impl CompositionPath {
+    fn identity(&self) -> (String, String) {
+        (self.file.clone(), self.text.clone())
+    }
+
+    fn display(&self) -> String {
+        format!("{}:{} {}", self.file, self.line, self.text)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExpectedCompositionPath {
+    file: &'static str,
+    line: usize,
+    text: &'static str,
+    owner: Option<&'static str>,
+    reason: Option<&'static str>,
+}
+
+impl ExpectedCompositionPath {
+    fn identity(&self) -> (String, String) {
+        (self.file.to_string(), self.text.to_string())
+    }
+
+    fn display(&self) -> String {
+        let row = format!("{}:{} {}", self.file, self.line, self.text);
+        match (self.owner, self.reason) {
+            (Some(owner), Some(reason)) => {
+                format!("{row} [owner={owner}; reason={reason}]")
+            }
+            _ => row,
+        }
+    }
+}
+
+macro_rules! expected_composition {
+    ($file:literal, $line:literal, $text:literal) => {
+        ExpectedCompositionPath {
+            file: $file,
+            line: $line,
+            text: $text,
+            owner: None,
+            reason: None,
+        }
+    };
+    ($file:literal, $line:literal, $text:literal, owner: $owner:literal, reason: $reason:literal) => {
+        ExpectedCompositionPath {
+            file: $file,
+            line: $line,
+            text: $text,
+            owner: Some($owner),
+            reason: Some($reason),
+        }
+    };
+}
+
+const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[ExpectedCompositionPath] = &[
+    expected_composition!("aggregate_decomp.rs", 283, r#"if call.method == "collect""#),
+    expected_composition!(
+        "aggregate_decomp.rs",
+        316,
+        r#"if matches!(call.method.to_string().as_str(), "unwrap" | "expect") =>"#
+    ),
+    expected_composition!(
+        "aggregate_decomp.rs",
+        318,
+        r#"if call.method == "unwrap" && !call.args.is_empty() {"#
+    ),
+    expected_composition!(
+        "aggregate_decomp.rs",
+        323,
+        r#"if call.method == "expect" && call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "assign_op.rs",
+        1732,
+        r#"Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {"#
+    ),
+    expected_composition!(
+        "assign_op.rs",
+        2132,
+        r#"if call.method != "count" || !call.args.is_empty() {"#
+    ),
+    expected_composition!(
+        "assign_op.rs",
+        2171,
+        r#"if !matches!(call.method.to_string().as_str(), "next" | "next_back") || !call.args.is_empty() {"#
+    ),
+    expected_composition!(
+        "assign_op.rs",
+        2619,
+        r#"Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {"#
+    ),
+    expected_composition!(
+        "char_range_filter_map.rs",
+        91,
+        r#"if call.method == "rev" && call.args.is_empty() {"#
+    ),
+    expected_composition!(
+        "char_range_filter_map.rs",
+        115,
+        r#"if call.method != "filter_map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "collect.rs",
+        42,
+        r#"if call.method != "collect" || !call.args.is_empty() {"#
+    ),
+    expected_composition!(
+        "collect.rs",
+        105,
+        r#"if call.method != "map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "collect.rs",
+        129,
+        r#"if call.method != "map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "constraint.rs",
+        1401,
+        r#"if !matches!(call.method.to_string().as_str(), "sum" | "last") {"#,
+        owner: "9f1ae82bda (#3490)",
+        reason: "new lift composition path from scan-terminal mutation drain; debt to route via catalog boundary"
+    ),
+    expected_composition!(
+        "constraint.rs",
+        1404,
+        r#"matches!(strip_refs_groups(&call.receiver), Expr::MethodCall(receiver) if receiver.method == "scan")"#,
+        owner: "9f1ae82bda (#3490)",
+        reason: "new lift composition path from scan-terminal mutation drain; debt to route via catalog boundary"
+    ),
+    expected_composition!(
+        "cycle.rs",
+        98,
+        r#"Expr::MethodCall(call) if call.method == "cycle" && call.args.is_empty() => {"#
+    ),
+    expected_composition!(
+        "extract_if.rs",
+        219,
+        r#"if map_call.method != "map" || map_call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "flat_map.rs",
+        46,
+        r#"if call.method != "flat_map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "flatten.rs",
+        39,
+        r#"if call.method == "flatten" && call.args.is_empty() {"#
+    ),
+    expected_composition!(
+        "flatten.rs",
+        61,
+        r#"if map_call.method != "map" || map_call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "float_refinement.rs",
+        252,
+        r#"Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {"#
+    ),
+    expected_composition!(
+        "float_refinement.rs",
+        299,
+        r#"Expr::MethodCall(call) if call.method == "unwrap" => {"#
+    ),
+    expected_composition!(
+        "float_refinement.rs",
+        311,
+        r#"if call.method == "unwrap" {"#
+    ),
+    expected_composition!(
+        "float_refinement.rs",
+        336,
+        r#"if call.method == "unwrap" {"#
+    ),
+    expected_composition!(
+        "float_refinement.rs",
+        364,
+        r#"if call.method == "unwrap" {"#
+    ),
+    expected_composition!(
+        "for_replay.rs",
+        1641,
+        r#"if call.method == "collect" && call.args.is_empty() && call.turbofish.is_none() {"#
+    ),
+    expected_composition!(
+        "forall.rs",
+        592,
+        r#"if call.method != "for_each" || call.args.len() != 1 {"#
+    ),
+    expected_composition!("forall.rs", 668, r#"if call.method == "step_by""#),
+    expected_composition!(
+        "function_map.rs",
+        85,
+        r#"if call.method != "map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "generic_body_sugar.rs",
+        349,
+        r#"if mc.args.is_empty() && matches!(method.as_str(), "into_iter" | "collect" | "iter") {"#
+    ),
+    expected_composition!(
+        "identity_map.rs",
+        34,
+        r#"if call.method != "map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!("infinity_eq.rs", 274, r#"if call.method == "unwrap" {"#),
+    expected_composition!(
+        "insert.rs",
+        220,
+        r#"if map_call.method != "map" || map_call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "inspect.rs",
+        63,
+        r#"if call.method == "inspect" && call.args.len() == 1 {"#
+    ),
+    expected_composition!(
+        "inspect.rs",
+        105,
+        r#"if !matches!(call.method.to_string().as_str(), "inspect" | "inspect_err")"#
+    ),
+    expected_composition!(
+        "inspect.rs",
+        249,
+        r#"if matches!(call.method.to_string().as_str(), "inspect" | "inspect_err")"#
+    ),
+    expected_composition!(
+        "intersperse_collect_string.rs",
+        160,
+        r#"if collect_call.method != "collect""#
+    ),
+    expected_composition!(
+        "intersperse_collect_string.rs",
+        178,
+        r#"if map_call.method != "map" || map_call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "intersperse_concat.rs",
+        121,
+        r#"if collect_call.method != "collect" || !collect_call.args.is_empty() {"#
+    ),
+    expected_composition!(
+        "ip_addr.rs",
+        309,
+        r#"Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {"#
+    ),
+    expected_composition!(
+        "ip_addr.rs",
+        312,
+        r#"Expr::MethodCall(call) if call.method == "expect" && call.args.len() == 1 => {"#
+    ),
+    expected_composition!(
+        "iter_terminal.rs",
+        573,
+        r#"| "flat_map" => matches!(strip_refs_groups(&call.args[0]), Expr::Closure(_)),"#
+    ),
+    expected_composition!(
+        "iter_terminal.rs",
+        714,
+        r#"if call.method != "scan" || call.args.len() != 2 {"#
+    ),
+    expected_composition!(
+        "let_stmt.rs",
+        65,
+        r#"matches!(selected, "fold" | "for_each")"#
+    ),
+    expected_composition!(
+        "map.rs",
+        77,
+        r#"if call.method != "map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "map.rs",
+        104,
+        r#"if call.method != "map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "method_family.rs",
+        484,
+        r#"if call.method == "collect" && call.args.is_empty() && call.turbofish.is_none() {"#
+    ),
+    expected_composition!(
+        "method_family.rs",
+        650,
+        r#"if call.method == "take" && iter_repeat_call_elem(&call.receiver).is_some() {"#
+    ),
+    expected_composition!("method_family.rs", 663, r#"if call.method == "chain" {"#),
+    expected_composition!(
+        "option_unwrap.rs",
+        42,
+        r#"if !matches!(method.as_str(), "unwrap" | "expect") {"#
+    ),
+    expected_composition!(
+        "peekable.rs",
+        57,
+        r#"if call.method == "peekable" && call.args.is_empty() {"#
+    ),
+    expected_composition!(
+        "peekable.rs",
+        217,
+        r#"Expr::MethodCall(call) if call.method == "peekable" && call.args.is_empty() => {"#
+    ),
+    expected_composition!(
+        "primitive_int.rs",
+        479,
+        r#"if matches!(call.method.to_string().as_str(), "unwrap" | "expect")"#
+    ),
+    expected_composition!(
+        "primitive_int.rs",
+        2016,
+        r#"if matches!(call.method.to_string().as_str(), "unwrap" | "expect")"#
+    ),
+    expected_composition!(
+        "result_predicate.rs",
+        59,
+        r#"if !matches!(method.as_str(), "is_ok" | "is_err") || frag.call_arg_count() != 0 {"#
+    ),
+    expected_composition!(
+        "result_predicate.rs",
+        279,
+        r#"Expr::MethodCall(call) if call.method == "ok_or" && call.args.len() == 1 => {"#
+    ),
+    expected_composition!(
+        "rev.rs",
+        29,
+        r#"if call.method == "rev" && call.args.is_empty() {"#
+    ),
+    expected_composition!(
+        "scan.rs",
+        72,
+        r#"if call.method != "scan" || call.args.len() != 2 {"#
+    ),
+    expected_composition!(
+        "step_by.rs",
+        34,
+        r#"if call.method != "step_by" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "utf8_chunks.rs",
+        264,
+        r#"Expr::MethodCall(call) if call.method == "expect" => iter_next_receiver(&call.receiver),"#
+    ),
+    expected_composition!(
+        "utf8_chunks.rs",
+        273,
+        r#"if call.method != "next" || !call.args.is_empty() {"#
+    ),
 ];
 
 const EXPECTED_COMBINATOR_LOCAL_RENAMES: &[&str] = &[];
@@ -365,7 +662,7 @@ fn detect_uncounted_composition_paths(
     root: &Path,
     methods: &BTreeSet<String>,
     landed_counted_loci: &BTreeSet<String>,
-) -> Vec<String> {
+) -> Vec<CompositionPath> {
     let mut rows = Vec::new();
     for path in rust_files(root) {
         let rel = path
@@ -395,7 +692,11 @@ fn detect_uncounted_composition_paths(
                 if landed_counted_loci.contains(&row) {
                     continue;
                 }
-                rows.push(row);
+                rows.push(CompositionPath {
+                    file: rel.clone(),
+                    line: line_no,
+                    text: line.trim().to_string(),
+                });
             }
         }
     }
@@ -438,12 +739,78 @@ fn as_set(rows: &[&str]) -> BTreeSet<String> {
     rows.iter().map(|row| row.to_string()).collect()
 }
 
+fn expected_composition_identities() -> BTreeMap<(String, String), usize> {
+    let mut identities = BTreeMap::new();
+    for identity in EXPECTED_UNCOUNTED_COMPOSITION_PATHS
+        .iter()
+        .map(ExpectedCompositionPath::identity)
+    {
+        *identities.entry(identity).or_insert(0) += 1;
+    }
+    identities
+}
+
+fn display_expected_composition_rows() -> Vec<String> {
+    EXPECTED_UNCOUNTED_COMPOSITION_PATHS
+        .iter()
+        .map(ExpectedCompositionPath::display)
+        .collect()
+}
+
+fn composition_identities(observed: &[CompositionPath]) -> BTreeMap<(String, String), usize> {
+    let mut identities = BTreeMap::new();
+    for identity in observed.iter().map(CompositionPath::identity) {
+        *identities.entry(identity).or_insert(0) += 1;
+    }
+    identities
+}
+
+fn display_composition_rows(observed: &[CompositionPath]) -> Vec<String> {
+    observed.iter().map(CompositionPath::display).collect()
+}
+
+fn composition_coordinates(observed: &[CompositionPath]) -> Vec<String> {
+    observed
+        .iter()
+        .map(|row| format!("{}:{}", row.file, row.line))
+        .collect()
+}
+
 fn diff_message(label: &str, expected: &BTreeSet<String>, observed: &[String]) -> String {
     let observed_set: BTreeSet<_> = observed.iter().cloned().collect();
     let missing: Vec<_> = expected.difference(&observed_set).cloned().collect();
     let unexpected: Vec<_> = observed_set.difference(expected).cloned().collect();
     format!(
         "{label} drifted\nmissing={missing:#?}\nunexpected={unexpected:#?}\nobserved={observed:#?}"
+    )
+}
+
+fn composition_diff_message(
+    label: &str,
+    expected: &BTreeMap<(String, String), usize>,
+    observed: &[CompositionPath],
+) -> String {
+    let observed_set = composition_identities(observed);
+    let missing: Vec<_> = expected
+        .iter()
+        .filter_map(|(identity, expected_count)| {
+            let observed_count = observed_set.get(identity).copied().unwrap_or_default();
+            (observed_count < *expected_count)
+                .then(|| (identity.clone(), *expected_count, observed_count))
+        })
+        .collect();
+    let unexpected: Vec<_> = observed_set
+        .iter()
+        .filter_map(|(identity, observed_count)| {
+            let expected_count = expected.get(identity).copied().unwrap_or_default();
+            (*observed_count > expected_count)
+                .then(|| (identity.clone(), expected_count, *observed_count))
+        })
+        .collect();
+    format!(
+        "{label} drifted\nmissing={missing:#?}\nunexpected={unexpected:#?}\nexpectedRows={:#?}\nobserved={:#?}",
+        display_expected_composition_rows(),
+        display_composition_rows(observed)
     )
 }
 
@@ -620,14 +987,17 @@ fn uncounted_composition_paths_are_row_pinned_with_planted_control() {
         &metrics.catalog_methods,
         &metrics.landed_counted_loci,
     );
-    let expected = as_set(EXPECTED_UNCOUNTED_COMPOSITION_PATHS);
+    let expected = expected_composition_identities();
     println!("R(uncounted-composition-paths) = {}", observed.len());
-    println!("uncounted composition rows = {observed:#?}");
+    println!(
+        "uncounted composition rows = {:#?}",
+        display_composition_rows(&observed)
+    );
     assert_eq!(
-        observed.iter().cloned().collect::<BTreeSet<_>>(),
+        composition_identities(&observed),
         expected,
         "{}",
-        diff_message("R(uncounted-composition-paths)", &expected, &observed)
+        composition_diff_message("R(uncounted-composition-paths)", &expected, &observed)
     );
 
     let planted = temp_root("uncounted-planted");
@@ -642,7 +1012,7 @@ fn uncounted_composition_paths_are_row_pinned_with_planted_control() {
         &metrics.landed_counted_loci,
     );
     assert_eq!(
-        planted_rows,
+        composition_coordinates(&planted_rows),
         vec!["planted_map.rs:1"],
         "planted in-catalog combinator should red through the B detector"
     );
@@ -658,7 +1028,7 @@ fn uncounted_composition_paths_are_row_pinned_with_planted_control() {
         &metrics.landed_counted_loci,
     );
     assert_eq!(
-        planted_rows,
+        composition_coordinates(&planted_rows),
         vec!["map.rs:1", "planted_map.rs:1"],
         "planted uncounted map composition inside map.rs must still red; exemptions belong in catalog rows, not file-wide code"
     );
@@ -674,7 +1044,7 @@ fn uncounted_composition_paths_are_row_pinned_with_planted_control() {
         &metrics.landed_counted_loci,
     );
     assert_eq!(
-        planted_rows,
+        composition_coordinates(&planted_rows),
         vec!["map.rs:1", "planted_map.rs:1"],
         "Tokio spawn is in the OUT manifest, while the planted map composition remains visible"
     );

@@ -29,7 +29,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, Value as CValue};
 use sugar_claim_envelope::{
     mint_bridge, mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
     MintedEnvelope,
@@ -341,7 +341,7 @@ fn publish_double_project_with_formals(
         declared_at: declared_at.into(),
     };
     let built = build_proof_envelope(&input);
-    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    let hex = cid_hex(&built.cid).unwrap();
     fs::write(proof_dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");
     dir
 }

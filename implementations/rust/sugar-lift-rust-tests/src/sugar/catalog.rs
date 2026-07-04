@@ -178,6 +178,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &is_empty::EXPR_SUGAR,
     &is_sorted::EXPR_SUGAR,
     &slice_accessor::EXPR_SUGAR,
+    &slice_chunk_window::TERM_EXPR_SUGAR,
     &slice_search::EXPR_SUGAR,
     &duration_accessor::EXPR_SUGAR,
     &duration_value::EXPR_SUGAR,
@@ -918,15 +919,15 @@ mod tests {
     }
 
     #[test]
-    fn panic_macro_is_builtin_sugar_before_generic_macro_term() {
-        let expr: Expr = syn::parse_str("panic!(\"boom\")").unwrap();
+    fn divergent_builtin_macro_is_builtin_sugar_before_generic_macro_term() {
+        let expr: Expr = syn::parse_str("todo!()").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Term);
         let panic_macro = names
             .iter()
             .position(|name| *name == "panic_macro")
             .unwrap_or_else(|| {
                 panic!(
-                    "panic! is a builtin divergence macro and needs dedicated PanicMacroSugar \
+                    "todo! is a builtin divergence macro and needs dedicated PanicMacroSugar \
                      before generic macro_term; candidates were {names:?}"
                 )
             });
@@ -937,7 +938,7 @@ mod tests {
 
         assert!(
             panic_macro < macro_term,
-            "PanicMacroSugar must outrank MacroTermSugar for panic!: {names:?}"
+            "PanicMacroSugar must outrank MacroTermSugar for divergent builtin macros: {names:?}"
         );
         assert_eq!(
             selected_candidate_name_for_role(&expr, SugarRole::Term),
@@ -947,12 +948,12 @@ mod tests {
 
     #[test]
     fn panic_macro_reports_builtin_effect_instead_of_macro_rules_gap() {
-        let expr: Expr = syn::parse_str("panic!(\"boom\")").unwrap();
+        let expr: Expr = syn::parse_str("unimplemented!()").unwrap();
         let audits = run_expr_with_audit(&expr, SugarRole::Term);
         let audit = audits
             .iter()
-            .find(|audit| audit.site == "panic ! (\"boom\")" && audit.requested_role == "Term")
-            .unwrap_or_else(|| panic!("panic! term site should be audited: {audits:?}"));
+            .find(|audit| audit.site == "unimplemented ! ()" && audit.requested_role == "Term")
+            .unwrap_or_else(|| panic!("unimplemented! term site should be audited: {audits:?}"));
 
         assert_eq!(audit.selected, Some("panic_macro"));
         assert_eq!(audit.disposition, FactoryDisposition::Refused);
@@ -961,7 +962,7 @@ mod tests {
                 .reason
                 .as_deref()
                 .is_some_and(|reason| reason.contains("panic! macro divergence")),
-            "panic! should report a typed builtin panic effect, not a macro_rules gap: {audit:?}"
+            "divergent builtin macros should report a typed builtin effect, not a macro_rules gap: {audit:?}"
         );
     }
 
@@ -1308,6 +1309,41 @@ mod tests {
             names.contains(&"method"),
             "unknown receiver next should still be claimed by generic MethodSugar: {names:?}"
         );
+    }
+
+    #[test]
+    fn scan_terminal_prioritizes_iter_terminal_before_generic_method_sugar() {
+        let expr: Expr = syn::parse_str(
+            "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
+        )
+        .unwrap();
+
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("iter_terminal"),
+            "scan terminal chains must ground through IterTerminalSugar before generic method fallback"
+        );
+    }
+
+    #[test]
+    fn scan_terminal_translates_to_ground_term_before_assertion_support() {
+        let expr: Expr = syn::parse_str(
+            "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
+        )
+        .unwrap();
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let term = crate::sugar::term_dispatch::translate_assertion_term_in_scope_with_audits(
+            &expr, &scope, None,
+        )
+        .expect("scan terminal must translate as a grounded assertion term");
+
+        match term.as_ref() {
+            sugar_ir_symbolic::Term::Const {
+                value: sugar_ir_symbolic::ConstValue::Int(value),
+                ..
+            } => assert_eq!(*value, 10),
+            other => panic!("scan terminal must ground to integer 10, got {other:?}"),
+        }
     }
 
     #[test]

@@ -1262,30 +1262,12 @@ mod guard_propagation_tests {
         json!({ "kind": "ctor", "name": name, "args": [guard, value] })
     }
 
-    fn guard_facts_for_carrier(name: &str) -> Vec<Json> {
-        let body = guarded_carrier(name, pred("pred_a"), panic_call());
-        let sites = run(&pool_with_post(body));
-        enumerated_call(&sites).guard_facts.clone()
-    }
-
     fn choice_carrier(name: &str, cond: Json, then_branch: Json, else_branch: Json) -> Json {
         json!({
             "kind": "ctor",
             "name": name,
             "args": [cond, then_branch, else_branch],
         })
-    }
-
-    fn guarded_choice_callsite_shape(name: &str) -> (Vec<Json>, Option<Json>) {
-        let body = choice_carrier(
-            name,
-            pred("some_condition"),
-            cf_guarded(pred("pred_a"), panic_call()),
-            cf_guarded(pred("pred_b"), json!({ "kind": "lit", "value": 0 })),
-        );
-        let sites = run(&pool_with_post(body));
-        let call = enumerated_call(&sites);
-        (call.guard_facts.clone(), call.containing_atomic.clone())
     }
 
     fn direct_choice_containing_atomic(name: &str) -> Option<Json> {

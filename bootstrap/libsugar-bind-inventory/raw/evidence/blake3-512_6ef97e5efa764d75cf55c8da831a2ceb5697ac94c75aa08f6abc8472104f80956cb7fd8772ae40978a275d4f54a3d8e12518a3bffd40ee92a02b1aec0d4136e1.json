@@ -3,7 +3,7 @@
   "confidence_basis_points": 10000,
   "extension_fields": {
     "err_type": "CatalogLoadError",
-    "function_symbol": "read_to_string@deleted_deleted proofir bridge",
+    "function_symbol": "read_to_string@proofir_bridge.rs",
     "ok_type": "String",
     "return_type": "Result<String, CatalogLoadError>",
     "role": "post",

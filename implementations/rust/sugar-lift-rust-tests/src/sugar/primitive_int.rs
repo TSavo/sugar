@@ -1284,7 +1284,7 @@ fn checked_pow_u128(lhs: u128, exp: u32) -> Option<u128> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct IntegerKind {
+pub(crate) struct IntegerKind {
     signed: bool,
     bits: u32,
     name: &'static str,
@@ -2156,7 +2156,6 @@ fn signed_bounds(bits: u32) -> (i128, i128) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     fn method_call_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {

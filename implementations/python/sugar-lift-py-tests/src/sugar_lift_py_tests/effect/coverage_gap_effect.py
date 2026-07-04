@@ -7,4 +7,3 @@ from dataclasses import dataclass
 class CoverageGapEffect:
     boundary: str
     reason: str
-

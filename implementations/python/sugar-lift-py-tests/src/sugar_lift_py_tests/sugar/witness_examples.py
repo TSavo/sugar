@@ -78,12 +78,7 @@ def call_truth_assertion_witness() -> SugarWitnessPair:
 
 
 def projected_equality_assertion_witness() -> SugarWitnessPair:
-    prefix = (
-        "class C:\n"
-        "    def __init__(self, x):\n"
-        "        self.x = x\n"
-        "\n"
-    )
+    prefix = "class C:\n" "    def __init__(self, x):\n" "        self.x = x\n" "\n"
     return _boolop_wrapped_pair(
         name="projected_equality_assertion_boolop",
         owner_sugar="ProjectedEqualityAssertionSugar",
@@ -164,12 +159,7 @@ def string_subscript_return_witness() -> SugarWitnessPair:
 
 
 def attribute_return_witness() -> SugarWitnessPair:
-    prefix = (
-        "class C:\n"
-        "    def __init__(self, x):\n"
-        "        self.x = x\n"
-        "\n"
-    )
+    prefix = "class C:\n" "    def __init__(self, x):\n" "        self.x = x\n" "\n"
     return _call_return_pair(
         name="attribute_return",
         owner_sugar="AttributeSugar",
@@ -231,12 +221,7 @@ def format_int_return_witness() -> SugarWitnessPair:
 
 
 def object_equality_return_witness() -> tuple[SugarWitnessPair, SugarWitnessPair]:
-    prefix = (
-        "class C:\n"
-        "    def __init__(self, x):\n"
-        "        self.x = x\n"
-        "\n"
-    )
+    prefix = "class C:\n" "    def __init__(self, x):\n" "        self.x = x\n" "\n"
     explicit_eq_prefix = (
         "class C:\n"
         "    def __init__(self, x):\n"
@@ -335,13 +320,7 @@ def block_return_witness() -> SugarWitnessPair:
 
 
 def if_return_witness() -> SugarWitnessPair:
-    prefix = (
-        "def A(z):\n"
-        "    if z == 1:\n"
-        "        return 7\n"
-        "    return 0\n"
-        "\n"
-    )
+    prefix = "def A(z):\n" "    if z == 1:\n" "        return 7\n" "    return 0\n" "\n"
     return _call_pair(
         name="if_return",
         owner_sugar="IfSugar",
@@ -379,11 +358,7 @@ def tuple_assign_return_witness() -> SugarWitnessPair:
 
 def tuple_unpack_assign_return_witness() -> SugarWitnessPair:
     prefix = (
-        "def A(z):\n"
-        "    pair = [z, 2]\n"
-        "    a, b = pair\n"
-        "    return b\n"
-        "\n"
+        "def A(z):\n" "    pair = [z, 2]\n" "    a, b = pair\n" "    return b\n" "\n"
     )
     return _call_pair(
         name="tuple_unpack_assign_return",
