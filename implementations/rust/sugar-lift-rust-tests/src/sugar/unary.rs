@@ -122,12 +122,18 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         _ => return None, // unknown future syn::UnOp -- construction gap
     };
     let operand_frag = frag.unary_operand()?;
+    let deref_operand_is_mutable_alias = (op == UnaryOpKind::Deref)
+        && operand_frag
+            .path_simple_ident()
+            .as_deref()
+            .is_some_and(|name| fcx.scope().mutable_alias_base(name).is_some());
     Some(Box::new(UnarySugar {
         op,
         site: frag.token_str(),
         inner: SugarBody::term_frag(&operand_frag, fcx),
         float_inner: (op == UnaryOpKind::Neg)
             .then(|| SugarBody::ieee_float_frag(&operand_frag, fcx, None, "unary_neg")),
+        deref_operand_is_mutable_alias,
     }))
 }
 
@@ -149,6 +155,10 @@ pub(crate) struct UnarySugar {
     /// cases. `UnarySugar` only dispatches through it after the normal term floor says
     /// the operand is Real zero.
     pub(crate) float_inner: Option<SugarBody<IeeeFloatFloor>>,
+    /// True only for `*alias_name` where `alias_name` is a temporal mutable-alias
+    /// binding. This lets AliasFloor's post-write scalar value pass through deref
+    /// without changing ordinary deref term emission (`*b` remains `deref(b)`).
+    pub(crate) deref_operand_is_mutable_alias: bool,
 }
 
 /// Read a desugared CHILD outcome as the `Rc<Term>` an `Expr::Unary` arm would have
@@ -277,13 +287,22 @@ impl Sugar for UnarySugar {
                 // because a `&mut` deref can observe a value MUTATED through the alias
                 // after the borrow, so canceling its binding-time snapshot would
                 // false-discharge (`let mut x=5; let r=&mut x; *r+=1; assert_eq!(*r,5)`
-                // -> `5==5` SAT). That `&mut`+mutation case stays refused (its own SSA
-                // arm). A non-`ref` child (raw pointer `*p`, opaque deref) is unchanged.
+                // -> `5==5` SAT). AliasFloor supplies a newer route for scalar `&mut`
+                // aliases: after replaying `*p += 1`, the child floor is already the
+                // pointee VALUE (`6`), not `ref_mut(5)`, so `deref(6)` collapses to `6`
+                // only when the operand is a known temporal mutable-alias binding.
+                // Ordinary non-alias derefs (`*b`) and opaque/raw pointer derefs are
+                // unchanged.
                 Ok(child) => {
                     if let Term::Ctor { name, args } = child.as_ref() {
                         if name == "ref" && args.len() == 1 {
                             return Outcome::Complete(Desugared::Term(Rc::clone(&args[0])));
                         }
+                    }
+                    if self.deref_operand_is_mutable_alias
+                        && matches!(child.as_ref(), Term::Const { .. })
+                    {
+                        return Outcome::Complete(Desugared::Term(child));
                     }
                     Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                         name: "deref".to_string(),

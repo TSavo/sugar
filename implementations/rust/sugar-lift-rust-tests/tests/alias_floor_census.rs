@@ -429,12 +429,6 @@ const EXPECTED_ALIAS_SIDE_TABLE_SETS: &[(&str, &str, &str, &str)] = &[
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
         "struct TemporalBindingSnapshot",
-        "alias-snapshot-slot",
-        "alias: Option<RewritePlace>",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "struct TemporalBindingSnapshot",
         "compound-alias-snapshot-flag",
         "compound_alias_rewrite: bool",
     ),
@@ -455,12 +449,6 @@ const EXPECTED_ALIAS_SIDE_TABLE_SETS: &[(&str, &str, &str, &str)] = &[
         "struct TemporalRewriteState",
         "interior-mutable-side-map",
         "cell_values: BTreeMap<String, CellState>",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "struct TemporalRewriteState",
-        "mutable-alias-map",
-        "aliases: BTreeMap<String, RewritePlace>",
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
@@ -694,12 +682,6 @@ const EXPECTED_BIND_EVENTS_NOT_FLOOR_DISPATCHED: &[(&str, &str, &str, &str)] = &
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "record_get_disjoint_mut_aliases",
-        "bind-event",
-        "self.aliases.insert(binding, place)",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
         "record_literal_value",
         "bind-event",
         "pub(crate) fn record_literal_value(",
@@ -709,12 +691,6 @@ const EXPECTED_BIND_EVENTS_NOT_FLOOR_DISPATCHED: &[(&str, &str, &str, &str)] = &
         "record_local",
         "bind-event",
         "pub(crate) fn record_local(",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "record_local",
-        "bind-event",
-        "self.aliases.insert(name, RewritePlace::Scalar(base))",
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
@@ -742,33 +718,15 @@ const EXPECTED_BIND_EVENTS_NOT_FLOOR_DISPATCHED: &[(&str, &str, &str, &str)] = &
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "target_for_deref",
-        "write-through",
-        "match self.aliases.get(&name)?",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
         "target_for_index",
         "write-through",
         "fn target_for_index(",
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "target_for_index",
-        "write-through",
-        "match self.aliases.get(&base_name)?",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
         "target_for_lhs",
         "write-through",
         "fn target_for_lhs(",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "target_for_lhs",
-        "write-through",
-        "match self.aliases.get(&name)?",
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",

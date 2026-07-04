@@ -33,6 +33,7 @@ pub mod sugar {
     pub mod addr_of_mut;
     pub mod aggregate_decomp;
     pub mod aggregate_term;
+    pub mod alias_floor;
     pub mod array_chunks;
     pub mod array_repeat;
     pub mod array_term;
@@ -21365,7 +21366,7 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn alias_deref_mutated_read_is_not_path_fallback() {
+    fn alias_floor_scalar_rewrite_makes_post_state_readable() {
         let f: syn::ItemFn = syn::parse_str(
             r#"
             fn t_alias_mut() {
@@ -21404,7 +21405,7 @@ mod lifter_key_tests {
         assert_eq!(
             names.first().copied(),
             Some("bound_path"),
-            "alias-mutated path reads must be owned by bound_path refusal before fallback path: {names:?}"
+            "alias-mutated path reads must stay owned by bound_path before fallback path: {names:?}"
         );
 
         let items = Vec::<syn::Item>::new();
@@ -21413,34 +21414,38 @@ mod lifter_key_tests {
         let ctx =
             sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
         match sugar::factory::build_term(&expr, &fcx).desugar(&ctx) {
-            Outcome::Incomplete(effect) => assert!(
-                effect.reason().contains("mutated through a `&mut` alias"),
-                "expected alias-deref refusal, got {}",
-                effect.reason()
-            ),
-            Outcome::Complete(_) => panic!("alias-deref-mutated read reduced to a stale term"),
+            Outcome::Complete(desugared) => {
+                let term = desugared
+                    .into_term()
+                    .expect("alias floor scalar read completes as a term");
+                assert_eq!(term_as_int(&term), Some(6));
+            }
+            Outcome::Incomplete(effect) => {
+                panic!(
+                    "AliasFloor scalar rewrite should make `x` readable, got {}",
+                    effect.reason()
+                )
+            }
         }
 
         let assertion: Expr = syn::parse_str("assert_eq!(x, 6)").unwrap();
         match sugar::factory::build_constraint(&assertion, &fcx).desugar(&ctx) {
-            Outcome::Incomplete(effect) => assert!(
-                effect.reason().contains("mutated through a `&mut` alias"),
-                "expected alias-deref assertion refusal, got {}",
-                effect.reason()
-            ),
-            Outcome::Complete(_) => {
-                panic!("alias-deref-mutated assertion reduced to stale constraints")
+            Outcome::Complete(_) => {}
+            Outcome::Incomplete(effect) => {
+                panic!(
+                    "AliasFloor scalar rewrite should make the assertion reducible, got {}",
+                    effect.reason()
+                )
             }
         }
 
         match sugar::factory::build_assertion_surface(&assertion, &fcx).desugar(&ctx) {
-            Outcome::Incomplete(effect) => assert!(
-                effect.reason().contains("mutated through a `&mut` alias"),
-                "expected alias-deref assertion-surface refusal, got {}",
-                effect.reason()
-            ),
-            Outcome::Complete(_) => {
-                panic!("alias-deref-mutated assertion surface reduced to stale constraints")
+            Outcome::Complete(_) => {}
+            Outcome::Incomplete(effect) => {
+                panic!(
+                    "AliasFloor scalar rewrite should make assertion-surface reduction complete, got {}",
+                    effect.reason()
+                )
             }
         }
     }

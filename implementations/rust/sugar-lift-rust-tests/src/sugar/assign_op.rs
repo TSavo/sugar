@@ -14,6 +14,10 @@ use sugar_ir_symbolic::{eq, ConstValue, Sort, Term};
 use syn::{BinOp, Expr, Lit, Pat, RangeLimits, Stmt, UnOp};
 use tracing::{debug, trace};
 
+use crate::sugar::alias_floor::{
+    AliasFloor, AliasFloorResult, AliasMutationCause, AliasRead, AliasReducedValue,
+    AliasTypedEffect, AliasWriteTarget,
+};
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
@@ -54,13 +58,12 @@ struct AssignOpSugar {
 
 impl Sugar for AssignOpSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let applied = match self.action.apply(ctx) {
-            Ok(applied) => applied,
-            Err(effect) => return Outcome::Incomplete(effect),
-        };
-        if !applied {
+        if let Err(effect) = self.action.validate_rhs(ctx) {
+            return Outcome::Incomplete(effect);
+        }
+        if !ctx.scope.temporal_rewrite_can_apply_action(&self.action) {
             panic!(
-                "temporal assignment action `{}` was accepted at construction but did not apply",
+                "temporal assignment action `{}` was accepted at construction but is no longer applicable",
                 self.site
             );
         }
@@ -113,19 +116,12 @@ impl TemporalRewriteAction {
         }
     }
 
-    fn apply(&self, ctx: &SugarCtx) -> Result<bool, crate::Effect> {
-        let term = match self {
+    fn validate_rhs(&self, ctx: &SugarCtx) -> Result<(), crate::Effect> {
+        match self {
             Self::Assign { rhs, .. } | Self::CompoundAssign { rhs, .. } => {
-                reduce_rhs_term(rhs, ctx)?
+                reduce_rhs_term(rhs, ctx).map(|_| ())
             }
-        };
-        let applied = match self {
-            Self::Assign { lhs, .. } => ctx.scope.apply_temporal_rewrite_assign_term(lhs, term),
-            Self::CompoundAssign { lhs, op, .. } => ctx
-                .scope
-                .apply_temporal_rewrite_compound_term(lhs, *op, term),
-        };
-        Ok(applied)
+        }
     }
 }
 
@@ -173,7 +169,7 @@ impl ExprTemporalRewriteAction {
 pub(crate) struct TemporalRewriteState {
     values: BTreeMap<String, Expr>,
     term_values: BTreeMap<String, Rc<Term>>,
-    aliases: BTreeMap<String, RewritePlace>,
+    aliases: BTreeMap<String, AliasFloor>,
     cell_values: BTreeMap<String, CellState>,
     unknown_consumed_iterators: BTreeMap<String, String>,
     unknown_mutations: BTreeMap<String, String>,
@@ -200,20 +196,6 @@ struct CellState {
 }
 
 #[derive(Clone, Debug)]
-enum RewritePlace {
-    Scalar(String),
-    Element {
-        base: String,
-        index: usize,
-    },
-    Slice {
-        base: String,
-        start: usize,
-        len: usize,
-    },
-}
-
-#[derive(Clone, Debug)]
 enum Target {
     Scalar {
         name: String,
@@ -230,7 +212,7 @@ enum Target {
 struct TemporalBindingSnapshot {
     value: Option<Expr>,
     term_value: Option<Rc<Term>>,
-    alias: Option<RewritePlace>,
+    alias: Option<AliasFloor>,
     cell_value: Option<CellState>,
     unknown_consumed_iterator: Option<String>,
     unknown_mutation: Option<String>,
@@ -274,21 +256,23 @@ impl TemporalRewriteState {
         if self.exhausted_iterators.contains(name) {
             return Some(syn::parse_quote!([].iter()));
         }
-        match self.aliases.get(name)? {
-            RewritePlace::Scalar(base)
-                if !self.unknown_consumed_iterators.contains_key(base)
-                    && !self.unknown_mutations.contains_key(base) =>
+        match alias_read_result(self.aliases.get(name)?.read()) {
+            Ok(AliasRead::Scalar(base))
+                if !self.unknown_consumed_iterators.contains_key(&base)
+                    && !self.unknown_mutations.contains_key(&base) =>
             {
-                self.values.get(base).cloned()
+                self.values.get(&base).cloned()
             }
-            RewritePlace::Element { base, index }
-                if !self.unknown_consumed_iterators.contains_key(base)
-                    && !self.unknown_mutations.contains_key(base) =>
+            Ok(AliasRead::Scalar(_)) => None,
+            Ok(AliasRead::Element { base, index })
+                if !self.unknown_consumed_iterators.contains_key(&base)
+                    && !self.unknown_mutations.contains_key(&base) =>
             {
-                self.aggregate_element(base, *index)
+                self.aggregate_element(&base, index)
             }
-            RewritePlace::Scalar(_) | RewritePlace::Element { .. } => None,
-            RewritePlace::Slice { .. } => None,
+            Ok(AliasRead::Element { .. }) => None,
+            Err(AliasTypedEffect::UnroutableAliasShape { .. }) => None,
+            Err(AliasTypedEffect::UnknownMutation { .. }) => None,
         }
     }
 
@@ -314,25 +298,25 @@ impl TemporalRewriteState {
         if self.values.contains_key(name) && self.rewritten_bases.contains(name) {
             return self.aggregate_element(name, index);
         }
-        match self.aliases.get(name)? {
-            RewritePlace::Scalar(base)
-                if self.rewritten_bases.contains(base)
-                    && !self.unknown_consumed_iterators.contains_key(base)
-                    && !self.unknown_mutations.contains_key(base) =>
+        match alias_read_result(self.aliases.get(name)?.read_index(index)) {
+            Ok(AliasRead::Element { base, index })
+                if self.rewritten_bases.contains(&base)
+                    && !self.unknown_consumed_iterators.contains_key(&base)
+                    && !self.unknown_mutations.contains_key(&base) =>
             {
-                self.aggregate_element(base, index)
+                self.aggregate_element(&base, index)
             }
-            RewritePlace::Slice { base, start, len }
-                if index < *len
-                    && self.rewritten_bases.contains(base)
-                    && !self.unknown_consumed_iterators.contains_key(base)
-                    && !self.unknown_mutations.contains_key(base) =>
+            Ok(AliasRead::Element { .. }) => None,
+            Ok(AliasRead::Scalar(base))
+                if self.rewritten_bases.contains(&base)
+                    && !self.unknown_consumed_iterators.contains_key(&base)
+                    && !self.unknown_mutations.contains_key(&base) =>
             {
-                self.aggregate_element(base, start.checked_add(index)?)
+                self.aggregate_element(&base, index)
             }
-            RewritePlace::Element { .. } | RewritePlace::Scalar(_) | RewritePlace::Slice { .. } => {
-                None
-            }
+            Ok(AliasRead::Scalar(_)) => None,
+            Err(AliasTypedEffect::UnroutableAliasShape { .. }) => None,
+            Err(AliasTypedEffect::UnknownMutation { .. }) => None,
         }
     }
 
@@ -359,11 +343,7 @@ impl TemporalRewriteState {
     }
 
     pub(crate) fn mutable_alias_base(&self, name: &str) -> Option<String> {
-        match self.aliases.get(name)? {
-            RewritePlace::Scalar(base)
-            | RewritePlace::Element { base, .. }
-            | RewritePlace::Slice { base, .. } => Some(base.clone()),
-        }
+        alias_base_identity(self.aliases.get(name)?.consume())
     }
 
     pub(crate) fn cell_kind(&self, name: &str) -> Option<CellKind> {
@@ -514,7 +494,9 @@ impl TemporalRewriteState {
                     }
                     applied
                 }),
-            Stmt::Expr(expr, _) => self.apply_consumption_expr(expr),
+            Stmt::Expr(expr, _) => {
+                self.apply_with_trace(expr, true) || self.apply_consumption_expr(expr)
+            }
             Stmt::Macro(stmt_macro) => self.apply_consumption_macro(&stmt_macro.mac),
             _ => false,
         }
@@ -1106,7 +1088,8 @@ impl TemporalRewriteState {
                 init = %token_key(&init.expr),
                 "temporal rewrite captured mutable reference alias"
             );
-            self.aliases.insert(name, RewritePlace::Scalar(base));
+            let alias = alias_bound_result(AliasFloor::scalar(base).bind());
+            self.aliases.insert(name, alias);
             return;
         }
         if let Some(base) =
@@ -1295,25 +1278,19 @@ impl TemporalRewriteState {
         }
         for (binding, spec) in bindings.into_iter().zip(specs.into_iter()) {
             let place = match spec {
-                IndexSpec::Element(index) => RewritePlace::Element {
-                    base: base.clone(),
-                    index,
-                },
-                IndexSpec::Slice { start, len } => RewritePlace::Slice {
-                    base: base.clone(),
-                    start,
-                    len,
-                },
+                IndexSpec::Element(index) => AliasFloor::element(base.clone(), index),
+                IndexSpec::Slice { start, len } => AliasFloor::slice(base.clone(), start, len),
             };
+            let alias = alias_bound_result(place.bind());
             self.clear_value(&binding);
             debug!(
                 target: "sugar_lift_rust_tests::temporal_rewrite",
                 binding = binding.as_str(),
                 base = base.as_str(),
-                place = ?place,
+                place = ?alias,
                 "temporal rewrite captured disjoint mutable alias"
             );
-            self.aliases.insert(binding, place);
+            self.aliases.insert(binding, alias);
         }
         true
     }
@@ -1370,9 +1347,10 @@ impl TemporalRewriteState {
             return false;
         };
         let target_base = target_base(&target);
+        let needs_compound_refusal = target_needs_compound_alias_refusal(&target);
         let updated = compose_assignment_term(op, old, rhs);
         let applied = self.set_target_term(target, updated);
-        if applied {
+        if applied && needs_compound_refusal {
             self.compound_alias_rewrites.insert(target_base);
         }
         applied
@@ -1400,8 +1378,9 @@ impl TemporalRewriteState {
         let target_label = target_label(&target);
         let target_base = target_base(&target);
         let updated_label = token_key(&updated);
+        let needs_compound_refusal = target_needs_compound_alias_refusal(&target);
         let applied = self.set_target(target, updated);
-        if applied {
+        if applied && needs_compound_refusal {
             self.compound_alias_rewrites.insert(target_base);
         }
         if applied && emit_trace {
@@ -1430,18 +1409,7 @@ impl TemporalRewriteState {
                         replayable_alias: false,
                     });
                 }
-                match self.aliases.get(&name)? {
-                    RewritePlace::Scalar(base) => Some(Target::Scalar {
-                        name: base.clone(),
-                        replayable_alias: true,
-                    }),
-                    RewritePlace::Element { base, index } => Some(Target::Element {
-                        base: base.clone(),
-                        index: *index,
-                        replayable_alias: true,
-                    }),
-                    RewritePlace::Slice { .. } => None,
-                }
+                target_from_alias_result(self.aliases.get(&name)?.write_through())
             }
             Expr::Unary(unary) if matches!(unary.op, UnOp::Deref(_)) => {
                 self.target_for_deref(&unary.expr)
@@ -1453,33 +1421,13 @@ impl TemporalRewriteState {
 
     fn target_for_deref(&self, expr: &Expr) -> Option<Target> {
         let name = simple_path_name(expr)?;
-        match self.aliases.get(&name)? {
-            RewritePlace::Scalar(base) => Some(Target::Scalar {
-                name: base.clone(),
-                replayable_alias: true,
-            }),
-            RewritePlace::Element { base, index } => Some(Target::Element {
-                base: base.clone(),
-                index: *index,
-                replayable_alias: true,
-            }),
-            RewritePlace::Slice { .. } => None,
-        }
+        target_from_alias_result(self.aliases.get(&name)?.write_through())
     }
 
     fn target_for_index(&self, index: &syn::ExprIndex) -> Option<Target> {
         let idx = self.index_value(&index.index)?;
         let base_name = simple_path_name(&index.expr)?;
-        match self.aliases.get(&base_name)? {
-            RewritePlace::Slice { base, start, len } if idx < *len => Some(Target::Element {
-                base: base.clone(),
-                index: start.checked_add(idx)?,
-                replayable_alias: true,
-            }),
-            RewritePlace::Element { .. } | RewritePlace::Scalar(_) | RewritePlace::Slice { .. } => {
-                None
-            }
-        }
+        target_from_alias_result(self.aliases.get(&base_name)?.write_index(idx))
     }
 
     fn target_for_direct_index_lhs(&self, lhs: &Expr) -> Option<Target> {
@@ -1519,13 +1467,22 @@ impl TemporalRewriteState {
 
     fn invalidate_unknown_assignment(&mut self, target: &Target, lhs: &Expr, rhs: &Expr) -> bool {
         let base = target_base(target);
-        let reason = format!(
-            "ambiguous temporal identity for `{base}` after assignment through mutable \
-             capability `{}`: RHS `{}` is not literal-determined, so there is no single \
-             timeless value to read at the assertion; refused",
-            token_key(lhs),
-            token_key(rhs)
-        );
+        let reason = if let Some(alias) = alias_floor_for_target(target) {
+            alias_unknown_mutation_reason(alias.unknown_mutation(
+                AliasMutationCause::UntrackableRhs {
+                    lhs: token_key(lhs),
+                    rhs: token_key(rhs),
+                },
+            ))
+        } else {
+            format!(
+                "ambiguous temporal identity for `{base}` after assignment through mutable \
+                 capability `{}`: RHS `{}` is not literal-determined, so there is no single \
+                 timeless value to read at the assertion; refused",
+                token_key(lhs),
+                token_key(rhs)
+            )
+        };
         self.clear_value(&base);
         self.aliases.remove(&base);
         self.unknown_consumed_iterators.remove(&base);
@@ -1716,6 +1673,11 @@ impl TemporalRewriteState {
             Expr::Unary(unary) => match unary.op {
                 UnOp::Neg(_) => self.int_value(&unary.expr)?.checked_neg(),
                 UnOp::Not(_) => Some(!self.int_value(&unary.expr)?),
+                UnOp::Deref(_) => {
+                    let name = simple_path_name(&unary.expr)?;
+                    let value = self.expr_for(&name)?;
+                    self.int_value(&value)
+                }
                 _ => None,
             },
             Expr::Path(_) => {
@@ -2494,6 +2456,225 @@ fn target_base(target: &Target) -> String {
     }
 }
 
+fn target_needs_compound_alias_refusal(target: &Target) -> bool {
+    match target {
+        Target::Scalar { .. } => false,
+        Target::Element {
+            replayable_alias, ..
+        } => *replayable_alias,
+    }
+}
+
+fn alias_floor_for_target(target: &Target) -> Option<AliasFloor> {
+    match target {
+        Target::Scalar {
+            name,
+            replayable_alias: true,
+        } => Some(AliasFloor::scalar(name.clone())),
+        Target::Scalar {
+            replayable_alias: false,
+            ..
+        } => None,
+        Target::Element {
+            base,
+            index,
+            replayable_alias: true,
+        } => Some(AliasFloor::element(base.clone(), *index)),
+        Target::Element {
+            replayable_alias: false,
+            ..
+        } => None,
+    }
+}
+
+fn alias_bound_result(result: AliasFloorResult) -> AliasFloor {
+    match result {
+        AliasFloorResult::ReducedValue(AliasReducedValue::BoundAlias(alias)) => alias,
+        AliasFloorResult::ReducedValue(AliasReducedValue::Read(AliasRead::Scalar(base))) => {
+            panic!("AliasFloor bind event returned read of scalar `{base}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::Read(AliasRead::Element {
+            base,
+            index,
+        })) => {
+            panic!("AliasFloor bind event returned read of element `{base}[{index}]`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Scalar { base },
+        )) => {
+            panic!("AliasFloor bind event returned write target `{base}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Element { base, index },
+        )) => {
+            panic!("AliasFloor bind event returned write target `{base}[{index}]`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::BaseIdentity(base)) => {
+            panic!("AliasFloor bind event returned base identity `{base}`")
+        }
+        AliasFloorResult::TypedEffect(effect) => {
+            panic!("{}", alias_effect_reason(&effect))
+        }
+    }
+}
+
+fn alias_read_result(result: AliasFloorResult) -> Result<AliasRead, AliasTypedEffect> {
+    match result {
+        AliasFloorResult::ReducedValue(AliasReducedValue::Read(read)) => Ok(read),
+        AliasFloorResult::ReducedValue(AliasReducedValue::BoundAlias(alias)) => {
+            panic!("AliasFloor read event returned bound alias `{alias:?}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Scalar { base },
+        )) => {
+            panic!("AliasFloor read event returned write target `{base}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Element { base, index },
+        )) => {
+            panic!("AliasFloor read event returned write target `{base}[{index}]`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::BaseIdentity(base)) => {
+            panic!("AliasFloor read event returned base identity `{base}`")
+        }
+        AliasFloorResult::TypedEffect(effect) => Err(effect),
+    }
+}
+
+fn alias_base_identity(result: AliasFloorResult) -> Option<String> {
+    match result {
+        AliasFloorResult::ReducedValue(AliasReducedValue::BaseIdentity(base)) => Some(base),
+        AliasFloorResult::ReducedValue(AliasReducedValue::BoundAlias(alias)) => {
+            panic!("AliasFloor consume event returned bound alias `{alias:?}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::Read(AliasRead::Scalar(base))) => {
+            panic!("AliasFloor consume event returned read of scalar `{base}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::Read(AliasRead::Element {
+            base,
+            index,
+        })) => {
+            panic!("AliasFloor consume event returned read of element `{base}[{index}]`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Scalar { base },
+        )) => {
+            panic!("AliasFloor consume event returned write target `{base}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Element { base, index },
+        )) => {
+            panic!("AliasFloor consume event returned write target `{base}[{index}]`")
+        }
+        AliasFloorResult::TypedEffect(AliasTypedEffect::UnroutableAliasShape { .. }) => None,
+        AliasFloorResult::TypedEffect(AliasTypedEffect::UnknownMutation { .. }) => None,
+    }
+}
+
+fn target_from_alias_result(result: AliasFloorResult) -> Option<Target> {
+    match result {
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Scalar { base },
+        )) => Some(Target::Scalar {
+            name: base,
+            replayable_alias: true,
+        }),
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Element { base, index },
+        )) => Some(Target::Element {
+            base,
+            index,
+            replayable_alias: true,
+        }),
+        AliasFloorResult::ReducedValue(AliasReducedValue::BoundAlias(alias)) => {
+            panic!("AliasFloor write event returned bound alias `{alias:?}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::Read(AliasRead::Scalar(base))) => {
+            panic!("AliasFloor write event returned read of scalar `{base}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::Read(AliasRead::Element {
+            base,
+            index,
+        })) => {
+            panic!("AliasFloor write event returned read of element `{base}[{index}]`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::BaseIdentity(base)) => {
+            panic!("AliasFloor write event returned base identity `{base}`")
+        }
+        AliasFloorResult::TypedEffect(effect) => {
+            panic!("{}", alias_effect_reason(&effect))
+        }
+    }
+}
+
+fn alias_unknown_mutation_reason(result: AliasFloorResult) -> String {
+    match result {
+        AliasFloorResult::TypedEffect(effect @ AliasTypedEffect::UnknownMutation { .. }) => {
+            alias_effect_reason(&effect)
+        }
+        AliasFloorResult::TypedEffect(AliasTypedEffect::UnroutableAliasShape { event, place }) => {
+            alias_effect_reason(&AliasTypedEffect::UnroutableAliasShape { event, place })
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::BoundAlias(alias)) => {
+            panic!("AliasFloor unknown-mutation event returned bound alias `{alias:?}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::Read(AliasRead::Scalar(base))) => {
+            panic!("AliasFloor unknown-mutation event returned read of scalar `{base}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::Read(AliasRead::Element {
+            base,
+            index,
+        })) => {
+            panic!("AliasFloor unknown-mutation event returned read of element `{base}[{index}]`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Scalar { base },
+        )) => {
+            panic!("AliasFloor unknown-mutation event returned write target `{base}`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::WriteTarget(
+            AliasWriteTarget::Element { base, index },
+        )) => {
+            panic!("AliasFloor unknown-mutation event returned write target `{base}[{index}]`")
+        }
+        AliasFloorResult::ReducedValue(AliasReducedValue::BaseIdentity(base)) => {
+            panic!("AliasFloor unknown-mutation event returned base identity `{base}`")
+        }
+    }
+}
+
+fn alias_effect_reason(effect: &AliasTypedEffect) -> String {
+    match effect {
+        AliasTypedEffect::UnroutableAliasShape { event, place } => format!(
+            "AliasFloor coverage gap for `{}` during `{event:?}`: owner #3482; \
+             illegal shape `{place:?}` has no typed AliasFloor result for this event; \
+             replacement is an AliasFloor event arm carrying ReducedValue or TypedEffect; refused",
+            place.base()
+        ),
+        AliasTypedEffect::UnknownMutation { place, cause } => match cause {
+            AliasMutationCause::UntrackableRhs { lhs, rhs } => format!(
+                "ambiguous temporal identity for `{}` after AliasFloor write-through `{lhs}`: \
+                 owner #3482; illegal shape RHS `{rhs}` is not literal-determined, so the \
+                 replacement is a typed AliasFloor UnknownMutation effect rather than stale \
+                 alias state; refused",
+                place.base()
+            ),
+            AliasMutationCause::OpaqueCall { site } => format!(
+                "ambiguous temporal identity for `{}` after AliasFloor opaque call `{site}`: \
+                 owner #3482; illegal shape may write through a mutable capability; \
+                 replacement is a typed AliasFloor UnknownMutation effect; refused",
+                place.base()
+            ),
+            AliasMutationCause::IteratorConsumption { method } => format!(
+                "ambiguous temporal identity for `{}` after AliasFloor iterator consumption \
+                 `.{method}()`: owner #3482; illegal shape advances through alias state with no \
+                 literal replay; replacement is a typed AliasFloor UnknownMutation effect; refused",
+                place.base()
+            ),
+        },
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum BinOpKind {
     Add,
@@ -2907,11 +3088,7 @@ mod tests {
             panic!("inner first statement is local alias");
         };
         state.record_local(alias);
-        assert!(
-            matches!(state.aliases.get("p"), Some(RewritePlace::Scalar(base)) if base == "r"),
-            "mutable reference alias was not recorded: {:?}",
-            state.aliases
-        );
+        assert_eq!(state.mutable_alias_base("p").as_deref(), Some("r"));
         let Stmt::Expr(assign, _) = &inner.block.stmts[1] else {
             panic!("inner second statement is assignment");
         };
@@ -2938,10 +3115,7 @@ mod tests {
         state.record_literal_value("v", syn::parse_quote!(vec![1, 2, 3]));
         state.aliases.insert(
             "a".to_string(),
-            RewritePlace::Element {
-                base: "v".to_string(),
-                index: 2,
-            },
+            alias_bound_result(AliasFloor::element("v", 2).bind()),
         );
         let lhs: Expr = syn::parse_quote!(*a);
 
@@ -2956,18 +3130,24 @@ mod tests {
     }
 
     #[test]
-    fn compound_alias_rewrite_marks_refusal_but_exact_assignment_clears_it() {
+    fn scalar_alias_compound_rewrite_reduces_without_refusal_side_set() {
         let mut state = TemporalRewriteState::default();
         state.record_literal_value("r", syn::parse_quote!(0));
-        state
-            .aliases
-            .insert("p".to_string(), RewritePlace::Scalar("r".to_string()));
+        state.aliases.insert(
+            "p".to_string(),
+            alias_bound_result(AliasFloor::scalar("r").bind()),
+        );
 
         let compound: Expr = syn::parse_quote!(*p += 1);
         assert!(state.apply_with_trace(&compound, false));
         assert!(
-            state.compound_alias_rewrite_needs_refusal("r"),
-            "compound mutation through &mut alias must refuse a later read"
+            !state.compound_alias_rewrite_needs_refusal("r"),
+            "scalar compound mutation through AliasFloor must reduce the base without leaving \
+             a refusal side-set"
+        );
+        assert_eq!(
+            state.expr_for("r").and_then(|expr| const_int(&expr)),
+            Some(1)
         );
 
         let exact: Expr = syn::parse_quote!(*p = 7);
@@ -2980,6 +3160,43 @@ mod tests {
             state.expr_for("r").and_then(|expr| const_int(&expr)),
             Some(7)
         );
+    }
+
+    #[test]
+    fn scalar_alias_unknown_rhs_records_typed_unknown_mutation_effect() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("r", syn::parse_quote!(0));
+        state.aliases.insert(
+            "p".to_string(),
+            alias_bound_result(AliasFloor::scalar("r").bind()),
+        );
+
+        let compound: Expr = syn::parse_quote!(*p += runtime_value());
+        assert!(state.apply_with_trace(&compound, false));
+        let reason = state
+            .unknown_mutation_reason("r")
+            .expect("unknown scalar alias RHS records an AliasFloor effect");
+        assert!(
+            reason.contains("AliasFloor UnknownMutation effect"),
+            "unknown scalar alias RHS must bridge the typed floor effect, got: {reason}"
+        );
+        assert!(
+            state.expr_for("r").is_none(),
+            "unknown scalar alias mutation must not leave a stale readable value"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "AliasFloor coverage gap")]
+    fn unhandled_alias_write_shape_panics_loudly() {
+        let mut state = TemporalRewriteState::default();
+        state.aliases.insert(
+            "s".to_string(),
+            alias_bound_result(AliasFloor::slice("buf", 0, 2).bind()),
+        );
+
+        let exact: Expr = syn::parse_quote!(*s = 7);
+        let _ = state.apply_with_trace(&exact, false);
     }
 
     #[test]

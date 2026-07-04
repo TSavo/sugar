@@ -45,8 +45,9 @@ struct TeethCase {
 }
 
 const EXPECTED_TEETH_PRODUCTION_ACTIVE_DISAGREEMENTS: usize = 0;
-const EXPECTED_TEETH_PRODUCTION_COVERAGE_GAPS: usize = 22;
+const EXPECTED_TEETH_PRODUCTION_COVERAGE_GAPS: usize = 21;
 const EXPECTED_TEETH_PRODUCTION_DISCHARGED_TRUTHS: &[&str] = &[
+    "borrow4_stale_mut_truthful",
     "function_literal_index_truthful",
     "function_literal_repeat_truthful",
     "single_ascii_alnum_truthful",
@@ -59,6 +60,7 @@ const EXPECTED_TEETH_PRODUCTION_DISCHARGED_TRUTHS: &[&str] = &[
     "single_ascii_whitespace_truthful",
 ];
 const EXPECTED_TEETH_PRODUCTION_CONFIRMED_LIES: &[&str] = &[
+    "borrow4_stale_mut_lying",
     "function_literal_index_lying",
     "function_literal_repeat_lying",
 ];
@@ -362,6 +364,7 @@ fn statuses_for_label<'a>(rows: &'a [ProveRow], label: &str) -> Vec<&'a ProveRow
     rows.iter()
         .filter(|row| row.property.contains(&file_needle))
         .filter(|row| !row.property.contains("#panic_callsite#"))
+        .filter(|row| !row.property.contains("::temporal-rewrite::"))
         .collect()
 }
 
@@ -466,8 +469,13 @@ fn teeth_cases() -> Vec<TeethCase> {
         },
         TeethCase {
             label: "borrow4_stale_mut_truthful",
-            source: r#"#[test] fn t() { let mut x = 5; let r = &mut x; *r += 1; assert_eq!(x, 6); }"#,
+            source: r#"#[test] fn t() { let mut x = 5; let r = &mut x; *r += 1; assert_eq!(x, 6); assert_eq!(x, 6); }"#,
             expectation: TeethExpectation::Truth,
+        },
+        TeethCase {
+            label: "borrow4_stale_mut_lying",
+            source: r#"#[test] fn t() { let mut x = 5; let r = &mut x; *r += 1; assert_eq!(x, 6); assert_eq!(x, 7); }"#,
+            expectation: TeethExpectation::Lie,
         },
         TeethCase {
             label: "single_ascii_digit_truthful",
