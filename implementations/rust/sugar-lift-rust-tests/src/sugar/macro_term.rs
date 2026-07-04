@@ -3,13 +3,15 @@
 // TERM recognizer for `Expr::Macro`: the mut-local temporal-instability refusal, then -- for a
 // `macro_rules!` we HOLD THE DEFINITION FOR -- an EXPANSION complete walk that feeds the macro's
 // own body back to the factory (`my_macro!(2,3)` -> `2 + 3` -> `+(2,3)`, which grounds).
-// If it cannot expand to a term we know how to reduce, construction records a panic
-// reason; there is no runtime "unsupported" outcome for "we did not write the sugar".
+// If a visible source macro cannot expand to a term we know how to reduce, construction records a
+// panic reason. If a dependency/compiler macro has no visible expansion source at all, this sugar
+// emits the typed opaque-macro effect instead of guessing vendor semantics.
 //
 // The expansion lives at DESUGAR time, not recognize time: the macro_rules registry
 // hangs off `ReductionCtx`, which is in the DESUGAR-time `SugarCtx` (`ctx.reducer`), not
 // recognize time.
 use sugar_ir_symbolic::str_const;
+use syn::parse::{Parse, ParseStream};
 
 use crate::sugar::configuration::{self, CfgDisposition};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
@@ -87,16 +89,25 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
 }
 
 /// A term-position macro invocation constructed with its expanded term body. If the
-/// source registry does not hold a usable `macro_rules!` definition, the node panics at
-/// desugar: that is a construction gap, not an honorable runtime effect.
+/// source registry does not hold a usable `macro_rules!` definition, the node emits an opaque
+/// macro effect: without expansion source, guessing the output would author vendor semantics.
 pub(crate) struct MacroSugar {
     body: MacroTermBody,
 }
 
 enum MacroTermBody {
-    MutLocalTemporalEffect { reason: String },
-    CfgPredicate { predicate: CfgPredicate },
+    MutLocalTemporalEffect {
+        reason: String,
+    },
+    CfgPredicate {
+        predicate: CfgPredicate,
+    },
     BuiltinFile,
+    BuiltinEnv(String),
+    OpaqueExpansion {
+        macro_name: String,
+        boundary: String,
+    },
     Expanded(SugarBody<TermFloor>),
     Unconstructible(String),
 }
@@ -124,10 +135,18 @@ fn build_macro_body_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> MacroTer
     if name == "file" && tokens.is_empty() && fcx.scope().macro_registry().lookup(&name).is_none() {
         return MacroTermBody::BuiltinFile;
     }
+    if name == "env" && fcx.scope().macro_registry().lookup(&name).is_none() {
+        if let Some(key) = parse_env_key(tokens.clone()) {
+            if let Some(value) = fcx.options().package_env_value(&key) {
+                return MacroTermBody::BuiltinEnv(value.to_string());
+            }
+        }
+    }
     let Some(rules) = fcx.scope().macro_registry().lookup(&name) else {
-        return MacroTermBody::Unconstructible(format!(
-            "macro `{name}` has no visible macro_rules source; write more Sugar for this AST"
-        ));
+        return MacroTermBody::OpaqueExpansion {
+            macro_name: name,
+            boundary: frag.token_str(),
+        };
     };
     let expanded = match crate::macro_expand::expand(&rules, tokens) {
         Ok(expanded) => expanded,
@@ -178,12 +197,46 @@ impl Sugar for MacroSugar {
             MacroTermBody::BuiltinFile => {
                 Outcome::Complete(Desugared::Term(str_const(ctx.scope.source_path())))
             }
+            MacroTermBody::BuiltinEnv(value) => {
+                Outcome::Complete(Desugared::Term(str_const(value.clone())))
+            }
+            MacroTermBody::OpaqueExpansion {
+                macro_name,
+                boundary,
+            } => Outcome::Incomplete(Effect::OpaqueMacroExpansion {
+                macro_name: macro_name.clone(),
+                boundary: boundary.clone(),
+            }),
             MacroTermBody::Expanded(body) => body.reduce(ctx),
             MacroTermBody::Unconstructible(reason) => {
                 panic!("{reason}");
             }
         }
     }
+}
+
+struct EnvMacroArgs {
+    key: syn::LitStr,
+}
+
+impl Parse for EnvMacroArgs {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let key = input.parse()?;
+        if !input.is_empty() {
+            let _: syn::Token![,] = input.parse()?;
+            let _: syn::LitStr = input.parse()?;
+        }
+        if !input.is_empty() {
+            return Err(input.error("env! accepts a literal key and optional literal message"));
+        }
+        Ok(Self { key })
+    }
+}
+
+fn parse_env_key(tokens: proc_macro2::TokenStream) -> Option<String> {
+    syn::parse2::<EnvMacroArgs>(tokens)
+        .ok()
+        .map(|args| args.key.value())
 }
 
 // Phase-3 from_src tests: source -> SourceFragment -> accessor -> recognize.
@@ -261,8 +314,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        sugar_ctx, FloatWidthScope, LiftOptions, ReductionCtx, TargetCfg, TemporalPlan,
-        TemporalScope,
+        refusal_disposition, sugar_ctx, Disposition, FloatWidthScope, LiftOptions, ReductionCtx,
+        TargetCfg, TemporalPlan, TemporalScope,
     };
 
     fn run(expr: &Expr, options: &LiftOptions) -> Outcome {
@@ -282,6 +335,26 @@ mod tests {
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();
         let ctx = sugar_ctx(&scope, options, &reducer, &mut float_widths, 0);
+        node.desugar(&ctx)
+    }
+
+    fn run_with_source_registry(expr: &Expr, source: &str) -> Outcome {
+        let file = syn::parse_file(source).expect("parse source registry");
+        let reducer = ReductionCtx::from_items(&file.items);
+        let mut registry = crate::MacroRegistry::new();
+        registry.scan_source(source);
+        let scope = TemporalScope::new("macro-term-test", TemporalPlan::default())
+            .with_macro_registry(registry);
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let node = {
+            let frag = SourceFragment::expr(expr, "<src>");
+            recognize(&frag, &fcx)
+        }
+        .expect("macro term sugar owns macro expressions");
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
         node.desugar(&ctx)
     }
 
@@ -338,6 +411,82 @@ mod tests {
                 ..
             } => assert_eq!(value, "tests/panic/location.rs"),
             other => panic!("file! must lift to a String const, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn opaque_json_macro_without_visible_source_is_terminal_effect() {
+        let expr: Expr = parse_quote!(json!({"ok": true}));
+        let Outcome::Incomplete(Effect::OpaqueMacroExpansion {
+            macro_name,
+            boundary,
+        }) = run(&expr, &LiftOptions::default())
+        else {
+            panic!("json! without a visible macro_rules body must be an opaque macro effect")
+        };
+        assert_eq!(macro_name, "json");
+        assert!(
+            boundary.contains("json !"),
+            "boundary names invocation: {boundary}"
+        );
+        let reason = (Effect::OpaqueMacroExpansion {
+            macro_name,
+            boundary,
+        })
+        .reason();
+        assert_eq!(refusal_disposition(&reason), Disposition::TerminalEffect);
+    }
+
+    #[test]
+    fn visible_json_macro_still_expands_instead_of_opaque_effect() {
+        let expr: Expr = parse_quote!(json!(7_i32));
+        let outcome = run_with_source_registry(
+            &expr,
+            r#"
+                macro_rules! json {
+                    ($value:expr) => {
+                        $value
+                    };
+                }
+            "#,
+        );
+        match outcome {
+            Outcome::Complete(Desugared::Term(_)) => {}
+            _ => panic!("visible macro_rules json! must expand"),
+        }
+    }
+
+    #[test]
+    fn env_macro_without_package_env_authority_is_opaque_macro_effect() {
+        let expr: Expr = parse_quote!(env!("CARGO_PKG_VERSION"));
+        let Outcome::Incomplete(Effect::OpaqueMacroExpansion {
+            macro_name,
+            boundary,
+        }) = run(&expr, &LiftOptions::default())
+        else {
+            panic!("env! without package-env authority must be an opaque macro effect")
+        };
+        assert_eq!(macro_name, "env");
+        assert!(
+            boundary.contains("CARGO_PKG_VERSION"),
+            "boundary carries the requested key: {boundary}"
+        );
+    }
+
+    #[test]
+    fn env_macro_with_package_env_authority_lifts_to_string_literal() {
+        let expr: Expr = parse_quote!(env!("CARGO_PKG_VERSION"));
+        let mut package_env = BTreeMap::new();
+        package_env.insert("CARGO_PKG_VERSION".to_string(), "9.8.7".to_string());
+        let outcome = run(&expr, &LiftOptions::default().with_package_env(package_env));
+        match outcome {
+            Outcome::Complete(Desugared::Term(term)) => {
+                assert_eq!(
+                    format!("{term:?}"),
+                    "Const { value: String(\"9.8.7\"), sort: Sort { name: \"String\" } }"
+                );
+            }
+            _ => panic!("env! with package-env authority must lift to the manifest value"),
         }
     }
 }

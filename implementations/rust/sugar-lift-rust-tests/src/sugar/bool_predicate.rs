@@ -12,7 +12,7 @@ use crate::sugar::term_dispatch::{
 use crate::{
     canonical_term_sig, const_val_term, curry_param_name, curry_param_term, helper_param_names,
     simple_path_name, strip_refs_groups, token_key, value_body_tail_substituted, DesugaredElem,
-    Outcome, SugarCtx,
+    Effect, Outcome, SugarCtx,
 };
 
 /// A unary predicate closure whose body is already factory-owned.
@@ -55,13 +55,9 @@ impl BoolPredicateClosure {
         match literal_predicate_bool_or_runtime_effect(&term) {
             Ok(Some(value)) => Ok(value),
             Err(effect) => Err(Outcome::Incomplete(effect)),
-            Ok(None) => bool_predicate_gap(
-                family,
-                &format!(
-                    "predicate floor did not reduce to literal bool: {}",
-                    canonical_term_sig(&term)
-                ),
-            ),
+            Ok(None) => Err(Outcome::Incomplete(runtime_predicate_bool_floor(
+                family, &term,
+            ))),
         }
     }
 }
@@ -116,13 +112,9 @@ impl BoolPredicateFunction {
         match literal_predicate_bool_or_runtime_effect(&term) {
             Ok(Some(value)) => Ok(value),
             Err(effect) => Err(Outcome::Incomplete(effect)),
-            Ok(None) => bool_predicate_gap(
-                family,
-                &format!(
-                    "function predicate floor did not reduce to literal bool: {}",
-                    canonical_term_sig(&term)
-                ),
-            ),
+            Ok(None) => Err(Outcome::Incomplete(runtime_predicate_bool_floor(
+                family, &term,
+            ))),
         }
     }
 }
@@ -194,4 +186,11 @@ fn elem_term_floor(elem: &DesugaredElem, family: &str) -> Rc<Term> {
 
 fn bool_predicate_gap(owner: &str, reason: &str) -> ! {
     panic!("{owner} predicate did not reach a lawful bool floor: {reason}")
+}
+
+fn runtime_predicate_bool_floor(family: &'static str, term: &Rc<Term>) -> Effect {
+    Effect::RuntimePredicateBoolFloor {
+        family: family.to_string(),
+        boundary: canonical_term_sig(term),
+    }
 }

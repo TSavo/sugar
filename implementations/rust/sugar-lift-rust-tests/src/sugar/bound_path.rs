@@ -20,7 +20,7 @@ use tracing::debug;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "bound_path",
-    &["path"],
+    &["const", "path"],
     crate::sugar::claim::SugarWitnesses::reasoned_bucket(
         "owner-mismatch path row: witnesses dispatch through assertion surfaces or term_literal",
     ),
@@ -181,10 +181,6 @@ struct BoundPathRuntimeDestructuredSourceSugar {
     reason: String,
 }
 
-struct BoundPathGapSugar {
-    reason: String,
-}
-
 impl Sugar for BoundPathTemporalEffectSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
@@ -206,12 +202,6 @@ impl Sugar for BoundPathRuntimeDestructuredSourceSugar {
         Outcome::Incomplete(Effect::RuntimeDestructuredSource {
             reason: self.reason.clone(),
         })
-    }
-}
-
-impl Sugar for BoundPathGapSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        panic!("{}", self.reason);
     }
 }
 
@@ -437,11 +427,11 @@ fn unresolved_destructured_source_backstop(
     fcx: &SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
     fcx.scope().is_unresolved_destructured_local(name).then(|| {
-        Box::new(BoundPathGapSugar {
+        Box::new(BoundPathRuntimeDestructuredSourceSugar {
             reason: format!(
-                "destructured source trace unresolved for `{name}`: pattern binding participates \
-             in the assertion, but SSA has not traced the destructured source to literal \
-             components yet"
+                "destructured source runtime, not literal for `{name}`: pattern binding participates \
+             in the assertion, but the destructured source trace did not resolve to literal \
+             components; refused"
             ),
         }) as Box<dyn Sugar>
     })

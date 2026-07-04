@@ -167,7 +167,11 @@ pub(crate) fn decompose_match_scrutinee(expr: &Expr) -> Option<MatchScrutineeSug
     })
 }
 
-fn expr_resolves_runtime_call_result(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+pub(crate) fn expr_resolves_runtime_call_result(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> bool {
     if depth > 8 {
         return false;
     }
@@ -185,6 +189,7 @@ fn expr_resolves_runtime_call_result(expr: &Expr, fcx: &SugarBuildCtx, depth: us
                 .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
                 .is_some_and(|init| expr_resolves_runtime_call_result(init, fcx, depth + 1))
         }
+        Expr::Field(field) => expr_resolves_runtime_call_result(&field.base, fcx, depth + 1),
         Expr::Paren(paren) => expr_resolves_runtime_call_result(&paren.expr, fcx, depth + 1),
         Expr::Group(group) => expr_resolves_runtime_call_result(&group.expr, fcx, depth + 1),
         Expr::Reference(reference) => {
