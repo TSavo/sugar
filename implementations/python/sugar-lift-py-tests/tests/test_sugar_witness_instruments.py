@@ -35,8 +35,8 @@ from sugar_lift_py_tests.witness_harness import (
 
 ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 0
-EXPECTED_SEED_CASES = 54
-EXPECTED_SEED_OWNER_COUNT = 41
+EXPECTED_SEED_CASES = 55
+EXPECTED_SEED_OWNER_COUNT = 42
 EXPECTED_TRIPLE_FAILURES = 0
 EXPECTED_MIGRATED_SEED_NAMES = {
     "add_method_return",
@@ -61,6 +61,7 @@ EXPECTED_MIGRATED_SEED_NAMES = {
     "identity_assertion_boolop",
     "if_return",
     "isinstance_assertion_boolop",
+    "joined_str_literal_return",
     "lambda_map_method",
     "membership_assertion_boolop",
     "name_return",
@@ -264,7 +265,7 @@ def test_temporal_opt_outs_are_pinned_as_retirable_deferrals() -> None:
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
     assert seed_report.seed_count == EXPECTED_SEED_CASES
     assert seed_report.unique_owner_count == EXPECTED_SEED_OWNER_COUNT
-    assert seed_report.catalog_count == 55
+    assert seed_report.catalog_count == 56
     assert seed_report.witness_triples_failing == EXPECTED_TRIPLE_FAILURES
     assert seed_report.witnesses_not_dispatching_to_owner == 0
     assert [
