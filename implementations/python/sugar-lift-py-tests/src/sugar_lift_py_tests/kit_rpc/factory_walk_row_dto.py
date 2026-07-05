@@ -22,6 +22,23 @@ FactoryWalkStatus = Literal[
 ]
 _ALLOWED_STATUSES = frozenset(get_args(FactoryWalkStatus))
 
+# Every status that renders red. A red verdict with no grounds is an
+# unclassified state reaching output: a claim the report cannot back. That
+# must be impossible BY CONSTRUCTION -- a red row IS a (verdict, grounds)
+# pair. The guard in __post_init__ is the tripwire; the pyright-visible type
+# split is the law (in flight). See #3540.
+_RED_STATUSES = frozenset(
+    {
+        "raise-effect",
+        "runtime-effect",
+        "coverage-gap",
+        "factory-gap",
+        "dig-refusal",
+        "absent",
+        "drifted",
+    }
+)
+
 
 @dataclass(frozen=True)
 class FactoryWalkRowDto:
@@ -47,6 +64,16 @@ class FactoryWalkRowDto:
                 f"owner=FactoryWalkRowDto illegal={self.status!r} "
                 f"replacement=typed Effect status or warranted/support; "
                 f"allowed={allowed}"
+            )
+        if self.status in _RED_STATUSES and not (self.reason or "").strip():
+            raise TypeError(
+                "red verdict carries no grounds; the ledger lost the dragon: "
+                f"owner=FactoryWalkRowDto status={self.status!r} "
+                f"blame={self.file}:{self.line} "
+                "replacement=construct red rows with their cause (own gap/effect "
+                "reason, or inherited contamination provenance such as "
+                "'via unresolved call at file:line'); a red row IS a "
+                "(verdict, grounds) pair. See #3540."
             )
 
     def to_rpc(self) -> dict[str, Any]:
