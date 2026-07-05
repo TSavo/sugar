@@ -41,6 +41,11 @@ class SymbolicValue(FloorValue):
                 return Complete(
                     SymbolicValue(ctor("py.format", [self.term, str_const(spec.value)]))
                 )
+        if operation.name == "__len__" and not operation.arguments:
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(SymbolicValue(ctor("py.len", [self.term])))
         if operation.name == "__int__" and not operation.arguments:
             from sugar_lift_py_tests.ir import _ConstStr, _Ctor, ctor
             from sugar_lift_py_tests.outcome import Complete

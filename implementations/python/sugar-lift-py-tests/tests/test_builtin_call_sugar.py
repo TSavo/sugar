@@ -7,8 +7,8 @@ from factory_reduce import fol, reduce_term
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import Bv32Value, SymbolicValue
-from sugar_lift_py_tests.ir import ctor, make_var, str_const
+from sugar_lift_py_tests.floor import ArrayLiteral, Bv32Value, SymbolicValue, TermValue
+from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -30,6 +30,38 @@ def test_str_builtin_dispatches_bv32_argument_to_floor_operation() -> None:
 
     assert result == SymbolicValue(ctor("py.str", [make_var("x")]))
     assert operation_log == [("BuiltinCallSugar", "str_with", "StrCoercionOperation")]
+
+
+def test_len_builtin_symbolic_argument_emits_structural_term() -> None:
+    result = reduce_term("len(x)", {"x": SymbolicValue(make_var("x"))})
+
+    assert fol(result) == fol(ctor("py.len", [make_var("x")]))
+
+
+def test_len_builtin_symbolic_argument_is_not_concretized() -> None:
+    result, operation_log = _reduce_value_with_log(
+        "len(x)", {"x": SymbolicValue(make_var("x"))}
+    )
+
+    assert result == SymbolicValue(ctor("py.len", [make_var("x")]))
+    assert not isinstance(result, TermValue)
+    assert operation_log == [
+        ("BuiltinCallSugar", "call_method_with", "MethodCallOperation")
+    ]
+
+
+def test_len_builtin_symbolic_argument_preserves_receiver_identity() -> None:
+    left = reduce_term("len(x)", {"x": SymbolicValue(make_var("x"))})
+    right = reduce_term("len(y)", {"y": SymbolicValue(make_var("y"))})
+
+    assert fol(left) != fol(right)
+    assert fol(right) == fol(ctor("py.len", [make_var("y")]))
+
+
+def test_len_builtin_array_literal_still_folds_concrete_length() -> None:
+    result = reduce_term("len(xs)", {"xs": ArrayLiteral((TermValue(1), TermValue(2)))})
+
+    assert fol(result) == fol(num(2))
 
 
 def _reduce_value_with_log(expr: str, binds: dict | None = None):
