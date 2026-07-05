@@ -9,7 +9,12 @@ from .bv32_value import Bv32Value
 from .call_site_value import CallSiteValue
 from .dict_literal_value import DictLiteralValue
 from .encoded_string_value import EncodedStringValue
-from .floor_value import FloorValue
+from .floor_dispatch_surface import (
+    FLOOR_OPERATION_METHOD_NAMES,
+    FloorDispatchSurface,
+    require_floor_dispatch_surface,
+)
+from .floor_value import BASE_CONSTRUCTION_GAP_METHOD_NAMES, FloorValue
 from .function_callable import FunctionCallable
 from .guarded_raise import GuardedRaise
 from .guarded_return import GuardedReturn
@@ -30,8 +35,42 @@ from .symbolic_value import SymbolicValue
 from .term_value import TermValue
 from .tuple_literal_value import TupleLiteralValue
 
+REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
+    ArrayLiteral,
+    BlockValue,
+    BoolValue,
+    BoundVar,
+    BuilderState,
+    Bv32Value,
+    CallSiteValue,
+    DictLiteralValue,
+    EncodedStringValue,
+    FunctionCallable,
+    GuardedRaise,
+    GuardedReturn,
+    ImportAliasValue,
+    LambdaCallable,
+    ObjectMethodValue,
+    ObjectValue,
+    PredicateValue,
+    RaiseValue,
+    ReturnValue,
+    SequenceConstructor,
+    SetLiteralValue,
+    SliceValue,
+    StringValue,
+    SupportValue,
+    SymbolicValue,
+    TermValue,
+    TupleLiteralValue,
+)
+
+for _floor_type in REGISTERED_FLOOR_TYPES:
+    require_floor_dispatch_surface(_floor_type)
+
 __all__ = [
     "ArrayLiteral",
+    "BASE_CONSTRUCTION_GAP_METHOD_NAMES",
     "BlockValue",
     "BoolValue",
     "BoundVar",
@@ -40,6 +79,8 @@ __all__ = [
     "CallSiteValue",
     "DictLiteralValue",
     "EncodedStringValue",
+    "FLOOR_OPERATION_METHOD_NAMES",
+    "FloorDispatchSurface",
     "FloorValue",
     "FunctionCallable",
     "GuardedRaise",
@@ -60,4 +101,6 @@ __all__ = [
     "SymbolicValue",
     "TermValue",
     "TupleLiteralValue",
+    "REGISTERED_FLOOR_TYPES",
+    "require_floor_dispatch_surface",
 ]
