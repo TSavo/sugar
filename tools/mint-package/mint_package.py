@@ -82,7 +82,11 @@ def _imported_properties(registry, cited):
             os.path.join(registry, canon(dep), "*", "verify.json")
         ):
             try:
-                doc = json.load(open(verify_path))
+                base_real = os.path.realpath(registry)
+                target_real = os.path.realpath(verify_path)
+                if os.path.commonpath([base_real, target_real]) != base_real:
+                    raise Exception("Invalid file path")
+                doc = json.load(open(target_real))
             except (OSError, ValueError):
                 continue
             for r in doc.get("rows", []):
