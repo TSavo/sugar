@@ -6,6 +6,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 
 Verdict = Literal["sat", "unsat"]
@@ -16,7 +17,7 @@ PY_TESTS = ROOT / "implementations" / "python" / "sugar-lift-py-tests"
 PY_SOURCE = ROOT / "implementations" / "python" / "sugar-lift-python-source"
 PY_PYTEST_WITNESS = ROOT / "implementations" / "python" / "sugar-lift-py-pytest-witness"
 SUGAR_BIN = RUST_WORKSPACE / "target" / "debug" / "sugar"
-_SUGAR_BUILT = False
+_SUGAR_BUILD_LOCK = Lock()
 
 
 class WitnessPipelineError(RuntimeError):
@@ -60,10 +61,11 @@ def _pythonpath() -> str:
 
 
 def _ensure_sugar_bin() -> Path:
-    global _SUGAR_BUILT
     if SUGAR_BIN.exists():
         return SUGAR_BIN
-    if not _SUGAR_BUILT:
+    with _SUGAR_BUILD_LOCK:
+        if SUGAR_BIN.exists():
+            return SUGAR_BIN
         completed = subprocess.run(
             [
                 "cargo",
@@ -85,10 +87,13 @@ def _ensure_sugar_bin() -> Path:
                 "cargo build for target/debug/sugar failed\n"
                 f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
             )
-        _SUGAR_BUILT = True
-    if not SUGAR_BIN.exists():
-        raise WitnessPipelineError("cargo build did not produce target/debug/sugar")
-    return SUGAR_BIN
+        if not SUGAR_BIN.exists():
+            raise WitnessPipelineError("cargo build did not produce target/debug/sugar")
+        return SUGAR_BIN
+
+
+def ensure_sugar_bin() -> Path:
+    return _ensure_sugar_bin()
 
 
 def _write_source(project: Path, source: str) -> None:

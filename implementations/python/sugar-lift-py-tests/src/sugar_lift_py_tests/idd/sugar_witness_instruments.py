@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import concurrent.futures
+import os
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -14,6 +16,7 @@ from sugar_lift_py_tests.sugar.witnesses import (
     SugarWitnessPair,
 )
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import ensure_sugar_bin
 
 
 @dataclass(frozen=True)
@@ -106,6 +109,17 @@ class RedEffectObservation:
     effect_class: str
     reason: str
     selected_sugars: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SeedWitnessEvaluation:
+    seed_name: str
+    triple_failures: tuple[WitnessTripleFailure, ...]
+    non_circularity_failures: tuple[NonCircularityFailure, ...]
+
+
+class SeedWitnessEvaluationError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -387,76 +401,175 @@ def evaluate_seed_witnesses(
     *,
     catalog_count: int | None = None,
 ) -> SugarWitnessSeedReport:
+    ordered_items = tuple(
+        sorted(enumerate(seeds), key=lambda item: (item[1].name, item[0]))
+    )
     catalog_names: set[str] | None = None
     if catalog_count is None:
         claims = _catalog_claims()
         catalog_count = len(claims)
         catalog_names = {claim.name for claim in claims}
-    triple_failures: list[WitnessTripleFailure] = []
-    non_circularity_failures: list[NonCircularityFailure] = []
-    for seed in seeds:
-        if isinstance(seed, SugarRedEffectWitnessPair):
-            for variant, witness in (
-                ("truthful", seed.truthful),
-                ("lying", seed.lying),
-            ):
-                observation = _observe_red_effect(witness)
-                _check_owner_selected(
-                    seed=seed,
-                    variant=variant,
-                    selected_sugars=observation.selected_sugars,
-                    triple_failures=triple_failures,
-                    non_circularity_failures=non_circularity_failures,
-                )
-                _check_red_effect_witness(
-                    seed=seed,
-                    variant=variant,
-                    witness=witness,
-                    observation=observation,
-                    failures=triple_failures,
-                )
-            continue
-        for variant, witness in (
-            ("truthful", seed.truthful),
-            ("lying", seed.lying),
-        ):
-            result = run_source_through_real_solver(
-                work_root / seed.name / variant,
-                witness.source,
-            )
-            _check_owner_selected(
-                seed=seed,
-                variant=variant,
-                selected_sugars=result.selected_sugars,
-                triple_failures=triple_failures,
-                non_circularity_failures=non_circularity_failures,
-            )
-            if not result.proofir_emitted:
-                triple_failures.append(
-                    WitnessTripleFailure(
-                        seed=seed.name,
-                        owner_sugar=seed.owner_sugar,
-                        variant=variant,
-                        axis="proofir-emitted",
-                        expected="non-empty ir",
-                        observed="<empty>",
-                    )
-                )
-            if result.verdict != witness.expected:
-                triple_failures.append(
-                    WitnessTripleFailure(
-                        seed=seed.name,
-                        owner_sugar=seed.owner_sugar,
-                        variant=variant,
-                        axis="verdict",
-                        expected=witness.expected,
-                        observed=result.verdict,
-                    )
-                )
+    evaluations = _evaluate_seed_witnesses_ordered(ordered_items, work_root)
+    triple_failures = [
+        failure for evaluation in evaluations for failure in evaluation.triple_failures
+    ]
+    non_circularity_failures = [
+        failure
+        for evaluation in evaluations
+        for failure in evaluation.non_circularity_failures
+    ]
     return SugarWitnessSeedReport(
         seed_count=len(seeds),
         unique_owner_count=len(_seed_coverage_owner_names(seeds, catalog_names)),
         catalog_count=catalog_count,
+        triple_failures=tuple(triple_failures),
+        non_circularity_failures=tuple(non_circularity_failures),
+    )
+
+
+def _evaluate_seed_witnesses_ordered(
+    ordered_items: Sequence[tuple[int, SugarWitnessSeed]],
+    work_root: Path,
+) -> tuple[SeedWitnessEvaluation, ...]:
+    if not ordered_items:
+        return ()
+    workers = _seed_witness_worker_count(len(ordered_items))
+    if any(
+        not isinstance(seed, SugarRedEffectWitnessPair) for _, seed in ordered_items
+    ):
+        ensure_sugar_bin()
+    if workers == 1 or len(ordered_items) == 1:
+        return tuple(_evaluate_one_seed(seed, work_root) for _, seed in ordered_items)
+
+    results: dict[tuple[int, str], SeedWitnessEvaluation] = {}
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="sugar-witness-seed",
+    ) as executor:
+        future_by_key = {
+            executor.submit(_evaluate_one_seed, seed, work_root): (index, seed)
+            for index, seed in ordered_items
+        }
+        for future in concurrent.futures.as_completed(future_by_key):
+            index, seed = future_by_key[future]
+            try:
+                results[(index, seed.name)] = future.result()
+            except SeedWitnessEvaluationError:
+                raise
+            except BaseException as exc:
+                raise SeedWitnessEvaluationError(
+                    "seed witness worker crashed before variant context: "
+                    f"seed={seed.name} owner={seed.owner_sugar}: {exc}"
+                ) from exc
+    return tuple(results[(index, seed.name)] for index, seed in ordered_items)
+
+
+def _seed_witness_worker_count(seed_count: int) -> int:
+    if seed_count <= 1:
+        return 1
+    raw = os.environ.get("SUGAR_WITNESS_WORKERS")
+    if raw is not None:
+        try:
+            workers = int(raw)
+        except ValueError as exc:
+            raise ValueError(
+                "invalid SUGAR_WITNESS_WORKERS: expected positive integer, "
+                f"observed {raw!r}"
+            ) from exc
+        if workers < 1:
+            raise ValueError(
+                "invalid SUGAR_WITNESS_WORKERS: expected positive integer, "
+                f"observed {raw!r}"
+            )
+        return min(workers, seed_count)
+    return min(8, os.cpu_count() or 1, seed_count)
+
+
+def _evaluate_one_seed(
+    seed: SugarWitnessSeed,
+    work_root: Path,
+) -> SeedWitnessEvaluation:
+    triple_failures: list[WitnessTripleFailure] = []
+    non_circularity_failures: list[NonCircularityFailure] = []
+    if isinstance(seed, SugarRedEffectWitnessPair):
+        for variant, witness in (
+            ("truthful", seed.truthful),
+            ("lying", seed.lying),
+        ):
+            try:
+                observation = _observe_red_effect(witness)
+            except BaseException as exc:
+                raise SeedWitnessEvaluationError(
+                    "seed witness worker crashed: "
+                    f"seed={seed.name} variant={variant} "
+                    f"owner={seed.owner_sugar}: {exc}"
+                ) from exc
+            _check_owner_selected(
+                seed=seed,
+                variant=variant,
+                selected_sugars=observation.selected_sugars,
+                triple_failures=triple_failures,
+                non_circularity_failures=non_circularity_failures,
+            )
+            _check_red_effect_witness(
+                seed=seed,
+                variant=variant,
+                witness=witness,
+                observation=observation,
+                failures=triple_failures,
+            )
+        return SeedWitnessEvaluation(
+            seed_name=seed.name,
+            triple_failures=tuple(triple_failures),
+            non_circularity_failures=tuple(non_circularity_failures),
+        )
+
+    for variant, witness in (
+        ("truthful", seed.truthful),
+        ("lying", seed.lying),
+    ):
+        try:
+            result = run_source_through_real_solver(
+                work_root / seed.name / variant,
+                witness.source,
+            )
+        except BaseException as exc:
+            raise SeedWitnessEvaluationError(
+                "seed witness worker crashed: "
+                f"seed={seed.name} variant={variant} "
+                f"owner={seed.owner_sugar}: {exc}"
+            ) from exc
+        _check_owner_selected(
+            seed=seed,
+            variant=variant,
+            selected_sugars=result.selected_sugars,
+            triple_failures=triple_failures,
+            non_circularity_failures=non_circularity_failures,
+        )
+        if not result.proofir_emitted:
+            triple_failures.append(
+                WitnessTripleFailure(
+                    seed=seed.name,
+                    owner_sugar=seed.owner_sugar,
+                    variant=variant,
+                    axis="proofir-emitted",
+                    expected="non-empty ir",
+                    observed="<empty>",
+                )
+            )
+        if result.verdict != witness.expected:
+            triple_failures.append(
+                WitnessTripleFailure(
+                    seed=seed.name,
+                    owner_sugar=seed.owner_sugar,
+                    variant=variant,
+                    axis="verdict",
+                    expected=witness.expected,
+                    observed=result.verdict,
+                )
+            )
+    return SeedWitnessEvaluation(
+        seed_name=seed.name,
         triple_failures=tuple(triple_failures),
         non_circularity_failures=tuple(non_circularity_failures),
     )
