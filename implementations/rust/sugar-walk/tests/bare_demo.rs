@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // End-to-end demo for issue #368: walk the bare program from paper 07's
 // example fixture and assert the WP at function entry is exactly what

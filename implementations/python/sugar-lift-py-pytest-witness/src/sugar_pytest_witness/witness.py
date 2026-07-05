@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """pytest witness lifter -- the proofchain-native correctness producer.
 
 Instead of lifting a test's assertions into a symbolic consistency claim, this

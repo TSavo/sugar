@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `FunctionMapSugar`: the `.map(path_fn)` adaptor over a literal-derived sequence.
 // Closure maps are owned by `MapSugar`; this node owns the stdlib shape where the

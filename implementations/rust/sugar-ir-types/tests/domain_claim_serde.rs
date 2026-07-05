@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Round-trip serde tests for the DomainClaim wire form and its
 // `Into<DomainClaim>` impl from `ConceptSiteMemento`.

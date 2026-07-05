@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // JCS conformance vectors for sugar_canonicalizer::encode_jcs.
 //

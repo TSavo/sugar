@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """A pytest plugin that records (node id -> outcome) for every test in ONE run.
 
 This is what makes the witness PER TEST instead of per file. The old lifter ran

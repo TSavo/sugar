@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `collection_literal`: finite-collection CONSTRUCTORS over written literals --
 // `vec![a, b, c]`, `Vec::from([a, b, c])` / `Vec::from(&[a, b, c])`, and

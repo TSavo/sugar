@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // ra_daemon_client.rs: thin client for the resident rust-analyzer host inside
 // the `sugar-linkerd` daemon.

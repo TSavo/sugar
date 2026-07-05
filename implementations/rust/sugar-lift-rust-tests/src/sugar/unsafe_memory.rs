@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Sugar for unsafe-memory writes. `clone_to_uninit` mutates raw / MaybeUninit
 // storage, so a value flowing through it is not a timeless construction from

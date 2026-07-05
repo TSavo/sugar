@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // LiteralIteratorQuantifierSugar: constraint-position `.all(..)` / `.any(..)`
 // over a finite literal iterator. This node is deliberately boring glue: the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `inspect`: value-preserving `.inspect(f)` surfaces. `Iterator::inspect` yields the
 // SAME items in the SAME order, so over a finite literal sequence it is the IDENTITY

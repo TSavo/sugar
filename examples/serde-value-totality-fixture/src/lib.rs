@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // serde-value-totality-fixture: Phase 2 Tier D-lib source-code exhibit.
 //

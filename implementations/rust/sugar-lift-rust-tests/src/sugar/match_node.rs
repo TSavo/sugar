@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `MatchSugar`: an N-arm match reduced to the conjunction of `guard_i => body_i`, each
 // `guard_i` the discriminant predicate the arm's pattern states over the scrutinee (the

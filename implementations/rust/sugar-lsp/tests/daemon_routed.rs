@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // daemon_routed.rs: integration tests for the sugar-lsp daemon-client mode.
 //

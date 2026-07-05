@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Extended JCS-JSON encoder tests. Covers the RFC 8785 / spec-pass-7
 // invariants the unit tests in jcs.rs only sample.

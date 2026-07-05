@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // StringPredicateSugar: constraint-shaped stdlib string/char predicates. These
 // outrank the generic boolean-predicate fallback so `assert!(s.starts_with("x"))`

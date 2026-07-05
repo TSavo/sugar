@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // END-TO-END REGRESSION for the ambient-universal forall-rewrite
 // (`with_ambient_foralls`): a `#euf#` obligation conjoins a lifted universal

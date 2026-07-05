@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `dyn Any` type-identity sugar. The source of truth is the concrete type at a
 // visible coercion site (`&expr as &dyn Any`, `Box::new(expr) as Box<dyn Any>`).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Integration tests for the multi-solver layer driven through the
 // public Runner API. Uses the `stub:` solver shorthand so CI doesn't

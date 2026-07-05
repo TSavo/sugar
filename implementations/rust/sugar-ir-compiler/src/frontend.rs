@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Typed ProofIR frontend adapter. This is the one legal transport-JSON decode
 // point during the frontend-boundary campaign; backend drains move behind it.

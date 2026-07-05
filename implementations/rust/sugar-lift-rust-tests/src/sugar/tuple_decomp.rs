@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `tuple_decomp` — the SHARED assertion-surface decomposition for tuple-valued warrants.
 //

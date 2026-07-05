@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // RUST INTEGER-DIVISION SOUNDNESS PROBE (#1446 rust-side equivalent).
 //

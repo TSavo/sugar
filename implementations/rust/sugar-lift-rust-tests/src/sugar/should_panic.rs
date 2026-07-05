@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `should_panic` — lift machinery for `#[test] #[should_panic]` functions.
 //

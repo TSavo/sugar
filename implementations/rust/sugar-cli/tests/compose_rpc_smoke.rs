@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // compose_rpc_smoke.rs: federation-witness test for `sugar compose --rpc`.
 //

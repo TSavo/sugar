@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `WrappingNegSugar`: primitive integer `.wrapping_neg()` over a grounded literal is
 // a stdlib/compiler axiom. The receiver child owns the numeric floor; this sugar only

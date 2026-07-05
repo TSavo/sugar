@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ResultTransposeCollectSugar`: stdlib
 // `.map(|x| -> Result<Option<T>, E> { ... }).filter_map(Result::transpose).collect()`

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `MatchScrutineeSugar`: the REFUSE-side node for a `match <runtime call> { .. }` whose
 // asserted value is the arm taken by a RUNTIME non-scalar result. It OWNS, in its own

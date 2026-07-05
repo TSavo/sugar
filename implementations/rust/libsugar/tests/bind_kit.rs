@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use libsugar::core::{
     address, bind_term_document, named_term_document_from_bind_payload,

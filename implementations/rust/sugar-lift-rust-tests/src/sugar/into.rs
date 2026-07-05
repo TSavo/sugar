@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `.into()` over a target-typed primitive literal floor. The factory supplies the
 // compiler-owned target type from the surrounding typed binding; this sugar reduces

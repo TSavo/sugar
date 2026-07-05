@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // The TERM-DISPATCH LEAF the factory's term arms bottom out in when an arm's
 // own PREAMBLE (not a child recursion) already computed a lawful floor:

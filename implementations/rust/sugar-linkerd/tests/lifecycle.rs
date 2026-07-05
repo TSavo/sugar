@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // lifecycle.rs: daemon lifecycle integration tests per spec §8.
 //

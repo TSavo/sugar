@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for pure `bool` Option-producing methods. This sugar has no
 // effect verdict of its own: it either composes child floors into the concrete

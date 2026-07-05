@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // IfSugar: lifts `if COND { THEN } [else { ELSE }]` (and `else if ...` chains)
 // to `Desugared::StmtBlock { guarded, raises, fall_through }`.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Panic-freedom fixture. Two production functions, each calling `Option::unwrap`
 // (a PARTIAL: it panics when the Option is None). The substrate's job is to

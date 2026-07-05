@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ConstSugar`: a compiler-known `const` path is transparent to its initializer.
 // The compiler already proved the path resolves for compiling code; recognition

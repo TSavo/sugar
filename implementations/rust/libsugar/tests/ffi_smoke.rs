@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // FFI smoke test for the C ABI exposed by libsugar per CCP §6.2.
 //

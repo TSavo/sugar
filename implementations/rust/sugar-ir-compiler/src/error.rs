@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Compile error model. One enum, one numeric code per variant, mapped
 // to the JSON-RPC error codes in the spec.

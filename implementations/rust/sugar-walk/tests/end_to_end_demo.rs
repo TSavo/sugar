@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // End-to-end demo: lift + walk + shadow, with NO hand-supplied
 // preconditions. The bare demo source is parsed in full; `f`'s precondition

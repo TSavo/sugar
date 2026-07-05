@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `StepBySugar`: the `.step_by(n)` adaptor. A decorator `Sugar` over an inner
 // sequence-`Sugar` that keeps every `n`-th element starting at index 0

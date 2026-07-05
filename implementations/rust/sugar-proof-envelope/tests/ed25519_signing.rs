@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Ed25519 signing helper tests. Pins the spec invariants:
 //   - "ed25519:" prefix on string-form signatures and pubkeys

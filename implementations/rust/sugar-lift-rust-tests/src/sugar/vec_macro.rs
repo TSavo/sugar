@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `VecMacroSugar`: compiler/std macro sugar for literal `vec![a, b, ...]`.
 // The repeat form `vec![x; n]` is deliberately not claimed here; array-repeat

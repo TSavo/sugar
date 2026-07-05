@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `UseSugar`: compiler import facts, not type checking. For compiling Rust, the
 // compiler has already accepted `use super::*`; this sugar materializes the visible

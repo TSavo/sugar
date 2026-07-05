@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `BinOpSugar`: the CONSTRUCTIVE term node for an ARITHMETIC binary operator in TERM
 // position (`a + b`, `x * y`, `n << 2`, ...). It mirrors EXACTLY the arithmetic

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Minimal CBOR decoder for .proof catalog reading. We only need the
 // major types we emit: unsigned int, byte string, text string, array,

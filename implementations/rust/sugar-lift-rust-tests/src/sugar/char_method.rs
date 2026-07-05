@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM/CONSTRAINT recognizers for pure total `char` methods. This sugar has no
 // effect verdict of its own: it composes typed child floors, or bubbles a child

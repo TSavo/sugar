@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `CycleTakeSugar`: `.cycle().take(n)` over a finite receiver. Bare `cycle()` is not
 // a finite composite floor; it becomes constructible only when a downstream `take`

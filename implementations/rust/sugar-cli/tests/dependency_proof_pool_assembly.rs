@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Voltron pool assembly: sugar prove must ask configured kits for the
 // dependency .proof files they resolve through their own package managers, then

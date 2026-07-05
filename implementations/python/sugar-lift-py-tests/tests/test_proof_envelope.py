@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Proof-envelope tests: round-trip, cross-kit byte-equivalence, and
 # sign/verify with known-good test vectors.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // FloatRefinementSugar: constraint-shaped stdlib float predicates. These are
 // first-order refinement atoms over the receiver, not generic

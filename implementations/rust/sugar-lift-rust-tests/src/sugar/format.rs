@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // The general string-formatting reducer. A `format!`/`.to_string()`/
 // `concat!`/string-`+` over operands that all resolve to WRITTEN LITERALS is sugar for

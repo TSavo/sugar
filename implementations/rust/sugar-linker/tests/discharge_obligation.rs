@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Integration tests for the post-implies-pre discharge check
 // (issue #249, the soundness hole closed by this commit).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // The superposition report: a VERDICT VIEW over the discharge the verifier
 // already performs. It owns no solver. The verifier compiles each callsite

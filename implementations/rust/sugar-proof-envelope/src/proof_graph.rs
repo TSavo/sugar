@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Typed proof-graph helpers. A .proof catalog is constructed in exactly one
 // direction:

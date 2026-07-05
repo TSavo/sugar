@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `BvBinOpSugar`: the constructive bv32 term node for a BIT-OPERATION binary operator
 // (`x << 2`, `a & b`, `x | y`, `a ^ b`, `n >> k`). It intercepts these operators

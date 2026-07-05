@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `LiteralSugar`: the BASE-CASE sequence node -- a finite literal domain (a literal
 // array `[e0, e1, ...]` or a closed integer range `a..b` / `a..=b`). Relocated

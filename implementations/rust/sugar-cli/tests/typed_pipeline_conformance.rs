@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // IDD instrument: typed-pipeline interfaces must declare the seven points from
 // docs/superpowers/specs/2026-07-02-typed-pipeline-interface-map.md §4.

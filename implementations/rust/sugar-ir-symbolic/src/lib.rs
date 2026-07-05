@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // sugar-ir-symbolic: Rust kit. Mirrors the C++ kit at
 // implementations/cpp/sugar-ir-symbolic/include/sugar/ir.hpp.

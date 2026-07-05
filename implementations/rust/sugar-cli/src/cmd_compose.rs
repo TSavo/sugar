@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `sugar compose --rpc`: JSON-RPC subprocess transport for the
 // canonical compose primitive per CCP §6.3.

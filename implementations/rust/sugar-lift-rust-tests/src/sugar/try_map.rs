@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `TryMapSugar`: std `array::try_map(path_fn)` over a literal array when the
 // source function returns an exact `Option` value. This owns the literal

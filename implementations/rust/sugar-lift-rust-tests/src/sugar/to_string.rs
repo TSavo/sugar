@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for closed stdlib `<literal>.to_string()`. Unknown receivers
 // decline so generic MethodSugar can continue digging the method-call universe.

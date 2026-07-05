@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `SliceIndexSugar`: term-position stdlib slice indexing over written literal
 // slices. This owns the `SliceIndex` method-call surface used by coretests'

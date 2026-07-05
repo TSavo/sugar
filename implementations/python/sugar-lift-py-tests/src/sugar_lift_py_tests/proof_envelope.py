@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Proof-envelope builder. Deterministic CBOR (RFC 8949 §4.2.1) encoding
 # of a catalog memento with member envelopes embedded as opaque byte

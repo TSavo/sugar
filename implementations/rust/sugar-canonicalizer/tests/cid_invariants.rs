@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // CID-shape invariants for blake3_512_of. These tests pin the spec
 // invariants: the self-identifying tag prefix, lowercase hex, exact

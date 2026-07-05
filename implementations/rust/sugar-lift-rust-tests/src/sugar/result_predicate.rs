@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ResultPredicateSugar`: `.is_ok()` / `.is_err()` over a grounded std `Result`
 // constructor. The sibling of `option_predicate` (`is_some`/`is_none`): once the

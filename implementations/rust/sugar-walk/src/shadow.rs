@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Shadow source tree: a parallel structure mirroring a source `syn::ItemFn`
 // where each AST node is a "slot" carrying ZERO OR MORE arrivals.

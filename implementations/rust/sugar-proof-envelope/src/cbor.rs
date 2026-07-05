@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Deterministic CBOR encoder. RFC 8949 §4.2.1 rules:
 //   - shortest-form integer encoding (smallest of short / u8 / u16 / u32 / u64)

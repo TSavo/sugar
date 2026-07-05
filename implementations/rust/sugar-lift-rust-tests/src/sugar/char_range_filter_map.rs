@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `CharRangeFilterMapSugar`: stdlib/compiler axiom for Rust scalar-value `char`
 // ranges. `(from..=to).eq((from as u32..=to as u32).filter_map(char::from_u32))`

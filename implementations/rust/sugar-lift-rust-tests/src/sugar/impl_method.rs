@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ImplMethodSugar`: the REFUSE-side node for an `impl` block declared as a STATEMENT inside
 // a test fn (`impl Write for W { fn write_str(..) { assert_eq!(..) } }`). It OWNS, in its own

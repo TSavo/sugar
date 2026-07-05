@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // AliasingMemento pool integration tests. Verifies that MementoPool
 // correctly indexes aliasing-memento entries and answers

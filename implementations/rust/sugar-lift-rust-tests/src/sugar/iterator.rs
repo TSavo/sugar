@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IteratorSugar`: the `.iter()` / `.into_iter()` identity-family adaptor over a
 // sequence Sugar. It is the explicit node between a composite domain and terminals like

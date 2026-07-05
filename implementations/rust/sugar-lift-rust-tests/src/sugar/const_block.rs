@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `Expr::Const` (`const { EXPR }`). A const block translates
 // its expression-only tail and scopes its locals; bare paths recurse into the

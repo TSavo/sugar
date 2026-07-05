@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 //! `SourceFragment` -- the ONE door the factory uses to talk to the syn AST.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `OptionPredicateSugar`: `.is_some()` / `.is_none()` over a grounded std Option
 // constructor. This is value sugar, separate from generic method calls: once the

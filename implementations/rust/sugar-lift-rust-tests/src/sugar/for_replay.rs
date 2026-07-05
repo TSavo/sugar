@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ForReplaySugar`: finite literal-loop temporal replay. This is for loops whose
 // body is not a symbolic forall because it contains source state transitions

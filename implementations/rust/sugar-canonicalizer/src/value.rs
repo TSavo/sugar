@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Value tree for the JCS canonical-encoder input. Mirrors the C++
 // `sugar::canonicalizer::Value` shape: scalars + array + object

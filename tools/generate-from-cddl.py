@@ -50,7 +50,7 @@ def parse_cddl(content: str) -> dict:
 def generate_rust(rules: dict) -> str:
     """Generate Rust types and parser from CDDL rules."""
     output = []
-    output.append("// SPDX-License-Identifier: Apache-2.0")
+    output.append("// SPDX-License-Identifier: MIT OR Apache-2.0")
     output.append("//")
     output.append("// GENERATED FILE: DO NOT EDIT")
     output.append("// Source: protocol/sugar-ir.cddl")

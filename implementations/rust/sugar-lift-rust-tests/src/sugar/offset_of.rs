@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `OffsetOfSugar`: `mem::offset_of!(T, field...)` is a compiler layout axiom.
 // For concrete source-visible layouts, ask rustc for the exact offset and lower

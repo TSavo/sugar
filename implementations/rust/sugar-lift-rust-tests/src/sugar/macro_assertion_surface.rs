@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // ASSERTION-SURFACE recognizer for held `macro_rules!` statement wrappers. Macro
 // expansion is source-to-source: the expanded assertion body goes straight back

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Witness lift surface (sugar-lift/1 NDJSON). At LIFT time this is the
 # PRODUCER: it runs each test under pytest and emits a ContractDecl carrying the

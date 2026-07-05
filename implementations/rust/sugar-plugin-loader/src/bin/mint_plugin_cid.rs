@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `mint-plugin-cid` — compute the content CID for a plugin file per
 // 2026-05-12-plugin-protocol.md §6.1.

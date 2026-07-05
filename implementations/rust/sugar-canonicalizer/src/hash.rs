@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // BLAKE3-512 hash helper. v1.1.0 of the protocol mandates
 // self-identifying hashes of the form:

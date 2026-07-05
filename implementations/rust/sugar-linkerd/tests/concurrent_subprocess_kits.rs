@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // concurrent_subprocess_kits.rs - regression test for issue #421:
 // concurrent subprocess kit lifters under load (spawn_blocking integration).

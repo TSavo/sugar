@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ArrayTryFromSugar`: fixed-array `TryFrom` over a literal-backed slice. The
 // slice composite owns the elements; this node owns only the stdlib conversion:

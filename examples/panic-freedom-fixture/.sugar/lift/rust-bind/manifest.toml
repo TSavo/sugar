@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Rust bind-IR (sugar) surface. `working_dir = "."` anchors `command` at this
 # kit root (examples/panic-freedom-fixture/), so the walk binary resolves at

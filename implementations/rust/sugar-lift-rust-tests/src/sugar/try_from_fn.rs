@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `TryFromFnSugar`: std/core `array::try_from_fn::<_, N, _>(path_fn)` where
 // the const length is literal and the source function returns an exact `Option`.

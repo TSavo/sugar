@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // IrTerm boundary-collapse campaign (#3192), Slice 2 Instrument A re-anchor.
 

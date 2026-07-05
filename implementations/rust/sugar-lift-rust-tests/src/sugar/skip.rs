@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `SkipSugar`: the `.skip(n)` adaptor. A decorator `Sugar` over an inner
 // sequence-`Sugar` that drops the first `n` elements. Lifted verbatim from the

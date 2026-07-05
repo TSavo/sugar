@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ExtractIfSugar`: replay the stdlib `BTreeMap::extract_if(.., pred).for_each(drop)`
 // state transition when the map was built from a finite literal integer-key iterator.

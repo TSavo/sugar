@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // COMPOSITE recognizer for literal range constructor values used as statement/let
 // surfaces. The recognizer constructs each field's child body without reducing it;

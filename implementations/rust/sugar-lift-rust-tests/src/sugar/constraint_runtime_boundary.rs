@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ConstraintRuntimeBoundarySugar`: relation operands that are not missing literal
 // reducers, but proven runtime boundaries. The only live owner here is the

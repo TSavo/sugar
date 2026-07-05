@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // End-to-end subprocess test. Spawns the standalone
 // `sugar-ir-smt-lib` binary, performs handshake and one compile via

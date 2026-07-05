@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Conformance test: Region + DependentSort byte-pinned fixture.
 // Verifies that the Rust kit produces the pinned CID for the

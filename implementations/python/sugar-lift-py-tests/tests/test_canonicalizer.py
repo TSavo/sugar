@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Cross-language conformance tests. Hash and JCS strings are pinned from
 # the Rust probe at implementations/rust/examples/layer2_py_probe.rs.

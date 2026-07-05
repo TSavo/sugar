@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `LiteralSliceSugar`: sequence-floor sugar for const-bounded slices over literal
 // arrays, e.g. `xs[..0]`. This is compiler/std sugar over a written array: when the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `OptionUnwrapSugar`: `.unwrap()` / `.expect(..)` over a grounded std
 // `Option`/`Result` constructor is value sugar. The child is still built by the

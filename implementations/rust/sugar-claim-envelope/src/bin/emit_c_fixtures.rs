@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Emits pinned test fixtures for the C kit's cross-kit byte-equivalence tests.
 // Run: cargo run --release -p sugar-claim-envelope --bin emit_c_fixtures

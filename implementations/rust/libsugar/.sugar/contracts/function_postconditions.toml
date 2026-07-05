@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Rust-kit manifest for audited function postconditions that are specific to
 # libsugar's own code. The Rust kit reads this as side metadata during

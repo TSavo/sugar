@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ComputeFloatSugar`: stdlib dec2flt `compute_float::<f32/f64>(q, w)` is an
 // internal Rust axiom. When the call is pinned to literal arguments, ask rustc for

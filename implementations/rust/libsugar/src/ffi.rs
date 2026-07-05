@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // C ABI FFI for the canonical compose primitive, per CCP §6.2.
 //

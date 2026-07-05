@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `Utf8ChunksSugar`: literal-backed stdlib temporal replay for
 // `[u8]::utf8_chunks()`.

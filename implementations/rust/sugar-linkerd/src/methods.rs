@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // methods.rs: implementations of the five JSON-RPC methods per spec R5-R9.
 //

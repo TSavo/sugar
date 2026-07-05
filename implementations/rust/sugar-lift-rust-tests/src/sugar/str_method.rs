@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for closed stdlib `&str`/`String` methods over written string
 // literals: string-producing methods (`.to_ascii_uppercase()`, `.to_ascii_lowercase()`,

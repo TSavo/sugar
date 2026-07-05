@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `InsertSugar`: replay `BTreeMap::insert(k, v)` presence semantics when the map
 // was built from a finite literal integer-key iterator. The returned Option is

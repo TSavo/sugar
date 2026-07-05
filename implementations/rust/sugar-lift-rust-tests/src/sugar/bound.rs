@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `BoundSugar`: the binding-resolution node. A `let name = <init>;` reference, when
 // it appears as the OPERAND of a consuming `Sugar`, is not an ad-hoc lookup inlined

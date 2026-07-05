@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ZipSugar`: `.zip(rhs)` over two finite literal-derived sequences. Structurally a
 // sibling of `chain`: both the receiver and the single argument are built through the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Exact IEEE-754 literal method sugar for f32/f64 bit conversions.
 //

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // .proof envelope builder. Per RFC 8949 §4.2.1 + the .proof spec
 // (protocol/specs/2026-04-30-proof-file-format.md):

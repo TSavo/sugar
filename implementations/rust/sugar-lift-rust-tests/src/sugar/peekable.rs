@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `peekable`: the `.peekable()` adaptor. `Iterator::peekable` yields the SAME items in
 // the SAME order -- it only ADDS `peek`/`next_if` capability; it never alters the value

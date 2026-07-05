@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `EnumerateSugar`: the `.enumerate()` adaptor. A decorator `Sugar` over an inner
 // sequence-`Sugar` that pairs each element with its position `(i, e)`. Lifted

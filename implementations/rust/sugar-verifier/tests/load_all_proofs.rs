@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 1 (load_all_proofs) tests. Pins:
 //   - rule 1 (filename CID matches content): mismatched filename is

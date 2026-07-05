@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IntPowSugar`: primitive integer `.pow(<literal exponent>)` as a compiler
 // axiom. It has no effect verdict of its own: it composes typed child floors,

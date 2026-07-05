@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `FilterSugar`: the `.filter(pred)` adaptor. A decorator `Sugar` over an inner
 // sequence-`Sugar` that keeps the elements where the closure const-evaluates true.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `CallSugar`: the CONSTRUCTIVE term node for a free-function call `f(a, b, ...)` --
 // the `Expr::Call` arm of `translate_term_in_scope` (NOT `Expr::MethodCall`, which is

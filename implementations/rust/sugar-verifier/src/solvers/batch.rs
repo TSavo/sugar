@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Chunked batched z3. Spawning a fresh z3 per obligation costs ~50ms alone and
 // ~270ms under 16-way parallel contention — which strangles a tight timeout into

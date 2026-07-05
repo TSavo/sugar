@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Rust `SourceOracle`: emits and resolves `SourceMemento`s.
 //!
 //! A memento is a pointer into source: file, span, function name, parameter

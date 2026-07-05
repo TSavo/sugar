@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // IR-JSON parser. Walks an IR-JSON document (per
 // protocol/specs/2026-04-30-ir-formal-grammar.md) and produces typed

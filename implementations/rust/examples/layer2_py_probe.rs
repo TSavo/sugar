@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // One-shot probe: prints the JCS-encoded canonical bytes and BLAKE3-512
 // hash of the same shapes that the Python Layer 2 adapter mints, so the

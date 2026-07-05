@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `CompareSugar`: the CONSTRUCTIVE term node for a COMPARISON in genuine TERM
 // position (`a[0] < b[0]` as the operand of an outer `==`, or the LHS of

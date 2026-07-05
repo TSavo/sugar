@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `intersperse` / `intersperse_with`: value-sequence adapters over a finite literal
 // iterator. The receiver composes through the shared sequence-family builder; the

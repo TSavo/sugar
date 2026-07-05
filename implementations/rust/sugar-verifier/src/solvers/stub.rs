@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stub solver. Returns a hard-coded verdict after an optional sleep.
 // Used by the multi-solver demo so CI can exercise every mode without

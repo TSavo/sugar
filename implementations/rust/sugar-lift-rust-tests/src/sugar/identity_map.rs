@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IdentityMapSugar`: the `.map(|x| x)` / `.map(|x| *x)` adaptor over a
 // literal-derived sequence. Unlike `MapSugar`, this does not inspect or transform the

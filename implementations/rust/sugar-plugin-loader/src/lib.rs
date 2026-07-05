@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // sugar-plugin-loader — PEP 1.7.0 runtime engine.
 //

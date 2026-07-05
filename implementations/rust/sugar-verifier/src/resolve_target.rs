@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 3: resolve_target. Look up the CallSite's bridge.targetCid in
 // the pool; return the target contract memento's `pre` formula as the

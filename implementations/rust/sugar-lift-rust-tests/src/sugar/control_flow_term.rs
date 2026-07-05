@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `ControlFlowTermSugar`: the refuse/router-side node for an effectful control-flow construct in
 // TERM position -- a `try { .. }` block (`Expr::TryBlock`), an `async { .. }` block

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `cfg_select! { pred => { .. } _ => { .. } }` is a compile-time branch
 // selector. Assertion-bearing inactive branches do not exist on this target;

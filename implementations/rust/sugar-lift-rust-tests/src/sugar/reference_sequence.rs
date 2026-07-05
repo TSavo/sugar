@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `reference_sequence`: a finite literal sequence in REFERENCE / IntoIterator position
 // -- a `&<array>` (or `&name` resolving to a literal array) used directly as an iterator

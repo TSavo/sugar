@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Measure peak RSS for `sugar verify` with the host `/usr/bin/time` format.
 # Darwin reports bytes via `time -l`; Linux reports KiB via `time -v`.

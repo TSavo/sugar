@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // ConstBoundSugar: assertion-shaped expressions whose operands are compiler-known
 // const terms (const generics, associated consts, literals, arithmetic/comparison

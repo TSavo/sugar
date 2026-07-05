@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 4 handshake: Tier 1 (hash equality) and Tier 2 (cached
 // implication memento) discharge for cross-language pre/post pairs.

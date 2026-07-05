@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // JSON-RPC over stdio subprocess client. Wraps a binary that speaks
 // the protocol defined in protocol/specs/2026-04-30-ir-compiler-protocol.md

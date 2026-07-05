@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `TryFromSugar`: `<DST as TryFrom<SRC>>::try_from(int-literal)` (and the
 // `DST::try_from(int-literal)` / `<DST>::try_from(..)` spellings) over an integer

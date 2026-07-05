@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Raw-pointer arithmetic (`ptr.wrapping_add(n)`, `wrapping_byte_add`, and their
 // subtraction siblings) is address / provenance work, not primitive-integer

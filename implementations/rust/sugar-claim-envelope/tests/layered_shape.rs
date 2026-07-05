@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Layered shape tests for `mint_contract` / `mint_bridge` /
 // `mint_implication`.

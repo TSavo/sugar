@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `MonadicSugar`: the CONSTRUCTIVE term node for the std `Option`/`Result`
 // CONSTRUCTORS over values -- `Some(x)`, `Ok(x)`, `Err(x)`, and the nullary

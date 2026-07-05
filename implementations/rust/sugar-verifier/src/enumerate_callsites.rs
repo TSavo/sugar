@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Stage 2: enumerate_callsites. For every contract memento in the
 // pool, walk its pre/post/inv looking for ctor terms whose `name`

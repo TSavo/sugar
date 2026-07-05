@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `CtorSugar`: the generic CONSTRUCTIVE named-ctor TERM node — the shared node the
 // term arms whose `Term::Ctor` has no dedicated node build through (`ref`/`ref_mut`,

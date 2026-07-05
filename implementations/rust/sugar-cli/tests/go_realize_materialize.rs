@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Residual rust-CLI behavior assertion from the former Go codegen
 // gauntlet. The deleted Go codegen kit tests have been removed; this negative test

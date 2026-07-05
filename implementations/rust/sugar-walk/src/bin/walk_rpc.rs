@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `sugar-walk-rpc`: minimal JSON-RPC 2.0 server over stdio. Each line
 // of stdin is one JSON-RPC request; each response is one line of JSON

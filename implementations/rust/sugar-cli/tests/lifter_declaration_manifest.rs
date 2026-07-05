@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // IDD instrument for #3384: every source-lift entrypoint must be declared and
 // ruled in a typed manifest. Absences are manifest rows too; no inline

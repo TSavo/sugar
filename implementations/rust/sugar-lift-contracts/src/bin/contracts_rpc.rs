@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // contracts_rpc: the RPC kit entrypoint for the rust `#[requires]` /
 // `#[ensures]` contract lifter.

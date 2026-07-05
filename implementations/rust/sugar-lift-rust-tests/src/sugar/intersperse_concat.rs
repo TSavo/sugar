@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `IntersperseConcatSugar`: stdlib string-sequence sugar for
 // `<literal seq>.intersperse(<literal sep>).collect::<Vec<_>>().concat()`.

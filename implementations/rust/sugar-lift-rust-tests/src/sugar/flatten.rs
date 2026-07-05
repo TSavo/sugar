@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `flatten`: the `.flatten()` adaptor over a finite literal of literal sub-sequences
 // (`[[1, 2], [3, 4]].iter().flatten()`). It concatenates each element's OWN finite

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // call_edges.rs: spec #114 §1: extract call-edge mementos from a syn AST.
 //

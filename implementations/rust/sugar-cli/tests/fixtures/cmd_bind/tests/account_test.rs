@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Test fixture for the bind integration tests.
 // The test-lift path reads these assertions and lifts them into

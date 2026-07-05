@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Witness deterministic build script executions.
 
 This is the same witness protocol the pytest seat uses, pointed at a build.

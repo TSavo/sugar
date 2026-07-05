@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Minimal CBOR decoder for .proof catalog reading. The implementation
 // moved to `sugar-proof-envelope::cbor_decode` so it can be reused

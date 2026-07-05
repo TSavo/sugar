@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 //! Grammar-totality ledger (IDD Phase-5 syn-source census).
 //!

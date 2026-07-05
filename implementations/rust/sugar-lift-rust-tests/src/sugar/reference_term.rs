@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `Expr::Reference`. Shared and mutable references are
 // capability constructors: `&x` -> `ref(x)`, `&mut x` -> `ref_mut(x)`.

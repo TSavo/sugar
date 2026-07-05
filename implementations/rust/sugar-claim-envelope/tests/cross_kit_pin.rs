@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Cross-kit pin generator for `claim_envelope` byte-equivalence tests in
 // other kits (python, cpp, csharp, go). Run with --nocapture to print

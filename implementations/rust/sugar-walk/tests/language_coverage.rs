@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Language-coverage tests: each Rust expression shape that lifts to an
 // IrTerm or IrFormula gets one assertion here. Demonstrates that the

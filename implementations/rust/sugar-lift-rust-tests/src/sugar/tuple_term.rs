@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // TERM recognizer for `Expr::Tuple`: the `literal_aggregate_term` "Tuple" ctor over
 // the element exprs. The same source shape also owns a tuple-component floor so

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // `CollectSugar`: `collect::<Vec<_>>()`, plus `collect::<Option<Vec<_>>>()` /
 // `collect::<Result<Vec<_>, _>>()` over a finite literal sequence whose final `.map`

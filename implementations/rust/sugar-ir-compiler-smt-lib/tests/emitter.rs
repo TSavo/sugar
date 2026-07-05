@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // SMT-LIB v2.6 emitter tests. Each formula kind translates correctly,
 // free-variable collection respects shadowing, bad inputs are

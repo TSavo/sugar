@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Generate a deliberately large-but-boring proof pool for RSS measurements.
 // This is a perf fixture builder, not a semantic showcase.
