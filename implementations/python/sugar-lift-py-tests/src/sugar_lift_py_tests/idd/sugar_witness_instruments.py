@@ -326,29 +326,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "is not currently a standalone solver verdict"
         ),
     ),
-    NonFolOptOut(
-        sugar_name="SubscriptAssignSugar",
-        floor_name="SupportValue",
-        reason="subscript assignment mutation produces no FOL assertion",
-        retirement_condition=(
-            "retire when subscript assignment mutation itself carries a "
-            "verdict-bearing state effect witness; current dunder seed selects "
-            "SubscriptAssignSugar and flips SAT/UNSAT through the unrelated "
-            "return value, while array mutation probes refuse at setitem_with"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="SubscriptDeleteSugar",
-        floor_name="SupportValue",
-        reason="subscript delete mutation produces no FOL assertion",
-        retirement_condition=(
-            "retire when subscript deletion mutation itself carries a "
-            "verdict-bearing state effect witness; current dunder seed selects "
-            "SubscriptDeleteSugar and flips SAT/UNSAT through the unrelated "
-            "return value, while deletion-state probes still reduce to an "
-            "incomplete callsite"
-        ),
-    ),
 )
 
 

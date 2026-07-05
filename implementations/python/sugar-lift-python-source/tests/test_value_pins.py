@@ -91,12 +91,14 @@ def _ellipsis_const():
 
 
 def test_str_constant_pins_value_at_use_site():
-    result = _lift("""
+    result = _lift(
+        """
         X = "abc"
 
         def f():
             return X
-        """)
+        """
+    )
     assert _tree_contains(result.ir, str_const("abc"))
     assert not _has_reads_effect(result, "X")
     assert not _pin_refusals(result.refusals)
@@ -131,12 +133,14 @@ def test_ellipsis_constant_pins_value_at_use_site():
 
 
 def test_int_bool_none_negative_pins():
-    scan = _scan("""
+    scan = _scan(
+        """
         A = 5
         B = True
         C = None
         D = -7
-        """)
+        """
+    )
     assert scan.pins["A"].term == int_const(5)
     assert scan.pins["B"].term == bool_const(True)
     assert scan.pins["C"].term == none_const()
@@ -150,12 +154,14 @@ def test_tuple_of_literals_pins():
 
 
 def test_final_confession_pins():
-    scan = _scan("""
+    scan = _scan(
+        """
         from typing import Final
 
         X: Final = 5
         Y: Final[int] = 6
-        """)
+        """
+    )
     assert scan.pins["X"].confession == "typing.Final"
     assert scan.pins["Y"].term == int_const(6)
 
@@ -270,12 +276,14 @@ def test_list_refuses_as_mutable():
 
 
 def test_mutable_list_pin_refusal_records_opacity_entry():
-    result = _lift("""
+    result = _lift(
+        """
         REGISTRY: list[str] = []
 
         def f():
             return 1
-        """)
+        """
+    )
 
     refusals = _pin_refusals(result.refusals)
     assert len(refusals) == 1
@@ -296,18 +304,22 @@ def test_mutable_list_pin_refusal_records_opacity_entry():
 
 
 def test_immutable_pin_keeps_opacity_empty_and_contracts_unchanged():
-    baseline = _lift("""
+    baseline = _lift(
+        """
         pass
 
         def f():
             return 1
-        """)
-    result = _lift("""
+        """
+    )
+    result = _lift(
+        """
         X = 5
 
         def f():
             return 1
-        """)
+        """
+    )
 
     assert result.opacity_report == []
     assert not _pin_refusals(result.refusals)
@@ -323,14 +335,16 @@ def test_dict_refuses_as_mutable():
 
 
 def test_mutable_dict_and_set_opacity_entries_are_distinct_and_structural():
-    result = _lift("""
+    result = _lift(
+        """
         CACHE = {"a": 1}
         SEEN = {1}
         VALUES = [1, 2]
 
         def f():
             return 1
-        """)
+        """
+    )
 
     assert [(row["name"], row["kind"]) for row in result.opacity_report] == [
         ("CACHE", "dict"),
@@ -357,12 +371,14 @@ def test_tuple_containing_list_refuses():
 
 
 def test_final_then_mutated_refuses_with_contradiction_message():
-    scan = _scan("""
+    scan = _scan(
+        """
         from typing import Final
 
         X: Final = 5
         X = 6
-        """)
+        """
+    )
     refusals = _pin_refusals(scan.refusals)
     assert len(refusals) == 1
     assert (
@@ -383,14 +399,16 @@ def test_refusal_record_is_structural():
 
 
 def test_totality_candidates_equal_admitted_plus_refused():
-    scan = _scan("""
+    scan = _scan(
+        """
         A = "ok"
         B = 2
         L = [1]
         M = 1
         M += 1
         Z = b"x"
-        """)
+        """
+    )
     assert scan.candidates == 5
     assert len(scan.pins) == 3
     assert len(_pin_refusals(scan.refusals)) == 2
@@ -409,23 +427,27 @@ def test_non_literal_bindings_are_not_candidates():
 
 
 def test_local_shadow_wins_over_pin():
-    result = _lift("""
+    result = _lift(
+        """
         X = "abc"
 
         def f(X):
             return X
-        """)
+        """
+    )
     assert not _tree_contains(result.ir, str_const("abc"))
 
 
 def test_refused_name_keeps_symbolic_read():
-    result = _lift("""
+    result = _lift(
+        """
         X = 1
         X = 2
 
         def f():
             return X
-        """)
+        """
+    )
     assert _has_reads_effect(result, "X")
     assert _pin_refusals(result.refusals)
 
@@ -445,13 +467,15 @@ def test_bad_twin_flip_changes_the_lifted_term():
 
 
 def test_int_enum_member_pins():
-    scan = _scan("""
+    scan = _scan(
+        """
         from enum import IntEnum
 
         class Status(IntEnum):
             OK = 200
             MISSING = 404
-        """)
+        """
+    )
     assert scan.pins["Status.OK"].term == int_const(200)
     assert scan.pins["Status.MISSING"].confession == "enum.value"
     assert scan.refusals == []
@@ -459,12 +483,14 @@ def test_int_enum_member_pins():
 
 
 def test_str_enum_member_pins():
-    scan = _scan("""
+    scan = _scan(
+        """
         from enum import StrEnum
 
         class Color(StrEnum):
             RED = "red"
-        """)
+        """
+    )
     assert scan.pins["Color.RED"].term == str_const("red")
     assert scan.refusals == []
 
@@ -472,12 +498,14 @@ def test_str_enum_member_pins():
 def test_plain_enum_member_refuses_by_name():
     # The == dispatch gate: Color.RED == 1 is False in python; pinning a
     # plain Enum member to its literal would be a wrong term.
-    scan = _scan("""
+    scan = _scan(
+        """
         from enum import Enum
 
         class Color(Enum):
             RED = 1
-        """)
+        """
+    )
     assert "Color.RED" not in scan.pins
     refusals = _enum_pin_refusals(scan.refusals)
     assert len(refusals) == 1
@@ -495,20 +523,23 @@ def test_plain_enum_member_refuses_by_name():
 
 
 def test_enum_member_attr_write_refuses():
-    scan = _scan("""
+    scan = _scan(
+        """
         from enum import IntEnum
 
         class Status(IntEnum):
             OK = 200
 
         Status.OK = 201
-        """)
+        """
+    )
     assert "Status.OK" not in scan.pins
     assert any("attribute write" in r["reason"] for r in scan.refusals)
 
 
 def test_enum_pin_substitutes_at_attribute_access():
-    result = _lift("""
+    result = _lift(
+        """
         from enum import IntEnum
 
         class Status(IntEnum):
@@ -516,19 +547,22 @@ def test_enum_pin_substitutes_at_attribute_access():
 
         def code():
             return Status.OK
-        """)
+        """
+    )
     assert _tree_contains(result.ir, int_const(200))
     # no AttributeError panic locus for the pinned access
     assert not _tree_contains(result.ir, {"kind": "panics"})
 
 
 def test_unpinned_attribute_access_keeps_panic_locus():
-    result = _lift("""
+    result = _lift(
+        """
         import os
 
         def sep():
             return os.sep
-        """)
+        """
+    )
     assert _tree_contains(result.ir, {"kind": "panics"})
 
 
@@ -537,7 +571,8 @@ def test_decorated_enum_class_refuses_by_name():
     # whatever the decorator returns. Caught live 2026-06-12: a class
     # decorator swapping the enum ran Color.RED == 99 while the scan
     # pinned 1 — a wrong term byte-identical to an inline literal.
-    scan = _scan("""
+    scan = _scan(
+        """
         from enum import IntEnum
 
         def shift(cls):
@@ -548,7 +583,8 @@ def test_decorated_enum_class_refuses_by_name():
         @shift
         class Color(IntEnum):
             RED = 1
-        """)
+        """
+    )
     assert "Color.RED" not in scan.pins
     reasons = [r["reason"] for r in scan.refusals]
     assert any("class decorator" in r for r in reasons)
@@ -558,11 +594,13 @@ def test_decorated_enum_class_refuses_by_name():
 def test_undecorated_enum_twin_still_pins():
     # the refusal above is the decorator, not collateral: the same class
     # without the decorator pins.
-    scan = _scan("""
+    scan = _scan(
+        """
         from enum import IntEnum
 
         class Color(IntEnum):
             RED = 1
-        """)
+        """
+    )
     assert scan.pins["Color.RED"].term == int_const(1)
     assert scan.totality_holds()
