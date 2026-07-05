@@ -194,9 +194,9 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="import aliases record name-binding support, not a FOL claim",
         retirement_condition=(
             "retire when the default proof path selects AliasSugar for import "
-            "alias support; current production probes use aliases as resolver "
-            "metadata and select no AliasSugar owner, while alias-backed calls "
-            "refuse before SAT/UNSAT"
+            "alias support; current import probes use aliases as resolver "
+            "metadata, select no AliasSugar owner, and alias-backed external "
+            "calls refuse at imported-callee/method sugar before SAT/UNSAT"
         ),
     ),
     NonFolOptOut(
@@ -233,10 +233,11 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "carry a solver verdict"
         ),
         retirement_condition=(
-            "retire when prove can discharge an attribute-assignment callsite "
-            "whose body selects AttributeAssignSugar but has no derived sibling; "
-            "current production probe refuses with `consistency check vacuous: "
-            "single constraint has no sibling to contradict`"
+            "retire when attribute-assignment mutation participates in a "
+            "verdict-bearing state bridge; current probes select "
+            "AttributeAssignSugar but refuse as object attribute mutation "
+            "effect, or with dunder support as control-flow body unexpected "
+            "CallSiteValue"
         ),
     ),
     NonFolOptOut(
@@ -247,10 +248,10 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "carry a solver verdict"
         ),
         retirement_condition=(
-            "retire when prove can discharge an attribute-deletion callsite whose "
-            "body selects AttributeDeleteSugar but has no derived sibling; "
-            "current production probe refuses with `consistency check vacuous: "
-            "single constraint has no sibling to contradict`"
+            "retire when attribute-deletion mutation participates in a "
+            "verdict-bearing state bridge; current dunder probes select "
+            "AttributeDeleteSugar but refuse as control-flow body unexpected "
+            "CallSiteValue"
         ),
     ),
     NonFolOptOut(
@@ -271,8 +272,10 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "solver path yields a SAT/UNSAT verdict"
         ),
         retirement_condition=(
-            "retire when bitwise terms produce SAT/UNSAT through the production "
-            "solver path"
+            "retire when bitwise Bv32 terms are decidable and typed-provenance "
+            "bearing in the production solver path; current variable and "
+            "constant probes select BitwiseOpSugar but prove reports "
+            "undecidable with an untyped FactoryWalkMemento formula"
         ),
     ),
     NonFolOptOut(
@@ -284,7 +287,9 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
         retirement_condition=(
             "retire when truthiness/value-flow floors produce a truthful/lying "
-            "solver witness for value-position boolean expressions"
+            "solver witness for value-position boolean expressions; current "
+            "probes select BoolOpSugar and refuse at the typed boolean "
+            "expression runtime boundary"
         ),
     ),
     NonFolOptOut(
@@ -302,9 +307,10 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         retirement_condition=(
             "until dict-constructor equality carries a verdict witness "
             "through the solver path (assert {1:2} == {1:3} is a "
-            "verdict-bearing claim; only the machinery is missing — "
-            "the structural-identity tests already prove the twin is "
-            "constructible the moment the path exists)"
+            "verdict-bearing claim; current probes select DictSugar and "
+            "refuse at DictLiteralValue.project_callsite_with, while the "
+            "structural-identity tests already prove the twin is "
+            "constructible the moment that bridge exists)"
         ),
     ),
     NonFolOptOut(
@@ -329,7 +335,9 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
         retirement_condition=(
             "retire when iterator-state and loop-body floors carry a "
-            "truthful/lying solver witness for for-loop execution"
+            "truthful/lying solver witness for for-loop execution; current "
+            "parameterized probes select ForSugar and refuse at the typed for "
+            "loop runtime boundary"
         ),
     ),
     NonFolOptOut(
@@ -354,7 +362,8 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
         retirement_condition=(
             "retire when the enclosing str.eq-bv-blocks universe carries an "
-            "OrdByte truthful/lying solver witness"
+            "OrdByte truthful/lying solver witness; current direct ord-byte "
+            "probes fail ProofIR construction with illegal free var byte_s_0"
         ),
     ),
     NonFolOptOut(
@@ -397,8 +406,9 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="subscript assignment mutation produces no FOL assertion",
         retirement_condition=(
             "retire when subscript assignment mutation itself carries a "
-            "verdict-bearing effect witness; current seed only proves the owner "
-            "appears on an inert support-return path"
+            "verdict-bearing state effect witness; current dunder seed selects "
+            "SubscriptAssignSugar and flips SAT/UNSAT through the unrelated "
+            "return value, while array mutation probes refuse at setitem_with"
         ),
     ),
     NonFolOptOut(
@@ -407,8 +417,10 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="subscript delete mutation produces no FOL assertion",
         retirement_condition=(
             "retire when subscript deletion mutation itself carries a "
-            "verdict-bearing effect witness; current seed only proves the owner "
-            "appears on an inert support-return path"
+            "verdict-bearing state effect witness; current dunder seed selects "
+            "SubscriptDeleteSugar and flips SAT/UNSAT through the unrelated "
+            "return value, while deletion-state probes still reduce to an "
+            "incomplete callsite"
         ),
     ),
 )
