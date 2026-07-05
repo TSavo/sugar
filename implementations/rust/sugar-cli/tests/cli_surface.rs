@@ -956,6 +956,122 @@ done
 }
 
 #[test]
+fn lift_visual_report_header_names_call_edges_and_implications_by_kind() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let manifest_dir = project.join(".sugar/lift/python");
+    fs::create_dir_all(&manifest_dir).expect("create manifest dir");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "python"
+kind = "lift"
+surface = "python"
+emit = "ir-document"
+"#,
+    )
+    .expect("write project config");
+
+    let plugin = dir.path().join("python.sh");
+    write_executable(
+        &plugin,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+while IFS= read -r line; do
+  if [[ "$line" == *'"method":"initialize"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"python","protocol_version":"pep/1.7.0","capabilities":{}}}'
+  elif [[ "$line" == *'"method":"lift"'* ]]; then
+    if [[ "$line" == *'"contract_bindings"'* ]]; then
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[],"sourceLedger":{"source_loci":0,"source_warranted":0,"source_inactive":0,"source_support":0,"source_refused":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"implications":[{"name":"caller-post-implies-callee-pre","antecedent":"caller","antecedentSlot":"post","consequent":"callee","consequentSlot":"pre","prover":"single-plugin-implications"}]}}'
+    else
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","planMementos":[{"kind":"component-plan","planning":{"source":"test-plan"},"planAtoms":[]}],"ir":[{"kind":"contract","name":"caller","outBinding":"out","post":{"kind":"atomic","name":"caller_post","args":[]}},{"kind":"contract","name":"callee","outBinding":"out","pre":{"kind":"atomic","name":"callee_pre","args":[]},"post":{"kind":"atomic","name":"callee_post","args":[]}}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_refused":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"callEdges":[{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:callee","targetContract":"callee","targetContractCid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","callSiteLocus":{"file":"app.py","line":2,"column":11}},{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:missing","targetContract":null,"targetContractCid":null,"callSiteLocus":{"file":"app.py","line":3,"column":11}}]}}'
+    fi
+  elif [[ "$line" == *'"method":"shutdown"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
+    exit 0
+  fi
+done
+"#,
+    );
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!("name = \"python\"\ncommand = [\"{}\"]\n", plugin.display()),
+    )
+    .expect("write manifest");
+
+    let json_output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--json")
+            .arg(&project),
+    );
+    let json_stdout = String::from_utf8_lossy(&json_output.stdout);
+    let json_stderr = String::from_utf8_lossy(&json_output.stderr);
+    assert!(
+        json_output.status.success(),
+        "lift report JSON should succeed\nstdout:\n{json_stdout}\nstderr:\n{json_stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&json_stdout).expect("report JSON parses");
+    let call_edges = report["callEdges"].as_array().expect("callEdges array");
+    let regular_call_edges = call_edges
+        .iter()
+        .filter(|edge| edge["kind"].as_str() == Some("call-edge"))
+        .count();
+    let resolved_call_edges = call_edges
+        .iter()
+        .filter(|edge| {
+            edge["kind"].as_str() == Some("call-edge")
+                && edge["targetContractCid"].as_str().is_some()
+        })
+        .count();
+    let dangling_call_edges = regular_call_edges - resolved_call_edges;
+    let implications = call_edges
+        .iter()
+        .filter(|edge| edge["kind"].as_str() == Some("implication"))
+        .count();
+
+    let visual_output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--visual")
+            .arg(&project),
+    );
+    let visual = String::from_utf8_lossy(&visual_output.stdout);
+    let visual_stderr = String::from_utf8_lossy(&visual_output.stderr);
+    assert!(
+        visual_output.status.success(),
+        "lift visual report should succeed\nstdout:\n{visual}\nstderr:\n{visual_stderr}"
+    );
+    let header = visual
+        .lines()
+        .find(|line| line.starts_with("report sections:"))
+        .unwrap_or_else(|| panic!("visual report must include report sections header: {visual}"));
+
+    assert!(
+        header.contains(&format!("call edges total={regular_call_edges}")),
+        "header must name regular call-edge rows separately from implication rows; header={header}; report callEdges={call_edges:#?}"
+    );
+    assert!(
+        header.contains(&format!("call edges resolved={resolved_call_edges}")),
+        "header must name resolved regular call-edge rows; header={header}; report callEdges={call_edges:#?}"
+    );
+    assert!(
+        header.contains(&format!("call edges dangling={dangling_call_edges}")),
+        "header must name dangling regular call-edge rows; header={header}; report callEdges={call_edges:#?}"
+    );
+    assert!(
+        header.contains(&format!("implications={implications}")),
+        "header implications must equal callEdges rows with kind=implication, not the total call-edge display bucket; header={header}; report callEdges={call_edges:#?}"
+    );
+    assert!(
+        !header.contains(&format!("implications={}", call_edges.len())),
+        "header must not label total callEdges as implications; header={header}; report callEdges={call_edges:#?}"
+    );
+}
+
+#[test]
 fn lift_report_python_assertions_join_source_guard_preconditions() {
     if !python_blake3_available() {
         eprintln!("python3/blake3 not on PATH: skipping Python guard precondition report test");
