@@ -5,9 +5,8 @@
 // step owned by `sugar mint`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use owo_colors::OwoColorize;
@@ -2058,32 +2057,38 @@ fn resolve_report_source_memento_via_plan_routes(
     routes: &[SourceOracleRoute],
     memento_value: &Value,
 ) -> Value {
-    let mut attempts = Vec::new();
-    for route in source_oracle_route_attempt_order(routes, memento_value) {
-        let Some(routed) = routed_source_memento_for_route(project_root, route, memento_value)
-        else {
-            continue;
-        };
-        match invoke_source_oracle_route(
-            project_root,
-            &routed.route,
-            &routed.workspace_root,
-            &routed.memento,
-        ) {
-            Ok(resolution) if resolution.status.as_deref() == Some("resolved") => {
-                return resolution.to_report_json(&routed.route, memento_value);
-            }
-            Ok(resolution) if resolution.source.is_some() => {
-                return resolution.to_report_json(&routed.route, memento_value);
-            }
-            Ok(resolution) => {
-                attempts.push(source_oracle_attempt_json(&routed.route, resolution.reason));
-            }
-            Err(error) => {
-                attempts.push(source_oracle_attempt_json(&routed.route, Some(error)));
+    let ordered_routes = source_oracle_route_attempt_order(routes, memento_value);
+    if let Some(lines) = visual_lines_from_project_file(Some(project_root), memento_value) {
+        let mut resolution = serde_json::json!({
+            "status": "resolved",
+            "sourceLines": source_oracle_lines_json(Some(&lines)),
+            "display": "source present",
+        });
+        if let Some(route) = ordered_routes.first() {
+            if let Some(object) = resolution.as_object_mut() {
+                object.insert("surface".to_string(), Value::String(route.surface.clone()));
+                object.insert(
+                    "role".to_string(),
+                    route.role.clone().map(Value::String).unwrap_or(Value::Null),
+                );
+                object.insert(
+                    "workspaceOverride".to_string(),
+                    route
+                        .workspace_override
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                );
             }
         }
+        return resolution;
     }
+    let attempts = ordered_routes
+        .into_iter()
+        .map(|route| {
+            source_oracle_attempt_json(route, Some(format_source_not_present(memento_value)))
+        })
+        .collect::<Vec<_>>();
     serde_json::json!({
         "status": "absent",
         "display": format_source_not_present(memento_value),
@@ -3206,7 +3211,6 @@ struct VisualFactoryWalkRow {
 #[derive(Clone, Copy)]
 struct VisualSourceLookup<'a> {
     project_root: Option<&'a Path>,
-    routes: &'a [SourceOracleRoute],
 }
 
 struct VisualBoundaryRow {
@@ -3243,7 +3247,6 @@ fn render_report_visual(
 fn render_visual_source_report(report: &LiftSourceReport) -> String {
     let source_lookup = VisualSourceLookup {
         project_root: report.project_root.as_deref(),
-        routes: &report.source_oracle_routes,
     };
     let rows = visual_factory_walk_rows(&report.factory_walk, source_lookup);
     let mut out = String::new();
@@ -3687,26 +3690,51 @@ fn resolve_source_memento_visual_lines(
         }
         return Err(resolution.display_source_or_absent(memento_value));
     }
-    let project_root = source_lookup
-        .project_root
-        .ok_or_else(|| "missing project root".to_string())?;
-    if let Some(routed) = routed_source_memento(project_root, source_lookup.routes, memento_value) {
-        let resolution = invoke_source_oracle_route(
-            project_root,
-            &routed.route,
-            &routed.workspace_root,
-            &routed.memento,
-        )?;
-        if let Some(lines) = resolution.lines {
-            return Ok(lines);
-        }
-        if let Some(source) = resolution.source.as_deref() {
-            return visual_lines_from_source_text(memento_value, source)
-                .ok_or_else(|| "source oracle text did not map to source lines".to_string());
-        }
-        return Err(resolution.display_source_or_absent(memento_value));
+    if let Some(lines) = visual_lines_from_project_file(source_lookup.project_root, memento_value) {
+        return Ok(lines);
     }
     Err(format_source_not_present(memento_value))
+}
+
+fn visual_lines_from_project_file(
+    project_root: Option<&Path>,
+    memento_value: &Value,
+) -> Option<Vec<VisualSourceWalkLine>> {
+    let project_root = project_root?;
+    let memento = source_memento_from_report_json(memento_value)?;
+    let path = if Path::new(&memento.file).is_absolute() {
+        PathBuf::from(&memento.file)
+    } else {
+        project_root.join(&memento.file)
+    };
+    let source = std::fs::read_to_string(path).ok()?;
+    visual_lines_from_source_file_text(memento_value, &source)
+}
+
+fn visual_lines_from_source_file_text(
+    memento_value: &Value,
+    source: &str,
+) -> Option<Vec<VisualSourceWalkLine>> {
+    let span = memento_value.get("span")?;
+    let start_line = span.get("start_line").and_then(Value::as_u64).unwrap_or(1);
+    let end_line = span
+        .get("end_line")
+        .and_then(Value::as_u64)
+        .unwrap_or(start_line)
+        .max(start_line);
+    let lines = source.lines().collect::<Vec<_>>();
+    let start = start_line.checked_sub(1)? as usize;
+    let end = end_line.min(lines.len() as u64) as usize;
+    let selected = lines.get(start..end)?;
+    let rendered = selected
+        .iter()
+        .enumerate()
+        .map(|(offset, source)| VisualSourceWalkLine {
+            line: start_line + offset as u64,
+            source: source.to_string(),
+        })
+        .collect::<Vec<_>>();
+    (!rendered.is_empty()).then_some(rendered)
 }
 
 fn visual_lines_from_source_text(
@@ -3941,32 +3969,17 @@ fn resolve_source_memento_visual_source(
     if let Some(resolution) = source_oracle_resolution_from_report_memento(memento_value) {
         return resolution.display_source_or_absent(memento_value);
     }
-    if let Some(resolved) =
-        resolve_source_memento_visual_source_via_rpc(source_lookup, memento_value)
-    {
-        return resolved;
+    if let Some(lines) = visual_lines_from_project_file(source_lookup.project_root, memento_value) {
+        return lines
+            .iter()
+            .map(|line| line.source.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
     }
     if source_memento_from_report_json(memento_value).is_none() {
         return "<source memento invalid>".to_string();
     }
     format_source_not_present(memento_value)
-}
-
-fn resolve_source_memento_visual_source_via_rpc(
-    source_lookup: VisualSourceLookup<'_>,
-    memento_value: &Value,
-) -> Option<String> {
-    let project_root = source_lookup.project_root?;
-    let routed = routed_source_memento(project_root, source_lookup.routes, memento_value)?;
-    match invoke_source_oracle_route(
-        project_root,
-        &routed.route,
-        &routed.workspace_root,
-        &routed.memento,
-    ) {
-        Ok(resolution) => Some(resolution.display_source_or_absent(memento_value)),
-        Err(error) => Some(format!("<source memento unresolved: {error}>")),
-    }
 }
 
 fn source_oracle_resolution_from_report_memento(
@@ -4023,36 +4036,6 @@ impl SourceOracleResolution {
             .clone()
             .unwrap_or_else(|| format_source_not_present(memento))
     }
-
-    fn to_report_json(&self, route: &SourceOracleRoute, memento: &Value) -> Value {
-        let status = self
-            .status
-            .as_deref()
-            .filter(|status| !status.is_empty())
-            .unwrap_or_else(|| {
-                if self.source.is_some() || self.lines.is_some() || self.display.is_some() {
-                    "resolved"
-                } else {
-                    "absent"
-                }
-            });
-        serde_json::json!({
-            "status": status,
-            "surface": route.surface.clone(),
-            "role": route.role.clone(),
-            "workspaceOverride": route.workspace_override.clone(),
-            "source": self.source.clone(),
-            "sourceLines": source_oracle_lines_json(self.lines.as_deref()),
-            "display": self.display.as_deref().map(str::to_string).unwrap_or_else(|| {
-                if self.source.is_some() || self.lines.is_some() {
-                    "source present".to_string()
-                } else {
-                    format_source_not_present(memento)
-                }
-            }),
-            "reason": self.reason.clone(),
-        })
-    }
 }
 
 fn source_oracle_lines_from_value(value: &Value) -> Option<Vec<VisualSourceWalkLine>> {
@@ -4099,12 +4082,13 @@ fn source_oracle_lines_json(lines: Option<&[VisualSourceWalkLine]>) -> Value {
         .unwrap_or(Value::Null)
 }
 
+#[cfg(test)]
 struct RoutedSourceMemento {
-    route: SourceOracleRoute,
     workspace_root: PathBuf,
     memento: Value,
 }
 
+#[cfg(test)]
 fn routed_source_memento(
     project_root: &Path,
     routes: &[SourceOracleRoute],
@@ -4118,35 +4102,11 @@ fn routed_source_memento(
     }
     Some(RoutedSourceMemento {
         workspace_root: route_workspace_root(project_root, route),
-        route: route.clone(),
         memento,
     })
 }
 
-fn routed_source_memento_for_route(
-    project_root: &Path,
-    route: &SourceOracleRoute,
-    memento_value: &Value,
-) -> Option<RoutedSourceMemento> {
-    let file = memento_value.get("file").and_then(Value::as_str)?;
-    let normalized_file = normalize_report_path(file);
-    let routed_file = match normalized_workspace_prefix(route.workspace_override.as_deref()) {
-        Some(prefix) => {
-            strip_report_path_prefix(&normalized_file, &prefix).unwrap_or(normalized_file)
-        }
-        None => normalized_file,
-    };
-    let mut memento = memento_value.clone();
-    if let Value::Object(object) = &mut memento {
-        object.insert("file".to_string(), Value::String(routed_file));
-    }
-    Some(RoutedSourceMemento {
-        workspace_root: route_workspace_root(project_root, route),
-        route: route.clone(),
-        memento,
-    })
-}
-
+#[cfg(test)]
 fn select_source_oracle_route<'a>(
     routes: &'a [SourceOracleRoute],
     file: &str,
@@ -4181,6 +4141,7 @@ fn select_source_oracle_route<'a>(
     }
 }
 
+#[cfg(test)]
 fn strip_report_path_prefix(file: &str, prefix: &str) -> Option<String> {
     if file == prefix {
         return None;
@@ -4203,6 +4164,7 @@ fn normalize_report_path(path: &str) -> String {
     path.replace('\\', "/").trim_start_matches("./").to_string()
 }
 
+#[cfg(test)]
 fn route_workspace_root(project_root: &Path, route: &SourceOracleRoute) -> PathBuf {
     let root = match route.workspace_override.as_deref().and_then(|raw| {
         let trimmed = raw.trim();
@@ -4219,113 +4181,6 @@ fn route_workspace_root(project_root: &Path, route: &SourceOracleRoute) -> PathB
         None => project_root.to_path_buf(),
     };
     root.canonicalize().unwrap_or(root)
-}
-
-fn invoke_source_oracle_route(
-    project_root: &Path,
-    route: &SourceOracleRoute,
-    workspace_root: &Path,
-    memento: &Value,
-) -> Result<SourceOracleResolution, String> {
-    let manifest = lift_plugin::find_manifest_for_surface(project_root, &route.surface)?;
-    let (program, args) = manifest.command.split_first().ok_or_else(|| {
-        format!(
-            "source oracle surface `{}` has empty command",
-            route.surface
-        )
-    })?;
-    let mut command = Command::new(program);
-    command.args(args);
-    if let Some(working_dir) = lift_plugin::resolved_working_dir_for(project_root, &manifest) {
-        command.current_dir(working_dir);
-    } else {
-        command.current_dir(project_root);
-    }
-    command.stdin(Stdio::piped());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("spawn source oracle `{}`: {error}", route.surface))?;
-    {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| format!("source oracle `{}` stdin closed", route.surface))?;
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "sugar.plugin.resolve_source_memento",
-            "params": {
-                "workspace_root": workspace_root.to_string_lossy(),
-                "sourceMemento": memento,
-            }
-        });
-        writeln!(
-            stdin,
-            "{}",
-            serde_json::to_string(&request).map_err(|error| error.to_string())?
-        )
-        .map_err(|error| format!("write source oracle request: {error}"))?;
-        let shutdown = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "shutdown",
-            "params": {}
-        });
-        writeln!(stdin, "{}", serde_json::to_string(&shutdown).unwrap())
-            .map_err(|error| format!("write source oracle shutdown: {error}"))?;
-    }
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| format!("source oracle `{}` stdout closed", route.surface))?;
-    let mut reader = BufReader::new(stdout);
-    let mut response_line = String::new();
-    reader
-        .read_line(&mut response_line)
-        .map_err(|error| format!("read source oracle response: {error}"))?;
-    let _ = child.wait();
-    let response: Value = serde_json::from_str(&response_line).map_err(|error| {
-        format!(
-            "parse source oracle response: {error}; raw={}",
-            response_line.trim_end()
-        )
-    })?;
-    if let Some(error) = response.get("error") {
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("source oracle refused");
-        return Err(message.to_string());
-    }
-    let result = response
-        .get("result")
-        .ok_or_else(|| format!("source oracle `{}` response missing result", route.surface))?;
-    Ok(SourceOracleResolution {
-        status: result
-            .get("status")
-            .and_then(Value::as_str)
-            .filter(|status| !status.is_empty())
-            .map(str::to_string),
-        source: result
-            .get("source")
-            .or_else(|| result.get("bodyText"))
-            .and_then(Value::as_str)
-            .filter(|source| !source.trim().is_empty())
-            .map(str::to_string),
-        lines: source_oracle_lines_from_value(result),
-        display: result
-            .get("display")
-            .and_then(Value::as_str)
-            .filter(|display| !display.trim().is_empty())
-            .map(str::to_string),
-        reason: result
-            .get("reason")
-            .and_then(Value::as_str)
-            .filter(|reason| !reason.trim().is_empty())
-            .map(str::to_string),
-    })
 }
 
 fn factory_walk_context_key(row: &Value, file: &str) -> String {
@@ -9959,6 +9814,82 @@ mod tests {
             "{visual}"
         );
         assert!(visual.contains("GREEN ⊢ out = expected"), "{visual}");
+    }
+
+    #[test]
+    fn visual_report_consumes_completed_report_without_render_time_source_oracle_dispatch() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let marker = root.path().join("render-time-source-oracle-invoked");
+        let script = root.path().join("source-oracle.sh");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+printf invoked > "{}"
+printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLines":[{{"line":1,"source":"fn from_plugin() {{}}"}}],"display":"source present"}}}}'
+"#,
+                marker.display()
+            ),
+        )
+        .expect("write source oracle script");
+        let manifest_dir = root.path().join(".sugar/lift/rust-test-assertions");
+        std::fs::create_dir_all(&manifest_dir).expect("mkdir manifest dir");
+        std::fs::write(
+            manifest_dir.join("manifest.toml"),
+            format!(
+                "name = \"rust-test-assertions\"\ncommand = [\"sh\", \"{}\"]\n",
+                script
+                    .to_string_lossy()
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+            ),
+        )
+        .expect("write manifest");
+
+        let mut report = minimal_source_report();
+        report.audits = Vec::new();
+        report.project_root = Some(root.path().to_path_buf());
+        report.source_oracle_routes = vec![SourceOracleRoute {
+            surface: "rust-test-assertions".to_string(),
+            workspace_override: None,
+            role: Some("unit-test-assertions".to_string()),
+        }];
+        report.contracts = vec![serde_json::json!({
+            "kind": "contract",
+            "name": "encode_len",
+            "post": {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "out"},
+                    {"kind": "var", "name": "expected"}
+                ]
+            },
+            "sourceWarrants": [{
+                "kind": "source-memento",
+                "contractName": "encode_len",
+                "file": "src/lib.rs",
+                "span": {"start_line": 1, "start_col": 0, "end_line": 1, "end_col": 16},
+                "sourceFunctionName": "encode_len",
+                "source_cid": format!("blake3-512:{}", "e".repeat(128)),
+                "template_cid": format!("blake3-512:{}", "f".repeat(128))
+            }]
+        })];
+
+        let visual = render_report_visual(&report, None);
+
+        assert!(
+            !marker.exists(),
+            "visual rendering must consume the completed report, not re-dispatch the lift/source plugin:\n{visual}"
+        );
+        assert!(
+            visual.contains("source not present, file src/lib.rs line 1 col 0 cid blake3-512:"),
+            "{visual}"
+        );
+        assert!(
+            !visual.contains("fn from_plugin"),
+            "rendered source came from the planted source oracle, not the completed report:\n{visual}"
+        );
     }
 
     #[test]
