@@ -6,7 +6,11 @@ from .compiler_selection_dto import CompilerSelectionDto
 from .component_plan_memento_dto import ComponentPlanMementoDto
 from .effect_dto import EffectDto
 from .factory_audit_summary_dto import FactoryAuditSummaryDto
-from .factory_walk_row_dto import FactoryWalkRowDto
+from .factory_walk_row_dto import (
+    FactoryWalkCompleteRowDto,
+    FactoryWalkRedRowDto,
+    FactoryWalkRowDto,
+)
 from .implication_dto import ImplicationDto
 from .lift_report_payload_dto import LiftReportPayloadDto
 from .plan_atom_dto import PlanAtomDto
@@ -22,6 +26,8 @@ __all__ = [
     "ComponentPlanMementoDto",
     "EffectDto",
     "FactoryAuditSummaryDto",
+    "FactoryWalkCompleteRowDto",
+    "FactoryWalkRedRowDto",
     "FactoryWalkRowDto",
     "ImplicationDto",
     "LiftReportPayloadDto",

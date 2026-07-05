@@ -33,6 +33,8 @@ from sugar_lift_py_tests.ir import (
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
     EffectDto,
+    FactoryWalkCompleteRowDto,
+    FactoryWalkRedRowDto,
     FactoryWalkRowDto,
     LiftReportPayloadDto,
     SourceMementoDto,
@@ -1138,7 +1140,7 @@ def _effect_lift(
         contract_name=effect_name,
         role="python.literal-call-sugar",
     )
-    walk = FactoryWalkRowDto(
+    walk = FactoryWalkRedRowDto(
         file=filename,
         line=frag.line,
         requested_role=requested_role,
@@ -2913,7 +2915,7 @@ def _walk_row(
     emitted_formula: Mapping[str, Any] | None = None,
     reason: str | None = None,
 ) -> FactoryWalkRowDto:
-    return FactoryWalkRowDto(
+    return FactoryWalkCompleteRowDto(
         file=filename,
         line=stmt.line,
         requested_role=requested_role,

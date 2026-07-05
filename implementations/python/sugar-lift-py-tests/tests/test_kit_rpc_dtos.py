@@ -11,7 +11,7 @@ from sugar_lift_py_tests.kit_rpc import (
     ComponentPlanMementoDto,
     EffectDto,
     FactoryAuditSummaryDto,
-    FactoryWalkRowDto,
+    FactoryWalkCompleteRowDto,
     ImplicationDto,
     LiftReportPayloadDto,
     PlanAtomDto,
@@ -99,7 +99,7 @@ def test_python_dtos_emit_rpc_report_shapes() -> None:
         source_warrants=[source],
         warranted_by=callsite_fact,
     )
-    walk = FactoryWalkRowDto(
+    walk = FactoryWalkCompleteRowDto(
         file="encoder.py",
         line=2,
         requested_role="BodyUniverse",
@@ -180,7 +180,7 @@ def test_factory_walk_dto_refuses_inline_side_doors() -> None:
     with pytest.raises(
         ValueError, match="factory walk rows must carry SourceMemento pins"
     ):
-        FactoryWalkRowDto(
+        FactoryWalkCompleteRowDto(
             file="encoder.py",
             line=2,
             requested_role="BodyUniverse",
