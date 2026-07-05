@@ -263,14 +263,24 @@ fn bridge_ir_from_resolved_call_edge(edge: &Value) -> Option<Value> {
         bridge["targetProofCid"] = Value::String(target_proof_cid.to_string());
     }
     if let Some(callsite) = edge.get("callsite").and_then(Value::as_object) {
-        bridge["callsite"] = Value::Object(callsite.clone());
+        let mut callsite = callsite.clone();
+        for key in ["file", "line", "start_line"] {
+            if callsite.get(key).is_some_and(Value::is_null) {
+                callsite.remove(key);
+            }
+        }
+        bridge["callsite"] = Value::Object(callsite);
     } else if let Some(locus) = edge.get("callSiteLocus").and_then(Value::as_object) {
         let mut callsite = serde_json::Map::new();
         callsite.insert("panicSite".to_string(), Value::Bool(false));
         if let Some(file) = locus.get("file").and_then(Value::as_str) {
             callsite.insert("file".to_string(), Value::String(file.to_string()));
         }
-        if let Some(line) = locus.get("line").or_else(|| locus.get("start_line")) {
+        if let Some(line) = locus
+            .get("line")
+            .or_else(|| locus.get("start_line"))
+            .filter(|value| !value.is_null())
+        {
             callsite.insert("line".to_string(), line.clone());
         }
         bridge["callsite"] = Value::Object(callsite);
@@ -5872,6 +5882,46 @@ mod tests {
             bridges[0]["callsite"]["formalActuals"]["encoding"]["value"],
             "latin1"
         );
+    }
+
+    #[test]
+    fn resolved_call_edge_with_null_locus_line_omits_optional_bridge_line() {
+        let root = temp_workspace("call_edge_null_locus_line");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let target_cid = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let resolved = json!({
+            "kind": "call-edge",
+            "sourceContract": "caller",
+            "targetSymbol": "call:encode64",
+            "targetContract": "base64.encode64",
+            "targetContractCid": target_cid,
+            "callSiteLocus": {"file": "test_encode.py", "line": null, "column": null},
+            "evidenceTerm": {"kind": "ctor", "name": "call:encode64", "args": []}
+        });
+        let merged = merge_ir_document_responses(vec![PerPluginDispatch {
+            surface: "python-implicit-implications".to_string(),
+            response: json!({
+                "kind": "ir-document",
+                "ir": [],
+                "callEdges": [resolved],
+                "diagnostics": []
+            }),
+        }])
+        .expect("merge ir-documents");
+
+        let ir = merged["ir"].as_array().expect("ir entries").clone();
+        let bridge = ir
+            .iter()
+            .find(|entry| entry["kind"].as_str() == Some("bridge"))
+            .expect("bridge materialized from resolved call edge");
+        assert_eq!(bridge["sourceSymbol"], "call:encode64");
+        assert!(
+            bridge["callsite"].get("line").is_none(),
+            "optional null locus line must be omitted before bridge minting: {bridge:#}"
+        );
+        mint_ir_document(&ir, None, None, None, &root, &out_dir, true)
+            .expect("call-edge bridge with omitted optional line must mint");
     }
 
     #[test]

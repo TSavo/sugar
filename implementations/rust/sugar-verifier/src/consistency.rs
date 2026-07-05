@@ -1055,6 +1055,22 @@ fn is_witness_member(body: &Json) -> bool {
         == Some("custom")
 }
 
+fn witness_provenance_kind_error(
+    body: &Json,
+    provenance_kind: ProofIrProvenanceKind,
+) -> Option<String> {
+    if !is_witness_member(body) || provenance_kind == ProofIrProvenanceKind::Derived {
+        return None;
+    }
+    Some(format!(
+        "custom execution-witness contract carries wrong provenance KIND; \
+         owner=sugar-verifier/consistency custom-witness recompute; \
+         shape=proofirProvenance.warrants[].kind={}; \
+         replacement=proofirProvenance.warrants[].kind=Derived",
+        provenance_kind.label()
+    ))
+}
+
 fn provenance_kind_refusal(cid: String, body: &Json, reason: String) -> ConsistencyResult {
     let property_name = contract_property_name(body).to_string();
     let effect = VerifyEffect::MissingProvenanceKind {
@@ -2247,11 +2263,28 @@ pub fn verify_consistency(
             continue;
         }
         match contract_provenance_kind(member, &body) {
-            Ok(provenance_kind) => candidates.push(ConsistencyCandidate {
-                cid: cid.to_string(),
-                body,
-                provenance_kind,
-            }),
+            Ok(provenance_kind) => {
+                if let Some(reason) = witness_provenance_kind_error(&body, provenance_kind) {
+                    warn!(
+                        cid = %cid,
+                        contract = contract_property_name(&body),
+                        provenance_kind = provenance_kind.label(),
+                        reason = %reason,
+                        "verifier/ambient: custom witness contract carries wrong provenance KIND; refusing rather than defaulting"
+                    );
+                    provenance_refusals.push(provenance_kind_refusal(
+                        cid.to_string(),
+                        &body,
+                        reason,
+                    ));
+                } else {
+                    candidates.push(ConsistencyCandidate {
+                        cid: cid.to_string(),
+                        body,
+                        provenance_kind,
+                    });
+                }
+            }
             Err(reason) => {
                 warn!(
                     cid = %cid,
@@ -2670,6 +2703,32 @@ mod tests {
             "evidence": {"kind":"evidence","proofType":"custom",
                          "certificate":{"tool":tool,"proofData":proof_data}},
         })
+    }
+
+    fn package_contract_with_provenance(
+        tool: &str,
+        package_cid: &str,
+        count: usize,
+        passed: usize,
+        provenance_kind: &str,
+    ) -> Json {
+        let mut body = package_contract(tool, package_cid, count, passed);
+        body.as_object_mut()
+            .expect("package contract body is an object")
+            .insert(
+                "proofirProvenance".to_string(),
+                proofir_provenance(provenance_kind),
+            );
+        body
+    }
+
+    fn insert_package_contract_with_provenance(pool: &mut MementoPool, cid: &str, body: Json) {
+        let env = json!({
+            "envelope": {
+                "header": body
+            }
+        });
+        pool.insert_unanchored_for_tests(test_cid(cid), env);
     }
 
     fn write_resolver_manifest(project: &std::path::Path, package_bytes: &[u8]) {
@@ -4222,6 +4281,47 @@ mod tests {
 
         std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
         std::env::remove_var("SUGAR_WITNESS_DISCHARGE_PYTEST");
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn stated_provenance_cannot_discharge_custom_execution_witness_package() {
+        let _env = witness_env_lock();
+        let package_bytes = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
+        let package_cid = blake3_512_of(package_bytes);
+        let project = unique_temp_dir("stated-witness-package-kind");
+        write_resolver_manifest(&project, package_bytes);
+        std::env::set_var("SUGAR_WITNESS_PROJECT_DIR", &project);
+
+        let body = package_contract_with_provenance("cargo-test", &package_cid, 1, 1, "Stated");
+        let mut pool = MementoPool::default();
+        insert_package_contract_with_provenance(
+            &mut pool,
+            "blake3-512:stated-witness-package",
+            body,
+        );
+        let (plan, reg) = z3_plan_and_registry();
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+
+        assert_eq!(res.len(), 1, "one witness-package obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "Stated provenance is the wrong kind for recomputed execution testimony: {res:?}"
+        );
+        assert!(
+            res[0].reason.contains("execution-witness")
+                && res[0].reason.contains("Derived")
+                && res[0].reason.contains("Stated"),
+            "wrong-kind refusal must name the crime and replacement: {}",
+            res[0].reason
+        );
+        assert!(
+            !res[0].witnessed,
+            "wrong-kind witness package must refuse before recompute can witness it"
+        );
+
+        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
         let _ = std::fs::remove_dir_all(&project);
     }
 

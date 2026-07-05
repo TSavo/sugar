@@ -412,6 +412,24 @@ pub fn witness_package_proof_data(
     sorted_compact_json(&v)
 }
 
+fn witness_package_proofir_provenance(bundle_cid: &str, runtime: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "proofir-provenance",
+        "nodeClass": "WitnessPackage",
+        "constructionSite": {
+            "tool": "cargo-test",
+            "runtimeCid": runtime,
+        },
+        "warrants": [
+            {
+                "kind": "Derived",
+                "floorChain": ["cargo-test-witness-package", "package-recompute"],
+                "packageCid": bundle_cid,
+            }
+        ],
+    })
+}
+
 /// Serialize a `serde_json::Value` with object keys sorted recursively and no
 /// extra whitespace (separators `,`/`:`), matching python `sort_keys=True,
 /// separators=(",", ":")`.
@@ -483,10 +501,19 @@ pub fn witness_package_contract_ir(
     // marshal_declarations emits a JSON array; the single contract is element 0.
     let arr: serde_json::Value =
         serde_json::from_str(&marshal_declarations(&[decl])).expect("contract marshals to JSON");
-    arr.as_array()
+    let mut member = arr
+        .as_array()
         .and_then(|a| a.first())
         .cloned()
-        .expect("one contract member")
+        .expect("one contract member");
+    member
+        .as_object_mut()
+        .expect("contract member is an object")
+        .insert(
+            "proofirProvenance".to_string(),
+            witness_package_proofir_provenance(bundle_cid, runtime),
+        );
+    member
 }
 
 // ---------------------------------------------------------------------------

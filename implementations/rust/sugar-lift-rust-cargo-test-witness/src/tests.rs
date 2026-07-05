@@ -194,6 +194,18 @@ fn contract_ir_carries_custom_evidence_pinning_bundle_cid() {
     assert_eq!(cert["tool"], "cargo-test");
     assert_eq!(cert["version"], RC);
     assert_eq!(cert["formulaHash"], cid);
+    let warrants = ir["proofirProvenance"]["warrants"]
+        .as_array()
+        .expect("witness package contract must carry proofirProvenance warrants");
+    assert_eq!(
+        warrants.len(),
+        1,
+        "witness package emits one execution-witness provenance kind"
+    );
+    assert_eq!(
+        warrants[0]["kind"], "Derived",
+        "cargo-test witness packages are recomputed execution testimony, not source-stated facts"
+    );
     // proofData round-trips and pins the SAME package cid.
     let pd = parse_evidence_proof_data(&serde_json::to_string(&ir["evidence"]).unwrap()).unwrap();
     assert_eq!(pd["packageCid"], cid);
