@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import Bv32Value
+from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.floor import Bv32Value, StringValue, TermValue
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import ord_byte_support_witness
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
+from sugar_lift_py_tests.sugar.witness_examples import ord_byte_return_witness
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 
 
 @dataclass(frozen=True)
@@ -30,18 +31,8 @@ class OrdByteSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         return _is_ord_byte(site)
 
     @classmethod
-    def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
-        return (
-            NotVerdictBearing(
-                sugar_name=cls.__name__,
-                floor_name="SupportValue",
-                reason=(
-                    "ord-byte terms are symbolic encoder support until the "
-                    "enclosing str.eq-bv-blocks universe carries the verdict"
-                ),
-            ),
-            ord_byte_support_witness(owner_sugar=cls.__name__),
-        )
+    def witnesses(cls) -> SugarWitnessPair:
+        return ord_byte_return_witness(owner_sugar=cls.__name__)
 
     @classmethod
     def build(cls, site, ctx) -> "OrdByteSugar":
@@ -53,7 +44,19 @@ class OrdByteSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         )
 
     def desugar(self, ctx) -> Outcome:
-        del ctx  # the byte is symbolic -- a free var the universe constrains
+        binding = ctx.temporal.value_outcome_for(self.source)
+        if isinstance(binding, Complete) and isinstance(binding.value, StringValue):
+            if 0 <= self.index < len(binding.value.value):
+                return Complete(TermValue(ord(binding.value.value[self.index])))
+            return Incomplete(
+                RuntimeEffect(
+                    "ord-byte runtime boundary: string index is out of range for "
+                    f"`{self.source}[{self.index}]`; Python raises at runtime, so "
+                    "keep this as a typed red until a narrower bounds proof owns "
+                    f"the shape. blame={self.source}[{self.index}]"
+                )
+            )
+        # Symbolic body support: the encoder universe constrains this byte var.
         return Complete(Bv32Value(make_var(f"byte_{self.source}_{self.index}")))
 
 
