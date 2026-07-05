@@ -29,7 +29,12 @@ from sugar_lift_py_tests.floor import (
     SupportValue,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witnesses import (
+    EffectWitnessSource,
+    NotVerdictBearing,
+    SugarRedEffectWitnessPair,
+    TypedRedEffectExpectation,
+)
 from sugar_lift_py_tests.witness_harness import (
     WitnessPipelineError,
     _stage_cli_project,
@@ -99,45 +104,39 @@ EXPECTED_MIGRATED_SEED_NAMES = {
     "tuple_unpack_assign_return",
     "unary_op_return",
     "with_return",
+    "async_for_runtime_effect",
+    "async_with_runtime_effect",
+    "await_runtime_effect",
+    "boolop_runtime_effect",
+    "for_runtime_effect",
+    "starred_runtime_effect",
 }
 EXPECTED_PINNED_FAILURE_SEED_NAMES: set[str] = set()
 EXPECTED_OPT_OUT_SUGARS = {
     "AliasSugar",
-    "AsyncForSugar",
-    "AsyncWithSugar",
     "AttributeAssignSugar",
     "AttributeDeleteSugar",
-    "AwaitSugar",
     "BitwiseOpSugar",
-    "BoolOpSugar",
     "CommentSugar",
     "DictCompSugar",
     "DictSugar",
     "ExprSugar",
-    "ForSugar",
     "ListLiteralSugar",
     "OrdByteSugar",
     "PassSugar",
     "SetCompSugar",
     "SetSugar",
-    "StarredSugar",
     "SubscriptAssignSugar",
     "SubscriptDeleteSugar",
 }
 EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
     "AliasSugar",
-    "AsyncForSugar",
-    "AsyncWithSugar",
     "AttributeAssignSugar",
     "AttributeDeleteSugar",
-    "AwaitSugar",
     "BitwiseOpSugar",
-    "BoolOpSugar",
     "DictSugar",
-    "ForSugar",
     "ListLiteralSugar",
     "OrdByteSugar",
-    "StarredSugar",
     "SubscriptAssignSugar",
     "SubscriptDeleteSugar",
 }
@@ -297,28 +296,69 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     rows = temporal_opt_outs()
 
     assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 15
+    assert len(rows) == 9
     assert all(row.retirement_condition for row in rows)
     by_name = {row.sugar_name: row for row in rows}
     expected_needles = {
         "AliasSugar": "select no AliasSugar owner",
-        "AsyncForSugar": "runtime-effect witness harness",
-        "AsyncWithSugar": "runtime-effect witness harness",
         "AttributeAssignSugar": "object attribute mutation effect",
         "AttributeDeleteSugar": "unexpected CallSiteValue",
-        "AwaitSugar": "runtime-effect witness harness",
         "BitwiseOpSugar": "prove reports undecidable",
-        "BoolOpSugar": "boolean expression runtime boundary",
         "DictSugar": "DictLiteralValue.project_callsite_with",
-        "ForSugar": "for loop runtime boundary",
         "ListLiteralSugar": "select ListLiteralSugar",
         "OrdByteSugar": "illegal free var byte_s_0",
-        "StarredSugar": "runtime expansion effect refuses",
         "SubscriptAssignSugar": "array mutation probes refuse at setitem_with",
         "SubscriptDeleteSugar": "deletion-state probes still reduce",
     }
     for sugar_name, needle in expected_needles.items():
         assert needle in by_name[sugar_name].retirement_condition
+
+
+def test_typed_red_effect_witness_accepts_right_red_and_rejects_wrong_red(
+    tmp_path: Path,
+) -> None:
+    source = "def A(z):\n    return z and 2\n"
+    right_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="boolean expression runtime boundary",
+        blame_needle="test_witness.py:2:11",
+    )
+    wrong_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="starred expression runtime boundary",
+        blame_needle="test_witness.py:2:11",
+    )
+    seed = SugarRedEffectWitnessPair(
+        name="planted_boolop_runtime_effect",
+        owner_sugar="BoolOpSugar",
+        family="typed-red-effect",
+        truthful=EffectWitnessSource(
+            source=source,
+            expectation=right_effect,
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=source,
+            expectation=wrong_effect,
+            expected_match=False,
+        ),
+    )
+
+    report = evaluate_seed_witnesses((seed,), tmp_path / "right-red")
+
+    assert report.is_zero
+
+    wrong_truth = replace(
+        seed,
+        truthful=replace(seed.truthful, expectation=wrong_effect, expected_match=True),
+    )
+    bad_report = evaluate_seed_witnesses((wrong_truth,), tmp_path / "wrong-red")
+
+    assert bad_report.witness_triples_failing == 1
+    assert [
+        (failure.seed, failure.variant, failure.axis)
+        for failure in bad_report.triple_failures
+    ] == [("planted_boolop_runtime_effect", "truthful", "typed-red-effect")]
 
 
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:

@@ -14,7 +14,8 @@ from sugar_lift_py_tests.operations import AsyncContextManagerOperation
 from sugar_lift_py_tests.operations import perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import typed_red_effect_witness
+from sugar_lift_py_tests.sugar.witnesses import SugarRedEffectWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -36,14 +37,20 @@ class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
         return site.observed == "AsyncWith"
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="SupportValue",
-            reason=(
-                "async context-manager execution is runtime support, not a "
-                "current FOL claim"
+    def witnesses(cls) -> SugarRedEffectWitnessPair:
+        return typed_red_effect_witness(
+            name="async_with_runtime_effect",
+            owner_sugar=cls.__name__,
+            source=(
+                "async def A(z):\n"
+                "    async with z as item:\n"
+                "        return item\n"
+                "    return 0\n"
             ),
+            effect_class="FactoryGap",
+            reason_needle="owner=AsyncWithSugar",
+            blame_needle="test_witness.py:2:4",
+            wrong_reason_needle="owner=AwaitSugar",
         )
 
     @classmethod

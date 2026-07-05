@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import ast
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
 
 from sugar_lift_py_tests import floor as floor_pkg
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.sugar.witnesses import (
+    EffectWitnessSource,
     NotVerdictBearing,
+    SugarRedEffectWitnessPair,
     SugarWitnessPair,
-    WitnessSource,
 )
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -25,7 +27,7 @@ class UnenrolledSugar:
         return {"name": self.name, "module": self.module, "role": self.role}
 
 
-SugarWitnessSeed = SugarWitnessPair
+SugarWitnessSeed = SugarWitnessPair | SugarRedEffectWitnessPair
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,13 @@ class NonCircularityFailure:
             "expectedSugar": self.expected_sugar,
             "selectedSugars": list(self.selected_sugars),
         }
+
+
+@dataclass(frozen=True)
+class RedEffectObservation:
+    effect_class: str
+    reason: str
+    selected_sugars: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -200,32 +209,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
     ),
     NonFolOptOut(
-        sugar_name="AsyncForSugar",
-        floor_name="SupportValue",
-        reason=(
-            "async iteration needs an async execution model before it can carry "
-            "a solver verdict"
-        ),
-        retirement_condition=(
-            "retire when a runtime-effect witness harness can assert typed red "
-            "async-iteration shapes; current async-for probes yield refused/no "
-            "SAT/UNSAT proof rows rather than a truthful/lying solver pair"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="AsyncWithSugar",
-        floor_name="SupportValue",
-        reason=(
-            "async context-manager execution is runtime support, not a current "
-            "FOL claim"
-        ),
-        retirement_condition=(
-            "retire when a runtime-effect witness harness can assert typed red "
-            "async context-manager shapes; current async-with probes yield "
-            "refused/no SAT/UNSAT proof rows rather than a truthful/lying pair"
-        ),
-    ),
-    NonFolOptOut(
         sugar_name="AttributeAssignSugar",
         floor_name="SupportValue",
         reason=(
@@ -255,16 +238,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
     ),
     NonFolOptOut(
-        sugar_name="AwaitSugar",
-        floor_name="SupportValue",
-        reason="await unwrapping is async runtime support without a sync verdict path",
-        retirement_condition=(
-            "retire when a runtime-effect witness harness can assert typed red "
-            "await shapes; current async-test probes produce no proof rows and "
-            "ordinary call probes refuse before a SAT/UNSAT pair"
-        ),
-    ),
-    NonFolOptOut(
         sugar_name="BitwiseOpSugar",
         floor_name="SupportValue",
         reason=(
@@ -276,20 +249,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "bearing in the production solver path; current variable and "
             "constant probes select BitwiseOpSugar but prove reports "
             "undecidable with an untyped FactoryWalkMemento formula"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="BoolOpSugar",
-        floor_name="SupportValue",
-        reason=(
-            "boolean expressions in value position short-circuit and return "
-            "runtime operand values rather than a pure bool fact"
-        ),
-        retirement_condition=(
-            "retire when truthiness/value-flow floors produce a truthful/lying "
-            "solver witness for value-position boolean expressions; current "
-            "probes select BoolOpSugar and refuse at the typed boolean "
-            "expression runtime boundary"
         ),
     ),
     NonFolOptOut(
@@ -325,20 +284,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         sugar_name="ExprSugar",
         floor_name="SupportValue",
         reason="expression statements evaluate for effects and leave no FOL claim",
-    ),
-    NonFolOptOut(
-        sugar_name="ForSugar",
-        floor_name="SupportValue",
-        reason=(
-            "for loops need iterator-state and body-effect floors before they "
-            "can carry a standalone solver verdict"
-        ),
-        retirement_condition=(
-            "retire when iterator-state and loop-body floors carry a "
-            "truthful/lying solver witness for for-loop execution; current "
-            "parameterized probes select ForSugar and refuse at the typed for "
-            "loop runtime boundary"
-        ),
     ),
     NonFolOptOut(
         sugar_name="ListLiteralSugar",
@@ -385,19 +330,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason=(
             "set literals are structural term support; set-constructor equality "
             "is not currently a standalone solver verdict"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="StarredSugar",
-        floor_name="SupportValue",
-        reason=(
-            "starred expression expansion is runtime call/display support, "
-            "not a standalone FOL claim"
-        ),
-        retirement_condition=(
-            "retire when a runtime-effect witness harness can assert typed red "
-            "starred-expansion shapes; current probes select StarredSugar but "
-            "the runtime expansion effect refuses before SAT/UNSAT"
         ),
     ),
     NonFolOptOut(
@@ -490,6 +422,27 @@ def evaluate_seed_witnesses(
     triple_failures: list[WitnessTripleFailure] = []
     non_circularity_failures: list[NonCircularityFailure] = []
     for seed in seeds:
+        if isinstance(seed, SugarRedEffectWitnessPair):
+            for variant, witness in (
+                ("truthful", seed.truthful),
+                ("lying", seed.lying),
+            ):
+                observation = _observe_red_effect(witness)
+                _check_owner_selected(
+                    seed=seed,
+                    variant=variant,
+                    selected_sugars=observation.selected_sugars,
+                    triple_failures=triple_failures,
+                    non_circularity_failures=non_circularity_failures,
+                )
+                _check_red_effect_witness(
+                    seed=seed,
+                    variant=variant,
+                    witness=witness,
+                    observation=observation,
+                    failures=triple_failures,
+                )
+            continue
         for variant, witness in (
             ("truthful", seed.truthful),
             ("lying", seed.lying),
@@ -498,25 +451,13 @@ def evaluate_seed_witnesses(
                 work_root / seed.name / variant,
                 witness.source,
             )
-            selected_sugars = result.selected_sugars
-            if seed.owner_sugar not in selected_sugars:
-                triple_failures.append(
-                    WitnessTripleFailure(
-                        seed=seed.name,
-                        owner_sugar=seed.owner_sugar,
-                        variant=variant,
-                        axis="sugar-fired",
-                        expected=seed.owner_sugar,
-                        observed=", ".join(selected_sugars) or "<none>",
-                    )
-                )
-                non_circularity_failures.append(
-                    NonCircularityFailure(
-                        seed=seed.name,
-                        expected_sugar=seed.owner_sugar,
-                        selected_sugars=selected_sugars,
-                    )
-                )
+            _check_owner_selected(
+                seed=seed,
+                variant=variant,
+                selected_sugars=result.selected_sugars,
+                triple_failures=triple_failures,
+                non_circularity_failures=non_circularity_failures,
+            )
             if not result.proofir_emitted:
                 triple_failures.append(
                     WitnessTripleFailure(
@@ -545,6 +486,137 @@ def evaluate_seed_witnesses(
         catalog_count=catalog_count,
         triple_failures=tuple(triple_failures),
         non_circularity_failures=tuple(non_circularity_failures),
+    )
+
+
+def _check_owner_selected(
+    *,
+    seed: SugarWitnessSeed,
+    variant: str,
+    selected_sugars: tuple[str, ...],
+    triple_failures: list[WitnessTripleFailure],
+    non_circularity_failures: list[NonCircularityFailure],
+) -> None:
+    if seed.owner_sugar in selected_sugars:
+        return
+    triple_failures.append(
+        WitnessTripleFailure(
+            seed=seed.name,
+            owner_sugar=seed.owner_sugar,
+            variant=variant,
+            axis="sugar-fired",
+            expected=seed.owner_sugar,
+            observed=", ".join(selected_sugars) or "<none>",
+        )
+    )
+    non_circularity_failures.append(
+        NonCircularityFailure(
+            seed=seed.name,
+            expected_sugar=seed.owner_sugar,
+            selected_sugars=selected_sugars,
+        )
+    )
+
+
+def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.effect import effect_kind, effect_reason
+    from sugar_lift_py_tests.factory import FactoryGap
+    from sugar_lift_py_tests.factory.block import Block
+    from sugar_lift_py_tests.factory.build import build_node
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    module = ast.parse(witness.source)
+    function = next(
+        stmt
+        for stmt in module.body
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and stmt.name == witness.function_name
+    )
+    audit_sink: list[dict[str, Any]] = []
+    ctx = FactoryBuildContext(
+        filename="test_witness.py",
+        catalog=default_catalog(),
+        audit_sink=audit_sink,
+    )
+    temporal = TemporalContext.empty()
+    for arg in function.args.args:
+        temporal = temporal.bind_value(arg.arg, SymbolicValue(make_var(arg.arg)))
+    ctx = replace(ctx, temporal=temporal)
+    try:
+        result = build_node(
+            Block.of(function.body),
+            filename="test_witness.py",
+            role=SugarRole.STATEMENT,
+            ctx=ctx,
+        )
+        outcome = result.sugar.desugar(ctx)
+    except FactoryGap as exc:
+        return RedEffectObservation(
+            effect_class="FactoryGap",
+            reason=str(exc),
+            selected_sugars=_selected_sugars_from_audit(audit_sink),
+        )
+    if isinstance(outcome, Incomplete):
+        return RedEffectObservation(
+            effect_class=effect_kind(outcome.effect),
+            reason=effect_reason(outcome.effect),
+            selected_sugars=_selected_sugars_from_audit(audit_sink),
+        )
+    return RedEffectObservation(
+        effect_class="<green>",
+        reason=repr(outcome),
+        selected_sugars=_selected_sugars_from_audit(audit_sink),
+    )
+
+
+def _selected_sugars_from_audit(rows: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    selected: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        name = row.get("selected")
+        if not isinstance(name, str) or name in seen:
+            continue
+        seen.add(name)
+        selected.append(name)
+    return tuple(selected)
+
+
+def _check_red_effect_witness(
+    *,
+    seed: SugarRedEffectWitnessPair,
+    variant: str,
+    witness: EffectWitnessSource,
+    observation: RedEffectObservation,
+    failures: list[WitnessTripleFailure],
+) -> None:
+    expectation = witness.expectation
+    matched = (
+        observation.effect_class == expectation.effect_class
+        and expectation.reason_needle in observation.reason
+        and expectation.blame_needle in observation.reason
+    )
+    if matched == witness.expected_match:
+        return
+    expected = (
+        f"{'match' if witness.expected_match else 'reject'} "
+        f"{expectation.effect_class} reason~={expectation.reason_needle!r} "
+        f"blame~={expectation.blame_needle!r}"
+    )
+    observed = f"{observation.effect_class}: {observation.reason}"
+    failures.append(
+        WitnessTripleFailure(
+            seed=seed.name,
+            owner_sugar=seed.owner_sugar,
+            variant=variant,
+            axis="typed-red-effect",
+            expected=expected,
+            observed=observed,
+        )
     )
 
 
@@ -675,11 +747,15 @@ def _claim_has_witness_or_opt_out(claim) -> bool:
     return False
 
 
-def _witness_pairs(witness: object) -> tuple[SugarWitnessPair, ...]:
-    if isinstance(witness, SugarWitnessPair):
+def _witness_pairs(witness: object) -> tuple[SugarWitnessSeed, ...]:
+    if isinstance(witness, (SugarWitnessPair, SugarRedEffectWitnessPair)):
         return (witness,)
     if isinstance(witness, tuple):
-        return tuple(item for item in witness if isinstance(item, SugarWitnessPair))
+        return tuple(
+            item
+            for item in witness
+            if isinstance(item, (SugarWitnessPair, SugarRedEffectWitnessPair))
+        )
     return ()
 
 
