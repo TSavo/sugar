@@ -6,7 +6,8 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import typed_red_effect_witness
+from sugar_lift_py_tests.sugar.witnesses import SugarRedEffectWitnessPair
 
 
 @dataclass(frozen=True)
@@ -20,14 +21,21 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         return site.observed == "For"
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="SupportValue",
-            reason=(
-                "for loops need iterator-state and body-effect floors before they "
-                "can carry a standalone solver verdict"
+    def witnesses(cls) -> SugarRedEffectWitnessPair:
+        return typed_red_effect_witness(
+            name="for_runtime_effect",
+            owner_sugar=cls.__name__,
+            source=(
+                "def A(z):\n"
+                "    x = 0\n"
+                "    for item in [z, 2]:\n"
+                "        x = item\n"
+                "    return x\n"
             ),
+            effect_class="RuntimeEffect",
+            reason_needle="for loop runtime boundary",
+            blame_needle="test_witness.py:3:4",
+            wrong_reason_needle="boolean expression runtime boundary",
         )
 
     @classmethod

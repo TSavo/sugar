@@ -7,7 +7,8 @@ from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.operations import AwaitOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import typed_red_effect_witness
+from sugar_lift_py_tests.sugar.witnesses import SugarRedEffectWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -25,11 +26,15 @@ class AwaitSugar(Sugar, role=SugarRole.TERM):
         return site.observed == "Await"
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="SupportValue",
-            reason="await unwrapping is async runtime support without a sync verdict path",
+    def witnesses(cls) -> SugarRedEffectWitnessPair:
+        return typed_red_effect_witness(
+            name="await_runtime_effect",
+            owner_sugar=cls.__name__,
+            source="async def A(z):\n    return await z\n",
+            effect_class="FactoryGap",
+            reason_needle="owner=AwaitSugar",
+            blame_needle="test_witness.py:2:11",
+            wrong_reason_needle="owner=StarredSugar",
         )
 
     @classmethod

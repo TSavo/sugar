@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
+from sugar_lift_py_tests.sugar.witnesses import (
+    EffectWitnessSource,
+    SugarRedEffectWitnessPair,
+    SugarWitnessPair,
+    TypedRedEffectExpectation,
+    WitnessSource,
+)
 
 
 def boolop_assertion_witness() -> SugarWitnessPair:
@@ -413,6 +419,41 @@ def ord_byte_support_witness(*, owner_sugar: str) -> SugarWitnessPair:
         owner_sugar=owner_sugar,
         truthful=source + "def test_a():\n    assert A('x') == 1\n",
         lying=source + "def test_a():\n    assert A('x') == 2\n",
+    )
+
+
+def typed_red_effect_witness(
+    *,
+    name: str,
+    owner_sugar: str,
+    source: str,
+    effect_class: str,
+    reason_needle: str,
+    blame_needle: str,
+    wrong_reason_needle: str,
+) -> SugarRedEffectWitnessPair:
+    return SugarRedEffectWitnessPair(
+        name=name,
+        owner_sugar=owner_sugar,
+        family="typed-red-effect",
+        truthful=EffectWitnessSource(
+            source=source,
+            expectation=TypedRedEffectExpectation(
+                effect_class=effect_class,
+                reason_needle=reason_needle,
+                blame_needle=blame_needle,
+            ),
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=source,
+            expectation=TypedRedEffectExpectation(
+                effect_class=effect_class,
+                reason_needle=wrong_reason_needle,
+                blame_needle=blame_needle,
+            ),
+            expected_match=False,
+        ),
     )
 
 
