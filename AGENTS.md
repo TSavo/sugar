@@ -691,6 +691,16 @@ after merge, for example `Mint toolchain run witnesses from mint path (#2297)`.
 PR descriptions should state what changed, why, and the validation commands
 run. Keep unrelated local work out of the branch; stage files explicitly.
 
+**Every PR that lowers a count must say which shell it deletes.** The
+invariant pipeline is: local red → named axis → executable instrument →
+typed replacement architecture → unrepresentable class → deleted shell.
+A PR that only reports "R went from N to M" is reporting motion; a PR that
+says "this promotes X into the type system and DELETES the census/tooth/pin
+that watched it" is reporting a rung climbed. If no shell is retirable yet,
+say that too, and name what would have to become true for one to hatch —
+that sentence is the retirement path, and an instrument without one is a
+scary number, not an instrument.
+
 ## Agent-Specific Instructions
 
 For isolated work, create repo-local worktrees under `.worktrees/` from
