@@ -12,8 +12,11 @@ from sugar_lift_py_tests.ir import (
     atomic,
     bool_const,
     eq,
+    or_,
     str_const,
 )
+from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import isinstance_assertion_witness
 from sugar_lift_py_tests.sugar.symbolic_term import symbolic_term
@@ -24,7 +27,8 @@ class IsInstanceAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     source_role = "python.isinstance-assertion-sugar"
 
     subject: Term
-    type_name: str
+    type_names: tuple[str, ...]
+    classinfo_effect: RuntimeEffect | None = None
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -46,6 +50,7 @@ class IsInstanceAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     def build(cls, site, ctx) -> "IsInstanceAssertionSugar":
         test = site.assert_test()
         subject, type_expr = test.call_args()
+        type_names = _type_expr_names_or_effect(type_expr)
         return cls(
             subject=symbolic_term(
                 subject,
@@ -55,28 +60,64 @@ class IsInstanceAssertionSugar(Sugar, role=SugarRole.ASSERTION):
                 name_resolver=ctx.name_resolver or {},
                 external_bridge_sink=ctx.external_bridge_sink,
             ),
-            type_name=_type_expr_name(type_expr),
+            type_names=() if isinstance(type_names, RuntimeEffect) else type_names,
+            classinfo_effect=(
+                type_names if isinstance(type_names, RuntimeEffect) else None
+            ),
         )
 
     def assertion_formula(self) -> Formula:
-        concrete = _concrete_isinstance(self.subject, self.type_name)
-        if concrete is not None:
-            return eq(bool_const(concrete), bool_const(True))
-        return atomic("is_type", [self.subject, str_const(self.type_name)])
+        concrete_values = [
+            _concrete_isinstance(self.subject, type_name)
+            for type_name in self.type_names
+        ]
+        if concrete_values and all(value is not None for value in concrete_values):
+            return eq(bool_const(any(concrete_values)), bool_const(True))
+        if not self.type_names:
+            return eq(bool_const(False), bool_const(True))
+
+        formulas = [
+            atomic("is_type", [self.subject, str_const(type_name)])
+            for type_name in self.type_names
+        ]
+        if len(formulas) == 1:
+            return formulas[0]
+        return or_(formulas)
 
     def desugar(self, ctx):
         del ctx
+        if self.classinfo_effect is not None:
+            return Incomplete(self.classinfo_effect)
         return self.assertion_formula()
 
 
-def _type_expr_name(site) -> str:
+def _type_expr_names_or_effect(site) -> tuple[str, ...] | RuntimeEffect:
     if site.observed == "Name":
-        return site.name_id()
+        return (site.name_id(),)
     if site.observed == "Attribute":
-        return f"{_type_expr_name(site.attr_receiver())}.{site.attr_name()}"
-    raise TypeError(
-        f"write more Sugar for isinstance type `{site.observed}`: "
-        "add a builtin type-expression shape"
+        receiver = _type_expr_names_or_effect(site.attr_receiver())
+        if isinstance(receiver, RuntimeEffect):
+            return receiver
+        if len(receiver) != 1:
+            return _runtime_classinfo_effect(site)
+        return (f"{receiver[0]}.{site.attr_name()}",)
+    if site.observed == "Tuple":
+        names: list[str] = []
+        for item in site.terms():
+            item_names = _type_expr_names_or_effect(item)
+            if isinstance(item_names, RuntimeEffect):
+                return item_names
+            names.extend(item_names)
+        return tuple(names)
+    return _runtime_classinfo_effect(site)
+
+
+def _runtime_classinfo_effect(site) -> RuntimeEffect:
+    return RuntimeEffect(
+        "isinstance classinfo runtime boundary; "
+        f"observed={site.observed} blame={site.blame}; "
+        "replacement=use an addressable type or tuple of addressable types, "
+        "or add cited runtime classinfo sugar"
     )
 
 

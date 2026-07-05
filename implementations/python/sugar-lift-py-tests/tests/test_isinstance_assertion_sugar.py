@@ -3,6 +3,120 @@ from __future__ import annotations
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 
+def test_isinstance_tuple_type_lifts_as_vendor_disjunction() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_alias(alias):\n" "    assert isinstance(alias, (int, str))\n"
+        ),
+        filename="test_alias.py",
+        memento_file="test_alias.py",
+    )
+
+    assert report is not None
+    assert len(report.payload.ir) == 1
+    assert report.payload.ir[0].inv == {
+        "kind": "or",
+        "operands": [
+            {
+                "kind": "atomic",
+                "name": "is_type",
+                "args": [
+                    {"kind": "var", "name": "alias"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "int",
+                    },
+                ],
+            },
+            {
+                "kind": "atomic",
+                "name": "is_type",
+                "args": [
+                    {"kind": "var", "name": "alias"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "str",
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def test_isinstance_tuple_type_truthful_concrete_twin_is_true() -> None:
+    report = build_literal_call_report(
+        source=("def test_alias():\n" "    assert isinstance(1, (str, int))\n"),
+        filename="test_alias.py",
+        memento_file="test_alias.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir[0].inv == {
+        "kind": "atomic",
+        "name": "=",
+        "args": [
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Bool"},
+                "value": True,
+            },
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Bool"},
+                "value": True,
+            },
+        ],
+    }
+
+
+def test_isinstance_tuple_type_lying_concrete_twin_is_false() -> None:
+    report = build_literal_call_report(
+        source=("def test_alias():\n" "    assert isinstance(1, (str, bytes))\n"),
+        filename="test_alias.py",
+        memento_file="test_alias.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir[0].inv == {
+        "kind": "atomic",
+        "name": "=",
+        "args": [
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Bool"},
+                "value": False,
+            },
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Bool"},
+                "value": True,
+            },
+        ],
+    }
+
+
+def test_isinstance_runtime_classinfo_is_typed_red() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def pick_type():\n"
+            "    return int\n"
+            "def test_alias(alias):\n"
+            "    assert isinstance(alias, (int, pick_type()))\n"
+        ),
+        filename="test_alias.py",
+        memento_file="test_alias.py",
+    )
+
+    assert report is not None
+    assert len(report.payload.effects) == 1
+    effect = report.payload.effects[0].effect
+    assert type(effect).__name__ == "RuntimeEffect"
+    assert "isinstance classinfo runtime boundary" in effect.reason
+    assert "observed=Call" in effect.reason
+
+
 def test_isinstance_assertion_lifts_as_python_builtin_fact() -> None:
     report = build_literal_call_report(
         source=(
