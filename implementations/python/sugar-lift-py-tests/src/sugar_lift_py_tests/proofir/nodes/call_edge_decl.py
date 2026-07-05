@@ -27,6 +27,7 @@ class BridgeAtom:
     target_proof_cid: str | None = field(init=False, default=None)
     call_site_locus: Locus | None = field(init=False, default=None)
     callsite: str | None = field(init=False, default=None)
+    formal_actuals: dict[str, Any] | None = field(init=False, default=None)
     evidence_term: ClaimFormula | None = field(init=False, default=None)
 
     def __init__(
@@ -39,6 +40,7 @@ class BridgeAtom:
         target_proof_cid: str | None = None,
         call_site_locus: Locus | None = None,
         callsite: str | None = None,
+        formal_actuals: dict[str, Any] | None = None,
         evidence_term: ClaimFormula | None = None,
     ) -> None:
         if not source_contract:
@@ -51,6 +53,8 @@ class BridgeAtom:
             raise TypeError("BridgeAtom call_site_locus must be Locus")
         if evidence_term is not None and not isinstance(evidence_term, ClaimFormula):
             raise TypeError("BridgeAtom evidence_term must be ClaimFormula")
+        if formal_actuals is not None and not isinstance(formal_actuals, dict):
+            raise TypeError("BridgeAtom formal_actuals must be dict")
         object.__setattr__(self, "source_contract", source_contract)
         object.__setattr__(self, "target_symbol", target_symbol)
         object.__setattr__(self, "target_contract", target_contract)
@@ -58,6 +62,7 @@ class BridgeAtom:
         object.__setattr__(self, "target_proof_cid", target_proof_cid)
         object.__setattr__(self, "call_site_locus", call_site_locus)
         object.__setattr__(self, "callsite", callsite)
+        object.__setattr__(self, "formal_actuals", formal_actuals)
         object.__setattr__(self, "evidence_term", evidence_term)
 
 
@@ -97,6 +102,13 @@ class CallEdgeDecl(ProofIRNode):
                 "line": self.bridge.call_site_locus.line,
                 "column": self.bridge.call_site_locus.column,
             }
+            if self.bridge.formal_actuals is not None:
+                edge["callsite"] = {
+                    "panicSite": False,
+                    "file": self.bridge.call_site_locus.file,
+                    "line": self.bridge.call_site_locus.line,
+                    "formalActuals": self.bridge.formal_actuals,
+                }
         if self.bridge.callsite is not None:
             edge["callsite"] = self.bridge.callsite
         if self.bridge.target_proof_cid is not None:

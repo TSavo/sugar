@@ -454,6 +454,13 @@ pub struct MintContractArgs {
     /// metadata field, not part of the contract CID: it does not change what
     /// is proven, only how a call site resolves to it. `None` omits the key.
     pub library: Option<String>,
+    /// Public call spelling this contract discharges when it is consumed from
+    /// another proof bundle (for example, a vendor-internal
+    /// `lib._npyio_impl.load` contract reached as `numpy.load`). Metadata, not
+    /// contract content: it does not contribute to `contract_cid`; it only lets
+    /// an imported proof resolve the same bridge target spelling the producer
+    /// used before sealing the proof.
+    pub bridge_source_symbol: Option<String>,
     /// Contract-directive metadata, not contract content: this does NOT
     /// contribute to `contract_cid`. Whether this contract may be discharged
     /// by reducing against a function body. Totality axioms such as
@@ -1138,6 +1145,14 @@ pub fn mint_contract_with_body_cid(
     if let Some(library) = &args.library {
         if !library.is_empty() {
             metadata_kvs.push(("library".into(), Value::string(library.clone())));
+        }
+    }
+    if let Some(bridge_source_symbol) = &args.bridge_source_symbol {
+        if !bridge_source_symbol.is_empty() {
+            metadata_kvs.push((
+                "bridgeSourceSymbol".into(),
+                Value::string(bridge_source_symbol.clone()),
+            ));
         }
     }
     if !args.body_discharge_eligible {
@@ -1858,6 +1873,7 @@ mod tests {
             emit_empty_formals: false,
             formal_sorts: Vec::new(),
             library: None,
+            bridge_source_symbol: None,
             body_discharge_eligible: true,
             body_discharge_refusal_reason: None,
             panic_loci: Vec::new(),
@@ -1911,6 +1927,7 @@ mod tests {
             emit_empty_formals: false,
             formal_sorts: Vec::new(),
             library: None,
+            bridge_source_symbol: None,
             body_discharge_eligible: true,
             body_discharge_refusal_reason: None,
             panic_loci: Vec::new(),
@@ -1949,6 +1966,7 @@ mod tests {
             emit_empty_formals: false,
             formal_sorts: Vec::new(),
             library: None,
+            bridge_source_symbol: None,
             body_discharge_eligible: true,
             body_discharge_refusal_reason: None,
             panic_loci: Vec::new(),
@@ -2138,6 +2156,7 @@ mod tests {
             emit_empty_formals: false,
             formal_sorts: Vec::new(),
             library: None,
+            bridge_source_symbol: None,
             body_discharge_eligible: true,
             body_discharge_refusal_reason: None,
             panic_loci: Vec::new(),

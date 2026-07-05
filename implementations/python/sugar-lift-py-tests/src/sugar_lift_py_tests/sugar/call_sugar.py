@@ -242,6 +242,7 @@ class ExternalBridgeStrategy:
                     "targetName": self.target_name,
                     "line": self.line,
                     "column": self.column,
+                    "argTerms": terms,
                 }
             )
         return Complete(SymbolicValue(euf_call_term(self.target_name, terms)))
