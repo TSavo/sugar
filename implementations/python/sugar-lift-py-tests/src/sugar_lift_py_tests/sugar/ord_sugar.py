@@ -7,7 +7,8 @@ from sugar_lift_py_tests.floor import Bv32Value
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import ord_byte_support_witness
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
 
 
 @dataclass(frozen=True)
@@ -29,14 +30,17 @@ class OrdByteSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         return _is_ord_byte(site)
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="SupportValue",
-            reason=(
-                "ord-byte terms are symbolic encoder support until the "
-                "enclosing str.eq-bv-blocks universe carries the verdict"
+    def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
+        return (
+            NotVerdictBearing(
+                sugar_name=cls.__name__,
+                floor_name="SupportValue",
+                reason=(
+                    "ord-byte terms are symbolic encoder support until the "
+                    "enclosing str.eq-bv-blocks universe carries the verdict"
+                ),
             ),
+            ord_byte_support_witness(owner_sugar=cls.__name__),
         )
 
     @classmethod

@@ -192,6 +192,12 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         sugar_name="AliasSugar",
         floor_name="ImportAliasValue",
         reason="import aliases record name-binding support, not a FOL claim",
+        retirement_condition=(
+            "retire when the default proof path selects AliasSugar for import "
+            "alias support; current production probes use aliases as resolver "
+            "metadata and select no AliasSugar owner, while alias-backed calls "
+            "refuse before SAT/UNSAT"
+        ),
     ),
     NonFolOptOut(
         sugar_name="AsyncForSugar",
@@ -200,6 +206,11 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "async iteration needs an async execution model before it can carry "
             "a solver verdict"
         ),
+        retirement_condition=(
+            "retire when a runtime-effect witness harness can assert typed red "
+            "async-iteration shapes; current async-for probes yield refused/no "
+            "SAT/UNSAT proof rows rather than a truthful/lying solver pair"
+        ),
     ),
     NonFolOptOut(
         sugar_name="AsyncWithSugar",
@@ -207,6 +218,11 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason=(
             "async context-manager execution is runtime support, not a current "
             "FOL claim"
+        ),
+        retirement_condition=(
+            "retire when a runtime-effect witness harness can assert typed red "
+            "async context-manager shapes; current async-with probes yield "
+            "refused/no SAT/UNSAT proof rows rather than a truthful/lying pair"
         ),
     ),
     NonFolOptOut(
@@ -217,8 +233,10 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "carry a solver verdict"
         ),
         retirement_condition=(
-            "retire when attribute assignment/object-field update floors emit a "
-            "truthful/lying solver witness"
+            "retire when prove can discharge an attribute-assignment callsite "
+            "whose body selects AttributeAssignSugar but has no derived sibling; "
+            "current production probe refuses with `consistency check vacuous: "
+            "single constraint has no sibling to contradict`"
         ),
     ),
     NonFolOptOut(
@@ -229,14 +247,21 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "carry a solver verdict"
         ),
         retirement_condition=(
-            "retire when attribute deletion/object-field delete floors emit a "
-            "truthful/lying solver witness"
+            "retire when prove can discharge an attribute-deletion callsite whose "
+            "body selects AttributeDeleteSugar but has no derived sibling; "
+            "current production probe refuses with `consistency check vacuous: "
+            "single constraint has no sibling to contradict`"
         ),
     ),
     NonFolOptOut(
         sugar_name="AwaitSugar",
         floor_name="SupportValue",
         reason="await unwrapping is async runtime support without a sync verdict path",
+        retirement_condition=(
+            "retire when a runtime-effect witness harness can assert typed red "
+            "await shapes; current async-test probes produce no proof rows and "
+            "ordinary call probes refuse before a SAT/UNSAT pair"
+        ),
     ),
     NonFolOptOut(
         sugar_name="BitwiseOpSugar",
@@ -290,6 +315,11 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "default-catalog list literals are verdict-bearing through "
             "ArrayLiteralSugar; this fallback constructor is shadowed support"
         ),
+        retirement_condition=(
+            "retire when the default proof path can select ListLiteralSugar for "
+            "list literals; current production probes select ArrayLiteralSugar "
+            "because it comes_before ListLiteralSugar in the default catalog"
+        ),
     ),
     NonFolOptOut(
         sugar_name="OrdByteSugar",
@@ -331,16 +361,31 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "starred expression expansion is runtime call/display support, "
             "not a standalone FOL claim"
         ),
+        retirement_condition=(
+            "retire when a runtime-effect witness harness can assert typed red "
+            "starred-expansion shapes; current probes select StarredSugar but "
+            "the runtime expansion effect refuses before SAT/UNSAT"
+        ),
     ),
     NonFolOptOut(
         sugar_name="SubscriptAssignSugar",
         floor_name="SupportValue",
         reason="subscript assignment mutation produces no FOL assertion",
+        retirement_condition=(
+            "retire when subscript assignment mutation itself carries a "
+            "verdict-bearing effect witness; current seed only proves the owner "
+            "appears on an inert support-return path"
+        ),
     ),
     NonFolOptOut(
         sugar_name="SubscriptDeleteSugar",
         floor_name="SupportValue",
         reason="subscript delete mutation produces no FOL assertion",
+        retirement_condition=(
+            "retire when subscript deletion mutation itself carries a "
+            "verdict-bearing effect witness; current seed only proves the owner "
+            "appears on an inert support-return path"
+        ),
     ),
 )
 
@@ -349,12 +394,7 @@ def seeds_from_catalog_witnesses() -> tuple[SugarWitnessSeed, ...]:
     seeds: list[SugarWitnessSeed] = []
     for claim in _catalog_claims():
         witness = _claim_witnesses(claim)
-        if isinstance(witness, SugarWitnessPair):
-            seeds.append(witness)
-        elif isinstance(witness, tuple) and all(
-            isinstance(item, SugarWitnessPair) for item in witness
-        ):
-            seeds.extend(witness)
+        seeds.extend(_witness_pairs(witness))
     return tuple(sorted(seeds, key=lambda seed: seed.name))
 
 
@@ -406,8 +446,11 @@ def evaluate_seed_witnesses(
     *,
     catalog_count: int | None = None,
 ) -> SugarWitnessSeedReport:
+    catalog_names: set[str] | None = None
     if catalog_count is None:
-        catalog_count = len(_catalog_claims())
+        claims = _catalog_claims()
+        catalog_count = len(claims)
+        catalog_names = {claim.name for claim in claims}
     triple_failures: list[WitnessTripleFailure] = []
     non_circularity_failures: list[NonCircularityFailure] = []
     for seed in seeds:
@@ -462,7 +505,7 @@ def evaluate_seed_witnesses(
                 )
     return SugarWitnessSeedReport(
         seed_count=len(seeds),
-        unique_owner_count=len({seed.owner_sugar for seed in seeds}),
+        unique_owner_count=len(_seed_coverage_owner_names(seeds, catalog_names)),
         catalog_count=catalog_count,
         triple_failures=tuple(triple_failures),
         non_circularity_failures=tuple(non_circularity_failures),
@@ -558,6 +601,18 @@ def temporal_opt_outs(
     return tuple(row for row in pinned if row.retirement_condition is not None)
 
 
+def _seed_coverage_owner_names(
+    seeds: Sequence[SugarWitnessSeed],
+    catalog_names: set[str] | None,
+) -> set[str]:
+    owners = {seed.owner_sugar for seed in seeds}
+    if catalog_names is None:
+        return owners
+    return owners | {
+        row.sugar_name for row in temporal_opt_outs() if row.sugar_name in catalog_names
+    }
+
+
 def _claim_module(claim) -> str:
     return getattr(claim.build, "__module__", "<unknown>")
 
@@ -570,23 +625,36 @@ def _claim_witnesses(claim) -> object:
 
 def _claim_has_witness_or_opt_out(claim) -> bool:
     witness = _claim_witnesses(claim)
-    if isinstance(witness, SugarWitnessPair):
+    if _witness_pairs(witness):
         return True
-    if (
-        isinstance(witness, tuple)
-        and witness
-        and all(isinstance(item, SugarWitnessPair) for item in witness)
-    ):
-        return True
-    if isinstance(witness, NotVerdictBearing):
+    opt_out = _not_verdict_bearing(witness)
+    if opt_out is not None:
         pinned = _non_fol_opt_out_for(claim.name)
         return (
             pinned is not None
-            and witness.sugar_name == pinned.sugar_name
-            and witness.floor_name == pinned.floor_name
-            and witness.reason == pinned.reason
+            and opt_out.sugar_name == pinned.sugar_name
+            and opt_out.floor_name == pinned.floor_name
+            and opt_out.reason == pinned.reason
         )
     return False
+
+
+def _witness_pairs(witness: object) -> tuple[SugarWitnessPair, ...]:
+    if isinstance(witness, SugarWitnessPair):
+        return (witness,)
+    if isinstance(witness, tuple):
+        return tuple(item for item in witness if isinstance(item, SugarWitnessPair))
+    return ()
+
+
+def _not_verdict_bearing(witness: object) -> NotVerdictBearing | None:
+    if isinstance(witness, NotVerdictBearing):
+        return witness
+    if isinstance(witness, tuple):
+        for item in witness:
+            if isinstance(item, NotVerdictBearing):
+                return item
+    return None
 
 
 def _non_fol_opt_out_for(sugar_name: str) -> NonFolOptOut | None:

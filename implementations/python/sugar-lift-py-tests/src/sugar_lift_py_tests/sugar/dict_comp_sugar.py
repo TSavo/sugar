@@ -10,7 +10,8 @@ from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import collection_len_return_witness
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import bind_temporal
 
@@ -42,14 +43,23 @@ class DictCompSugar(Sugar, role=SugarRole.TERM):
         return site.observed == "DictComp"
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="DictLiteralValue",
-            reason=(
-                "dict comprehensions reduce to structural dict support; "
-                "dict-constructor equality is not currently a standalone "
-                "solver verdict"
+    def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
+        return (
+            NotVerdictBearing(
+                sugar_name=cls.__name__,
+                floor_name="DictLiteralValue",
+                reason=(
+                    "dict comprehensions reduce to structural dict support; "
+                    "dict-constructor equality is not currently a standalone "
+                    "solver verdict"
+                ),
+            ),
+            collection_len_return_witness(
+                name="dict_comp_len_return",
+                owner_sugar=cls.__name__,
+                expression="{x: x for x in [1, 2]}",
+                truthful=2,
+                lying=3,
             ),
         )
 

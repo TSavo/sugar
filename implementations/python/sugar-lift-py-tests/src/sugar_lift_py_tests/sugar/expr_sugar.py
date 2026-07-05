@@ -6,7 +6,8 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import SupportValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import inert_statement_return_witness
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -26,11 +27,18 @@ class ExprSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="SupportValue",
-            reason="expression statements evaluate for effects and leave no FOL claim",
+    def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
+        return (
+            NotVerdictBearing(
+                sugar_name=cls.__name__,
+                floor_name="SupportValue",
+                reason="expression statements evaluate for effects and leave no FOL claim",
+            ),
+            inert_statement_return_witness(
+                name="expr_support_return",
+                owner_sugar=cls.__name__,
+                statement="z",
+            ),
         )
 
     @classmethod

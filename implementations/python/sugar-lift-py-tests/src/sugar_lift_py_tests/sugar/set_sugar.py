@@ -8,7 +8,8 @@ from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import collection_len_return_witness
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -25,13 +26,22 @@ class SetSugar(Sugar, role=SugarRole.TERM):
         return site.observed == "Set"
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="SetLiteralValue",
-            reason=(
-                "set literals are structural term support; set-constructor "
-                "equality is not currently a standalone solver verdict"
+    def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
+        return (
+            NotVerdictBearing(
+                sugar_name=cls.__name__,
+                floor_name="SetLiteralValue",
+                reason=(
+                    "set literals are structural term support; set-constructor "
+                    "equality is not currently a standalone solver verdict"
+                ),
+            ),
+            collection_len_return_witness(
+                name="set_literal_len_return",
+                owner_sugar=cls.__name__,
+                expression="{1, 1, 2}",
+                truthful=2,
+                lying=3,
             ),
         )
 
