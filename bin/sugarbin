@@ -8,7 +8,7 @@ usage: bin/sugarbin [--profile release|debug] [--platform <auto|key>] [--print-s
 Resolve the Sugar CLI binary by source stamp:
   SUGAR_BIN override -> local target by stamp -> shelf by stamp -> build + publish.
 
-  --print-source-stamp prints the canonical source stamp and exits.
+  --print-source-stamp prints the canonical Rust build-input tree stamp and exits.
 On success, prints exactly the binary path to stdout. Diagnostics go to stderr.
 EOF
 }
@@ -97,42 +97,108 @@ sha256_file() {
   fi
 }
 
+require_b3sum() {
+  if command -v b3sum >/dev/null 2>&1; then
+    return 0
+  fi
+  log "crime=missing-blake3-tool owner=bin/sugarbin illegal shape=b3sum not found on PATH replacement=install b3sum (macOS: brew install b3sum or cargo install b3sum; Debian/Ubuntu: apt install b3sum or cargo install b3sum)"
+  return 1
+}
+
+rust_tree_stream() {
+  python3 - "$rust_workspace" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+if not root.is_dir():
+    raise SystemExit(f"rust workspace not found: {root}")
+
+# The sugar binary artifact is keyed only by its build-input closure: the Rust
+# workspace bytes Cargo sees for sugar-cli. Repo metadata and other language
+# kits are intentionally outside this cache boundary.
+SKIP_DIRS = {
+    ".git",
+    ".hg",
+    ".jj",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".sugar",
+    "node_modules",
+    "target",
+    "__pycache__",
+}
+SKIP_FILES = {
+    ".DS_Store",
+}
+
+
+def emit(label: bytes, value: bytes) -> None:
+    out = sys.stdout.buffer
+    out.write(str(len(label)).encode("ascii"))
+    out.write(b":")
+    out.write(label)
+    out.write(str(len(value)).encode("ascii"))
+    out.write(b":")
+    out.write(value)
+
+
+for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+    dirnames[:] = sorted(name for name in dirnames if name not in SKIP_DIRS)
+    rel_dir = Path(dirpath).relative_to(root)
+    for filename in sorted(name for name in filenames if name not in SKIP_FILES):
+        path = Path(dirpath) / filename
+        rel = (rel_dir / filename).as_posix()
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode):
+            kind = b"symlink"
+            content = os.readlink(path).encode("utf-8", "surrogateescape")
+        elif stat.S_ISREG(st.st_mode):
+            kind = b"file"
+            content = path.read_bytes()
+        else:
+            continue
+        executable = b"1" if (st.st_mode & 0o111) else b"0"
+        emit(b"path", rel.encode("utf-8", "surrogateescape"))
+        emit(b"kind", kind)
+        emit(b"exec", executable)
+        emit(b"bytes", content)
+PY
+}
+
 source_stamp() {
   if [[ -n "${SUGAR_BINARY_SOURCE_STAMP:-}" ]]; then
     printf '%s\n' "$SUGAR_BINARY_SOURCE_STAMP"
     return 0
   fi
-  local head dirty
-  head="$(git -C "$repo_root" rev-parse HEAD)"
-  if git -C "$repo_root" diff --quiet --ignore-submodules -- . \
-    && git -C "$repo_root" diff --cached --quiet --ignore-submodules -- .; then
-    printf '%s\n' "$head"
-    return 0
-  fi
-  dirty="$( \
-    {
-      git -C "$repo_root" diff --binary -- .
-      git -C "$repo_root" diff --cached --binary -- .
-      git -C "$repo_root" ls-files --others --exclude-standard -z \
-        | xargs -0 -I{} sh -c 'printf "untracked:%s\n" "$1"; git -C "$2" hash-object "$1"' sh "{}" "$repo_root"
-    } \
-      | shasum -a 256 \
-      | awk '{print $1}' \
-  )"
-  printf '%s-dirty-%s\n' "$head" "${dirty:0:16}"
+  require_b3sum
+  local digest
+  digest="$(rust_tree_stream | b3sum -l 64 --no-names | awk '{print $1}')"
+  [[ "$digest" =~ ^[0-9a-f]{128}$ ]] || {
+    log "crime=invalid-blake3-output owner=bin/sugarbin illegal shape=b3sum -l 64 emitted '$digest' replacement=repair or upgrade b3sum so it emits 64-byte lowercase hex digests"
+    return 1
+  }
+  printf 'blake3-512:%s\n' "$digest"
 }
 
 git_head() {
-  if [[ -n "${SUGAR_BUILD_GIT_HEAD:-}" ]]; then
+  if [[ "${SUGAR_BUILD_GIT_HEAD+x}" == "x" ]]; then
     printf '%s\n' "$SUGAR_BUILD_GIT_HEAD"
     return 0
   fi
-  git -C "$repo_root" rev-parse HEAD
+  git -C "$repo_root" rev-parse HEAD 2>/dev/null || true
+}
+
+stamp_for_filename() {
+  printf '%s\n' "${1//:/_}"
 }
 
 artifact_name() {
   local stamp="$1"
-  printf 'sugar-%s-%s-%s\n' "$(platform_key)" "$profile" "$stamp"
+  printf 'sugar-%s-%s-%s\n' "$(platform_key)" "$profile" "$(stamp_for_filename "$stamp")"
 }
 
 binary_stamp() {
@@ -200,16 +266,16 @@ publish_if_absent() {
   meta="$tmp/$name.metadata.json"
   cp "$bin" "$asset"
   chmod +x "$asset"
-  python3 - "$meta" "$repo" "$actor" "$stamp" "$(platform_key)" "$profile" "$sha" "$bin" <<'PY'
+  python3 - "$meta" "$repo" "$actor" "$stamp" "$(artifact_name "$stamp")" "$(platform_key)" "$profile" "$sha" "$bin" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
 
-path, repo, actor, stamp, platform, profile, sha256, binary = sys.argv[1:]
+path, repo, actor, stamp, artifact, platform, profile, sha256, binary = sys.argv[1:]
 with open(path, "w", encoding="utf-8") as out:
     json.dump(
         {
-            "artifact": f"sugar-{platform}-{profile}-{stamp}",
+            "artifact": artifact,
             "repo": repo,
             "actor": actor,
             "buildStamp": stamp,
@@ -237,7 +303,10 @@ verify_attestation_if_present() {
   command -v gh >/dev/null 2>&1 || return 0
   local repo
   repo="$(github_repo)" || return 0
-  gh attestation verify "$bin" --repo "$repo" --source-digest "$(git_head)" >/dev/null 2>&1 \
+  local head
+  head="$(git_head)"
+  [[ -n "$head" ]] || { log "attestation skipped for $(basename "$bin"): git head unavailable; stamp tooth remains decisive"; return 0; }
+  gh attestation verify "$bin" --repo "$repo" --source-digest "$head" >/dev/null 2>&1 \
     && log "attestation verified for $(basename "$bin")" \
     || log "attestation absent or unverifiable for $(basename "$bin"); stamp tooth remains decisive"
 }

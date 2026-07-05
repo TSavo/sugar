@@ -8,9 +8,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SUGAR_BUILD_GIT_HEAD");
     let git_head = std::env::var("SUGAR_BUILD_GIT_HEAD")
         .ok()
-        .filter(|value| !value.is_empty())
         .or_else(|| git_output(&["rev-parse", "HEAD"]))
-        .unwrap_or_else(|| "unknown".to_string());
+        .unwrap_or_default();
     let build_stamp = std::env::var("SUGAR_BUILD_STAMP")
         .ok()
         .filter(|value| !value.is_empty())

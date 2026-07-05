@@ -188,7 +188,6 @@ mod tests {
     fn version_string_present() {
         // The crate version string isn't empty: env! is compile-time.
         assert!(!CLI_VERSION.is_empty());
-        assert!(!BUILD_GIT_HEAD.is_empty());
         assert!(!BUILD_STAMP.is_empty());
     }
 

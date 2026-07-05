@@ -271,10 +271,14 @@ if ! grep -Fq "exec cargo" "$ssh_log"; then
   exit 1
 fi
 if ! grep -Fq "SUGAR_BUILD_STAMP=" "$ssh_log" \
-  || ! grep -Fq "bcargo-sugarbin-miss" "$ssh_log" \
-  || ! grep -Fq "SUGAR_BUILD_GIT_HEAD=" "$ssh_log" \
-  || ! grep -Fq "bcargo-fake-head" "$ssh_log"; then
+  || ! grep -Fq "bcargo-sugarbin-miss" "$ssh_log"; then
   echo "bcargo did not stamp the remote sugar build with the shelf source stamp" >&2
+  cat "$ssh_log" >&2
+  exit 1
+fi
+if grep -Fq "SUGAR_BUILD_GIT_HEAD=" "$ssh_log" \
+  || grep -Fq "bcargo-fake-head" "$ssh_log"; then
+  echo "bcargo passed the obsolete remote git-head workaround into the sugar build" >&2
   cat "$ssh_log" >&2
   exit 1
 fi

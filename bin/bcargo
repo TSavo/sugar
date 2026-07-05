@@ -139,10 +139,6 @@ remote_for_local_path() {
   esac
 }
 
-sugar_build_git_head() {
-  git -C "$repo_root" rev-parse HEAD
-}
-
 sugar_binary_repo() {
   if [[ -n "${SUGAR_BINARY_REPO:-}" ]]; then
     printf '%s\n' "$SUGAR_BINARY_REPO"
@@ -475,19 +471,12 @@ sugar_stamp=""
 if sync_bin_requested sugar; then
   sugar_stamp="$(sugar_source_stamp)"
 fi
-sugar_git_head=""
-if [[ -n "$sugar_stamp" ]]; then
-  sugar_git_head="$(sugar_build_git_head)"
-fi
 resolved_sugar_binary_repo="$(sugar_binary_repo)"
 
 remote_sugarbin_assignments() {
   local stamp="$1"
   printf 'SUGAR_BINARY_SOURCE_STAMP=%s ' "$(quote_sh "$stamp")"
   printf 'SUGAR_BINARY_TARGET_ROOT=%s ' "$(quote_sh "$remote_target_dir")"
-  if [[ -n "$sugar_git_head" ]]; then
-    printf 'SUGAR_BUILD_GIT_HEAD=%s ' "$(quote_sh "$sugar_git_head")"
-  fi
   if [[ -n "$resolved_sugar_binary_repo" ]]; then
     printf 'SUGAR_BINARY_REPO=%s ' "$(quote_sh "$resolved_sugar_binary_repo")"
   fi
@@ -537,7 +526,6 @@ if [[ "$provision_python_env" != "0" ]]; then
 fi
 if [[ -n "$sugar_stamp" ]]; then
   cargo_env+=("SUGAR_BUILD_STAMP=$(quote_sh "$sugar_stamp")")
-  cargo_env+=("SUGAR_BUILD_GIT_HEAD=$(quote_sh "$sugar_git_head")")
 fi
 cargo_env+=("PATH=$(quote_sh "$path_prefix"):\$PATH")
 
