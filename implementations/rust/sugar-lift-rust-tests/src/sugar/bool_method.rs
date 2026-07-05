@@ -12,7 +12,7 @@ use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::{token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "bool_literal_method",
@@ -58,13 +58,21 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         _ => return None,
     };
     let receiver_frag = call_frag.call_receiver()?;
+    let boundary = receiver_frag
+        .as_expr()
+        .map(token_key)
+        .unwrap_or_else(|| "bool receiver".to_string());
     Some(Box::new(BoolMethodSugar {
+        method: method_name,
+        boundary,
         receiver: SugarBody::term_frag(&receiver_frag, fcx),
         kind,
     }))
 }
 
 struct BoolMethodSugar {
+    method: String,
+    boundary: String,
     receiver: SugarBody<TermFloor>,
     kind: BoolMethodKind,
 }
@@ -81,9 +89,10 @@ impl Sugar for BoolMethodSugar {
             Err(outcome) => return outcome,
         };
         let Some(value) = literal_bool(&receiver) else {
-            panic!(
-                "bool method receiver did not reduce to a literal bool; write the owning Sugar before Outcome"
-            );
+            return Outcome::Incomplete(Effect::RuntimeBoolMethod {
+                method: self.method.clone(),
+                boundary: self.boundary.clone(),
+            });
         };
 
         match &self.kind {
@@ -135,6 +144,14 @@ fn literal_bool(term: &Term) -> Option<bool> {
 // No parse_quote!, no StubTerm, no run().
 #[cfg(test)]
 mod from_src_tests {
+    use super::*;
+    use crate::{
+        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan,
+        TemporalScope,
+    };
+    use sugar_ir_symbolic::Term;
+    use syn::Item;
+
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
     /// Navigate to the tail MethodCall expression of the first function in a one-liner source.
@@ -203,6 +220,47 @@ mod from_src_tests {
         assert!(
             closure_frag.closure_body_frag().is_some(),
             "closure body must be accessible via closure_body_frag"
+        );
+    }
+
+    fn run_expr(src: &str) -> Outcome {
+        let expr: syn::Expr = syn::parse_str(src).expect("expr");
+        let scope = TemporalScope::new("bool-method-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = crate::sugar::factory::build_term(&expr, &fcx);
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut fw = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+        sugar.desugar(&ctx)
+    }
+
+    #[test]
+    fn literal_bool_then_some_still_reduces() {
+        let Outcome::Complete(Desugared::Term(term)) = run_expr("true.then_some(7)") else {
+            panic!("literal bool receiver should reduce then_some");
+        };
+        match &*term {
+            Term::Ctor { name, .. } => assert_eq!(name, "opt:some"),
+            other => panic!("expected Some ctor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_bool_method_receiver_is_typed_effect_not_floor_panic() {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_expr("flag.then_some(7)")
+        }))
+        .expect("runtime bool method must be a typed effect, not a panic");
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime bool method must not fabricate an Option value");
+        };
+        assert!(
+            effect.reason().contains("runtime bool method"),
+            "effect should name the bool-method boundary: {}",
+            effect.reason()
         );
     }
 }

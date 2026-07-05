@@ -19,8 +19,9 @@
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
+use crate::sugar::method_family::build_literal_sequence_composite;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::Sugar;
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_term(
     "reference_term",
@@ -43,6 +44,14 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_term(
     recognize,
 );
 
+pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_composite(
+    "reference_composite_boundary",
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "runtime reference requested as composite; literal sequence references use reference_sequence",
+    ),
+    recognize_composite,
+);
+
 /// TERM recognizer for `Expr::Reference`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let inner = frag.reference_inner()?;
@@ -55,6 +64,32 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         ctor,
         vec![SugarBody::term_frag(&inner, fcx)],
     )))
+}
+
+fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let inner = frag.reference_inner()?;
+    if inner
+        .as_expr()
+        .and_then(|expr| build_literal_sequence_composite(expr, fcx))
+        .is_some()
+    {
+        return None;
+    }
+    Some(Box::new(ReferenceCompositeBoundary {
+        boundary: frag.token_str(),
+    }))
+}
+
+struct ReferenceCompositeBoundary {
+    boundary: String,
+}
+
+impl Sugar for ReferenceCompositeBoundary {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeCompositeReference {
+            boundary: self.boundary.clone(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -146,5 +181,33 @@ mod tests {
         assert_eq!(name, "ref_mut");
         assert_eq!(args.len(), 1);
         assert!(matches!(args[0].as_ref(), Term::Var { name } if name == "x"));
+    }
+
+    #[test]
+    fn composite_reference_runtime_value_is_typed_effect_not_factory_gap() {
+        let expr: Expr = syn::parse_str("&runtime_value").expect("parse expr");
+        let scope = TemporalScope::new("reference-composite-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let sugar = crate::sugar::factory::build_composite(&expr, &fcx);
+            let items: Vec<Item> = Vec::new();
+            let reducer = ReductionCtx::from_items(&items);
+            let mut float_widths = FloatWidthScope::new();
+            let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+            sugar.desugar(&ctx)
+        }))
+        .expect("composite reference must be a typed effect, not a factory gap");
+
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime composite reference must not fabricate a composite");
+        };
+        assert!(
+            effect.reason().contains("composite reference"),
+            "effect should name the reference boundary: {}",
+            effect.reason()
+        );
     }
 }

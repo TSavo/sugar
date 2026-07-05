@@ -18,9 +18,9 @@ use sugar_lift_rust_tests::cargo_cfg::{
 };
 use sugar_lift_rust_tests::source_oracle;
 use sugar_lift_rust_tests::{
-    lift_file_with_all_source_imports, AssertionFactEmission, AssertionFactKind,
-    ConstSourceRegistry, FactoryAudit, FactoryAuditSpan, FunctionSourceRegistry, LiftOptions,
-    MacroRegistry, TargetCfg,
+    lift_file_with_all_source_imports, macro_is_assertion_surface, refusal_disposition,
+    AssertionFactEmission, AssertionFactKind, ConstSourceRegistry, Disposition, FactoryAudit,
+    FactoryAuditSpan, FunctionSourceRegistry, LiftOptions, MacroRegistry, TargetCfg,
 };
 use sugar_proof_envelope::StoredMember;
 use syn::parse::Parser;
@@ -756,7 +756,22 @@ fn audit_only_lift_reply(id: &Value, params: &Value) -> Value {
             "id": id,
             "result": {
                 "kind": "ir-document",
+                "ir": [],
                 "diagnostics": [],
+                "refusals": [],
+                "sourceLedger": {
+                    "source_loci": 0,
+                    "source_warranted": 0,
+                    "source_unresolved": 0,
+                },
+                "sourceAudits": [],
+                "factoryAudits": [],
+                "factoryAuditSummary": {
+                    "statusCounts": {},
+                    "emittedRows": 0,
+                    "unresolvedSites": [],
+                    "factoryWalk": [],
+                },
                 "auditOnlyGaps": [],
             },
         });
@@ -2487,7 +2502,9 @@ fn source_test_body_warning_classification(
             "runtime callable element boundary",
         ));
     }
-    if reason.contains("assertion under for context over a LITERAL range") {
+    if reason.contains("assertion under for context over a LITERAL range")
+        || reason.contains("assertion under for context over a LITERAL array")
+    {
         let body_tokens = block.to_token_stream().to_string();
         if (body_tokens.contains("memrchr") || body_tokens.contains("memchr"))
             && body_tokens.contains("let mut")
@@ -3001,18 +3018,29 @@ fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
     #[derive(Default)]
     struct Scan {
         saw_literal_range_loop: bool,
+        literal_loop_depth: usize,
         saw_atomic_or_cell: bool,
         saw_catch_unwind: bool,
         saw_drop_impl: bool,
         saw_runtime_memchr_slice: bool,
+        saw_loop_assert_runtime_local: bool,
         memchr_haystack_bases: BTreeSet<String>,
         mut_locals: BTreeSet<String>,
+        runtime_value_locals: BTreeSet<String>,
     }
 
     impl<'ast> syn::visit::Visit<'ast> for Scan {
         fn visit_expr_for_loop(&mut self, for_loop: &'ast syn::ExprForLoop) {
-            if matches!(for_loop.expr.as_ref(), syn::Expr::Range(_)) {
+            let literal_domain = matches!(
+                peel_refs_groups(&for_loop.expr),
+                syn::Expr::Range(_) | syn::Expr::Array(_) | syn::Expr::Repeat(_)
+            );
+            if literal_domain {
                 self.saw_literal_range_loop = true;
+                self.literal_loop_depth += 1;
+                syn::visit::visit_expr_for_loop(self, for_loop);
+                self.literal_loop_depth = self.literal_loop_depth.saturating_sub(1);
+                return;
             }
             syn::visit::visit_expr_for_loop(self, for_loop);
         }
@@ -3033,6 +3061,14 @@ fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
             if let syn::Pat::Ident(ident) = &local.pat {
                 if ident.mutability.is_some() {
                     self.mut_locals.insert(ident.ident.to_string());
+                }
+                if local
+                    .init
+                    .as_ref()
+                    .filter(|init| init.diverge.is_none())
+                    .is_some_and(|init| runtime_value_init(&init.expr))
+                {
+                    self.runtime_value_locals.insert(ident.ident.to_string());
                 }
             }
             syn::visit::visit_local(self, local);
@@ -3089,6 +3125,18 @@ fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
             }
             syn::visit::visit_expr_method_call(self, call);
         }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            if self.literal_loop_depth > 0
+                && macro_is_assertion_surface(mac)
+                && macro_expr_args(mac.tokens.clone())
+                    .iter()
+                    .any(|arg| expr_refs_any_ident(arg, &self.runtime_value_locals))
+            {
+                self.saw_loop_assert_runtime_local = true;
+            }
+            syn::visit::visit_macro(self, mac);
+        }
     }
 
     let mut scan = Scan::default();
@@ -3101,8 +3149,22 @@ fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
     scan.saw_literal_range_loop
         && (scan.saw_atomic_or_cell
             || scan.saw_runtime_memchr_slice
+            || scan.saw_loop_assert_runtime_local
             || saw_textual_mut_memchr_slice
             || (scan.saw_catch_unwind && scan.saw_drop_impl))
+}
+
+fn runtime_value_init(expr: &syn::Expr) -> bool {
+    match peel_refs_groups(expr) {
+        syn::Expr::Call(_) | syn::Expr::MethodCall(_) => true,
+        syn::Expr::Field(field) => runtime_value_init(&field.base),
+        syn::Expr::Index(index) => runtime_value_init(&index.expr),
+        syn::Expr::Try(try_expr) => runtime_value_init(&try_expr.expr),
+        syn::Expr::Await(await_expr) => runtime_value_init(&await_expr.base),
+        syn::Expr::Paren(paren) => runtime_value_init(&paren.expr),
+        syn::Expr::Group(group) => runtime_value_init(&group.expr),
+        _ => false,
+    }
 }
 
 fn call_path_last(expr: &syn::Expr) -> Option<String> {
@@ -3345,7 +3407,20 @@ fn clean_named_refusal_category(
     if reason.contains("literal array element is not text-determined") {
         return Some("literal array element boundary");
     }
+    if owned_terminal_source_effect_reason(reason)
+        && matches!(refusal_disposition(reason), Disposition::TerminalEffect)
+    {
+        return Some("terminal source effect");
+    }
     None
+}
+
+fn owned_terminal_source_effect_reason(reason: &str) -> bool {
+    (reason.contains("owner=rust.") && reason.contains("shape=") && reason.contains("replacement="))
+        || reason.contains("predicate runtime bool floor")
+        || reason.contains("runtime format argument")
+        || reason.contains("match term runtime interior")
+        || reason.contains("unknown iterator consumption")
 }
 
 fn source_location_runtime_reason(source_path: &str, source_name: &str, reason: &str) -> bool {
@@ -5386,6 +5461,43 @@ fn {test_name}() {{
     }
 
     #[test]
+    fn audit_only_zero_gap_response_keeps_source_ledger_shape() {
+        let (root, params) = construction_gap_fixture(
+            "audit_only_zero_gap_response_keeps_source_ledger_shape",
+            r#"
+#[test]
+fn no_gap() {
+    assert_eq!(1 + 1, 2);
+}
+"#,
+        );
+
+        let response = handle_with_mode(
+            &json!(1),
+            "lift",
+            &params,
+            RpcMode::AuditOnlyConstructionGaps,
+        );
+        assert_eq!(response["result"]["kind"], "ir-document");
+        assert_eq!(response["result"]["auditOnlyGaps"], json!([]));
+        assert_eq!(response["result"]["sourceLedger"]["source_loci"], 0);
+        assert_eq!(response["result"]["sourceLedger"]["source_warranted"], 0);
+        assert_eq!(response["result"]["sourceLedger"]["source_unresolved"], 0);
+        assert_eq!(response["result"]["ir"], json!([]));
+        assert_eq!(response["result"]["factoryAuditSummary"]["emittedRows"], 0);
+        assert_eq!(
+            response["result"]["factoryAuditSummary"]["unresolvedSites"],
+            json!([])
+        );
+        assert_eq!(
+            response["result"]["factoryAuditSummary"]["factoryWalk"],
+            json!([])
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn audit_only_factory_audit_unresolved_rows_become_content_keyed_gaps() {
         let audit = FactoryAudit {
             ast_kind: "expr",
@@ -5838,6 +5950,78 @@ mod tests {
     }
 
     #[test]
+    fn source_audit_classifier_delegates_to_terminal_effect_whitelist() {
+        let macro_reason = "rust test assertions: unsupported assertion surface; released to layer 0: opaque macro expansion `json!` at `serde_json :: json ! ({ \"rows\" : [] })`: no visible macro_rules source or typed builtin expansion authority; owner=rust.macro_term; shape=macro-term; replacement=register the source macro_rules body or add cited builtin macro sugar";
+        assert_eq!(
+            clean_named_refusal_category(
+                "src/report_witness.rs",
+                "prove_report_mints_witness_proof_bundle",
+                macro_reason,
+            ),
+            Some("terminal source effect")
+        );
+
+        let composite_index_reason = "rust test assertions: unsupported assertion surface; released to layer 0: runtime composite index `j [\"rows\"] [0]` is not a finite composite value; owner=rust.index; shape=composite-index; replacement=literal slice/index floor or typed runtime value model; refused";
+        assert_eq!(
+            clean_named_refusal_category(
+                "src/report_fmt.rs",
+                "report_json_includes_body_discharge_tier",
+                composite_index_reason,
+            ),
+            Some("terminal source effect")
+        );
+
+        let runtime_predicate_reason = "rust test assertions: unsupported assertion surface; released to layer 0: filter predicate runtime bool floor `c:cmp:eq(c:field:status(v:opaque:filter-elem:runtime_panic_row_with_bundle (\"blake3-512:dep-bundle\" , \"src/lib.rs\" , 10 , \"method:expect\" , \"proven\")),s:\"proven\")`, not literal-determined";
+        assert_eq!(
+            clean_named_refusal_category(
+                "src/panic_annotations_runtime.rs",
+                "runtime_panic_rows_filter_by_proven_count",
+                runtime_predicate_reason,
+            ),
+            Some("terminal source effect")
+        );
+
+        let format_reason = "rust test assertions: unsupported assertion surface; released to layer 0: runtime format argument `c:call:std::process::id()`, not literal-determined; refused";
+        assert_eq!(
+            clean_named_refusal_category(
+                "src/cmd_hash.rs",
+                "hash_known_input_matches_lib",
+                format_reason
+            ),
+            Some("terminal source effect")
+        );
+
+        let consumed_iterator_reason = "rust test assertions: unsupported assertion surface; released to layer 0: unknown iterator consumption for `human` via `find`: a prior iterator operation advanced this mutable iterator by an unknown or by_ref-adaptor count, so there is no single timeless source value to read at the assertion; refused";
+        assert_eq!(
+            clean_named_refusal_category(
+                "src/cmd_lift.rs",
+                "human_report_renders_full_body_source_from_source_oracle_with_universe_inline",
+                consumed_iterator_reason,
+            ),
+            Some("terminal source effect")
+        );
+
+        let match_term_reason = "rust test assertions: unsupported assertion surface; released to layer 0: match term runtime interior `match error { LiftPluginError :: Diagnostic (diagnostic) => { assert_eq ! (diagnostic . kind , LiftPluginDiagnosticKind :: InvalidResponsePayload) ; } other => panic ! (\"expected typed diagnostic\") , }` is not a constructible case-term value";
+        assert_eq!(
+            clean_named_refusal_category(
+                "src/lift_plugin.rs",
+                "malformed_lift_response_payload_becomes_typed_diagnostic",
+                match_term_reason,
+            ),
+            Some("terminal source effect")
+        );
+    }
+
+    #[test]
+    fn source_audit_classifier_does_not_terminalize_reach_gaps() {
+        let reach_gap = "rust test assertions: unsupported assertion surface; released to layer 0: assertion helper `helper` has no visible source; skipped assertion";
+        assert_eq!(
+            clean_named_refusal_category("src/lib.rs", "needs_helper_source", reach_gap),
+            None
+        );
+    }
+
+    #[test]
     fn source_warning_classifier_names_runtime_callable_element_without_refusing_literal_twin() {
         let reason = "rust test assertions: unsupported assertion surface; released to layer 0: assertion surface `assert ! (funcs . into_iter () . any (| f | f (1) == 1))` emitted only support facts; assertion without warranted fact emitted; released to layer 0";
         let runtime_body: syn::Block = syn::parse_quote!({
@@ -5993,6 +6177,28 @@ fn literal_empty_callsite_twin_warrants() {
             "literal loop whose body hits atomic runtime state should be refused by name"
         );
 
+        let runtime_local_body: syn::Block = syn::parse_quote!({
+            let checks = run_oracle_host_checks_with_adapter();
+            for id in ["oracle.requested", "oracle.host.ready"] {
+                let check = check_by_id_from_checks(&checks, id);
+                assert_eq!(check.status, CheckStatus::Pass, "{id}: {check:#?}");
+            }
+        });
+        assert!(
+            matches!(
+                source_test_body_warning_classification(
+                    "src/doctor.rs",
+                    "oracle_requested_ready_adapter_passes_all_oracle_checks",
+                    &reason.replace("LITERAL range", "LITERAL array"),
+                    &runtime_local_body,
+                ),
+                Some(SourceWarningClassification::Refused(
+                    "literal for-loop body runtime read"
+                ))
+            ),
+            "literal array loops whose assertions read runtime call results should be refused by name"
+        );
+
         let pure_body: syn::Block = syn::parse_quote!({
             for i in 0..2 {
                 assert!(i < 2);
@@ -6007,6 +6213,22 @@ fn literal_empty_callsite_twin_warrants() {
             )
             .is_none(),
             "pure literal loops stay available to the warranting sugar"
+        );
+
+        let pure_array_body: syn::Block = syn::parse_quote!({
+            for id in ["oracle.requested", "oracle.host.ready"] {
+                assert!(id.len() > 0);
+            }
+        });
+        assert!(
+            source_test_body_warning_classification(
+                "src/doctor.rs",
+                "pure_literal_array_loop",
+                &reason.replace("LITERAL range", "LITERAL array"),
+                &pure_array_body,
+            )
+            .is_none(),
+            "pure literal array loops stay available to replay/forall sugar"
         );
     }
 

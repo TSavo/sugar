@@ -14,7 +14,7 @@ use crate::sugar::flat_map::{FlatMapClosure, FlatMapSugar};
 use crate::sugar::method_family;
 use crate::sugar::sequence_floor::SequenceElementVisitor;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
+use crate::{Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -122,13 +122,108 @@ impl SequenceElementVisitor for FlattenSubsequenceVisitor {
 
     fn visit_runtime(self, elem: &DesugaredElem) -> Self::Output {
         let expr = &elem.expr;
-        panic!(
-            "flatten element did not dispatch to a nested sequence floor: {}",
-            quote::quote!(#expr)
-        )
+        Err(Outcome::Incomplete(Effect::RuntimeFlattenElement {
+            boundary: quote::quote!(#expr).to_string(),
+        }))
     }
 
     fn visit_non_sequence_literal(self, _elem: &DesugaredElem) -> Self::Output {
         panic!("flatten element dispatched to a non-sequence literal floor")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sugar::factory::SugarBuildCtx;
+    use crate::{
+        sugar_ctx, ConstVal, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
+        TemporalPlan, TemporalScope,
+    };
+    use syn::{Expr, Item};
+
+    struct StubSeq {
+        elems: Vec<DesugaredElem>,
+    }
+
+    impl Sugar for StubSeq {
+        fn desugar(&self, _ctx: &crate::SugarCtx) -> Outcome {
+            Outcome::Complete(Desugared::Seq(self.elems.clone()))
+        }
+    }
+
+    fn run(node: &FlattenSugar) -> Outcome {
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let scope = TemporalScope::new("flatten-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let mut fw = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+        node.desugar(&ctx)
+    }
+
+    fn elem(src: &str, value: Option<ConstVal>) -> DesugaredElem {
+        DesugaredElem {
+            expr: syn::parse_str(src).expect("element expr"),
+            value,
+        }
+    }
+
+    #[test]
+    fn runtime_flatten_element_is_typed_effect_not_floor_panic() {
+        let node = FlattenSugar {
+            inner: crate::sugar::factory::SugarBody::from_node(Box::new(StubSeq {
+                elems: vec![elem(
+                    r#"edge.get("sourceContract").and_then(Value::as_str)"#,
+                    None,
+                )],
+            })),
+        };
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&node)))
+            .expect("runtime flatten element must be a typed effect, not a floor panic");
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime flatten element must not fabricate a nested sequence");
+        };
+        assert!(
+            effect.reason().contains("runtime flatten element"),
+            "effect should name the flatten boundary: {}",
+            effect.reason()
+        );
+    }
+
+    #[test]
+    fn literal_nested_arrays_still_flatten() {
+        let node = FlattenSugar {
+            inner: crate::sugar::factory::SugarBody::from_node(Box::new(StubSeq {
+                elems: vec![
+                    elem(
+                        "[1, 2]",
+                        Some(ConstVal::Array(vec![ConstVal::Int(1), ConstVal::Int(2)])),
+                    ),
+                    elem("[3]", Some(ConstVal::Array(vec![ConstVal::Int(3)]))),
+                ],
+            })),
+        };
+
+        let Outcome::Complete(Desugared::Seq(out)) = run(&node) else {
+            panic!("literal nested arrays should flatten to a sequence");
+        };
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn recognize_declines_wrong_method() {
+        let expr: Expr = syn::parse_str("[[1]].iter().map(|x| x)").expect("expr");
+        let frag = SourceFragment::expr(&expr, "test.rs");
+        let scope = TemporalScope::new("flatten-structural", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        assert!(
+            recognize_composite(&frag, &fcx).is_none(),
+            "flatten must not claim a non-flatten method call"
+        );
     }
 }

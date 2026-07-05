@@ -57,6 +57,15 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize_composite,
     );
 
+pub(crate) const RUNTIME_COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::fallback_composite(
+        "runtime_match_composite",
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "runtime value match requested as composite; match_node owns decomposable assertion matches",
+        ),
+        recognize_runtime_composite,
+    );
+
 pub(crate) const CONSTRAINT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::constraint_before(
         "constraint_closed_match",
@@ -120,6 +129,18 @@ pub(crate) fn recognize_composite(
             .map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,
     }
+}
+
+fn recognize_runtime_composite(
+    frag: &SourceFragment,
+    _fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
+    matches!(expr, Expr::Match(_)).then(|| {
+        Box::new(RuntimeMatchTermSugar {
+            boundary: token_key(expr),
+        }) as Box<dyn Sugar>
+    })
 }
 
 /// CONSTRAINT recognizer for a closed `match` whose scrutinee determines exactly one
@@ -196,11 +217,9 @@ fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn 
     if crate::sugar::match_scrutinee::expr_resolves_runtime_call_result(&m.expr, fcx, 0) {
         return None;
     }
-    match_has_runtime_term_interior(m).then(|| {
-        Box::new(RuntimeMatchTermSugar {
-            boundary: token_key(expr),
-        }) as Box<dyn Sugar>
-    })
+    Some(Box::new(RuntimeMatchTermSugar {
+        boundary: token_key(expr),
+    }) as Box<dyn Sugar>)
 }
 
 /// A match arm reduced to its discriminant guard + body statements. The guard is
@@ -525,56 +544,70 @@ fn single_surviving_value_arm(m: &syn::ExprMatch) -> Option<(&Pat, &Expr)> {
     Some((&arm.pat, &arm.body))
 }
 
-fn match_has_runtime_term_interior(m: &syn::ExprMatch) -> bool {
-    m.arms
-        .iter()
-        .filter(|arm| !expr_diverges(&arm.body))
-        .any(|arm| expr_has_runtime_term_interior(&arm.body))
-}
+#[cfg(test)]
+mod residue_tests {
+    use super::*;
 
-fn stmt_has_runtime_term_interior(stmt: &Stmt) -> bool {
-    match stmt {
-        Stmt::Local(local) => local
-            .init
-            .as_ref()
-            .is_some_and(|init| expr_has_runtime_term_interior(&init.expr)),
-        Stmt::Item(_) => false,
-        Stmt::Expr(expr, _) => expr_has_runtime_term_interior(expr),
-        Stmt::Macro(_) => true,
+    #[test]
+    fn term_value_match_is_typed_effect_not_factory_gap() {
+        let expr: Expr = syn::parse_str(
+            "match theory { FormulaTheory::EquationalTheory => d.equational_theory, FormulaTheory::FirstOrder => d.first_order, FormulaTheory::Default => None }",
+        )
+        .expect("parse expr");
+        let scope = TemporalScope::new("match-term-test", crate::TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let sugar = crate::sugar::factory::build_term(&expr, &fcx);
+            let items: Vec<syn::Item> = Vec::new();
+            let reducer = ReductionCtx::from_items(&items);
+            let mut float_widths = FloatWidthScope::new();
+            let ctx = crate::sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+            sugar.desugar(&ctx)
+        }))
+        .expect("value match in term position must be a typed effect, not a factory gap");
+
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime term match must not fabricate a term");
+        };
+        assert!(
+            effect.reason().contains("match term runtime interior"),
+            "effect should name the match boundary: {}",
+            effect.reason()
+        );
     }
-}
 
-fn expr_has_runtime_term_interior(expr: &Expr) -> bool {
-    match expr {
-        Expr::Call(_) | Expr::MethodCall(_) | Expr::Try(_) | Expr::Macro(_) => true,
-        Expr::Block(block) => block.block.stmts.iter().any(stmt_has_runtime_term_interior),
-        Expr::If(if_expr) => {
-            expr_has_runtime_term_interior(&if_expr.cond)
-                || if_expr
-                    .then_branch
-                    .stmts
-                    .iter()
-                    .any(stmt_has_runtime_term_interior)
-                || if_expr
-                    .else_branch
-                    .as_ref()
-                    .is_some_and(|(_, else_expr)| expr_has_runtime_term_interior(else_expr))
-        }
-        Expr::Match(match_expr) => match_has_runtime_term_interior(match_expr),
-        Expr::Paren(paren) => expr_has_runtime_term_interior(&paren.expr),
-        Expr::Group(group) => expr_has_runtime_term_interior(&group.expr),
-        Expr::Reference(reference) => expr_has_runtime_term_interior(&reference.expr),
-        Expr::Unary(unary) => expr_has_runtime_term_interior(&unary.expr),
-        Expr::Binary(binary) => {
-            expr_has_runtime_term_interior(&binary.left)
-                || expr_has_runtime_term_interior(&binary.right)
-        }
-        Expr::Field(field) => expr_has_runtime_term_interior(&field.base),
-        Expr::Index(index) => {
-            expr_has_runtime_term_interior(&index.expr)
-                || expr_has_runtime_term_interior(&index.index)
-        }
-        _ => false,
+    #[test]
+    fn composite_value_match_is_typed_effect_not_factory_gap() {
+        let expr: Expr = syn::parse_str(
+            "match error { LiftPluginError::Diagnostic(diagnostic) => diagnostic.kind, _ => fallback }",
+        )
+        .expect("parse expr");
+        let scope = TemporalScope::new("match-composite-test", crate::TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let sugar = crate::sugar::factory::build_composite(&expr, &fcx);
+            let items: Vec<syn::Item> = Vec::new();
+            let reducer = ReductionCtx::from_items(&items);
+            let mut float_widths = FloatWidthScope::new();
+            let ctx = crate::sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+            sugar.desugar(&ctx)
+        }))
+        .expect("value match in composite position must be a typed effect, not a factory gap");
+
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime composite match must not fabricate a composite");
+        };
+        assert!(
+            effect.reason().contains("match term runtime interior"),
+            "effect should name the match boundary: {}",
+            effect.reason()
+        );
     }
 }
 

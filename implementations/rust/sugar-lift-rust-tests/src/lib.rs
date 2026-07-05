@@ -799,6 +799,11 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // by `loop_body_mutates && !loop_mutation_is_simple_counter_only` (a genuine simple
         // counter does not reach here -- it completes or lifts as a forall).
         || reason.contains("RUNTIME-VALUED accumulator")
+        // TERMINAL: a closure value may be source syntax while still not denoting one stable
+        // callable term when it captures a local whose identity is ambiguous in the current
+        // temporal scope. The closure_term sugar already types this as `ClosureAmbiguousCapture`;
+        // the factory must count it as an effect, not a structural construction gap.
+        || reason.contains("closure captures ambiguous local")
         // TERMINAL: an assertion in an `impl` METHOD body (top-level `Item::Impl` or a
         // nested impl declared as a statement). It runs only when the method is INVOKED,
         // observing the receiver's RUNTIME state (a mutated field, an atomic `.load`, a
@@ -993,6 +998,38 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // calls / `?` cannot hand a single source-literal value to term consumers. Pure
         // same-sort case terms are future work; this branch fires only on runtime interiors.
         || reason.contains("match term runtime interior")
+        // TERMINAL: char/string case-like methods only compute from literal-determined
+        // receivers in this lift. A runtime receiver is not source-constructible, and a
+        // generic `method:*` term would hide the stdlib boundary behind EUF.
+        || reason.contains("runtime text method")
+        || reason.contains("runtime string repeat count")
+        // TERMINAL: composite-position references/indexes over runtime JSON/value state are
+        // not finite sequence floors. Literal sequence references and literal slices have
+        // specific owners and never reach these boundaries.
+        || reason.contains("runtime composite reference")
+        || reason.contains("runtime composite index")
+        || reason.contains("runtime composite method")
+        || reason.contains("runtime flatten element")
+        || reason.contains("runtime filter_map")
+        // TERMINAL: `&&` / `||` can only be source-evaluated here when operands reduce
+        // to literal bools. Runtime bool operands require a typed boolean value model,
+        // not a factory panic or a guessed short-circuit result.
+        || reason.contains("runtime bool logic")
+        || reason.contains("runtime bool method")
+        // TERMINAL: a literal-domain iterator terminal whose closure body reads a captured
+        // value that is not itself a literal floor (`["field"].iter().any(|f| row.get(f)..)`).
+        // The domain is finite, but the predicate result is runtime data; guessing the
+        // selected element would author semantics. Pure literal predicates and literal
+        // captured arrays do not reach this reason.
+        || reason.contains("literal iterator predicate reads runtime capture")
+        // TERMINAL: a term-position `if let` branch introduces pattern bindings that
+        // ValueIfSugar cannot substitute into branch terms. Treating the guard as a term
+        // is a construction gap; guessing the selected branch would be worse.
+        || reason.contains("value-if pattern guard")
+        // TERMINAL: a value-position block with mutation/assignment before the returned
+        // value is not an expression-only term. Immutable-let blocks still reduce
+        // transparently; only proved statement-state blocks reach this named boundary.
+        || reason.contains("runtime block term")
         // TERMINAL: `str::parse()` without a turbofish takes its result type from the
         // surrounding relation (`assert_eq!(input.parse(), Ok(1.0f64))`). The written callsite
         // therefore does not own a single timeless value: the same `input.parse()` syntax can
@@ -2172,7 +2209,7 @@ fn collect_source_assertion_contract_expr(
 
     let let_inits = BTreeMap::new();
     let fcx = sugar::factory::SugarBuildCtx::new(scope, options, &let_inits);
-    if sugar::factory::has_constraint(expr, &fcx) {
+    if expr_has_constraint_surface(expr, options) {
         let ctx =
             sugar_ctx_with_factory_audits(scope, options, reducer, float_widths, 0, factory_audits);
         match sugar::factory::build_constraint(expr, &fcx).desugar(&ctx) {
@@ -5066,6 +5103,64 @@ impl TemporalScope {
         self
     }
 
+    fn without_let_binding_snapshots(&self) -> Self {
+        Self {
+            local_scope: self.local_scope.clone(),
+            plan: self.plan.clone(),
+            versions: self.versions.clone(),
+            ambiguous: self.ambiguous.clone(),
+            temporal_floor: self.temporal_floor.clone(),
+            literal_arrays: self.literal_arrays.clone(),
+            let_bindings: BTreeMap::new(),
+            mutable_let_bindings: BTreeSet::new(),
+            let_binding_types: BTreeMap::new(),
+            term_bindings: self.term_bindings.clone(),
+            runtime_destructured_locals: self.runtime_destructured_locals.clone(),
+            unresolved_destructured_locals: self.unresolved_destructured_locals.clone(),
+            macro_registry: self.macro_registry.clone(),
+            fn_registry: self.fn_registry.clone(),
+            impl_value_registry: self.impl_value_registry.clone(),
+            layout_type_registry: self.layout_type_registry.clone(),
+            value_type_registry: self.value_type_registry.clone(),
+            const_registry: self.const_registry.clone(),
+            inside_const_item_initializer: self.inside_const_item_initializer,
+            inlined_value_helpers: std::cell::RefCell::new(
+                self.inlined_value_helpers.borrow().clone(),
+            ),
+            dormant_mut_ref: self.dormant_mut_ref.clone(),
+            temporal_rewrite: std::cell::RefCell::new(self.temporal_rewrite.borrow().clone()),
+        }
+    }
+
+    fn definition_scope_snapshot_for_bound_var(&self, source: &Expr) -> Self {
+        let referenced = names_referenced_in_expr(source);
+        let base = self.without_let_binding_snapshots();
+        let mut snapshot = base.clone();
+        for (name, bound) in &self.let_bindings {
+            if !referenced.contains(name) {
+                continue;
+            }
+            let Some(projected) = self.stable_let_binding_for_term(name) else {
+                continue;
+            };
+            let flattened = sugar::bound_var::BoundVar::new(
+                name,
+                projected.clone(),
+                projected.clone(),
+                true,
+                bound.expected_type().map(str::to_string),
+                base.clone(),
+            );
+            snapshot.let_bindings.insert(name.clone(), flattened);
+            if let Some(expected_type) = bound.expected_type() {
+                snapshot
+                    .let_binding_types
+                    .insert(name.clone(), expected_type.to_string());
+            }
+        }
+        snapshot
+    }
+
     fn let_expr_bindings(&self) -> ExprBindings {
         self.let_bindings
             .iter()
@@ -5278,13 +5373,14 @@ impl TemporalScope {
             return;
         }
         let expected_type = expected_ty.map(type_key);
+        let definition_scope = self.definition_scope_snapshot_for_bound_var(&init);
         let bound = sugar::bound_var::BoundVar::new(
             name,
             init,
             rewritten,
             true,
             expected_type,
-            self.clone(),
+            definition_scope,
         );
         self.record_bound_var_value(bound, is_mutable);
         if let Some(ty) = expected_ty {
@@ -5302,13 +5398,14 @@ impl TemporalScope {
         let temporal_bindings = self.temporal_rewrite.borrow().expr_bindings();
         let rewritten = substitute_expr(&rewritten, &temporal_bindings);
         let projection_is_stable = !names_referenced_in_expr(&rewritten).contains(name);
+        let definition_scope = self.definition_scope_snapshot_for_bound_var(&init);
         sugar::bound_var::BoundVar::new(
             name,
             init,
             rewritten,
             projection_is_stable,
             expected_type,
-            self.clone(),
+            definition_scope,
         )
     }
 
@@ -6005,15 +6102,93 @@ pub(crate) fn expr_is_assertion_surface(expr: &Expr) -> bool {
 }
 
 pub fn macro_is_assertion_surface(mac: &syn::Macro) -> bool {
-    let expr = Expr::Macro(syn::ExprMacro {
-        attrs: Vec::new(),
-        mac: mac.clone(),
-    });
-    let scope = TemporalScope::new("<assertion-surface-accounting>", TemporalPlan::default());
-    let options = LiftOptions::default();
-    let let_inits = BTreeMap::new();
-    let fcx = sugar::factory::SugarBuildCtx::new(&scope, &options, &let_inits);
-    sugar::factory::has_assertion_surface(&expr, &fcx)
+    macro_name(mac).is_some_and(|name| assertion_surface_macro_name(&name))
+}
+
+fn macro_name(mac: &syn::Macro) -> Option<String> {
+    mac.path.segments.last().map(|seg| seg.ident.to_string())
+}
+
+fn assertion_surface_macro_name(name: &str) -> bool {
+    matches!(
+        name,
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+            | "assert_eq_const_safe"
+            | "cfg_select"
+    )
+}
+
+fn expr_has_constraint_surface(expr: &Expr, options: &LiftOptions) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Macro(expr_macro) => macro_name(&expr_macro.mac)
+            .is_some_and(|name| assertion_surface_macro_name(&name) || name == "cfg"),
+        Expr::Binary(binary) => {
+            matches!(
+                binary.op,
+                syn::BinOp::And(_)
+                    | syn::BinOp::Or(_)
+                    | syn::BinOp::Eq(_)
+                    | syn::BinOp::Ne(_)
+                    | syn::BinOp::Lt(_)
+                    | syn::BinOp::Le(_)
+                    | syn::BinOp::Gt(_)
+                    | syn::BinOp::Ge(_)
+            )
+        }
+        Expr::Unary(unary) => matches!(unary.op, syn::UnOp::Not(_)),
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Bool(_),
+            ..
+        }) => true,
+        Expr::If(if_expr) => {
+            !matches!(&*if_expr.cond, Expr::Let(_)) && block_or_else_diverges(if_expr)
+        }
+        Expr::Paren(paren) => expr_has_constraint_surface(&paren.expr, options),
+        Expr::Group(group) => expr_has_constraint_surface(&group.expr, options),
+        _ => false,
+    }
+}
+
+fn block_or_else_diverges(if_expr: &syn::ExprIf) -> bool {
+    if_expr
+        .then_branch
+        .stmts
+        .last()
+        .is_some_and(stmt_is_unconditional_panic)
+        || if_expr
+            .else_branch
+            .as_ref()
+            .is_some_and(|(_, expr)| expr_is_unconditional_panic(expr))
+}
+
+fn stmt_is_unconditional_panic(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Expr(expr, _) => expr_is_unconditional_panic(expr),
+        Stmt::Macro(stmt_macro) => is_unconditional_panic_macro(&stmt_macro.mac),
+        _ => false,
+    }
+}
+
+fn expr_is_unconditional_panic(expr: &Expr) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Macro(expr_macro) => is_unconditional_panic_macro(&expr_macro.mac),
+        Expr::Block(block) => block
+            .block
+            .stmts
+            .last()
+            .is_some_and(stmt_is_unconditional_panic),
+        Expr::Unsafe(unsafe_expr) => unsafe_expr
+            .block
+            .stmts
+            .last()
+            .is_some_and(stmt_is_unconditional_panic),
+        _ => false,
+    }
 }
 
 pub fn assertion_surface_site_cid(mac: &syn::Macro) -> String {
@@ -9237,6 +9412,47 @@ enum Effect {
     /// (calls, method calls, `?`, or macros). Pure same-sort arms are future case-term work;
     /// runtime interiors have no source-literal value to select.
     RuntimeMatchTerm { boundary: String },
+    /// RUNTIME-TEXT-METHOD: a char/string case-like method reached a receiver that did
+    /// not reduce to a source literal. Falling through to `method:*` would erase stdlib
+    /// text semantics into an unconstrained EUF symbol.
+    RuntimeTextMethod { method: String, boundary: String },
+    /// RUNTIME-STRING-REPEAT-COUNT: `"literal".repeat(n)` has a text-determined receiver
+    /// but a non-literal count. The repeated string value cannot be materialized without a
+    /// concrete count.
+    RuntimeStringRepeatCount { boundary: String },
+    /// RUNTIME-COMPOSITE-REFERENCE: a reference was requested as a composite value, but
+    /// the referent was not the finite literal-sequence reference shape.
+    RuntimeCompositeReference { boundary: String },
+    /// RUNTIME-COMPOSITE-INDEX: an index expression was requested as a composite value.
+    /// Literal slice/range indexes have narrower owners; runtime JSON/value indexes stop here.
+    RuntimeCompositeIndex { boundary: String },
+    /// RUNTIME-COMPOSITE-METHOD: a method chain was requested as a finite composite.
+    /// Specific iterator/literal sequence methods have narrower owners; arbitrary runtime
+    /// method calls are not finite source-sequence floors.
+    RuntimeCompositeMethodCall { boundary: String },
+    /// RUNTIME-FLATTEN-ELEMENT: `.flatten()` reached an element that had no finite nested
+    /// sequence floor. The adaptor must not guess a macro/runtime JSON element's expansion.
+    RuntimeFlattenElement { boundary: String },
+    /// RUNTIME-FILTER-MAP: `.filter_map()` reached an adapter element/closure/result that
+    /// is not representable by the closed literal Option floor. It must remain a typed
+    /// runtime boundary rather than a guessed adapter result.
+    RuntimeFilterMap { reason: String, boundary: String },
+    /// RUNTIME-BOOL-LOGIC: a boolean `&&`/`||` operand did not reduce to a literal bool.
+    /// This lift only short-circuits source-literal bools; runtime bool terms need a typed
+    /// boolean value model before the branch can be evaluated honestly.
+    RuntimeBoolLogic { owner: String, boundary: String },
+    /// RUNTIME-BOOL-METHOD: bool Option-producing methods (`then`, `then_some`) only
+    /// compute when the receiver is literal-determined.
+    RuntimeBoolMethod { method: String, boundary: String },
+    /// VALUE-IF-PATTERN-GUARD: a term-position `if let` introduces bindings in its branch.
+    /// The value-if floor can compose ordinary bool guards, but cannot substitute pattern
+    /// bindings from the guard into branch terms.
+    ValueIfPatternGuard { boundary: String },
+    /// RUNTIME-BLOCK-TERM: a term-position block contains local mutation or assignment
+    /// before returning a value. Transparent immutable-let blocks still reduce through
+    /// BlockTermSugar; this fires only when the prefix proves statement-state semantics
+    /// the term floor cannot collapse into one timeless value.
+    RuntimeBlockTerm { boundary: String },
     /// TYPE-INFERRED-PARSE-RESULT: `str::parse()` without turbofish takes its result type
     /// from the surrounding relation. The same call syntax can denote distinct parser
     /// results under different expected types, so relation sugar must refuse the source
@@ -9256,6 +9472,11 @@ enum Effect {
     /// term, but not to a literal truth value. The adaptor cannot decide which elements are
     /// kept from an opaque predicate result, so it stops by name instead of guessing a set.
     RuntimePredicateBoolFloor { family: String, boundary: String },
+    /// RUNTIME-ITERATOR-PREDICATE: a finite literal-domain terminal (`any`/`all`/`find`/..)
+    /// reached a closure body that reads a non-literal captured value. The domain count is
+    /// source-visible, but the predicate's truth is runtime data; the terminal must not guess
+    /// which element satisfies it.
+    RuntimeIteratorPredicate { reason: String },
     /// ARRAY-REPEAT (non-literal): an array-repeat `[elem; N]` whose length `N` is NOT a plain
     /// literal -- a const-generic param or a const expression (`[0u8; SIZE]`, `[(); SIZE - 1]`).
     /// With a NON-literal count there is no finite construction from the written literal to
@@ -9524,6 +9745,61 @@ impl Effect {
             Effect::RuntimeMatchTerm { boundary } => format!(
                 "match term runtime interior `{boundary}` is not a constructible case-term value"
             ),
+            Effect::RuntimeTextMethod { method, boundary } => format!(
+                "runtime text method `{method}` at `{boundary}` is not literal-determined; \
+                 owner=rust.text_method; shape=runtime-text-method; replacement=literal \
+                 string/char floor or typed runtime string model; refused"
+            ),
+            Effect::RuntimeStringRepeatCount { boundary } => format!(
+                "runtime string repeat count `{boundary}`, not literal-determined; \
+                 owner=rust.str_method; shape=runtime-string-repeat-count; replacement=literal \
+                 usize count or typed runtime string model; refused"
+            ),
+            Effect::RuntimeCompositeReference { boundary } => format!(
+                "runtime composite reference `{boundary}` is not a finite composite value; \
+                 owner=rust.reference; shape=composite-reference; replacement=literal-sequence \
+                 reference or typed runtime value model; refused"
+            ),
+            Effect::RuntimeCompositeIndex { boundary } => format!(
+                "runtime composite index `{boundary}` is not a finite composite value; \
+                 owner=rust.index; shape=composite-index; replacement=literal slice/index floor \
+                 or typed runtime value model; refused"
+            ),
+            Effect::RuntimeCompositeMethodCall { boundary } => format!(
+                "runtime composite method `{boundary}` is not a finite composite value; \
+                 owner=rust.method; shape=composite-method; replacement=specific sequence \
+                 method sugar or typed runtime value model; refused"
+            ),
+            Effect::RuntimeFlattenElement { boundary } => format!(
+                "runtime flatten element `{boundary}` did not dispatch to a nested sequence floor; \
+                 owner=rust.flatten; shape=runtime-flatten-element; replacement=nested literal \
+                 sequence floor or typed opaque-element model; refused"
+            ),
+            Effect::RuntimeFilterMap { reason, boundary } => format!(
+                "runtime filter_map `{boundary}` cannot be counted by the literal Option floor: \
+                 {reason}; owner=rust.filter_map; shape=runtime-filter-map; replacement=literal \
+                 Option-producing closure over finite elements or typed runtime adapter model; refused"
+            ),
+            Effect::RuntimeBoolLogic { owner, boundary } => format!(
+                "runtime bool logic `{owner}` operand `{boundary}` is not literal-determined; \
+                 owner=rust.binop; shape=runtime-bool-logic; replacement=literal bool floor \
+                 or typed runtime boolean model; refused"
+            ),
+            Effect::RuntimeBoolMethod { method, boundary } => format!(
+                "runtime bool method `{method}` receiver `{boundary}` is not literal-determined; \
+                 owner=rust.bool_method; shape=runtime-bool-method; replacement=literal bool \
+                 receiver or typed runtime boolean model; refused"
+            ),
+            Effect::ValueIfPatternGuard { boundary } => format!(
+                "value-if pattern guard `{boundary}` introduces branch bindings that are not \
+                 modeled by ValueIfSugar; owner=rust.value_if; shape=value-if-pattern-guard; \
+                 replacement=pattern-aware value-if floor or explicit branch binding model; refused"
+            ),
+            Effect::RuntimeBlockTerm { boundary } => format!(
+                "runtime block term `{boundary}` contains mutation/assignment before its value; \
+                 owner=rust.block_term; shape=runtime-block-term; replacement=typed statement-state \
+                 value model or an expression-only block; refused"
+            ),
             Effect::TypeInferredParseResult {
                 assertion,
                 boundary,
@@ -9540,6 +9816,7 @@ impl Effect {
             Effect::RuntimePredicateBoolFloor { family, boundary } => {
                 format!("{family} predicate runtime bool floor `{boundary}`, not literal-determined")
             }
+            Effect::RuntimeIteratorPredicate { reason } => reason.clone(),
             // Carries the existing "array-repeat ... non-literal length ... refused by name"
             // substring verbatim so a single whitelist entry recognizes it; the emit site's
             // `assert_eq!:` / `assert!:` prefix is preserved by the caller.
@@ -10970,8 +11247,8 @@ fn has_constraint_candidate(
     options: &LiftOptions,
     let_inits: &BTreeMap<String, &Expr>,
 ) -> bool {
-    let fcx = sugar::factory::SugarBuildCtx::new(scope, options, let_inits);
-    sugar::factory::has_constraint(expr, &fcx)
+    let _ = (scope, let_inits);
+    expr_has_constraint_surface(expr, options)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -12442,7 +12719,7 @@ fn collect_statement_macro_entries<'a>(
         factory_audits,
     );
 
-    let has_direct_surface = sugar::factory::has_assertion_surface(&macro_expr, &fcx);
+    let has_direct_surface = statement_macro_has_direct_assertion_surface(mac, temporal_scope);
     tracing::debug!(
         target: "sugar_lift_rust_tests::macro_match",
         macro_name = %macro_name,
@@ -12564,6 +12841,100 @@ fn collect_statement_macro_entries<'a>(
         macro_depth = macro_depth,
         "statement macro is not direct assertion surface and has no source expansion"
     );
+}
+
+fn statement_macro_has_direct_assertion_surface(
+    mac: &syn::Macro,
+    temporal_scope: &TemporalScope,
+) -> bool {
+    let Some(name) = macro_name(mac) else {
+        return false;
+    };
+    match name.as_str() {
+        "assert_eq_const_safe" => temporal_scope
+            .macro_registry()
+            .lookup("assert_eq_const_safe")
+            .is_some(),
+        name => assertion_surface_macro_name(name) && name != "assert_eq_const_safe",
+    }
+}
+
+#[cfg(test)]
+mod statement_macro_surface_probe_tests {
+    use super::*;
+
+    fn macro_from_expr(src: &str) -> syn::Macro {
+        let expr: Expr = syn::parse_str(src).expect("macro expression");
+        let Expr::Macro(expr_macro) = expr else {
+            panic!("fixture did not parse as macro expression");
+        };
+        expr_macro.mac
+    }
+
+    #[test]
+    fn direct_assertion_macro_probe_is_syntactic_true() {
+        let scope = TemporalScope::new("macro-probe", TemporalPlan::default());
+        let mac = macro_from_expr("assert_eq!(1, 1)");
+
+        assert!(statement_macro_has_direct_assertion_surface(&mac, &scope));
+    }
+
+    #[test]
+    fn vendor_wrapper_macro_probe_does_not_build_catalog_children() {
+        let scope = TemporalScope::new("macro-probe", TemporalPlan::default());
+        let mac = macro_from_expr("assert_four!()");
+
+        assert!(
+            !statement_macro_has_direct_assertion_surface(&mac, &scope),
+            "held macro wrappers must go through source expansion, not the direct surface probe"
+        );
+    }
+
+    #[test]
+    fn assert_eq_const_safe_probe_requires_registered_macro() {
+        let scope = TemporalScope::new("macro-probe", TemporalPlan::default());
+        let mac = macro_from_expr("assert_eq_const_safe!(1, 1)");
+
+        assert!(
+            !statement_macro_has_direct_assertion_surface(&mac, &scope),
+            "assert_eq_const_safe is direct only when the source macro is registered"
+        );
+    }
+}
+
+#[cfg(test)]
+mod constraint_surface_probe_tests {
+    use super::*;
+
+    #[test]
+    fn relation_expr_is_a_constraint_surface_without_catalog_probe() {
+        let options = LiftOptions::default();
+        let expr: Expr = syn::parse_str("x == y").expect("relation expr");
+
+        assert!(expr_has_constraint_surface(&expr, &options));
+    }
+
+    #[test]
+    fn panic_guard_expr_is_a_constraint_surface_without_catalog_probe() {
+        let options = LiftOptions::default();
+        let expr: Expr = syn::parse_str("if !ok { panic!(\"bad\") }").expect("if panic expr");
+
+        assert!(expr_has_constraint_surface(&expr, &options));
+    }
+
+    #[test]
+    fn runtime_method_chain_is_not_a_constraint_surface_probe() {
+        let options = LiftOptions::default();
+        let expr: Expr = syn::parse_str(
+            r#"minted.contract_bindings.iter().find(|binding| binding.contract == wanted)"#,
+        )
+        .expect("method chain expr");
+
+        assert!(
+            !expr_has_constraint_surface(&expr, &options),
+            "source-contract probes must not ask the constraint catalog about runtime method chains"
+        );
+    }
 }
 
 /// Count IDENT-token occurrences of `name` in any `ToTokens` node (recursing into
@@ -14761,6 +15132,28 @@ fn closure_adaptor_refusal(expr: &Expr, scope: &TemporalScope) -> Option<String>
              iteration, not constructed from source literals); refused"
         ));
     }
+    // TERMINAL (bin-2 RUNTIME PREDICATE over a literal domain): the DOMAIN is a finite source
+    // construction, but the predicate body reads a captured value that has no literal/const
+    // floor (`["field"].iter().any(|field| row.get(field)..)`). The count is known, but the
+    // predicate result is runtime data, so the terminal cannot decide which element satisfies
+    // the predicate without inventing a runtime JSON/value model. Literal captures such as
+    // `let ys = [..]; literal.iter().any(|v| &ys == *v)` deliberately stay in the bin-1 work
+    // bucket; the fake-refuse guard is the literal-floor check in
+    // `closure_body_runtime_capture`.
+    if for_iter_domain_is_literal(collection) {
+        if let Some(capture) = call
+            .args
+            .iter()
+            .find_map(|a| closure_body_runtime_capture(a, scope))
+        {
+            return Some(runtime_iterator_predicate_reason(
+                &method,
+                domain,
+                &capture,
+                &token_key(expr),
+            ));
+        }
+    }
     // TERMINAL (bin-2 RUNTIME CALL through literal-domain element): the domain may be a
     // finite source construction, but the closure body invokes the iterated value as a
     // callable (`|f| (*f)()`). The mapped value is produced by runtime dispatch, and in
@@ -14780,6 +15173,21 @@ fn closure_adaptor_refusal(expr: &Expr, scope: &TemporalScope) -> Option<String>
         "iterator/option adaptor `.{method}(|..| ..)` over {domain}; not yet lifted; \
          released to layer 0"
     ))
+}
+
+fn runtime_iterator_predicate_reason(
+    method: &str,
+    domain: &str,
+    capture: &str,
+    boundary: &str,
+) -> String {
+    format!(
+        "literal iterator predicate reads runtime capture `{capture}` in \
+         `.{method}(|..| ..)` over {domain} at `{boundary}`: predicate truth is runtime data, \
+         not a source-literal point-wise floor; owner=rust.iter_terminal; \
+         shape=literal-iterator-runtime-predicate; replacement=literal predicate floor or typed \
+         runtime predicate model; refused"
+    )
 }
 
 fn closure_body_mutates_captured_runtime_state(expr: &Expr) -> bool {
@@ -15045,6 +15453,109 @@ fn closure_body_reads_mut_local(expr: &Expr, scope: &TemporalScope) -> bool {
     };
     syn::visit::Visit::visit_expr(&mut v, &cl.body);
     v.found
+}
+
+fn closure_body_runtime_capture(expr: &Expr, scope: &TemporalScope) -> Option<String> {
+    let Expr::Closure(cl) = expr else {
+        return None;
+    };
+    let mut param_vec = Vec::new();
+    for pat in &cl.inputs {
+        collect_pat_idents(pat, &mut param_vec);
+    }
+    let params: BTreeSet<String> = param_vec.into_iter().collect();
+    let locals = closure_local_bindings(cl);
+
+    struct V<'a> {
+        scope: &'a TemporalScope,
+        params: &'a BTreeSet<String>,
+        locals: &'a BTreeSet<String>,
+        found: Option<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V<'_> {
+        fn visit_expr_path(&mut self, p: &'ast syn::ExprPath) {
+            if self.found.is_some() {
+                return;
+            }
+            let Some(name) = p.path.get_ident().map(|i| i.to_string()) else {
+                syn::visit::visit_expr_path(self, p);
+                return;
+            };
+            if self.params.contains(&name) || self.locals.contains(&name) {
+                syn::visit::visit_expr_path(self, p);
+                return;
+            }
+            if !looks_like_runtime_value_capture(&name) {
+                syn::visit::visit_expr_path(self, p);
+                return;
+            }
+            if !capture_has_literal_floor(&name, self.scope) {
+                self.found = Some(name);
+                return;
+            }
+            syn::visit::visit_expr_path(self, p);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // Nested closures have their own capture semantics.
+        }
+    }
+    let mut v = V {
+        scope,
+        params: &params,
+        locals: &locals,
+        found: None,
+    };
+    syn::visit::Visit::visit_expr(&mut v, &cl.body);
+    v.found
+}
+
+fn looks_like_runtime_value_capture(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_lowercase())
+}
+
+fn capture_has_literal_floor(name: &str, scope: &TemporalScope) -> bool {
+    if let Some(init) = scope.stable_let_binding_for_term(name) {
+        return expr_has_literal_capture_floor(init, scope, 0);
+    }
+    let Ok(path) = syn::parse_str::<syn::Path>(name) else {
+        return false;
+    };
+    scope
+        .const_expr_for_path(&path)
+        .is_some_and(|expr| expr_has_literal_capture_floor(&expr, scope, 0))
+}
+
+fn expr_has_literal_capture_floor(expr: &Expr, scope: &TemporalScope, depth: usize) -> bool {
+    if depth > 6 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Lit(_) => true,
+        Expr::Unary(unary) => expr_has_literal_capture_floor(&unary.expr, scope, depth + 1),
+        Expr::Array(array) => array
+            .elems
+            .iter()
+            .all(|elem| expr_has_literal_capture_floor(elem, scope, depth + 1)),
+        Expr::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .all(|elem| expr_has_literal_capture_floor(elem, scope, depth + 1)),
+        Expr::Repeat(repeat) => {
+            expr_has_literal_capture_floor(&repeat.expr, scope, depth + 1)
+                && matches!(
+                    strip_refs_groups(&repeat.len),
+                    Expr::Lit(lit) if matches!(lit.lit, syn::Lit::Int(_))
+                )
+        }
+        Expr::Path(_) => {
+            let _ = scope;
+            false
+        }
+        _ => false,
+    }
 }
 
 /// True if `for_iter_domain` would name `collection` a finite LITERAL construction (a
@@ -21769,6 +22280,43 @@ fn t() {
     }
 
     #[test]
+    fn bound_var_definition_scope_flattens_prior_bindings() {
+        let mut scope = TemporalScope::new("flattened_bound_var", TemporalPlan::default());
+        scope.record_let_binding("a", syn::parse_str("1").expect("a init"));
+        scope.record_let_binding("b", syn::parse_str("a + 1").expect("b init"));
+        scope.record_let_binding("c", syn::parse_str("b + 1").expect("c init"));
+
+        let c = scope
+            .stable_bound_var_for_term("c")
+            .expect("c stays a stable bound variable");
+        let c_scope = c.definition_scope();
+        let b = c_scope
+            .stable_bound_var_for_term("b")
+            .expect("c definition scope keeps b");
+
+        assert_eq!(
+            token_key(c.source()),
+            "b + 1",
+            "the current BoundVar still keeps its written source"
+        );
+        assert_eq!(
+            token_key(b.source()),
+            "1 + 1",
+            "prior bindings in a definition snapshot are flattened to their stable projection"
+        );
+        assert!(
+            c_scope.stable_bound_var_for_term("a").is_none(),
+            "definition snapshots keep only names referenced by the written RHS"
+        );
+        assert!(
+            b.definition_scope()
+                .stable_bound_var_for_term("a")
+                .is_none(),
+            "flattened prior bindings must not carry recursive definition-scope ancestry"
+        );
+    }
+
+    #[test]
     fn runtime_match_scrutinee_router_declines_literal_match_scrutinee() {
         let expr: Expr = syn::parse_str(
             r#"match 2 {
@@ -25373,6 +25921,7 @@ fn t() {
             "out-of-bounds unchecked slice indexing `[10 , 20 , 30] . get_unchecked (5)` is undefined behavior with no determinate value; refused",
             "destructured source runtime, not literal for `a`: pattern binding participates in the assertion, but the destructured source did not resolve to a literal tuple/array; refused",
             "filter predicate runtime bool floor `c:cmp:eq(v:opaque:row,s:\"proven\")`, not literal-determined",
+            "runtime block term `{ let mut response = response ; response [\"factoryAuditSummary\"] = serde_json :: json ! ({ \"emittedRows\" : 0 }) ; response }` contains mutation/assignment before its value; owner=rust.block_term; shape=runtime-block-term; replacement=typed statement-state value model or an expression-only block; refused",
             "named refusal (atomic read-modify-write runtime state): vendor pin not liftable: temporally unstable mutating method read of `x` after `.fetch_or()`",
             "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state",
             "named refusal (cell value runtime/aliased, not literal-pinned): vendor pin not liftable: cell value runtime/aliased, not literal-pinned",
@@ -25445,6 +25994,16 @@ fn t() {
             "consumed iterator state must be a named terminal Effect, not an \
              AmbiguousTemporalIdentity catch-all or an unclassified refusal string; add a \
              ConsumedIteratorState effect and classify this exact terminal boundary"
+        );
+    }
+
+    #[test]
+    fn closure_ambiguous_capture_is_a_named_terminal_effect() {
+        let reason = "closure captures ambiguous local `status`; refused";
+        assert_eq!(
+            refusal_disposition(reason),
+            Disposition::TerminalEffect,
+            "ClosureAmbiguousCapture is already a typed Effect and must be counted as terminal"
         );
     }
 
@@ -26404,6 +26963,152 @@ fn t() {
                 .iter()
                 .all(|r| !r.contains("READS a MUTABLE-local capture")),
             "immutable-capture body stays off the mut-capture path: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons.iter().all(|r| {
+                !r.contains("literal iterator predicate reads runtime capture")
+                    && matches!(refusal_disposition(r), Disposition::Unclassified)
+            }),
+            "literal immutable captures remain honest work, not runtime-capture effects: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn literal_any_predicate_runtime_capture_is_typed_effect() {
+        let src = r#"
+            struct Row;
+
+            impl Row {
+                fn get(&self, _field: &&str) -> Option<&'static str> { None }
+            }
+
+            fn make_row() -> Row { Row }
+
+            #[test]
+            fn t() {
+                let row = make_row();
+                assert_eq!(
+                    ["claim", "role"].iter().any(|field| row.get(field).is_some()),
+                    true
+                );
+            }
+        "#;
+        let out = lift_src(src);
+
+        assert_eq!(
+            out.assertions_lifted,
+            0,
+            "runtime JSON/value predicate must not fake-discharge: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons.iter().any(|reason| {
+                reason.contains("literal iterator predicate reads runtime capture `row`")
+                    && reason.contains("owner=rust.iter_terminal")
+                    && reason.contains("shape=literal-iterator-runtime-predicate")
+                    && matches!(refusal_disposition(reason), Disposition::TerminalEffect)
+            }),
+            "runtime capture should be a named terminal effect: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn literal_all_predicate_runtime_capture_uses_same_typed_effect() {
+        let src = r#"
+            struct Row;
+
+            impl Row {
+                fn has(&self, _field: &&str) -> bool { false }
+            }
+
+            fn make_row() -> Row { Row }
+
+            #[test]
+            fn t() {
+                let row = make_row();
+                assert_eq!(["claim", "role"].iter().all(|field| row.has(field)), true);
+            }
+        "#;
+        let out = lift_src(src);
+
+        assert!(
+            out.skip_reasons.iter().any(|reason| {
+                reason.contains("literal iterator predicate reads runtime capture `row`")
+                    && reason.contains(".all(|..| ..)")
+                    && matches!(refusal_disposition(reason), Disposition::TerminalEffect)
+            }),
+            "all/find-style predicate terminals should share the runtime predicate boundary: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn literal_string_repeat_direct_count_still_lifts() {
+        let src = r#"
+            #[test]
+            fn t() {
+                assert_eq!("ab".repeat(3), "ababab");
+            }
+        "#;
+        let out = lift_src(src);
+
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "literal repeat count should materialize the repeated string: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    }
+
+    #[test]
+    fn literal_string_repeat_stable_literal_count_still_lifts() {
+        let src = r#"
+            #[test]
+            fn t() {
+                let n = 3;
+                assert_eq!("ab".repeat(n), "ababab");
+            }
+        "#;
+        let out = lift_src(src);
+
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "stable literal repeat count should still route through the string floor: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    }
+
+    #[test]
+    fn literal_string_repeat_runtime_count_is_typed_effect() {
+        let src = r#"
+            fn runtime_count() -> usize { 3 }
+
+            #[test]
+            fn t() {
+                let n = runtime_count();
+                assert_eq!("ab".repeat(n), "ababab");
+            }
+        "#;
+        let out = lift_src(src);
+
+        assert_eq!(
+            out.assertions_lifted,
+            0,
+            "runtime repeat count must not fake-materialize a string: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons.iter().any(|reason| {
+                reason.contains("runtime string repeat count `n`")
+                    && reason.contains("owner=rust.str_method")
+                    && reason.contains("shape=runtime-string-repeat-count")
+                    && matches!(refusal_disposition(reason), Disposition::TerminalEffect)
+            }),
+            "runtime repeat count should be a named terminal effect: {:?}",
             out.skip_reasons
         );
     }

@@ -1706,6 +1706,13 @@ impl IterTerminalSugar {
             | Terminal::TryFold { .. } => {
                 let reason = self.closure_refusal.clone()?;
                 match refusal_disposition(&reason) {
+                    Disposition::TerminalEffect
+                        if reason.contains("literal iterator predicate reads runtime capture") =>
+                    {
+                        Some(Outcome::Incomplete(Effect::RuntimeIteratorPredicate {
+                            reason,
+                        }))
+                    }
                     Disposition::TerminalEffect => {
                         Some(Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
                             reason,

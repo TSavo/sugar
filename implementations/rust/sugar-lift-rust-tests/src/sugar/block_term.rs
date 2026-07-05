@@ -123,12 +123,15 @@ struct BlockTermSugar {
     site: String,
     statement_effects: Vec<SugarBody<StatementEffectFloor>>,
     tail: Option<SugarBody<TermFloor>>,
+    runtime_boundary: Option<String>,
 }
 
 impl BlockTermSugar {
     fn boxed(site: &Expr, stmts: Vec<Stmt>, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+        let site = token_key(site);
         Box::new(Self {
-            site: token_key(site),
+            runtime_boundary: runtime_block_boundary(&stmts).then(|| site.clone()),
+            site,
             statement_effects: statement_effect_bodies(&stmts, fcx),
             tail: tail_body(&stmts, fcx),
         })
@@ -158,7 +161,83 @@ impl Sugar for BlockTermSugar {
         if let Some(tail) = &self.tail {
             return tail.desugar(ctx);
         }
+        if let Some(boundary) = &self.runtime_boundary {
+            return Outcome::Incomplete(Effect::RuntimeBlockTerm {
+                boundary: boundary.clone(),
+            });
+        }
         panic!("unsupported term `{}`", self.site);
+    }
+}
+
+fn runtime_block_boundary(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_has_runtime_block_boundary)
+}
+
+fn stmt_has_runtime_block_boundary(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Local(local) => pat_has_mut_binding(&local.pat),
+        Stmt::Expr(expr, _) => expr_has_assignment(expr),
+        Stmt::Macro(_) | Stmt::Item(_) => false,
+    }
+}
+
+fn pat_has_mut_binding(pat: &Pat) -> bool {
+    match pat {
+        Pat::Ident(id) => id.mutability.is_some(),
+        Pat::Type(t) => pat_has_mut_binding(&t.pat),
+        Pat::Paren(p) => pat_has_mut_binding(&p.pat),
+        Pat::Tuple(tuple) => tuple.elems.iter().any(pat_has_mut_binding),
+        Pat::TupleStruct(tuple) => tuple.elems.iter().any(pat_has_mut_binding),
+        Pat::Struct(strukt) => strukt
+            .fields
+            .iter()
+            .any(|field| pat_has_mut_binding(&field.pat)),
+        Pat::Slice(slice) => slice.elems.iter().any(pat_has_mut_binding),
+        Pat::Reference(reference) => pat_has_mut_binding(&reference.pat),
+        _ => false,
+    }
+}
+
+fn expr_has_assignment(expr: &Expr) -> bool {
+    match expr {
+        Expr::Assign(_) => true,
+        Expr::Array(array) => array.elems.iter().any(expr_has_assignment),
+        Expr::Tuple(tuple) => tuple.elems.iter().any(expr_has_assignment),
+        Expr::Call(call) => {
+            expr_has_assignment(&call.func) || call.args.iter().any(expr_has_assignment)
+        }
+        Expr::MethodCall(call) => {
+            expr_has_assignment(&call.receiver) || call.args.iter().any(expr_has_assignment)
+        }
+        Expr::Reference(reference) => expr_has_assignment(&reference.expr),
+        Expr::Cast(cast) => expr_has_assignment(&cast.expr),
+        Expr::Field(field) => expr_has_assignment(&field.base),
+        Expr::Index(index) => expr_has_assignment(&index.expr) || expr_has_assignment(&index.index),
+        Expr::Binary(binary) => {
+            expr_has_assignment(&binary.left) || expr_has_assignment(&binary.right)
+        }
+        Expr::Unary(unary) => expr_has_assignment(&unary.expr),
+        Expr::Paren(paren) => expr_has_assignment(&paren.expr),
+        Expr::Group(group) => expr_has_assignment(&group.expr),
+        Expr::Block(block) => runtime_block_boundary(&block.block.stmts),
+        Expr::Unsafe(block) => runtime_block_boundary(&block.block.stmts),
+        Expr::If(if_expr) => {
+            expr_has_assignment(&if_expr.cond)
+                || runtime_block_boundary(&if_expr.then_branch.stmts)
+                || if_expr
+                    .else_branch
+                    .as_ref()
+                    .is_some_and(|(_, expr)| expr_has_assignment(expr))
+        }
+        Expr::Match(match_expr) => {
+            expr_has_assignment(&match_expr.expr)
+                || match_expr
+                    .arms
+                    .iter()
+                    .any(|arm| expr_has_assignment(&arm.body))
+        }
+        _ => false,
     }
 }
 
@@ -249,4 +328,72 @@ fn statement_effect_expr(stmt: &Stmt) -> Option<Expr> {
 fn tail_body(stmts: &[Stmt], fcx: &SugarBuildCtx) -> Option<SugarBody<TermFloor>> {
     let tail = transparent_tail_expr(stmts)?;
     Some(SugarBody::term(&tail, fcx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan,
+        TemporalScope,
+    };
+    use sugar_ir_symbolic::{ConstValue, Term};
+
+    fn reduce(src: &str) -> Outcome {
+        let expr: Expr = syn::parse_str(src).expect("parse block expr");
+        let scope = TemporalScope::new("block-term-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let frag = SourceFragment::expr(&expr, "<block-test>");
+        let sugar = recognize(&frag, &fcx).expect("block term recognizes");
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+        sugar.desugar(&ctx)
+    }
+
+    fn assert_int(outcome: Outcome, expected: i128) {
+        let Outcome::Complete(Desugared::Term(term)) = outcome else {
+            panic!("expected completed int term");
+        };
+        let Term::Const {
+            value: ConstValue::Int(actual),
+            ..
+        } = term.as_ref()
+        else {
+            panic!("expected int const term, got {term:?}");
+        };
+        assert_eq!(*actual, expected);
+    }
+
+    #[test]
+    fn mutating_block_term_is_typed_effect_not_unsupported_term_panic() {
+        let outcome = std::panic::catch_unwind(|| {
+            reduce(
+                r#"{ let mut response = response; response["factoryAuditSummary"] = serde_json::json!({"emittedRows": 0}); response }"#,
+            )
+        })
+        .expect("runtime block term must be a typed effect, not a construction panic");
+
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime block term must not fabricate a timeless value");
+        };
+        assert!(
+            effect.reason().contains("runtime block term"),
+            "effect should name the runtime block boundary: {}",
+            effect.reason()
+        );
+    }
+
+    #[test]
+    fn expression_only_block_still_reduces() {
+        assert_int(reduce("{ 2_i32 + 3 }"), 5);
+    }
+
+    #[test]
+    fn immutable_let_block_still_reduces() {
+        assert_int(reduce("{ let x = 2_i32; x + 3 }"), 5);
+    }
 }
