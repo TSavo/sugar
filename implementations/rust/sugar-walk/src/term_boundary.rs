@@ -47,7 +47,7 @@ pub fn raise_guarded_return_ir(guarded_return: GuardedReturn) -> IrTerm {
         })
 }
 
-fn formula_to_legacy_guard_term(formula: IrFormula) -> Option<IrTerm> {
+pub fn formula_to_legacy_guard_term(formula: IrFormula) -> Option<IrTerm> {
     match formula {
         IrFormula::Atomic { name, args } => Some(IrTerm::Ctor {
             name: cf_head(&name),
