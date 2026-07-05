@@ -3766,6 +3766,45 @@ def test_known_external_constant_defaults_lift_without_effects() -> None:
     ]
 
 
+def test_known_imported_header_size_default_lifts_without_effects() -> None:
+    source = (
+        "from _format_impl import _MAX_HEADER_SIZE\n"
+        "\n"
+        "def f(max_header_size=_MAX_HEADER_SIZE):\n"
+        "    return max_header_size\n"
+    )
+
+    result = lift_source(source, "known_imported_header_size_default.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert contract["effects"] == []
+    assert contract["parameterShape"] == [
+        {
+            "name": "max_header_size",
+            "kind": "positional-or-keyword",
+            "default": _int_const(10000),
+        }
+    ]
+
+
+def test_unknown_imported_name_default_remains_refused() -> None:
+    source = (
+        "from config import LIMIT\n" "\n" "def f(limit=LIMIT):\n" "    return limit\n"
+    )
+
+    result = lift_source(source, "unknown_imported_name_default.py")
+
+    assert result.refusals == [
+        {
+            "kind": "non-literal-default",
+            "function": "unknown_imported_name_default.f",
+            "line": 3,
+            "reason": "non-literal default: Name",
+        }
+    ]
+
+
 def test_rebound_import_constant_default_remains_refused() -> None:
     source = (
         "import numpy as np\n"
@@ -4219,6 +4258,27 @@ def test_transparent_wraps_final_and_deprecated_decorators_lift_body() -> None:
     contract = _contract(result.ir, ".f")
     assert result.refusals == []
     assert _function_body(result) == _return(_int_const(2))
+    assert "decoratorKinds" not in contract
+
+
+def test_transparent_set_module_decorator_lifts_body_without_marker() -> None:
+    source = (
+        "def set_module(module):\n"
+        "    def decorator(func):\n"
+        "        func.__module__ = module\n"
+        "        return func\n"
+        "    return decorator\n"
+        "\n"
+        "@set_module('numpy')\n"
+        "def f(x):\n"
+        "    return x\n"
+    )
+
+    result = lift_source(source, "set_module_decorator.py")
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result, ".f") == _return(_var("x"))
     assert "decoratorKinds" not in contract
 
 

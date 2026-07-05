@@ -123,18 +123,46 @@ fn solver_path_or_panic() -> String {
 
 fn sugar_bin_or_panic() -> PathBuf {
     let workspace = rust_workspace();
-    for candidate in [
-        workspace.join("target/debug/sugar"),
-        workspace.join("target/release/sugar"),
-    ] {
-        if candidate.is_file() {
-            return candidate;
-        }
+    let repo = workspace
+        .parent()
+        .and_then(Path::parent)
+        .expect("rust workspace lives under implementations/rust");
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let output = Command::new(repo.join("bin/sugarbin"))
+        .arg("--profile")
+        .arg(profile)
+        .output()
+        .unwrap_or_else(|err| panic!("spawn bin/sugarbin for production sugar CLI: {err}"));
+    if !output.status.success() {
+        panic!(
+            "crime=soundness verdict without production CLI; owner=teeth_asymmetry; \
+             illegal shape=bin/sugarbin could not resolve active-profile sugar binary; \
+             replacement=repair the sugarbin handoff path before this harness\n\
+             status={}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
-    panic!(
-        "crime=soundness verdict without production CLI; owner=teeth_asymmetry; \
-         illegal shape=no target/{{debug,release}}/sugar binary; replacement=run `cargo build -p sugar-cli` before this harness"
-    );
+    let path = String::from_utf8(output.stdout)
+        .expect("sugarbin emits utf-8 path")
+        .trim()
+        .to_owned();
+    let candidate = PathBuf::from(path);
+    if candidate.is_file() {
+        candidate
+    } else {
+        panic!(
+            "crime=soundness verdict without production CLI; owner=teeth_asymmetry; \
+             illegal shape=bin/sugarbin returned missing binary at {}; \
+             replacement=repair the sugarbin handoff path for this test profile",
+            candidate.display()
+        );
+    }
 }
 
 fn unique_cli_project(label: &str) -> PathBuf {

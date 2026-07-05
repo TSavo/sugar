@@ -9,15 +9,19 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal
 
+from sugar_lift_py_tests.sugar_binary import (
+    SugarBinaryResolutionError,
+    resolve_sugar_binary,
+)
+
 Verdict = Literal["sat", "unsat"]
 
 ROOT = Path(__file__).resolve().parents[5]
-RUST_WORKSPACE = ROOT / "implementations" / "rust"
 PY_TESTS = ROOT / "implementations" / "python" / "sugar-lift-py-tests"
 PY_SOURCE = ROOT / "implementations" / "python" / "sugar-lift-python-source"
 PY_PYTEST_WITNESS = ROOT / "implementations" / "python" / "sugar-lift-py-pytest-witness"
-SUGAR_BIN = RUST_WORKSPACE / "target" / "debug" / "sugar"
 _SUGAR_BUILD_LOCK = Lock()
+_RESOLVED_SUGAR_BIN: Path | None = None
 
 
 class WitnessPipelineError(RuntimeError):
@@ -61,35 +65,17 @@ def _pythonpath() -> str:
 
 
 def _ensure_sugar_bin() -> Path:
-    if SUGAR_BIN.exists():
-        return SUGAR_BIN
+    global _RESOLVED_SUGAR_BIN
+    if _RESOLVED_SUGAR_BIN is not None:
+        return _RESOLVED_SUGAR_BIN
     with _SUGAR_BUILD_LOCK:
-        if SUGAR_BIN.exists():
-            return SUGAR_BIN
-        completed = subprocess.run(
-            [
-                "cargo",
-                "build",
-                "--locked",
-                "-p",
-                "sugar-cli",
-                "--bin",
-                "sugar",
-            ],
-            cwd=RUST_WORKSPACE,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=180,
-        )
-        if completed.returncode != 0:
-            raise WitnessPipelineError(
-                "cargo build for target/debug/sugar failed\n"
-                f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
-            )
-        if not SUGAR_BIN.exists():
-            raise WitnessPipelineError("cargo build did not produce target/debug/sugar")
-        return SUGAR_BIN
+        if _RESOLVED_SUGAR_BIN is not None:
+            return _RESOLVED_SUGAR_BIN
+        try:
+            _RESOLVED_SUGAR_BIN = resolve_sugar_binary(profile="debug")
+        except SugarBinaryResolutionError as exc:
+            raise WitnessPipelineError(str(exc)) from exc
+        return _RESOLVED_SUGAR_BIN
 
 
 def ensure_sugar_bin() -> Path:

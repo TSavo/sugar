@@ -248,6 +248,56 @@ def _derive_symbol(rel_path: str, function_name: str) -> str | None:
     return f"{module}.{function_name}" if module else function_name
 
 
+def _module_file(root: Path, module: str) -> Path | None:
+    module_path = root.joinpath(*module.split("."))
+    package_init = module_path / "__init__.py"
+    if package_init.is_file():
+        return package_init
+    file_path = module_path.with_suffix(".py")
+    if file_path.is_file():
+        return file_path
+    return None
+
+
+def _literal_all_exports(root: Path, module: str) -> list[str]:
+    file_path = _module_file(root, module)
+    if file_path is None:
+        return []
+    try:
+        source = file_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(file_path))
+    except (OSError, SyntaxError):
+        return []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in node.targets
+        ):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except (ValueError, SyntaxError):
+            return []
+        if isinstance(value, (list, tuple)) and all(
+            isinstance(item, str) for item in value
+        ):
+            return list(value)
+        return []
+    return []
+
+
+def _relative_import_target(current_module: str, node: ast.ImportFrom) -> str | None:
+    if node.level != 1 or not node.module:
+        return None
+    return f"{current_module}.{node.module}" if current_module else node.module
+
+
+def _join_symbol(prefix: str, name: str) -> str:
+    return f"{prefix}.{name}" if prefix else name
+
+
 def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | None:
     """Build the PUBLIC re-export map for a package being universal-lifted.
 
@@ -260,18 +310,19 @@ def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | N
     `__init__.py` re-exports it as: `from .lib._function_base_impl import rot90`
     publishes `rot90` at `<package>.rot90`.
 
-    This reads the package root's `__init__.py` and returns a map keyed by the
-    SOURCE-PATH symbol the lifter derives, valued by the PUBLIC
+    This reads the package's declared `__init__.py` re-export chain and returns
+    a map keyed by the SOURCE-PATH symbol the lifter derives, valued by the PUBLIC
     `(library_tag, public_symbol)` pair:
 
       `lib._function_base_impl.rot90` -> (`numpy`, `numpy.rot90`)
 
-    Nothing is hard-coded: the package name is the root directory's name, and
-    every name is DERIVED from the package's own `__init__` re-exports
-    (`from .sub.module import name` and `name` entries in `__all__` that resolve
-    to a `from`-import). Returns None when the root is not a package (no
-    `__init__.py`), leaving the source-path symbol untouched (the existing
-    in-project behavior).
+    Nothing is hard-coded: the package name is the root directory's name, and every
+    name is DERIVED from package-authored imports. The top-level public name comes
+    from the root `__init__.py`; package-internal re-export hops are followed only
+    when they are declared by another `__init__.py` import, including star imports
+    whose target module has a literal string-list `__all__`. Returns None when the
+    root is not a package (no `__init__.py`), leaving the source-path symbol
+    untouched (the existing in-project behavior).
     """
     root = workspace_root
     init_path = root / "__init__.py"
@@ -289,27 +340,57 @@ def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | N
     except SyntaxError:
         return None
     mapping: dict[str, tuple[str, str]] = {}
-    for node in ast.walk(tree):
-        # Only direct, level-1 (`from .x.y import name`) re-exports from within
-        # this package establish a public alias. Absolute imports and deeper
-        # relative levels do not publish at `<package>.<name>` here.
-        if not isinstance(node, ast.ImportFrom):
+    aliases: dict[str, str] = {}
+    for current_init in sorted(root.rglob("__init__.py")):
+        try:
+            current_rel = current_init.parent.relative_to(root)
+        except ValueError:
             continue
-        if node.level != 1 or not node.module:
+        current_module = ".".join(
+            part for part in current_rel.parts if part and part != "."
+        )
+        try:
+            current_src = current_init.read_text(encoding="utf-8")
+            current_tree = ast.parse(current_src, filename=str(current_init))
+        except (OSError, SyntaxError):
             continue
-        submodule = node.module  # e.g. "lib._function_base_impl"
-        for alias in node.names:
-            if alias.name == "*":
+        for node in ast.walk(current_tree):
+            # Only same-package, level-1 (`from .x.y import name`) declarations
+            # establish identity. Absolute imports and deeper relative levels are
+            # different evidence and are intentionally left unmatched here.
+            if not isinstance(node, ast.ImportFrom):
                 continue
-            source_name = alias.name
-            public_name = alias.asname or alias.name
-            # The lifter derives the source-path symbol from the file's relpath
-            # under the package root: `<submodule>.<source_name>` (the package
-            # name is NOT part of the derived symbol because the lift root IS the
-            # package). That derived symbol is the map key.
-            source_symbol = f"{submodule}.{source_name}"
-            public_symbol = f"{package}.{public_name}"
-            mapping.setdefault(source_symbol, (package, public_symbol))
+            target_module = _relative_import_target(current_module, node)
+            if target_module is None:
+                continue
+            for alias in node.names:
+                export_names = (
+                    _literal_all_exports(root, target_module)
+                    if alias.name == "*"
+                    else [alias.name]
+                )
+                for source_name in export_names:
+                    public_name = (
+                        source_name if alias.name == "*" else alias.asname or alias.name
+                    )
+                    source_symbol = f"{target_module}.{source_name}"
+                    alias_symbol = _join_symbol(current_module, public_name)
+                    if current_module:
+                        aliases.setdefault(source_symbol, alias_symbol)
+                    else:
+                        mapping.setdefault(
+                            source_symbol,
+                            (package, f"{package}.{public_name}"),
+                        )
+
+    for source_symbol, alias_symbol in sorted(aliases.items()):
+        seen = {source_symbol}
+        cursor = alias_symbol
+        while cursor in aliases and cursor not in seen and cursor not in mapping:
+            seen.add(cursor)
+            cursor = aliases[cursor]
+        if cursor in mapping:
+            mapping.setdefault(source_symbol, mapping[cursor])
     return mapping or None
 
 

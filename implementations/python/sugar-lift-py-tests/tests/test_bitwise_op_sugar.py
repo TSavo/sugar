@@ -12,7 +12,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import Bv32Value
+from sugar_lift_py_tests.floor import Bv32Value, TermValue
 from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
@@ -45,6 +45,20 @@ def test_bitwise_lshift_dispatches_term_receiver_without_python_solving():
     result, operation_log = _reduce_value_with_log("1 << x", _x())
 
     assert result == Bv32Value(ctor("bv32.shl", [num(1), make_var("x")]))
+    assert operation_log == [("BitwiseOpSugar", "bitwise_with", "BitwiseOperation")]
+
+
+def test_concrete_bitwise_literals_fold_to_int_term():
+    result, operation_log = _reduce_value_with_log("3 & 1")
+
+    assert result == TermValue(1)
+    assert operation_log == [("BitwiseOpSugar", "bitwise_with", "BitwiseOperation")]
+
+
+def test_concrete_bitwise_shift_literals_fold_to_int_term():
+    result, operation_log = _reduce_value_with_log("1 << 2")
+
+    assert result == TermValue(4)
     assert operation_log == [("BitwiseOpSugar", "bitwise_with", "BitwiseOperation")]
 
 
