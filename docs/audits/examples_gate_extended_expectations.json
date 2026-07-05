@@ -1,0 +1,21 @@
+{
+  "examples": [
+    {
+      "expected": "GREEN",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 0 in the current examples gate sweep",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 939.496,
+      "name": "examples/signup-service/prove.sh"
+    }
+  ],
+  "policy": "GREEN rows must remain green. NAMED_RED rows must keep the same failure_shape until a deliberate fixture move records promotion to GREEN. New examples, missing examples, new reds, and changed red shapes fail the gate.",
+  "suite": "extended",
+  "summary": {
+    "green": 1,
+    "named_red": 0,
+    "total": 1,
+    "unclassified": 0
+  },
+  "version": 1
+}
