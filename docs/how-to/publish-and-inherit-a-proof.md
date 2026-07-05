@@ -58,8 +58,11 @@ consumer asserting  np.add(2,3) == 6  ->  REFUSED  (and(==5, ==6) is UNSAT)
 Verified end to end:
 
 ```
-implementations/python/sugar-lift-py-tests/tests/test_inheritance_e2e.py
-  parametrized: consumer-agrees-PROVEN, consumer-contradicts-REFUSED
+examples/numpy-consumer-demo/run.sh
+  runnable: four-verdict membrane receipt plus vendor proof v1 -> v2 update delta
+
+implementations/rust/sugar-cli/tests/cross_proof_imported_implications.rs
+  e2e: imported precondition, imported universe, and vendor-update callsite delta
 ```
 
 Contracts key to the **callsite** (e.g. `numpy.add#euf#…::assertion`), not to the
