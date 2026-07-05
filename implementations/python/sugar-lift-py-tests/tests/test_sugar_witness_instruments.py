@@ -300,18 +300,63 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     assert all(row.retirement_condition for row in rows)
     by_name = {row.sugar_name: row for row in rows}
     expected_needles = {
-        "AliasSugar": "select no AliasSugar owner",
+        "AliasSugar": "literal_call_report._import_bindings resolver metadata",
         "AttributeAssignSugar": "object attribute mutation effect",
         "AttributeDeleteSugar": "unexpected CallSiteValue",
         "BitwiseOpSugar": "prove reports undecidable",
         "DictSugar": "DictLiteralValue.project_callsite_with",
-        "ListLiteralSugar": "select ListLiteralSugar",
+        "ListLiteralSugar": "typed delegated-owner witness seat",
         "OrdByteSugar": "illegal free var byte_s_0",
         "SubscriptAssignSugar": "array mutation probes refuse at setitem_with",
         "SubscriptDeleteSugar": "deletion-state probes still reduce",
     }
     for sugar_name, needle in expected_needles.items():
         assert needle in by_name[sugar_name].retirement_condition
+
+
+def test_alias_temporal_opt_out_reproduces_resolver_metadata_owner_blocker(
+    tmp_path: Path,
+) -> None:
+    truthful = (
+        "import numpy as np\n"
+        "\n"
+        "def test_alias_backed_call():\n"
+        "    assert np.add(2, 3) == 5\n"
+    )
+    lying = truthful.replace("== 5", "== 6")
+
+    truthful_result = run_source_through_real_solver(tmp_path / "alias-truth", truthful)
+    lying_result = run_source_through_real_solver(tmp_path / "alias-lie", lying)
+
+    assert truthful_result.verdict == "sat"
+    assert lying_result.verdict == "unsat"
+    assert "CallSugar" in truthful_result.selected_sugars
+    assert "PrimitiveLiteralSugar" in truthful_result.selected_sugars
+    assert "AliasSugar" not in truthful_result.selected_sugars
+    assert "AliasSugar" not in lying_result.selected_sugars
+
+
+def test_list_literal_temporal_opt_out_reproduces_shadowed_owner_blocker(
+    tmp_path: Path,
+) -> None:
+    truthful = (
+        "def A():\n"
+        "    return len([1, 2, 3])\n"
+        "\n"
+        "def test_list_literal():\n"
+        "    assert A() == 3\n"
+    )
+    lying = truthful.replace("== 3", "== 2")
+
+    truthful_result = run_source_through_real_solver(tmp_path / "list-truth", truthful)
+    lying_result = run_source_through_real_solver(tmp_path / "list-lie", lying)
+
+    assert truthful_result.verdict == "sat"
+    assert lying_result.verdict == "unsat"
+    assert "ArrayLiteralSugar" in truthful_result.selected_sugars
+    assert "BuiltinCallSugar" in truthful_result.selected_sugars
+    assert "ListLiteralSugar" not in truthful_result.selected_sugars
+    assert "ListLiteralSugar" not in lying_result.selected_sugars
 
 
 def test_typed_red_effect_witness_accepts_right_red_and_rejects_wrong_red(

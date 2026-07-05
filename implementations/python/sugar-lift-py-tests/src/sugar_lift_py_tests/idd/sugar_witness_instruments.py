@@ -202,10 +202,11 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         floor_name="ImportAliasValue",
         reason="import aliases record name-binding support, not a FOL claim",
         retirement_condition=(
-            "retire when the default proof path selects AliasSugar for import "
-            "alias support; current import probes use aliases as resolver "
-            "metadata, select no AliasSugar owner, and alias-backed external "
-            "calls refuse at imported-callee/method sugar before SAT/UNSAT"
+            "retire when module import alias support is emitted as a "
+            "factory-walk owner row and a consuming alias-backed assertion "
+            "can witness that owner; current default proof path reads imports "
+            "only through literal_call_report._import_bindings resolver "
+            "metadata, so probes select no AliasSugar owner"
         ),
     ),
     NonFolOptOut(
@@ -293,9 +294,11 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "ArrayLiteralSugar; this fallback constructor is shadowed support"
         ),
         retirement_condition=(
-            "retire when the default proof path can select ListLiteralSugar for "
-            "list literals; current production probes select ArrayLiteralSugar "
-            "because it comes_before ListLiteralSugar in the default catalog"
+            "retire when shadowed fallback sugars have a typed delegated-owner "
+            "witness seat, or the default catalog can select ListLiteralSugar "
+            "without stealing ArrayLiteralSugar's verdict-bearing claim; current "
+            "production probes select ArrayLiteralSugar because it comes_before "
+            "ListLiteralSugar in the default catalog"
         ),
     ),
     NonFolOptOut(
