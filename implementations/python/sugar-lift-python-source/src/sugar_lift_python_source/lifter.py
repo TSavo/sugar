@@ -2901,6 +2901,22 @@ def _lift_guard_compare(node: ast.Compare) -> Json | None:
     operands: list[ast.expr] = [node.left, *node.comparators]
     atoms: list[Json] = []
     for index, op_node in enumerate(node.ops):
+        if isinstance(op_node, (ast.Is, ast.IsNot)):
+            atom = _lift_guard_identity_compare(
+                op_node, operands[index], operands[index + 1]
+            )
+            if atom is None:
+                return None
+            atoms.append(atom)
+            continue
+        if isinstance(op_node, (ast.In, ast.NotIn)):
+            atom = _lift_guard_membership_compare(
+                op_node, operands[index], operands[index + 1]
+            )
+            if atom is None:
+                return None
+            atoms.append(atom)
+            continue
         op = _GUARD_CMP_OPS.get(type(op_node))
         if op is None:
             return None
@@ -2912,6 +2928,43 @@ def _lift_guard_compare(node: ast.Compare) -> Json | None:
     return _simplify_conjunction(atoms)
 
 
+def _lift_guard_identity_compare(
+    op_node: ast.cmpop, left_node: ast.expr, right_node: ast.expr
+) -> Json | None:
+    left = _lift_guard_term(left_node)
+    right = _lift_guard_term(right_node)
+    if left is None or right is None:
+        return None
+    if not _is_none_term(left) and not _is_none_term(right):
+        return None
+    op = "=" if isinstance(op_node, ast.Is) else "≠"
+    return _atomic(op, [left, right])
+
+
+def _lift_guard_membership_compare(
+    op_node: ast.cmpop, left_node: ast.expr, right_node: ast.expr
+) -> Json | None:
+    left = _lift_guard_term(left_node)
+    options = _lift_guard_literal_options(right_node)
+    if left is None or options is None or not options:
+        return None
+    equalities = [_atomic("=", [left, option]) for option in options]
+    membership = _fold_connective("or", equalities)
+    return _negate_formula(membership) if isinstance(op_node, ast.NotIn) else membership
+
+
+def _lift_guard_literal_options(node: ast.expr) -> list[Json] | None:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return None
+    values: list[Json] = []
+    for elt in node.elts:
+        value = _lift_guard_term(elt)
+        if value is None:
+            return None
+        values.append(value)
+    return values
+
+
 def _lift_guard_term(node: ast.expr) -> Json | None:
     if isinstance(node, ast.Name):
         return var(node.id)
@@ -2920,7 +2973,16 @@ def _lift_guard_term(node: ast.expr) -> Json | None:
             return bool_const(node.value)
         if isinstance(node.value, int):
             return int_const(node.value)
+        if isinstance(node.value, str):
+            return str_const(node.value)
+        if node.value is None:
+            return none_const()
         return None
+    if isinstance(node, ast.Attribute):
+        receiver = _lift_guard_term(node.value)
+        if receiver is None:
+            return None
+        return ctor("python:attribute", receiver, str_const(node.attr))
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
         operand = node.operand
         if isinstance(operand, ast.Constant) and type(operand.value) is int:
@@ -2929,6 +2991,16 @@ def _lift_guard_term(node: ast.expr) -> Json | None:
                 value = -value
             return int_const(value)
     return None
+
+
+def _is_none_term(term: Json) -> bool:
+    sort = term.get("sort") if isinstance(term, dict) else None
+    return (
+        isinstance(sort, dict)
+        and sort.get("name") == "Unit"
+        and term.get("kind") == "const"
+        and term.get("value") is None
+    )
 
 
 def _atomic(name: str, args: list[Json]) -> Json:

@@ -129,8 +129,28 @@ def _int(value: int) -> dict[str, object]:
     }
 
 
+def _str(value: str) -> dict[str, object]:
+    return {
+        "kind": "const",
+        "value": value,
+        "sort": {"kind": "primitive", "name": "String"},
+    }
+
+
+def _unit(value: object = None) -> dict[str, object]:
+    return {
+        "kind": "const",
+        "value": value,
+        "sort": {"kind": "primitive", "name": "Unit"},
+    }
+
+
 def _var(name: str) -> dict[str, object]:
     return {"kind": "var", "name": name}
+
+
+def _attr(receiver: dict[str, object], name: str) -> dict[str, object]:
+    return _call_term("python:attribute", receiver, _str(name))
 
 
 def _atom(
@@ -201,6 +221,109 @@ def test_precondition_guard_residual_does_not_emit_partial_prefix():
         "    if x < 2:\n"
         "        raise ValueError\n"
         "    return x\n"
+    )
+    result = lift_source(source, "m.py")
+    contract = next(
+        item
+        for item in result.ir
+        if item.get("kind") == "function-contract"
+        and not str(item.get("fnName", "")).startswith("<source-unit")
+    )
+
+    assert contract["pre"] == {"kind": "atomic", "name": "true", "args": []}
+    assert any(
+        item.get("kind") == "precondition-guard-skipped" for item in result.diagnostics
+    )
+
+
+def test_attribute_none_guard_lowers_to_negated_identity_precondition():
+    source = (
+        "class Box:\n"
+        "    def present(self):\n"
+        "        if self.value is None:\n"
+        "            raise ValueError\n"
+        "        return 1\n"
+    )
+    contract = _fn_contract(source)
+
+    assert contract["pre"] == _atom("≠", _attr(_var("self"), "value"), _unit())
+
+
+def test_attribute_numeric_guard_lowers_to_core_comparison_precondition():
+    source = (
+        "class Box:\n"
+        "    def wide_enough(self):\n"
+        "        if self.ndim < 2:\n"
+        "            raise ValueError\n"
+        "        return 1\n"
+    )
+    contract = _fn_contract(source)
+
+    assert contract["pre"] == _atom("≥", _attr(_var("self"), "ndim"), _int(2))
+
+
+def test_finite_literal_membership_guard_lowers_to_disjunction_precondition():
+    source = (
+        "def supported(device):\n"
+        '    if device not in ["cpu", None]:\n'
+        "        raise ValueError\n"
+        "    return 1\n"
+    )
+    contract = _fn_contract(source)
+
+    assert contract["pre"] == {
+        "kind": "or",
+        "operands": [
+            _atom("=", _var("device"), _str("cpu")),
+            _atom("=", _var("device"), _unit()),
+        ],
+    }
+
+
+def test_mixed_supported_guard_shapes_compose_without_residual():
+    source = (
+        "class Box:\n"
+        "    def supported(self, mode):\n"
+        "        if self.value is None:\n"
+        "            raise ValueError\n"
+        "        if mode not in (1, 2):\n"
+        "            raise ValueError\n"
+        "        return 1\n"
+    )
+    result = lift_source(source, "m.py")
+    contract = next(
+        item
+        for item in result.ir
+        if item.get("kind") == "function-contract"
+        and not str(item.get("fnName", "")).startswith("<source-unit")
+    )
+
+    assert contract["pre"] == {
+        "kind": "and",
+        "operands": [
+            _atom("≠", _attr(_var("self"), "value"), _unit()),
+            {
+                "kind": "or",
+                "operands": [
+                    _atom("=", _var("mode"), _int(1)),
+                    _atom("=", _var("mode"), _int(2)),
+                ],
+            },
+        ],
+    }
+    assert not [
+        item
+        for item in result.diagnostics
+        if item.get("kind") == "precondition-guard-skipped"
+    ]
+
+
+def test_runtime_call_guard_stays_residual_not_precondition_claim():
+    source = (
+        "def supported(value):\n"
+        "    if not isinstance(value, int):\n"
+        "        raise ValueError\n"
+        "    return 1\n"
     )
     result = lift_source(source, "m.py")
     contract = next(
