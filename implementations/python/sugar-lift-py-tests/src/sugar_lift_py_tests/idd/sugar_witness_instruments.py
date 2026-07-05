@@ -216,10 +216,13 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="import aliases record name-binding support, not a FOL claim",
         retirement_condition=(
             "retire when module import alias support is emitted as a "
-            "factory-walk owner row and a consuming alias-backed assertion "
-            "can witness that owner; current default proof path reads imports "
-            "only through literal_call_report._import_bindings resolver "
-            "metadata, so probes select no AliasSugar owner"
+            "factory-walk owner row and a consuming alias-backed assertion can "
+            "witness that owner; current default proof path calls "
+            "factory/build.py:87 _build_source_report before SourceFragmentStack "
+            "dispatch, then factory/literal_call_report.py:304 reads imports as "
+            "_import_bindings resolver metadata, while sugar/alias_sugar.py:18 "
+            "can own only an observed alias fragment, so alias-backed proof probes "
+            "select CallSugar/PrimitiveLiteralSugar and no AliasSugar owner"
         ),
     ),
     NonFolOptOut(
@@ -280,9 +283,13 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         retirement_condition=(
             "retire when shadowed fallback sugars have a typed delegated-owner "
             "witness seat, or the default catalog can select ListLiteralSugar "
-            "without stealing ArrayLiteralSugar's verdict-bearing claim; current "
-            "production probes select ArrayLiteralSugar because it comes_before "
-            "ListLiteralSugar in the default catalog"
+            "without stealing ArrayLiteralSugar's verdict-bearing claim; "
+            "claim/sugar_catalog.py:15 admits both List owners, factory/build.py:174 "
+            "selects the candidate that dominates by comes_before, and "
+            "sugar/array_literal_sugar.py:29 declares "
+            "comes_before=('ListLiteralSugar',) over the same observed List shape "
+            "that sugar/list_literal_sugar.py:28 owns, so production probes "
+            "select ArrayLiteralSugar instead of ListLiteralSugar"
         ),
     ),
     NonFolOptOut(
