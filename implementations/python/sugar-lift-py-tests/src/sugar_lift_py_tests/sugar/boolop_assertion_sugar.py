@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.ir import Formula, and_, or_
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -59,19 +58,18 @@ class BoolOpAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
 
 def _assertion_child(site, ctx) -> SugarBody:
-    try:
-        return ctx.build_body(site, SugarRole.ASSERTION)
-    except FactoryGap as gap:
+    if not ctx.catalog.candidates_for(SugarRole.ASSERTION, site):
         return SugarBody(
             _RuntimeAssertionEffect(
                 owner="BoolOpAssertionSugar",
-                observed=str(gap.info.get("observed", site.assert_test().observed)),
-                requested=str(gap.info.get("requested", SugarRole.ASSERTION.value)),
-                replacement=str(gap.info.get("fix", str(gap))),
+                observed=site.assert_test().observed,
+                requested=SugarRole.ASSERTION.value,
+                replacement=f"create {site.suggested_sugar_module}",
                 blame=site.blame,
             ),
             SugarRole.ASSERTION,
         )
+    return ctx.build_body(site, SugarRole.ASSERTION)
 
 
 @dataclass(frozen=True)

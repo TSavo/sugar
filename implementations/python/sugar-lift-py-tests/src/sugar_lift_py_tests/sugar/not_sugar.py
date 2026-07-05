@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.ir import Formula, atomic, ctor, eq, gt, gte, lt, lte, ne, not_
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -62,19 +61,18 @@ class NotSugar(Sugar, role=SugarRole.ASSERTION):
         formula = _symbolic_assertion_formula(operand_assert, ctx)
         if formula is not None and _prefer_symbolic_formula(operand_assert):
             return cls(formula=formula)
-        try:
-            return cls(body=ctx.build_body(operand_assert, SugarRole.ASSERTION))
-        except FactoryGap as gap:
+        if not ctx.catalog.candidates_for(SugarRole.ASSERTION, operand_assert):
             return cls(
                 runtime_reason=(
-                    f"NotSugar child {gap.info.get('observed', operand_assert.assert_test().observed)} "
+                    f"NotSugar child {operand_assert.assert_test().observed} "
                     "cannot be reduced to a static assertion formula; Python "
                     "evaluates this negated assertion at runtime. "
-                    f"replacement={gap.info.get('requested', SugarRole.ASSERTION.value)}; "
-                    f"fix={gap.info.get('fix', str(gap))}"
+                    f"replacement={SugarRole.ASSERTION.value}; "
+                    f"fix=create {operand_assert.suggested_sugar_module}"
                 ),
                 blame=site.blame,
             )
+        return cls(body=ctx.build_body(operand_assert, SugarRole.ASSERTION))
 
     @classmethod
     def witnesses(cls):

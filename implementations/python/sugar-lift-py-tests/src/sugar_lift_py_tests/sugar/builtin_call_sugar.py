@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory.build import FactoryCandidateDeclined
 from sugar_lift_py_tests.floor import StringValue, SymbolicValue
 from sugar_lift_py_tests.operations import (
     AttributeLookupOperation,
@@ -190,14 +190,7 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
                 self.blame,
                 f"attribute name expression `{self.dynamic_name_observed}` is runtime",
             )
-        try:
-            receiver_outcome = self.receiver.reduce(ctx)
-        except FactoryGap as exc:
-            return _runtime_getattr_effect(
-                self.blame,
-                "receiver could not be reduced before runtime getattr: "
-                f"{exc.info.get('observed', type(exc).__name__)}",
-            )
+        receiver_outcome = self.receiver.reduce(ctx)
         if isinstance(receiver_outcome, Incomplete):
             return receiver_outcome
         receiver = complete_value(
@@ -319,9 +312,9 @@ class FormatBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
                 "FormatBuiltinSugar claim built an unsupported builtin call"
             )
         if _call_is_context_bound(site, ctx):
-            from sugar_lift_py_tests.sugar.call_sugar import CallSugar
-
-            return CallSugar.build(site, ctx)
+            raise FactoryCandidateDeclined(
+                "context-bound `format` belongs to CallSugar"
+            )
         args = site.call_args()
         return cls(
             argument=ctx.build_body(args[0], SugarRole.TERM),
