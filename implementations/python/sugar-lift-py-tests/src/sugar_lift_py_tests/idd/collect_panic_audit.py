@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import shutil
 import subprocess
 import sys
-import tempfile
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional
+from typing import Any, Callable, Iterable, List, Optional
 
 from .command_result import CommandResult
 from .extract_panic_records import extract_panic_records
@@ -15,6 +19,14 @@ from .panic_record import PanicRecord
 
 RunCommand = Callable[[List[str], Path], CommandResult]
 PackagePathResolver = Callable[[str], Path]
+_CACHE_VERSION = "sugar-python-panic-audit-workspace-v1"
+
+
+@dataclass(frozen=True)
+class CachedAuditWorkspace:
+    workspace: Path
+    cache_key: str
+    hit: bool
 
 
 def collect_panic_audit(
@@ -130,10 +142,8 @@ def _resolve_installed_package_path(package: str) -> Path:
 def _run_command(command: List[str], cwd: Path) -> CommandResult:
     if command[:4] == ["sugar", "lift", "--report", "--visual"] and command:
         target = Path(command[-1])
-        with tempfile.TemporaryDirectory(prefix="sugar-python-audit-") as tmp:
-            audit_workspace = Path(tmp) / target.name
-            _prepare_audit_workspace(target, cwd, audit_workspace)
-            return _run_subprocess([*command[:-1], str(audit_workspace)], cwd)
+        audit_workspace = _cached_audit_workspace(target, cwd).workspace
+        return _run_subprocess([*command[:-1], str(audit_workspace)], cwd)
     return _run_subprocess(command, cwd)
 
 
@@ -162,19 +172,125 @@ def _prepare_audit_workspace(target: Path, root: Path, audit_workspace: Path) ->
     sugar_dir = audit_workspace / ".sugar"
     manifest_dir = sugar_dir / "lift/python"
     manifest_dir.mkdir(parents=True, exist_ok=True)
-    (sugar_dir / "config.toml").write_text(
-        "\n".join(
-            [
-                "[[plugins]]",
-                'name = "python-audit-lift"',
-                'kind = "lift"',
-                'surface = "python"',
-                'emit = "ir-document"',
-                "",
-            ]
-        ),
+    (sugar_dir / "config.toml").write_text(_audit_config_toml(), encoding="utf-8")
+    (manifest_dir / "manifest.toml").write_text(
+        _audit_manifest_toml(root),
         encoding="utf-8",
     )
+
+
+def _cached_audit_workspace(target: Path, root: Path) -> CachedAuditWorkspace:
+    target = target.resolve()
+    root = root.resolve()
+    cache_key = _audit_workspace_cache_key(target, root)
+    cell_root = _audit_workspace_cache_root() / cache_key
+    workspace = cell_root / target.name
+    metadata = cell_root / "audit-workspace.json"
+    if _audit_workspace_cache_hit(metadata, workspace, cache_key):
+        return CachedAuditWorkspace(workspace=workspace, cache_key=cache_key, hit=True)
+
+    cache_root = _audit_workspace_cache_root()
+    cache_root.mkdir(parents=True, exist_ok=True)
+    tmp_root = cache_root / f".{cache_key}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    try:
+        _prepare_audit_workspace(target, root, tmp_root / target.name)
+        metadata_payload = {
+            "kind": "sugar-python-panic-audit-workspace",
+            "version": _CACHE_VERSION,
+            "cacheKey": cache_key,
+            "targetName": target.name,
+        }
+        (tmp_root / "audit-workspace.json").write_text(
+            json.dumps(metadata_payload, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            os.rename(tmp_root, cell_root)
+        except FileExistsError:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+        if not _audit_workspace_cache_hit(metadata, workspace, cache_key):
+            raise RuntimeError(
+                f"audit workspace cache cell {cell_root} was not materialized"
+            )
+        return CachedAuditWorkspace(workspace=workspace, cache_key=cache_key, hit=False)
+    except Exception:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        raise
+
+
+def _audit_workspace_cache_hit(metadata: Path, workspace: Path, cache_key: str) -> bool:
+    if not metadata.is_file() or not workspace.is_dir():
+        return False
+    try:
+        payload = json.loads(metadata.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        payload.get("kind") == "sugar-python-panic-audit-workspace"
+        and payload.get("version") == _CACHE_VERSION
+        and payload.get("cacheKey") == cache_key
+    )
+
+
+def _audit_workspace_cache_key(target: Path, root: Path) -> str:
+    hasher = hashlib.sha256()
+    _hash_text(hasher, "version", _CACHE_VERSION)
+    _hash_text(hasher, "target-name", target.name)
+    _hash_text(hasher, "config", _audit_config_toml())
+    _hash_text(hasher, "manifest", _audit_manifest_toml(root))
+    _hash_tree(hasher, "target", target)
+    _hash_tree(
+        hasher,
+        "python-kit",
+        root / "implementations/python/sugar-lift-py-tests/src",
+    )
+    _hash_tree(
+        hasher,
+        "python-source-kit",
+        root / "implementations/python/sugar-lift-python-source/src",
+    )
+    return hasher.hexdigest()
+
+
+def _hash_tree(hasher: Any, label: str, root: Path) -> None:
+    _hash_text(hasher, f"{label}:root", root.name)
+    for source in sorted(root.rglob("*.py")):
+        if "__pycache__" in source.parts:
+            continue
+        relative = source.relative_to(root).as_posix()
+        _hash_text(hasher, f"{label}:path", relative)
+        data = source.read_bytes()
+        _hash_text(hasher, f"{label}:sha256", hashlib.sha256(data).hexdigest())
+
+
+def _hash_text(hasher: Any, label: str, value: str) -> None:
+    hasher.update(label.encode("utf-8"))
+    hasher.update(b"\0")
+    hasher.update(value.encode("utf-8"))
+    hasher.update(b"\0")
+
+
+def _audit_workspace_cache_root() -> Path:
+    configured = os.environ.get("SUGAR_PANIC_AUDIT_WORKSPACE_CACHE_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".cache" / "sugar" / "python-panic-audit-workspaces"
+
+
+def _audit_config_toml() -> str:
+    return "\n".join(
+        [
+            "[[plugins]]",
+            'name = "python-audit-lift"',
+            'kind = "lift"',
+            'surface = "python"',
+            'emit = "ir-document"',
+            "",
+        ]
+    )
+
+
+def _audit_manifest_toml(root: Path) -> str:
     lift_rpc = (
         root
         / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"
@@ -186,24 +302,21 @@ def _prepare_audit_workspace(target: Path, root: Path, audit_workspace: Path) ->
         "--audit-only",
     ]
     command_items = ", ".join(_toml_string(item) for item in command)
-    (manifest_dir / "manifest.toml").write_text(
-        "\n".join(
-            [
-                'name = "python-audit-lift"',
-                'version = "0.1.0"',
-                'protocol_version = "pep/1.7.0"',
-                'kind = "lift"',
-                f"command = [{command_items}]",
-                f"working_dir = {_toml_string(str(root))}",
-                "",
-                "[capabilities]",
-                'authoring_surfaces = ["python"]',
-                'ir_version = "v1.1.0"',
-                "emits_signed_mementos = false",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    return "\n".join(
+        [
+            'name = "python-audit-lift"',
+            'version = "0.1.0"',
+            'protocol_version = "pep/1.7.0"',
+            'kind = "lift"',
+            f"command = [{command_items}]",
+            f"working_dir = {_toml_string(str(root))}",
+            "",
+            "[capabilities]",
+            'authoring_surfaces = ["python"]',
+            'ir_version = "v1.1.0"',
+            "emits_signed_mementos = false",
+            "",
+        ]
     )
 
 
