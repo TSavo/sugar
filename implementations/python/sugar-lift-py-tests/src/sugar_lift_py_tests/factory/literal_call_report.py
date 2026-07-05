@@ -160,6 +160,12 @@ class SourceReportBuild:
 
 
 @dataclass(frozen=True)
+class _PriorAssignmentEffect:
+    site: SourceFragment
+    incomplete: Incomplete
+
+
+@dataclass(frozen=True)
 class EqualityFactEmission:
     fact: EqualityFact
     source_warrants: tuple[SourceMementoDto, ...]
@@ -633,6 +639,14 @@ def _lift_assert(
         module_statements=module_statements,
         factory_audits=factory_audits,
     )
+    if isinstance(assertion_ctx, _PriorAssignmentEffect):
+        return _prior_assignment_effect_lift(
+            assertion_ctx,
+            fn=fn,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+        )
     derived_literal_call = _numpy_integer_literal_call_derived_fact(
         stmt,
         comparison=comparison,
@@ -742,6 +756,14 @@ def _lift_assertion_via_factory(
         external_bridge_sink=external_bridge_sink,
         factory_audits=factory_audits,
     )
+    if isinstance(ctx, _PriorAssignmentEffect):
+        return _prior_assignment_effect_lift(
+            ctx,
+            fn=fn,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+        )
     if _is_simple_bound_name_equality(
         stmt, _prior_assignment_names(module_statements, fn, stmt)
     ):
@@ -935,7 +957,7 @@ def _assertion_factory_ctx(
     module_statements: list[SourceFragment],
     external_bridge_sink: list[dict[str, Any]] | None = None,
     factory_audits: list[Any] | None = None,
-) -> FactoryBuildContext:
+) -> FactoryBuildContext | _PriorAssignmentEffect:
     from .build import default_catalog
 
     ctx = FactoryBuildContext(
@@ -975,21 +997,27 @@ def _ctx_with_prior_assignments(
     fn: SourceFragment,
     stmt: SourceFragment,
     ctx: FactoryBuildContext,
-) -> FactoryBuildContext:
+) -> FactoryBuildContext | _PriorAssignmentEffect:
     from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
 
     priors = _needed_prior_assignment_sites(module_statements, fn, stmt)
     if not priors:
         return ctx
-    block = BlockSugar(
-        statements=tuple(
-            ctx.build_body(prior, SugarRole.STATEMENT) for prior in priors
-        ),
-        blame=stmt.blame,
-    )
-    folded = block.fold_with_context(ctx)
-    complete_value(folded.outcome, owner="literal_call_report.prior_assignment_block")
-    return folded.ctx
+    folded_ctx = ctx
+    for prior in priors:
+        block = BlockSugar(
+            statements=(folded_ctx.build_body(prior, SugarRole.STATEMENT),),
+            blame=prior.blame,
+        )
+        folded = block.fold_with_context(folded_ctx)
+        if isinstance(folded.outcome, Incomplete):
+            return _PriorAssignmentEffect(site=prior, incomplete=folded.outcome)
+        complete_value(
+            folded.outcome,
+            owner="literal_call_report.prior_assignment_block",
+        )
+        folded_ctx = folded.ctx
+    return folded_ctx
 
 
 def _needed_prior_assignment_sites(
@@ -1211,6 +1239,27 @@ def _effect_lift(
         [walk],
         [],
         [EffectDto(name=effect_name, effect=incomplete.effect, source_memento=memento)],
+    )
+
+
+def _prior_assignment_effect_lift(
+    prior: _PriorAssignmentEffect,
+    *,
+    fn: SourceFragment,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> LiftResult:
+    return _effect_lift(
+        prior.site,
+        fn,
+        prior.incomplete,
+        stmt=prior.site,
+        selected="PriorAssignmentTypedEffect",
+        requested_role="PriorAssignmentBlock",
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
     )
 
 
