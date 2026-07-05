@@ -95,7 +95,11 @@ fn eq(lhs: Json, rhs: Json) -> Json {
     json!({"kind": "atomic", "name": "=", "args": [lhs, rhs]})
 }
 
-fn vendor_ir() -> Vec<Json> {
+fn vendor_ir_with_encodings(encodings: &[&str]) -> Vec<Json> {
+    let encoding_operands: Vec<Json> = encodings
+        .iter()
+        .map(|encoding| eq(var("encoding"), string_const(encoding)))
+        .collect();
     vec![
         json!({
             "kind": "function-contract",
@@ -106,11 +110,7 @@ fn vendor_ir() -> Vec<Json> {
             "outBinding": "out",
             "pre": {
                 "kind": "or",
-                "operands": [
-                    eq(var("encoding"), string_const("ASCII")),
-                    eq(var("encoding"), string_const("latin1")),
-                    eq(var("encoding"), string_const("bytes")),
-                ],
+                "operands": encoding_operands,
             },
         }),
         json!({
@@ -128,8 +128,8 @@ fn vendor_ir() -> Vec<Json> {
     ]
 }
 
-fn write_static_vendor_plugin(path: &Path) {
-    let ir = serde_json::to_string(&vendor_ir()).expect("vendor IR serializes");
+fn write_static_vendor_plugin(path: &Path, ir: &[Json]) {
+    let ir = serde_json::to_string(ir).expect("vendor IR serializes");
     write_executable(
         path,
         &format!(
@@ -161,7 +161,7 @@ for line in sys.stdin:
     );
 }
 
-fn stage_vendor_proof() -> (tempfile::TempDir, PathBuf, String) {
+fn stage_vendor_proof_with_encodings(encodings: &[&str]) -> (tempfile::TempDir, PathBuf, String) {
     let dir = tempfile::tempdir().expect("create vendor tempdir");
     let project = dir.path().join("vendor");
     let manifest_dir = project.join(".sugar/lift/static-vendor");
@@ -185,7 +185,8 @@ flags = ["-smt2", "-in"]
     )
     .expect("write vendor config");
     let plugin = project.join("static_vendor.py");
-    write_static_vendor_plugin(&plugin);
+    let ir = vendor_ir_with_encodings(encodings);
+    write_static_vendor_plugin(&plugin, &ir);
     fs::write(
         manifest_dir.join("manifest.toml"),
         format!(
@@ -228,6 +229,10 @@ flags = ["-smt2", "-in"]
         .map(|hex| format!("blake3-512:{hex}"))
         .expect("proof filename is CID-addressed");
     (dir, proof, cid)
+}
+
+fn stage_vendor_proof() -> (tempfile::TempDir, PathBuf, String) {
+    stage_vendor_proof_with_encodings(&["ASCII", "latin1", "bytes"])
 }
 
 fn build_python_lift_tests() -> PathBuf {
@@ -334,7 +339,35 @@ flags = ["-smt2", "-in"]
     project
 }
 
+fn remove_direct_project_proofs(project: &Path) {
+    for entry in fs::read_dir(project).expect("read project root") {
+        let path = entry.expect("project entry").path();
+        if path.extension().and_then(|s| s.to_str()) == Some("proof") {
+            fs::remove_file(&path)
+                .unwrap_or_else(|err| panic!("remove stale proof {}: {err}", path.display()));
+        }
+    }
+}
+
+fn replace_imported_proof(project: &Path, proof: &Path) {
+    let imports = project.join(".sugar/imports");
+    for entry in fs::read_dir(&imports).expect("read imports dir") {
+        let path = entry.expect("imports entry").path();
+        if path.extension().and_then(|s| s.to_str()) == Some("proof") {
+            fs::remove_file(&path)
+                .unwrap_or_else(|err| panic!("remove imported proof {}: {err}", path.display()));
+        }
+    }
+    fs::copy(
+        proof,
+        imports.join(proof.file_name().expect("proof filename")),
+    )
+    .expect("copy replacement proof");
+    remove_direct_project_proofs(project);
+}
+
 fn run_mint(project: &Path) {
+    remove_direct_project_proofs(project);
     let output = Command::new(sugar_bin())
         .arg("mint")
         .arg("--project")
@@ -542,4 +575,82 @@ def test_add():
     let bad_row = find_consistency_row(&bad_prove, "numpy.add#euf#");
     assert_eq!(bad_row["status"].as_str(), Some("unsatisfied"));
     assert_linked_post_targets_imported_proof(bad_row, &proof_cid);
+}
+
+#[test]
+fn imported_vendor_update_delta_names_only_affected_consumer_callsites() {
+    assert!(
+        python_available(),
+        "python3 is required for the Python lift plugin"
+    );
+    assert!(
+        z3_available(),
+        "z3 is required for the production prove verdict"
+    );
+    let (_vendor_v1_dir, proof_v1, proof_v1_cid) =
+        stage_vendor_proof_with_encodings(&["ASCII", "latin1", "bytes"]);
+    let (_vendor_v2_dir, proof_v2, proof_v2_cid) =
+        stage_vendor_proof_with_encodings(&["ASCII", "bytes"]);
+    assert_ne!(
+        proof_v1_cid, proof_v2_cid,
+        "tightening the vendor encoding universe must mint a different proof"
+    );
+
+    let consumer = stage_consumer_project(
+        &proof_v1,
+        r#"import numpy as np
+
+
+def test_load():
+    assert np.load("data.npy", encoding="latin1") == "data.npy"
+
+
+def test_add():
+    assert np.add(5, 5) == 10
+"#,
+        "vendor-update-consumer",
+    );
+
+    let v1_report = run_lift_report(&consumer);
+    assert_report_edge_targets_imported_proof(&v1_report, "call:numpy.load", &proof_v1_cid);
+    run_mint(&consumer);
+    let (v1_prove, v1_code) = run_prove(&consumer);
+    assert_eq!(
+        v1_code, 0,
+        "consumer should prove against vendor v1: {v1_prove}"
+    );
+    let v1_load = find_bridge_row(&v1_prove, "call:numpy.load");
+    assert_eq!(v1_load["status"].as_str(), Some("discharged"));
+    let v1_add = find_consistency_row(&v1_prove, "numpy.add#euf#");
+    assert_eq!(v1_add["status"].as_str(), Some("discharged"));
+    assert_linked_post_targets_imported_proof(v1_add, &proof_v1_cid);
+
+    replace_imported_proof(&consumer, &proof_v2);
+    let v2_report = run_lift_report(&consumer);
+    assert_report_edge_targets_imported_proof(&v2_report, "call:numpy.load", &proof_v2_cid);
+    run_mint(&consumer);
+    let (v2_prove, v2_code) = run_prove(&consumer);
+    assert_eq!(
+        v2_code, 1,
+        "consumer load call should fail after vendor v2 removes latin1: {v2_prove}"
+    );
+    assert_eq!(v2_prove["violations"].as_u64(), Some(1));
+    let v2_load = find_bridge_row(&v2_prove, "call:numpy.load");
+    assert_eq!(v2_load["status"].as_str(), Some("unsatisfied"));
+    let v2_add = find_consistency_row(&v2_prove, "numpy.add#euf#");
+    assert_eq!(v2_add["status"].as_str(), Some("discharged"));
+    assert_linked_post_targets_imported_proof(v2_add, &proof_v2_cid);
+
+    let changed = [(
+        "call:numpy.load",
+        v1_load["status"].as_str().unwrap(),
+        v2_load["status"].as_str().unwrap(),
+    )];
+    let held = [(
+        "numpy.add#euf#",
+        v1_add["status"].as_str().unwrap(),
+        v2_add["status"].as_str().unwrap(),
+    )];
+    assert_eq!(changed, [("call:numpy.load", "discharged", "unsatisfied")]);
+    assert_eq!(held, [("numpy.add#euf#", "discharged", "discharged")]);
 }

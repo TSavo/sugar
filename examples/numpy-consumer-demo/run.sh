@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # Cross-proof consumer demo: vendor fact, vendor universe, user fact.
 #
-# This is intentionally tiny. It mints a minimal vendor `.proof` that exposes
-# two NumPy-shaped contracts, stages that proof under each consumer's
-# `.sugar/imports/`, and then proves four consumer claims through the shipping
-# Sugar CLI:
+# This is intentionally tiny. It mints two minimal vendor `.proof` files that
+# expose NumPy-shaped contracts, stages v1 under one unchanged consumer, swaps
+# to v2, and then proves the same consumer claims through the shipping Sugar
+# CLI:
 #
-#   np.load(..., encoding="latin1")  -> discharges imported vendor pre
-#   np.load(..., encoding="wrong")   -> violates imported vendor pre
-#   np.add(5, 5) == 10               -> discharges via imported vendor universe
-#   np.add(5, 5) == 11               -> refutes via imported vendor universe
+#   v1: np.load(..., encoding="latin1") -> discharges imported vendor pre
+#   v2: np.load(..., encoding="latin1") -> violates tightened vendor pre
+#   both: np.add(5, 5) == 10            -> discharges via imported vendor universe
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -53,36 +52,36 @@ def eq(left, right):
     return {"kind": "atomic", "name": "=", "args": [left, right]}
 
 
-vendor_ir = [
-    {
-        "kind": "function-contract",
-        "name": "lib._npyio_impl.load",
-        "bridgeSourceSymbol": "numpy.load",
-        "formals": ["file", "encoding"],
-        "formalSorts": [str_sort, str_sort],
-        "outBinding": "out",
-        "pre": {
-            "kind": "or",
-            "operands": [
-                eq(var("encoding"), string_const("ASCII")),
-                eq(var("encoding"), string_const("latin1")),
-                eq(var("encoding"), string_const("bytes")),
-            ],
+def vendor_ir(encodings):
+    return [
+        {
+            "kind": "function-contract",
+            "name": "lib._npyio_impl.load",
+            "bridgeSourceSymbol": "numpy.load",
+            "formals": ["file", "encoding"],
+            "formalSorts": [str_sort, str_sort],
+            "outBinding": "out",
+            "pre": {
+                "kind": "or",
+                "operands": [
+                    eq(var("encoding"), string_const(encoding))
+                    for encoding in encodings
+                ],
+            },
         },
-    },
-    {
-        "kind": "function-contract",
-        "name": "numpy.add",
-        "bridgeSourceSymbol": "numpy.add",
-        "formals": ["a", "b"],
-        "formalSorts": [int_sort, int_sort],
-        "outBinding": "out",
-        "post": eq(
-            var("out"),
-            {"kind": "ctor", "name": "+", "args": [var("a"), var("b")]},
-        ),
-    },
-]
+        {
+            "kind": "function-contract",
+            "name": "numpy.add",
+            "bridgeSourceSymbol": "numpy.add",
+            "formals": ["a", "b"],
+            "formalSorts": [int_sort, int_sort],
+            "outBinding": "out",
+            "post": eq(
+                var("out"),
+                {"kind": "ctor", "name": "+", "args": [var("a"), var("b")]},
+            ),
+        },
+    ]
 
 
 def write_executable(path: Path, body: str) -> None:
@@ -107,9 +106,11 @@ def require_success(proc, label):
         )
 
 
-def mint_vendor() -> tuple[Path, str]:
-    vendor = work / "vendor"
-    out = work / "vendor-out"
+def mint_vendor(label: str, encodings) -> tuple[Path, str]:
+    vendor = work / label
+    out = work / f"{label}-out"
+    shutil.rmtree(vendor, ignore_errors=True)
+    shutil.rmtree(out, ignore_errors=True)
     (vendor / ".sugar/lift/static-vendor").mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     (vendor / ".sugar/config.toml").write_text(
@@ -134,7 +135,7 @@ flags = ["-smt2", "-in"]
 import json
 import sys
 
-IR = {json.dumps(vendor_ir)}
+IR = {json.dumps(vendor_ir(encodings))}
 
 for line in sys.stdin:
     request = json.loads(line)
@@ -193,6 +194,7 @@ done
 
 def stage_consumer(name: str, source: str, proof: Path) -> Path:
     project = work / name
+    shutil.rmtree(project, ignore_errors=True)
     (project / ".sugar/lift/python").mkdir(parents=True, exist_ok=True)
     (project / ".sugar/imports").mkdir(parents=True, exist_ok=True)
     shutil.copy2(proof, project / ".sugar/imports" / proof.name)
@@ -228,7 +230,27 @@ exec python3 -m sugar_lift_py_tests.lift_rpc --rpc
     return project
 
 
+def remove_direct_proofs(project: Path) -> None:
+    for proof in project.glob("*.proof"):
+        proof.unlink()
+
+
+def replace_imported_proof(project: Path, proof: Path) -> None:
+    imports = project / ".sugar/imports"
+    for imported in imports.glob("*.proof"):
+        imported.unlink()
+    shutil.copy2(proof, imports / proof.name)
+    remove_direct_proofs(project)
+
+
+def lift_report(project: Path):
+    report = run([bin_path, "lift", "--report", "--json", project])
+    require_success(report, f"{project.name} wall")
+    return json.loads(report.stdout)
+
+
 def mint_and_prove(project: Path):
+    remove_direct_proofs(project)
     mint = run([bin_path, "mint", "--project", project, "--out", project, "--quiet", "--json"])
     require_success(mint, f"consumer mint {project.name}")
     prove = run([bin_path, "prove", project, "--json"])
@@ -250,68 +272,90 @@ def row_for(report, *, bridge=None, property_contains=None):
     raise SystemExit(f"row not found bridge={bridge!r} property={property_contains!r}: {json.dumps(report, indent=2)}")
 
 
-proof, proof_cid = mint_vendor()
-print(f"vendor proof: {proof.name} ({proof_cid})")
+def edge_for(report, target_symbol):
+    return next(e for e in report["callEdges"] if e["targetSymbol"] == target_symbol)
 
-cases = {
-    "load-good": """import numpy as np
+
+def summarize(label, proof_cid, report, code):
+    load = row_for(report, bridge="call:numpy.load")
+    add = row_for(report, property_contains="numpy.add#euf#")
+    add_linked = add["verification"]["linkedPosts"][0]
+    print(f"{label}: proof={proof_cid}")
+    print(
+        f"  np.load latin1: exit={code} status={load['status']} violations={report.get('violations')}"
+    )
+    print(
+        f"  np.add(5,5)==10: status={add['status']} linked-origin={add_linked['targetProofCid']}"
+    )
+    return {
+        "load": load["status"],
+        "add": add["status"],
+        "add_origin": add_linked["targetProofCid"],
+    }
+
+
+proof_v1, proof_v1_cid = mint_vendor("vendor-v1", ["ASCII", "latin1", "bytes"])
+proof_v2, proof_v2_cid = mint_vendor("vendor-v2", ["ASCII", "bytes"])
+print(f"vendor v1 proof: {proof_v1.name} ({proof_v1_cid})")
+print(f"vendor v2 proof: {proof_v2.name} ({proof_v2_cid})")
+
+consumer_source = """import numpy as np
 
 def test_load():
     assert np.load("data.npy", encoding="latin1") == "data.npy"
-""",
-    "load-bad": """import numpy as np
-
-def test_load():
-    assert np.load("data.npy", encoding="wrong") == "data.npy"
-""",
-    "add-good": """import numpy as np
 
 def test_add():
     assert np.add(5, 5) == 10
-""",
-    "add-bad": """import numpy as np
+"""
 
-def test_add():
-    assert np.add(5, 5) == 11
-""",
-}
+consumer = stage_consumer("consumer-vendor-update", consumer_source, proof_v1)
 
-projects = {name: stage_consumer(name, source, proof) for name, source in cases.items()}
-
-wall = run([bin_path, "lift", "--report", "--json", projects["load-good"]])
-require_success(wall, "load-good wall")
-wall_report = json.loads(wall.stdout)
-edge = next(e for e in wall_report["callEdges"] if e["targetSymbol"] == "call:numpy.load")
+v1_wall = lift_report(consumer)
+v1_edge = edge_for(v1_wall, "call:numpy.load")
 print(
-    "wall edge:",
-    edge["sourceContract"],
+    "v1 wall edge:",
+    v1_edge["sourceContract"],
     "->",
-    edge["targetSymbol"],
+    v1_edge["targetSymbol"],
     "->",
-    edge["targetContract"],
+    v1_edge["targetContract"],
     "origin",
-    edge["targetProofCid"],
+    v1_edge["targetProofCid"],
 )
+v1_code, v1_prove = mint_and_prove(consumer)
+v1_summary = summarize("v1", proof_v1_cid, v1_prove, v1_code)
 
-for name in ["load-good", "load-bad", "add-good", "add-bad"]:
-    code, report = mint_and_prove(projects[name])
-    if name.startswith("load"):
-        row = row_for(report, bridge="call:numpy.load")
+replace_imported_proof(consumer, proof_v2)
+v2_wall = lift_report(consumer)
+v2_edge = edge_for(v2_wall, "call:numpy.load")
+print(
+    "v2 wall edge:",
+    v2_edge["sourceContract"],
+    "->",
+    v2_edge["targetSymbol"],
+    "->",
+    v2_edge["targetContract"],
+    "origin",
+    v2_edge["targetProofCid"],
+)
+v2_code, v2_prove = mint_and_prove(consumer)
+v2_summary = summarize("v2", proof_v2_cid, v2_prove, v2_code)
+
+changed = []
+held = []
+for key, label in [("load", "np.load latin1"), ("add", "np.add(5,5)==10")]:
+    before = v1_summary[key]
+    after = v2_summary[key]
+    if before == after:
+        held.append((label, before, after))
     else:
-        row = row_for(report, property_contains="numpy.add#euf#")
-    print(
-        f"{name}: exit={code} status={row['status']} violations={report.get('violations')}"
-    )
-    if name.startswith("add"):
-        linked = row["verification"]["linkedPosts"][0]
-        print(
-            "  linked post:",
-            linked["sourceSymbol"],
-            "origin",
-            linked["targetProofCid"],
-            "call",
-            linked["call"]["name"],
-        )
+        changed.append((label, before, after))
+
+print("delta summary: changed={} held={} scanned_files=0".format(len(changed), len(held)))
+for label, before, after in changed:
+    print(f"  changed: {label}: {before} -> {after}; new vendor proof={proof_v2_cid}")
+for label, before, after in held:
+    print(f"  held: {label}: {before} -> {after}")
 
 print(f"workdir: {work}")
 PY
