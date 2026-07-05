@@ -1217,6 +1217,131 @@ emit = "ir-document"
 }
 
 #[test]
+fn lift_report_python_public_constructor_reexport_joins_guard_precondition() {
+    if !python_blake3_available() {
+        eprintln!(
+            "python3/blake3 not on PATH: skipping Python constructor reexport guard implication report test"
+        );
+        return;
+    }
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let manifest_dir = project.join(".sugar/lift/python");
+    fs::create_dir_all(&manifest_dir).expect("create manifest dir");
+    fs::create_dir_all(project.join("_core")).expect("create _core dir");
+    fs::write(project.join("__init__.py"), "from ._core import finfo\n")
+        .expect("write __init__.py");
+    fs::write(
+        project.join("_core").join("__init__.py"),
+        "from .getlimits import *\n",
+    )
+    .expect("write _core/__init__.py");
+    fs::write(
+        project.join("_core").join("getlimits.py"),
+        r#"__all__ = ["finfo"]
+
+class finfo:
+    def __new__(cls, dtype):
+        if dtype is None:
+            raise TypeError("dtype required")
+        return dtype
+"#,
+    )
+    .expect("write _core/getlimits.py");
+    fs::write(
+        project.join("test_getlimits.py"),
+        r#"import project as np
+
+def test_finfo():
+    assert np.finfo("f8") == "f8"
+"#,
+    )
+    .expect("write test_getlimits.py");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "python-audit-lift"
+kind = "lift"
+surface = "python"
+emit = "ir-document"
+"#,
+    )
+    .expect("write project config");
+
+    let py_tests_src = repo_root()
+        .join("implementations")
+        .join("python")
+        .join("sugar-lift-py-tests")
+        .join("src");
+    let py_source_src = repo_root()
+        .join("implementations")
+        .join("python")
+        .join("sugar-lift-python-source")
+        .join("src");
+    let plugin = dir.path().join("python-lift.sh");
+    write_executable(
+        &plugin,
+        &format!(
+            "#!/bin/sh\nexport PYTHONPATH=\"{}:{}${{PYTHONPATH:+:$PYTHONPATH}}\"\nexec python3 -m sugar_lift_py_tests.lift_rpc --rpc\n",
+            py_tests_src.display(),
+            py_source_src.display()
+        ),
+    );
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            "name = \"python-audit-lift\"\ncommand = [\"{}\"]\nworking_dir = \".\"\n",
+            plugin.display()
+        ),
+    )
+    .expect("write manifest");
+
+    let output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--json")
+            .arg(&project),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "lift report must join public constructor reexport assertion edges to source guard preconditions\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("report JSON parses");
+    let contracts = report["contracts"].as_array().expect("contracts array");
+    let constructor = contracts
+        .iter()
+        .find(|contract| {
+            contract["name"].as_str() == Some("_core.getlimits.finfo.__new__")
+                || contract["fnName"].as_str() == Some("_core.getlimits.finfo.__new__")
+        })
+        .expect("source-lifter contract for _core.getlimits.finfo.__new__ must be minted");
+    assert_eq!(
+        constructor["bridgeSourceSymbol"].as_str(),
+        Some("project.finfo"),
+        "constructor contract must carry the public class re-export bridge symbol: {constructor:#?}"
+    );
+    assert_eq!(
+        constructor["pre"]["name"].as_str(),
+        Some("≠"),
+        "constructor contract must carry the negated None guard: {constructor:#?}"
+    );
+    let call_edges = report["callEdges"].as_array().expect("callEdges array");
+    assert!(
+        call_edges.iter().any(|edge| {
+            edge["kind"].as_str() == Some("implication")
+                && edge["targetContract"].as_str() == Some("_core.getlimits.finfo.__new__")
+                && edge["targetSlot"].as_str() == Some("pre")
+                && edge["prover"].as_str() == Some("python-implications")
+        }),
+        "report must render the constructor reexport post-to-pre implication edge; callEdges={call_edges:#?}"
+    );
+}
+
+#[test]
 fn lift_report_rehydrates_assertion_surface_audits_from_minted_proof() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");

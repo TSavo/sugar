@@ -347,13 +347,28 @@ def _source_precondition_only_contracts(
                 ),
                 "locus": item.get("locus"),
             }
-            public = public_reexports.get(fn_name)
-            contract["bridgeSourceSymbol"] = (
-                public[1] if public is not None else fn_name
+            contract["bridgeSourceSymbol"] = _source_contract_bridge_symbol(
+                fn_name, public_reexports
             )
             out.append(contract)
             existing_names.add(fn_name)
     return out
+
+
+def _source_contract_bridge_symbol(
+    fn_name: str, public_reexports: dict[str, tuple[str, str]]
+) -> str:
+    public = public_reexports.get(fn_name)
+    if public is not None:
+        return public[1]
+    for constructor_suffix in (".__new__", ".__init__"):
+        if not fn_name.endswith(constructor_suffix):
+            continue
+        class_symbol = fn_name[: -len(constructor_suffix)]
+        public_class = public_reexports.get(class_symbol)
+        if public_class is not None:
+            return public_class[1]
+    return fn_name
 
 
 def _source_lifter_function_contracts(
