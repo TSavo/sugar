@@ -204,6 +204,74 @@ def test_sugarbin_refuses_when_every_rung_is_exhausted(tmp_path: Path) -> None:
     assert "no matching sugar binary for stamp newfeedface" in completed.stderr
 
 
+def test_sugarbin_can_print_source_stamp_without_resolving_binary() -> None:
+    completed = _run_sugarbin(
+        {
+            "SUGAR_BINARY_SOURCE_STAMP": "stamp-for-delegators",
+            "SUGAR_BINARY_ALLOW_BUILD": "0",
+            "SUGAR_BINARY_NO_SHELF": "1",
+        },
+        "--print-source-stamp",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "stamp-for-delegators"
+    assert completed.stderr == ""
+
+
+def test_sugarbin_publish_uploads_stamp_named_assets(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    binary = target / "release" / "sugar"
+    binary.parent.mkdir(parents=True)
+    _write_fake_sugar(binary, "publishstamp")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    upload_log = tmp_path / "upload.log"
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1 $2" = "repo view" ]; then echo TSavo/sugar; exit 0; fi\n'
+        'if [ "$1 $2" = "api user" ]; then echo fake-publisher; exit 0; fi\n'
+        'if [ "$1 $2" = "release view" ]; then\n'
+        '  case "$*" in *"--json assets"*) exit 0 ;; esac\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1 $2" = "release upload" ]; then\n'
+        f"  printf '%s\\n' \"$@\" > {os.fspath(upload_log)!r}\n"
+        "  exit 0\n"
+        "fi\n"
+        'echo unexpected gh "$@" >&2\n'
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+
+    completed = _run_sugarbin(
+        {
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "SUGAR_BINARY_TARGET_ROOT": os.fspath(target),
+            "SUGAR_BINARY_REPO": "TSavo/sugar",
+            "SUGAR_BINARY_SOURCE_STAMP": "publishstamp",
+        },
+        "--profile",
+        "release",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    upload_args = upload_log.read_text(encoding="utf-8").splitlines()
+    uploaded_paths = [
+        arg
+        for arg in upload_args
+        if Path(arg).name.startswith("sugar-darwin-x86_64-release-publishstamp")
+    ]
+    assert [Path(arg).name for arg in uploaded_paths] == [
+        "sugar-darwin-x86_64-release-publishstamp",
+        "sugar-darwin-x86_64-release-publishstamp.metadata.json",
+    ]
+    assert all("#" not in arg for arg in uploaded_paths)
+
+
 def test_python_wrapper_delegates_to_sugarbin(tmp_path: Path, monkeypatch) -> None:
     from sugar_lift_py_tests import sugar_binary
 

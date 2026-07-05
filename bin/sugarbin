@@ -3,17 +3,19 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: bin/sugarbin [--profile release|debug] [--platform <auto|key>]
+usage: bin/sugarbin [--profile release|debug] [--platform <auto|key>] [--print-source-stamp]
 
 Resolve the Sugar CLI binary by source stamp:
   SUGAR_BIN override -> local target by stamp -> shelf by stamp -> build + publish.
 
+  --print-source-stamp prints the canonical source stamp and exits.
 On success, prints exactly the binary path to stdout. Diagnostics go to stderr.
 EOF
 }
 
 profile="release"
 platform_override="auto"
+print_source_stamp=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
@@ -25,6 +27,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "sugarbin: --platform requires a value" >&2; exit 2; }
       platform_override="$2"
       shift 2
+      ;;
+    --print-source-stamp)
+      print_source_stamp=1
+      shift
       ;;
     --help | -h)
       usage
@@ -117,6 +123,10 @@ source_stamp() {
 }
 
 git_head() {
+  if [[ -n "${SUGAR_BUILD_GIT_HEAD:-}" ]]; then
+    printf '%s\n' "$SUGAR_BUILD_GIT_HEAD"
+    return 0
+  fi
   git -C "$repo_root" rev-parse HEAD
 }
 
@@ -182,11 +192,14 @@ publish_if_absent() {
     log "shelf already has $name"
     return 0
   fi
-  local actor sha tmp meta
+  local actor sha tmp asset meta
   actor="$(gh api user --jq .login 2>/dev/null || printf unknown)"
   sha="$(sha256_file "$bin")"
   tmp="$(mktemp -d)"
+  asset="$tmp/$name"
   meta="$tmp/$name.metadata.json"
+  cp "$bin" "$asset"
+  chmod +x "$asset"
   python3 - "$meta" "$repo" "$actor" "$stamp" "$(platform_key)" "$profile" "$sha" "$bin" <<'PY'
 import json
 import sys
@@ -212,7 +225,7 @@ with open(path, "w", encoding="utf-8") as out:
     )
     out.write("\n")
 PY
-  gh release upload "$shelf_tag" "$bin#$name" "$meta#$name.metadata.json" \
+  gh release upload "$shelf_tag" "$asset" "$meta" \
     --repo "$repo" >/dev/null 2>&1 \
     && log "published $name as $actor" \
     || log "publish failed or raced for $name; continuing"
@@ -273,6 +286,11 @@ build_from_source() {
 }
 
 main() {
+  if [[ "$print_source_stamp" == "1" ]]; then
+    source_stamp
+    return 0
+  fi
+
   if [[ -n "${SUGAR_BIN:-}" ]]; then
     printf '%s\n' "$SUGAR_BIN"
     return 0
