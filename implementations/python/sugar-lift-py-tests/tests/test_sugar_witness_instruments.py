@@ -300,7 +300,7 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     by_name = {row.sugar_name: row for row in rows}
     expected_needles = {
         "AliasSugar": "factory/literal_call_report.py:304",
-        "DictSugar": "DictLiteralValue.project_callsite_with",
+        "DictSugar": "structural dict equality / entry decomposition",
         "ListLiteralSugar": "sugar/array_literal_sugar.py:29",
     }
     for sugar_name, needle in expected_needles.items():
@@ -322,6 +322,15 @@ def test_owner_selection_gap_rows_cite_excluding_code() -> None:
     assert "factory/build.py:174" in list_condition
     assert "sugar/array_literal_sugar.py:29" in list_condition
     assert "sugar/list_literal_sugar.py:28" in list_condition
+
+    dict_condition = rows["DictSugar"].retirement_condition
+    assert dict_condition is not None
+    assert (
+        "docs.python.org/3/library/stdtypes.html#mapping-types-dict" in dict_condition
+    )
+    assert "literal_call_report.py:2197/2219" in dict_condition
+    assert "callsite_projection_operation.py:61" in dict_condition
+    assert "still discharges the lie" in dict_condition
 
 
 def test_owner_selection_gap_is_not_missing_enrollment() -> None:
