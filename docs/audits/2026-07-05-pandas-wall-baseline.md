@@ -2,8 +2,10 @@
 
 Part of #3503.
 
-This is the first August-seat scouting baseline for full pandas source plus its
-test corpus using the current Python audit machinery. It changes no lifter code.
+This is the August-seat scouting baseline for full pandas source plus its test
+corpus using the current Python audit machinery. The original measurement found
+the `MapSugar receiver` crash; this revision refreshes the wall after routing
+that case to a typed effect.
 
 ## Corpus
 
@@ -11,20 +13,20 @@ test corpus using the current Python audit machinery. It changes no lifter code.
 |---|---:|
 | pandas version | 3.0.3 |
 | installed package | `/usr/local/lib/python3.14/site-packages/pandas` |
-| cached audit workspace | `/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e6584386f67991af23cdca0e0ab3ef983b1e1645526c9aa02599d1a9a46d5238/pandas` |
-| audit workspace cache key | `e6584386f67991af23cdca0e0ab3ef983b1e1645526c9aa02599d1a9a46d5238` |
+| cached audit workspace | `/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e17a7b3da98c63ba59bef1a18a4f040503e5fb8ba0e16d9b967701438674c1ba/pandas` |
+| audit workspace cache key | `e17a7b3da98c63ba59bef1a18a4f040503e5fb8ba0e16d9b967701438674c1ba` |
 | Python files | 1421 |
 | pandas test Python files | 1122 |
-| repo head | `1e9779fe8ab477718361ab82e0c523962e050fb7` |
-| sugar binary stamp | `1e9779fe8ab477718361ab82e0c523962e050fb7-dirty-3aa553bfc26f7252` |
+| repo head | `6fa7d8743b52f732406ce2e7adad4dd1fc9b905f` |
+| sugar binary stamp | `6fa7d8743b52f732406ce2e7adad4dd1fc9b905f-dirty-491789b70f9bf49d` |
 
 The audit workspace was materialized through
 `sugar_lift_py_tests.idd.collect_panic_audit._cached_audit_workspace`, the same
 cache path used by the numpy/pandas panic audit.
 
-The binary stamp is dirty because the baseline fixture and this report were
-staged while the current-main receipt was refreshed; the lifter code under
-measurement is from `1e9779fe8ab477718361ab82e0c523962e050fb7`.
+The release binary was resolved by `bin/sugarbin` for
+`6fa7d8743b52f732406ce2e7adad4dd1fc9b905f` plus this PR's dirty-tree
+`MapSugar` incomplete-effect propagation change.
 
 ## Render Result
 
@@ -33,16 +35,17 @@ before emitting `sourceLedger`, `sourceAudits`, or visual rows.
 
 | command | exit | stdout bytes | stderr bytes | elapsed |
 |---|---:|---:|---:|---:|
-| `sugar lift --report --json <cached-pandas-audit-workspace>` | 2 | 0 | 8840 | 64.23s |
-| `sugar lift --report --visual <cached-pandas-audit-workspace>` | 2 | 0 | 8840 | 62.88s |
+| `sugar lift --report --json <cached-pandas-audit-workspace>` | 2 | 0 | 7932 | 298.58s |
+| `sugar lift --report --visual <cached-pandas-audit-workspace>` | 2 | 0 | 7932 | 307.61s |
 
 Raw receipt hashes:
 
 | receipt | sha256 |
 |---|---|
-| `/tmp/pandas-wall-baseline-current/pandas-report.json.stderr` | `0d40824aeb2839f154afae2e9e598641a66969bb8da3ab3577254b89d960c522` |
-| `/tmp/pandas-wall-baseline-current/pandas-report.visual.stderr` | `71dc36f4c1b8ba1bbba081a46595876a58d35ff88c407af0c4f48e408423c0e5` |
-| `/tmp/pandas-wall-baseline-current/repro-report.stderr` | `0c74aa641c5e92bce497e6dfebada16d06668a8cce3cf718be70bbeab901a9eb` |
+| `/tmp/mapsugar-effect-honesty-pandas-final2/pandas-report.json.stderr` | `0281eeb0af1825f24f7f6f0e254179fec1f129ac2326c45ea6e0538da391fbff` |
+| `/tmp/mapsugar-effect-honesty-pandas-final2/pandas-report.visual.stderr` | `d263b0122bf930b69fb6b59049fd29d62d15b0764bf844fd938b6377e603e389` |
+| `/tmp/mapsugar-effect-honesty-after.json` | `5aebb5634ef8ff05c6e51cc8b0075313c20dbc8112f3de6cbb90aa008149d8dc` |
+| `/tmp/mapsugar-effect-honesty-after.stderr` | `232774b53f6d619c371621aea0f1e7a2fdba2e01bb83747352b5b44f83d8e62a` |
 
 ## Counts
 
@@ -67,46 +70,44 @@ bare-red invariant can be measured.
 
 ## First Blocker
 
-The first blocker is in pandas' own test corpus:
+The current first blocker is in pandas' own test corpus:
 
 ```text
-pandas/tests/base/test_conversion.py:127:12
-MapSugar receiver cannot read completed value from incomplete effect:
+pandas/tests/internals/test_internals.py:1179:29
+AddSugar receiver cannot read completed value from incomplete effect:
 write more Sugar for this AST:
 owner=python.factory
-observed=call-local:typ
+observed=call-builtin:slice
 requested=term
-fix=resolve local call `typ` to a body, link an imported .proof, add sugar, or emit a real effect
+fix=add builtin call sugar for `slice`, resolve a local body, link an imported .proof, or emit a real effect
 ```
 
 Source shape:
 
 ```python
-typ = index_or_series
-s = typ([1], dtype=dtype)
-result = s.map(type)[0]
-if not isinstance(rdtype, tuple):
-    rdtype = (rdtype,)
-assert result in rdtype
+bpl = BlockPlacement(slice(0, 5))
+assert bpl.add(1).as_slice == slice(1, 6, 1)
+assert bpl.add(np.arange(5)).as_slice == slice(0, 10, 2)
+assert list(bpl.add(np.arange(5, 0, -1))) == [5, 5, 5, 5, 5]
 ```
 
 Call path:
 
 ```text
-MembershipAssertionSugar.desugar
-NameSugar.desugar
-StringSubscriptSugar.desugar
-MapSugar.desugar
-complete_value(MapSugar receiver)
+_lift_callsite_assertion
+_literal_floor_via_factory
+AddSugar.desugar
+complete_value(AddSugar receiver)
 ```
 
-The bug class is not pandas-specific semantics yet. The wall aborts because an
-incomplete local-call effect (`typ(...)`) is forced as a completed value by a
-later map/string-subscript/membership composition.
+The old `MapSugar receiver` blocker is no longer the first abort. The wall now
+gets to `pandas/tests/internals/test_internals.py` and stops when `AddSugar`
+forces the incomplete typed effect for `slice(0, 5)` as a completed term.
 
-## Minimal Repro
+## MapSugar Repro
 
-The same failure reproduces without the full pandas tree:
+The original MapSugar failure reproducer is small enough to keep as the
+regression receipt:
 
 ```python
 def test_iterable_map(index_or_series, dtype, rdtype):
@@ -118,23 +119,23 @@ def test_iterable_map(index_or_series, dtype, rdtype):
     assert result in rdtype
 ```
 
-Receipt:
+Post-fix receipt:
 
 ```text
-sugar lift --report --json /tmp/pandas-wall-baseline-current/repro-audit
-exit 2
-MapSugar receiver cannot read completed value from incomplete effect:
-... test_conversion_minimal.py:3:8 observed=call-local:typ requested=term ...
+sugar lift --report --json /tmp/mapsugar-effect-honesty-after-audit
+exit 0
+factory walk row: selected=MembershipAssertionSugar status=factory-gap
+reason contains observed=call-local:typ requested=term
 ```
 
 ## Top Red Shapes
 
-Because the full wall aborts before rows are emitted, the top-10 red reason
-table is not available yet. The current top blocker is:
+Because the full wall still aborts before rows are emitted, the top-10 red
+reason table is not available yet. The current top blocker is:
 
 | rank | count | template | example |
 |---:|---:|---|---|
-| 1 | 1 | MapSugar receiver forces incomplete `call-local` effect from local constructor alias before report rows are emitted | `pandas/tests/base/test_conversion.py:127:12` |
+| 1 | 1 | AddSugar receiver forces incomplete `call-builtin:slice` effect before report rows are emitted | `pandas/tests/internals/test_internals.py:1179:29` |
 
 ## Transfer Notes
 
@@ -142,14 +143,15 @@ table is not available yet. The current top blocker is:
 |---|---|
 | content-addressed audit workspace cache | Transfers. The pandas workspace is keyed by vendor source plus kit source. |
 | re-export bridges / set-module-style aliasing | Not reached. The wall aborts before bridge/call-edge counts render. |
-| guard shapes | Not reached. The corpus contains guard-heavy tests, but the first blocker is earlier. |
+| guard shapes | Not reached. The corpus contains guard-heavy tests, but the current blocker still aborts before frequency counts render. |
 | decorators | Not reached. The pandas package and tests are present, but decorator frequency cannot be measured until render survives. |
-| local alias plus higher-order map | First blocker. `typ = index_or_series`, `typ(...)`, `s.map(type)[0]`, and membership assertion compose into the crash. |
+| local alias plus higher-order map | Drained for the first pandas hit. The minimal repro now returns a typed `factory-gap` row with `call-local:typ` grounds. |
+| builtin `slice(...)` inside arithmetic receiver | New first blocker. `AddSugar` forces the `call-builtin:slice` effect as a completed receiver. |
 
 ## August Work-List Seed
 
-1. Make the local-call effect remain typed through `MapSugar`/subscript/membership
-   composition instead of forcing `Complete`.
+1. Make the `call-builtin:slice` effect remain typed through `AddSugar` instead
+   of forcing `Complete`.
 2. Re-run this exact baseline and require `bare-red count = 0`.
 3. Only after the wall renders, classify the real top-10 reason templates by
    frequency.
