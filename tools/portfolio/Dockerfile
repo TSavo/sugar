@@ -157,5 +157,8 @@ RUN curl https://elan.lean-lang.org/elan-init.sh -sSf \
 COPY verify-portfolio.sh /opt/portfolio/verify-portfolio.sh
 RUN chmod +x /opt/portfolio/verify-portfolio.sh
 
+RUN chown -R 1000:1000 /opt /cache /workspace
+USER 1000
+
 WORKDIR /workspace
 CMD ["bash"]
