@@ -21,8 +21,10 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
   actions: read
+  attestations: write
+  id-token: write
 
 jobs:
   rss-floor-smoke:
@@ -55,7 +57,9 @@ jobs:
 
       - name: Build RSS smoke binaries
         working-directory: implementations/rust
-        run: cargo build -p sugar-cli --bin sugar -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib
+        run: |
+          ../../bin/sugarbin --profile debug >/dev/null
+          cargo build -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib
 
       - name: Generate synthetic RSS fixture
         working-directory: implementations/rust
@@ -71,9 +75,10 @@ jobs:
           # synthetic fixture now mints the provenance KIND warrants the
           # verifier REQUIRES (source-memento per contract, 240 contracts).
           # The old reference measured a fixture the verifier refuses today.
+          sugar_bin="$(bin/sugarbin --profile debug)"
+          export SUGAR_BIN="$sugar_bin"
           tools/perf/verify-rss.sh \
             --project-root "$RUNNER_TEMP/sugar-rss-synthetic-120" \
-            --sugar implementations/rust/target/debug/sugar \
             --reference-kib 37376 \
             --label ci-linux-synthetic-120 \
             -- --quiet
@@ -149,3 +154,10 @@ jobs:
         run: make ci
         env:
           CI: '1'
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Attest published sugar binary
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: implementations/rust/target/release/sugar

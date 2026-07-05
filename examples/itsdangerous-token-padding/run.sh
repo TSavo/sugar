@@ -25,7 +25,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 TARGET_DIR="${CARGO_TARGET_DIR:-$REPO/implementations/rust/target}"
-BIN="$TARGET_DIR/debug/sugar"
+BIN="$("$REPO/bin/sugarbin" --profile release)"
 
 VENV="${ITSDANGEROUS_LOGO_VENV:-/tmp/itsdangerous-logo-venv}"
 export ITSDANGEROUS_LOGO_VENV="$VENV"
@@ -1411,9 +1411,6 @@ PY
   rm -f "$report"
 }
 
-echo "== build the CLI =="
-cargo build --manifest-path "$REPO/implementations/rust/Cargo.toml" -p sugar-cli --bin sugar >/dev/null || {
-  echo "FAIL: sugar build"; exit 1; }
 [ -x "$BIN" ] || { echo "FAIL: sugar binary missing at $BIN"; exit 1; }
 
 run_twin() {

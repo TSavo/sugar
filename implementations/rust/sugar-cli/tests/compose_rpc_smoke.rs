@@ -26,19 +26,7 @@ use serde_json::{json, Value as JsonValue};
 const PINNED_CID: &str = "blake3-512:36212b7bf7b9ccf264950940a33d64e1cfe88b6f4d8a47c01949fc64d9359d1813d6147aa2e1afe82b01e6e7ebcbe0a413683284b5f47ffef5bf364213304665";
 
 fn sugar_bin() -> PathBuf {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let workspace = PathBuf::from(manifest_dir).parent().unwrap().to_path_buf();
-    let release = workspace.join("target").join("release").join("sugar");
-    let debug = workspace.join("target").join("debug").join("sugar");
-    if release.exists() {
-        release
-    } else if debug.exists() {
-        debug
-    } else {
-        // Fall back to release path; the test will fail with a clear
-        // missing-binary error rather than a misleading timeout.
-        release
-    }
+    PathBuf::from(env!("CARGO_BIN_EXE_sugar"))
 }
 
 /// Build the wire body for one of the trivial pure atoms used by
@@ -84,7 +72,7 @@ fn compose_rpc_returns_pinned_cid() {
     let bin = sugar_bin();
     assert!(
         bin.exists(),
-        "sugar binary missing at {}; run `cargo build -p sugar-cli` first",
+        "sugar test subject binary missing at {}; cargo should provide CARGO_BIN_EXE_sugar",
         bin.display()
     );
 
@@ -197,7 +185,7 @@ fn compose_rpc_impure_input_returns_refusal_memento_with_stable_cid() {
     let bin = sugar_bin();
     assert!(
         bin.exists(),
-        "sugar binary missing at {}; run `cargo build -p sugar-cli` first",
+        "sugar test subject binary missing at {}; cargo should provide CARGO_BIN_EXE_sugar",
         bin.display()
     );
 

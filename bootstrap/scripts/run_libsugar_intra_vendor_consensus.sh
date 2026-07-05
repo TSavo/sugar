@@ -12,7 +12,7 @@ POLICY="protocol/policies/intra-vendor-empirical-admission.json"
 WITNESS_DIR="$EVIDENCE/witness-consensus"
 RECEIPT_DIR="bootstrap/witness-consensus-receipts"
 RECEIPT="$RECEIPT_DIR/libsugar-intra-vendor.json"
-CLI="implementations/rust/target/release/sugar"
+CLI="$("$ROOT/bin/sugarbin" --profile release)"
 THRESHOLD=4
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/sugar-witness-consensus.XXXXXX")"
@@ -45,8 +45,8 @@ trap cleanup EXIT
 
 find menagerie/concept-shapes/specs -type f -name '*.spec.json' | sort > "$BEFORE_SPECS"
 
-echo "build sugar-cli"
-(cd implementations/rust && cargo build --release -p sugar-cli)
+echo "resolve sugar-cli"
+"$ROOT/bin/sugarbin" --profile release >/dev/null
 
 python3 - "$POLICY" "$CLI_POLICY" <<'PY'
 import json

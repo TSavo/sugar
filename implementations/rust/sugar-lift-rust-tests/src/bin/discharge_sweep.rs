@@ -1160,21 +1160,48 @@ fn sugar_binary(sugar_path: Option<&Path>) -> Result<PathBuf, String> {
         return Err(format!("--sugar path is not a file: {}", path.display()));
     }
     let workspace = rust_workspace();
-    for candidate in [
-        workspace.join("target/debug/sugar"),
-        workspace.join("target/release/sugar"),
-    ] {
-        if candidate.is_file() {
-            return candidate
-                .canonicalize()
-                .map_err(|err| format!("canonicalize sugar {}: {err}", candidate.display()));
-        }
+    let repo = workspace.parent().and_then(Path::parent).ok_or_else(|| {
+        "crime=production replay without sugar CLI; owner=discharge_sweep; \
+             illegal shape=rust workspace is not under implementations/rust; \
+             replacement=run discharge_sweep from a checked-out sugar repo"
+            .to_string()
+    })?;
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let output = Command::new(repo.join("bin/sugarbin"))
+        .arg("--profile")
+        .arg(profile)
+        .output()
+        .map_err(|err| format!("spawn bin/sugarbin: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "crime=production replay without sugar CLI; owner=discharge_sweep; \
+             illegal shape=bin/sugarbin could not resolve active-profile sugar binary; \
+             replacement=repair the sugarbin handoff path before this harness\n\
+             status={}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let path = String::from_utf8(output.stdout)
+        .map_err(|err| format!("bin/sugarbin emitted non-utf8 path: {err}"))?
+        .trim()
+        .to_owned();
+    let candidate = PathBuf::from(path);
+    if candidate.is_file() {
+        return candidate
+            .canonicalize()
+            .map_err(|err| format!("canonicalize sugar {}: {err}", candidate.display()));
     }
     Err(format!(
         "crime=production replay without sugar CLI; owner=discharge_sweep; \
-         illegal shape=no target/{{debug,release}}/sugar binary under {}; \
-         replacement=run `cargo build -p sugar-cli --bin sugar --locked` or pass --sugar",
-        workspace.display()
+         illegal shape=bin/sugarbin returned missing binary at {}; \
+         replacement=repair the sugarbin handoff path or pass --sugar",
+        candidate.display()
     ))
 }
 

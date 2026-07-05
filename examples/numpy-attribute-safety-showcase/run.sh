@@ -4,8 +4,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
+SUGAR=""
 VENV="${NUMPY_ATTR_SHOWCASE_VENV:-/tmp/sugar-numpy-attribute-safety-venv}"
 PYTHON="$VENV/bin/python"
 PIP="$PYTHON -m pip"
@@ -36,10 +35,7 @@ if [ "${NUMPY_ATTR_SHOWCASE_ON_REMOTE:-0}" != "1" ] \
   exit $?
 fi
 
-if [ "${NUMPY_ATTR_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  echo "== build sugar =="
-  cargo build --manifest-path "$RUST/Cargo.toml" -p sugar-cli --bin sugar >/dev/null
-fi
+SUGAR="$("$REPO/bin/sugarbin" --profile release)"
 
 if [ ! -x "$SUGAR" ]; then
   echo "missing executable: $SUGAR" >&2

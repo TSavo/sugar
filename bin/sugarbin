@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: bin/sugarbin [--profile release|debug] [--platform <auto|key>]
+
+Resolve the Sugar CLI binary by source stamp:
+  SUGAR_BIN override -> local target by stamp -> shelf by stamp -> build + publish.
+
+On success, prints exactly the binary path to stdout. Diagnostics go to stderr.
+EOF
+}
+
+profile="release"
+platform_override="auto"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile)
+      [[ $# -ge 2 ]] || { echo "sugarbin: --profile requires a value" >&2; exit 2; }
+      profile="$2"
+      shift 2
+      ;;
+    --platform)
+      [[ $# -ge 2 ]] || { echo "sugarbin: --platform requires a value" >&2; exit 2; }
+      platform_override="$2"
+      shift 2
+      ;;
+    --help | -h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "sugarbin: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$profile" in
+  release | debug) ;;
+  *) echo "sugarbin: --profile must be release or debug" >&2; exit 2 ;;
+esac
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(git -C "$script_dir/.." rev-parse --show-toplevel 2>/dev/null || (cd "$script_dir/.." && pwd -P))"
+repo_root="$(cd "$repo_root" && pwd -P)"
+rust_workspace="$repo_root/implementations/rust"
+shelf_tag="${SUGAR_BINARY_SHELF_TAG:-sugar-binary-shelf}"
+
+log() {
+  printf 'sugarbin: %s\n' "$*" >&2
+}
+
+quote_sh() {
+  printf "'"
+  printf "%s" "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
+platform_key() {
+  if [[ "$platform_override" != "auto" ]]; then
+    printf '%s\n' "$platform_override"
+    return 0
+  fi
+  local os arch
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m | tr '[:upper:]' '[:lower:]')"
+  case "$arch" in
+    amd64 | x64) arch="x86_64" ;;
+    aarch64) arch="arm64" ;;
+  esac
+  case "$os" in
+    darwin) os="darwin" ;;
+    linux) os="linux" ;;
+  esac
+  printf '%s-%s\n' "$os" "$arch"
+}
+
+json_field() {
+  local field="$1"
+  python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$field"
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+source_stamp() {
+  if [[ -n "${SUGAR_BINARY_SOURCE_STAMP:-}" ]]; then
+    printf '%s\n' "$SUGAR_BINARY_SOURCE_STAMP"
+    return 0
+  fi
+  local head dirty
+  head="$(git -C "$repo_root" rev-parse HEAD)"
+  if git -C "$repo_root" diff --quiet --ignore-submodules -- . \
+    && git -C "$repo_root" diff --cached --quiet --ignore-submodules -- .; then
+    printf '%s\n' "$head"
+    return 0
+  fi
+  dirty="$( \
+    {
+      git -C "$repo_root" diff --binary -- .
+      git -C "$repo_root" diff --cached --binary -- .
+      git -C "$repo_root" ls-files --others --exclude-standard -z \
+        | xargs -0 -I{} sh -c 'printf "untracked:%s\n" "$1"; git -C "$2" hash-object "$1"' sh "{}" "$repo_root"
+    } \
+      | shasum -a 256 \
+      | awk '{print $1}' \
+  )"
+  printf '%s-dirty-%s\n' "$head" "${dirty:0:16}"
+}
+
+git_head() {
+  git -C "$repo_root" rev-parse HEAD
+}
+
+artifact_name() {
+  local stamp="$1"
+  printf 'sugar-%s-%s-%s\n' "$(platform_key)" "$profile" "$stamp"
+}
+
+binary_stamp() {
+  local bin="$1"
+  local version
+  version="$("$bin" version --json 2>/dev/null)" || return 1
+  local stamp
+  stamp="$(printf '%s\n' "$version" | json_field buildStamp)"
+  if [[ -z "$stamp" ]]; then
+    stamp="$(printf '%s\n' "$version" | json_field buildGitHead)"
+  fi
+  [[ -n "$stamp" ]] || return 1
+  printf '%s\n' "$stamp"
+}
+
+matches_stamp() {
+  local bin="$1" expected="$2" label="$3"
+  [[ -x "$bin" ]] || return 1
+  local observed
+  if ! observed="$(binary_stamp "$bin")"; then
+    log "$label skipped: could not read build stamp from $bin"
+    return 1
+  fi
+  if [[ "$observed" != "$expected" ]]; then
+    log "$label skipped: stale binary $bin has stamp $observed, need $expected"
+    return 1
+  fi
+  return 0
+}
+
+github_repo() {
+  if [[ -n "${SUGAR_BINARY_REPO:-}" ]]; then
+    printf '%s\n' "$SUGAR_BINARY_REPO"
+    return 0
+  fi
+  gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || return 1
+}
+
+cache_dir() {
+  printf '%s\n' "${SUGAR_BINARY_CACHE_DIR:-$HOME/.cache/sugar/binaries}"
+}
+
+publish_if_absent() {
+  local bin="$1" stamp="$2" name="$3"
+  [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
+  command -v gh >/dev/null 2>&1 || { log "gh not found; not publishing $name"; return 0; }
+  local repo
+  repo="$(github_repo)" || { log "gh repo identity unavailable; not publishing $name"; return 0; }
+  gh release view "$shelf_tag" --repo "$repo" >/dev/null 2>&1 \
+    || gh release create "$shelf_tag" \
+      --repo "$repo" \
+      --title "Sugar binary shelf" \
+      --notes "Dumb shelf for stamp-addressed Sugar test binaries." >/dev/null 2>&1 \
+    || { log "could not create shelf release; not publishing $name"; return 0; }
+  if gh release view "$shelf_tag" --repo "$repo" --json assets --jq '.assets[].name' \
+    | grep -Fxq "$name"; then
+    log "shelf already has $name"
+    return 0
+  fi
+  local actor sha tmp meta
+  actor="$(gh api user --jq .login 2>/dev/null || printf unknown)"
+  sha="$(sha256_file "$bin")"
+  tmp="$(mktemp -d)"
+  meta="$tmp/$name.metadata.json"
+  python3 - "$meta" "$repo" "$actor" "$stamp" "$(platform_key)" "$profile" "$sha" "$bin" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+path, repo, actor, stamp, platform, profile, sha256, binary = sys.argv[1:]
+with open(path, "w", encoding="utf-8") as out:
+    json.dump(
+        {
+            "artifact": f"sugar-{platform}-{profile}-{stamp}",
+            "repo": repo,
+            "actor": actor,
+            "buildStamp": stamp,
+            "platform": platform,
+            "profile": profile,
+            "sha256": sha256,
+            "source": binary,
+            "publishedAt": datetime.now(timezone.utc).isoformat(),
+        },
+        out,
+        indent=2,
+        sort_keys=True,
+    )
+    out.write("\n")
+PY
+  gh release upload "$shelf_tag" "$bin#$name" "$meta#$name.metadata.json" \
+    --repo "$repo" >/dev/null 2>&1 \
+    && log "published $name as $actor" \
+    || log "publish failed or raced for $name; continuing"
+  rm -rf "$tmp"
+}
+
+verify_attestation_if_present() {
+  local bin="$1" stamp="$2"
+  command -v gh >/dev/null 2>&1 || return 0
+  local repo
+  repo="$(github_repo)" || return 0
+  gh attestation verify "$bin" --repo "$repo" --source-digest "$(git_head)" >/dev/null 2>&1 \
+    && log "attestation verified for $(basename "$bin")" \
+    || log "attestation absent or unverifiable for $(basename "$bin"); stamp tooth remains decisive"
+}
+
+pull_from_shelf() {
+  local stamp="$1" name="$2"
+  [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
+  command -v gh >/dev/null 2>&1 || { log "gh not found; skipping shelf pull"; return 1; }
+  local repo
+  repo="$(github_repo)" || { log "gh repo identity unavailable; skipping shelf pull"; return 1; }
+  local dir download_dir candidate
+  dir="$(cache_dir)"
+  candidate="$dir/$name"
+  if matches_stamp "$candidate" "$stamp" "prebuilt cache"; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  download_dir="$dir/.downloads/$name"
+  mkdir -p "$download_dir"
+  if ! gh release download "$shelf_tag" --repo "$repo" --pattern "$name" --dir "$download_dir" >/dev/null 2>&1; then
+    log "shelf miss for $name"
+    return 1
+  fi
+  local downloaded="$download_dir/$name"
+  [[ -f "$downloaded" ]] || { log "shelf downloaded no $name asset"; return 1; }
+  chmod +x "$downloaded"
+  verify_attestation_if_present "$downloaded" "$stamp"
+  if ! matches_stamp "$downloaded" "$stamp" "prebuilt shelf"; then
+    return 1
+  fi
+  mkdir -p "$dir"
+  cp "$downloaded" "$candidate"
+  chmod +x "$candidate"
+  printf '%s\n' "$candidate"
+}
+
+build_from_source() {
+  local stamp="$1"
+  log "building sugar once for this session (set SUGAR_BIN to skip)"
+  local cargo_bin="${SUGAR_BINARY_CARGO:-cargo}"
+  local args=(build --locked --manifest-path "$rust_workspace/Cargo.toml" -p sugar-cli --bin sugar)
+  if [[ "$profile" == "release" ]]; then
+    args+=(--release)
+  fi
+  SUGAR_BUILD_STAMP="$stamp" SUGAR_BUILD_GIT_HEAD="$(git_head)" "$cargo_bin" "${args[@]}"
+}
+
+main() {
+  if [[ -n "${SUGAR_BIN:-}" ]]; then
+    printf '%s\n' "$SUGAR_BIN"
+    return 0
+  fi
+
+  local stamp name candidate built
+  stamp="$(source_stamp)"
+  name="$(artifact_name "$stamp")"
+
+  candidate="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/sugar"
+  if matches_stamp "$candidate" "$stamp" "local target"; then
+    publish_if_absent "$candidate" "$stamp" "$name"
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  if candidate="$(pull_from_shelf "$stamp" "$name")"; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  if [[ "${SUGAR_BINARY_ALLOW_BUILD:-1}" == "0" ]]; then
+    log "no matching sugar binary for stamp $stamp and build fallback disabled"
+    return 1
+  fi
+  build_from_source "$stamp"
+  built="$rust_workspace/target/$profile/sugar"
+  if ! matches_stamp "$built" "$stamp" "built binary"; then
+    log "built binary did not match requested stamp $stamp"
+    return 1
+  fi
+  publish_if_absent "$built" "$stamp" "$name"
+  printf '%s\n' "$built"
+}
+
+main "$@"

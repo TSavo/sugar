@@ -26,7 +26,6 @@ fi
 
 cd "$RUST_DIR"
 cargo run -q -p sugar-cli --example forall_vampire_fixture -- "$PROJECT" >/dev/null
-cargo build -q -p sugar-cli --bin sugar
 
 cat > "$Z3_SMT" <<'SMT'
 (set-logic ALL)
@@ -47,7 +46,7 @@ SMT
 z3_rc=0
 timeout 10 z3 -smt2 "$Z3_SMT" > "$Z3_OUT" 2>&1 || z3_rc=$?
 
-SUGAR="$RUST_DIR/target/debug/sugar"
+SUGAR="$("$ROOT/bin/sugarbin" --profile release)"
 verify_rc=0
 (
   cd "$PROJECT"
