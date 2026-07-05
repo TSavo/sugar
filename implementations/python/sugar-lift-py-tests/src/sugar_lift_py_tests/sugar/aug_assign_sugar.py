@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import BoundVar
 from sugar_lift_py_tests.operations import (
     InplaceBinaryOperatorOperation,
@@ -34,16 +35,14 @@ _INPLACE_SYMBOL: dict[str, str] = {
 class AugAssignSugar(Sugar, role=SugarRole.STATEMENT):
     """`x <op>= v` binds x to a lazy in-place binary operation over the old x."""
 
-    name: str
-    value: SugarBody
+    name: str | None
+    value: SugarBody | None
+    runtime_reason: str | None = None
+    blame: str = "<unknown>"
 
     @classmethod
     def owns(cls, fragment) -> bool:
-        return (
-            fragment.observed == "AugAssign"
-            and fragment.aug_assign_target().observed == "Name"
-            and fragment.aug_assign_op() in _INPLACE_SYMBOL
-        )
+        return fragment.observed == "AugAssign"
 
     @classmethod
     def witnesses(cls):
@@ -51,6 +50,19 @@ class AugAssignSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def build(cls, fragment, ctx):
+        if (
+            fragment.aug_assign_target().observed != "Name"
+            or fragment.aug_assign_op() not in _INPLACE_SYMBOL
+        ):
+            return cls(
+                name=None,
+                value=None,
+                runtime_reason=(
+                    f"target {fragment.aug_assign_target().observed} with "
+                    f"operator {fragment.aug_assign_op()}"
+                ),
+                blame=fragment.blame,
+            )
         value = _AugAssignValue(
             operator=_INPLACE_SYMBOL[fragment.aug_assign_op()],
             left=ctx.build_body(fragment.aug_assign_target(), SugarRole.TERM),
@@ -60,9 +72,21 @@ class AugAssignSugar(Sugar, role=SugarRole.STATEMENT):
         return cls(
             name=fragment.aug_assign_target().name_id(),
             value=SugarBody(value, SugarRole.TERM),
+            blame=fragment.blame,
         )
 
     def desugar(self, ctx) -> Outcome:
+        if self.runtime_reason is not None:
+            return Incomplete(
+                RuntimeEffect(
+                    "augmented assignment runtime boundary: "
+                    f"{self.runtime_reason} mutates runtime state; keep as typed "
+                    "red until a narrower assignment floor owns this shape. "
+                    f"blame={self.blame}"
+                )
+            )
+        if self.name is None or self.value is None:
+            raise TypeError("AugAssignSugar supported path must carry name and value")
         return Complete(BoundVar(self.name, self.value, scope=ctx))
 
 

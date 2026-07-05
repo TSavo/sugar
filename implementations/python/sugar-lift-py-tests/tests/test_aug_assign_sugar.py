@@ -88,3 +88,11 @@ def test_aug_mod_assign_equals_the_remainder():
 
 def test_aug_pow_assign_equals_the_power():
     assert _block("    x = 2\n    x **= 3\n    return x\n") == _block("    return 8\n")
+
+
+def test_subscript_aug_assign_is_typed_runtime_mutation_effect():
+    halted = _block("    x = [0]\n    x[0] += 1\n    return x\n")
+
+    assert isinstance(halted, Incomplete)
+    assert "augmented assignment runtime boundary" in halted.reason
+    assert "target Subscript" in halted.reason

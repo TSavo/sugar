@@ -142,6 +142,18 @@ def test_membership_assertion_emits_symbolic_contains_predicate() -> None:
     ]
 
 
+def test_membership_assertion_emits_string_contains_symbolic_item_predicate() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert needle in 'abcdef'",
+        {"needle": SymbolicValue(make_var("needle"))},
+    )
+
+    assert formula == atomic("contains", [str_const("abcdef"), make_var("needle")])
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+    ]
+
+
 def test_membership_assertion_negates_symbolic_not_in_predicate() -> None:
     formula, operation_log = _reduce_assertion_with_operation_log(
         "assert 'needle' not in haystack",
@@ -193,6 +205,40 @@ def test_membership_assertion_uses_array_floor_contains() -> None:
         "name": "=",
         "args": [TRUE_CONST, TRUE_CONST],
     }
+
+
+def test_membership_assertion_uses_set_floor_contains() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert 2 in {1, 2, 3}"
+    )
+
+    assert formula == eq(bool_const(True), bool_const(True))
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+    ]
+
+
+def test_membership_assertion_negates_not_in_after_set_floor_contains() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert 9 not in {1, 2, 3}"
+    )
+
+    assert formula == eq(bool_const(True), bool_const(True))
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+    ]
+
+
+def test_membership_assertion_preserves_symbolic_set_contains_predicate() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert 1 in {x}",
+        {"x": SymbolicValue(make_var("x"))},
+    )
+
+    assert formula == atomic("contains", [ctor("python:set", [make_var("x")]), num(1)])
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+    ]
 
 
 def test_membership_assertion_negates_not_in_after_floor_contains() -> None:

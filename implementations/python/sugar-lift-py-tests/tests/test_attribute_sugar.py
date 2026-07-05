@@ -8,6 +8,8 @@ import pytest
 
 from factory_reduce import fol, reduce_term
 
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import (
     FactoryAuditRow,
     FactoryGap,
@@ -15,10 +17,9 @@ from sugar_lift_py_tests.factory import (
     GapKind,
     GapLocus,
 )
-from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.floor import ArrayLiteral
 from sugar_lift_py_tests.ir import ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
@@ -121,6 +122,19 @@ def test_desugar_propagates_floor_gaps() -> None:
     )
     with pytest.raises(FactoryGap):
         sugar.desugar(ctx=None)
+
+
+def test_list_bound_attribute_missing_floor_is_typed_runtime_boundary() -> None:
+    node = ast.parse("items.append", mode="eval").body
+    build_ctx = FactoryBuildContext(filename="attr.py", catalog=default_catalog())
+    temporal = build_ctx.temporal.bind_value("items", ArrayLiteral(()))
+    body = build_ctx.with_temporal(temporal).build_body(node, SugarRole.TERM)
+    outcome = body.reduce(ReduceContext(temporal=temporal))
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "RuntimeEffect"
+    assert "attribute access runtime boundary" in outcome.reason
+    assert "ArrayLiteral.append" in outcome.reason
 
 
 def test_desugar_propagates_type_errors() -> None:

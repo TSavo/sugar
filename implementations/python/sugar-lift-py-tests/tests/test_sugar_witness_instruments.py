@@ -109,10 +109,12 @@ EXPECTED_OPT_OUT_SUGARS = {
     "AttributeDeleteSugar",
     "AwaitSugar",
     "BitwiseOpSugar",
+    "BoolOpSugar",
     "CommentSugar",
     "DictCompSugar",
     "DictSugar",
     "ExprSugar",
+    "ForSugar",
     "ListLiteralSugar",
     "OrdByteSugar",
     "PassSugar",
@@ -130,7 +132,9 @@ EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
     "AttributeDeleteSugar",
     "AwaitSugar",
     "BitwiseOpSugar",
+    "BoolOpSugar",
     "DictSugar",
+    "ForSugar",
     "ListLiteralSugar",
     "OrdByteSugar",
     "StarredSugar",
@@ -293,7 +297,7 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     rows = temporal_opt_outs()
 
     assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 13
+    assert len(rows) == 15
     assert all(row.retirement_condition for row in rows)
     by_name = {row.sugar_name: row for row in rows}
     assert "selects AliasSugar" in by_name["AliasSugar"].retirement_condition

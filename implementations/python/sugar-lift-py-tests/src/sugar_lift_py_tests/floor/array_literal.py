@@ -34,6 +34,21 @@ class ArrayLiteral(FloorValue):
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
         return operation.binary_array(self, ctx)
 
+    def attribute_with(self, operation: Any, ctx: Any) -> Any:
+        del ctx
+        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            RuntimeEffect(
+                "attribute access runtime boundary: "
+                f"ArrayLiteral.{operation.name} has no static attribute floor for "
+                "attribute_with; Python resolves attributes through descriptor and "
+                "__getattribute__ hooks at runtime. Keep as typed red until a "
+                f"narrower attribute floor owns the shape. blame={operation.blame}"
+            )
+        )
+
     def contains_with(self, operation: Any, ctx: Any) -> Any:
         return operation.contains_array(self, ctx)
 

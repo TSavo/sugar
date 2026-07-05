@@ -74,6 +74,8 @@ class MembershipAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             operation=operation,
             ctx=ctx,
         )
+        if isinstance(contains_outcome, Incomplete):
+            return contains_outcome
         contains = complete_value(
             contains_outcome, owner="MembershipAssertionSugar contains"
         )

@@ -11,7 +11,7 @@ from factory_reduce import array_map_build
 
 from sugar_lift_py_tests.factory import SourceFragment
 from sugar_lift_py_tests.floor import LambdaCallable
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
 
 
@@ -32,3 +32,14 @@ def test_lambda_holds_whatever_body_verbatim_and_wraps_it():
         assert complete_value(sugar.desugar(None), owner="lambda") == LambdaCallable(
             parameter="x", body=body
         )
+
+
+def test_multi_parameter_lambda_is_typed_runtime_boundary():
+    node = ast.parse("lambda x, y: x + y", mode="eval").body
+    body = array_map_build("x + y")
+    sugar = LambdaSugar.from_site(SourceFragment.from_node(node, "l.py"), body=body)
+
+    assert sugar is not None
+    outcome = sugar.desugar(None)
+    assert isinstance(outcome, Incomplete)
+    assert "lambda runtime boundary" in outcome.reason

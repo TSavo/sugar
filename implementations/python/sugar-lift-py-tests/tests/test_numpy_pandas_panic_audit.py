@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy
+
 from sugar_lift_py_tests.idd import (
     CommandResult,
     collect_panic_audit,
@@ -12,6 +14,7 @@ from sugar_lift_py_tests.idd import (
     render_text,
 )
 from sugar_lift_py_tests.idd.collect_panic_audit import _prepare_audit_workspace
+from sugar_lift_py_tests.witness_harness import _ensure_sugar_bin
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -216,6 +219,71 @@ def test_extracts_audit_only_gaps_from_rust_wrapped_rpc_error() -> None:
         "pandas_floor_panics": 1,
         "unexpected_panics": 0,
     }
+
+
+def test_extracts_audit_only_gaps_when_rust_adds_trailing_context() -> None:
+    def failing_runner(command: list[str], cwd: Path) -> CommandResult:
+        return CommandResult(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "error: kit transform failed: lift plugin transport: "
+                "lift plugin returned error: "
+                '{"code":-32603,"message":"audit-only construction gaps",'
+                '"data":{"auditOnlyGaps":[{"kind":"audit-only-construction-gap",'
+                '"label":"a.py","message":"write more Sugar for this AST: '
+                "owner=python.factory blame=a.py:1:0 observed=Call requested=term "
+                'fix=add call sugar","gap":{"owner":"python.factory",'
+                '"blame":"a.py:1:0","observed":"Call","requested":"term",'
+                '"fix":"add call sugar"},"auditRow":{}},'
+                '{"kind":"audit-only-construction-gap","label":"b.py",'
+                '"message":"write more Sugar for this AST: '
+                "owner=python.factory blame=b.py:2:0 observed=Dict requested=term "
+                'fix=add dict sugar","gap":{"owner":"python.factory",'
+                '"blame":"b.py:2:0","observed":"Dict","requested":"term",'
+                '"fix":"add dict sugar"},"auditRow":{}}]}}; '
+                "fix=Inspect the lift PathAlgebra step and keep errors structured\n"
+            ),
+        )
+
+    report = collect_panic_audit(
+        ROOT,
+        run_command=failing_runner,
+        installed_packages=("numpy",),
+        include_showcases=False,
+        package_path_resolver=lambda _package: ROOT / "examples/numpy-showcase",
+    )
+
+    assert report.r.values == {
+        "numpy_sugar_panics": 2,
+        "numpy_floor_panics": 0,
+        "pandas_sugar_panics": 0,
+        "pandas_floor_panics": 0,
+        "unexpected_panics": 0,
+    }
+
+
+def test_installed_numpy_totality_gate_is_stable_zero(monkeypatch) -> None:
+    sugar = _ensure_sugar_bin()
+    monkeypatch.setenv(
+        "PATH",
+        f"{sugar.parent}{os.pathsep}{os.environ.get('PATH', '')}",
+    )
+
+    report = collect_panic_audit(
+        ROOT,
+        installed_packages=("numpy",),
+        include_showcases=False,
+    )
+
+    assert report.r.values == {
+        "numpy_sugar_panics": 0,
+        "numpy_floor_panics": 0,
+        "pandas_sugar_panics": 0,
+        "pandas_floor_panics": 0,
+        "unexpected_panics": 0,
+    }, f"numpy {numpy.__version__} construction-gap gate reopened: {render_text(report)}"
+    assert not report.records
 
 
 def test_extracts_audit_only_loud_floor_type_error() -> None:

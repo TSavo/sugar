@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.ir import Formula, atomic, ctor, eq, gt, gte, lt, lte, ne, not_
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
 from sugar_lift_py_tests.sugar.witness_examples import not_assertion_witness
@@ -42,6 +45,8 @@ class NotSugar(Sugar, role=SugarRole.ASSERTION):
 
     body: SugarBody | None = None
     formula: Formula | None = None
+    runtime_reason: str | None = None
+    blame: str = "<unknown>"
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -57,7 +62,19 @@ class NotSugar(Sugar, role=SugarRole.ASSERTION):
         formula = _symbolic_assertion_formula(operand_assert, ctx)
         if formula is not None and _prefer_symbolic_formula(operand_assert):
             return cls(formula=formula)
-        return cls(body=ctx.build_body(operand_assert, SugarRole.ASSERTION))
+        try:
+            return cls(body=ctx.build_body(operand_assert, SugarRole.ASSERTION))
+        except FactoryGap as gap:
+            return cls(
+                runtime_reason=(
+                    f"NotSugar child {gap.info.get('observed', operand_assert.assert_test().observed)} "
+                    "cannot be reduced to a static assertion formula; Python "
+                    "evaluates this negated assertion at runtime. "
+                    f"replacement={gap.info.get('requested', SugarRole.ASSERTION.value)}; "
+                    f"fix={gap.info.get('fix', str(gap))}"
+                ),
+                blame=site.blame,
+            )
 
     @classmethod
     def witnesses(cls):
@@ -66,9 +83,19 @@ class NotSugar(Sugar, role=SugarRole.ASSERTION):
     def apply(self, formula: Formula) -> Formula:
         return not_(formula)
 
-    def desugar(self, ctx) -> Formula:
+    def desugar(self, ctx) -> Formula | Incomplete:
+        if self.runtime_reason is not None:
+            return Incomplete(
+                RuntimeEffect(
+                    "assertion runtime boundary: "
+                    f"{self.runtime_reason}; blame={self.blame}"
+                )
+            )
         if self.body is not None:
-            return self.apply(self.body.reduce(ctx))
+            formula = self.body.reduce(ctx)
+            if isinstance(formula, Incomplete):
+                return formula
+            return self.apply(formula)
         if self.formula is not None:
             return self.apply(self.formula)
         raise TypeError("NotSugar polarity marker has no assertion body to desugar")

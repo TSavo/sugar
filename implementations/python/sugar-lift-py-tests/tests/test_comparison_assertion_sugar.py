@@ -326,23 +326,88 @@ def test_comparison_assertion_does_not_treat_bound_local_as_vendor_fact() -> Non
     )
 
 
-def test_bound_name_equality_gap_names_bound_name_frontier() -> None:
-    import pytest
-
-    from sugar_lift_py_tests.factory import FactoryGap
-
-    with pytest.raises(FactoryGap) as raised:
-        build_literal_call_report(
-            source=(
-                "def test_counter():\n" "    count = 0\n" "    assert count == 0\n"
-            ),
-            filename="test_counter.py",
-            memento_file="test_counter.py",
-        )
-
-    assert raised.value.info["observed"] == "assert-eq-lhs:bound-name:count"
-    assert raised.value.info["requested"] == "BoundNameEquality"
-    assert raised.value.info["fix"] == (
-        "lift bound-name equality for `count`: reduce a proven-pure binding, "
-        "dig its assignment/mutation history, or emit a stateful effect"
+def test_bound_name_equality_emits_typed_runtime_effect() -> None:
+    report = build_literal_call_report(
+        source=("def test_counter():\n" "    count = 0\n" "    assert count == 0\n"),
+        filename="test_counter.py",
+        memento_file="test_counter.py",
     )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    assert (
+        "bound-name equality runtime boundary"
+        in report.payload.effects[0].effect.reason
+    )
+    assert report.payload.factory_walk[0].status == "runtime-effect"
+
+
+def test_callsite_expected_predicate_emits_typed_runtime_effect() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "def test_casting(casting):\n"
+            '    expected = casting == "unsafe"\n'
+            '    assert np.can_cast("V4", "V4", casting=casting) == expected\n'
+        ),
+        filename="test_casting.py",
+        memento_file="test_casting.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    assert (
+        "callsite expected runtime boundary" in report.payload.effects[0].effect.reason
+    )
+    assert "PredicateValue" in report.payload.effects[0].effect.reason
+    assert report.payload.factory_walk[0].status == "runtime-effect"
+
+
+def test_unsupported_is_comparison_assertion_emits_typed_runtime_effect() -> None:
+    report = build_literal_call_report(
+        source=("def test_type(expected):\n" "    assert {1} is expected\n"),
+        filename="test_type.py",
+        memento_file="test_type.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    assert "assertion runtime boundary" in report.payload.effects[0].effect.reason
+    assert "assert-compare-op:Is" in report.payload.effects[0].effect.reason
+    assert report.payload.factory_walk[0].status == "runtime-effect"
+
+
+def test_boolop_assertion_with_unowned_child_emits_typed_runtime_effect() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_body(mod):\n"
+            '    assert "body" in mod and len(mod["body"]) == 9\n'
+        ),
+        filename="test_body.py",
+        memento_file="test_body.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    assert "assertion runtime boundary" in report.payload.effects[0].effect.reason
+    assert "BoolOpAssertionSugar" in report.payload.effects[0].effect.reason
+    assert report.payload.factory_walk[0].status == "runtime-effect"
+
+
+def test_not_assertion_with_unowned_child_emits_typed_runtime_effect() -> None:
+    report = build_literal_call_report(
+        source=("def test_mask(out, where):\n" "    assert not out[~where].any()\n"),
+        filename="test_mask.py",
+        memento_file="test_mask.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    assert "assertion runtime boundary" in report.payload.effects[0].effect.reason
+    assert "NotSugar" in report.payload.effects[0].effect.reason
+    assert report.payload.factory_walk[0].status == "runtime-effect"

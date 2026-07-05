@@ -315,16 +315,21 @@ class ObjectCallStrategy:
             perform_operation,
         )
 
-        callee = complete_value(
-            self.callee.reduce(ctx), owner="ObjectCallStrategy callee"
-        )
-        arguments = tuple(
-            complete_value(argument.reduce(ctx), owner="ObjectCallStrategy argument")
-            for argument in self.arguments
-        )
+        callee_outcome = self.callee.reduce(ctx)
+        if isinstance(callee_outcome, Incomplete):
+            return callee_outcome
+        callee = complete_value(callee_outcome, owner="ObjectCallStrategy callee")
+        arguments = []
+        for argument in self.arguments:
+            argument_outcome = argument.reduce(ctx)
+            if isinstance(argument_outcome, Incomplete):
+                return argument_outcome
+            arguments.append(
+                complete_value(argument_outcome, owner="ObjectCallStrategy argument")
+            )
         operation = MethodCallOperation(
             name="__call__",
-            arguments=arguments,
+            arguments=tuple(arguments),
             owner="CallSugar",
             blame=self.blame,
         )

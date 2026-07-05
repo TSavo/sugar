@@ -33,6 +33,9 @@ class SetLiteralValue(FloorValue):
             observed=f"SetLiteralValue.{operation.name}",
         )
 
+    def contains_with(self, operation: Any, ctx: object) -> Any:
+        return operation.contains_set(self, ctx)
+
 
 def _call_method_effect(
     *,

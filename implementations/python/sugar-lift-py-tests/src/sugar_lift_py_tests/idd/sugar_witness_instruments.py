@@ -276,6 +276,18 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
     ),
     NonFolOptOut(
+        sugar_name="BoolOpSugar",
+        floor_name="SupportValue",
+        reason=(
+            "boolean expressions in value position short-circuit and return "
+            "runtime operand values rather than a pure bool fact"
+        ),
+        retirement_condition=(
+            "retire when truthiness/value-flow floors produce a truthful/lying "
+            "solver witness for value-position boolean expressions"
+        ),
+    ),
+    NonFolOptOut(
         sugar_name="CommentSugar",
         floor_name="SupportValue",
         reason="comments are inert source support",
@@ -307,6 +319,18 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         sugar_name="ExprSugar",
         floor_name="SupportValue",
         reason="expression statements evaluate for effects and leave no FOL claim",
+    ),
+    NonFolOptOut(
+        sugar_name="ForSugar",
+        floor_name="SupportValue",
+        reason=(
+            "for loops need iterator-state and body-effect floors before they "
+            "can carry a standalone solver verdict"
+        ),
+        retirement_condition=(
+            "retire when iterator-state and loop-body floors carry a "
+            "truthful/lying solver witness for for-loop execution"
+        ),
     ),
     NonFolOptOut(
         sugar_name="ListLiteralSugar",

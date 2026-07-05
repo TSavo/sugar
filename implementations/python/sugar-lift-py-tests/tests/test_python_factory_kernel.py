@@ -146,6 +146,48 @@ def test_lift_rpc_audit_only_argv_collects_all_factory_gaps(tmp_path) -> None:
     )
 
 
+def test_lift_rpc_normal_mode_ignores_empty_package_markers(tmp_path) -> None:
+    empty_package_marker = tmp_path / "pkg" / "__init__.py"
+    ordinary = tmp_path / "pkg" / "ordinary.py"
+    empty_package_marker.parent.mkdir()
+    empty_package_marker.write_text("", encoding="utf-8")
+    ordinary.write_text("def ordinary():\n    return 1\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(PY_TESTS / "src"),
+    }
+    request = "\n".join(
+        json.dumps(message)
+        for message in [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "lift",
+                "params": {"workspace_root": str(tmp_path), "source_paths": ["."]},
+            },
+            {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}},
+        ]
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"],
+        input=request + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    responses = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
+    lift_response = next(response for response in responses if response.get("id") == 2)
+    assert "error" not in lift_response
+    assert all(value == 0 for value in lift_response["result"]["sourceLedger"].values())
+
+
 def test_factory_without_sugar_panics_on_last_popped_source_fragment() -> None:
     source = "def encode_len(data):\n    global x\n"
 
