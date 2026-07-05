@@ -653,6 +653,12 @@ def _lift_assert(
         ctx=assertion_ctx,
         call_return_sort=call_return_sort,
         contract_bindings=contract_bindings,
+        emit_call_edge=_should_emit_stated_call_edge(
+            functions_by_name,
+            callee_name,
+            universe=universe,
+            derived_literal_call=derived_literal_call,
+        ),
     )
     factory_audits.extend(universe_factory_audits)
     return _merge_many(
@@ -661,6 +667,23 @@ def _lift_assert(
             for lift in (universe, derived_literal_call, assertion)
             if lift is not None
         ]
+    )
+
+
+def _should_emit_stated_call_edge(
+    functions_by_name: dict[str, SourceFragment],
+    callee_name: str,
+    *,
+    universe: LiftResult | None,
+    derived_literal_call: LiftResult | None,
+) -> bool:
+    if derived_literal_call is not None:
+        return False
+    if universe is None:
+        return True
+    callee = functions_by_name.get(callee_name)
+    return (
+        callee is not None and getattr(callee.node, "_sugar_source", None) is not None
     )
 
 
@@ -1387,6 +1410,7 @@ def _lift_callsite_assertion(
     ctx: FactoryBuildContext | None = None,
     call_return_sort: ProofSort | None = None,
     contract_bindings: list | None = None,
+    emit_call_edge: bool = True,
 ) -> LiftResult:
     """The fact. `callee(args) == expected` lifts to the euf callsite obligation
     `eq(call:callee(args), expected)`, contract-named `callee#euf#<arg_sig>::assertion`.
@@ -1479,7 +1503,7 @@ def _lift_callsite_assertion(
         source_lines=source_lines,
         warrant=Stated(locus=_proofir_construction_site(stmt, memento_file)),
         callsite=callsite,
-        emit_call_edge=True,
+        emit_call_edge=emit_call_edge,
         call_return_sort=call_return_sort,
         contract_bindings=contract_bindings or [],
     )
@@ -1575,6 +1599,9 @@ def _emit_euf_fact(
         "predicate",
         requested_role="AssertionSurface",
         emitted_formula=inv,
+        reason=(
+            "derived from callsite floor" if isinstance(warrant, Derived) else None
+        ),
     )
     audit = _source_audit(
         fn,

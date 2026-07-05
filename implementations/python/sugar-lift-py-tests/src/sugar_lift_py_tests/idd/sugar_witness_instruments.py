@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -497,19 +496,20 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
     from sugar_lift_py_tests.context import FactoryBuildContext
     from sugar_lift_py_tests.effect import effect_kind, effect_reason
     from sugar_lift_py_tests.factory import FactoryGap
-    from sugar_lift_py_tests.factory.block import Block
     from sugar_lift_py_tests.factory.build import build_node
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.sugar_body import SugarBody
     from sugar_lift_py_tests.temporal import TemporalContext
 
-    module = ast.parse(witness.source)
+    module = SourceFragment.from_source(witness.source, "test_witness.py")
     function = next(
-        stmt
-        for stmt in module.body
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and stmt.name == witness.function_name
+        fragment
+        for fragment in module.walk()
+        if fragment.observed in {"FunctionDef", "AsyncFunctionDef"}
+        and fragment.function_name() == witness.function_name
     )
     audit_sink: list[dict[str, Any]] = []
     ctx = FactoryBuildContext(
@@ -518,17 +518,21 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
         audit_sink=audit_sink,
     )
     temporal = TemporalContext.empty()
-    for arg in function.args.args:
-        temporal = temporal.bind_value(arg.arg, SymbolicValue(make_var(arg.arg)))
+    for arg in function.function_params():
+        temporal = temporal.bind_value(arg, SymbolicValue(make_var(arg)))
     ctx = replace(ctx, temporal=temporal)
     try:
         result = build_node(
-            Block.of(function.body),
+            function.function_body_block(),
             filename="test_witness.py",
             role=SugarRole.STATEMENT,
             ctx=ctx,
         )
-        outcome = result.sugar.desugar(ctx)
+        outcome = SugarBody(
+            sugar=result.sugar,
+            role=SugarRole.STATEMENT,
+            audit_row=result.audit_row,
+        ).reduce(ctx)
     except FactoryGap as exc:
         return RedEffectObservation(
             effect_class="FactoryGap",
