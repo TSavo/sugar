@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from sugar_lift_py_tests.floor import ObjectValue, StringValue
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import Complete, Outcome
 
 from .descriptor_operation import DescriptorOperation
 from .object_method_call import call_object_method_value, raise_object_floor_gap
@@ -43,15 +43,26 @@ class AttributeDeleteOperation:
                 owner=self.owner,
                 blame=self.blame,
             )
+        fields = tuple(field for field in receiver.fields if field.name != self.name)
+        if len(fields) != len(receiver.fields):
+            return Complete(
+                ObjectValue(
+                    class_name=receiver.class_name,
+                    fields=fields,
+                    methods=receiver.methods,
+                    class_fields=receiver.class_fields,
+                    identity=receiver.identity,
+                )
+            )
         raise_object_floor_gap(
             receiver,
             owner=self.owner,
             blame=self.blame,
             observed=f"{receiver.class_name}.{self.name}",
-            requested="object attribute deletion effect",
+            requested="existing object attribute field",
             fix=(
-                f"define `__delattr__` on `{receiver.class_name}`, add a "
-                f"`__delete__` descriptor for `{self.name}`, or emit a real "
-                "attribute-deletion effect"
+                f"assign `{self.name}` on `{receiver.class_name}` before deletion, "
+                f"define `__delattr__`, add a `__delete__` descriptor for "
+                f"`{self.name}`, or emit a real attribute-deletion effect"
             ),
         )

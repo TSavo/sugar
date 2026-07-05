@@ -827,13 +827,18 @@ def _build_class_fields(class_site, ctx):
         if name is None:
             continue
         value = stmt.assign_value()
-        if not (
-            _is_resolved_local_class_call(value, ctx)
-            or _is_external_bridge_call(value, ctx)
-        ):
+        if not _is_constructor_class_field_value(value, ctx):
             continue
         fields.append((name, ctx.build_body(value, SugarRole.TERM)))
     return tuple(fields)
+
+
+def _is_constructor_class_field_value(fragment, ctx) -> bool:
+    return (
+        fragment.observed == "PrimitiveLiteral"
+        or _is_resolved_local_class_call(fragment, ctx)
+        or _is_external_bridge_call(fragment, ctx)
+    )
 
 
 def _is_external_bridge_call(fragment, ctx) -> bool:

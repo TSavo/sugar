@@ -210,35 +210,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
     ),
     NonFolOptOut(
-        sugar_name="AttributeAssignSugar",
-        floor_name="SupportValue",
-        reason=(
-            "attribute mutation is stateful support until object-field updates "
-            "carry a solver verdict"
-        ),
-        retirement_condition=(
-            "retire when attribute-assignment mutation participates in a "
-            "verdict-bearing state bridge; current probes select "
-            "AttributeAssignSugar but refuse as object attribute mutation "
-            "effect, or with dunder support as control-flow body unexpected "
-            "CallSiteValue"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="AttributeDeleteSugar",
-        floor_name="SupportValue",
-        reason=(
-            "attribute deletion is stateful support until object-field deletes "
-            "carry a solver verdict"
-        ),
-        retirement_condition=(
-            "retire when attribute-deletion mutation participates in a "
-            "verdict-bearing state bridge; current dunder probes select "
-            "AttributeDeleteSugar but refuse as control-flow body unexpected "
-            "CallSiteValue"
-        ),
-    ),
-    NonFolOptOut(
         sugar_name="BitwiseOpSugar",
         floor_name="SupportValue",
         reason=(
