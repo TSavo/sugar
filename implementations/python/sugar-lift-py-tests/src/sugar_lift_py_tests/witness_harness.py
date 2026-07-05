@@ -312,9 +312,16 @@ def _captured_lift_document(capture: Path) -> dict:
     lift_responses = [
         item for item in responses if item.get("id") == 2 and "result" in item
     ]
-    if len(lift_responses) != 1:
-        raise WitnessPipelineError(f"expected one lift response, got {responses!r}")
-    return lift_responses[0]["result"]
+    primary_lift_responses = [
+        item
+        for item in lift_responses
+        if isinstance(item.get("result"), dict) and item["result"].get("ir")
+    ]
+    if len(primary_lift_responses) != 1:
+        raise WitnessPipelineError(
+            f"expected one primary lift response, got {responses!r}"
+        )
+    return primary_lift_responses[0]["result"]
 
 
 def prove_verdict(prove_doc: dict) -> Verdict:

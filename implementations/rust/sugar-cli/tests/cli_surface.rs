@@ -881,6 +881,81 @@ done
 }
 
 #[test]
+fn lift_report_runs_single_surface_implication_pass_with_contract_bindings() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let manifest_dir = project.join(".sugar/lift/python");
+    fs::create_dir_all(&manifest_dir).expect("create manifest dir");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "python"
+kind = "lift"
+surface = "python"
+emit = "ir-document"
+"#,
+    )
+    .expect("write project config");
+
+    let plugin = dir.path().join("python.sh");
+    write_executable(
+        &plugin,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+while IFS= read -r line; do
+  if [[ "$line" == *'"method":"initialize"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"python","protocol_version":"pep/1.7.0","capabilities":{}}}'
+  elif [[ "$line" == *'"method":"lift"'* ]]; then
+    if [[ "$line" == *'"contract_bindings"'* ]]; then
+      if [[ "$line" != *'"name":"callee"'* ]]; then
+        printf 'single-surface implication pass did not receive callee contract binding: %s\n' "$line" >&2
+        exit 45
+      fi
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[],"sourceLedger":{"source_loci":0,"source_warranted":0,"source_inactive":0,"source_support":0,"source_refused":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"implications":[{"name":"caller-post-implies-callee-pre","antecedent":"caller","antecedentSlot":"post","consequent":"callee","consequentSlot":"pre","prover":"single-plugin-implications"}]}}'
+    else
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"caller","outBinding":"out","post":{"kind":"atomic","name":"caller_post","args":[]}},{"kind":"contract","name":"callee","outBinding":"out","pre":{"kind":"atomic","name":"callee_pre","args":[]},"post":{"kind":"atomic","name":"callee_post","args":[]}}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_refused":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"callEdges":[{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:callee","targetContract":null,"targetContractCid":null,"callSiteLocus":{"file":"app.py","line":2,"column":11}}]}}'
+    fi
+  elif [[ "$line" == *'"method":"shutdown"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
+    exit 0
+  fi
+done
+"#,
+    );
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!("name = \"python\"\ncommand = [\"{}\"]\n", plugin.display()),
+    )
+    .expect("write manifest");
+
+    let output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--json")
+            .arg(&project),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "lift report should run the single configured report plugin and its implication pass\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("report JSON parses");
+    let call_edges = report["callEdges"].as_array().expect("callEdges array");
+    assert!(
+        call_edges.iter().any(|edge| {
+            edge["kind"].as_str() == Some("implication")
+                && edge["sourceContract"].as_str() == Some("caller")
+                && edge["targetContract"].as_str() == Some("callee")
+                && edge["prover"].as_str() == Some("single-plugin-implications")
+        }),
+        "single-surface report must include the implication memento edge after the bindings-backed pass; callEdges={call_edges:#?}"
+    );
+}
+
+#[test]
 fn lift_report_rehydrates_assertion_surface_audits_from_minted_proof() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");
@@ -1502,16 +1577,16 @@ surface = "python"
     let implications = report["implications"]
         .as_array()
         .expect("implications array");
-    // Current batch lift emits callable universes per supported literal-expected
-    // call occurrence and merges same-semantic-CID equality facts into one EUF
-    // assertion with unioned warrants. A call-to-call RHS is not a literal
-    // expected value under return-sort truth: the LHS call carries the dug Int
-    // return sort, while the unresolved RHS `call:` ctor remains LegacyCtor and
-    // the construction law correctly refuses Eq(Int, LegacyCtor).
+    // Current batch lift emits one callable universe for the callee and merges
+    // same-semantic-CID equality facts into one EUF assertion with unioned
+    // warrants. A call-to-call RHS is not a literal expected value under
+    // return-sort truth: the LHS call carries the dug Int return sort, while the
+    // unresolved RHS `call:` ctor remains LegacyCtor and the construction law
+    // correctly refuses Eq(Int, LegacyCtor).
     assert_eq!(
         ir.len(),
-        3,
-        "expected two callable universes plus one merged literal-call assertion: {report:#}"
+        2,
+        "expected one callable universe plus one merged literal-call assertion: {report:#}"
     );
     assert_eq!(
         implications.len(),
@@ -1534,8 +1609,8 @@ surface = "python"
             .iter()
             .filter(|name| **name == "test_parser::parse_int::callable")
             .count(),
-        2,
-        "expected one callable universe per literal-call occurrence: {names:?}"
+        1,
+        "expected one callable universe for the literal-call callee: {names:?}"
     );
     let euf_assertions: Vec<_> = ir
         .iter()
@@ -1765,8 +1840,8 @@ surface = "python"
         .collect();
     assert_eq!(
         callable_contracts.len(),
-        2,
-        "expected one callable universe for each supported checked(...) equality: {report:#}"
+        1,
+        "expected one callable universe for the supported checked(...) equalities: {report:#}"
     );
 
     let euf_assertions: Vec<_> = ir

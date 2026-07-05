@@ -55,6 +55,9 @@ pub fn run(args: LiftArgs) -> u8 {
         if graph_plugins.len() > 1 {
             return run_configured_lift_report_graph(&args, &project_root, &graph_plugins);
         }
+        if graph_plugins.len() == 1 {
+            return run_configured_lift_report_response(&args, &project_root, &graph_plugins);
+        }
     }
     let resolved_surface = match configured_or_planned_lift_surface(
         &project_root,
@@ -641,6 +644,145 @@ fn run_configured_lift_report_graph(
         }
     };
     trace_lift_report_response("after_configured_lift_report_graph", &response);
+    if args.report_summary {
+        trace_lift_report_checkpoint("before_source_report_summary_from_lift_response");
+        let summary = match source_report_summary_from_lift_response(&response, project_root) {
+            Ok(summary) => summary,
+            Err(error) => {
+                eprintln!("{}: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        };
+        trace_lift_report_checkpoint("after_source_report_summary_from_lift_response");
+        let hard_failure = source_report_summary_has_hard_failures(&summary);
+        let rendered = if args.out.json {
+            match render_report_summary_json(&summary) {
+                Ok(rendered) => rendered,
+                Err(error) => {
+                    eprintln!(
+                        "{}: render lift summary report: {error}",
+                        "error".red().bold()
+                    );
+                    return EXIT_USER_ERROR;
+                }
+            }
+        } else {
+            render_report_summary_human(&summary)
+        };
+        trace_lift_render_checkpoint("after_render_summary_report", rendered.len());
+        if let Err(error) = write_output(None, rendered.as_bytes()) {
+            eprintln!("{}: {error}", "error".red().bold());
+            return EXIT_USER_ERROR;
+        }
+        trace_lift_render_checkpoint("after_write_summary_report", rendered.len());
+        return if hard_failure {
+            EXIT_VERIFY_FAIL
+        } else {
+            EXIT_OK
+        };
+    }
+
+    trace_lift_report_checkpoint("before_source_report_from_lift_response");
+    let mut report = match source_report_from_lift_response(&response, args.contract.as_deref()) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("{}: {error}", "error".red().bold());
+            return EXIT_USER_ERROR;
+        }
+    };
+    report.project_root = Some(project_root.to_path_buf());
+    report.source_oracle_routes = source_oracle_routes_for_plugins(plugins);
+    trace_lift_source_report("after_source_report_from_lift_response", &report);
+
+    let prove_with = if args.prove {
+        match prepare_lift_report_prove_inputs_for_plugins(
+            project_root,
+            plugins,
+            args.library_bindings,
+            &args.with,
+        ) {
+            Ok(with) => with,
+            Err(error) => {
+                eprintln!("{}: prepare prove report: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    let prove_report = if args.prove {
+        trace_lift_report_checkpoint("before_build_prove_report");
+        match cmd_prove::build_prove_report_with_options(
+            project_root,
+            &args.z3,
+            &prove_with,
+            ComponentPlanOptions {
+                allow_failed_components: args.allow_failed_components,
+            },
+        ) {
+            Ok(prove_report) => {
+                trace_lift_report_checkpoint("after_build_prove_report");
+                Some(prove_report)
+            }
+            Err(error) => {
+                eprintln!("{}: prove report: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        }
+    } else {
+        None
+    };
+    let mut hard_failure = source_report_has_hard_failures(&report);
+    if let Some(prove_report) = &prove_report {
+        hard_failure |= report_fmt::report_exit_code(prove_report) != EXIT_OK;
+    }
+    trace_lift_source_report("before_render_report", &report);
+    let rendered = if args.out.json {
+        match render_report_json(&report, prove_report.as_ref()) {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                eprintln!("{}: render lift report: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        }
+    } else if args.visual {
+        render_report_visual(&report, prove_report.as_ref())
+    } else {
+        render_report_human(&report, prove_report.as_ref())
+    };
+    trace_lift_render_checkpoint("after_render_report", rendered.len());
+    if let Err(error) = write_output(None, rendered.as_bytes()) {
+        eprintln!("{}: {error}", "error".red().bold());
+        return EXIT_USER_ERROR;
+    }
+    trace_lift_render_checkpoint("after_write_report", rendered.len());
+    if hard_failure {
+        EXIT_VERIFY_FAIL
+    } else {
+        EXIT_OK
+    }
+}
+
+fn run_configured_lift_report_response(
+    args: &LiftArgs,
+    project_root: &Path,
+    plugins: &[PluginEntry],
+) -> u8 {
+    let out_dir = lift_report_auto_mint_dir(project_root);
+    let response = match cmd_mint::lift_plugins_response_for_report(
+        project_root,
+        plugins,
+        &out_dir,
+        args.library_bindings,
+        args.report_summary,
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            eprintln!("{}: {error}", "error".red().bold());
+            return EXIT_USER_ERROR;
+        }
+    };
+    trace_lift_report_response("after_configured_lift_report_response", &response);
     if args.report_summary {
         trace_lift_report_checkpoint("before_source_report_summary_from_lift_response");
         let summary = match source_report_summary_from_lift_response(&response, project_root) {
@@ -8954,7 +9096,11 @@ mod tests {
             "facts": ["call:encodeBase64(bytes) = out"]
         })];
         report.factory_audits = vec![serde_json::json!({"kind": "factory-audit"})];
-        report.factory_walk = vec![serde_json::json!({"kind": "factory-walk"})];
+        report.factory_walk = vec![serde_json::json!({
+            "kind": "factory-walk",
+            "status": "warranted",
+            "verdict": "complete"
+        })];
         report.contracts = vec![serde_json::json!({
             "kind": "contract",
             "name": "encode_len",

@@ -392,6 +392,7 @@ def _handle_lift(
             )
             return
         payload = LiftReportPayloadDto(source_ledger={})
+        bindings_backed_pass = bool(contract_bindings)
         root = Path(workspace_root).resolve()
         for path in _iter_python_files(workspace_root, source_paths):
             full_path = Path(path)
@@ -413,6 +414,11 @@ def _handle_lift(
                     raise
             if hasattr(result, "payload"):
                 file_payload = result.payload
+                if bindings_backed_pass:
+                    payload.call_edges.extend(file_payload.call_edges)
+                    payload.implications.extend(file_payload.implications)
+                    payload.diagnostics.extend(file_payload.diagnostics)
+                    continue
                 payload.ir.extend(file_payload.ir)
                 payload.source_mementos.extend(file_payload.source_mementos)
                 _merge_source_ledger(payload.source_ledger, file_payload.source_ledger)
@@ -420,6 +426,7 @@ def _handle_lift(
                 payload.factory_audits.extend(file_payload.factory_audits)
                 payload.factory_walk.extend(file_payload.factory_walk)
                 payload.call_edges.extend(file_payload.call_edges)
+                payload.implications.extend(file_payload.implications)
                 payload.diagnostics.extend(file_payload.diagnostics)
         _send({"jsonrpc": "2.0", "id": msg_id, "result": payload.to_rpc()})
     except FactoryGap as exc:
