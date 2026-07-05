@@ -24,7 +24,8 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
     unenrolled_sugars,
 )
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
-from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     DictLiteralValue,
     ImportAliasValue,
@@ -304,16 +305,73 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     assert all(row.retirement_condition for row in rows)
     by_name = {row.sugar_name: row for row in rows}
     expected_needles = {
-        "AliasSugar": "literal_call_report._import_bindings resolver metadata",
+        "AliasSugar": "factory/literal_call_report.py:304",
         "BitwiseOpSugar": "prove reports undecidable",
         "DictSugar": "DictLiteralValue.project_callsite_with",
-        "ListLiteralSugar": "typed delegated-owner witness seat",
+        "ListLiteralSugar": "sugar/array_literal_sugar.py:29",
         "OrdByteSugar": "illegal free var byte_s_0",
         "SubscriptAssignSugar": "array mutation probes refuse at setitem_with",
         "SubscriptDeleteSugar": "deletion-state probes still reduce",
     }
     for sugar_name, needle in expected_needles.items():
         assert needle in by_name[sugar_name].retirement_condition
+
+
+def test_owner_selection_gap_rows_cite_excluding_code() -> None:
+    rows = {row.sugar_name: row for row in temporal_opt_outs()}
+
+    alias_condition = rows["AliasSugar"].retirement_condition
+    assert alias_condition is not None
+    assert "factory/build.py:87" in alias_condition
+    assert "factory/literal_call_report.py:304" in alias_condition
+    assert "sugar/alias_sugar.py:18" in alias_condition
+
+    list_condition = rows["ListLiteralSugar"].retirement_condition
+    assert list_condition is not None
+    assert "claim/sugar_catalog.py:15" in list_condition
+    assert "factory/build.py:174" in list_condition
+    assert "sugar/array_literal_sugar.py:29" in list_condition
+    assert "sugar/list_literal_sugar.py:28" in list_condition
+
+
+def test_owner_selection_gap_is_not_missing_enrollment() -> None:
+    catalog = default_catalog()
+    claim_names = {claim.name for claim in catalog.claims}
+    assert {"AliasSugar", "ArrayLiteralSugar", "ListLiteralSugar"} <= claim_names
+
+    alias_site = next(
+        site
+        for site in SourceFragment.from_source(
+            "import numpy as np\n", "probe.py"
+        ).walk()
+        if site.observed == "alias"
+    )
+    alias_result = build_node(
+        alias_site,
+        filename="probe.py",
+        role=SugarRole.TERM,
+        catalog=catalog,
+    )
+    assert alias_result.audit_row.selected == "AliasSugar"
+
+    list_site = next(
+        site
+        for site in SourceFragment.from_source("[1, 2, 3]\n", "probe.py").walk()
+        if site.observed == "List"
+    )
+    list_candidates = [
+        candidate.name
+        for candidate in catalog.candidates_for(SugarRole.TERM, list_site)
+    ]
+    assert "ArrayLiteralSugar" in list_candidates
+    assert "ListLiteralSugar" in list_candidates
+    list_result = build_node(
+        list_site,
+        filename="probe.py",
+        role=SugarRole.TERM,
+        catalog=catalog,
+    )
+    assert list_result.audit_row.selected == "ArrayLiteralSugar"
 
 
 def test_alias_temporal_opt_out_reproduces_resolver_metadata_owner_blocker(
