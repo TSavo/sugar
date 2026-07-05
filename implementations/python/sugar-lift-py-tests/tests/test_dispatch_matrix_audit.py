@@ -45,15 +45,14 @@ TupleLiteralValue | M | M | M | M | M | M | M | M | I | M | I | M | M | M | M | 
 """
 
 
-def test_dispatch_matrix_pins_live_baseline() -> None:
+def test_dispatch_matrix_has_zero_missing_cells() -> None:
     report = collect_dispatch_matrix()
 
-    assert len(report.floor_specs) == EXPECTED_FLOOR_COUNT
-    assert len(report.operation_specs) == EXPECTED_OPERATION_COUNT
-    assert (
-        len(report.missing_cells) == EXPECTED_MISSING_CELL_COUNT
-    ), report.render_missing_cells()
-    assert report.render_matrix() == EXPECTED_MATRIX
+    # IDD invariant: the only thing pinned is that the gap is zero. Floor count,
+    # operation count, and matrix shape are not baselined — pinning them just
+    # ratchets in the current incompleteness. This stays red until every
+    # dispatch cell is filled.
+    assert len(report.missing_cells) == 0, report.render_missing_cells()
 
 
 def test_planted_floor_without_operation_decisions_is_a_new_missing_cell() -> None:
@@ -107,8 +106,10 @@ def test_dispatch_matrix_law8_annotation_names_rung_and_retirement() -> None:
 def test_dispatch_matrix_cli_reports_the_confession_vector(capsys) -> None:
     status = cli.main(["--dispatch-matrix-frontier"])
 
-    assert status == 1
+    # IDD invariant: a clean frontier reports zero missing cells and exits clean.
+    # Red until the gap is actually zero — no pinned confession baseline.
     stdout = capsys.readouterr().out
     assert "Law 8 dispatch-matrix annotation" in stdout
-    assert "R(dispatch-matrix-missing-cells): 713" in stdout
+    assert "R(dispatch-matrix-missing-cells): 0" in stdout
+    assert status == 0
     assert "BoundVar |" in stdout
