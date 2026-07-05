@@ -3208,6 +3208,29 @@ struct VisualFactoryWalkRow {
     tone: VisualTone,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VisualRedGrounds {
+    kind: &'static str,
+    file: String,
+    line: u64,
+    col: u64,
+    reason: String,
+}
+
+impl VisualRedGrounds {
+    fn own_label(&self, here: bool) -> String {
+        let here = if here { " HERE" } else { "" };
+        format!("RED{here} {}: {}", self.kind, self.reason)
+    }
+
+    fn inherited_label(&self) -> String {
+        format!(
+            "RED via {} at {}:{}:{}: {}",
+            self.kind, self.file, self.line, self.col, self.reason
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 struct VisualSourceLookup<'a> {
     project_root: Option<&'a Path>,
@@ -3218,7 +3241,7 @@ struct VisualBoundaryRow {
     sort_key: (u64, u64, u64, u64),
     source: String,
     label: String,
-    reason: Option<String>,
+    grounds: VisualRedGrounds,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3311,7 +3334,7 @@ fn render_universe_visual_report(
         match mode {
             UniverseVisualMode::BodyIncomplete => {
                 let reason = incomplete_boundary
-                    .and_then(|boundary| boundary.reason.as_deref())
+                    .map(|boundary| boundary.grounds.reason.as_str())
                     .unwrap_or("effect");
                 out.push_str(&format!("    incomplete: {reason}\n"));
             }
@@ -3460,11 +3483,11 @@ fn render_universe_warrant_breakdown(
         UniverseVisualItem::Predicate { sort_key, .. } => (*sort_key, 1_u8),
     });
 
-    let mut red = false;
+    let mut red: Option<VisualRedGrounds> = None;
     for item in items {
         match item {
             UniverseVisualItem::Boundary(boundary) => {
-                red = true;
+                red = Some(boundary.grounds.clone());
                 render_visual_source_annotation(
                     out,
                     &boundary.source,
@@ -3478,14 +3501,14 @@ fn render_universe_warrant_breakdown(
                 let (tone, annotation) = match mode {
                     UniverseVisualMode::Fact => (VisualTone::Plain, format!("FACT ⊢ {predicate}")),
                     UniverseVisualMode::BodyComplete | UniverseVisualMode::BodyIncomplete => {
-                        let tone = if red {
+                        let tone = if red.is_some() {
                             VisualTone::Red
                         } else {
                             VisualTone::Green
                         };
-                        let status = if red { "RED" } else { "GREEN" };
-                        let annotation = if red {
-                            status.to_string()
+                        let status = if red.is_some() { "RED" } else { "GREEN" };
+                        let annotation = if let Some(grounds) = red.as_ref() {
+                            grounds.inherited_label()
                         } else {
                             format!("{status} ⊢ {predicate}")
                         };
@@ -3561,14 +3584,14 @@ fn render_universe_source_walk(
         }
     }
 
-    let mut red = false;
+    let mut red: Option<VisualRedGrounds> = None;
     let mut rendered_lines = BTreeSet::new();
     for line in source_walk {
         rendered_lines.insert(line.line);
         if mode == UniverseVisualMode::BodyIncomplete {
             if let Some(boundary_rows) = boundary_by_line.get(&line.line) {
                 if let Some(boundary) = boundary_rows.first() {
-                    red = true;
+                    red = Some(boundary.grounds.clone());
                     render_visual_source_annotation(
                         out,
                         &line.source,
@@ -3592,7 +3615,7 @@ fn render_universe_source_walk(
         }
         if let Some(boundary_rows) = boundary_by_line.get(&line.line) {
             if let Some(boundary) = boundary_rows.first() {
-                red = true;
+                red = Some(boundary.grounds.clone());
                 render_visual_source_annotation(
                     out,
                     &line.source,
@@ -3602,14 +3625,14 @@ fn render_universe_source_walk(
                 continue;
             }
         }
-        let tone = if red {
+        let tone = if red.is_some() {
             VisualTone::Red
         } else {
             VisualTone::Green
         };
-        let status = if red { "RED" } else { "GREEN" };
-        let annotation = if red {
-            status.to_string()
+        let status = if red.is_some() { "RED" } else { "GREEN" };
+        let annotation = if let Some(grounds) = red.as_ref() {
+            grounds.inherited_label()
         } else if let Some(predicates) = predicate_by_line.get(&line.line) {
             format!("{status} ⊢ {}", predicates.join(" ∧ "))
         } else {
@@ -3836,18 +3859,8 @@ fn visual_boundary_rows(
         };
         let context = source_memento_context_key(memento);
         let here = red_seen.insert(context.clone());
-        let prefix = match raw_verdict {
-            "gap" if here => "RED HERE gap",
-            "gap" => "RED gap",
-            _ if here => "RED HERE effect",
-            _ => "RED effect",
-        };
-        let label = row
-            .get("reason")
-            .and_then(Value::as_str)
-            .filter(|reason| !reason.is_empty())
-            .map(|reason| format!("{prefix}: {reason}"))
-            .unwrap_or_else(|| prefix.to_string());
+        let grounds = visual_red_grounds_from_factory_row(row, raw_verdict, memento);
+        let label = grounds.own_label(here);
         rows.push(VisualBoundaryRow {
             context,
             sort_key: memento
@@ -3856,21 +3869,92 @@ fn visual_boundary_rows(
                 .unwrap_or_default(),
             source: resolve_source_memento_visual_source(source_lookup, memento),
             label,
-            reason: row
-                .get("reason")
-                .and_then(Value::as_str)
-                .filter(|reason| !reason.is_empty())
-                .map(ToOwned::to_owned),
+            grounds,
         });
     }
     rows
+}
+
+fn visual_red_grounds_from_factory_row(
+    row: &Value,
+    raw_verdict: &str,
+    memento: &Value,
+) -> VisualRedGrounds {
+    let kind = if raw_verdict == "gap" {
+        "gap"
+    } else {
+        "effect"
+    };
+    let reason = row
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.trim().is_empty())
+        .unwrap_or_else(|| panic_groundless_red_row(row, raw_verdict, memento));
+    let (file, line, col) = visual_red_blame(row, memento);
+    VisualRedGrounds {
+        kind,
+        file,
+        line,
+        col,
+        reason: reason.to_string(),
+    }
+}
+
+fn panic_groundless_red_row(row: &Value, raw_verdict: &str, memento: &Value) -> ! {
+    let status = row
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("<missing>");
+    let selected = row
+        .get("selected")
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let ast_kind = row
+        .get("ast_kind")
+        .or_else(|| row.get("astKind"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    let requested_role = row
+        .get("requested_role")
+        .or_else(|| row.get("requestedRole"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    let (file, line, col) = visual_red_blame(row, memento);
+    panic!(
+        "red verdict carries no grounds; the ledger lost the dragon: \
+         owner=sugar-cli.visual status={status} verdict={raw_verdict} \
+         requested_role={requested_role} ast_kind={ast_kind} selected={selected} \
+         blame={file}:{line}:{col} replacement=thread the own gap/effect reason \
+         or inherited contamination provenance into this red row before rendering"
+    );
+}
+
+fn visual_red_blame(row: &Value, memento: &Value) -> (String, u64, u64) {
+    let file = memento
+        .get("file")
+        .and_then(Value::as_str)
+        .or_else(|| row.get("file").and_then(Value::as_str))
+        .unwrap_or("<unknown>")
+        .to_string();
+    let line = memento
+        .get("span")
+        .and_then(|span| span.get("start_line"))
+        .and_then(Value::as_u64)
+        .or_else(|| row.get("line").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let col = memento
+        .get("span")
+        .and_then(|span| span.get("start_col"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    (file, line, col)
 }
 
 fn visual_factory_walk_rows(
     factory_walk: &[Value],
     source_lookup: VisualSourceLookup<'_>,
 ) -> Vec<VisualFactoryWalkRow> {
-    let mut red_seen: BTreeSet<String> = BTreeSet::new();
+    let mut red_seen: BTreeMap<String, VisualRedGrounds> = BTreeMap::new();
     let mut rows = Vec::new();
     for row in factory_walk {
         let file = row
@@ -3887,18 +3971,14 @@ fn visual_factory_walk_rows(
                 .unwrap_or("incomplete")
         };
         let context = factory_walk_context_key(row, &file);
-        let reason = row
-            .get("reason")
-            .and_then(Value::as_str)
-            .filter(|reason| !reason.is_empty());
         let (tone, label) = if raw_verdict == "complete" {
             let predicate = row
                 .get("emittedFormula")
                 .or_else(|| row.get("emitted_formula"))
                 .or_else(|| row.get("formula"))
                 .map(proofir_formula_to_fol_with_instances);
-            if red_seen.contains(&context) {
-                (VisualTone::Red, "RED".to_string())
+            if let Some(grounds) = red_seen.get(&context) {
+                (VisualTone::Red, grounds.inherited_label())
             } else {
                 (
                     VisualTone::Green,
@@ -3908,27 +3988,27 @@ fn visual_factory_walk_rows(
                 )
             }
         } else if raw_verdict == "gap" {
-            let here = red_seen.insert(context.clone());
-            let prefix = if here { "RED HERE gap" } else { "RED gap" };
-            (
-                VisualTone::Red,
-                reason
-                    .map(|reason| format!("{prefix}: {reason}"))
-                    .unwrap_or_else(|| prefix.to_string()),
-            )
+            let grounds = visual_red_grounds_from_factory_row(
+                row,
+                raw_verdict,
+                row.get("sourceMemento").unwrap_or(&Value::Null),
+            );
+            let here = !red_seen.contains_key(&context);
+            red_seen
+                .entry(context.clone())
+                .or_insert_with(|| grounds.clone());
+            (VisualTone::Red, grounds.own_label(here))
         } else {
-            let here = red_seen.insert(context.clone());
-            let prefix = if here {
-                "RED HERE effect"
-            } else {
-                "RED effect"
-            };
-            (
-                VisualTone::Red,
-                reason
-                    .map(|reason| format!("{prefix}: {reason}"))
-                    .unwrap_or_else(|| prefix.to_string()),
-            )
+            let grounds = visual_red_grounds_from_factory_row(
+                row,
+                raw_verdict,
+                row.get("sourceMemento").unwrap_or(&Value::Null),
+            );
+            let here = !red_seen.contains_key(&context);
+            red_seen
+                .entry(context.clone())
+                .or_insert_with(|| grounds.clone());
+            (VisualTone::Red, grounds.own_label(here))
         };
         rows.push(VisualFactoryWalkRow {
             context,
@@ -9817,6 +9897,44 @@ mod tests {
     }
 
     #[test]
+    fn visual_report_panics_on_red_factory_row_without_grounds() {
+        let mut report = minimal_source_report();
+        report.factory_walk = vec![serde_json::json!({
+            "file": "src/lib.rs",
+            "line": 7,
+            "requested_role": "Term",
+            "ast_kind": "Call",
+            "selected": "CallSugar",
+            "status": "refused",
+            "verdict": "incomplete",
+            "output": "effect",
+            "sourceMemento": {
+                "kind": "source-memento",
+                "file": "src/lib.rs",
+                "span": {
+                    "start_line": 7,
+                    "start_col": 12,
+                    "end_line": 7,
+                    "end_col": 24
+                }
+            }
+        })];
+
+        let panic = std::panic::catch_unwind(|| render_visual_source_report(&report))
+            .expect_err("groundless red rows must halt visual rendering");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic>");
+        assert!(
+            message.contains("red verdict carries no grounds; the ledger lost the dragon"),
+            "{message}"
+        );
+        assert!(message.contains("blame=src/lib.rs:7:12"), "{message}");
+    }
+
+    #[test]
     fn visual_report_consumes_completed_report_without_render_time_source_oracle_dispatch() {
         let root = tempfile::tempdir().expect("tempdir");
         let marker = root.path().join("render-time-source-oracle-invoked");
@@ -10345,7 +10463,7 @@ fn sample() {
             "{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[31m    let a = 10;\u{1b}[0m  RED"),
+            visual.contains("\u{1b}[31m    let a = 10;\u{1b}[0m  RED via effect at src/lib.rs:5:12: runtime boundary: pointer identity"),
             "{visual}"
         );
         assert!(
@@ -10676,7 +10794,7 @@ fn encode_with_padding(input: &[u8], output: &mut [u8], engine: &Engine) {
             "first incomplete factory effect is the RED HERE line:\n{visual}"
         );
         assert!(
-            universe_visual.contains("\u{1b}[31m    let padding_bytes = 0;\u{1b}[0m  RED"),
+            universe_visual.contains("\u{1b}[31m    let padding_bytes = 0;\u{1b}[0m  RED via effect at src/lib.rs:4:4: runtime boundary: internal_encode writes output"),
             "after the effect, later source remains red and unknowable:\n{visual}"
         );
     }

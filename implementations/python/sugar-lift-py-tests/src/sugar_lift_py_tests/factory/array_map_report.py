@@ -16,6 +16,7 @@ from sugar_lift_py_tests.ir import and_, eq, formula_to_value, make_var, num
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
     CallsiteFactDto,
+    FactoryWalkCompleteRowDto,
     FactoryWalkRowDto,
     LiftReportPayloadDto,
     SourceMementoDto,
@@ -635,7 +636,7 @@ def _walk_row(
     emitted_formula: Mapping[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> FactoryWalkRowDto:
-    return FactoryWalkRowDto(
+    return FactoryWalkCompleteRowDto(
         file=filename,
         line=stmt.line,
         requested_role="term",
