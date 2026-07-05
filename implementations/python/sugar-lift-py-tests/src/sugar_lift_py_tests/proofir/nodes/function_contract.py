@@ -424,6 +424,12 @@ def _normalize_sort(sort: Sort | IrSort) -> Sort:
 
 
 def _formula_models_post(formula: IrFormula, env: dict[str, IrTerm]) -> bool | None:
+    if isinstance(formula, _Atomic) and formula.name == "int32.eq-bv-expr":
+        if len(formula.args) != 2:
+            return None
+        left = _normalize_ir_term(formula.args[0], env)
+        right = _normalize_ir_term(formula.args[1], env)
+        return left == right if left is not None and right is not None else None
     if isinstance(formula, _Atomic) and formula.name == "=":
         if len(formula.args) != 2:
             return None
@@ -505,6 +511,9 @@ def _fold_numeric_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
         ):
             equal = left == right
             return bool_const(equal if name == "==" else not equal)
+    folded_bv32 = _fold_bv32_ctor(name, args)
+    if folded_bv32 is not None:
+        return folded_bv32
     if name not in {"+", "-", "*"}:
         return None
     if not all(isinstance(arg, _ConstInt) for arg in args):
@@ -522,6 +531,60 @@ def _fold_numeric_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
     if name == "-" and len(values) == 2:
         return num(values[0] - values[1])
     return None
+
+
+def _fold_bv32_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
+    if name == "bv32.neg" and len(args) == 1 and isinstance(args[0], _ConstInt):
+        return num(_i32_signed(-_i32_signed(args[0].value)))
+    if (
+        name == "bv32.slt"
+        and len(args) == 2
+        and all(isinstance(arg, _ConstInt) for arg in args)
+    ):
+        left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
+        return bool_const(_i32_signed(left) < _i32_signed(right))
+    if name == "bv32.ite" and len(args) == 3 and isinstance(args[0], _ConstBool):
+        return args[1] if args[0].value else args[2]
+    if name not in {
+        "bv32.and",
+        "bv32.or",
+        "bv32.xor",
+        "bv32.add",
+        "bv32.mul",
+        "bv32.shl",
+        "bv32.lshr",
+    }:
+        return None
+    if len(args) != 2 or not all(isinstance(arg, _ConstInt) for arg in args):
+        return None
+    left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
+    left_bits = _u32(left)
+    right_bits = _u32(right)
+    shift = right_bits & 31
+    if name == "bv32.and":
+        result = left_bits & right_bits
+    elif name == "bv32.or":
+        result = left_bits | right_bits
+    elif name == "bv32.xor":
+        result = left_bits ^ right_bits
+    elif name == "bv32.add":
+        result = left_bits + right_bits
+    elif name == "bv32.mul":
+        result = left_bits * right_bits
+    elif name == "bv32.shl":
+        result = left_bits << shift
+    else:
+        result = left_bits >> shift
+    return num(_i32_signed(result))
+
+
+def _u32(value: int) -> int:
+    return int(value) & 0xFFFFFFFF
+
+
+def _i32_signed(value: int) -> int:
+    bits = _u32(value)
+    return bits - 0x100000000 if bits & 0x80000000 else bits
 
 
 __all__ = ["Formal", "FunctionContract", "FunctionContractBuilder"]

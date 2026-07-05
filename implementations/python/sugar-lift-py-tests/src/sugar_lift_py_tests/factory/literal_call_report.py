@@ -2565,6 +2565,7 @@ def _function_universe(
     _universe_formulas = [
         f for f in body_formulas if not _is_free_var_definition(f, _universe_bound)
     ]
+    _universe_formulas = _with_python_number_sort_universe(_universe_formulas)
     _universe_formulas = _with_python_bytes_content_universe(_universe_formulas)
     if _is_open_byte_support_universe(_universe_formulas, _universe_bound):
         _record_dig_refusal(
@@ -2764,6 +2765,7 @@ def _dig_universe(
     _universe_formulas = [
         f for f in body_formulas if not _is_free_var_definition(f, _universe_bound)
     ]
+    _universe_formulas = _with_python_number_sort_universe(_universe_formulas)
     _universe_formulas = _with_python_bytes_content_universe(_universe_formulas)
     if _is_open_byte_support_universe(_universe_formulas, _universe_bound):
         _record_dig_refusal(
@@ -2899,6 +2901,44 @@ def _with_python_bytes_content_universe(formulas: list[Formula]) -> list[Formula
         if right == out and _is_python_bytes_literal_term(left):
             return [*formulas, _Atomic("str.is_ascii", (out,))]
     return formulas
+
+
+def _with_python_number_sort_universe(formulas: list[Formula]) -> list[Formula]:
+    """Route symbolic Python bitwise bodies through the int32/BV universe.
+
+    A callable post `out == bv32.*` must not hand a naked bv32 term to the
+    consistency formula. The Java numeric universe precedent carries the
+    width-refined BV tree in `int32.eq-bv-expr(subject, tree)` and lets the
+    verifier specialize the subject onto the canonical `call:<callee>` Int
+    federation term.
+    """
+
+    return [_python_number_sort_formula(formula) for formula in formulas]
+
+
+def _python_number_sort_formula(formula: Formula) -> Formula:
+    if not isinstance(formula, _Atomic) or formula.name != "=":
+        return formula
+    if len(formula.args) != 2:
+        return formula
+    left, right = formula.args
+    if _is_out_binding_term(left) and _is_bv32_tree(right):
+        return _Atomic("int32.eq-bv-expr", (left, right))
+    if _is_out_binding_term(right) and _is_bv32_tree(left):
+        return _Atomic("int32.eq-bv-expr", (right, left))
+    return formula
+
+
+def _is_out_binding_term(term: Term) -> bool:
+    return isinstance(term, _Var) and term.name == "out"
+
+
+def _is_bv32_tree(term: Term) -> bool:
+    if isinstance(term, _Ctor):
+        return term.name.startswith("bv32.") or any(
+            _is_bv32_tree(arg) for arg in term.args
+        )
+    return False
 
 
 def _is_python_bytes_literal_term(term: Term) -> bool:

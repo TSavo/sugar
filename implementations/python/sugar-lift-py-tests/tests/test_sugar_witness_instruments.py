@@ -456,6 +456,71 @@ def test_bitwise_literal_fold_witness_discharges_and_refutes(tmp_path: Path) -> 
     assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
 
 
+def test_bitwise_symbolic_witness_uses_number_sort_universe(
+    tmp_path: Path,
+) -> None:
+    prefix = "def A(z):\n    return z & 3\n\n"
+    truthful = prefix + "def test_a():\n    assert A(6) == 2\n"
+    lying = prefix + "def test_a():\n    assert A(6) == 1\n"
+
+    truthful_result = run_source_through_real_solver(
+        tmp_path / "bitwise-symbolic-truth", truthful
+    )
+    lying_result = run_source_through_real_solver(
+        tmp_path / "bitwise-symbolic-lie", lying
+    )
+
+    truthful_atom = _single_int32_eq_bv_expr_atom(truthful_result.lift_doc)
+    lying_atom = _single_int32_eq_bv_expr_atom(lying_result.lift_doc)
+    truthful_formula = _single_linked_int32_eq_bv_expr_atom(truthful_result.prove_doc)
+    lying_formula = _single_linked_int32_eq_bv_expr_atom(lying_result.prove_doc)
+    trace = {
+        "truthful": {
+            "verdict": truthful_result.verdict,
+            "selectedSugars": truthful_result.selected_sugars,
+            "universeAtom": truthful_atom,
+            "finalFormula": truthful_formula,
+            "ir": _a_callsite_euf_rows(truthful_result.lift_doc),
+            "rows": truthful_result.prove_doc.get("rows"),
+        },
+        "lying": {
+            "verdict": lying_result.verdict,
+            "selectedSugars": lying_result.selected_sugars,
+            "universeAtom": lying_atom,
+            "finalFormula": lying_formula,
+            "ir": _a_callsite_euf_rows(lying_result.lift_doc),
+            "rows": lying_result.prove_doc.get("rows"),
+        },
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert "BitwiseOpSugar" in truthful_result.selected_sugars
+    assert truthful_atom == lying_atom
+    assert truthful_atom["args"][0] == {"kind": "var", "name": "out"}
+    assert _ctor_names(truthful_atom["args"][1]) == {"bv32.and"}
+
+    assert truthful_formula == lying_formula
+    assert truthful_formula["args"][0] == {
+        "kind": "ctor",
+        "name": "call:A",
+        "args": [
+            {
+                "kind": "const",
+                "value": 6,
+                "sort": {"kind": "primitive", "name": "Int"},
+            }
+        ],
+    }
+    assert _ctor_names(truthful_formula["args"][1]) == {"bv32.and"}
+
+    assert truthful_result.verdict == "sat"
+    assert _prove_statuses(truthful_result.prove_doc) == ["discharged"]
+
+    assert "BitwiseOpSugar" in lying_result.selected_sugars
+    assert lying_result.verdict == "unsat"
+    assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
+
+
 def test_subscript_assignment_post_state_witness_discharges_and_refutes(
     tmp_path: Path,
 ) -> None:
@@ -1152,6 +1217,60 @@ def _a_callsite_euf_rows(lift_doc: dict) -> list[dict]:
         and row.get("name", "").startswith("A#euf#c:call:A(")
         and row.get("name", "").endswith("::assertion")
     ]
+
+
+def _single_int32_eq_bv_expr_atom(lift_doc: dict) -> dict:
+    atoms = [
+        atom
+        for row in lift_doc["ir"]
+        if isinstance(row, dict)
+        for atom in _walk_atoms(row)
+        if atom.get("name") == "int32.eq-bv-expr"
+    ]
+    assert len(atoms) == 1, json.dumps(lift_doc["ir"], indent=2, sort_keys=True)
+    return atoms[0]
+
+
+def _single_linked_int32_eq_bv_expr_atom(prove_doc: dict) -> dict:
+    atoms = [
+        atom
+        for row in prove_doc.get("rows", [])
+        if isinstance(row, dict)
+        for post in row.get("verification", {}).get("linkedPosts", [])
+        if isinstance(post, dict)
+        for atom in _walk_atoms(post.get("instantiatedPost"))
+        if atom.get("name") == "int32.eq-bv-expr"
+    ]
+    assert len(atoms) == 1, json.dumps(prove_doc, indent=2, sort_keys=True)
+    return atoms[0]
+
+
+def _walk_atoms(node) -> list[dict]:
+    if isinstance(node, dict):
+        found = [node] if node.get("kind") == "atomic" else []
+        for value in node.values():
+            found.extend(_walk_atoms(value))
+        return found
+    if isinstance(node, list):
+        found: list[dict] = []
+        for item in node:
+            found.extend(_walk_atoms(item))
+        return found
+    return []
+
+
+def _ctor_names(node) -> set[str]:
+    if isinstance(node, dict):
+        names = {node["name"]} if node.get("kind") == "ctor" else set()
+        for value in node.values():
+            names.update(_ctor_names(value))
+        return names
+    if isinstance(node, list):
+        names: set[str] = set()
+        for item in node:
+            names.update(_ctor_names(item))
+        return names
+    return set()
 
 
 def _warrant_kinds(row: dict) -> set[str]:
