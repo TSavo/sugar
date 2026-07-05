@@ -2865,7 +2865,7 @@ def _binding_for_bridge_symbol(
     for binding in contract_bindings:
         if not isinstance(binding, dict):
             continue
-        if binding.get("bridgeSourceSymbol") == target_symbol:
+        if binding.get("bridgeSourceSymbol") in {target_symbol, target_name}:
             return binding
         name = binding.get("name")
         if name in {target_symbol, target_name}:

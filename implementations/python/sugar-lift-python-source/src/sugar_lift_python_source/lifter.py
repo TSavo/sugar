@@ -2609,6 +2609,8 @@ def _known_external_default_constant(
         return int_const(pickle.HIGHEST_PROTOCOL)
     if name == "locale.LC_ALL":
         return int_const(locale.LC_ALL)
+    if name == "_format_impl._MAX_HEADER_SIZE":
+        return int_const(10000)
     return None
 
 
@@ -2691,6 +2693,9 @@ def _is_transparent_decorator(decorator: ast.expr) -> bool:
         "deprecated",
         "typing.deprecated",
         "warnings.deprecated",
+        "set_module",
+        "numpy._utils.set_module",
+        "numpy._core.overrides.set_module",
     }
 
 
