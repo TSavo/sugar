@@ -94,6 +94,14 @@ def _write_map_receiver_effect_repro(project: Path) -> None:
     )
 
 
+def _write_non_callable_map_mapper_repro(project: Path) -> None:
+    project.mkdir()
+    (project / "test_map_mapper_minimal.py").write_text(
+        ("def test_non_callable_mapper():\n" "    assert [1, 2, 3].map(1)[0] == 1\n"),
+        encoding="utf-8",
+    )
+
+
 def _equality_value_pairs(contract: dict) -> tuple[tuple[int, int], ...]:
     inv = contract["inv"]
     assert inv["kind"] == "and"
@@ -225,6 +233,24 @@ def test_map_receiver_incomplete_local_call_emits_typed_effect(
     assert "owner=python.factory" in row["reason"]
     assert "observed=call-local:typ" in row["reason"]
     assert "requested=term" in row["reason"]
+
+
+def test_map_non_callable_mapper_emits_typed_effect(tmp_path: Path) -> None:
+    project = tmp_path / "map-mapper-effect"
+    _write_non_callable_map_mapper_repro(project)
+
+    doc = _run_lift_rpc(project)
+
+    assert doc["ir"] == []
+    walk = doc["factoryAuditSummary"]["factoryWalk"]
+    assert len(walk) == 1
+    row = walk[0]
+    assert row["selected"] == "ProjectedEqualityAssertionSugar"
+    assert row["status"] == "runtime-effect"
+    assert row["output"] == {"effect": "RuntimeEffect"}
+    assert "map mapper runtime boundary" in row["reason"]
+    assert "mapper reduced to TermValue" in row["reason"]
+    assert "requires a LambdaCallable" in row["reason"]
 
 
 def test_map_operation_missing_floor_names_floor_gap() -> None:
