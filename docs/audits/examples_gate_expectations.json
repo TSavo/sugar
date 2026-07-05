@@ -1,0 +1,617 @@
+{
+  "examples": [
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
+      "last_observed_rc": 101,
+      "last_observed_seconds": 137.018,
+      "name": "examples/base64-showcase/run.sh",
+      "work_order_issue": 3606
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 87.35,
+      "name": "examples/bitflags-showcase/run.sh",
+      "work_order_issue": 3587
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 9.534,
+      "name": "examples/build-witness-showcase/run.sh",
+      "work_order_issue": 3587
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 19.185,
+      "name": "examples/forall-loop-showcase/run.sh",
+      "work_order_issue": 3587
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "mint-missing/forall-vampire-claim-rows",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape mint-missing/forall-vampire-claim-rows; work order #3579",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 78.488,
+      "name": "examples/forall-vampire-showcase/run.sh",
+      "work_order_issue": 3579
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 124.892,
+      "name": "examples/itertools-showcase/run.sh",
+      "work_order_issue": 3587
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "mint-missing/base64-decode-property-rows",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape mint-missing/base64-decode-property-rows; work order #3578",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 44.56,
+      "name": "examples/itsdangerous-token-padding/run.sh",
+      "work_order_issue": 3578
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 112.508,
+      "name": "examples/java-abs-bound/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 25.327,
+      "name": "examples/java-abs-flagship/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "missing-universe-atom/int32-eq-bv-expr",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape missing-universe-atom/int32-eq-bv-expr; work order #3580",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 24.521,
+      "name": "examples/java-abs-model/run.sh",
+      "work_order_issue": 3580
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 26.245,
+      "name": "examples/java-abs-universe/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 30.263,
+      "name": "examples/java-assertion-consistency/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 42.218,
+      "name": "examples/java-b64-strong/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 29.349,
+      "name": "examples/java-b64-tails/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 28.585,
+      "name": "examples/java-bound-federation/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 29.005,
+      "name": "examples/java-callbind-consistency/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 34.622,
+      "name": "examples/java-codec-universe/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 34.667,
+      "name": "examples/java-commons-codec-crc32/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 42.145,
+      "name": "examples/java-crc32-universe/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 42.968,
+      "name": "examples/java-crc32-valuepin/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 68.539,
+      "name": "examples/java-forall-loop/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 23.208,
+      "name": "examples/java-instance-universe/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 94.044,
+      "name": "examples/java-mt-reference/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "GREEN",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 0 in the current examples gate sweep",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 80.338,
+      "name": "examples/java-mt-strong/run.sh"
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "kit-transform/callsite-line-null",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape kit-transform/callsite-line-null; work order #3607",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 95.491,
+      "name": "examples/java-panama-bridge/run.sh",
+      "work_order_issue": 3607
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 78.102,
+      "name": "examples/java-pattern-regex/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 23.308,
+      "name": "examples/java-testng-consistency/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 35.306,
+      "name": "examples/java-urlsafe-seam/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 37.076,
+      "name": "examples/java-voltron/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 27.761,
+      "name": "examples/java-witness-recompute/run.sh",
+      "work_order_issue": 3582
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 124.009,
+      "name": "examples/num-integer-showcase/run.sh",
+      "work_order_issue": 3587
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-output/no-json-report",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-output/no-json-report; work order #3583",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 104.457,
+      "name": "examples/numpy-attribute-safety-showcase/run.sh",
+      "work_order_issue": 3583
+    },
+    {
+      "expected": "GREEN",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 0 in the current examples gate sweep",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 24.016,
+      "name": "examples/numpy-consumer-demo/run.sh"
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "durable-row-missing/scientific-python-showcase",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape durable-row-missing/scientific-python-showcase; work order #3576",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 112.257,
+      "name": "examples/numpy-showcase/run.sh",
+      "work_order_issue": 3576
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 54.833,
+      "name": "examples/numpy-vendor/run.sh",
+      "work_order_issue": 3587
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "durable-row-missing/scientific-python-showcase",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape durable-row-missing/scientific-python-showcase; work order #3576",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 43.122,
+      "name": "examples/pandas-showcase/run.sh",
+      "work_order_issue": 3576
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "audit-missing/pandas-package-audit",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape audit-missing/pandas-package-audit; work order #3575",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 34.263,
+      "name": "examples/pandas-source-accounting/run.sh",
+      "work_order_issue": 3575
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "kit-transform/callsite-line-null",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape kit-transform/callsite-line-null; work order #3607",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 106.43,
+      "name": "examples/polars-showcase/run.sh",
+      "work_order_issue": 3607
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "verdict-drift/expected-proven-label",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape verdict-drift/expected-proven-label; work order #3589",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 76.256,
+      "name": "examples/python-base64-federation/run.sh",
+      "work_order_issue": 3589
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
+      "last_observed_rc": 101,
+      "last_observed_seconds": 175.441,
+      "name": "examples/python-bodyguard-precondition/run.sh",
+      "work_order_issue": 3606
+    },
+    {
+      "expected": "GREEN",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 0 in the current examples gate sweep",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 44.306,
+      "name": "examples/python-guard-shapes/run.sh"
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "verdict-drift/refused-row-expectation",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape verdict-drift/refused-row-expectation; work order #3591",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 70.814,
+      "name": "examples/python-literal-base20/run.sh",
+      "work_order_issue": 3591
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "verdict-drift/refused-row-expectation",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape verdict-drift/refused-row-expectation; work order #3591",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 96.396,
+      "name": "examples/python-literal-base64/run.sh",
+      "work_order_issue": 3591
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "plugin-entrypoint/stale-python-lsp-module",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape plugin-entrypoint/stale-python-lsp-module; work order #3581",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 16.232,
+      "name": "examples/python-urlsafe-seam/run.sh",
+      "work_order_issue": 3581
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/expected-discharge-rows",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/expected-discharge-rows; work order #3585",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 153.159,
+      "name": "examples/regex-showcase/run.sh",
+      "work_order_issue": 3585
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "rust-lift-panic/chained-comparison",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape rust-lift-panic/chained-comparison; work order #3588",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 1757.836,
+      "name": "examples/rust-coretests-report/run.sh",
+      "work_order_issue": 3588
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "mint-output/regex-membership-ended-during-mint",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape mint-output/regex-membership-ended-during-mint; work order #3608",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 22.816,
+      "name": "examples/rust-regex-membership/run.sh",
+      "work_order_issue": 3608
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "kit-transform/callsite-line-null",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape kit-transform/callsite-line-null; work order #3607",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 26.018,
+      "name": "examples/rust-test-assertion-consistency/run.sh",
+      "work_order_issue": 3607
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/expected-discharge-rows",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/expected-discharge-rows; work order #3585",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 103.198,
+      "name": "examples/rust-witness-showcase/run.sh",
+      "work_order_issue": 3585
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 66.385,
+      "name": "examples/semver-showcase/run.sh",
+      "work_order_issue": 3587
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
+      "last_observed_rc": 101,
+      "last_observed_seconds": 4.383,
+      "name": "examples/serde-json-showcase/run.sh",
+      "work_order_issue": 3606
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "durable-row-missing/scientific-python-showcase",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape durable-row-missing/scientific-python-showcase; work order #3576",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 60.79,
+      "name": "examples/sklearn-showcase/run.sh",
+      "work_order_issue": 3576
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
+      "last_observed_rc": 101,
+      "last_observed_seconds": 52.386,
+      "name": "examples/std-core-bodyguard-precondition/run.sh",
+      "work_order_issue": 3606
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
+      "last_observed_rc": 101,
+      "last_observed_seconds": 74.836,
+      "name": "examples/std-core-showcase/run.sh",
+      "work_order_issue": 3606
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 73.001,
+      "name": "examples/std-core-string-predicates/run.sh",
+      "work_order_issue": 3587
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
+      "last_observed_rc": 101,
+      "last_observed_seconds": 53.946,
+      "name": "examples/tokio-await-implication-edge/run.sh",
+      "work_order_issue": 3606
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
+      "last_observed_rc": 101,
+      "last_observed_seconds": 10.914,
+      "name": "examples/tokio-channel-implication-edge/run.sh",
+      "work_order_issue": 3606
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "kit-transform/callsite-line-null",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape kit-transform/callsite-line-null; work order #3607",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 63.726,
+      "name": "examples/tokio-effect-consistency/run.sh",
+      "work_order_issue": 3607
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
+      "last_observed_rc": 101,
+      "last_observed_seconds": 15.397,
+      "name": "examples/tokio-mutex-implication-edge/run.sh",
+      "work_order_issue": 3606
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 33.175,
+      "name": "examples/url-showcase/run.sh",
+      "work_order_issue": 3587
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 19.66,
+      "name": "examples/uuid-showcase/run.sh",
+      "work_order_issue": 3587
+    }
+  ],
+  "policy": "GREEN rows must remain green. NAMED_RED rows must keep the same failure_shape until a deliberate fixture move records promotion to GREEN. New examples, missing examples, new reds, and changed red shapes fail the gate.",
+  "suite": "smoke",
+  "summary": {
+    "green": 3,
+    "named_red": 58,
+    "total": 61,
+    "unclassified": 0
+  },
+  "version": 1
+}

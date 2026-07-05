@@ -62,6 +62,7 @@ help:
 	@echo "  make ci             check-cargo-entrypoint + the acid test + showcase receipts"
 	@echo "  make test-all       the acid test: test-rust + test-python"
 	@echo "  make test-showcases run the checked-in end-to-end showcase receipts"
+	@echo "  make examples-gate  run public example smoke scripts against the ratchet fixture"
 	@echo ""
 	@echo "Per-language build:"
 	@echo "  make build-rust     cargo build --release (workspace)"
@@ -348,6 +349,40 @@ SHOWCASE_RUNS = \
 	examples/java-mt-reference/run.sh \
 	examples/java-crc32-universe/run.sh \
 	examples/java-pattern-regex/run.sh
+
+EXAMPLES_GATE_EXPECTATIONS ?= docs/audits/examples_gate_expectations.json
+EXAMPLES_GATE_EXTENDED_EXPECTATIONS ?= docs/audits/examples_gate_extended_expectations.json
+EXAMPLES_GATE_SUMMARY ?= .out/examples-gate-summary.json
+EXAMPLES_GATE_EXTENDED_SUMMARY ?= .out/examples-gate-extended-summary.json
+EXAMPLES_GATE_LOG_DIR ?= .out/examples-gate-logs
+EXAMPLES_GATE_EXTENDED_LOG_DIR ?= .out/examples-gate-extended-logs
+EXAMPLES_GATE_TIMEOUT_SECONDS ?= 3600
+EXAMPLES_GATE_EXTENDED_TIMEOUT_SECONDS ?= 3600
+EXAMPLES_GATE_NICE ?= 10
+
+.PHONY: test-examples-gate-tooth
+test-examples-gate-tooth:
+	$(PYTHON) tests/examples_gate_test.py
+
+.PHONY: examples-gate
+examples-gate:
+	$(PYTHON) tools/examples_gate.py \
+	  --suite smoke \
+	  --expectations $(EXAMPLES_GATE_EXPECTATIONS) \
+	  --summary-json $(EXAMPLES_GATE_SUMMARY) \
+	  --log-dir $(EXAMPLES_GATE_LOG_DIR) \
+	  --timeout-seconds $(EXAMPLES_GATE_TIMEOUT_SECONDS) \
+	  --nice $(EXAMPLES_GATE_NICE)
+
+.PHONY: examples-gate-extended
+examples-gate-extended:
+	$(PYTHON) tools/examples_gate.py \
+	  --suite extended \
+	  --expectations $(EXAMPLES_GATE_EXTENDED_EXPECTATIONS) \
+	  --summary-json $(EXAMPLES_GATE_EXTENDED_SUMMARY) \
+	  --log-dir $(EXAMPLES_GATE_EXTENDED_LOG_DIR) \
+	  --timeout-seconds $(EXAMPLES_GATE_EXTENDED_TIMEOUT_SECONDS) \
+	  --nice $(EXAMPLES_GATE_NICE)
 
 .PHONY: test-showcases
 test-showcases:
