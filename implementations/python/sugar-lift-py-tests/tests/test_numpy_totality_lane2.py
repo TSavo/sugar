@@ -212,6 +212,54 @@ def test_array_literal_element_effect_is_not_forced_to_value():
     assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
 
 
+def test_prior_assignment_block_effect_is_reported_at_assignment_locus():
+    from sugar_lift_py_tests.sugar.block_sugar import BlockFold, BlockSugar
+
+    forced_effect = Incomplete(
+        FactoryGapEffect(
+            owner="CallSugar",
+            blame="numpy.py:2:10",
+            observed="SymbolicValue.mode",
+            requested="symbolic receiver method floor",
+            fix=(
+                "add cited warrant for SymbolicValue.mode or keep the opaque "
+                "runtime method as a typed effect"
+            ),
+            gap_kind="Floor",
+            gap_locus="Construction",
+        )
+    )
+
+    def forced_incomplete(self, ctx):
+        return BlockFold(forced_effect, ctx)
+
+    original_fold = BlockSugar.fold_with_context
+    try:
+        BlockSugar.fold_with_context = forced_incomplete
+        report = build_literal_call_report(
+            source=(
+                "def t(arr):\n" "    res = arr.mode()\n" "    assert f(res) == 1\n"
+            ),
+            filename="numpy.py",
+            memento_file="numpy.py",
+        )
+    finally:
+        BlockSugar.fold_with_context = original_fold
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    effect = report.payload.effects[0]
+    assert effect.name == "numpy::t::effect:2:4"
+    assert isinstance(effect.effect, FactoryGapEffect)
+    assert effect.effect.owner == "CallSugar"
+    assert effect.effect.observed == "SymbolicValue.mode"
+    assert effect.effect.requested == "symbolic receiver method floor"
+    assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
+    assert report.payload.factory_walk[0].line == 2
+    assert report.payload.factory_walk[0].ast_kind == "Assign"
+
+
 def test_external_call_class_field_is_constructor_field_not_missing_attribute():
     report = build_literal_call_report(
         source=(
