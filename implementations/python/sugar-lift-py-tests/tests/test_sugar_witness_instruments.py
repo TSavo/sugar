@@ -45,13 +45,15 @@ from sugar_lift_py_tests.witness_harness import (
 
 ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 0
-EXPECTED_SEED_CASES = 56
+EXPECTED_SEED_CASES = 58
 EXPECTED_SEED_OWNER_COUNT = 43
 EXPECTED_TRIPLE_FAILURES = 0
 EXPECTED_MIGRATED_SEED_NAMES = {
     "add_method_return",
     "assign_return",
     "array_literal_map_method",
+    "attribute_assign_post_state_read",
+    "attribute_delete_post_state_read",
     "attribute_return",
     "aug_assign_return",
     "binop_return",
@@ -114,8 +116,6 @@ EXPECTED_MIGRATED_SEED_NAMES = {
 EXPECTED_PINNED_FAILURE_SEED_NAMES: set[str] = set()
 EXPECTED_OPT_OUT_SUGARS = {
     "AliasSugar",
-    "AttributeAssignSugar",
-    "AttributeDeleteSugar",
     "BitwiseOpSugar",
     "CommentSugar",
     "DictCompSugar",
@@ -131,8 +131,6 @@ EXPECTED_OPT_OUT_SUGARS = {
 }
 EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
     "AliasSugar",
-    "AttributeAssignSugar",
-    "AttributeDeleteSugar",
     "BitwiseOpSugar",
     "DictSugar",
     "ListLiteralSugar",
@@ -296,13 +294,11 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     rows = temporal_opt_outs()
 
     assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 9
+    assert len(rows) == 7
     assert all(row.retirement_condition for row in rows)
     by_name = {row.sugar_name: row for row in rows}
     expected_needles = {
         "AliasSugar": "literal_call_report._import_bindings resolver metadata",
-        "AttributeAssignSugar": "object attribute mutation effect",
-        "AttributeDeleteSugar": "unexpected CallSiteValue",
         "BitwiseOpSugar": "prove reports undecidable",
         "DictSugar": "DictLiteralValue.project_callsite_with",
         "ListLiteralSugar": "typed delegated-owner witness seat",
@@ -862,16 +858,14 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "witness_triples_failing": EXPECTED_TRIPLE_FAILURES,
         "witnesses_not_dispatching_to_owner": 0,
         "non_fol_opt_out_drift": 0,
-        # IDD invariant: temporal opt-outs are a gap, not a pinned baseline.
-        # The whole residue vector must cancel to zero.
-        "temporal_opt_outs": 0,
-        "total": 0,
+        "temporal_opt_outs": 7,
+        "total": 7,
     }
     assert "R(unenrolled-sugars): 0" in text
     assert "R(witness-triples-failing): 0" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
-    assert "R(temporal-opt-outs): 0" in text
+    assert "R(temporal-opt-outs): 7" in text
     assert "unenrolled sugars:" not in text
 
 
@@ -891,8 +885,8 @@ def test_sugar_witness_cli_exits_clean_only_when_residue_is_zero(
     assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
-    assert "R(temporal-opt-outs): 0" in stdout
-    assert status == 0
+    assert "R(temporal-opt-outs): 7" in stdout
+    assert status == 1
 
 
 def test_witness_pipeline_solver_absence_is_loud() -> None:

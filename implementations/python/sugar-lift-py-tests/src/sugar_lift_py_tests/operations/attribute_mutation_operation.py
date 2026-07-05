@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-from sugar_lift_py_tests.floor import FloorValue, ObjectValue, StringValue
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.floor import FloorValue, ObjectField, ObjectValue, StringValue
+from sugar_lift_py_tests.outcome import Complete, Outcome
 
 from .descriptor_operation import DescriptorOperation
 from .object_method_call import call_object_method_value, raise_object_floor_gap
@@ -45,15 +45,15 @@ class AttributeMutationOperation:
                 owner=self.owner,
                 blame=self.blame,
             )
-        raise_object_floor_gap(
-            receiver,
-            owner=self.owner,
-            blame=self.blame,
-            observed=f"{receiver.class_name}.{self.name}",
-            requested="object attribute mutation effect",
-            fix=(
-                f"define `__setattr__` on `{receiver.class_name}`, add a "
-                f"`__set__` descriptor for `{self.name}`, or emit a real "
-                "attribute-mutation effect"
-            ),
+        return Complete(
+            ObjectValue(
+                class_name=receiver.class_name,
+                fields=(
+                    *(field for field in receiver.fields if field.name != self.name),
+                    ObjectField(self.name, self.value),
+                ),
+                methods=receiver.methods,
+                class_fields=receiver.class_fields,
+                identity=receiver.identity,
+            )
         )
