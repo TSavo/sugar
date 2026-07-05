@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from sugar_lift_py_tests.idd import sugar_witness_instruments
 from sugar_lift_py_tests.idd import cli
 from sugar_lift_py_tests.idd.sugar_witness_instruments import (
     DEFAULT_SUGAR_WITNESS_SEEDS,
@@ -33,9 +36,12 @@ from sugar_lift_py_tests.sugar.witnesses import (
     EffectWitnessSource,
     NotVerdictBearing,
     SugarRedEffectWitnessPair,
+    SugarWitnessPair,
     TypedRedEffectExpectation,
+    WitnessSource,
 )
 from sugar_lift_py_tests.witness_harness import (
+    WitnessPipelineResult,
     WitnessPipelineError,
     _stage_cli_project,
     prove_verdict,
@@ -400,6 +406,179 @@ def test_typed_red_effect_witness_accepts_right_red_and_rejects_wrong_red(
         (failure.seed, failure.variant, failure.axis)
         for failure in bad_report.triple_failures
     ] == [("planted_boolop_runtime_effect", "truthful", "typed-red-effect")]
+
+
+def _fake_witness_result(
+    *, selected: tuple[str, ...], verdict: str
+) -> WitnessPipelineResult:
+    status = "discharged" if verdict == "sat" else "unsatisfied"
+    return WitnessPipelineResult(
+        lift_doc={
+            "factoryAuditSummary": {
+                "factoryWalk": [{"selected": sugar} for sugar in selected]
+            },
+            "ir": [{"kind": "fake"}],
+        },
+        prove_doc={"rows": [{"status": status}]},
+    )
+
+
+def _synthetic_seed(name: str, owner: str) -> SugarWitnessPair:
+    return SugarWitnessPair(
+        name=name,
+        owner_sugar=owner,
+        family="parallel-seed-test",
+        truthful=WitnessSource(source=f"# {name} truthful", expected="sat"),
+        lying=WitnessSource(source=f"# {name} lying", expected="unsat"),
+    )
+
+
+def test_evaluate_seed_witnesses_runs_seed_pairs_in_parallel_and_collates_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SUGAR_WITNESS_WORKERS", "3")
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "ensure_sugar_bin",
+        lambda: Path("fake-sugar"),
+    )
+    seeds = (
+        _synthetic_seed("zeta", "ZetaSugar"),
+        _synthetic_seed("alpha", "AlphaSugar"),
+        _synthetic_seed("middle", "MiddleSugar"),
+    )
+    active_total = 0
+    active_by_seed: dict[str, int] = {}
+    max_active_total = 0
+    max_active_same_seed = 0
+    lock = threading.Lock()
+
+    def fake_run(project: Path, source: str) -> WitnessPipelineResult:
+        nonlocal active_total, max_active_total, max_active_same_seed
+        seed_name = project.parent.name
+        variant = project.name
+        with lock:
+            active_total += 1
+            active_by_seed[seed_name] = active_by_seed.get(seed_name, 0) + 1
+            max_active_total = max(max_active_total, active_total)
+            max_active_same_seed = max(max_active_same_seed, active_by_seed[seed_name])
+        try:
+            time.sleep({"zeta": 0.06, "alpha": 0.02, "middle": 0.04}[seed_name])
+            expected = "sat" if variant == "truthful" else "unsat"
+            return _fake_witness_result(selected=("<wrong-owner>",), verdict=expected)
+        finally:
+            with lock:
+                active_total -= 1
+                active_by_seed[seed_name] -= 1
+
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "run_source_through_real_solver",
+        fake_run,
+    )
+
+    report = evaluate_seed_witnesses(seeds, tmp_path, catalog_count=len(seeds))
+
+    assert max_active_total > 1
+    assert max_active_same_seed == 1
+    assert [
+        (failure.seed, failure.variant, failure.axis)
+        for failure in report.triple_failures
+    ] == [
+        ("alpha", "truthful", "sugar-fired"),
+        ("alpha", "lying", "sugar-fired"),
+        ("middle", "truthful", "sugar-fired"),
+        ("middle", "lying", "sugar-fired"),
+        ("zeta", "truthful", "sugar-fired"),
+        ("zeta", "lying", "sugar-fired"),
+    ]
+
+
+def test_evaluate_seed_witness_parallel_report_matches_serial_for_planted_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "ensure_sugar_bin",
+        lambda: Path("fake-sugar"),
+    )
+    seeds = (
+        _synthetic_seed("beta", "BetaSugar"),
+        _synthetic_seed("alpha", "AlphaSugar"),
+    )
+
+    def fake_run(project: Path, source: str) -> WitnessPipelineResult:
+        selected = (
+            ("<wrong-owner>",)
+            if project.parent.name == "alpha"
+            else (f"{project.parent.name.capitalize()}Sugar",)
+        )
+        expected = "sat" if project.name == "truthful" else "unsat"
+        return _fake_witness_result(selected=selected, verdict=expected)
+
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "run_source_through_real_solver",
+        fake_run,
+    )
+
+    monkeypatch.setenv("SUGAR_WITNESS_WORKERS", "1")
+    serial = evaluate_seed_witnesses(
+        seeds,
+        tmp_path / "serial",
+        catalog_count=len(seeds),
+    )
+    monkeypatch.setenv("SUGAR_WITNESS_WORKERS", "3")
+    parallel = evaluate_seed_witnesses(
+        seeds,
+        tmp_path / "parallel",
+        catalog_count=len(seeds),
+    )
+
+    assert serial.to_json() == parallel.to_json()
+    assert [
+        (failure.seed, failure.variant, failure.axis)
+        for failure in parallel.triple_failures
+    ] == [
+        ("alpha", "truthful", "sugar-fired"),
+        ("alpha", "lying", "sugar-fired"),
+    ]
+
+
+def test_evaluate_seed_witness_worker_crash_names_seed_and_variant(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SUGAR_WITNESS_WORKERS", "2")
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "ensure_sugar_bin",
+        lambda: Path("fake-sugar"),
+    )
+    seeds = (
+        _synthetic_seed("ok", "OkSugar"),
+        _synthetic_seed("bad", "BadSugar"),
+    )
+
+    def fake_run(project: Path, source: str) -> WitnessPipelineResult:
+        if project.parent.name == "bad" and project.name == "truthful":
+            raise RuntimeError("boom from fake worker")
+        expected = "sat" if project.name == "truthful" else "unsat"
+        return _fake_witness_result(selected=(project.parent.name,), verdict=expected)
+
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "run_source_through_real_solver",
+        fake_run,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=("seed=bad.*variant=truthful.*owner=BadSugar.*" "boom from fake worker"),
+    ):
+        evaluate_seed_witnesses(seeds, tmp_path, catalog_count=len(seeds))
 
 
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
