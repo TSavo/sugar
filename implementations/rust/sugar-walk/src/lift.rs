@@ -78,6 +78,7 @@ struct LiftCtx {
     len_eq_one_facts: Vec<LenEqOneFact>,
     mutable_roots: HashSet<String>,
     pure_free_guard_rules: Vec<PureFreeGuardRule>,
+    body_discharge_refusals: BTreeSet<String>,
 }
 
 impl LiftCtx {
@@ -102,6 +103,7 @@ impl LiftCtx {
             len_eq_one_facts: Vec::new(),
             mutable_roots: HashSet::new(),
             pure_free_guard_rules,
+            body_discharge_refusals: BTreeSet::new(),
         }
     }
 
@@ -144,6 +146,26 @@ impl LiftCtx {
         self.assertion_guard_facts.retain(|fact| fact.root != root);
         self.len_eq_one_facts.retain(|fact| fact.root != root);
     }
+
+    fn refuse_body_discharge_for_unknown_mutation(&mut self, reason: String) {
+        self.body_discharge_refusals.insert(reason);
+        self.local_value_kinds.clear();
+        self.assertion_guard_facts.clear();
+        self.len_eq_one_facts.clear();
+    }
+
+    fn body_discharge_refusal_reason(&self) -> Option<String> {
+        if self.body_discharge_refusals.is_empty() {
+            return None;
+        }
+        Some(
+            self.body_discharge_refusals
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -158,6 +180,12 @@ pub struct PureFreeGuardRule {
     pub post_predicate: String,
     pub source_line: Option<usize>,
     pub allow_line_less_match: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiftedFunctionPostcondition {
+    pub wp: Wp,
+    pub body_discharge_refusal_reason: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -330,6 +358,19 @@ pub fn lift_function_postcondition_with_return_facts_and_pure_free_guards(
     return_facts: &FunctionReturnFacts,
     pure_free_guard_rules: &[PureFreeGuardRule],
 ) -> Wp {
+    lift_function_postcondition_with_return_facts_and_pure_free_guards_detailed(
+        item_fn,
+        return_facts,
+        pure_free_guard_rules,
+    )
+    .wp
+}
+
+pub fn lift_function_postcondition_with_return_facts_and_pure_free_guards_detailed(
+    item_fn: &ItemFn,
+    return_facts: &FunctionReturnFacts,
+    pure_free_guard_rules: &[PureFreeGuardRule],
+) -> LiftedFunctionPostcondition {
     let mut ctx = LiftCtx::with_return_facts_and_pure_free_guards(
         return_facts.clone(),
         pure_free_guard_rules.to_vec(),
@@ -415,7 +456,10 @@ pub fn lift_function_postcondition_with_return_facts_and_pure_free_guards(
         }
     }
 
-    Wp(simplify_conjunction(accum))
+    LiftedFunctionPostcondition {
+        wp: Wp(simplify_conjunction(accum)),
+        body_discharge_refusal_reason: ctx.body_discharge_refusal_reason(),
+    }
 }
 
 /// A ctor head the lifter emits for an opaque / effectful operation, whose value
@@ -1343,147 +1387,166 @@ fn local_binding_ident_for_pat(pat: &Pat) -> Option<(String, bool)> {
 
 fn invalidate_assignment_targets(expr: &Expr, ctx: &mut LiftCtx) {
     let mut roots = BTreeSet::new();
-    collect_assignment_target_roots_in_expr(expr, &mut roots);
+    collect_assignment_target_roots_in_expr(expr, &mut roots, ctx);
     for root in roots {
         ctx.invalidate_root(&root);
     }
 }
 
-fn collect_assignment_target_roots_in_expr(expr: &Expr, roots: &mut BTreeSet<String>) {
+fn collect_assignment_target_roots_in_expr(
+    expr: &Expr,
+    roots: &mut BTreeSet<String>,
+    ctx: &mut LiftCtx,
+) {
     match expr {
         Expr::Assign(assign) => {
             collect_assignment_roots_lift(&assign.left, roots);
-            collect_assignment_target_roots_in_expr(&assign.right, roots);
+            collect_assignment_target_roots_in_expr(&assign.right, roots, ctx);
         }
         Expr::Binary(binary) => {
             if binop_is_assignment_lift(&binary.op) {
                 collect_assignment_roots_lift(&binary.left, roots);
             } else {
-                collect_assignment_target_roots_in_expr(&binary.left, roots);
+                collect_assignment_target_roots_in_expr(&binary.left, roots, ctx);
             }
-            collect_assignment_target_roots_in_expr(&binary.right, roots);
+            collect_assignment_target_roots_in_expr(&binary.right, roots, ctx);
         }
         Expr::Array(array) => {
             for elem in &array.elems {
-                collect_assignment_target_roots_in_expr(elem, roots);
+                collect_assignment_target_roots_in_expr(elem, roots, ctx);
             }
         }
         Expr::Async(async_expr) => {
-            collect_assignment_target_roots_in_stmts(&async_expr.block.stmts, roots)
+            collect_assignment_target_roots_in_stmts(&async_expr.block.stmts, roots, ctx)
         }
-        Expr::Await(await_expr) => collect_assignment_target_roots_in_expr(&await_expr.base, roots),
-        Expr::Block(block) => collect_assignment_target_roots_in_stmts(&block.block.stmts, roots),
+        Expr::Await(await_expr) => {
+            collect_assignment_target_roots_in_expr(&await_expr.base, roots, ctx)
+        }
+        Expr::Block(block) => {
+            collect_assignment_target_roots_in_stmts(&block.block.stmts, roots, ctx)
+        }
         Expr::Break(break_expr) => {
             if let Some(expr) = &break_expr.expr {
-                collect_assignment_target_roots_in_expr(expr, roots);
+                collect_assignment_target_roots_in_expr(expr, roots, ctx);
             }
         }
         Expr::Call(call) => {
-            collect_assignment_target_roots_in_expr(&call.func, roots);
+            collect_assignment_target_roots_in_expr(&call.func, roots, ctx);
             for arg in &call.args {
-                collect_assignment_target_roots_in_expr(arg, roots);
+                collect_assignment_target_roots_in_expr(arg, roots, ctx);
             }
         }
-        Expr::Cast(cast) => collect_assignment_target_roots_in_expr(&cast.expr, roots),
+        Expr::Cast(cast) => collect_assignment_target_roots_in_expr(&cast.expr, roots, ctx),
         Expr::Closure(_) => {}
         Expr::Const(const_expr) => {
-            collect_assignment_target_roots_in_stmts(&const_expr.block.stmts, roots)
+            collect_assignment_target_roots_in_stmts(&const_expr.block.stmts, roots, ctx)
         }
-        Expr::Field(field) => collect_assignment_target_roots_in_expr(&field.base, roots),
+        Expr::Field(field) => collect_assignment_target_roots_in_expr(&field.base, roots, ctx),
         Expr::ForLoop(for_loop) => {
-            collect_assignment_target_roots_in_expr(&for_loop.expr, roots);
-            collect_assignment_target_roots_in_stmts(&for_loop.body.stmts, roots);
+            collect_assignment_target_roots_in_expr(&for_loop.expr, roots, ctx);
+            collect_assignment_target_roots_in_stmts(&for_loop.body.stmts, roots, ctx);
         }
-        Expr::Group(group) => collect_assignment_target_roots_in_expr(&group.expr, roots),
+        Expr::Group(group) => collect_assignment_target_roots_in_expr(&group.expr, roots, ctx),
         Expr::If(if_expr) => {
-            collect_assignment_target_roots_in_expr(&if_expr.cond, roots);
-            collect_assignment_target_roots_in_stmts(&if_expr.then_branch.stmts, roots);
+            collect_assignment_target_roots_in_expr(&if_expr.cond, roots, ctx);
+            collect_assignment_target_roots_in_stmts(&if_expr.then_branch.stmts, roots, ctx);
             if let Some((_, else_expr)) = &if_expr.else_branch {
-                collect_assignment_target_roots_in_expr(else_expr, roots);
+                collect_assignment_target_roots_in_expr(else_expr, roots, ctx);
             }
         }
         Expr::Index(index) => {
-            collect_assignment_target_roots_in_expr(&index.expr, roots);
-            collect_assignment_target_roots_in_expr(&index.index, roots);
+            collect_assignment_target_roots_in_expr(&index.expr, roots, ctx);
+            collect_assignment_target_roots_in_expr(&index.index, roots, ctx);
         }
-        Expr::Let(let_expr) => collect_assignment_target_roots_in_expr(&let_expr.expr, roots),
+        Expr::Let(let_expr) => collect_assignment_target_roots_in_expr(&let_expr.expr, roots, ctx),
         Expr::Loop(loop_expr) => {
-            collect_assignment_target_roots_in_stmts(&loop_expr.body.stmts, roots)
+            collect_assignment_target_roots_in_stmts(&loop_expr.body.stmts, roots, ctx)
         }
         Expr::Match(match_expr) => {
-            collect_assignment_target_roots_in_expr(&match_expr.expr, roots);
+            collect_assignment_target_roots_in_expr(&match_expr.expr, roots, ctx);
             for arm in &match_expr.arms {
                 if let Some((_, guard)) = &arm.guard {
-                    collect_assignment_target_roots_in_expr(guard, roots);
+                    collect_assignment_target_roots_in_expr(guard, roots, ctx);
                 }
-                collect_assignment_target_roots_in_expr(&arm.body, roots);
+                collect_assignment_target_roots_in_expr(&arm.body, roots, ctx);
             }
         }
         Expr::MethodCall(method) => {
-            collect_assignment_target_roots_in_expr(&method.receiver, roots);
+            collect_assignment_target_roots_in_expr(&method.receiver, roots, ctx);
             for arg in &method.args {
-                collect_assignment_target_roots_in_expr(arg, roots);
+                collect_assignment_target_roots_in_expr(arg, roots, ctx);
             }
         }
-        Expr::Paren(paren) => collect_assignment_target_roots_in_expr(&paren.expr, roots),
+        Expr::Paren(paren) => collect_assignment_target_roots_in_expr(&paren.expr, roots, ctx),
         Expr::Range(range) => {
             if let Some(start) = &range.start {
-                collect_assignment_target_roots_in_expr(start, roots);
+                collect_assignment_target_roots_in_expr(start, roots, ctx);
             }
             if let Some(end) = &range.end {
-                collect_assignment_target_roots_in_expr(end, roots);
+                collect_assignment_target_roots_in_expr(end, roots, ctx);
             }
         }
-        Expr::RawAddr(raw_addr) => collect_assignment_target_roots_in_expr(&raw_addr.expr, roots),
+        Expr::RawAddr(raw_addr) => {
+            collect_assignment_target_roots_in_expr(&raw_addr.expr, roots, ctx)
+        }
         Expr::Reference(reference) => {
             if reference.mutability.is_some() {
                 collect_assignment_roots_lift(&reference.expr, roots);
             }
-            collect_assignment_target_roots_in_expr(&reference.expr, roots);
+            collect_assignment_target_roots_in_expr(&reference.expr, roots, ctx);
         }
         Expr::Repeat(repeat) => {
-            collect_assignment_target_roots_in_expr(&repeat.expr, roots);
-            collect_assignment_target_roots_in_expr(&repeat.len, roots);
+            collect_assignment_target_roots_in_expr(&repeat.expr, roots, ctx);
+            collect_assignment_target_roots_in_expr(&repeat.len, roots, ctx);
         }
         Expr::Return(return_expr) => {
             if let Some(expr) = &return_expr.expr {
-                collect_assignment_target_roots_in_expr(expr, roots);
+                collect_assignment_target_roots_in_expr(expr, roots, ctx);
             }
         }
         Expr::Struct(struct_expr) => {
             for field in &struct_expr.fields {
-                collect_assignment_target_roots_in_expr(&field.expr, roots);
+                collect_assignment_target_roots_in_expr(&field.expr, roots, ctx);
             }
             if let Some(rest) = &struct_expr.rest {
-                collect_assignment_target_roots_in_expr(rest, roots);
+                collect_assignment_target_roots_in_expr(rest, roots, ctx);
             }
         }
-        Expr::Try(try_expr) => collect_assignment_target_roots_in_expr(&try_expr.expr, roots),
+        Expr::Try(try_expr) => collect_assignment_target_roots_in_expr(&try_expr.expr, roots, ctx),
         Expr::TryBlock(try_block) => {
-            collect_assignment_target_roots_in_stmts(&try_block.block.stmts, roots)
+            collect_assignment_target_roots_in_stmts(&try_block.block.stmts, roots, ctx)
         }
         Expr::Tuple(tuple) => {
             for elem in &tuple.elems {
-                collect_assignment_target_roots_in_expr(elem, roots);
+                collect_assignment_target_roots_in_expr(elem, roots, ctx);
             }
         }
-        Expr::Unary(unary) => collect_assignment_target_roots_in_expr(&unary.expr, roots),
+        Expr::Unary(unary) => collect_assignment_target_roots_in_expr(&unary.expr, roots, ctx),
         Expr::Unsafe(unsafe_expr) => {
-            collect_assignment_target_roots_in_stmts(&unsafe_expr.block.stmts, roots)
+            collect_assignment_target_roots_in_stmts(&unsafe_expr.block.stmts, roots, ctx)
         }
         Expr::While(while_expr) => {
-            collect_assignment_target_roots_in_expr(&while_expr.cond, roots);
-            collect_assignment_target_roots_in_stmts(&while_expr.body.stmts, roots);
+            collect_assignment_target_roots_in_expr(&while_expr.cond, roots, ctx);
+            collect_assignment_target_roots_in_stmts(&while_expr.body.stmts, roots, ctx);
         }
         Expr::Yield(yield_expr) => {
             if let Some(expr) = &yield_expr.expr {
-                collect_assignment_target_roots_in_expr(expr, roots);
+                collect_assignment_target_roots_in_expr(expr, roots, ctx);
             }
         }
         Expr::Continue(_) | Expr::Infer(_) | Expr::Lit(_) | Expr::Path(_) => {}
         Expr::Macro(expr_macro) if assignment_target_macro_has_no_roots(&expr_macro.mac) => {}
-        Expr::Macro(_) | Expr::Verbatim(_) => {
-            panic!("sugar-walk assignment target collector refused opaque syn::Expr variant")
+        Expr::Macro(expr_macro) => {
+            ctx.refuse_body_discharge_for_unknown_mutation(opaque_macro_assignment_root_refusal(
+                "Expr::Macro",
+                &expr_macro.mac,
+            ));
+        }
+        Expr::Verbatim(_) => {
+            ctx.refuse_body_discharge_for_unknown_mutation(
+                "opaque-macro-assignment-root: crime=unclassified assignment target may mutate tracked roots; owner=sugar-walk assignment target collector; shape=Expr::Verbatim; replacement=add a typed root classifier or emit a terminal body-discharge refusal"
+                    .to_string(),
+            );
         }
         other => {
             let _ = other;
@@ -1492,22 +1555,35 @@ fn collect_assignment_target_roots_in_expr(expr: &Expr, roots: &mut BTreeSet<Str
     }
 }
 
-fn collect_assignment_target_roots_in_stmts(stmts: &[Stmt], roots: &mut BTreeSet<String>) {
+fn collect_assignment_target_roots_in_stmts(
+    stmts: &[Stmt],
+    roots: &mut BTreeSet<String>,
+    ctx: &mut LiftCtx,
+) {
     for stmt in stmts {
         match stmt {
             Stmt::Local(local) => {
                 if let Some(init) = &local.init {
-                    collect_assignment_target_roots_in_expr(&init.expr, roots);
+                    collect_assignment_target_roots_in_expr(&init.expr, roots, ctx);
                 }
             }
-            Stmt::Expr(expr, _) => collect_assignment_target_roots_in_expr(expr, roots),
+            Stmt::Expr(expr, _) => collect_assignment_target_roots_in_expr(expr, roots, ctx),
             Stmt::Item(_) => {}
             Stmt::Macro(stmt_macro) if assignment_target_macro_has_no_roots(&stmt_macro.mac) => {}
-            Stmt::Macro(_) => {
-                panic!("sugar-walk assignment target collector refused opaque statement macro")
+            Stmt::Macro(stmt_macro) => {
+                ctx.refuse_body_discharge_for_unknown_mutation(
+                    opaque_macro_assignment_root_refusal("Stmt::Macro", &stmt_macro.mac),
+                );
             }
         }
     }
+}
+
+fn opaque_macro_assignment_root_refusal(shape: &str, mac: &Macro) -> String {
+    let name = macro_leaf_name(mac).unwrap_or_else(|| "<unknown>".to_string());
+    format!(
+        "opaque-macro-assignment-root: crime=unclassified macro may mutate tracked roots; owner=sugar-walk assignment target collector; shape={shape}({name}!); replacement=add a macro-specific assignment-root classifier or keep this function body-discharge-ineligible"
+    )
 }
 
 fn assignment_target_macro_has_no_roots(mac: &Macro) -> bool {
@@ -1957,6 +2033,11 @@ fn collect_guarded_panic_effects_in_expr(
             invalidate_statement_guard_facts_for_expr_effects(&while_expr.cond, guard_facts);
             let saved_guard_facts = guard_facts.clone();
             collect_guarded_panic_effects_in_stmts(&while_expr.body.stmts, ctx, guard_facts, out);
+            *guard_facts = saved_guard_facts;
+        }
+        Expr::Loop(loop_expr) => {
+            let saved_guard_facts = guard_facts.clone();
+            collect_guarded_panic_effects_in_stmts(&loop_expr.body.stmts, ctx, guard_facts, out);
             *guard_facts = saved_guard_facts;
         }
         Expr::ForLoop(for_loop) => {
