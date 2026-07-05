@@ -1,0 +1,356 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Callable, Mapping, Optional, Sequence
+
+from .collect_panic_audit import (
+    _prepare_audit_workspace,
+    _resolve_installed_package_path,
+)
+from .command_result import CommandResult
+
+RunCommand = Callable[[list[str], Path, dict[str, str]], CommandResult]
+PackagePathResolver = Callable[[str], Path]
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_REASONED_RED_RE = re.compile(
+    r"\bRED(?: HERE)? (?:effect|gap)(?::|\s+at\b)|\bRED via (?:effect|gap)\b"
+)
+
+
+@dataclass(frozen=True)
+class NumpyWallSummary:
+    green: int
+    red_reasoned: int
+    red_bare: int
+    contracts: int
+    pre_bearing: int
+    call_edges_resolved: int
+    implications: int
+
+    def to_json_dict(self) -> dict[str, int]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class NumpyWallFloors:
+    green: int
+    pre_bearing: int
+    implications: int
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, Any]) -> "NumpyWallFloors":
+        floors = data.get("floors", data)
+        if not isinstance(floors, Mapping):
+            raise TypeError("numpy wall floors must be a mapping")
+        return cls(
+            green=_int_field(floors, "green"),
+            pre_bearing=_int_field(floors, "pre_bearing"),
+            implications=_int_field(floors, "implications"),
+        )
+
+    def to_json_dict(self) -> dict[str, int]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class NumpyWallResult:
+    summary: NumpyWallSummary
+    breaches: tuple[str, ...]
+    visual_path: Path
+    report_path: Path
+    summary_path: Path
+
+
+def load_wall_floors(path: Path) -> NumpyWallFloors:
+    return NumpyWallFloors.from_json_dict(json.loads(path.read_text(encoding="utf-8")))
+
+
+def summarize_numpy_wall(
+    visual_text: str, report_json: Mapping[str, Any]
+) -> NumpyWallSummary:
+    green, red_reasoned, red_bare = _visual_counts(visual_text)
+    contracts = _json_array(report_json, "contracts")
+    call_edges = _json_array(report_json, "callEdges")
+    return NumpyWallSummary(
+        green=green,
+        red_reasoned=red_reasoned,
+        red_bare=red_bare,
+        contracts=len(contracts),
+        pre_bearing=sum(
+            1 for contract in contracts if _contract_has_pre_slot(contract)
+        ),
+        call_edges_resolved=sum(
+            1 for edge in call_edges if _resolved_regular_call_edge(edge)
+        ),
+        implications=sum(1 for edge in call_edges if _implication_edge(edge)),
+    )
+
+
+def check_wall_floors(summary: NumpyWallSummary, floors: NumpyWallFloors) -> list[str]:
+    breaches: list[str] = []
+    if summary.red_bare != 0:
+        breaches.append(
+            "red_bare invariant breached: "
+            f"observed={summary.red_bare} expected=0; "
+            "replacement=thread a typed effect/gap reason into every red wall row"
+        )
+    for field in ("green", "pre_bearing", "implications"):
+        observed = getattr(summary, field)
+        floor = getattr(floors, field)
+        if observed < floor:
+            breaches.append(
+                f"{field} floor breached: observed={observed} "
+                f"floor={floor} delta={observed - floor}"
+            )
+    return breaches
+
+
+def build_numpy_wall(
+    *,
+    root: Path,
+    output_dir: Path,
+    floors: NumpyWallFloors,
+    package_path_resolver: Optional[PackagePathResolver] = None,
+    run_command: Optional[RunCommand] = None,
+    profile: str = "release",
+) -> NumpyWallResult:
+    root = root.resolve()
+    output_dir = output_dir.resolve()
+    runner = run_command or _run_subprocess
+    resolver = package_path_resolver or _resolve_installed_package_path
+
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True)
+
+    sugar_bin = _resolve_sugar_bin(root, profile, runner)
+    package_path = resolver("numpy").resolve()
+    workspace = output_dir / "workspace" / package_path.name
+    _prepare_audit_workspace(package_path, root, workspace, audit_only=False)
+    env = _wall_env(root, sugar_bin)
+
+    visual_result = runner(
+        ["sugar", "lift", "--report", "--visual", str(workspace)], root, env
+    )
+    visual_path = output_dir / "wall.txt"
+    _write_command_receipt(visual_path, visual_result)
+    if visual_result.returncode != 0:
+        raise RuntimeError(
+            "numpy wall visual render failed "
+            f"exit={visual_result.returncode}; see {visual_path}"
+        )
+
+    report_result = runner(
+        ["sugar", "lift", "--report", "--json", str(workspace)], root, env
+    )
+    report_path = output_dir / "report.json"
+    _write_command_receipt(report_path, report_result)
+    if report_result.returncode != 0:
+        raise RuntimeError(
+            "numpy wall json report failed "
+            f"exit={report_result.returncode}; see {report_path}"
+        )
+    try:
+        report_json = json.loads(report_result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"numpy wall json report was not valid JSON: {exc}") from exc
+    if not isinstance(report_json, Mapping):
+        raise RuntimeError("numpy wall json report must be a JSON object")
+
+    summary = summarize_numpy_wall(visual_result.stdout, report_json)
+    summary_path = output_dir / "summary.json"
+    summary_path.write_text(
+        json.dumps(summary.to_json_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    breaches = tuple(check_wall_floors(summary, floors))
+    return NumpyWallResult(
+        summary=summary,
+        breaches=breaches,
+        visual_path=visual_path,
+        report_path=report_path,
+        summary_path=summary_path,
+    )
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Build and ratchet-check the installed NumPy lift wall."
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path(__file__).resolve().parents[5],
+        help="repository root",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="directory for wall.txt and summary.json",
+    )
+    parser.add_argument(
+        "--floors",
+        type=Path,
+        default=None,
+        help="ratchet floor JSON fixture",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("debug", "release"),
+        default="release",
+        help="sugarbin profile to resolve",
+    )
+    args = parser.parse_args(argv)
+
+    root = args.root.resolve()
+    output_dir = args.output_dir or (root / ".sugar" / "numpy-wall")
+    floors_path = args.floors or (root / "tools" / "numpy-wall-floors.json")
+    result = build_numpy_wall(
+        root=root,
+        output_dir=output_dir,
+        floors=load_wall_floors(floors_path),
+        profile=args.profile,
+    )
+    print(json.dumps(result.summary.to_json_dict(), indent=2, sort_keys=True))
+    if result.breaches:
+        print("numpy wall ratchet breached:", file=sys.stderr)
+        for breach in result.breaches:
+            print(f"- {breach}", file=sys.stderr)
+        print(f"summary: {result.summary_path}", file=sys.stderr)
+        print(f"report: {result.report_path}", file=sys.stderr)
+        print(f"visual: {result.visual_path}", file=sys.stderr)
+        return 1
+    print(f"numpy wall ratchet PASS: {result.summary_path}", file=sys.stderr)
+    return 0
+
+
+def _visual_counts(visual_text: str) -> tuple[int, int, int]:
+    green = 0
+    red_reasoned = 0
+    red_bare = 0
+    for raw_line in visual_text.splitlines():
+        line = _ANSI_RE.sub("", raw_line)
+        if not line.startswith("    "):
+            continue
+        if re.search(r"\bGREEN\b", line):
+            green += 1
+        if re.search(r"\bRED\b", line):
+            if _REASONED_RED_RE.search(line):
+                red_reasoned += 1
+            else:
+                red_bare += 1
+    return green, red_reasoned, red_bare
+
+
+def _json_array(
+    report_json: Mapping[str, Any], field: str
+) -> tuple[Mapping[str, Any], ...]:
+    value = report_json.get(field)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise TypeError(f"numpy wall report field `{field}` must be a JSON array")
+    rows: list[Mapping[str, Any]] = []
+    for index, row in enumerate(value):
+        if not isinstance(row, Mapping):
+            raise TypeError(
+                f"numpy wall report field `{field}` row {index} must be a JSON object"
+            )
+        rows.append(row)
+    return tuple(rows)
+
+
+def _contract_has_pre_slot(contract: Mapping[str, Any]) -> bool:
+    pre = contract.get("pre")
+    if pre is None:
+        return False
+    if isinstance(pre, str):
+        return bool(pre.strip())
+    if isinstance(pre, (list, dict)):
+        return bool(pre)
+    return True
+
+
+def _resolved_regular_call_edge(edge: Mapping[str, Any]) -> bool:
+    if edge.get("kind") != "call-edge":
+        return False
+    target_cid = edge.get("targetContractCid")
+    return isinstance(target_cid, str) and bool(target_cid.strip())
+
+
+def _implication_edge(edge: Mapping[str, Any]) -> bool:
+    return edge.get("kind") == "implication"
+
+
+def _int_field(data: Mapping[str, Any], field: str) -> int:
+    value = data.get(field)
+    if not isinstance(value, int) or value < 0:
+        raise TypeError(f"numpy wall floor `{field}` must be a non-negative integer")
+    return value
+
+
+def _resolve_sugar_bin(root: Path, profile: str, runner: RunCommand) -> Path:
+    result = runner(
+        [str(root / "bin/sugarbin"), "--profile", profile], root, os.environ.copy()
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"bin/sugarbin --profile {profile} failed exit={result.returncode}: "
+            f"{(result.stderr or result.stdout).strip()}"
+        )
+    sugar = Path(result.stdout.strip().splitlines()[-1]).resolve()
+    return sugar
+
+
+def _wall_env(root: Path, sugar_bin: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = f"{sugar_bin.parent}{os.pathsep}{env.get('PATH', '')}"
+    source_paths = [
+        root / "implementations/python/sugar-lift-py-tests/src",
+        root / "implementations/python/sugar-lift-python-source/src",
+    ]
+    existing = env.get("PYTHONPATH")
+    if existing:
+        source_paths.append(Path(existing))
+    env["PYTHONPATH"] = os.pathsep.join(str(path) for path in source_paths)
+    return env
+
+
+def _run_subprocess(
+    command: list[str], cwd: Path, env: dict[str, str]
+) -> CommandResult:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return CommandResult(127, "", f"unable to execute {command[0]}: {exc}")
+    return CommandResult(completed.returncode, completed.stdout, completed.stderr)
+
+
+def _write_command_receipt(path: Path, result: CommandResult) -> None:
+    if result.returncode == 0:
+        path.write_text(result.stdout, encoding="utf-8")
+        return
+    path.write_text(
+        result.stdout
+        + ("\n" if result.stdout and result.stderr else "")
+        + result.stderr,
+        encoding="utf-8",
+    )

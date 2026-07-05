@@ -157,7 +157,9 @@ def _run_subprocess(command: List[str], cwd: Path) -> CommandResult:
     return CommandResult(completed.returncode, completed.stdout, completed.stderr)
 
 
-def _prepare_audit_workspace(target: Path, root: Path, audit_workspace: Path) -> None:
+def _prepare_audit_workspace(
+    target: Path, root: Path, audit_workspace: Path, *, audit_only: bool = True
+) -> None:
     target = target.resolve()
     root = root.resolve()
     audit_workspace.mkdir(parents=True, exist_ok=True)
@@ -174,7 +176,7 @@ def _prepare_audit_workspace(target: Path, root: Path, audit_workspace: Path) ->
     manifest_dir.mkdir(parents=True, exist_ok=True)
     (sugar_dir / "config.toml").write_text(_audit_config_toml(), encoding="utf-8")
     (manifest_dir / "manifest.toml").write_text(
-        _audit_manifest_toml(root),
+        _audit_manifest_toml(root, audit_only=audit_only),
         encoding="utf-8",
     )
 
@@ -290,7 +292,7 @@ def _audit_config_toml() -> str:
     )
 
 
-def _audit_manifest_toml(root: Path) -> str:
+def _audit_manifest_toml(root: Path, *, audit_only: bool = True) -> str:
     lift_rpc = (
         root
         / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"
@@ -299,8 +301,9 @@ def _audit_manifest_toml(root: Path) -> str:
         sys.executable,
         str(lift_rpc),
         "--rpc",
-        "--audit-only",
     ]
+    if audit_only:
+        command.append("--audit-only")
     command_items = ", ".join(_toml_string(item) for item in command)
     return "\n".join(
         [

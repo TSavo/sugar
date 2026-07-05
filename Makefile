@@ -70,6 +70,7 @@ help:
 	@echo ""
 	@echo "Per-language test:"
 	@echo "  make test-rust  test-python   (the proven provers)"
+	@echo "  make numpy-wall                build and ratchet-check the NumPy lift wall"
 	@echo "  make test-python-format       Black check for implementations/python"
 	@echo "  make test-<lang>              go / csharp / php / c"
 	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
@@ -162,6 +163,10 @@ $(BCARGO_PYTHON_ENV_STAMP): Makefile $(wildcard implementations/python/*/pyproje
 .PHONY: check-cargo-entrypoint
 check-cargo-entrypoint:
 	tools/check-cargo-entrypoint.sh
+
+.PHONY: numpy-wall
+numpy-wall:
+	python3 tools/numpy_wall.py
 
 .PHONY: setup-git-hooks
 setup-git-hooks:
