@@ -10,8 +10,7 @@ import textwrap
 
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
-_ENCODER = textwrap.dedent(
-    """
+_ENCODER = textwrap.dedent("""
     def encodeBase64(value):
         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
         b0 = ord(value[0])
@@ -23,8 +22,7 @@ _ENCODER = textwrap.dedent(
             + alphabet[((b1 & 15) << 2) | (b2 >> 6)]
             + alphabet[b2 & 63]
         )
-    """
-)
+    """)
 
 
 def test_import_sugar_digs_imported_callee_into_its_module_source(

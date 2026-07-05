@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import LambdaCallable
 from sugar_lift_py_tests.operations import MapOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
@@ -64,7 +65,16 @@ class MapSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             return mapper_outcome
         mapper = complete_value(mapper_outcome, owner="MapSugar mapper")
         if not isinstance(mapper, LambdaCallable):
-            raise TypeError("MapSugar mapper must reduce to LambdaCallable")
+            return Incomplete(
+                RuntimeEffect(
+                    "map mapper runtime boundary: "
+                    f"mapper reduced to {type(mapper).__name__}; MapSugar "
+                    "requires a LambdaCallable mapper so Python's per-element "
+                    "call semantics are not guessed. Add a callable floor for "
+                    "this mapper shape or keep the assertion as a typed red "
+                    f"effect. blame={self.blame}"
+                )
+            )
         operation = MapOperation(mapper=mapper, owner="MapSugar", blame=self.blame)
         return perform_operation(
             owner="MapSugar",

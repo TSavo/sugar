@@ -2,9 +2,9 @@
   "kind": "pandas-wall-baseline",
   "schema": 1,
   "measured_at": "2026-07-05",
-  "repo_head": "6fa7d8743b52f732406ce2e7adad4dd1fc9b905f",
-  "sugar_binary_stamp": "6fa7d8743b52f732406ce2e7adad4dd1fc9b905f-dirty-491789b70f9bf49d",
-  "measurement_note": "The release binary was resolved by bin/sugarbin for repo_head plus this PR's dirty-tree MapSugar incomplete-effect propagation change.",
+  "repo_head": "e0468e87f95330f7b771fa7966541ec510449f21",
+  "sugar_binary_stamp": "e0468e87f95330f7b771fa7966541ec510449f21-dirty-d09e16b1c665ec21",
+  "measurement_note": "The release binary was resolved by bin/sugarbin for repo_head plus this PR's dirty-tree MapSugar non-callable-mapper typed-effect change.",
   "campaign": "#3503",
   "pandas": {
     "version": "3.0.3",
@@ -21,16 +21,16 @@
       "exit_code": 2,
       "stdout_bytes": 0,
       "stderr_bytes": 7932,
-      "stderr_sha256": "0281eeb0af1825f24f7f6f0e254179fec1f129ac2326c45ea6e0538da391fbff",
-      "elapsed_seconds": 298.58
+      "stderr_sha256": "9702cc6c4ee4e443da7dffc720775bd0f7f939564d352e7f70e366df9a9c1c8a",
+      "elapsed_seconds": 976.15
     },
     "visual": {
       "command": "sugar lift --report --visual <cached-pandas-audit-workspace>",
       "exit_code": 2,
       "stdout_bytes": 0,
       "stderr_bytes": 7932,
-      "stderr_sha256": "d263b0122bf930b69fb6b59049fd29d62d15b0764bf844fd938b6377e603e389",
-      "elapsed_seconds": 307.61
+      "stderr_sha256": "bedb6323260ad810f10c1afc90f4c50fde0dc0c639435b60548f8777e63f3916",
+      "elapsed_seconds": 865.05
     },
     "counts_available": false,
     "counts_unavailable_reason": "both json and visual report renderers abort before emitting sourceLedger/sourceAudits"
@@ -49,22 +49,27 @@
   },
   "first_blocker": {
     "class": "transport-diagnostic-from-lift-plugin-error",
-    "owner": "AddSugar receiver",
-    "vendor_file": "pandas/tests/internals/test_internals.py",
-    "vendor_line": 1179,
-    "vendor_column": 29,
-    "message": "AddSugar receiver cannot read completed value from incomplete effect: write more Sugar for this AST: owner=python.factory blame=<workspace>/pandas/tests/internals/test_internals.py:1179:29 observed=call-builtin:slice requested=term fix=add builtin call sugar for `slice`, resolve a local body, link an imported .proof, or emit a real effect",
+    "owner": "BitwiseOpSugar left",
+    "vendor_file": "pandas/tests/test_sorting.py",
+    "vendor_line": 300,
+    "vendor_column": 20,
+    "message": "BitwiseOpSugar left cannot read completed value from incomplete effect: write more Sugar for this AST: owner=python.factory blame=<workspace>/pandas/tests/test_sorting.py:300:20 observed=call-method:notna requested=term fix=add receiver-dispatched method sugar for `notna`, resolve a local body, link an imported .proof, or emit a real effect",
     "path": [
-      "_lift_callsite_assertion",
-      "_literal_floor_via_factory",
-      "AddSugar.desugar",
-      "complete_value(AddSugar receiver)"
+      "_lift_assertion_via_factory",
+      "BoolOpAssertionSugar.desugar",
+      "TruthyAssertionSugar.desugar",
+      "BitwiseOpSugar.desugar",
+      "complete_value(BitwiseOpSugar left)"
     ],
     "source_excerpt": [
-      "bpl = BlockPlacement(slice(0, 5))",
-      "assert bpl.add(1).as_slice == slice(1, 6, 1)",
-      "assert bpl.add(np.arange(5)).as_slice == slice(0, 10, 2)",
-      "assert list(bpl.add(np.arange(5, 0, -1))) == [5, 5, 5, 5, 5]"
+      "out = DataFrame(vals, columns=[*list(\"ABCDEFG\"), \"left\", \"right\"])",
+      "out = out.sort_values(out.columns.to_list(), ignore_index=True)",
+      "jmask = {",
+      "    \"left\": out[\"left\"].notna(),",
+      "    \"right\": out[\"right\"].notna(),",
+      "    \"inner\": out[\"left\"].notna() & out[\"right\"].notna(),",
+      "    \"outer\": np.ones(len(out), dtype=\"bool\"),",
+      "}"
     ]
   },
   "map_receiver_repro": {
@@ -88,12 +93,31 @@
     },
     "source": "def test_iterable_map(index_or_series, dtype, rdtype):\n    typ = index_or_series\n    s = typ([1], dtype=dtype)\n    result = s.map(type)[0]\n    if not isinstance(rdtype, tuple):\n        rdtype = (rdtype,)\n    assert result in rdtype\n"
   },
+  "map_mapper_repro": {
+    "path": "tests/test_array_map_sugar.py::test_map_non_callable_mapper_emits_typed_effect",
+    "command": "PYTHONPATH=src python3 -m pytest -q tests/test_array_map_sugar.py::test_map_non_callable_mapper_emits_typed_effect -vv",
+    "red_first": "on main the lift RPC returned JSON-RPC error -32603: MapSugar mapper must reduce to LambdaCallable",
+    "after": {
+      "exit_code": 0,
+      "status": "typed-effect-row",
+      "factory_walk": {
+        "selected": "ProjectedEqualityAssertionSugar",
+        "status": "runtime-effect",
+        "effect": "RuntimeEffect",
+        "reason_contains": [
+          "map mapper runtime boundary",
+          "mapper reduced to TermValue",
+          "requires a LambdaCallable"
+        ]
+      }
+    }
+  },
   "top_red_reason_shapes": [
     {
       "rank": 1,
       "count": 1,
-      "template": "AddSugar receiver forces incomplete call-builtin:slice effect before report rows are emitted",
-      "example": "pandas/tests/internals/test_internals.py:1179:29"
+      "template": "BitwiseOpSugar left forces incomplete call-method:notna effect before report rows are emitted",
+      "example": "pandas/tests/test_sorting.py:300:20"
     }
   ],
   "transfer_notes": [
@@ -119,8 +143,18 @@
     },
     {
       "mechanism": "builtin slice inside arithmetic receiver",
+      "status": "drained-upstream",
+      "detail": "the prior blocker was `BlockPlacement(slice(0, 5))`; builtin `slice(...)` now reduces to SliceValue on main, and the pandas wall passes this site"
+    },
+    {
+      "mechanism": "non-callable map mapper",
+      "status": "drained",
+      "detail": "MapSugar no longer throws when the mapper reduces to a non-Lambda floor value; it emits a typed runtime-effect row instead of aborting the report"
+    },
+    {
+      "mechanism": "bitwise propagation over receiver-dispatched method gap",
       "status": "first-blocker",
-      "detail": "the current blocker is `BlockPlacement(slice(0, 5))`; AddSugar forces the `call-builtin:slice` effect as a completed receiver"
+      "detail": "the current blocker is `out[\"left\"].notna() & out[\"right\"].notna()`; BitwiseOpSugar forces the `call-method:notna` effect as a completed left operand. This is the hand-rolled incomplete-as-complete propagation class owned by the Sugar-ABC template-method migration lane."
     }
   ]
 }
