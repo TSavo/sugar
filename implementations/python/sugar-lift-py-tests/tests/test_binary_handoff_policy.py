@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import os
+import re
+import shutil
 import subprocess
 import threading
 import time
@@ -15,6 +17,7 @@ PY_KIT_ROOTS = (
     ROOT / "implementations" / "python" / "sugar-lift-python-source",
 )
 THIS_TEST = Path(__file__).resolve()
+STAMP_RE = re.compile(r"^blake3-512:[0-9a-f]{128}$")
 
 
 def _python_files() -> list[Path]:
@@ -103,6 +106,68 @@ def _run_sugarbin(env: dict[str, str], *args: str) -> subprocess.CompletedProces
         check=False,
         timeout=30,
     )
+
+
+def _write_stamp_fixture(root: Path) -> Path:
+    script = root / "bin" / "sugarbin"
+    script.parent.mkdir(parents=True)
+    shutil.copy2(SUGARBIN, script)
+    script.chmod(0o755)
+
+    rust_src = root / "implementations" / "rust" / "sugar-cli" / "src"
+    rust_src.mkdir(parents=True)
+    (root / "implementations" / "rust" / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["sugar-cli"]\n',
+        encoding="utf-8",
+    )
+    (root / "implementations" / "rust" / "Cargo.lock").write_text(
+        "# fixture lock\n",
+        encoding="utf-8",
+    )
+    (root / "implementations" / "rust" / "sugar-cli" / "Cargo.toml").write_text(
+        '[package]\nname = "sugar-cli"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    (rust_src / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+    py_src = root / "implementations" / "python" / "sugar-lift-py-tests"
+    py_src.mkdir(parents=True)
+    (py_src / "ignored_by_sugarbin.py").write_text("VALUE = 1\n", encoding="utf-8")
+    return script
+
+
+def _run_fixture_sugarbin(
+    script: Path, env: dict[str, str] | None = None, *args: str
+) -> subprocess.CompletedProcess[str]:
+    merged_env = {**os.environ, **(env or {})}
+    for key in (
+        "SUGAR_BIN",
+        "SUGAR_BINARY_ALLOW_BUILD",
+        "SUGAR_BINARY_CACHE_DIR",
+        "SUGAR_BINARY_NO_SHELF",
+        "SUGAR_BINARY_REPO",
+        "SUGAR_BINARY_SOURCE_STAMP",
+        "SUGAR_BINARY_TARGET_ROOT",
+        "SUGAR_BUILD_GIT_HEAD",
+    ):
+        if env is None or key not in env:
+            merged_env.pop(key, None)
+    return subprocess.run(
+        [os.fspath(script), *args],
+        cwd=script.parent.parent,
+        env=merged_env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+
+def _fixture_stamp(script: Path) -> str:
+    completed = _run_fixture_sugarbin(script, {}, "--print-source-stamp")
+    assert completed.returncode == 0, completed.stderr
+    stamp = completed.stdout.strip()
+    assert STAMP_RE.fullmatch(stamp)
+    return stamp
 
 
 def test_sugarbin_prints_explicit_sugar_bin_without_resolving(tmp_path: Path) -> None:
@@ -219,11 +284,104 @@ def test_sugarbin_can_print_source_stamp_without_resolving_binary() -> None:
     assert completed.stderr == ""
 
 
+def test_sugarbin_source_stamp_is_rust_tree_content_hash(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "nested" / "second"
+    first_script = _write_stamp_fixture(first)
+    second_script = _write_stamp_fixture(second)
+
+    first_stamp = _fixture_stamp(first_script)
+    assert _fixture_stamp(second_script) == first_stamp
+
+    (
+        first
+        / "implementations"
+        / "python"
+        / "sugar-lift-py-tests"
+        / "ignored_by_sugarbin.py"
+    ).write_text(
+        "VALUE = 2\n",
+        encoding="utf-8",
+    )
+    assert _fixture_stamp(first_script) == first_stamp
+
+    (first / "implementations" / "rust" / "sugar-cli" / "src" / "main.rs").write_text(
+        'fn main() { println!("changed"); }\n',
+        encoding="utf-8",
+    )
+    assert _fixture_stamp(first_script) != first_stamp
+
+
+def test_sugarbin_source_stamp_ignores_git_history_for_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    script = _write_stamp_fixture(root)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Sugar Test",
+            "-c",
+            "user.email=sugar@example.invalid",
+            "commit",
+            "-qm",
+            "initial",
+        ],
+        cwd=root,
+        check=True,
+    )
+    before = _fixture_stamp(script)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Sugar Test",
+            "-c",
+            "user.email=sugar@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "synthetic rebase commit",
+        ],
+        cwd=root,
+        check=True,
+    )
+    assert _fixture_stamp(script) == before
+
+
+def test_sugarbin_source_stamp_requires_blake3_tool(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    script = _write_stamp_fixture(root)
+    python = shutil.which("python3")
+    bash = shutil.which("bash")
+    assert python is not None
+    assert bash is not None
+    fake_bin = tmp_path / "bin-no-b3sum"
+    fake_bin.mkdir()
+    (fake_bin / "python3").symlink_to(python)
+    (fake_bin / "bash").symlink_to(bash)
+
+    completed = _run_fixture_sugarbin(
+        script,
+        {"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        "--print-source-stamp",
+    )
+
+    assert completed.returncode != 0
+    assert "crime=missing-blake3-tool" in completed.stderr
+    assert "replacement=install b3sum" in completed.stderr
+
+
 def test_sugarbin_publish_uploads_stamp_named_assets(tmp_path: Path) -> None:
     target = tmp_path / "target"
     binary = target / "release" / "sugar"
     binary.parent.mkdir(parents=True)
-    _write_fake_sugar(binary, "publishstamp")
+    stamp = "blake3-512:" + ("a" * 128)
+    artifact_stamp = stamp.replace(":", "_")
+    _write_fake_sugar(binary, stamp)
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -252,7 +410,8 @@ def test_sugarbin_publish_uploads_stamp_named_assets(tmp_path: Path) -> None:
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "SUGAR_BINARY_TARGET_ROOT": os.fspath(target),
             "SUGAR_BINARY_REPO": "TSavo/sugar",
-            "SUGAR_BINARY_SOURCE_STAMP": "publishstamp",
+            "SUGAR_BINARY_SOURCE_STAMP": stamp,
+            "SUGAR_BINARY_ALLOW_BUILD": "0",
         },
         "--profile",
         "release",
@@ -263,13 +422,13 @@ def test_sugarbin_publish_uploads_stamp_named_assets(tmp_path: Path) -> None:
     uploaded_paths = [
         arg
         for arg in upload_args
-        if Path(arg).name.startswith("sugar-darwin-x86_64-release-publishstamp")
+        if Path(arg).name.startswith(f"sugar-darwin-x86_64-release-{artifact_stamp}")
     ]
     assert [Path(arg).name for arg in uploaded_paths] == [
-        "sugar-darwin-x86_64-release-publishstamp",
-        "sugar-darwin-x86_64-release-publishstamp.metadata.json",
+        f"sugar-darwin-x86_64-release-{artifact_stamp}",
+        f"sugar-darwin-x86_64-release-{artifact_stamp}.metadata.json",
     ]
-    assert all("#" not in arg for arg in uploaded_paths)
+    assert all("#" not in arg and ":" not in Path(arg).name for arg in uploaded_paths)
 
 
 def test_python_wrapper_delegates_to_sugarbin(tmp_path: Path, monkeypatch) -> None:
