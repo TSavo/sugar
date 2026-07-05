@@ -131,7 +131,6 @@ EXPECTED_OPT_OUT_SUGARS = {
     "DictSugar",
     "ExprSugar",
     "ListLiteralSugar",
-    "OrdByteSugar",
     "PassSugar",
     "SetCompSugar",
     "SetSugar",
@@ -141,7 +140,6 @@ EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
     "BitwiseOpSugar",
     "DictSugar",
     "ListLiteralSugar",
-    "OrdByteSugar",
 }
 
 
@@ -299,7 +297,7 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     rows = temporal_opt_outs()
 
     assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 5
+    assert len(rows) == 4
     assert all(row.retirement_condition for row in rows)
     by_name = {row.sugar_name: row for row in rows}
     expected_needles = {
@@ -307,7 +305,6 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
         "BitwiseOpSugar": "prove reports undecidable",
         "DictSugar": "DictLiteralValue.project_callsite_with",
         "ListLiteralSugar": "sugar/array_literal_sugar.py:29",
-        "OrdByteSugar": "illegal free var byte_s_0",
     }
     for sugar_name, needle in expected_needles.items():
         assert needle in by_name[sugar_name].retirement_condition
@@ -1220,14 +1217,14 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "witness_triples_failing": EXPECTED_TRIPLE_FAILURES,
         "witnesses_not_dispatching_to_owner": 0,
         "non_fol_opt_out_drift": 0,
-        "temporal_opt_outs": 5,
-        "total": 5,
+        "temporal_opt_outs": 4,
+        "total": 4,
     }
     assert "R(unenrolled-sugars): 0" in text
     assert "R(witness-triples-failing): 0" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
-    assert "R(temporal-opt-outs): 5" in text
+    assert "R(temporal-opt-outs): 4" in text
     assert "unenrolled sugars:" not in text
 
 
@@ -1247,7 +1244,7 @@ def test_sugar_witness_cli_exits_clean_only_when_residue_is_zero(
     assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
-    assert "R(temporal-opt-outs): 5" in stdout
+    assert "R(temporal-opt-outs): 4" in stdout
     assert status == 1
 
 

@@ -293,19 +293,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
     ),
     NonFolOptOut(
-        sugar_name="OrdByteSugar",
-        floor_name="SupportValue",
-        reason=(
-            "ord-byte terms are symbolic encoder support until the enclosing "
-            "str.eq-bv-blocks universe carries the verdict"
-        ),
-        retirement_condition=(
-            "retire when the enclosing str.eq-bv-blocks universe carries an "
-            "OrdByte truthful/lying solver witness; current direct ord-byte "
-            "probes fail ProofIR construction with illegal free var byte_s_0"
-        ),
-    ),
-    NonFolOptOut(
         sugar_name="PassSugar",
         floor_name="SupportValue",
         reason="pass is inert control-flow support",
