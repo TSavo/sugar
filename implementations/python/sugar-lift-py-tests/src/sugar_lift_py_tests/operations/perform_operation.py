@@ -4,7 +4,7 @@ from typing import Any
 
 from sugar_lift_py_tests.factory import FactoryGap, FactoryGapInfo, GapKind, GapLocus
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
-from sugar_lift_py_tests.floor import FloorValue
+from sugar_lift_py_tests.floor import BASE_CONSTRUCTION_GAP_METHOD_NAMES, FloorValue
 from sugar_lift_py_tests.outcome import Outcome
 
 _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.operations."
@@ -43,6 +43,18 @@ def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
 
 def _is_declared_operation(operation: object) -> bool:
     return type(operation).__module__.startswith(_DECLARED_OPERATION_MODULE)
+
+
+def _is_inherited_construction_gap_method(
+    *,
+    receiver: FloorValue,
+    method_name: str,
+    method: object,
+) -> bool:
+    del receiver
+    if method_name not in BASE_CONSTRUCTION_GAP_METHOD_NAMES:
+        return False
+    return getattr(method, "__func__", None) is FloorValue.__dict__.get(method_name)
 
 
 def _missing_floor_gap(
@@ -118,6 +130,17 @@ def perform_operation(
                 candidates=[],
                 message=info.message,
             ),
+        )
+    if _is_declared_operation(operation) and _is_inherited_construction_gap_method(
+        receiver=receiver,
+        method_name=method_name,
+        method=method,
+    ):
+        _missing_floor_gap(
+            owner=owner,
+            blame=blame,
+            receiver=receiver,
+            method_name=method_name,
         )
     recorder = None if ctx is None else ctx.record_operation
     if recorder is not None:
