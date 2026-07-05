@@ -201,3 +201,22 @@ def test_isinstance_assertion_lifts_call_subject_with_keywords_symbolically() ->
         ],
     }
     assert fact["args"][1]["value"] == "np.ndarray"
+
+
+def test_isinstance_dynamic_type_expression_is_typed_runtime_effect() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_dynamic_type(value, type_factory):\n"
+            "    assert isinstance(value, type_factory())\n"
+        ),
+        filename="test_dynamic.py",
+        memento_file="test_dynamic.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    assert "isinstance classinfo runtime boundary" in (
+        report.payload.effects[0].effect.reason
+    )
+    assert report.payload.factory_walk[0].status == "runtime-effect"

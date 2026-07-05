@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.floor import StringValue, SymbolicValue
 from sugar_lift_py_tests.operations import (
+    AttributeLookupOperation,
     BinaryOperatorOperation,
     MethodCallOperation,
     NextOperation,
@@ -11,13 +15,13 @@ from sugar_lift_py_tests.operations import (
     perform_operation,
 )
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
-from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import (
     builtin_len_return_witness,
     divmod_subscript_return_witness,
     format_int_return_witness,
 )
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -100,6 +104,132 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 ctx=ctx,
             )
         raise TypeError(f"write more Sugar for builtin call `{self.name}`")
+
+
+@dataclass(frozen=True)
+class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
+    receiver: SugarBody
+    attr_name: str | None
+    dynamic_name_observed: str | None
+    blame: str = "<unknown>"
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return (
+            site.observed == "Call"
+            and not site.call_is_method_call()
+            and not site.call_has_keywords()
+            and site.call_target_name() == "getattr"
+            and site.call_arg_count() == 2
+        )
+
+    @classmethod
+    def witnesses(cls):
+        return SugarWitnessPair(
+            name="getattr_builtin_literal_attribute",
+            owner_sugar=cls.__name__,
+            family="python-builtin-getattr",
+            truthful=WitnessSource(
+                source=(
+                    "class Box:\n"
+                    "    def __init__(self):\n"
+                    "        self.value = 2\n"
+                    "\n"
+                    "def A():\n"
+                    "    return getattr(Box(), 'value')\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A() == 2\n"
+                ),
+                expected="sat",
+            ),
+            lying=WitnessSource(
+                source=(
+                    "class Box:\n"
+                    "    def __init__(self):\n"
+                    "        self.value = 2\n"
+                    "\n"
+                    "def A():\n"
+                    "    return getattr(Box(), 'value')\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A() == 3\n"
+                ),
+                expected="unsat",
+            ),
+        )
+
+    @classmethod
+    def build(cls, site, ctx) -> Sugar:
+        if not cls.owns(site):
+            raise TypeError(
+                "GetattrBuiltinSugar claim built an unsupported getattr call"
+            )
+        if _call_is_context_bound(site, ctx):
+            from sugar_lift_py_tests.sugar.call_sugar import CallSugar
+
+            return CallSugar.build(site, ctx)
+        receiver, name = site.call_args()
+        attr_name = None
+        dynamic_name_observed = name.observed
+        if name.observed == "PrimitiveLiteral":
+            literal = name.literal_value()
+            if isinstance(literal, str):
+                attr_name = literal
+                dynamic_name_observed = None
+        return cls(
+            receiver=ctx.build_body(receiver, SugarRole.TERM),
+            attr_name=attr_name,
+            dynamic_name_observed=dynamic_name_observed,
+            blame=site.blame,
+        )
+
+    def desugar(self, ctx) -> Outcome:
+        if self.attr_name is None:
+            return _runtime_getattr_effect(
+                self.blame,
+                f"attribute name expression `{self.dynamic_name_observed}` is runtime",
+            )
+        try:
+            receiver_outcome = self.receiver.reduce(ctx)
+        except FactoryGap as exc:
+            return _runtime_getattr_effect(
+                self.blame,
+                "receiver could not be reduced before runtime getattr: "
+                f"{exc.info.get('observed', type(exc).__name__)}",
+            )
+        if isinstance(receiver_outcome, Incomplete):
+            return receiver_outcome
+        receiver = complete_value(
+            receiver_outcome, owner="GetattrBuiltinSugar receiver"
+        )
+        if isinstance(receiver, SymbolicValue):
+            return _runtime_getattr_effect(
+                self.blame,
+                "receiver reduced to SymbolicValue; Python resolves attributes at runtime",
+            )
+        return perform_operation(
+            owner="GetattrBuiltinSugar",
+            blame=self.blame,
+            receiver=receiver,
+            operation=AttributeLookupOperation(
+                name=self.attr_name,
+                owner="GetattrBuiltinSugar",
+                blame=self.blame,
+            ),
+            ctx=ctx,
+        )
+
+
+def _runtime_getattr_effect(blame: str, detail: str) -> Incomplete:
+    return Incomplete(
+        RuntimeEffect(
+            "getattr runtime boundary: "
+            f"{detail}. Python evaluates dynamic attribute access at runtime; keep "
+            "this as a typed red effect until a narrower vendor-cited reduction "
+            f"owns the shape. blame={blame}"
+        )
+    )
 
 
 @dataclass(frozen=True)

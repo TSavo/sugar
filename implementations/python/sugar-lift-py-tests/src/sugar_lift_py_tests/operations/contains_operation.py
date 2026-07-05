@@ -15,11 +15,12 @@ from sugar_lift_py_tests.floor import (
     BoolValue,
     FloorValue,
     PredicateValue,
+    SetLiteralValue,
     StringValue,
     SymbolicValue,
     TermValue,
 )
-from sugar_lift_py_tests.ir import atomic
+from sugar_lift_py_tests.ir import _ConstBool, _ConstInt, _ConstReal, _ConstStr, atomic
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
@@ -33,6 +34,18 @@ class ContainsOperation:
 
     def contains_string(self, receiver: StringValue, ctx: object) -> Outcome:
         del ctx
+        if isinstance(self.item, SymbolicValue):
+            return Complete(
+                PredicateValue(
+                    atomic(
+                        "contains",
+                        [
+                            floor_to_term(receiver, owner=f"{self.owner} container"),
+                            floor_to_term(self.item, owner=f"{self.owner} item"),
+                        ],
+                    )
+                )
+            )
         if not isinstance(self.item, StringValue):
             self._floor_gap(receiver="StringValue")
         return Complete(BoolValue(self.item.value in receiver.value))
@@ -42,6 +55,27 @@ class ContainsOperation:
         if not isinstance(self.item, TermValue):
             self._floor_gap(receiver="ArrayLiteral")
         return Complete(BoolValue(any(item == self.item for item in receiver.items)))
+
+    def contains_set(self, receiver: SetLiteralValue, ctx: object) -> Outcome:
+        del ctx
+        item_term = floor_to_term(self.item, owner=f"{self.owner} item")
+        if any(item == item_term for item in receiver.items):
+            return Complete(BoolValue(True))
+        if _is_ground_literal(item_term) and all(
+            _is_ground_literal(item) for item in receiver.items
+        ):
+            return Complete(BoolValue(False))
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "contains",
+                    [
+                        floor_to_term(receiver, owner=f"{self.owner} container"),
+                        item_term,
+                    ],
+                )
+            )
+        )
 
     def contains_symbolic(self, receiver: SymbolicValue, ctx: object) -> Outcome:
         del ctx
@@ -79,3 +113,7 @@ class ContainsOperation:
                 message=info.message,
             ),
         )
+
+
+def _is_ground_literal(term) -> bool:
+    return isinstance(term, (_ConstBool, _ConstInt, _ConstReal, _ConstStr))

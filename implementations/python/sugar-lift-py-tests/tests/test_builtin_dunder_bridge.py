@@ -7,12 +7,15 @@ from factory_reduce import fol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import ctor, num, str_const
+from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.temporal import TemporalContext
 
 
 def _ctx_for_module(
@@ -50,9 +53,36 @@ def _reduce_expr(
     )
     node = ast.parse(expr, mode="eval").body
     return complete_value(
-        ctx.build_body(node, SugarRole.TERM).reduce(ctx),
+        _reduce_outcome(
+            source,
+            expr,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
+        ),
         owner="builtin dunder bridge",
     )
+
+
+def _reduce_outcome(
+    source: str,
+    expr: str,
+    *,
+    import_aliases: dict[str, str] | None = None,
+    from_imports: dict[str, tuple[str, str]] | None = None,
+    binds: dict[str, object] | None = None,
+):
+    ctx = _ctx_for_module(
+        source,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+    )
+    if binds:
+        temporal = TemporalContext.empty()
+        for name, value in binds.items():
+            temporal = temporal.bind_value(name, value)
+        ctx = ctx.with_temporal(temporal)
+    node = ast.parse(expr, mode="eval").body
+    return ctx.build_body(node, SugarRole.TERM).reduce(ctx)
 
 
 def _object_identity(class_name: str, blame: str):
@@ -85,6 +115,78 @@ class Box:
     value = _reduce_expr(source, "[10, 20, 30][len(Box())]")
 
     assert value == TermValue(20)
+
+
+def test_getattr_builtin_literal_name_matches_attribute_lookup() -> None:
+    source = """\
+class Box:
+    def __init__(self):
+        self.value = 2
+"""
+
+    via_getattr = _reduce_expr(source, "getattr(Box(), 'value')")
+    via_attribute = _reduce_expr(source, "Box().value")
+
+    assert via_getattr == via_attribute == TermValue(2)
+
+
+def test_getattr_builtin_literal_name_bad_twin_uses_requested_attribute() -> None:
+    source = """\
+class Box:
+    def __init__(self):
+        self.left = 1
+        self.right = 2
+"""
+
+    left = _reduce_expr(source, "getattr(Box(), 'left')")
+    right = _reduce_expr(source, "getattr(Box(), 'right')")
+
+    assert left == TermValue(1)
+    assert right == TermValue(2)
+
+
+def test_getattr_builtin_runtime_name_is_typed_runtime_effect() -> None:
+    outcome = _reduce_outcome(
+        "",
+        "getattr(obj, 'setall_' + sfx)",
+        binds={
+            "obj": SymbolicValue(make_var("obj")),
+            "sfx": SymbolicValue(make_var("sfx")),
+        },
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "getattr runtime boundary" in outcome.effect.reason
+    assert "attribute name expression" in outcome.effect.reason
+
+
+def test_getattr_builtin_opaque_receiver_is_typed_runtime_effect() -> None:
+    outcome = _reduce_outcome(
+        "",
+        "getattr(obj, 'value')",
+        binds={"obj": SymbolicValue(make_var("obj"))},
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "getattr runtime boundary" in outcome.effect.reason
+    assert "receiver reduced to SymbolicValue" in outcome.effect.reason
+
+
+def test_getattr_builtin_as_callee_propagates_runtime_effect() -> None:
+    outcome = _reduce_outcome(
+        "",
+        "getattr(obj, 'setall_' + sfx)(1)",
+        binds={
+            "obj": SymbolicValue(make_var("obj")),
+            "sfx": SymbolicValue(make_var("sfx")),
+        },
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "getattr runtime boundary" in outcome.effect.reason
 
 
 def test_hash_builtin_projects_to_dunder_method_bridge() -> None:

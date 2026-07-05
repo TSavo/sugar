@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.ir import Formula, and_, or_
+from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import boolop_assertion_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -33,13 +36,18 @@ class BoolOpAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         return cls(
             operator=test.boolop_op_kind(),
             values=tuple(
-                ctx.build_body(site.assert_with_test(value), SugarRole.ASSERTION)
+                _assertion_child(site.assert_with_test(value), ctx)
                 for value in test.boolop_values()
             ),
         )
 
-    def desugar(self, ctx) -> Formula:
-        formulas = [value.reduce(ctx) for value in self.values]
+    def desugar(self, ctx) -> Formula | Incomplete:
+        formulas: list[Formula] = []
+        for value in self.values:
+            formula = value.reduce(ctx)
+            if isinstance(formula, Incomplete):
+                return formula
+            formulas.append(formula)
         if self.operator == "and":
             return and_(formulas)
         if self.operator == "or":
@@ -47,4 +55,42 @@ class BoolOpAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         raise TypeError(
             f"write more Sugar for BoolOpAssertionSugar `{self.operator}`: "
             "add assertion connective lowering"
+        )
+
+
+def _assertion_child(site, ctx) -> SugarBody:
+    try:
+        return ctx.build_body(site, SugarRole.ASSERTION)
+    except FactoryGap as gap:
+        return SugarBody(
+            _RuntimeAssertionEffect(
+                owner="BoolOpAssertionSugar",
+                observed=str(gap.info.get("observed", site.assert_test().observed)),
+                requested=str(gap.info.get("requested", SugarRole.ASSERTION.value)),
+                replacement=str(gap.info.get("fix", str(gap))),
+                blame=site.blame,
+            ),
+            SugarRole.ASSERTION,
+        )
+
+
+@dataclass(frozen=True)
+class _RuntimeAssertionEffect:
+    owner: str
+    observed: str
+    requested: str
+    replacement: str
+    blame: str
+
+    def desugar(self, ctx) -> Outcome:
+        del ctx
+        return Incomplete(
+            RuntimeEffect(
+                "assertion runtime boundary: "
+                f"{self.owner} child {self.observed} cannot be reduced to a static "
+                "assertion formula; Python evaluates this assertion branch at "
+                "runtime. "
+                f"replacement={self.requested}; fix={self.replacement}; "
+                f"blame={self.blame}"
+            )
         )

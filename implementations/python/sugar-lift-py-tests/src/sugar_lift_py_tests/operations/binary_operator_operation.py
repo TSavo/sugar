@@ -17,12 +17,13 @@ from sugar_lift_py_tests.floor import (
     EncodedStringValue,
     FloorValue,
     ObjectValue,
+    PredicateValue,
     StringValue,
     SymbolicValue,
     TermValue,
 )
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
-from sugar_lift_py_tests.ir import ctor, num
+from sugar_lift_py_tests.ir import ctor, eq, ne, num, str_const
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
 _FOLD: dict[str, Callable[[int | float, int | float], int | float]] = {
@@ -37,6 +38,7 @@ _FOLD: dict[str, Callable[[int | float, int | float], int | float]] = {
 
 # Operators whose divisor of 0 is a runtime effect (Python raises), not a value.
 _DIVIDES = {"/", "//", "%", "divmod"}
+_MAX_LITERAL_REPEAT_ITEMS = 1024
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,13 @@ class BinaryOperatorOperation:
         del ctx
         if isinstance(self.right, (TermValue, SymbolicValue)):
             return self._emit_symbolic(receiver, self.right)
+        if isinstance(self.right, StringValue) and self.operator in {"==", "!="}:
+            formula = (
+                eq(receiver.term, str_const(self.right.value))
+                if self.operator == "=="
+                else ne(receiver.term, str_const(self.right.value))
+            )
+            return Complete(PredicateValue(formula))
         self._floor_gap(receiver="SymbolicValue")
 
     def binary_string(self, receiver: StringValue, ctx: object) -> Outcome:
@@ -99,6 +108,8 @@ class BinaryOperatorOperation:
         del ctx
         if self.operator == "*" and isinstance(self.right, TermValue):
             return self._repeat_array(receiver, self.right)
+        if self.operator == "*" and isinstance(self.right, SymbolicValue):
+            return self._symbolic_sequence_repeat_effect(receiver="ArrayLiteral")
         self._floor_gap(receiver="ArrayLiteral")
 
     def binary_tuple(self, receiver: TupleLiteralValue, ctx: object) -> Outcome:
@@ -106,7 +117,7 @@ class BinaryOperatorOperation:
         if self.operator == "*" and isinstance(self.right, TermValue):
             return self._repeat_tuple(receiver, self.right)
         if self.operator == "*" and isinstance(self.right, SymbolicValue):
-            return self._symbolic_tuple_repeat_effect()
+            return self._symbolic_sequence_repeat_effect(receiver="TupleLiteralValue")
         self._floor_gap(receiver="TupleLiteralValue")
 
     def binary_encoded_string(
@@ -173,12 +184,24 @@ class BinaryOperatorOperation:
         repeat = self._repeat_count(count)
         if repeat is None:
             return self._repeat_count_effect(count)
+        if _repeated_item_count(len(value.items), repeat) > _MAX_LITERAL_REPEAT_ITEMS:
+            return self._oversized_repeat_effect(
+                receiver="ArrayLiteral",
+                item_count=len(value.items),
+                repeat=repeat,
+            )
         return Complete(ArrayLiteral(value.items * repeat))
 
     def _repeat_tuple(self, value: TupleLiteralValue, count: TermValue) -> Outcome:
         repeat = self._repeat_count(count)
         if repeat is None:
             return self._repeat_count_effect(count)
+        if _repeated_item_count(len(value.items), repeat) > _MAX_LITERAL_REPEAT_ITEMS:
+            return self._oversized_repeat_effect(
+                receiver="TupleLiteralValue",
+                item_count=len(value.items),
+                repeat=repeat,
+            )
         return Complete(TupleLiteralValue(value.items * repeat))
 
     def _repeat_count(self, count: TermValue) -> int | None:
@@ -194,19 +217,26 @@ class BinaryOperatorOperation:
             )
         )
 
-    def _symbolic_tuple_repeat_effect(self) -> Outcome:
+    def _oversized_repeat_effect(
+        self, *, receiver: str, item_count: int, repeat: int
+    ) -> Outcome:
         return Incomplete(
-            FactoryGapEffect(
-                owner=self.owner,
-                blame=self.blame,
-                observed="TupleLiteralValue*SymbolicValue",
-                requested="concrete tuple repetition count",
-                fix=(
-                    "only fold tuple repetition when the repeat count is a "
-                    "concrete int; carry symbolic/runtime counts as a typed effect"
-                ),
-                gap_kind="Floor",
-                gap_locus="Construction",
+            RuntimeEffect(
+                "sequence repetition construction boundary: "
+                f"{receiver} with {item_count} item(s) repeated {repeat} time(s) "
+                f"would materialize {_repeated_item_count(item_count, repeat)} "
+                "literal floor items; keep as typed red until a compact repeated-"
+                f"sequence floor owns this shape. blame={self.blame}"
+            )
+        )
+
+    def _symbolic_sequence_repeat_effect(self, *, receiver: str) -> Outcome:
+        return Incomplete(
+            RuntimeEffect(
+                "sequence repetition by symbolic count: "
+                f"{receiver} * SymbolicValue depends on runtime __index__/length "
+                "semantics; keep as typed red until a compact symbolic repeated-"
+                f"sequence floor owns this shape. blame={self.blame}"
             )
         )
 
@@ -252,3 +282,7 @@ def _operand_term(value: FloorValue):
     ):
         return num(value.value)
     return None
+
+
+def _repeated_item_count(item_count: int, repeat: int) -> int:
+    return item_count * max(repeat, 0)

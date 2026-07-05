@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import pytest
-
 from factory_reduce import compose_block
 
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, SupportValue, TermValue
 
 
@@ -21,6 +18,7 @@ def test_expression_statement_does_not_replace_docstring_comment_sugar() -> None
     assert SupportValue.non_fol_support is True
 
 
-def test_expression_statement_propagates_refused_inner_expression() -> None:
-    with pytest.raises(FactoryGap, match="observed=Set"):
-        compose_block("    {1}\n    return 2\n")
+def test_expression_statement_discards_reduced_set_literal_value() -> None:
+    outcome = compose_block("    {1}\n    return 2\n")
+
+    assert outcome == BlockValue((ReturnValue(TermValue(2)),))

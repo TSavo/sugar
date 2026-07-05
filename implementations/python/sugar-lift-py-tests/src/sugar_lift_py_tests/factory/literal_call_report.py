@@ -38,7 +38,7 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceMementoDto,
     SourceSpanDto,
 )
-from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.effect import FactoryGapEffect, RuntimeEffect
 from sugar_lift_py_tests.effect import effect_status
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
@@ -74,6 +74,7 @@ from .floor_contract_agreement import (
     floor_contract_agreement_diagnostic,
     floor_contract_agreement_violations_for_fact,
 )
+from .factory_gap import FactoryGap
 from .proofir_provenance_diagnostic import proofir_formula_provenance_diagnostic
 from .factory_build_context import FactoryBuildContext
 from .source_fragment import SourceFragment
@@ -408,6 +409,36 @@ def _non_call_equality_lhs_gap(
     )
 
 
+def _non_call_equality_runtime_reason(
+    *, observed: str, requested: str, fix: str, blame: str
+) -> str:
+    if requested == "BoundNameEquality":
+        return (
+            "bound-name equality runtime boundary: "
+            f"{observed} has binding or mutation history that is runtime state; "
+            "keep as typed red until a proven-pure binding dig owns the assignment "
+            f"history. replacement={requested}; fix={fix}; blame={blame}"
+        )
+    return (
+        "literal-call equality runtime boundary: "
+        f"{observed} is not a callsite, so no callee obligation can be minted; "
+        "Python evaluates the expression at runtime. Keep as typed red until a "
+        f"narrower equality sugar owns this shape. replacement={requested}; "
+        f"fix={fix}; blame={blame}"
+    )
+
+
+def _assertion_runtime_reason(
+    *, observed: str, requested: str, fix: str, blame: str
+) -> str:
+    return (
+        "assertion runtime boundary: "
+        f"{observed} cannot be reduced to a static assertion formula by the "
+        "current factory catalog; Python evaluates this assertion at runtime. "
+        f"replacement={requested}; fix={fix}; blame={blame}"
+    )
+
+
 def _lift_assert(
     stmt: SourceFragment,
     *,
@@ -460,23 +491,55 @@ def _lift_assert(
 
     comparison = stmt.assert_test()
     if comparison.observed != "Compare" or len(comparison.compare_ops()) != 1:
-        _panic_no_sugar(
+        observed = f"assert-test:{comparison.observed}"
+        requested = "EqualityAssertion"
+        fix = "lift this assertion shape or keep it as a typed runtime effect"
+        return _effect_lift(
             stmt,
-            memento_file,
-            observed=f"assert-test:{comparison.observed}",
-            requested="EqualityAssertion",
-            fix="lift this assertion shape (only `call(...) == literal` is covered)",
+            fn,
+            Incomplete(
+                RuntimeEffect(
+                    _assertion_runtime_reason(
+                        observed=observed,
+                        requested=requested,
+                        fix=fix,
+                        blame=f"{memento_file}:{stmt.line}:{stmt.col}",
+                    )
+                )
+            ),
+            stmt=stmt,
+            selected="AssertionRuntimeEffect",
+            requested_role=requested,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
         )
     if (
         comparison.compare_ops()[0] != "Eq"
         or len(comparison.compare_comparators()) != 1
     ):
-        _panic_no_sugar(
+        observed = f"assert-compare-op:{comparison.compare_ops()[0]}"
+        requested = "EqualityAssertion"
+        fix = "lift non-`==` comparison assertions or keep them typed red"
+        return _effect_lift(
             stmt,
-            memento_file,
-            observed=f"assert-compare-op:{comparison.compare_ops()[0]}",
-            requested="EqualityAssertion",
-            fix="lift non-`==` comparison assertions",
+            fn,
+            Incomplete(
+                RuntimeEffect(
+                    _assertion_runtime_reason(
+                        observed=observed,
+                        requested=requested,
+                        fix=fix,
+                        blame=f"{memento_file}:{stmt.line}:{stmt.col}",
+                    )
+                )
+            ),
+            stmt=stmt,
+            selected="AssertionRuntimeEffect",
+            requested_role=requested,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
         )
     comparison_left = _resolve_bound_lhs(comparison.compare_left(), fn)
     callee_name = _callee_name(comparison_left, import_aliases, from_imports)
@@ -484,12 +547,32 @@ def _lift_assert(
         observed, requested, fix = _non_call_equality_lhs_gap(
             comparison_left, fn=fn, stmt=stmt
         )
-        _panic_no_sugar(
+        return _effect_lift(
             comparison_left,
-            memento_file,
-            observed=observed,
-            requested=requested,
-            fix=fix,
+            fn,
+            Incomplete(
+                RuntimeEffect(
+                    _non_call_equality_runtime_reason(
+                        observed=observed,
+                        requested=requested,
+                        fix=fix,
+                        blame=(
+                            f"{memento_file}:"
+                            f"{comparison_left.line}:{comparison_left.col}"
+                        ),
+                    )
+                )
+            ),
+            stmt=stmt,
+            selected=(
+                "BoundNameEqualityRuntimeEffect"
+                if requested == "BoundNameEquality"
+                else "CallsiteEqualityRuntimeEffect"
+            ),
+            requested_role=requested,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
         )
 
     universe: LiftResult | None = None
@@ -1306,7 +1389,31 @@ def _lift_callsite_assertion(
             memento_file=memento_file,
             source_lines=source_lines,
         )
-    expected_term = floor_to_term(expected_value, owner="literal_call_report")
+    try:
+        expected_term = floor_to_term(expected_value, owner="literal_call_report")
+    except FactoryGap as gap:
+        return _effect_lift(
+            expected_frag,
+            fn,
+            Incomplete(
+                RuntimeEffect(
+                    "callsite expected runtime boundary: "
+                    f"{type(expected_value).__name__} cannot be projected to a "
+                    "ProofIR term for callsite equality; Python evaluates this "
+                    "expected expression at runtime. Keep as typed red until a "
+                    "boolean-expression term floor owns predicate-valued RHS "
+                    f"assertions. replacement=CallsiteExpected; "
+                    f"fix={gap.info.get('fix', str(gap))}; "
+                    f"blame={memento_file}:{expected_frag.line}:{expected_frag.col}"
+                )
+            ),
+            stmt=stmt,
+            selected="CallsiteExpectedRuntimeEffect",
+            requested_role="CallsiteExpected",
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+        )
     # Each arg composes through the factory's literal sugars (string, int, array,
     # ...) -- the same path as the expected. A literal the catalog reduces but can't
     # yet shape into a term (e.g. a nested array) is turned into a clean mouth-panic

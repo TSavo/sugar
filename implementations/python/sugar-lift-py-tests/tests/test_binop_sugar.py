@@ -13,12 +13,13 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
+    ArrayLiteral,
     Bv32Value,
     EncodedStringValue,
     StringValue,
     SymbolicValue,
 )
-from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -104,6 +105,26 @@ def test_add_on_symbolic_operand_emits_the_operation_sort_silent():
     assert fol(result) == fol(ctor("+", [make_var("x"), num(1)]))
 
 
+def test_symbolic_string_equality_emits_predicate_value():
+    value, operation_log = _reduce_with_log(
+        'casting == "unsafe"',
+        {"casting": SymbolicValue(make_var("casting"))},
+    )
+
+    assert value.formula.name == "="
+    assert [fol(arg) for arg in value.formula.args] == [
+        fol(make_var("casting")),
+        fol(str_const("unsafe")),
+    ]
+    assert operation_log == [
+        (
+            "ObjectEqualityTermSugar",
+            "binary_operator_with",
+            "BinaryOperatorOperation",
+        )
+    ]
+
+
 def test_symbolic_binary_with_float_operand_is_typed_floor_effect():
     outcome, operation_log = _reduce_outcome_with_log(
         "x + 1.5",
@@ -134,18 +155,27 @@ def test_reversed_sequence_multiplication_repeats_literal_sequence():
     assert fol(reduce_term("3 * [1]")) == fol(ctor("array", [num(1), num(1), num(1)]))
 
 
-def test_tuple_repetition_by_symbolic_count_is_typed_floor_effect():
+def test_large_sequence_repetition_is_typed_runtime_boundary():
+    outcome, operation_log = _reduce_outcome_with_log("[1] * 65521")
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "RuntimeEffect"
+    assert "sequence repetition construction boundary" in outcome.reason
+    assert "65521 literal floor items" in outcome.reason
+    assert operation_log == [
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
+    ]
+
+
+def test_tuple_repetition_by_symbolic_count_is_typed_runtime_effect():
     outcome, operation_log = _reduce_outcome_with_log(
         "(1,) * count",
         {"count": SymbolicValue(make_var("count"))},
     )
 
     assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "FactoryGapEffect"
-    assert outcome.effect.observed == "TupleLiteralValue*SymbolicValue"
-    assert outcome.effect.requested == "concrete tuple repetition count"
-    assert outcome.effect.gap_kind == "Floor"
-    assert outcome.effect.gap_locus == "Construction"
+    assert type(outcome.effect).__name__ == "RuntimeEffect"
+    assert "sequence repetition by symbolic count" in outcome.reason
     assert operation_log == [
         (
             "TupleLiteralSugar",
@@ -153,4 +183,21 @@ def test_tuple_repetition_by_symbolic_count_is_typed_floor_effect():
             "SequenceConstructionOperation",
         ),
         ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
+    ]
+
+
+def test_list_repetition_by_symbolic_count_is_typed_runtime_effect():
+    outcome, operation_log = _reduce_outcome_with_log(
+        "items * count",
+        {
+            "items": ArrayLiteral((SymbolicValue(make_var("x")),)),
+            "count": SymbolicValue(make_var("count")),
+        },
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "RuntimeEffect"
+    assert "sequence repetition by symbolic count" in outcome.reason
+    assert operation_log == [
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
     ]

@@ -45,7 +45,9 @@ def _records_from_wrapped_rpc_error(target: LiftTarget, line: str) -> list[Panic
     marker = "lift plugin returned error: "
     if marker not in line:
         return []
-    payload = line.split(marker, 1)[1].strip()
+    payload = _json_object_prefix(line.split(marker, 1)[1].strip())
+    if payload is None:
+        return []
     try:
         error = json.loads(payload)
     except json.JSONDecodeError:
@@ -64,6 +66,36 @@ def _records_from_wrapped_rpc_error(target: LiftTarget, line: str) -> list[Panic
             return []
         return [_record_from_fields(target, kind, info, message)]
     return []
+
+
+def _json_object_prefix(payload: str) -> Optional[str]:
+    start = payload.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for idx in range(start, len(payload)):
+        char = payload[idx]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return payload[start : idx + 1]
+            if depth < 0:
+                return None
+    return None
 
 
 def _record_from_gap(target: LiftTarget, gap: dict) -> PanicRecord:

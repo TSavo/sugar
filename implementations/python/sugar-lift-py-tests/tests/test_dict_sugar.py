@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import pytest
-
 from factory_reduce import fol, reduce_term
 
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.ir import ctor, num, str_const
 
 
@@ -31,6 +28,15 @@ def test_dict_literal_order_and_kind_are_structural() -> None:
     assert fol(first) != fol(ctor("array", [num(1), num(2)]))
 
 
-def test_dict_literal_propagates_refused_entry_shape() -> None:
-    with pytest.raises(FactoryGap, match="observed=Set"):
-        reduce_term('{"bad": {1}}')
+def test_dict_literal_preserves_set_entry_shape() -> None:
+    assert fol(reduce_term('{"bad": {1}}')) == fol(
+        ctor(
+            "python:dict",
+            [
+                ctor(
+                    "python:dict_entry",
+                    [str_const("bad"), ctor("python:set", [num(1)])],
+                )
+            ],
+        )
+    )

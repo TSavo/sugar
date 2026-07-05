@@ -400,12 +400,17 @@ def _handle_lift(
             except ValueError:
                 rel_path = full_path.name
             with open(path, "r", encoding="utf-8") as handle:
-                result = lift_source(
-                    path,
-                    handle.read(),
-                    memento_file=rel_path,
-                    contract_bindings=contract_bindings,
-                )
+                try:
+                    result = lift_source(
+                        path,
+                        handle.read(),
+                        memento_file=rel_path,
+                        contract_bindings=contract_bindings,
+                    )
+                except ValueError as exc:
+                    if str(exc) == NO_SOURCE_SITES_MESSAGE:
+                        continue
+                    raise
             if hasattr(result, "payload"):
                 file_payload = result.payload
                 payload.ir.extend(file_payload.ir)
