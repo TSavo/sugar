@@ -5135,13 +5135,18 @@ fn contract_dependency_tokens_for_contracts(contracts: &[&Value]) -> Vec<String>
 fn contract_dependency_tokens(name: &str) -> Vec<String> {
     let mut tokens = BTreeSet::new();
     push_contract_dependency_token(&mut tokens, name);
+    if let Some(owner) = owning_source_function_name(name) {
+        push_contract_dependency_token(&mut tokens, &owner);
+    }
     if let Some(stripped) = name.strip_prefix("rust-source::") {
         push_contract_dependency_token(&mut tokens, stripped);
     }
     let base = name.split('#').next().unwrap_or(name);
     push_contract_dependency_token(&mut tokens, base);
     if let Some(last) = base.rsplit("::").next() {
-        push_contract_dependency_token(&mut tokens, last);
+        if !(last == "callable" && base.ends_with("::callable")) {
+            push_contract_dependency_token(&mut tokens, last);
+        }
     }
     if let Some(method) = base.strip_prefix("method:") {
         push_contract_dependency_token(&mut tokens, method);
@@ -10007,6 +10012,76 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
         assert!(
             !visual.contains("fn from_plugin"),
             "rendered source came from the planted source oracle, not the completed report:\n{visual}"
+        );
+    }
+
+    #[test]
+    fn visual_report_does_not_warrant_callable_universe_from_callable_builtin_fact() {
+        let mut report = minimal_source_report();
+        report.audits = Vec::new();
+        report.contracts = vec![
+            serde_json::json!({
+                "kind": "function-contract",
+                "name": "test_scalarbuffer::_as_dict::callable",
+                "outBinding": "out",
+                "post": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        {"kind": "var", "name": "out"},
+                        {"kind": "ctor", "name": "python:dict", "args": []}
+                    ]
+                },
+                "sourceWarrants": [{
+                    "kind": "source-memento",
+                    "contractName": "test_scalarbuffer::_as_dict::callable",
+                    "file": "_core/tests/test_scalarbuffer.py",
+                    "span": {"start_line": 17, "start_col": 4, "end_line": 18, "end_col": 72},
+                    "sourceFunctionName": "_as_dict",
+                    "source_cid": format!("blake3-512:{}", "a".repeat(128)),
+                    "template_cid": format!("blake3-512:{}", "b".repeat(128))
+                }]
+            }),
+            serde_json::json!({
+                "kind": "contract",
+                "name": "test_indexing::test_flatiter_method_signatures::assert:1698:4::assertion",
+                "inv": {
+                    "kind": "atomic",
+                    "name": "py.truthy",
+                    "args": [{
+                        "kind": "ctor",
+                        "name": "call:callable",
+                        "args": [{"kind": "var", "name": "method"}]
+                    }]
+                },
+                "sourceWarrants": [{
+                    "kind": "source-memento",
+                    "contractName": "test_indexing::test_flatiter_method_signatures::assert:1698:4::assertion",
+                    "file": "_core/tests/test_indexing.py",
+                    "span": {"start_line": 1698, "start_col": 4, "end_line": 1698, "end_col": 27},
+                    "sourceFunctionName": "test_flatiter_method_signatures",
+                    "source_cid": format!("blake3-512:{}", "c".repeat(128)),
+                    "template_cid": format!("blake3-512:{}", "d".repeat(128))
+                }]
+            }),
+        ];
+
+        let visual = render_visual_source_report(&report);
+        let section = visual
+            .split("  universe test_scalarbuffer::_as_dict::callable\n")
+            .nth(1)
+            .expect("as_dict universe")
+            .split("\n  universe ")
+            .next()
+            .expect("as_dict section");
+
+        assert!(
+            !section.contains("walk warranted by observed facts:"),
+            "the `::callable` contract marker must not attach unrelated call:callable facts:\n{visual}"
+        );
+        assert!(
+            !section.contains("call:callable(method)"),
+            "callable builtin facts are not _as_dict callsite evidence:\n{visual}"
         );
     }
 

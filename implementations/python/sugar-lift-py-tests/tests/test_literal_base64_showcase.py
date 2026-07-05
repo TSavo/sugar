@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
+
 ROOT = Path(__file__).resolve().parents[4]
 PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
 
@@ -202,3 +204,46 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     assert walk[5]["emittedFormula"] == assertion_contract["inv"]
     assert good_doc["sourceLedger"]["source_loci"] == 2
     assert good_doc["sourceLedger"]["source_warranted"] == 2
+
+
+def test_reused_resolved_callee_universe_is_emitted_once() -> None:
+    doc = build_literal_call_report(
+        source=(
+            "def helper(x):\n"
+            "    return x + 1\n"
+            "\n"
+            "def test_a():\n"
+            "    assert helper(1) == 2\n"
+            "\n"
+            "def test_b():\n"
+            "    assert helper(1) == 2\n"
+        ),
+        filename="test_dupe.py",
+        memento_file="test_dupe.py",
+    ).payload.to_rpc()
+
+    assert [contract["name"] for contract in doc["ir"]].count(
+        "test_dupe::helper::callable"
+    ) == 1
+    helper_mementos = [
+        memento
+        for memento in doc["sourceMementos"]
+        if memento.get("contractName") == "test_dupe::helper::callable"
+    ]
+    assert [
+        (memento["sourceFunctionName"], memento["span"]["start_line"])
+        for memento in helper_mementos
+    ] == [("helper", 1), ("helper", 2)]
+    helper_walk = [
+        row
+        for row in doc["factoryAuditSummary"]["factoryWalk"]
+        if row["sourceMemento"].get("contractName") == "test_dupe::helper::callable"
+    ]
+    assert [
+        (
+            row["selected"],
+            row["sourceMemento"]["sourceFunctionName"],
+            row["sourceMemento"]["span"]["start_line"],
+        )
+        for row in helper_walk
+    ] == [("ReturnSugar", "helper", 2)]

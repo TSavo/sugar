@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Callable, NoReturn, TypeVar
 
 from sugar_lift_py_tests.factory.array_map_report import (
     _callsite_string,
@@ -40,6 +40,7 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceMementoDto,
     SourceSpanDto,
 )
+from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
 from sugar_lift_py_tests.effect import FactoryGapEffect, RuntimeEffect
 from sugar_lift_py_tests.effect import effect_status
 from sugar_lift_py_tests.floor import PredicateValue
@@ -143,6 +144,7 @@ LiftResult = tuple[
     list[dict[str, Any]],
     list[EffectDto],
 ]
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -340,7 +342,14 @@ def build_literal_call_report(
             effects.extend(effect_rows)
     if not contracts and not effects:
         return None
-    materialized_contracts = _materialize_contract_rows(contracts)
+    materialized_contracts = _dedupe_rpc_rows(
+        _materialize_contract_rows(contracts),
+        _body_universe_key,
+    )
+    source_mementos = _dedupe_rpc_rows(source_mementos, _source_memento_key)
+    factory_walk = _dedupe_rpc_rows(factory_walk, _factory_walk_key)
+    call_edges = _dedupe_rpc_rows(call_edges, _small_rpc_row_key)
+    effects = _dedupe_rpc_rows(effects, _small_rpc_row_key)
     enforce_floor_contract_agreement_gate(agreement_violations)
     ir_payload: list[BodyUniverseDto | dict[str, Any]] = []
     ir_payload.extend(materialized_contracts)
@@ -1717,6 +1726,74 @@ def _merge_contract_rows(rows: list[Any]) -> list[Any]:
         else:
             merged.append(row)
     return merged
+
+
+def _dedupe_rpc_rows(rows: list[_T], key_fn: Callable[[_T], object]) -> list[_T]:
+    out: list[_T] = []
+    seen: set[object] = set()
+    for row in rows:
+        key = key_fn(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def _body_universe_key(row: BodyUniverseDto) -> object:
+    rpc = row.to_rpc()
+    return (
+        rpc.get("kind"),
+        rpc.get("name"),
+        rpc.get("outBinding"),
+        tuple(rpc.get("formals") or ()),
+        rpc.get("bridgeSourceSymbol"),
+        _stable_json(rpc.get("pre")),
+        _stable_json(rpc.get("post")),
+        _stable_json(rpc.get("inv")),
+        _stable_json(rpc.get("sourceWarrants")),
+        _stable_json(rpc.get("warrantedBy")),
+    )
+
+
+def _source_memento_key(row: SourceMementoDto | dict[str, Any]) -> object:
+    rpc = to_rpc_value(row)
+    return (
+        rpc.get("file"),
+        _stable_json(rpc.get("span")),
+        rpc.get("source_cid") or rpc.get("sourceCid"),
+        rpc.get("template_cid") or rpc.get("templateCid"),
+        rpc.get("source_function_name") or rpc.get("sourceFunctionName"),
+        rpc.get("role"),
+        rpc.get("claimName"),
+        rpc.get("contractName"),
+        tuple(rpc.get("param_names") or rpc.get("paramNames") or ()),
+    )
+
+
+def _factory_walk_key(row: FactoryWalkRowDto) -> object:
+    return (
+        row.file,
+        row.line,
+        row.requested_role,
+        row.ast_kind,
+        row.selected,
+        row.status,
+        row.reason,
+        row.occurrences,
+        _stable_json(row.output),
+        _source_memento_key(row.source_memento),
+        _stable_json(row.span),
+        _stable_json(row.emitted_formula),
+    )
+
+
+def _small_rpc_row_key(row: _T) -> object:
+    return _stable_json(to_rpc_value(row))
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(to_rpc_value(value), sort_keys=True, separators=(",", ":"))
 
 
 def _materialize_contract_rows(rows: list[Any]) -> list[BodyUniverseDto]:
