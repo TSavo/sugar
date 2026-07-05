@@ -13,6 +13,7 @@ import pytest
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.claim import SugarCatalog, SugarClaim, SugarRole
 from sugar_lift_py_tests.factory import FactoryGap, build_next, build_node
+from sugar_lift_py_tests.factory.build import FactoryCandidateDeclined
 from sugar_lift_py_tests.floor import ArrayLiteral, Bv32Value, TermValue
 from sugar_lift_py_tests.ir import term_to_value
 from sugar_lift_py_tests.outcome import complete_value
@@ -355,6 +356,46 @@ def test_factory_uses_comes_before_to_resolve_multiple_claims() -> None:
         "candidates": ["BetaLiteralSugar", "AlphaLiteralSugar"],
         "message": "selected Sugar `AlphaLiteralSugar` for role term at `ordered.py:1:0`",
     }
+
+
+def test_factory_reselects_when_context_sensitive_claim_declines() -> None:
+    node = ast.parse("1", mode="eval").body
+
+    @dataclass(frozen=True)
+    class OwnedSugar:
+        owner: str
+
+    def owns_literal(site) -> bool:
+        return isinstance(site.node, ast.Constant)
+
+    alpha = SugarClaim(
+        name="AlphaLiteralSugar",
+        role=SugarRole.TERM,
+        owns=owns_literal,
+        build=lambda _site, _ctx: (_ for _ in ()).throw(
+            FactoryCandidateDeclined(
+                "context-bound literal belongs to BetaLiteralSugar"
+            )
+        ),
+        comes_before=("BetaLiteralSugar",),
+    )
+    beta = SugarClaim(
+        name="BetaLiteralSugar",
+        role=SugarRole.TERM,
+        owns=owns_literal,
+        build=lambda _site, _ctx: OwnedSugar("beta"),
+    )
+    catalog = SugarCatalog([beta, alpha])
+
+    result = build_node(
+        node,
+        filename="declined.py",
+        role=SugarRole.TERM,
+        catalog=catalog,
+    )
+
+    assert result.sugar == OwnedSugar("beta")
+    assert result.audit_row.selected == "BetaLiteralSugar"
 
 
 def test_array_literal_factory_hits_missing_primitive_literal_leaf_first() -> None:

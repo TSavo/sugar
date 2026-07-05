@@ -13,6 +13,10 @@ from .source_fragment import SourceFragment
 from .source_fragment_stack import SourceFragmentStack
 
 
+class FactoryCandidateDeclined(RuntimeError):
+    """A selected sugar can step aside only so the factory can select the next one."""
+
+
 def build_node(
     node,
     *,
@@ -111,8 +115,13 @@ def _build_site(
     role: SugarRole,
     catalog: SugarCatalog,
     ctx: FactoryBuildContext,
+    excluded: frozenset[str] = frozenset(),
 ) -> FactoryBuildResult:
-    candidates = catalog.candidates_for(role, site)
+    candidates = [
+        candidate
+        for candidate in catalog.candidates_for(role, site)
+        if candidate.name not in excluded
+    ]
     if not candidates:
         info = FactoryGapInfo(
             owner="python.factory",
@@ -135,7 +144,16 @@ def _build_site(
     selected = _select_candidate(candidates)
     if selected is None:
         _raise_ambiguous_candidates(site, role, candidates)
-    sugar = selected.claim.build(site, ctx)
+    try:
+        sugar = selected.claim.build(site, ctx)
+    except FactoryCandidateDeclined:
+        return _build_site(
+            site,
+            role=role,
+            catalog=catalog,
+            ctx=ctx,
+            excluded=excluded | {selected.name},
+        )
     message = (
         f"selected Sugar `{selected.name}` for role {role.value} at `{site.blame}`"
     )

@@ -40,6 +40,7 @@ from sugar_lift_py_tests.kit_rpc import (
 )
 from sugar_lift_py_tests.effect import FactoryGapEffect, RuntimeEffect
 from sugar_lift_py_tests.effect import effect_status
+from sugar_lift_py_tests.floor import PredicateValue
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.proofir import (
@@ -1389,9 +1390,7 @@ def _lift_callsite_assertion(
             memento_file=memento_file,
             source_lines=source_lines,
         )
-    try:
-        expected_term = floor_to_term(expected_value, owner="literal_call_report")
-    except FactoryGap as gap:
+    if isinstance(expected_value, PredicateValue):
         return _effect_lift(
             expected_frag,
             fn,
@@ -1403,7 +1402,8 @@ def _lift_callsite_assertion(
                     "expected expression at runtime. Keep as typed red until a "
                     "boolean-expression term floor owns predicate-valued RHS "
                     f"assertions. replacement=CallsiteExpected; "
-                    f"fix={gap.info.get('fix', str(gap))}; "
+                    "fix=add a ProofIR term projection for PredicateValue "
+                    "or keep predicate RHS assertions as a typed effect; "
                     f"blame={memento_file}:{expected_frag.line}:{expected_frag.col}"
                 )
             ),
@@ -1414,6 +1414,7 @@ def _lift_callsite_assertion(
             memento_file=memento_file,
             source_lines=source_lines,
         )
+    expected_term = floor_to_term(expected_value, owner="literal_call_report")
     # Each arg composes through the factory's literal sugars (string, int, array,
     # ...) -- the same path as the expected. A literal the catalog reduces but can't
     # yet shape into a term (e.g. a nested array) is turned into a clean mouth-panic
