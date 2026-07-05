@@ -224,6 +224,20 @@ struct PerPluginDispatch {
     response: Value,
 }
 
+fn response_has_call_edges(response: &Value) -> bool {
+    response
+        .get("callEdges")
+        .or_else(|| response.get("call_edges"))
+        .and_then(Value::as_array)
+        .is_some_and(|edges| !edges.is_empty())
+}
+
+fn producer_responses_have_call_edges(responses: &[PerPluginDispatch]) -> bool {
+    responses
+        .iter()
+        .any(|dispatch| response_has_call_edges(&dispatch.response))
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct OracleObservation {
     requested: bool,
@@ -293,6 +307,8 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     let mut merged_assertion_surface_audits: Vec<Value> = Vec::new();
     let mut saw_call_edges = false;
     let mut merged_call_edges: Vec<Value> = Vec::new();
+    let mut call_edge_indexes: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut saw_vendor_conjoins = false;
     let mut merged_vendor_conjoins: Vec<Value> = Vec::new();
     let mut merged_factory_summary = MergedFactoryAuditSummary::default();
@@ -418,7 +434,9 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
             .and_then(Value::as_array)
         {
             saw_call_edges = true;
-            merged_call_edges.extend(arr.iter().cloned());
+            for item in arr {
+                merge_call_edge(&mut merged_call_edges, &mut call_edge_indexes, item.clone());
+            }
         }
         if let Some(arr) = entry
             .response
@@ -507,6 +525,58 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
         merged["planMementos"] = Value::Array(merged_plan_mementos);
     }
     Ok(merged)
+}
+
+fn merge_call_edge(
+    merged_call_edges: &mut Vec<Value>,
+    call_edge_indexes: &mut std::collections::HashMap<String, usize>,
+    edge: Value,
+) {
+    let key = call_edge_dedup_key(&edge);
+    let Some(existing_index) = call_edge_indexes.get(&key).copied() else {
+        call_edge_indexes.insert(key, merged_call_edges.len());
+        merged_call_edges.push(edge);
+        return;
+    };
+    if !call_edge_has_target_cid(&merged_call_edges[existing_index])
+        && call_edge_has_target_cid(&edge)
+    {
+        merged_call_edges[existing_index] = edge;
+    }
+}
+
+fn call_edge_dedup_key(edge: &Value) -> String {
+    let locus = edge
+        .get("callSiteLocus")
+        .or_else(|| edge.get("call_site_locus"))
+        .unwrap_or(&Value::Null);
+    format!(
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        edge.get("sourceContract")
+            .or_else(|| edge.get("source_contract"))
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        edge.get("targetSymbol")
+            .or_else(|| edge.get("target_symbol"))
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        locus.get("file").and_then(Value::as_str).unwrap_or(""),
+        locus
+            .get("line")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        locus
+            .get("column")
+            .and_then(Value::as_i64)
+            .unwrap_or_default()
+    )
+}
+
+fn call_edge_has_target_cid(edge: &Value) -> bool {
+    edge.get("targetContractCid")
+        .or_else(|| edge.get("target_contract_cid"))
+        .and_then(Value::as_str)
+        .is_some_and(|cid| !cid.is_empty())
 }
 
 #[derive(Debug, Default)]
@@ -838,90 +908,86 @@ impl MintKit {
             per_plugin.push(dispatched);
         }
 
-        let contract_bindings = if consumer_steps.is_empty() {
+        let implicit_report_consumer = consumer_steps.is_empty()
+            && producer_steps.len() == 1
+            && producer_responses_have_call_edges(&producer_responses);
+        let contract_bindings = if consumer_steps.is_empty() && !implicit_report_consumer {
             Vec::new()
         } else {
-            let mut bindings = contract_bindings_from_producer_responses(
+            consumer_contract_bindings_from_producers(
                 &producer_responses,
                 &project_root_for_manifests,
                 &out_dir,
                 quiet,
             )
-            .map_err(KitError::Transformation)?;
-            // Dependency-proof bridging, one level up the crate graph: harvest
-            // contracts published by dependency proofs already in
-            // `.sugar/imports/` (libsugar, the rust stdlib shim, ...) and
-            // forward them alongside this crate's own producer contracts. The
-            // implication lifter then emits a bridge for each cross-crate /
-            // stdlib call site instead of leaving it a vacuous lift-gap.
-            //
-            // Precedence under (crate, leaf) matching: a dependency's `foo` and
-            // this crate's `foo` are DISTINCT keys (different crate), so both
-            // are forwarded and the implication lifter routes each call site to
-            // the contract in the crate it actually resolved. The only true
-            // duplicate is a dependency contract sharing BOTH library AND leaf
-            // with a producer contract (e.g. vendoring this very crate's own
-            // proof); drop just that, since it would key-collide. This is what
-            // lets the 6 same-leaf-different-crate dependency contracts that the
-            // bare-name filter used to drop be forwarded and bridged correctly.
-            let intra_keys: std::collections::HashSet<(String, String)> = bindings
-                .iter()
-                .filter_map(|b| {
-                    let name = b.get("name").and_then(|v| v.as_str())?.to_string();
-                    let lib = b
-                        .get("library")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    Some((lib, name))
-                })
-                .collect();
-            let dep_bindings =
-                contract_bindings_from_dependency_proofs(&project_root_for_manifests);
-            let dep_total = dep_bindings.len();
-            debug!(
-                dep_total = dep_total,
-                intra_keys = intra_keys.len(),
-                "mint: harvested dependency proof contracts"
-            );
-            let dep_kept: Vec<Value> = dep_bindings
-                .into_iter()
-                .filter(|b| {
-                    let Some(name) = b.get("name").and_then(|v| v.as_str()).map(String::from)
-                    else {
-                        return false;
-                    };
-                    let lib = b
-                        .get("library")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    !intra_keys.contains(&(lib, name))
-                })
-                .collect();
-            let dep_dropped = dep_total - dep_kept.len();
-            info!(
-                dep_forwarded = dep_kept.len(),
-                dep_dropped = dep_dropped,
-                "mint: dependency contracts forwarded for cross-crate bridging"
-            );
-            if dep_dropped > 0 {
-                debug!(
-                    dep_dropped = dep_dropped,
-                    "mint: dependency contracts dropped (same crate AND leaf as producer contract)"
-                );
-            }
-            if !quiet && dep_total > 0 {
-                println!(
-                    "{}: {} dependency contract(s) forwarded for cross-crate bridging, {} dropped (same crate AND leaf as a producer contract)",
-                    "deps".green().bold(),
-                    dep_kept.len(),
-                    dep_dropped
-                );
-            }
-            bindings.extend(dep_kept);
-            bindings
+            .map_err(KitError::Transformation)?
         };
+
+        if implicit_report_consumer && !contract_bindings.is_empty() {
+            let step = &producer_steps[0];
+            let lift_options =
+                lift_options_from_request(&step.lift_request, contract_bindings.clone());
+            debug!(
+                surface = %step.surface,
+                contract_bindings = contract_bindings.len(),
+                "mint: dispatching implicit report implication pass"
+            );
+            let session = match lift_plugin::dispatch_lift(
+                &project_root_for_manifests,
+                &step.surface,
+                lift_options,
+                quiet,
+            ) {
+                Ok(session) => session,
+                Err(LiftPluginError::MissingBinary { binary }) => {
+                    if !quiet {
+                        println!(
+                            "{}: lifter binary `{}` not found: producing empty-set attestation",
+                            "warn".yellow().bold(),
+                            binary
+                        );
+                    }
+                    let empty_cid = compute_contract_set_cid(vec![]);
+                    let result = DispatchResult {
+                        filename_cid: String::new(),
+                        contract_set_cid: empty_cid,
+                        bytes_written: 0,
+                        proof_file: None,
+                        lift_result: json!({
+                            "kind": "empty-set",
+                            "reason": "lifter binary not found",
+                            "binary": binary,
+                        }),
+                    };
+                    let claim = mint_result_claim(input, None, &result)?;
+                    return Ok(MintSession {
+                        claim,
+                        result,
+                        surface: step.surface.clone(),
+                        out_dir,
+                    });
+                }
+                Err(LiftPluginError::Refused(refusal)) => {
+                    return Err(KitError::Transformation(format!(
+                        "{}: {}",
+                        refusal.header.failure_kind, refusal.header.failure_detail
+                    )))
+                }
+                Err(LiftPluginError::Diagnostic(error)) => {
+                    return Err(KitError::Transformation(error.to_string()))
+                }
+            };
+            let response = session
+                .response_projection()
+                .clone_response_for_compatibility()
+                .map_err(|error| KitError::Transformation(error.to_string()))?;
+            assert_oracle_ready_if_requested(&step.surface, &response)
+                .map_err(KitError::Transformation)?;
+            per_plugin.push(PerPluginDispatch {
+                surface: step.surface.clone(),
+                response,
+            });
+        }
 
         for step in &consumer_steps {
             let lift_options =
@@ -1523,7 +1589,7 @@ pub(crate) fn lift_plugins_response_for_report(
 
     let mut per_plugin: Vec<PerPluginDispatch> = Vec::with_capacity(plugins.len());
     let mut producer_responses: Vec<PerPluginDispatch> = Vec::with_capacity(producer_plugins.len());
-    for plugin in producer_plugins {
+    for plugin in &producer_plugins {
         let response = dispatch_report_lift_plugin(
             project_root,
             plugin,
@@ -1539,11 +1605,28 @@ pub(crate) fn lift_plugins_response_for_report(
         per_plugin.push(dispatched);
     }
 
-    let contract_bindings = if consumer_plugins.is_empty() {
+    let implicit_report_consumer = consumer_plugins.is_empty()
+        && producer_plugins.len() == 1
+        && producer_responses_have_call_edges(&producer_responses);
+    let contract_bindings = if consumer_plugins.is_empty() && !implicit_report_consumer {
         Vec::new()
     } else {
         consumer_contract_bindings_from_producers(&producer_responses, project_root, out_dir, true)?
     };
+    if implicit_report_consumer && !contract_bindings.is_empty() {
+        let plugin = producer_plugins[0];
+        let response = dispatch_report_lift_plugin(
+            project_root,
+            plugin,
+            contract_bindings.clone(),
+            library_bindings,
+            false,
+        )?;
+        per_plugin.push(PerPluginDispatch {
+            surface: plugin.surface.clone(),
+            response,
+        });
+    }
     for plugin in consumer_plugins {
         let response = dispatch_report_lift_plugin(
             project_root,
@@ -5366,6 +5449,55 @@ mod tests {
                 .len(),
             1,
             "merged ir-document must keep implication-lifter output: {merged}"
+        );
+    }
+
+    #[test]
+    fn merge_ir_document_responses_dedups_call_edges_and_prefers_resolved_edges() {
+        let unresolved = json!({
+            "kind": "call-edge",
+            "sourceContract": "caller",
+            "targetSymbol": "call:callee",
+            "targetContract": null,
+            "targetContractCid": null,
+            "callSiteLocus": {"file": "src/lib.py", "line": 3, "column": 12}
+        });
+        let resolved = json!({
+            "kind": "call-edge",
+            "sourceContract": "caller",
+            "targetSymbol": "call:callee",
+            "targetContract": "callee",
+            "targetContractCid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "callSiteLocus": {"file": "src/lib.py", "line": 3, "column": 12}
+        });
+        let merged = merge_ir_document_responses(vec![
+            PerPluginDispatch {
+                surface: "python".to_string(),
+                response: json!({
+                    "kind": "ir-document",
+                    "ir": [],
+                    "callEdges": [unresolved],
+                    "diagnostics": []
+                }),
+            },
+            PerPluginDispatch {
+                surface: "python-implicit-implications".to_string(),
+                response: json!({
+                    "kind": "ir-document",
+                    "ir": [],
+                    "callEdges": [resolved],
+                    "diagnostics": []
+                }),
+            },
+        ])
+        .expect("merge ir-documents");
+
+        let edges = merged["callEdges"].as_array().expect("call edges");
+        assert_eq!(edges.len(), 1, "same callsite edge must not duplicate");
+        assert_eq!(edges[0]["targetContract"], "callee");
+        assert_eq!(
+            edges[0]["targetContractCid"],
+            "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         );
     }
 

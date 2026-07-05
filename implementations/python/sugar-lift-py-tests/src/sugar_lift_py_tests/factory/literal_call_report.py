@@ -36,6 +36,7 @@ from sugar_lift_py_tests.kit_rpc import (
     FactoryWalkCompleteRowDto,
     FactoryWalkRedRowDto,
     FactoryWalkRowDto,
+    ImplicationDto,
     LiftReportPayloadDto,
     SourceMementoDto,
     SourceSpanDto,
@@ -286,6 +287,7 @@ def build_literal_call_report(
     factory_audits: list[Any] = []
     factory_walk: list[FactoryWalkRowDto] = []
     call_edges: list[dict[str, Any]] = []
+    implications: list[ImplicationDto | dict[str, Any]] = []
     effects: list[EffectDto] = []
     dig_refusals: list[DigRefusal] = []
     agreement_violations: list[FloorContractAgreementViolation] = []
@@ -339,6 +341,11 @@ def build_literal_call_report(
             source_audits.extend(audits)
             factory_walk.extend(rows)
             call_edges.extend(edges)
+            implications.extend(
+                _precondition_implications_from_call_edges(
+                    edges, contract_bindings or []
+                )
+            )
             effects.extend(effect_rows)
     if not contracts and not effects:
         return None
@@ -369,6 +376,7 @@ def build_literal_call_report(
             factory_walk=walk_payload,
             effects=effect_payload,
             call_edges=call_edges,
+            implications=implications,
             diagnostics=[
                 *[refusal.to_json() for refusal in dig_refusals],
                 floor_contract_agreement_diagnostic(agreement_violations),
@@ -2817,6 +2825,56 @@ def _binding_proof_cid(binding: dict[str, Any] | None) -> str | None:
         return None
     cid = binding.get("target_proof_cid") or binding.get("targetProofCid")
     return cid if isinstance(cid, str) and cid else None
+
+
+def _precondition_implications_from_call_edges(
+    edges: list[dict[str, Any]], contract_bindings: list
+) -> list[ImplicationDto]:
+    implications: list[ImplicationDto] = []
+    seen: set[tuple[str, str]] = set()
+    for edge in edges:
+        source_contract = edge.get("sourceContract")
+        target_contract = edge.get("targetContract")
+        if not isinstance(source_contract, str) or not isinstance(target_contract, str):
+            continue
+        source_binding = _binding_for_contract_name(contract_bindings, source_contract)
+        target_binding = _binding_for_contract_name(contract_bindings, target_contract)
+        if not _binding_bool(source_binding, "has_post"):
+            continue
+        if not _binding_bool(target_binding, "has_pre"):
+            continue
+        key = (source_contract, target_contract)
+        if key in seen:
+            continue
+        seen.add(key)
+        implications.append(
+            ImplicationDto(
+                name=f"{source_contract}.post-implies-{target_contract}.pre",
+                antecedent=source_contract,
+                consequent=target_contract,
+                antecedent_slot="post",
+                consequent_slot="pre",
+                prover="python-implications",
+            )
+        )
+    return implications
+
+
+def _binding_for_contract_name(
+    contract_bindings: list, contract_name: str
+) -> dict[str, Any] | None:
+    for binding in contract_bindings:
+        if not isinstance(binding, dict):
+            continue
+        if binding.get("name") == contract_name:
+            return binding
+    return None
+
+
+def _binding_bool(binding: dict[str, Any] | None, key: str) -> bool:
+    if binding is None:
+        return False
+    return binding.get(key) is True
 
 
 def _import_bindings(

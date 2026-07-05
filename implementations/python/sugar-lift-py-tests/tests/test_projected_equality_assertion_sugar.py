@@ -1,7 +1,53 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
+
+ROOT = Path(__file__).resolve().parents[4]
+PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
+
+
+def _run_lift_rpc(
+    project: Path, *, contract_bindings: list[dict] | None = None
+) -> dict:
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(PY_TESTS / "src"),
+    }
+    params = {"workspace_root": str(project), "source_paths": ["."]}
+    if contract_bindings is not None:
+        params["contract_bindings"] = contract_bindings
+    request = "\n".join(
+        json.dumps(message)
+        for message in [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "lift", "params": params},
+            {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}},
+        ]
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"],
+        input=request + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    responses = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
+    response = next(item for item in responses if item.get("id") == 2)
+    assert "error" not in response, response
+    return response["result"]
 
 
 def test_projected_equality_lifts_call_result_attribute_fact() -> None:
@@ -261,6 +307,139 @@ def test_projected_equality_external_bridge_edge_uses_dependency_binding() -> No
     assert edge["targetContract"] == "native::sqrt::callable"
     assert edge["targetContractCid"] == "blake3-512:math-sqrt-contract"
     assert edge["targetProofCid"] == "blake3-512:math-proof"
+
+
+def test_projected_equality_resolved_post_to_pre_edge_emits_implication() -> None:
+    source = (
+        "import math\n"
+        "def test_sqrt(actual):\n"
+        "    assert actual.value == math.sqrt(4)\n"
+    )
+    first_pass = build_literal_call_report(
+        source=source,
+        filename="test_sqrt.py",
+        memento_file="test_sqrt.py",
+    )
+    assert first_pass is not None
+    source_contract = first_pass.payload.ir[0].name
+
+    report = build_literal_call_report(
+        source=source,
+        filename="test_sqrt.py",
+        memento_file="test_sqrt.py",
+        contract_bindings=[
+            {
+                "name": source_contract,
+                "contract_cid": "blake3-512:source-contract",
+                "has_post": True,
+            },
+            {
+                "name": "native::sqrt::callable",
+                "contract_cid": "blake3-512:math-sqrt-contract",
+                "bridgeSourceSymbol": "call:math.sqrt",
+                "has_pre": True,
+            },
+        ],
+    )
+
+    assert report is not None
+    assert len(report.payload.implications) == 1
+    implication = report.payload.implications[0]
+    assert implication.antecedent == source_contract
+    assert implication.antecedent_slot == "post"
+    assert implication.consequent == "native::sqrt::callable"
+    assert implication.consequent_slot == "pre"
+    assert implication.prover == "python-implications"
+
+
+def test_projected_equality_resolved_edge_without_target_pre_is_not_implication() -> (
+    None
+):
+    source = (
+        "import math\n"
+        "def test_sqrt(actual):\n"
+        "    assert actual.value == math.sqrt(4)\n"
+    )
+    first_pass = build_literal_call_report(
+        source=source,
+        filename="test_sqrt.py",
+        memento_file="test_sqrt.py",
+    )
+    assert first_pass is not None
+    source_contract = first_pass.payload.ir[0].name
+
+    report = build_literal_call_report(
+        source=source,
+        filename="test_sqrt.py",
+        memento_file="test_sqrt.py",
+        contract_bindings=[
+            {
+                "name": source_contract,
+                "contract_cid": "blake3-512:source-contract",
+                "has_post": True,
+            },
+            {
+                "name": "native::sqrt::callable",
+                "contract_cid": "blake3-512:math-sqrt-contract",
+                "bridgeSourceSymbol": "call:math.sqrt",
+                "has_pre": False,
+            },
+        ],
+    )
+
+    assert report is not None
+    assert report.payload.call_edges[0]["targetContract"] == "native::sqrt::callable"
+    assert report.payload.implications == []
+
+
+def test_lift_rpc_bindings_backed_pass_returns_implication_consumer_payload(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "import math\n"
+        "def test_sqrt(actual):\n"
+        "    assert actual.value == math.sqrt(4)\n"
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "test_sqrt.py").write_text(source, encoding="utf-8")
+    first_pass = build_literal_call_report(
+        source=source,
+        filename="test_sqrt.py",
+        memento_file="test_sqrt.py",
+    )
+    assert first_pass is not None
+    source_contract = first_pass.payload.ir[0].name
+
+    result = _run_lift_rpc(
+        project,
+        contract_bindings=[
+            {
+                "name": source_contract,
+                "contract_cid": "blake3-512:source-contract",
+                "has_post": True,
+            },
+            {
+                "name": "native::sqrt::callable",
+                "contract_cid": "blake3-512:math-sqrt-contract",
+                "bridgeSourceSymbol": "call:math.sqrt",
+                "has_pre": True,
+            },
+        ],
+    )
+
+    assert result["ir"] == []
+    assert result["callEdges"][0]["targetContract"] == "native::sqrt::callable"
+    assert result["implications"] == [
+        {
+            "name": f"{source_contract}.post-implies-native::sqrt::callable.pre",
+            "antecedent": source_contract,
+            "antecedentSlot": "post",
+            "consequent": "native::sqrt::callable",
+            "consequentSlot": "pre",
+            "prover": "python-implications",
+        }
+    ]
 
 
 def test_projected_equality_lifts_fstring_rhs_attribute() -> None:
