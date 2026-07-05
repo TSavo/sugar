@@ -52,7 +52,10 @@ fn initializer_fact_composite_selected(expr: &Expr) -> bool {
     let Expr::MethodCall(call) = expr else {
         return false;
     };
-    matches!(call.method.to_string().as_str(), "fold" | "for_each")
+    matches!(
+        call.method.to_string().as_str(),
+        "fold" | "rfold" | "for_each"
+    )
 }
 
 /// Statements whose fact surfaces are executed while evaluating a `let` initializer.
@@ -303,10 +306,12 @@ mod initializer_probe_tests {
     #[test]
     fn initializer_probe_accepts_fact_terminals_only() {
         let fold: Expr = syn::parse_str("[1, 2].iter().fold(0, |acc, x| acc + x)").unwrap();
+        let rfold: Expr = syn::parse_str("[1, 2].iter().rfold(0, |acc, x| acc + x)").unwrap();
         let for_each: Expr =
             syn::parse_str("[1, 2].iter().for_each(|x| assert_eq!(*x, 1))").unwrap();
 
         assert!(initializer_fact_composite_selected(&fold));
+        assert!(initializer_fact_composite_selected(&rfold));
         assert!(initializer_fact_composite_selected(&for_each));
     }
 
