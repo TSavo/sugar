@@ -22,6 +22,7 @@ from .predicate_value import PredicateValue
 from .raise_value import RaiseValue
 from .return_value import ReturnValue
 from .sequence_constructor import SequenceConstructor
+from .set_literal_value import SetLiteralValue
 from .slice_value import SliceValue
 from .string_value import StringValue
 from .support_value import SupportValue
@@ -52,6 +53,7 @@ __all__ = [
     "RaiseValue",
     "ReturnValue",
     "SequenceConstructor",
+    "SetLiteralValue",
     "SliceValue",
     "StringValue",
     "SupportValue",

@@ -22,7 +22,12 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
 )
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import DictLiteralValue, ImportAliasValue, SupportValue
+from sugar_lift_py_tests.floor import (
+    DictLiteralValue,
+    ImportAliasValue,
+    SetLiteralValue,
+    SupportValue,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_lift_py_tests.witness_harness import (
@@ -105,11 +110,14 @@ EXPECTED_OPT_OUT_SUGARS = {
     "AwaitSugar",
     "BitwiseOpSugar",
     "CommentSugar",
+    "DictCompSugar",
     "DictSugar",
     "ExprSugar",
     "ListLiteralSugar",
     "OrdByteSugar",
     "PassSugar",
+    "SetCompSugar",
+    "SetSugar",
     "StarredSugar",
     "SubscriptAssignSugar",
     "SubscriptDeleteSugar",
@@ -191,7 +199,9 @@ def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
         "SupportValue",
         "ImportAliasValue",
         "DictLiteralValue",
+        "SetLiteralValue",
     }
+    assert SetLiteralValue.non_fol_support is True
 
     audit = non_fol_opt_out_audit()
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.ir import Term, ctor
 
 from .floor_value import FloorValue
+from .term_value import TermValue
 
 
 @dataclass(frozen=True)
@@ -27,3 +30,32 @@ class DictLiteralValue(FloorValue):
             "python:dict",
             [ctor("python:dict_entry", [key, value]) for key, value in self.entries],
         )
+
+    def call_method_with(self, operation: Any, ctx: object) -> Any:
+        del ctx
+        if operation.name == "__len__" and not operation.arguments:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(len(self.entries)))
+        return _call_method_effect(
+            blame=operation.blame,
+            observed=f"DictLiteralValue.{operation.name}",
+        )
+
+
+def _call_method_effect(
+    *,
+    blame: str,
+    observed: str,
+):
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    return Incomplete(
+        RuntimeEffect(
+            "dict builtin method runtime boundary: "
+            f"{observed} has no reduced floor semantics in this tranche. "
+            "Python dictionary method results can expose runtime view/mutation "
+            "semantics; keep as typed red until a narrower vendor-cited "
+            f"reduction owns the shape. blame={blame}"
+        )
+    )

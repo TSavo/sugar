@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.ir import Term, ctor
+
+from .floor_value import FloorValue
+from .term_value import TermValue
+
+
+@dataclass(frozen=True)
+class SetLiteralValue(FloorValue):
+    """A structural Python set literal term with deterministic support order."""
+
+    non_fol_support = True
+
+    items: tuple[Term, ...]
+
+    def to_term(self, *, owner: str) -> Term:
+        del owner
+        return ctor("python:set", list(self.items))
+
+    def call_method_with(self, operation: Any, ctx: object) -> Any:
+        del ctx
+        if operation.name == "__len__" and not operation.arguments:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(len(self.items)))
+        return _call_method_effect(
+            blame=operation.blame,
+            observed=f"SetLiteralValue.{operation.name}",
+        )
+
+
+def _call_method_effect(
+    *,
+    blame: str,
+    observed: str,
+):
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    return Incomplete(
+        RuntimeEffect(
+            "set builtin method runtime boundary: "
+            f"{observed} has no reduced floor semantics in this tranche. "
+            "Python set method results can expose runtime mutation and "
+            "iteration-order semantics; keep as typed red until a narrower "
+            f"vendor-cited reduction owns the shape. blame={blame}"
+        )
+    )
