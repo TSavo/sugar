@@ -1,0 +1,111 @@
+{
+  "kind": "pandas-wall-baseline",
+  "schema": 1,
+  "measured_at": "2026-07-05",
+  "repo_head": "1e9779fe8ab477718361ab82e0c523962e050fb7",
+  "sugar_binary_stamp": "1e9779fe8ab477718361ab82e0c523962e050fb7-dirty-3aa553bfc26f7252",
+  "measurement_note": "The binary stamp is dirty because this baseline fixture and report were staged while refreshing the current-main receipt; no lifter code changed in this branch.",
+  "campaign": "#3503",
+  "pandas": {
+    "version": "3.0.3",
+    "package_path": "/usr/local/lib/python3.14/site-packages/pandas",
+    "audit_workspace": "/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e6584386f67991af23cdca0e0ab3ef983b1e1645526c9aa02599d1a9a46d5238/pandas",
+    "audit_workspace_cache_key": "e6584386f67991af23cdca0e0ab3ef983b1e1645526c9aa02599d1a9a46d5238",
+    "python_files": 1421,
+    "test_python_files": 1122
+  },
+  "render": {
+    "status": "blocked-by-crash",
+    "json": {
+      "command": "sugar lift --report --json <cached-pandas-audit-workspace>",
+      "exit_code": 2,
+      "stdout_bytes": 0,
+      "stderr_bytes": 8840,
+      "stderr_sha256": "0d40824aeb2839f154afae2e9e598641a66969bb8da3ab3577254b89d960c522",
+      "elapsed_seconds": 64.23
+    },
+    "visual": {
+      "command": "sugar lift --report --visual <cached-pandas-audit-workspace>",
+      "exit_code": 2,
+      "stdout_bytes": 0,
+      "stderr_bytes": 8840,
+      "stderr_sha256": "71dc36f4c1b8ba1bbba081a46595876a58d35ff88c407af0c4f48e408423c0e5",
+      "elapsed_seconds": 62.88
+    },
+    "counts_available": false,
+    "counts_unavailable_reason": "both json and visual report renderers abort before emitting sourceLedger/sourceAudits"
+  },
+  "requested_counts": {
+    "contracts": null,
+    "pre_bearing": null,
+    "call_edges": null,
+    "resolved": null,
+    "dangling": null,
+    "implications": null,
+    "green": null,
+    "reasoned_red": null,
+    "bare_red": null,
+    "bare_red_assessment": "unmeasured because the renderer crashed before any report rows were emitted"
+  },
+  "first_blocker": {
+    "class": "transport-diagnostic-from-lift-plugin-error",
+    "owner": "MapSugar receiver",
+    "vendor_file": "pandas/tests/base/test_conversion.py",
+    "vendor_line": 127,
+    "vendor_column": 12,
+    "message": "MapSugar receiver cannot read completed value from incomplete effect: write more Sugar for this AST: owner=python.factory blame=<workspace>/pandas/tests/base/test_conversion.py:127:12 observed=call-local:typ requested=term fix=resolve local call `typ` to a body, link an imported .proof, add sugar, or emit a real effect",
+    "path": [
+      "MembershipAssertionSugar.desugar",
+      "NameSugar.desugar",
+      "StringSubscriptSugar.desugar",
+      "MapSugar.desugar",
+      "complete_value(MapSugar receiver)"
+    ],
+    "source_excerpt": [
+      "typ = index_or_series",
+      "s = typ([1], dtype=dtype)",
+      "result = s.map(type)[0]",
+      "if not isinstance(rdtype, tuple):",
+      "    rdtype = (rdtype,)",
+      "assert result in rdtype"
+    ]
+  },
+  "minimal_repro": {
+    "path": "/tmp/pandas-wall-baseline-current/repro-audit/test_conversion_minimal.py",
+    "command": "sugar lift --report --json /tmp/pandas-wall-baseline-current/repro-audit",
+    "exit_code": 2,
+    "stderr_sha256": "0c74aa641c5e92bce497e6dfebada16d06668a8cce3cf718be70bbeab901a9eb",
+    "message": "MapSugar receiver cannot read completed value from incomplete effect: write more Sugar for this AST: owner=python.factory blame=/private/tmp/pandas-wall-baseline-current/repro-audit/test_conversion_minimal.py:3:8 observed=call-local:typ requested=term fix=resolve local call `typ` to a body, link an imported .proof, add sugar, or emit a real effect",
+    "source": "def test_iterable_map(index_or_series, dtype, rdtype):\n    typ = index_or_series\n    s = typ([1], dtype=dtype)\n    result = s.map(type)[0]\n    if not isinstance(rdtype, tuple):\n        rdtype = (rdtype,)\n    assert result in rdtype\n"
+  },
+  "top_red_reason_shapes": [
+    {
+      "rank": 1,
+      "count": 1,
+      "template": "MapSugar receiver forces incomplete call-local effect from local constructor alias before report rows are emitted",
+      "example": "pandas/tests/base/test_conversion.py:127:12"
+    }
+  ],
+  "transfer_notes": [
+    {
+      "mechanism": "audit-workspace cache",
+      "status": "transfers",
+      "detail": "pandas materializes through the same content-addressed workspace cache as numpy; the cache key includes vendor source and kit source"
+    },
+    {
+      "mechanism": "numpy-style re-export bridges",
+      "status": "not-reached",
+      "detail": "the wall aborts inside pandas tests before package-level call-edge and bridge counts render"
+    },
+    {
+      "mechanism": "guard/decorator shapes",
+      "status": "not-reached",
+      "detail": "decorator-heavy pandas corpus is present, but top-shape frequencies cannot be counted until the MapSugar receiver crash is made typed"
+    },
+    {
+      "mechanism": "local alias plus higher-order map",
+      "status": "first-blocker",
+      "detail": "the first blocker is a local constructor alias `typ`, followed by `s.map(type)[0]`, then a membership assertion over `rdtype`"
+    }
+  ]
+}
