@@ -3,7 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import os
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -622,7 +622,7 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.sugar_body import SugarBody
-    from sugar_lift_py_tests.temporal import TemporalContext
+    from sugar_lift_py_tests.temporal import bind_temporal
 
     module = SourceFragment.from_source(witness.source, "test_witness.py")
     function = next(
@@ -637,10 +637,14 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
         catalog=default_catalog(),
         audit_sink=audit_sink,
     )
-    temporal = TemporalContext.empty()
     for arg in function.function_params():
-        temporal = temporal.bind_value(arg, SymbolicValue(make_var(arg)))
-    ctx = replace(ctx, temporal=temporal)
+        ctx = bind_temporal(
+            ctx,
+            arg,
+            SymbolicValue(make_var(arg)),
+            owner="SugarWitnessInstruments",
+            blame=function.blame,
+        )
     try:
         result = build_node(
             function.function_body_block(),
