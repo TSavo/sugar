@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 import numpy
+import pytest
 
 from sugar_lift_py_tests.idd import (
     CommandResult,
@@ -13,7 +15,14 @@ from sugar_lift_py_tests.idd import (
     main,
     render_text,
 )
-from sugar_lift_py_tests.idd.collect_panic_audit import _prepare_audit_workspace
+
+panic_audit_module = importlib.import_module(
+    "sugar_lift_py_tests.idd.collect_panic_audit"
+)
+from sugar_lift_py_tests.idd.collect_panic_audit import (
+    _cached_audit_workspace,
+    _prepare_audit_workspace,
+)
 from sugar_lift_py_tests.witness_harness import _ensure_sugar_bin
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -143,6 +152,80 @@ def test_audit_workspace_manifest_passes_audit_flag_to_python_lifter(tmp_path) -
     assert "sugar_lift_py_tests/lift_rpc.py" in manifest
     assert '"--rpc", "--audit-only"' in manifest
     assert "sugar_lift_py_tests.lsp" not in manifest
+
+
+def test_audit_workspace_cache_reuses_same_stamp(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "target"
+    (target / "pkg").mkdir(parents=True)
+    (target / "pkg/sample.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    cache_root = tmp_path / "cache"
+    monkeypatch.setenv("SUGAR_PANIC_AUDIT_WORKSPACE_CACHE_DIR", str(cache_root))
+
+    cold = _cached_audit_workspace(target, ROOT)
+    warm = _cached_audit_workspace(target, ROOT)
+
+    assert cold.cache_key == warm.cache_key
+    assert cold.workspace == warm.workspace
+    assert cold.hit is False
+    assert warm.hit is True
+    assert (warm.workspace / "pkg/sample.py").read_text(encoding="utf-8") == (
+        "def f():\n    return 1\n"
+    )
+
+
+def test_audit_workspace_cache_misses_when_vendor_source_changes(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "target"
+    (target / "pkg").mkdir(parents=True)
+    sample = target / "pkg/sample.py"
+    sample.write_text("VALUE = 1\n", encoding="utf-8")
+    cache_root = tmp_path / "cache"
+    monkeypatch.setenv("SUGAR_PANIC_AUDIT_WORKSPACE_CACHE_DIR", str(cache_root))
+
+    before = _cached_audit_workspace(target, ROOT)
+    sample.write_text("VALUE = 2\n", encoding="utf-8")
+    after = _cached_audit_workspace(target, ROOT)
+
+    assert before.cache_key != after.cache_key
+    assert before.workspace != after.workspace
+    assert before.hit is False
+    assert after.hit is False
+    assert (before.workspace / "pkg/sample.py").read_text(encoding="utf-8") == (
+        "VALUE = 1\n"
+    )
+    assert (after.workspace / "pkg/sample.py").read_text(encoding="utf-8") == (
+        "VALUE = 2\n"
+    )
+
+
+def test_lift_command_uses_cached_audit_workspace(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "target"
+    (target / "pkg").mkdir(parents=True)
+    (target / "pkg/sample.py").write_text("VALUE = 1\n", encoding="utf-8")
+    cache_root = tmp_path / "cache"
+    monkeypatch.setenv("SUGAR_PANIC_AUDIT_WORKSPACE_CACHE_DIR", str(cache_root))
+    commands: list[list[str]] = []
+
+    def fake_subprocess(command: list[str], cwd: Path) -> CommandResult:
+        commands.append(command)
+        return CommandResult(0, "", "")
+
+    monkeypatch.setattr(panic_audit_module, "_run_subprocess", fake_subprocess)
+
+    command = ["sugar", "lift", "--report", "--visual", str(target)]
+    assert panic_audit_module._run_command(command, ROOT).returncode == 0
+    assert panic_audit_module._run_command(command, ROOT).returncode == 0
+
+    assert len(commands) == 2
+    assert commands[0][-1] == commands[1][-1]
+    cached_workspace = Path(commands[0][-1])
+    assert cached_workspace.is_dir()
+    assert cached_workspace.parent.parent == cache_root
 
 
 def test_cli_exits_red_until_numpy_pandas_have_zero_panics(monkeypatch, capsys) -> None:

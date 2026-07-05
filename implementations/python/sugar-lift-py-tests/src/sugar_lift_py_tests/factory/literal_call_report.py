@@ -1251,6 +1251,30 @@ def _free_vars_in_ir_term(term: Term) -> frozenset[str]:
     return frozenset()
 
 
+def _free_vars_in_ir_formula(formula: Formula) -> frozenset[str]:
+    if isinstance(formula, _Atomic):
+        return frozenset().union(*(_free_vars_in_ir_term(arg) for arg in formula.args))
+    if isinstance(formula, _Connective):
+        return frozenset().union(
+            *(_free_vars_in_ir_formula(operand) for operand in formula.operands)
+        )
+    if isinstance(formula, _Quantifier):
+        return _free_vars_in_ir_formula(formula.body) - {formula.name}
+    return frozenset()
+
+
+def _open_universe_vars(formulas: list[Formula], bound: set[str]) -> frozenset[str]:
+    return (
+        frozenset().union(*(_free_vars_in_ir_formula(formula) for formula in formulas))
+        - bound
+    )
+
+
+def _is_open_byte_support_universe(formulas: list[Formula], bound: set[str]) -> bool:
+    open_vars = _open_universe_vars(formulas, bound)
+    return bool(open_vars) and all(name.startswith("byte_") for name in open_vars)
+
+
 def _open_equality_fact_vars(arg_terms: list[Term], value_term: Term) -> frozenset[str]:
     return frozenset().union(
         _free_vars_in_ir_term(value_term),
@@ -2426,6 +2450,20 @@ def _function_universe(
         f for f in body_formulas if not _is_free_var_definition(f, _universe_bound)
     ]
     _universe_formulas = _with_python_bytes_content_universe(_universe_formulas)
+    if _is_open_byte_support_universe(_universe_formulas, _universe_bound):
+        _record_dig_refusal(
+            dig_refusals,
+            callee=callee.function_name(),
+            blame=callee.blame,
+            caught=ValueError(
+                "naked ord-byte body has no enclosing str.eq-bv-blocks universe"
+            ),
+            reason=(
+                "function universe body walker refused open ord-byte support; "
+                "concrete callsite projection may still derive the byte value"
+            ),
+        )
+        return None
     if not _universe_formulas:
         return None
     function_post = _post_condition_from_ir(
@@ -2611,6 +2649,20 @@ def _dig_universe(
         f for f in body_formulas if not _is_free_var_definition(f, _universe_bound)
     ]
     _universe_formulas = _with_python_bytes_content_universe(_universe_formulas)
+    if _is_open_byte_support_universe(_universe_formulas, _universe_bound):
+        _record_dig_refusal(
+            dig_refusals,
+            callee=target_fn.function_name(),
+            blame=target_fn.blame,
+            caught=ValueError(
+                "naked ord-byte body has no enclosing str.eq-bv-blocks universe"
+            ),
+            reason=(
+                "function universe body walker refused open ord-byte support; "
+                "concrete callsite projection may still derive the byte value"
+            ),
+        )
+        return None
     function_post = _post_condition_from_ir(
         (
             _universe_formulas[0]
@@ -2865,7 +2917,7 @@ def _binding_for_bridge_symbol(
     for binding in contract_bindings:
         if not isinstance(binding, dict):
             continue
-        if binding.get("bridgeSourceSymbol") == target_symbol:
+        if binding.get("bridgeSourceSymbol") in {target_symbol, target_name}:
             return binding
         name = binding.get("name")
         if name in {target_symbol, target_name}:

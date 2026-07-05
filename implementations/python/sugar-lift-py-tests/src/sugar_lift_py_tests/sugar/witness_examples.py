@@ -412,13 +412,13 @@ def inert_statement_return_witness(
     )
 
 
-def ord_byte_support_witness(*, owner_sugar: str) -> SugarWitnessPair:
-    source = "def A(s):\n" "    ord(s[0])\n" "    return 1\n" "\n"
+def ord_byte_return_witness(*, owner_sugar: str) -> SugarWitnessPair:
+    source = "def A(s):\n" "    return ord(s[0])\n" "\n"
     return _call_pair(
-        name="ord_byte_support_return",
+        name="ord_byte_return",
         owner_sugar=owner_sugar,
-        truthful=source + "def test_a():\n    assert A('x') == 1\n",
-        lying=source + "def test_a():\n    assert A('x') == 2\n",
+        truthful=source + "def test_a():\n    assert A('x') == 120\n",
+        lying=source + "def test_a():\n    assert A('x') == 121\n",
     )
 
 

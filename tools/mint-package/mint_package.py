@@ -20,6 +20,7 @@ the factory exits without work -- the thousandth consumer pays a memcmp,
 not a re-mint. Verdicts are read from receipts; exit codes are never
 trusted.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -63,8 +64,16 @@ def _ensure_kit_venv(registry):
     if not os.path.exists(kit_py):
         os.makedirs(os.path.dirname(kit_venv), exist_ok=True)
         sh([sys.executable, "-m", "venv", kit_venv])
-        sh([os.path.join(kit_venv, "bin", "pip"), "install", "-q",
-            "blake3", "cbor2", "pynacl"])
+        sh(
+            [
+                os.path.join(kit_venv, "bin", "pip"),
+                "install",
+                "-q",
+                "blake3",
+                "cbor2",
+                "pynacl",
+            ]
+        )
     return kit_py
 
 
@@ -132,9 +141,7 @@ def _direct_dependencies(venv, package):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("spec", help="name==version")
-    ap.add_argument(
-        "--registry", default=os.path.expanduser("~/sugar-registry")
-    )
+    ap.add_argument("--registry", default=os.path.expanduser("~/sugar-registry"))
     ap.add_argument("--force", action="store_true")
     ap.add_argument(
         "--venv",
@@ -164,8 +171,17 @@ def main():
     if not glob.glob(os.path.join(sdist_dir, "*")):
         sh(
             [
-                sys.executable, "-m", "pip", "download", "--no-deps",
-                "--no-binary", ":all:", "-d", sdist_dir, args.spec, "-q",
+                sys.executable,
+                "-m",
+                "pip",
+                "download",
+                "--no-deps",
+                "--no-binary",
+                ":all:",
+                "-d",
+                sdist_dir,
+                args.spec,
+                "-q",
             ]
         )
     sdist = sorted(glob.glob(os.path.join(sdist_dir, "*")))[0]
@@ -268,9 +284,7 @@ def main():
 
     copied = 0
     for tf in test_files:
-        dst = os.path.join(
-            project, os.path.relpath(tf, src).replace(os.sep, "__")
-        )
+        dst = os.path.join(project, os.path.relpath(tf, src).replace(os.sep, "__"))
         shutil.copyfile(tf, dst)
         copied += 1
 
@@ -304,19 +318,10 @@ def main():
     )
 
     # ── the shipping CLI is the ground ─────────────────────────────────────
-    bin_ = os.path.join(REPO, "implementations/rust/target/debug/sugar")
-    target = os.environ.get(
-        "CARGO_TARGET_DIR", os.path.join(REPO, "implementations/rust/target")
-    )
-    bin_ = os.path.join(target, "debug", "sugar")
-    if not os.path.exists(bin_):
-        sh(
-            [
-                "cargo", "build", "--manifest-path",
-                os.path.join(REPO, "implementations/rust/Cargo.toml"),
-                "-p", "sugar-cli", "--bin", "sugar",
-            ]
-        )
+    bin_ = subprocess.check_output(
+        [os.path.join(REPO, "bin", "sugarbin"), "--profile", "release"],
+        text=True,
+    ).strip()
     sh([bin_, "mint", "--out", "."], cwd=project)
     verify_path = os.path.join(entry, "verify.json")
     with open(verify_path, "w") as vf:
@@ -350,10 +355,8 @@ def main():
     def _own_count(*statuses):
         return sum(1 for r in own_rows if r.get("status") in statuses)
 
-    universes = sum(
-        1 for r in own_rows if "::assertion" in str(r.get("property", ""))
-    )
-    own_split = (receipt.get("dischargeSplit") or {})
+    universes = sum(1 for r in own_rows if "::assertion" in str(r.get("property", "")))
+    own_split = receipt.get("dischargeSplit") or {}
     own_summary = {
         "ownRows": len(own_rows),
         "discharged": _own_count("discharged"),
@@ -420,7 +423,13 @@ def main():
         # context, never conflated with own.
         "pool_receipt_summary": {
             k: receipt.get(k)
-            for k in ("totalCallsites", "discharged", "violations", "refused", "dischargeSplit")
+            for k in (
+                "totalCallsites",
+                "discharged",
+                "violations",
+                "refused",
+                "dischargeSplit",
+            )
         },
         "assertion_properties": universes,
         "cited_bundles": cited,

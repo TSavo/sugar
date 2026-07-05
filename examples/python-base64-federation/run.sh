@@ -22,16 +22,15 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
 TARGET_DIR="${CARGO_TARGET_DIR:-$RUST/target}"
-BIN="$TARGET_DIR/debug/sugar"
+BIN="$("$REPO/bin/sugarbin" --profile release)"
 PYTHON_SRC="$REPO/implementations/python/sugar-lift-py-pytest-witness/src:$REPO/implementations/python/sugar-lift-py-tests/src:$REPO/implementations/python/sugar-lift-python-source/src"
 VENV="${PYTHON_LITERAL_BASE64_VENV:-/tmp/python-literal-base64-venv}"
 SYSTEM_PYTHON="${PYTHON_LITERAL_BASE64_PYTHON:-$(command -v python3)}"
 PYTHON="$SYSTEM_PYTHON"
 
-echo "== build the CLI and bundled SMT compiler =="
+echo "== build the bundled SMT compiler =="
 cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli --bin sugar \
-  -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib >/dev/null || { echo "FAIL: sugar build"; exit 1; }
+  -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib >/dev/null || { echo "FAIL: SMT compiler build"; exit 1; }
 [ -x "$BIN" ] || { echo "FAIL: sugar binary missing at $BIN"; exit 1; }
 command -v z3 >/dev/null 2>&1 || { echo "FAIL: z3 is required for this showcase"; exit 1; }
 

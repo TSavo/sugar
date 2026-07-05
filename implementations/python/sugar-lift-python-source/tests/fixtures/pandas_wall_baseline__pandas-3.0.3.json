@@ -1,0 +1,126 @@
+{
+  "kind": "pandas-wall-baseline",
+  "schema": 1,
+  "measured_at": "2026-07-05",
+  "repo_head": "6fa7d8743b52f732406ce2e7adad4dd1fc9b905f",
+  "sugar_binary_stamp": "6fa7d8743b52f732406ce2e7adad4dd1fc9b905f-dirty-491789b70f9bf49d",
+  "measurement_note": "The release binary was resolved by bin/sugarbin for repo_head plus this PR's dirty-tree MapSugar incomplete-effect propagation change.",
+  "campaign": "#3503",
+  "pandas": {
+    "version": "3.0.3",
+    "package_path": "/usr/local/lib/python3.14/site-packages/pandas",
+    "audit_workspace": "/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e17a7b3da98c63ba59bef1a18a4f040503e5fb8ba0e16d9b967701438674c1ba/pandas",
+    "audit_workspace_cache_key": "e17a7b3da98c63ba59bef1a18a4f040503e5fb8ba0e16d9b967701438674c1ba",
+    "python_files": 1421,
+    "test_python_files": 1122
+  },
+  "render": {
+    "status": "blocked-by-crash",
+    "json": {
+      "command": "sugar lift --report --json <cached-pandas-audit-workspace>",
+      "exit_code": 2,
+      "stdout_bytes": 0,
+      "stderr_bytes": 7932,
+      "stderr_sha256": "0281eeb0af1825f24f7f6f0e254179fec1f129ac2326c45ea6e0538da391fbff",
+      "elapsed_seconds": 298.58
+    },
+    "visual": {
+      "command": "sugar lift --report --visual <cached-pandas-audit-workspace>",
+      "exit_code": 2,
+      "stdout_bytes": 0,
+      "stderr_bytes": 7932,
+      "stderr_sha256": "d263b0122bf930b69fb6b59049fd29d62d15b0764bf844fd938b6377e603e389",
+      "elapsed_seconds": 307.61
+    },
+    "counts_available": false,
+    "counts_unavailable_reason": "both json and visual report renderers abort before emitting sourceLedger/sourceAudits"
+  },
+  "requested_counts": {
+    "contracts": null,
+    "pre_bearing": null,
+    "call_edges": null,
+    "resolved": null,
+    "dangling": null,
+    "implications": null,
+    "green": null,
+    "reasoned_red": null,
+    "bare_red": null,
+    "bare_red_assessment": "unmeasured because the renderer crashed before any report rows were emitted"
+  },
+  "first_blocker": {
+    "class": "transport-diagnostic-from-lift-plugin-error",
+    "owner": "AddSugar receiver",
+    "vendor_file": "pandas/tests/internals/test_internals.py",
+    "vendor_line": 1179,
+    "vendor_column": 29,
+    "message": "AddSugar receiver cannot read completed value from incomplete effect: write more Sugar for this AST: owner=python.factory blame=<workspace>/pandas/tests/internals/test_internals.py:1179:29 observed=call-builtin:slice requested=term fix=add builtin call sugar for `slice`, resolve a local body, link an imported .proof, or emit a real effect",
+    "path": [
+      "_lift_callsite_assertion",
+      "_literal_floor_via_factory",
+      "AddSugar.desugar",
+      "complete_value(AddSugar receiver)"
+    ],
+    "source_excerpt": [
+      "bpl = BlockPlacement(slice(0, 5))",
+      "assert bpl.add(1).as_slice == slice(1, 6, 1)",
+      "assert bpl.add(np.arange(5)).as_slice == slice(0, 10, 2)",
+      "assert list(bpl.add(np.arange(5, 0, -1))) == [5, 5, 5, 5, 5]"
+    ]
+  },
+  "map_receiver_repro": {
+    "path": "/tmp/mapsugar-effect-honesty-after-audit/test_conversion_minimal.py",
+    "command": "sugar lift --report --json /tmp/mapsugar-effect-honesty-after-audit",
+    "exit_code": 0,
+    "stdout_bytes": 8821,
+    "stderr_bytes": 5629,
+    "stdout_sha256": "5aebb5634ef8ff05c6e51cc8b0075313c20dbc8112f3de6cbb90aa008149d8dc",
+    "stderr_sha256": "232774b53f6d619c371621aea0f1e7a2fdba2e01bb83747352b5b44f83d8e62a",
+    "status": "typed-effect-row",
+    "factory_walk": {
+      "selected": "MembershipAssertionSugar",
+      "status": "factory-gap",
+      "effect": "FactoryGapEffect",
+      "reason_contains": [
+        "owner=python.factory",
+        "observed=call-local:typ",
+        "requested=term"
+      ]
+    },
+    "source": "def test_iterable_map(index_or_series, dtype, rdtype):\n    typ = index_or_series\n    s = typ([1], dtype=dtype)\n    result = s.map(type)[0]\n    if not isinstance(rdtype, tuple):\n        rdtype = (rdtype,)\n    assert result in rdtype\n"
+  },
+  "top_red_reason_shapes": [
+    {
+      "rank": 1,
+      "count": 1,
+      "template": "AddSugar receiver forces incomplete call-builtin:slice effect before report rows are emitted",
+      "example": "pandas/tests/internals/test_internals.py:1179:29"
+    }
+  ],
+  "transfer_notes": [
+    {
+      "mechanism": "audit-workspace cache",
+      "status": "transfers",
+      "detail": "pandas materializes through the same content-addressed workspace cache as numpy; the cache key includes vendor source and kit source"
+    },
+    {
+      "mechanism": "numpy-style re-export bridges",
+      "status": "not-reached",
+      "detail": "the wall aborts inside pandas tests before package-level call-edge and bridge counts render"
+    },
+    {
+      "mechanism": "guard/decorator shapes",
+      "status": "not-reached",
+      "detail": "decorator-heavy pandas corpus is present, but top-shape frequencies cannot be counted until the AddSugar receiver crash is made typed"
+    },
+    {
+      "mechanism": "local alias plus higher-order map",
+      "status": "drained",
+      "detail": "the original blocker was a local constructor alias `typ`, followed by `s.map(type)[0]`, then a membership assertion over `rdtype`; it now emits a typed factory-gap row"
+    },
+    {
+      "mechanism": "builtin slice inside arithmetic receiver",
+      "status": "first-blocker",
+      "detail": "the current blocker is `BlockPlacement(slice(0, 5))`; AddSugar forces the `call-builtin:slice` effect as a completed receiver"
+    }
+  ]
+}

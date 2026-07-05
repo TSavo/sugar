@@ -4569,6 +4569,7 @@ fn render_report_plan_roll_call(report: &LiftSourceReport) -> String {
     let Some(plan_body) = report.plan_mementos.iter().find_map(plan_body_from_memento) else {
         return String::new();
     };
+    let sections = report_section_counts(report);
     let mut out = String::new();
     let source = plan_body
         .pointer("/planning/source")
@@ -4585,12 +4586,16 @@ fn render_report_plan_roll_call(report: &LiftSourceReport) -> String {
         }
     }
     out.push_str(&format!(
-        "report sections: unit test facts={}, body universes={}, factory report={}, implications={}, source mementos={}\n",
-        report_unit_test_fact_count(report),
-        report.contracts.len(),
-        report.factory_audits.len() + report.factory_walk.len(),
-        report.call_edges.len() + report.vendor_conjoins.len(),
-        report.source_mementos.len(),
+        "report sections: unit test facts={}, body universes={}, factory report={}, call edges total={}, call edges resolved={}, call edges dangling={}, implications={}, vendor conjoins={}, source mementos={}\n",
+        sections.unit_test_facts,
+        sections.body_universes,
+        sections.factory_report,
+        sections.call_edges_total,
+        sections.call_edges_resolved,
+        sections.call_edges_dangling,
+        sections.implications,
+        sections.vendor_conjoins,
+        sections.source_mementos,
     ));
     out
 }
@@ -4600,6 +4605,7 @@ fn assembly_plan_json_value(report: &LiftSourceReport) -> Option<Value> {
         .plan_mementos
         .iter()
         .find_map(plan_body_from_memento)?;
+    let sections = report_section_counts(report);
     Some(serde_json::json!({
         "source": plan_body
             .pointer("/planning/source")
@@ -4617,13 +4623,73 @@ fn assembly_plan_json_value(report: &LiftSourceReport) -> Option<Value> {
             .cloned()
             .unwrap_or_else(|| Value::Array(Vec::new())),
         "reportSections": {
-            "unitTestFacts": report_unit_test_fact_count(report),
-            "bodyUniverses": report.contracts.len(),
-            "factoryReport": report.factory_audits.len() + report.factory_walk.len(),
-            "implications": report.call_edges.len() + report.vendor_conjoins.len(),
-            "sourceMementos": report.source_mementos.len(),
+            "unitTestFacts": sections.unit_test_facts,
+            "bodyUniverses": sections.body_universes,
+            "factoryReport": sections.factory_report,
+            "callEdgesTotal": sections.call_edges_total,
+            "callEdgesResolved": sections.call_edges_resolved,
+            "callEdgesDangling": sections.call_edges_dangling,
+            "implications": sections.implications,
+            "vendorConjoins": sections.vendor_conjoins,
+            "sourceMementos": sections.source_mementos,
         },
     }))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReportSectionCounts {
+    unit_test_facts: usize,
+    body_universes: usize,
+    factory_report: usize,
+    call_edges_total: usize,
+    call_edges_resolved: usize,
+    call_edges_dangling: usize,
+    implications: usize,
+    vendor_conjoins: usize,
+    source_mementos: usize,
+}
+
+fn report_section_counts(report: &LiftSourceReport) -> ReportSectionCounts {
+    let call_edges_total = report
+        .call_edges
+        .iter()
+        .filter(|edge| report_call_edge_kind(edge) == Some("call-edge"))
+        .count();
+    let call_edges_resolved = report
+        .call_edges
+        .iter()
+        .filter(|edge| {
+            report_call_edge_kind(edge) == Some("call-edge")
+                && report_call_edge_target_cid(edge).is_some()
+        })
+        .count();
+    let implications = report
+        .call_edges
+        .iter()
+        .filter(|edge| report_call_edge_kind(edge) == Some("implication"))
+        .count();
+    ReportSectionCounts {
+        unit_test_facts: report_unit_test_fact_count(report),
+        body_universes: report.contracts.len(),
+        factory_report: report.factory_audits.len() + report.factory_walk.len(),
+        call_edges_total,
+        call_edges_resolved,
+        call_edges_dangling: call_edges_total.saturating_sub(call_edges_resolved),
+        implications,
+        vendor_conjoins: report.vendor_conjoins.len(),
+        source_mementos: report.source_mementos.len(),
+    }
+}
+
+fn report_call_edge_kind(edge: &Value) -> Option<&str> {
+    edge.get("kind").and_then(Value::as_str)
+}
+
+fn report_call_edge_target_cid(edge: &Value) -> Option<&str> {
+    edge.get("targetContractCid")
+        .or_else(|| edge.get("target_contract_cid"))
+        .and_then(Value::as_str)
+        .filter(|cid| !cid.is_empty())
 }
 
 fn plan_body_from_memento(value: &Value) -> Option<&Value> {
@@ -9207,12 +9273,17 @@ mod tests {
             "{human}"
         );
         assert!(human.contains("bin blake3-512:"), "{human}");
-        assert!(human.contains("report sections: unit test facts=1, body universes=1, factory report=2, implications=1, source mementos=1"), "{human}");
+        assert!(human.contains("report sections: unit test facts=1, body universes=1, factory report=2, call edges total=0, call edges resolved=0, call edges dangling=0, implications=0, vendor conjoins=0, source mementos=1"), "{human}");
 
         let rendered_json = render_report_json(&report, None).expect("json report");
         let parsed: serde_json::Value = serde_json::from_str(&rendered_json).expect("valid json");
         assert_eq!(parsed["assemblyPlan"]["source"], "component-discovery");
         assert_eq!(parsed["assemblyPlan"]["reportSections"]["bodyUniverses"], 1);
+        assert_eq!(
+            parsed["assemblyPlan"]["reportSections"]["callEdgesTotal"],
+            0
+        );
+        assert_eq!(parsed["assemblyPlan"]["reportSections"]["implications"], 0);
         assert_eq!(
             parsed["assemblyPlan"]["planAtoms"][1]["workspaceOverride"],
             "vendor/base64-0.22.1"

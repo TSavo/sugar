@@ -16,7 +16,11 @@ if str(PY_TESTS_SRC) not in sys.path:
 if str(PKG_SRC) not in sys.path:
     sys.path.insert(0, str(PKG_SRC))
 
-from sugar_lift_python_source.bind_lifter import _operand_slot, lift_source
+from sugar_lift_python_source.bind_lifter import (
+    _operand_slot,
+    _public_reexport_map,
+    lift_source,
+)
 from sugar_lift_python_source.bind_effects import (
     BoundaryBodyShapeEffect,
     MissingBindingEffect,
@@ -1583,3 +1587,24 @@ def test_universal_lift_untagged_function_is_sugar_at_library_bindings_layer() -
     # only the bind-lift-entry — so the contract-path unit tests are unaffected.
     al = lift_source(source, "pkg/calc.py", layer="all")
     assert not [e for e in al.ir if e.get("kind") == "library-sugar-binding-entry"]
+
+
+def test_public_reexport_map_follows_declared_internal_star_hops(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "project"
+    package.mkdir()
+    (package / "__init__.py").write_text("from ._core import finfo\n", encoding="utf-8")
+    core = package / "_core"
+    core.mkdir()
+    (core / "__init__.py").write_text("from .getlimits import *\n", encoding="utf-8")
+    (core / "getlimits.py").write_text(
+        "__all__ = ['finfo']\n" "class finfo:\n" "    pass\n",
+        encoding="utf-8",
+    )
+
+    reexports = _public_reexport_map(package)
+
+    assert reexports is not None
+    assert reexports["_core.finfo"] == ("project", "project.finfo")
+    assert reexports["_core.getlimits.finfo"] == ("project", "project.finfo")

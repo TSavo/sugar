@@ -3,7 +3,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-BIN="$REPO/implementations/rust/target/debug/sugar"
+BIN="$("$REPO/bin/sugarbin" --profile release)"
 VENV="${BUILD_WITNESS_VENV:-/tmp/build-witness-venv}"
 
 if [ ! -x "$VENV/bin/python" ]; then
@@ -14,10 +14,7 @@ if [ ! -x "$VENV/bin/python" ]; then
     pytest pynacl blake3 cbor2
 fi
 
-if [ ! -x "$BIN" ]; then
-  echo "== build local sugar debug CLI =="
-  cargo build --manifest-path "$REPO/implementations/rust/Cargo.toml" -p sugar-cli --bin sugar >/dev/null
-fi
+[ -x "$BIN" ] || { echo "FAIL: sugarbin returned a missing binary: $BIN"; exit 1; }
 
 WORK="$HERE/.work"
 rm -rf "$WORK"

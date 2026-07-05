@@ -3,7 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import os
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -216,24 +216,13 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="import aliases record name-binding support, not a FOL claim",
         retirement_condition=(
             "retire when module import alias support is emitted as a "
-            "factory-walk owner row and a consuming alias-backed assertion "
-            "can witness that owner; current default proof path reads imports "
-            "only through literal_call_report._import_bindings resolver "
-            "metadata, so probes select no AliasSugar owner"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="BitwiseOpSugar",
-        floor_name="SupportValue",
-        reason=(
-            "bitwise terms are symbolic bitvector support until the production "
-            "solver path yields a SAT/UNSAT verdict"
-        ),
-        retirement_condition=(
-            "retire when bitwise Bv32 terms are decidable and typed-provenance "
-            "bearing in the production solver path; current variable and "
-            "constant probes select BitwiseOpSugar but prove reports "
-            "undecidable with an untyped FactoryWalkMemento formula"
+            "factory-walk owner row and a consuming alias-backed assertion can "
+            "witness that owner; current default proof path calls "
+            "factory/build.py:87 _build_source_report before SourceFragmentStack "
+            "dispatch, then factory/literal_call_report.py:304 reads imports as "
+            "_import_bindings resolver metadata, while sugar/alias_sugar.py:18 "
+            "can own only an observed alias fragment, so alias-backed proof probes "
+            "select CallSugar/PrimitiveLiteralSugar and no AliasSugar owner"
         ),
     ),
     NonFolOptOut(
@@ -245,16 +234,23 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         sugar_name="DictSugar",
         floor_name="DictLiteralValue",
         reason=(
-            "dict literals are structural term support; the current solver "
-            "path has no standalone dict-constructor verdict witness"
+            "dict literals are structural term support; the production "
+            "solver path lacks dictionary key/value-pair equality"
         ),
         retirement_condition=(
-            "until dict-constructor equality carries a verdict witness "
-            "through the solver path (assert {1:2} == {1:3} is a "
-            "verdict-bearing claim; current probes select DictSugar and "
-            "refuse at DictLiteralValue.project_callsite_with, while the "
-            "structural-identity tests already prove the twin is "
-            "constructible the moment that bridge exists)"
+            "retire when dict-constructor equality is represented as "
+            "key/value-pair structural testimony, matching Python's mapping "
+            "rule that dictionaries compare equal iff they have the same "
+            "(key, value) pairs regardless of order "
+            "(docs.python.org/3/library/stdtypes.html#mapping-types-dict). "
+            "Current path: literal_call_report.py:2197/2219 demands the "
+            "callee floor and operations/callsite_projection_operation.py:61 falls "
+            "through to a Projection gap for DictLiteralValue. A probe that "
+            "adds only DictLiteralValue.project_callsite_with emits a Derived "
+            "python:dict sibling, but the production solver still discharges "
+            "the lie `A()->{1:2}; assert A()=={1:3}`; the missing owner is "
+            "structural dict equality / entry decomposition, not a safe "
+            "projection arm alone."
         ),
     ),
     NonFolOptOut(
@@ -280,22 +276,13 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         retirement_condition=(
             "retire when shadowed fallback sugars have a typed delegated-owner "
             "witness seat, or the default catalog can select ListLiteralSugar "
-            "without stealing ArrayLiteralSugar's verdict-bearing claim; current "
-            "production probes select ArrayLiteralSugar because it comes_before "
-            "ListLiteralSugar in the default catalog"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="OrdByteSugar",
-        floor_name="SupportValue",
-        reason=(
-            "ord-byte terms are symbolic encoder support until the enclosing "
-            "str.eq-bv-blocks universe carries the verdict"
-        ),
-        retirement_condition=(
-            "retire when the enclosing str.eq-bv-blocks universe carries an "
-            "OrdByte truthful/lying solver witness; current direct ord-byte "
-            "probes fail ProofIR construction with illegal free var byte_s_0"
+            "without stealing ArrayLiteralSugar's verdict-bearing claim; "
+            "claim/sugar_catalog.py:15 admits both List owners, factory/build.py:174 "
+            "selects the candidate that dominates by comes_before, and "
+            "sugar/array_literal_sugar.py:29 declares "
+            "comes_before=('ListLiteralSugar',) over the same observed List shape "
+            "that sugar/list_literal_sugar.py:28 owns, so production probes "
+            "select ArrayLiteralSugar instead of ListLiteralSugar"
         ),
     ),
     NonFolOptOut(
@@ -317,29 +304,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason=(
             "set literals are structural term support; set-constructor equality "
             "is not currently a standalone solver verdict"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="SubscriptAssignSugar",
-        floor_name="SupportValue",
-        reason="subscript assignment mutation produces no FOL assertion",
-        retirement_condition=(
-            "retire when subscript assignment mutation itself carries a "
-            "verdict-bearing state effect witness; current dunder seed selects "
-            "SubscriptAssignSugar and flips SAT/UNSAT through the unrelated "
-            "return value, while array mutation probes refuse at setitem_with"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="SubscriptDeleteSugar",
-        floor_name="SupportValue",
-        reason="subscript delete mutation produces no FOL assertion",
-        retirement_condition=(
-            "retire when subscript deletion mutation itself carries a "
-            "verdict-bearing state effect witness; current dunder seed selects "
-            "SubscriptDeleteSugar and flips SAT/UNSAT through the unrelated "
-            "return value, while deletion-state probes still reduce to an "
-            "incomplete callsite"
         ),
     ),
 )
@@ -615,7 +579,7 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.sugar_body import SugarBody
-    from sugar_lift_py_tests.temporal import TemporalContext
+    from sugar_lift_py_tests.temporal import bind_temporal
 
     module = SourceFragment.from_source(witness.source, "test_witness.py")
     function = next(
@@ -630,10 +594,14 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
         catalog=default_catalog(),
         audit_sink=audit_sink,
     )
-    temporal = TemporalContext.empty()
     for arg in function.function_params():
-        temporal = temporal.bind_value(arg, SymbolicValue(make_var(arg)))
-    ctx = replace(ctx, temporal=temporal)
+        ctx = bind_temporal(
+            ctx,
+            arg,
+            SymbolicValue(make_var(arg)),
+            owner="SugarWitnessInstruments",
+            blame=function.blame,
+        )
     try:
         result = build_node(
             function.function_body_block(),

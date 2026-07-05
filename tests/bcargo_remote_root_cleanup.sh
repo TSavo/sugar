@@ -33,6 +33,15 @@ if [[ "${BCARGO_FAKE_CARGO_FAIL:-0}" == "1" ]]; then
     esac
   done
 fi
+if [[ "${BCARGO_FAKE_SUGARBIN_PULL_FAIL:-0}" == "1" ]]; then
+  for arg in "$@"; do
+    case "$arg" in
+      *"resolved="*"SUGAR_BINARY_ALLOW_BUILD="*"bin/sugarbin"*)
+        exit 42
+        ;;
+    esac
+  done
+fi
 exit 0
 SH
 
@@ -62,8 +71,15 @@ SH
 
 cat >"$fake_bin/git" <<'SH'
 #!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then
+  shift 2
+fi
 if [[ "$1" == "rev-parse" && "$2" == "--show-toplevel" ]]; then
   printf '%s\n' "$BCARGO_FAKE_REPO_ROOT"
+  exit 0
+fi
+if [[ "$1" == "rev-parse" && "$2" == "HEAD" ]]; then
+  printf 'bcargo-fake-head\n'
   exit 0
 fi
 echo "unexpected fake git invocation: $*" >&2
@@ -95,6 +111,11 @@ BCARGO_REMOTE_ROOT="$default_root" run_fake_bcargo check --manifest-path impleme
 if grep -Fq "rm -rf '$default_root'" "$ssh_log"; then
   echo "bcargo cleaned the remote root without BCARGO_CLEAN_REMOTE_ROOT" >&2
   cat "$ssh_log" >&2
+  exit 1
+fi
+if ! grep -Fq "bin/sugarbin" "$rsync_log"; then
+  echo "bcargo did not sync the delegated sugarbin policy script to the remote checkout" >&2
+  cat "$rsync_log" >&2
   exit 1
 fi
 
@@ -176,6 +197,7 @@ elf_target="$tmp/local-target"
 : >"$ssh_log"
 : >"$rsync_log"
 if ! BCARGO_REMOTE_ROOT="$elf_root" \
+  SUGAR_BINARY_SOURCE_STAMP=bcargo-elf-refusal \
   BCARGO_FAKE_RSYNC_WRITE_ELF=1 \
   BCARGO_FAKE_FILE_OUTPUT="ELF 64-bit LSB executable, x86-64" \
   BCARGO_FAKE_UNAME=Darwin \
@@ -192,5 +214,72 @@ fi
 if ! grep -Fq "crime=foreign-platform-binary" "$tmp/elf.err"; then
   echo "bcargo skipped/deposited an ELF without the expected cold-agent executable diagnostic" >&2
   cat "$tmp/elf.err" >&2
+  exit 1
+fi
+
+sugarbin_hit_root="/home/tsavo/remote/sugar-bcargo-clean-contract-sugarbin-hit"
+sugarbin_target="$tmp/sugarbin-hit-target"
+: >"$ssh_log"
+: >"$rsync_log"
+SUGAR_BINARY_SOURCE_STAMP=bcargo-sugarbin-hit \
+SUGAR_BINARY_REPO=TSavo/sugar \
+BCARGO_REMOTE_ROOT="$sugarbin_hit_root" \
+  run_fake_bcargo --sync-bin sugar build --manifest-path implementations/rust/Cargo.toml \
+    -p sugar-cli --bin sugar --target-dir "$sugarbin_target"
+if ! grep -Fq "bin/sugarbin" "$ssh_log"; then
+  echo "bcargo did not ask sugarbin for the linux shelf cell before a sugar-only build" >&2
+  cat "$ssh_log" >&2
+  exit 1
+fi
+if ! grep -Fq "SUGAR_BINARY_SOURCE_STAMP=" "$ssh_log" \
+  || ! grep -Fq "bcargo-sugarbin-hit" "$ssh_log"; then
+  echo "bcargo did not pass the current source stamp to remote sugarbin" >&2
+  cat "$ssh_log" >&2
+  exit 1
+fi
+if ! grep -Fq -- "--platform" "$ssh_log" \
+  || ! grep -Fq "linux-x86_64" "$ssh_log"; then
+  echo "bcargo did not request the linux shelf cell for the remote build" >&2
+  cat "$ssh_log" >&2
+  exit 1
+fi
+if ! grep -Fq "SUGAR_BINARY_REPO=" "$ssh_log" \
+  || ! grep -Fq "TSavo/sugar" "$ssh_log"; then
+  echo "bcargo did not pass the repository identity to remote sugarbin" >&2
+  cat "$ssh_log" >&2
+  exit 1
+fi
+if grep -Fq "exec cargo" "$ssh_log"; then
+  echo "bcargo rebuilt sugar even though remote sugarbin resolved the linux shelf cell" >&2
+  cat "$ssh_log" >&2
+  exit 1
+fi
+
+sugarbin_miss_root="/home/tsavo/remote/sugar-bcargo-clean-contract-sugarbin-miss"
+sugarbin_miss_target="$tmp/sugarbin-miss-target"
+: >"$ssh_log"
+: >"$rsync_log"
+SUGAR_BINARY_SOURCE_STAMP=bcargo-sugarbin-miss \
+SUGAR_BINARY_REPO=TSavo/sugar \
+BCARGO_REMOTE_ROOT="$sugarbin_miss_root" \
+BCARGO_FAKE_SUGARBIN_PULL_FAIL=1 \
+  run_fake_bcargo --sync-bin sugar build --manifest-path implementations/rust/Cargo.toml \
+    -p sugar-cli --bin sugar --target-dir "$sugarbin_miss_target"
+if ! grep -Fq "exec cargo" "$ssh_log"; then
+  echo "bcargo did not fall back to remote cargo after a sugarbin shelf miss" >&2
+  cat "$ssh_log" >&2
+  exit 1
+fi
+if ! grep -Fq "SUGAR_BUILD_STAMP=" "$ssh_log" \
+  || ! grep -Fq "bcargo-sugarbin-miss" "$ssh_log" \
+  || ! grep -Fq "SUGAR_BUILD_GIT_HEAD=" "$ssh_log" \
+  || ! grep -Fq "bcargo-fake-head" "$ssh_log"; then
+  echo "bcargo did not stamp the remote sugar build with the shelf source stamp" >&2
+  cat "$ssh_log" >&2
+  exit 1
+fi
+if [[ "$(grep -Fc "bin/sugarbin" "$ssh_log")" -lt 2 ]]; then
+  echo "bcargo did not delegate both pre-build pull and post-build publish to sugarbin" >&2
+  cat "$ssh_log" >&2
   exit 1
 fi

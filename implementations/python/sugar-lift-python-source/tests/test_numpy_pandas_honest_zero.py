@@ -13,7 +13,8 @@ import pytest
 from sugar_lift_python_source.lifter import lift_source
 
 PACKAGES = ("numpy", "pandas")
-FIXTURE = Path(__file__).parent / "fixtures/numpy_pandas_honest_zero_counts.json"
+FIXTURE_DIR = Path(__file__).parent / "fixtures"
+FIXTURE_PREFIX = "numpy_pandas_honest_zero_counts"
 
 CLOSED_REFUSAL_KINDS = {
     "syntax-error",
@@ -42,10 +43,28 @@ class CorpusScan:
 
 
 def test_numpy_pandas_honest_zero_corpus_matches_fixture() -> None:
-    fixture = _load_fixture()
-    scan = _scan_numpy_pandas()
+    package_versions = _installed_package_versions()
+    fixture = _load_fixture_for_package_versions(package_versions)
+    scan = _scan_numpy_pandas(package_versions=package_versions)
 
     _assert_scan_matches_fixture(scan, fixture)
+
+
+def test_fixture_selection_is_keyed_by_package_versions() -> None:
+    fixture = _load_fixture_for_package_versions({"numpy": "2.5.1", "pandas": "3.0.3"})
+
+    assert fixture["package_versions"] == {"numpy": "2.5.1", "pandas": "3.0.3"}
+    assert fixture["counts_by_kind"]["decorator-refused"] == 9193
+
+
+def test_unknown_package_version_skips_with_named_fixture_key() -> None:
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        _load_fixture_for_package_versions({"numpy": "9.9.9", "pandas": "3.0.3"})
+
+    assert "numpy=9.9.9,pandas=3.0.3" in str(exc_info.value)
+    assert "numpy_pandas_honest_zero_counts__numpy-9.9.9__pandas-3.0.3.json" in str(
+        exc_info.value
+    )
 
 
 def test_gate_logic_rejects_unhandled_syntax_at_stable_zero() -> None:
@@ -107,9 +126,12 @@ def test_gate_logic_rejects_stale_pinned_count() -> None:
         _assert_scan_matches_fixture(scan, fixture)
 
 
-def _scan_numpy_pandas() -> CorpusScan:
+def _scan_numpy_pandas(
+    package_versions: dict[str, str] | None = None,
+) -> CorpusScan:
     roots = {package: _package_root(package) for package in PACKAGES}
-    package_versions = {package: _package_version(package) for package in PACKAGES}
+    if package_versions is None:
+        package_versions = _installed_package_versions()
     counts_by_kind: Counter[str] = Counter()
     unhandled_syntax: list[str] = []
     opacity_misses: list[str] = []
@@ -178,8 +200,32 @@ def _assert_scan_matches_fixture(scan: CorpusScan, fixture: dict[str, Any]) -> N
         )
 
 
-def _load_fixture() -> dict[str, Any]:
-    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+def _load_fixture_for_package_versions(
+    package_versions: dict[str, str],
+) -> dict[str, Any]:
+    fixture_path = _fixture_path_for_package_versions(package_versions)
+    if not fixture_path.exists():
+        pytest.skip(
+            "no numpy/pandas honest-zero fixture for package_versions "
+            f"{_fixture_key(package_versions)}; expected fixture "
+            f"{fixture_path.name}; vendor version is an explicit corpus input, "
+            "so add a version-keyed fixture instead of comparing against another "
+            "vendor version"
+        )
+    return json.loads(fixture_path.read_text(encoding="utf-8"))
+
+
+def _fixture_path_for_package_versions(package_versions: dict[str, str]) -> Path:
+    suffix = "__".join(f"{package}-{package_versions[package]}" for package in PACKAGES)
+    return FIXTURE_DIR / f"{FIXTURE_PREFIX}__{suffix}.json"
+
+
+def _fixture_key(package_versions: dict[str, str]) -> str:
+    return ",".join(f"{package}={package_versions[package]}" for package in PACKAGES)
+
+
+def _installed_package_versions() -> dict[str, str]:
+    return {package: _package_version(package) for package in PACKAGES}
 
 
 def _package_root(package: str) -> Path:

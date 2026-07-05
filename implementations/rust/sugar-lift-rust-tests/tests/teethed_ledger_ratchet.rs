@@ -102,9 +102,22 @@ fn coverage_rvector(
     rust: &std::path::Path,
     corpus: &std::path::Path,
 ) -> Option<(u64, u64, u64, u64)> {
-    let sugar = rust.join("target/release/sugar");
     let rpc = rust.join("target/release/rust_test_assertions_rpc");
-    if !sugar.exists() || !rpc.exists() {
+    if !rpc.exists() {
+        return None;
+    }
+    let repo = rust.parent()?.parent()?;
+    let sugarbin = repo.join("bin/sugarbin");
+    let sugar_out = std::process::Command::new(sugarbin)
+        .arg("--profile")
+        .arg("release")
+        .output()
+        .ok()?;
+    if !sugar_out.status.success() {
+        return None;
+    }
+    let sugar = PathBuf::from(String::from_utf8(sugar_out.stdout).ok()?.trim());
+    if !sugar.exists() {
         return None;
     }
     // Render the manifest with this checkout's binary dir (run.sh parity).

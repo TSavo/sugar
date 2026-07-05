@@ -1,0 +1,8 @@
+{
+  "kind": "numpy-wall-ratchet-floors",
+  "floors": {
+    "green": 1309,
+    "implications": 11,
+    "pre_bearing": 25
+  }
+}

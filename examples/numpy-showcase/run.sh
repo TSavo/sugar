@@ -28,7 +28,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-BIN="$REPO/implementations/rust/target/debug/sugar"
+BIN="$("$REPO/bin/sugarbin" --profile release)"
 PP="$REPO/implementations/python/sugar-lift-python-source/src:$REPO/implementations/python/sugar-lift-py-tests/src"
 
 # The pytest-witness lifter RUNS numpy's test, and the numpy.testing lifter

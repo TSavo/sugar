@@ -28,6 +28,14 @@ _BITWISE_TERMS: dict[str, Callable[[Term, Term], Term]] = {
     ">>": bvlshr,
 }
 
+_BITWISE_FOLDS: dict[str, Callable[[int, int], int]] = {
+    "&": lambda left, right: left & right,
+    "|": lambda left, right: left | right,
+    "^": lambda left, right: left ^ right,
+    "<<": lambda left, right: left << right,
+    ">>": lambda left, right: left >> right,
+}
+
 
 @dataclass(frozen=True)
 class BitwiseOperation:
@@ -40,6 +48,9 @@ class BitwiseOperation:
     def bitwise_term(self, receiver: TermValue, ctx: object) -> Outcome:
         if isinstance(self.operand, ObjectValue):
             return self._reflect_bitwise(receiver, ctx)
+        folded = self._fold_concrete_ints(receiver)
+        if folded is not None:
+            return Complete(TermValue(folded))
         return self._complete(_bv32_term(receiver))
 
     def bitwise_bv32(self, receiver: Bv32Value, ctx: object) -> Outcome:
@@ -109,6 +120,19 @@ class BitwiseOperation:
                 ),
             ) from None
 
+    def _fold_concrete_ints(self, receiver: TermValue) -> int | None:
+        left = _concrete_int(receiver)
+        right = _concrete_int(self.operand)
+        if left is None or right is None:
+            return None
+        folder = _BITWISE_FOLDS.get(self.operator)
+        if folder is None:
+            return None
+        try:
+            return folder(left, right)
+        except ValueError:
+            return None
+
 
 def _bv32_term(value: FloorValue) -> Term:
     if isinstance(value, Bv32Value):
@@ -118,3 +142,14 @@ def _bv32_term(value: FloorValue) -> Term:
     if isinstance(value, TermValue):
         return num(int(value.value))
     raise TypeError(type(value).__name__)
+
+
+def _concrete_int(value: FloorValue) -> int | None:
+    if not isinstance(value, TermValue):
+        return None
+    # bool is an int subclass in Python, but the bitwise witness here is the
+    # vendor's integer operator. Bool-valued bitwise semantics stay on their
+    # existing non-folding path until a bool-specific witness owns them.
+    if isinstance(value.value, bool) or not isinstance(value.value, int):
+        return None
+    return value.value

@@ -78,6 +78,22 @@ def _write_native_callable_twin(project: Path, expected: str) -> None:
     )
 
 
+def _write_map_receiver_effect_repro(project: Path) -> None:
+    project.mkdir()
+    (project / "test_conversion_minimal.py").write_text(
+        (
+            "def test_iterable_map(index_or_series, dtype, rdtype):\n"
+            "    typ = index_or_series\n"
+            "    s = typ([1], dtype=dtype)\n"
+            "    result = s.map(type)[0]\n"
+            "    if not isinstance(rdtype, tuple):\n"
+            "        rdtype = (rdtype,)\n"
+            "    assert result in rdtype\n"
+        ),
+        encoding="utf-8",
+    )
+
+
 def _equality_value_pairs(contract: dict) -> tuple[tuple[int, int], ...]:
     inv = contract["inv"]
     assert inv["kind"] == "and"
@@ -189,6 +205,26 @@ def test_native_list_map_function_ref_emits_callable_universe(tmp_path: Path) ->
     ]
     assert good_doc["sourceLedger"]["source_loci"] == 2
     assert good_doc["sourceLedger"]["source_warranted"] == 2
+
+
+def test_map_receiver_incomplete_local_call_emits_typed_effect(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "map-receiver-effect"
+    _write_map_receiver_effect_repro(project)
+
+    doc = _run_lift_rpc(project)
+
+    assert doc["ir"] == []
+    walk = doc["factoryAuditSummary"]["factoryWalk"]
+    assert len(walk) == 1
+    row = walk[0]
+    assert row["selected"] == "MembershipAssertionSugar"
+    assert row["status"] == "factory-gap"
+    assert row["output"] == {"effect": "FactoryGapEffect"}
+    assert "owner=python.factory" in row["reason"]
+    assert "observed=call-local:typ" in row["reason"]
+    assert "requested=term" in row["reason"]
 
 
 def test_map_operation_missing_floor_names_floor_gap() -> None:

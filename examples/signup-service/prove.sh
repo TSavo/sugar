@@ -14,8 +14,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 # Use debug binary if release hasn't been built; caller can override via SUGAR=.
-SUGAR="${SUGAR:-$REPO/implementations/rust/target/debug/sugar}"
-[ -x "$SUGAR" ] || SUGAR="$REPO/implementations/rust/target/release/sugar"
+SUGAR="${SUGAR:-$("$REPO/bin/sugarbin" --profile release)}"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
 # JUnit5 vendor source for assertion vocab derivation — identical to what the
 # java-assertion-consistency showcase uses. Copied into each work dir so the
