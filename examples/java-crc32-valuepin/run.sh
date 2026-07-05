@@ -36,7 +36,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
 BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
+SUGAR="$("$REPO/bin/sugarbin" --profile release)"
 KIT_JAVA="$(which java)"
 
 echo "SCOPE: java-crc32-valuepin — THE VALUE-PIN RUNG over OpenJDK CRC32C (jdk-21+35), GPLv2+CE."
@@ -66,10 +66,7 @@ print("   independent CRC-32C(\"123456789\") cross-check = 0x%08X (matches the v
 PY
 
 echo
-echo "== build the sugar CLI =="
-if [ "${JAVA_CRC32_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  cargo build --manifest-path "$RUST/Cargo.toml" -p sugar-cli --bin sugar >/dev/null
-fi
+echo "== resolve the sugar CLI =="
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not at $SUGAR"; exit 1; }
 
 echo

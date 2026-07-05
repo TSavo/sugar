@@ -264,6 +264,19 @@ def _python_source_lifter_api():
     return source_lift_source
 
 
+def _python_source_public_reexport_map(root: Path) -> dict[str, tuple[str, str]]:
+    try:
+        from sugar_lift_python_source.bind_lifter import _public_reexport_map
+    except ModuleNotFoundError:
+        sibling_src = (
+            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
+        )
+        if str(sibling_src) not in sys.path:
+            sys.path.insert(0, str(sibling_src))
+        from sugar_lift_python_source.bind_lifter import _public_reexport_map
+    return _public_reexport_map(root) or {}
+
+
 def _is_python_test_file(path: Path) -> bool:
     name = path.name
     return (name.startswith("test_") and name.endswith(".py")) or name.endswith(
@@ -285,6 +298,7 @@ def _source_precondition_only_contracts(
 ) -> List[Dict[str, Any]]:
     source_lift_source = _python_source_lifter_api()
     root = Path(workspace_root or ".").resolve()
+    public_reexports = _python_source_public_reexport_map(root)
     existing_names = {
         str(item.get("fnName") or item.get("name"))
         for item in existing_contracts
@@ -333,10 +347,28 @@ def _source_precondition_only_contracts(
                 ),
                 "locus": item.get("locus"),
             }
-            contract["bridgeSourceSymbol"] = fn_name
+            contract["bridgeSourceSymbol"] = _source_contract_bridge_symbol(
+                fn_name, public_reexports
+            )
             out.append(contract)
             existing_names.add(fn_name)
     return out
+
+
+def _source_contract_bridge_symbol(
+    fn_name: str, public_reexports: dict[str, tuple[str, str]]
+) -> str:
+    public = public_reexports.get(fn_name)
+    if public is not None:
+        return public[1]
+    for constructor_suffix in (".__new__", ".__init__"):
+        if not fn_name.endswith(constructor_suffix):
+            continue
+        class_symbol = fn_name[: -len(constructor_suffix)]
+        public_class = public_reexports.get(class_symbol)
+        if public_class is not None:
+            return public_class[1]
+    return fn_name
 
 
 def _source_lifter_function_contracts(

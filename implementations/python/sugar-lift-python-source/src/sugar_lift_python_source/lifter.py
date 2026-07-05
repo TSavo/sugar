@@ -2609,6 +2609,8 @@ def _known_external_default_constant(
         return int_const(pickle.HIGHEST_PROTOCOL)
     if name == "locale.LC_ALL":
         return int_const(locale.LC_ALL)
+    if name == "_format_impl._MAX_HEADER_SIZE":
+        return int_const(10000)
     return None
 
 
@@ -2691,6 +2693,9 @@ def _is_transparent_decorator(decorator: ast.expr) -> bool:
         "deprecated",
         "typing.deprecated",
         "warnings.deprecated",
+        "set_module",
+        "numpy._utils.set_module",
+        "numpy._core.overrides.set_module",
     }
 
 
@@ -2983,6 +2988,18 @@ def _lift_guard_term(node: ast.expr) -> Json | None:
         if receiver is None:
             return None
         return ctor("python:attribute", receiver, str_const(node.attr))
+    if isinstance(node, ast.Call):
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "len"
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            operand = _lift_guard_term(node.args[0])
+            if operand is None:
+                return None
+            return ctor("python:len", operand)
+        return None
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
         operand = node.operand
         if isinstance(operand, ast.Constant) and type(operand.value) is int:

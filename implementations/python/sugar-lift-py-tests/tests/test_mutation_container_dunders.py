@@ -208,6 +208,25 @@ def t():
     ]
 
 
+def test_subscript_assignment_rebinds_literal_array_post_state() -> None:
+    source = """\
+def t():
+    xs = [1, 2, 3]
+    xs[1] = 9
+    return xs[1]
+"""
+
+    value, operation_log = _reduce_function_body(source, "t")
+
+    assert value == BlockValue((ReturnValue(TermValue(9)),))
+    assert operation_log == [
+        ("BlockSugar", "bind_with", "BindValueOperation"),
+        ("SubscriptAssignSugar", "setitem_with", "SetItemOperation"),
+        ("BlockSugar", "bind_with", "BindValueOperation"),
+        ("StringSubscriptSugar", "subscript_with", "SubscriptOperation"),
+    ]
+
+
 def test_subscript_delete_statement_dispatches_delitem_and_absorbs_return() -> None:
     source = """\
 class Box:
@@ -227,6 +246,25 @@ def t():
         ("BlockSugar", "bind_with", "BindValueOperation"),
         ("CallSiteValue.force_floor", "curry_with", "CurryArgumentsOperation"),
         ("SubscriptDeleteSugar", "delitem_with", "DelItemOperation"),
+    ]
+
+
+def test_subscript_delete_rebinds_literal_array_post_state() -> None:
+    source = """\
+def t():
+    xs = [1, 2, 3]
+    del xs[1]
+    return xs[1]
+"""
+
+    value, operation_log = _reduce_function_body(source, "t")
+
+    assert value == BlockValue((ReturnValue(TermValue(3)),))
+    assert operation_log == [
+        ("BlockSugar", "bind_with", "BindValueOperation"),
+        ("SubscriptDeleteSugar", "delitem_with", "DelItemOperation"),
+        ("BlockSugar", "bind_with", "BindValueOperation"),
+        ("StringSubscriptSugar", "subscript_with", "SubscriptOperation"),
     ]
 
 

@@ -89,7 +89,7 @@ self_test() {
 }
 
 project_root=""
-sugar_bin="${SUGAR_BIN:-sugar}"
+sugar_bin="${SUGAR_BIN:-}"
 reference_kib="${SUGAR_VERIFY_RSS_REFERENCE_KIB:-}"
 json_out=""
 label="sugar-verify"
@@ -143,6 +143,10 @@ done
 
 [ -n "$project_root" ] || die "--project-root is required"
 [ -d "$project_root" ] || die "project root not found: $project_root"
+if [ -z "$sugar_bin" ]; then
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  sugar_bin="$("$repo_root/bin/sugarbin" --profile release)"
+fi
 if [ -n "$reference_kib" ] && ! [[ "$reference_kib" =~ ^[0-9]+$ ]]; then
   die "--reference-kib must be an integer KiB value"
 fi

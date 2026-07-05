@@ -956,6 +956,122 @@ done
 }
 
 #[test]
+fn lift_visual_report_header_names_call_edges_and_implications_by_kind() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let manifest_dir = project.join(".sugar/lift/python");
+    fs::create_dir_all(&manifest_dir).expect("create manifest dir");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "python"
+kind = "lift"
+surface = "python"
+emit = "ir-document"
+"#,
+    )
+    .expect("write project config");
+
+    let plugin = dir.path().join("python.sh");
+    write_executable(
+        &plugin,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+while IFS= read -r line; do
+  if [[ "$line" == *'"method":"initialize"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"python","protocol_version":"pep/1.7.0","capabilities":{}}}'
+  elif [[ "$line" == *'"method":"lift"'* ]]; then
+    if [[ "$line" == *'"contract_bindings"'* ]]; then
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[],"sourceLedger":{"source_loci":0,"source_warranted":0,"source_inactive":0,"source_support":0,"source_refused":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"implications":[{"name":"caller-post-implies-callee-pre","antecedent":"caller","antecedentSlot":"post","consequent":"callee","consequentSlot":"pre","prover":"single-plugin-implications"}]}}'
+    else
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","planMementos":[{"kind":"component-plan","planning":{"source":"test-plan"},"planAtoms":[]}],"ir":[{"kind":"contract","name":"caller","outBinding":"out","post":{"kind":"atomic","name":"caller_post","args":[]}},{"kind":"contract","name":"callee","outBinding":"out","pre":{"kind":"atomic","name":"callee_pre","args":[]},"post":{"kind":"atomic","name":"callee_post","args":[]}}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_refused":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"callEdges":[{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:callee","targetContract":"callee","targetContractCid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","callSiteLocus":{"file":"app.py","line":2,"column":11}},{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:missing","targetContract":null,"targetContractCid":null,"callSiteLocus":{"file":"app.py","line":3,"column":11}}]}}'
+    fi
+  elif [[ "$line" == *'"method":"shutdown"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
+    exit 0
+  fi
+done
+"#,
+    );
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!("name = \"python\"\ncommand = [\"{}\"]\n", plugin.display()),
+    )
+    .expect("write manifest");
+
+    let json_output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--json")
+            .arg(&project),
+    );
+    let json_stdout = String::from_utf8_lossy(&json_output.stdout);
+    let json_stderr = String::from_utf8_lossy(&json_output.stderr);
+    assert!(
+        json_output.status.success(),
+        "lift report JSON should succeed\nstdout:\n{json_stdout}\nstderr:\n{json_stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&json_stdout).expect("report JSON parses");
+    let call_edges = report["callEdges"].as_array().expect("callEdges array");
+    let regular_call_edges = call_edges
+        .iter()
+        .filter(|edge| edge["kind"].as_str() == Some("call-edge"))
+        .count();
+    let resolved_call_edges = call_edges
+        .iter()
+        .filter(|edge| {
+            edge["kind"].as_str() == Some("call-edge")
+                && edge["targetContractCid"].as_str().is_some()
+        })
+        .count();
+    let dangling_call_edges = regular_call_edges - resolved_call_edges;
+    let implications = call_edges
+        .iter()
+        .filter(|edge| edge["kind"].as_str() == Some("implication"))
+        .count();
+
+    let visual_output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--visual")
+            .arg(&project),
+    );
+    let visual = String::from_utf8_lossy(&visual_output.stdout);
+    let visual_stderr = String::from_utf8_lossy(&visual_output.stderr);
+    assert!(
+        visual_output.status.success(),
+        "lift visual report should succeed\nstdout:\n{visual}\nstderr:\n{visual_stderr}"
+    );
+    let header = visual
+        .lines()
+        .find(|line| line.starts_with("report sections:"))
+        .unwrap_or_else(|| panic!("visual report must include report sections header: {visual}"));
+
+    assert!(
+        header.contains(&format!("call edges total={regular_call_edges}")),
+        "header must name regular call-edge rows separately from implication rows; header={header}; report callEdges={call_edges:#?}"
+    );
+    assert!(
+        header.contains(&format!("call edges resolved={resolved_call_edges}")),
+        "header must name resolved regular call-edge rows; header={header}; report callEdges={call_edges:#?}"
+    );
+    assert!(
+        header.contains(&format!("call edges dangling={dangling_call_edges}")),
+        "header must name dangling regular call-edge rows; header={header}; report callEdges={call_edges:#?}"
+    );
+    assert!(
+        header.contains(&format!("implications={implications}")),
+        "header implications must equal callEdges rows with kind=implication, not the total call-edge display bucket; header={header}; report callEdges={call_edges:#?}"
+    );
+    assert!(
+        !header.contains(&format!("implications={}", call_edges.len())),
+        "header must not label total callEdges as implications; header={header}; report callEdges={call_edges:#?}"
+    );
+}
+
+#[test]
 fn lift_report_python_assertions_join_source_guard_preconditions() {
     if !python_blake3_available() {
         eprintln!("python3/blake3 not on PATH: skipping Python guard precondition report test");
@@ -1088,6 +1204,256 @@ emit = "ir-document"
                 && diagnostic["function"].as_str() == Some("guarded.complex_guard")
         }),
         "non-flat if-raise guard residual must surface as a diagnostic, not disappear; diagnostics={diagnostics:#?}"
+    );
+}
+
+#[test]
+fn lift_report_python_public_reexport_joins_set_module_guard_precondition() {
+    if !python_blake3_available() {
+        eprintln!("python3/blake3 not on PATH: skipping Python public reexport guard implication report test");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let manifest_dir = project.join(".sugar/lift/python");
+    fs::create_dir_all(&manifest_dir).expect("create manifest dir");
+    fs::create_dir_all(project.join("lib")).expect("create lib dir");
+    fs::write(
+        project.join("__init__.py"),
+        "from .lib._npyio_impl import load\n",
+    )
+    .expect("write __init__.py");
+    fs::write(
+        project.join("lib").join("_npyio_impl.py"),
+        r#"def set_module(module):
+    def decorator(func):
+        func.__module__ = module
+        return func
+    return decorator
+
+@set_module('project')
+def load(file, encoding='ASCII'):
+    if encoding not in ('ASCII', 'latin1', 'bytes'):
+        raise ValueError("unsupported encoding")
+    return file
+"#,
+    )
+    .expect("write lib/_npyio_impl.py");
+    fs::write(
+        project.join("test_io.py"),
+        r#"import project as np
+
+def test_load():
+    assert np.load("data.npy") == "data.npy"
+"#,
+    )
+    .expect("write test_io.py");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "python-audit-lift"
+kind = "lift"
+surface = "python"
+emit = "ir-document"
+"#,
+    )
+    .expect("write project config");
+
+    let py_tests_src = repo_root()
+        .join("implementations")
+        .join("python")
+        .join("sugar-lift-py-tests")
+        .join("src");
+    let py_source_src = repo_root()
+        .join("implementations")
+        .join("python")
+        .join("sugar-lift-python-source")
+        .join("src");
+    let plugin = dir.path().join("python-lift.sh");
+    write_executable(
+        &plugin,
+        &format!(
+            "#!/bin/sh\nexport PYTHONPATH=\"{}:{}${{PYTHONPATH:+:$PYTHONPATH}}\"\nexec python3 -m sugar_lift_py_tests.lift_rpc --rpc\n",
+            py_tests_src.display(),
+            py_source_src.display()
+        ),
+    );
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            "name = \"python-audit-lift\"\ncommand = [\"{}\"]\nworking_dir = \".\"\n",
+            plugin.display()
+        ),
+    )
+    .expect("write manifest");
+
+    let output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--json")
+            .arg(&project),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "lift report must join public reexport assertion edges to source guard preconditions\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("report JSON parses");
+    let contracts = report["contracts"].as_array().expect("contracts array");
+    let load = contracts
+        .iter()
+        .find(|contract| {
+            contract["name"].as_str() == Some("lib._npyio_impl.load")
+                || contract["fnName"].as_str() == Some("lib._npyio_impl.load")
+        })
+        .expect("source-lifter contract for lib._npyio_impl.load must be minted");
+    assert_eq!(
+        load["bridgeSourceSymbol"].as_str(),
+        Some("project.load"),
+        "load contract must carry the public re-export bridge symbol: {load:#?}"
+    );
+    assert_eq!(
+        load["pre"]["kind"].as_str(),
+        Some("or"),
+        "load contract must carry the negated encoding membership guard: {load:#?}"
+    );
+    let call_edges = report["callEdges"].as_array().expect("callEdges array");
+    assert!(
+        call_edges.iter().any(|edge| {
+            edge["kind"].as_str() == Some("implication")
+                && edge["targetContract"].as_str() == Some("lib._npyio_impl.load")
+                && edge["targetSlot"].as_str() == Some("pre")
+                && edge["prover"].as_str() == Some("python-implications")
+        }),
+        "report must render the public reexport post-to-pre implication edge; callEdges={call_edges:#?}"
+    );
+}
+
+#[test]
+fn lift_report_python_public_constructor_reexport_joins_guard_precondition() {
+    if !python_blake3_available() {
+        eprintln!(
+            "python3/blake3 not on PATH: skipping Python constructor reexport guard implication report test"
+        );
+        return;
+    }
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let manifest_dir = project.join(".sugar/lift/python");
+    fs::create_dir_all(&manifest_dir).expect("create manifest dir");
+    fs::create_dir_all(project.join("_core")).expect("create _core dir");
+    fs::write(project.join("__init__.py"), "from ._core import finfo\n")
+        .expect("write __init__.py");
+    fs::write(
+        project.join("_core").join("__init__.py"),
+        "from .getlimits import *\n",
+    )
+    .expect("write _core/__init__.py");
+    fs::write(
+        project.join("_core").join("getlimits.py"),
+        r#"__all__ = ["finfo"]
+
+class finfo:
+    def __new__(cls, dtype):
+        if dtype is None:
+            raise TypeError("dtype required")
+        return dtype
+"#,
+    )
+    .expect("write _core/getlimits.py");
+    fs::write(
+        project.join("test_getlimits.py"),
+        r#"import project as np
+
+def test_finfo():
+    assert np.finfo("f8") == "f8"
+"#,
+    )
+    .expect("write test_getlimits.py");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "python-audit-lift"
+kind = "lift"
+surface = "python"
+emit = "ir-document"
+"#,
+    )
+    .expect("write project config");
+
+    let py_tests_src = repo_root()
+        .join("implementations")
+        .join("python")
+        .join("sugar-lift-py-tests")
+        .join("src");
+    let py_source_src = repo_root()
+        .join("implementations")
+        .join("python")
+        .join("sugar-lift-python-source")
+        .join("src");
+    let plugin = dir.path().join("python-lift.sh");
+    write_executable(
+        &plugin,
+        &format!(
+            "#!/bin/sh\nexport PYTHONPATH=\"{}:{}${{PYTHONPATH:+:$PYTHONPATH}}\"\nexec python3 -m sugar_lift_py_tests.lift_rpc --rpc\n",
+            py_tests_src.display(),
+            py_source_src.display()
+        ),
+    );
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            "name = \"python-audit-lift\"\ncommand = [\"{}\"]\nworking_dir = \".\"\n",
+            plugin.display()
+        ),
+    )
+    .expect("write manifest");
+
+    let output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--json")
+            .arg(&project),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "lift report must join public constructor reexport assertion edges to source guard preconditions\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("report JSON parses");
+    let contracts = report["contracts"].as_array().expect("contracts array");
+    let constructor = contracts
+        .iter()
+        .find(|contract| {
+            contract["name"].as_str() == Some("_core.getlimits.finfo.__new__")
+                || contract["fnName"].as_str() == Some("_core.getlimits.finfo.__new__")
+        })
+        .expect("source-lifter contract for _core.getlimits.finfo.__new__ must be minted");
+    assert_eq!(
+        constructor["bridgeSourceSymbol"].as_str(),
+        Some("project.finfo"),
+        "constructor contract must carry the public class re-export bridge symbol: {constructor:#?}"
+    );
+    assert_eq!(
+        constructor["pre"]["name"].as_str(),
+        Some("≠"),
+        "constructor contract must carry the negated None guard: {constructor:#?}"
+    );
+    let call_edges = report["callEdges"].as_array().expect("callEdges array");
+    assert!(
+        call_edges.iter().any(|edge| {
+            edge["kind"].as_str() == Some("implication")
+                && edge["targetContract"].as_str() == Some("_core.getlimits.finfo.__new__")
+                && edge["targetSlot"].as_str() == Some("pre")
+                && edge["prover"].as_str() == Some("python-implications")
+        }),
+        "report must render the constructor reexport post-to-pre implication edge; callEdges={call_edges:#?}"
     );
 }
 

@@ -23,6 +23,10 @@ from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.idd.proofir_vocab_instruments import (
     collect_proofir_vocabulary_frontier,
 )
+from sugar_lift_py_tests.sugar_binary import (
+    SugarBinaryResolutionError,
+    resolve_sugar_binary,
+)
 from sugar_lift_py_tests.proofir import (
     CallTerm,
     ConstTerm,
@@ -45,12 +49,9 @@ from sugar_lift_py_tests.proofir import (
 )
 
 ROOT = Path(__file__).resolve().parents[4]
-RUST_WORKSPACE = ROOT / "implementations" / "rust"
 PY_TESTS = ROOT / "implementations" / "python" / "sugar-lift-py-tests"
 PY_SOURCE = ROOT / "implementations" / "python" / "sugar-lift-python-source"
 PY_PYTEST_WITNESS = ROOT / "implementations" / "python" / "sugar-lift-py-pytest-witness"
-SUGAR_BIN = RUST_WORKSPACE / "target" / "debug" / "sugar"
-_SUGAR_BUILT = False
 
 
 def _construction_site() -> ConstructionSite:
@@ -91,22 +92,10 @@ def _pythonpath() -> str:
 
 
 def _ensure_sugar_bin() -> Path:
-    global _SUGAR_BUILT
-    if SUGAR_BIN.exists():
-        return SUGAR_BIN
-    if not _SUGAR_BUILT:
-        completed = subprocess.run(
-            ["cargo", "build", "--locked", "-p", "sugar-cli", "--bin", "sugar"],
-            cwd=RUST_WORKSPACE,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=180,
-        )
-        assert completed.returncode == 0, completed.stderr
-        _SUGAR_BUILT = True
-    assert SUGAR_BIN.exists(), "cargo build did not produce target/debug/sugar"
-    return SUGAR_BIN
+    try:
+        return resolve_sugar_binary()
+    except SugarBinaryResolutionError as exc:
+        raise AssertionError(str(exc)) from exc
 
 
 def _write_source(project: Path, source: str) -> None:

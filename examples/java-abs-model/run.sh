@@ -28,7 +28,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
 BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
+SUGAR="$("$REPO/bin/sugarbin" --profile release)"
 KIT_JAVA="$(which java)"
 
 echo "SCOPE: java-abs-model — z3.model derive showcase, chain closed end to end."
@@ -38,11 +38,8 @@ echo "SCOPE: Input: Integer.MIN_VALUE = -2147483648 = #x80000000."
 echo "SCOPE: NO hardcoded formula: the bv_tree only ever comes from the lifted universe."
 echo
 
-# ── build sugar CLI + Java kit ──────────────────────────────────────────────
-echo "== build the sugar CLI =="
-if [ "${JAVA_ASSERT_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  cargo build --manifest-path "$RUST/Cargo.toml" -p sugar-cli --bin sugar >/dev/null
-fi
+# ── resolve sugar CLI + build Java kit ──────────────────────────────────────
+echo "== resolve the sugar CLI =="
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not at $SUGAR"; exit 1; }
 echo "   sugar binary: $SUGAR"
 

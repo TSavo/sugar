@@ -85,6 +85,7 @@ case "$local_cwd" in
 esac
 
 remote_host="${BCARGO_REMOTE_HOST:-battleaxe}"
+remote_binary_platform="${BCARGO_REMOTE_BINARY_PLATFORM:-linux-x86_64}"
 # Per-checkout remote root so concurrent worktrees/agents do not clobber each
 # other. All checkouts previously shared one root, and `rsync -az --delete`
 # from one wiped another's source mid-build (stale/false builds, stalls). Derive
@@ -136,6 +137,19 @@ remote_for_local_path() {
       printf '%s\n' "$path"
       ;;
   esac
+}
+
+sugar_build_git_head() {
+  git -C "$repo_root" rev-parse HEAD
+}
+
+sugar_binary_repo() {
+  if [[ -n "${SUGAR_BINARY_REPO:-}" ]]; then
+    printf '%s\n' "$SUGAR_BINARY_REPO"
+    return 0
+  fi
+  command -v gh >/dev/null 2>&1 || return 0
+  gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true
 }
 
 run_ssh() {
@@ -293,6 +307,7 @@ sync_file Cargo.lock
 sync_file Makefile
 sync_file sugar-release.toml
 sync_file bin/bcargo
+sync_file bin/sugarbin
 sync_file package.json
 sync_file pnpm-lock.yaml
 sync_file rust-toolchain
@@ -374,6 +389,134 @@ else
   remote_target_dir="$remote_cwd/target"
 fi
 
+sync_bin_requested() {
+  local wanted="$1" bin
+  local found=1
+  set +u
+  for bin in "${sync_bins[@]}"; do
+    if [[ "$bin" == "$wanted" ]]; then
+      found=0
+      break
+    fi
+  done
+  set -u
+  return "$found"
+}
+
+sync_bin_count() {
+  local count
+  set +u
+  count="${#sync_bins[@]}"
+  set -u
+  printf '%s\n' "$count"
+}
+
+sugar_source_stamp() {
+  if [[ -n "${SUGAR_BINARY_SOURCE_STAMP:-}" ]]; then
+    printf '%s\n' "$SUGAR_BINARY_SOURCE_STAMP"
+    return 0
+  fi
+  "$repo_root/bin/sugarbin" --print-source-stamp
+}
+
+is_sugar_only_build_request() {
+  [[ "${cargo_args[0]:-}" == "build" ]] || return 1
+  [[ "$(sync_bin_count)" -eq 1 ]] || return 1
+  local package_ok=0 bin_ok=0 other_package=0 other_bin=0 i arg value
+  for ((i = 0; i < ${#cargo_args[@]}; i++)); do
+    arg="${cargo_args[$i]}"
+    case "$arg" in
+      -p | --package)
+        if ((i + 1 >= ${#cargo_args[@]})); then
+          return 1
+        fi
+        value="${cargo_args[$((i + 1))]}"
+        if [[ "$value" == "sugar-cli" ]]; then
+          package_ok=1
+        else
+          other_package=1
+        fi
+        i=$((i + 1))
+        ;;
+      -p=* | --package=*)
+        value="${arg#*=}"
+        if [[ "$value" == "sugar-cli" ]]; then
+          package_ok=1
+        else
+          other_package=1
+        fi
+        ;;
+      --bin)
+        if ((i + 1 >= ${#cargo_args[@]})); then
+          return 1
+        fi
+        value="${cargo_args[$((i + 1))]}"
+        if [[ "$value" == "sugar" ]]; then
+          bin_ok=1
+        else
+          other_bin=1
+        fi
+        i=$((i + 1))
+        ;;
+      --bin=*)
+        value="${arg#*=}"
+        if [[ "$value" == "sugar" ]]; then
+          bin_ok=1
+        else
+          other_bin=1
+        fi
+        ;;
+    esac
+  done
+  [[ "$package_ok" == "1" && "$bin_ok" == "1" && "$other_package" == "0" && "$other_bin" == "0" ]]
+}
+
+sugar_stamp=""
+if sync_bin_requested sugar; then
+  sugar_stamp="$(sugar_source_stamp)"
+fi
+sugar_git_head=""
+if [[ -n "$sugar_stamp" ]]; then
+  sugar_git_head="$(sugar_build_git_head)"
+fi
+resolved_sugar_binary_repo="$(sugar_binary_repo)"
+
+remote_sugarbin_assignments() {
+  local stamp="$1"
+  printf 'SUGAR_BINARY_SOURCE_STAMP=%s ' "$(quote_sh "$stamp")"
+  printf 'SUGAR_BINARY_TARGET_ROOT=%s ' "$(quote_sh "$remote_target_dir")"
+  if [[ -n "$sugar_git_head" ]]; then
+    printf 'SUGAR_BUILD_GIT_HEAD=%s ' "$(quote_sh "$sugar_git_head")"
+  fi
+  if [[ -n "$resolved_sugar_binary_repo" ]]; then
+    printf 'SUGAR_BINARY_REPO=%s ' "$(quote_sh "$resolved_sugar_binary_repo")"
+  fi
+}
+
+remote_sugarbin_pull() {
+  local stamp="$1"
+  local remote_bin="$remote_target_dir/$profile/sugar"
+  local cmd
+  cmd="cd $(quote_sh "$remote_repo") && "
+  cmd+="resolved=\"\$($(remote_sugarbin_assignments "$stamp")"
+  cmd+="SUGAR_BINARY_ALLOW_BUILD='0' "
+  cmd+="bin/sugarbin --profile $(quote_sh "$profile") --platform $(quote_sh "$remote_binary_platform"))\""
+  cmd+=" && mkdir -p $(quote_sh "$(dirname "$remote_bin")")"
+  cmd+=" && if [ \"\$resolved\" != $(quote_sh "$remote_bin") ]; then cp \"\$resolved\" $(quote_sh "$remote_bin"); fi"
+  cmd+=" && chmod +x $(quote_sh "$remote_bin")"
+  run_ssh "bash -lc $(quote_sh "$cmd")"
+}
+
+remote_sugarbin_publish() {
+  local stamp="$1"
+  local cmd
+  cmd="cd $(quote_sh "$remote_repo") && "
+  cmd+="$(remote_sugarbin_assignments "$stamp")"
+  cmd+="SUGAR_BINARY_ALLOW_BUILD='0' "
+  cmd+="bin/sugarbin --profile $(quote_sh "$profile") --platform $(quote_sh "$remote_binary_platform") >/dev/null"
+  run_ssh "bash -lc $(quote_sh "$cmd")"
+}
+
 remote_args=()
 for arg in "$@"; do
   if [[ "$arg" == "$repo_root" ]]; then
@@ -391,6 +534,10 @@ if [[ "$provision_python_env" != "0" ]]; then
   provision_steps+=("BCARGO_PYTHON_VENV=$(quote_sh "$remote_python_venv") make --quiet bcargo-python-kit-env")
   cargo_env+=("PYTHON=$(quote_sh "$remote_python")")
   path_prefix="$path_prefix:$remote_python_bin"
+fi
+if [[ -n "$sugar_stamp" ]]; then
+  cargo_env+=("SUGAR_BUILD_STAMP=$(quote_sh "$sugar_stamp")")
+  cargo_env+=("SUGAR_BUILD_GIT_HEAD=$(quote_sh "$sugar_git_head")")
 fi
 cargo_env+=("PATH=$(quote_sh "$path_prefix"):\$PATH")
 
@@ -415,10 +562,25 @@ for arg in "${remote_args[@]}"; do
   inner+=" $arg"
 done
 
-set +e
-run_ssh "bash -lc $(quote_sh "$inner")"
-status=$?
-set -e
+sugar_cell_ready=0
+skip_remote_cargo=0
+if [[ -n "$sugar_stamp" ]]; then
+  if remote_sugarbin_pull "$sugar_stamp"; then
+    sugar_cell_ready=1
+    if is_sugar_only_build_request; then
+      skip_remote_cargo=1
+    fi
+  fi
+fi
+
+if [[ "$skip_remote_cargo" == "1" ]]; then
+  status=0
+else
+  set +e
+  run_ssh "bash -lc $(quote_sh "$inner")"
+  status=$?
+  set -e
+fi
 
 if [[ "$status" -ne 0 ]]; then
   if [[ "$clean_remote_root" == "always" ]]; then
@@ -429,8 +591,17 @@ if [[ "$status" -ne 0 ]]; then
   exit "$status"
 fi
 
-if ((${#sync_bins[@]} > 0)); then
-  for bin in "${sync_bins[@]}"; do
+if sync_bin_requested sugar && [[ "$sugar_cell_ready" != "1" ]]; then
+  if ! remote_sugarbin_publish "$sugar_stamp"; then
+    echo "bcargo: remote sugarbin publish did not complete for stamp $sugar_stamp" >&2
+  fi
+fi
+
+if (($(sync_bin_count) > 0)); then
+  set +u
+  bins_to_sync=("${sync_bins[@]}")
+  set -u
+  for bin in "${bins_to_sync[@]}"; do
     remote_bin="$remote_target_dir/$profile/$bin"
     local_bin="$local_target_dir/$profile/$bin"
     mkdir -p "$(dirname "$local_bin")"
