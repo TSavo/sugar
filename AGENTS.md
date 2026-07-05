@@ -541,6 +541,20 @@ unhandled case continue is a place incompleteness got dressed as completeness.
 Hunt them; convert each to a panic, a named typed effect, or the sacred
 coverage panic. Never to a benign default. See #3500.
 
+The honor code, stated once and binding everywhere: **a red test that names
+the fix is honorable. A panic that names how to stop it is honorable. A
+report that says complete, then has lines that say incomplete, is a lie.**
+Red and panic are the system telling the truth about its own boundary, and
+each earns its keep by carrying its remedy. But an artifact that CLAIMS
+totality while containing one unbacked line has crossed from incomplete to
+false — and false is the only unforgivable state. The report may be partial
+and say so, red and say why, or complete and prove it. It may never be
+complete-except. Worked example: 255 red rows rendered with no grounds in
+the first numpy wall (#3540) — each one a claim the report could not back,
+inside an artifact asserting completeness. That is not a rendering bug; it
+is a lie with a stack trace, and the fix is a type: a red row IS a
+(verdict, grounds) pair, unconstructible apart.
+
 ## The entire product is one match expression
 
 ```
