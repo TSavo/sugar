@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# Purpose:
+#   Bounded demo surface for the cross-proof membrane story: one runnable
+#   four-verdict receipt plus the vendor-update arc where an imported vendor
+#   proof changes and only the consumer callsites coupled to that formula move.
+#   This is the script referenced by docs/how-to/publish-and-inherit-a-proof.md.
+#
+# Retirement:
+#   Retire this shell when the same v1/v2 vendor-update arc is exercised by a
+#   CI-gated e2e suite. The current load-bearing seat is
+#   implementations/rust/sugar-cli/tests/cross_proof_imported_implications.rs;
+#   once that suite, or a successor such as test_inheritance_e2e.py, fully owns
+#   the runnable demo receipt, this shell becomes redundant demo sugar.
+#
 # Cross-proof consumer demo: vendor fact, vendor universe, user fact.
 #
 # This is intentionally tiny. It mints two minimal vendor `.proof` files that
