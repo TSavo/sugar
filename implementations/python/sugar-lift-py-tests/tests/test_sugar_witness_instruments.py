@@ -300,38 +300,25 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     assert len(rows) == 15
     assert all(row.retirement_condition for row in rows)
     by_name = {row.sugar_name: row for row in rows}
-    assert "selects AliasSugar" in by_name["AliasSugar"].retirement_condition
-    assert "select ListLiteralSugar" in by_name["ListLiteralSugar"].retirement_condition
-    assert (
-        "runtime-effect witness harness" in by_name["AwaitSugar"].retirement_condition
-    )
-    assert (
-        "runtime-effect witness harness"
-        in by_name["AsyncForSugar"].retirement_condition
-    )
-    assert (
-        "runtime-effect witness harness"
-        in by_name["AsyncWithSugar"].retirement_condition
-    )
-    assert (
-        "runtime-effect witness harness" in by_name["StarredSugar"].retirement_condition
-    )
-    assert (
-        "single constraint has no sibling"
-        in by_name["AttributeAssignSugar"].retirement_condition
-    )
-    assert (
-        "single constraint has no sibling"
-        in by_name["AttributeDeleteSugar"].retirement_condition
-    )
-    assert (
-        "inert support-return path"
-        in by_name["SubscriptAssignSugar"].retirement_condition
-    )
-    assert (
-        "inert support-return path"
-        in by_name["SubscriptDeleteSugar"].retirement_condition
-    )
+    expected_needles = {
+        "AliasSugar": "select no AliasSugar owner",
+        "AsyncForSugar": "runtime-effect witness harness",
+        "AsyncWithSugar": "runtime-effect witness harness",
+        "AttributeAssignSugar": "object attribute mutation effect",
+        "AttributeDeleteSugar": "unexpected CallSiteValue",
+        "AwaitSugar": "runtime-effect witness harness",
+        "BitwiseOpSugar": "prove reports undecidable",
+        "BoolOpSugar": "boolean expression runtime boundary",
+        "DictSugar": "DictLiteralValue.project_callsite_with",
+        "ForSugar": "for loop runtime boundary",
+        "ListLiteralSugar": "select ListLiteralSugar",
+        "OrdByteSugar": "illegal free var byte_s_0",
+        "StarredSugar": "runtime expansion effect refuses",
+        "SubscriptAssignSugar": "array mutation probes refuse at setitem_with",
+        "SubscriptDeleteSugar": "deletion-state probes still reduce",
+    }
+    for sugar_name, needle in expected_needles.items():
+        assert needle in by_name[sugar_name].retirement_condition
 
 
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
