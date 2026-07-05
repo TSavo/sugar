@@ -52,6 +52,12 @@ class ArrayLiteral(FloorValue):
     def contains_with(self, operation: Any, ctx: Any) -> Any:
         return operation.contains_array(self, ctx)
 
+    def delitem_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.delitem_array(self, ctx)
+
+    def setitem_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.setitem_array(self, ctx)
+
     def subscript_with(self, operation: Any, ctx: Any) -> Any:
         return operation.subscript_array(self, ctx)
 

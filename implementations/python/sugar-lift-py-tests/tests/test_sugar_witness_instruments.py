@@ -52,7 +52,7 @@ from sugar_lift_py_tests.witness_harness import (
 
 ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 0
-EXPECTED_SEED_CASES = 58
+EXPECTED_SEED_CASES = 60
 EXPECTED_SEED_OWNER_COUNT = 43
 EXPECTED_TRIPLE_FAILURES = 0
 EXPECTED_MIGRATED_SEED_NAMES = {
@@ -102,6 +102,8 @@ EXPECTED_MIGRATED_SEED_NAMES = {
     "raise_try_return",
     "slice_string_return",
     "string_subscript_return",
+    "subscript_assign_post_state_read",
+    "subscript_delete_post_state_read",
     "to_list_len_return",
     "try_body",
     "try_except_raise",
@@ -133,8 +135,6 @@ EXPECTED_OPT_OUT_SUGARS = {
     "PassSugar",
     "SetCompSugar",
     "SetSugar",
-    "SubscriptAssignSugar",
-    "SubscriptDeleteSugar",
 }
 EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
     "AliasSugar",
@@ -142,8 +142,6 @@ EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
     "DictSugar",
     "ListLiteralSugar",
     "OrdByteSugar",
-    "SubscriptAssignSugar",
-    "SubscriptDeleteSugar",
 }
 
 
@@ -301,7 +299,7 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     rows = temporal_opt_outs()
 
     assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 7
+    assert len(rows) == 5
     assert all(row.retirement_condition for row in rows)
     by_name = {row.sugar_name: row for row in rows}
     expected_needles = {
@@ -310,8 +308,6 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
         "DictSugar": "DictLiteralValue.project_callsite_with",
         "ListLiteralSugar": "sugar/array_literal_sugar.py:29",
         "OrdByteSugar": "illegal free var byte_s_0",
-        "SubscriptAssignSugar": "array mutation probes refuse at setitem_with",
-        "SubscriptDeleteSugar": "deletion-state probes still reduce",
     }
     for sugar_name, needle in expected_needles.items():
         assert needle in by_name[sugar_name].retirement_condition
@@ -417,6 +413,100 @@ def test_list_literal_temporal_opt_out_reproduces_shadowed_owner_blocker(
     assert "BuiltinCallSugar" in truthful_result.selected_sugars
     assert "ListLiteralSugar" not in truthful_result.selected_sugars
     assert "ListLiteralSugar" not in lying_result.selected_sugars
+
+
+def test_subscript_assignment_post_state_witness_discharges_and_refutes(
+    tmp_path: Path,
+) -> None:
+    prefix = (
+        "def A(z):\n" "    xs = [1, 2, 3]\n" "    xs[1] = 9\n" "    return xs[1]\n" "\n"
+    )
+    truthful = prefix + "def test_a():\n    assert A(0) == 9\n"
+    lying = prefix + "def test_a():\n    assert A(0) == 2\n"
+
+    truthful_result = run_source_through_real_solver(
+        tmp_path / "subscript-assign-truth", truthful
+    )
+    lying_result = run_source_through_real_solver(
+        tmp_path / "subscript-assign-lie", lying
+    )
+
+    trace = {
+        "truthful": {
+            "verdict": truthful_result.verdict,
+            "selectedSugars": truthful_result.selected_sugars,
+            "ir": _euf_rows(truthful_result.lift_doc),
+            "rows": truthful_result.prove_doc.get("rows"),
+        },
+        "lying": {
+            "verdict": lying_result.verdict,
+            "selectedSugars": lying_result.selected_sugars,
+            "ir": _euf_rows(lying_result.lift_doc),
+            "rows": lying_result.prove_doc.get("rows"),
+        },
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert "SubscriptAssignSugar" in truthful_result.selected_sugars
+    assert truthful_result.verdict == "sat"
+    assert _linked_post_rhs_values(truthful_result.prove_doc) == [9]
+    assert _prove_statuses(truthful_result.prove_doc) == ["discharged"]
+    assert "single constraint has no sibling" not in _prove_reasons(
+        truthful_result.prove_doc
+    )
+
+    assert "SubscriptAssignSugar" in lying_result.selected_sugars
+    assert lying_result.verdict == "unsat"
+    assert _linked_post_rhs_values(lying_result.prove_doc) == [9]
+    assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
+    assert _prove_reason_contains_values(lying_result.prove_doc, {2, 9})
+
+
+def test_subscript_delete_post_state_witness_discharges_and_refutes(
+    tmp_path: Path,
+) -> None:
+    prefix = (
+        "def A(z):\n" "    xs = [1, 2, 3]\n" "    del xs[1]\n" "    return xs[1]\n" "\n"
+    )
+    truthful = prefix + "def test_a():\n    assert A(0) == 3\n"
+    lying = prefix + "def test_a():\n    assert A(0) == 2\n"
+
+    truthful_result = run_source_through_real_solver(
+        tmp_path / "subscript-delete-truth", truthful
+    )
+    lying_result = run_source_through_real_solver(
+        tmp_path / "subscript-delete-lie", lying
+    )
+
+    trace = {
+        "truthful": {
+            "verdict": truthful_result.verdict,
+            "selectedSugars": truthful_result.selected_sugars,
+            "ir": _euf_rows(truthful_result.lift_doc),
+            "rows": truthful_result.prove_doc.get("rows"),
+        },
+        "lying": {
+            "verdict": lying_result.verdict,
+            "selectedSugars": lying_result.selected_sugars,
+            "ir": _euf_rows(lying_result.lift_doc),
+            "rows": lying_result.prove_doc.get("rows"),
+        },
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert "SubscriptDeleteSugar" in truthful_result.selected_sugars
+    assert truthful_result.verdict == "sat"
+    assert _linked_post_rhs_values(truthful_result.prove_doc) == [3]
+    assert _prove_statuses(truthful_result.prove_doc) == ["discharged"]
+    assert "single constraint has no sibling" not in _prove_reasons(
+        truthful_result.prove_doc
+    )
+
+    assert "SubscriptDeleteSugar" in lying_result.selected_sugars
+    assert lying_result.verdict == "unsat"
+    assert _linked_post_rhs_values(lying_result.prove_doc) == [3]
+    assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
+    assert _prove_reason_contains_values(lying_result.prove_doc, {2, 3})
 
 
 def test_typed_red_effect_witness_accepts_right_red_and_rejects_wrong_red(
@@ -1007,6 +1097,41 @@ def _euf_rhs_fingerprint(row: dict) -> object:
     return json.dumps(rhs, sort_keys=True)
 
 
+def _linked_post_rhs_values(prove_doc: dict) -> list[int]:
+    values: list[int] = []
+    for row in prove_doc.get("rows", []):
+        verification = row.get("verification")
+        if not isinstance(verification, dict):
+            continue
+        for post in verification.get("linkedPosts", []):
+            instantiated = post.get("instantiatedPost", {})
+            args = instantiated.get("args", [])
+            if len(args) >= 2 and isinstance(args[1], dict):
+                values.append(args[1].get("value"))
+    return sorted(value for value in values if isinstance(value, int))
+
+
+def _prove_statuses(prove_doc: dict) -> list[str]:
+    return [
+        status
+        for row in prove_doc.get("rows", [])
+        if isinstance((status := row.get("status")), str)
+    ]
+
+
+def _prove_reasons(prove_doc: dict) -> str:
+    return "\n".join(
+        reason
+        for row in prove_doc.get("rows", [])
+        if isinstance((reason := row.get("reason")), str)
+    )
+
+
+def _prove_reason_contains_values(prove_doc: dict, values: set[int]) -> bool:
+    reasons = _prove_reasons(prove_doc)
+    return all(f'"value":{value}' in reasons for value in values)
+
+
 def _single_assertion_contract(lift_doc: dict) -> dict:
     rows = [
         row
@@ -1095,14 +1220,14 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "witness_triples_failing": EXPECTED_TRIPLE_FAILURES,
         "witnesses_not_dispatching_to_owner": 0,
         "non_fol_opt_out_drift": 0,
-        "temporal_opt_outs": 7,
-        "total": 7,
+        "temporal_opt_outs": 5,
+        "total": 5,
     }
     assert "R(unenrolled-sugars): 0" in text
     assert "R(witness-triples-failing): 0" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
-    assert "R(temporal-opt-outs): 7" in text
+    assert "R(temporal-opt-outs): 5" in text
     assert "unenrolled sugars:" not in text
 
 
@@ -1122,7 +1247,7 @@ def test_sugar_witness_cli_exits_clean_only_when_residue_is_zero(
     assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
-    assert "R(temporal-opt-outs): 7" in stdout
+    assert "R(temporal-opt-outs): 5" in stdout
     assert status == 1
 
 
