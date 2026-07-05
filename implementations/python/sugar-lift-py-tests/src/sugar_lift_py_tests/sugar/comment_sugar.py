@@ -51,7 +51,7 @@ class CommentSugar(Sugar, role=SugarRole.STATEMENT):
             raise TypeError("CommentSugar built a non-comment statement")
         return cls()
 
-    def desugar(self, ctx=None) -> Outcome:
+    def _build(self, ctx=None) -> Outcome:
         # A comment desugars to Support and ALWAYS completes: no term, no binding, no
         # scope -- it contributes nothing to the first-order logic.
         return Complete(SupportValue())

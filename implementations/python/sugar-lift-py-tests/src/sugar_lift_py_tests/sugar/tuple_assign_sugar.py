@@ -50,7 +50,7 @@ class TupleAssignSugar(Sugar, role=SugarRole.STATEMENT):
     def witnesses(cls):
         return tuple_assign_return_witness()
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         return Complete(
             BlockValue(
                 tuple(

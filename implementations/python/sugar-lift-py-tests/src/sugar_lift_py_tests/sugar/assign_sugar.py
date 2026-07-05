@@ -20,6 +20,7 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
 
     name: str
     value: SugarBody
+    template_operand_names = ()
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -39,7 +40,7 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
             value=ctx.build_body(site.assign_value(), SugarRole.TERM),
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         # The rhs is NOT reduced here -- it is bound LAZILY as a BoundVar that aliases the
         # name to the rhs SOURCE (recoverable: `b = x` keeps `x`). An effect in the rhs
         # (`x = 1/0`) surfaces when the binding is USED (the reference reduces the source

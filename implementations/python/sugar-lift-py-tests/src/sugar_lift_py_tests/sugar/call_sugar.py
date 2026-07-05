@@ -669,7 +669,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         )
         return cls(strategy=RefuseStrategy(info))
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         return self.strategy.emit(self, ctx)
 
 

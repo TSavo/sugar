@@ -41,7 +41,7 @@ class ConstantSugar(Sugar, role=SugarRole.TERM):
             return cls(value)
         return None
 
-    def desugar(self) -> Outcome:
+    def _build(self) -> Outcome:
         if isinstance(self.value, bytes):
             return Complete(
                 SymbolicValue(ctor("python:bytes", [str_const(self.value.hex())]))

@@ -60,7 +60,7 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         # match each operand: an Incomplete (a runtime effect) bubbles upward unchanged.
         left_outcome = self.left.reduce(ctx)
         if isinstance(left_outcome, Incomplete):

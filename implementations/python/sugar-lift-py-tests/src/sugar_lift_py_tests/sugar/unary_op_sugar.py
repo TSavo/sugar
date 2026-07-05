@@ -50,7 +50,7 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         operand_outcome = self.operand.reduce(ctx)
         if isinstance(operand_outcome, Incomplete):
             return operand_outcome

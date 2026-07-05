@@ -44,7 +44,7 @@ class BuilderCtorSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         value = complete_value(self.items.reduce(ctx), owner="BuilderCtorSugar")
         if not isinstance(value, ArrayLiteral):
             raise TypeError("BuilderCtorSugar argument must reduce to ArrayLiteral")

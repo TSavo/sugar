@@ -62,7 +62,7 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         argument_outcome = self.argument.reduce(ctx)
         if isinstance(argument_outcome, Incomplete):
             return argument_outcome
@@ -184,7 +184,7 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         if self.attr_name is None:
             return _runtime_getattr_effect(
                 self.blame,
@@ -262,7 +262,7 @@ class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         left_outcome = self.left.reduce(ctx)
         if isinstance(left_outcome, Incomplete):
             return left_outcome
@@ -322,7 +322,7 @@ class FormatBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         argument_outcome = self.argument.reduce(ctx)
         if isinstance(argument_outcome, Incomplete):
             return argument_outcome

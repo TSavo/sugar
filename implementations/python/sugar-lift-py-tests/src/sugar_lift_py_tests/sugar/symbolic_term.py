@@ -413,20 +413,6 @@ def symbolic_term(
         import_target = site.call_import_target_name(import_aliases, from_imports)
         target = import_target or site.call_target_name()
         if target is not None:
-            if (
-                import_target is not None
-                and import_target not in name_resolver
-                and external_bridge_sink is not None
-            ):
-                external_bridge_sink.append(
-                    {
-                        "targetSymbol": f"call:{import_target}",
-                        "targetName": import_target,
-                        "line": site.line,
-                        "column": site.col,
-                        "argTerms": args,
-                    }
-                )
             args = []
             receiver = site.call_receiver()
             if import_target is None and receiver is not None:
@@ -472,6 +458,20 @@ def symbolic_term(
                             )
                         ],
                     )
+                )
+            if (
+                import_target is not None
+                and import_target not in name_resolver
+                and external_bridge_sink is not None
+            ):
+                external_bridge_sink.append(
+                    {
+                        "targetSymbol": f"call:{import_target}",
+                        "targetName": import_target,
+                        "line": site.line,
+                        "column": site.col,
+                        "argTerms": args,
+                    }
                 )
             return ctor(f"call:{target}", args)
     raise TypeError(

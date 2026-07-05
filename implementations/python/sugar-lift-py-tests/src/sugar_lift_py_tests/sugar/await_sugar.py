@@ -46,7 +46,7 @@ class AwaitSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         awaitable_outcome = self.awaitable.reduce(ctx)
         if isinstance(awaitable_outcome, Incomplete):
             return awaitable_outcome

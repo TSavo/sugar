@@ -60,7 +60,7 @@ class ListLiteralSugar(Sugar, role=SugarRole.TERM):
             return None
         return cls(elements=elements, blame=blame or site.blame)
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         items: list[FloorValue] = []
         for element in self.elements:
             value = complete_value(element.reduce(ctx), owner="ListLiteralSugar")

@@ -75,7 +75,7 @@ class AugAssignSugar(Sugar, role=SugarRole.STATEMENT):
             blame=fragment.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         if self.runtime_reason is not None:
             return Incomplete(
                 RuntimeEffect(

@@ -36,6 +36,9 @@ SetCompPlan = _FiniteSetComp | _RuntimeSetComp
 class SetCompSugar(Sugar, role=SugarRole.TERM):
     plan: SetCompPlan
     blame: str
+    effect_consumer_reason = (
+        "binds comprehension variables while reducing element bodies"
+    )
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -92,7 +95,7 @@ class SetCompSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _desugar_with_effects(self, ctx) -> Outcome:
         if isinstance(self.plan, _RuntimeSetComp):
             return _runtime_iterable_effect(self.blame, self.plan.reason)
         iterable_outcome = self.plan.iterable.reduce(ctx)
@@ -130,6 +133,10 @@ class SetCompSugar(Sugar, role=SugarRole.TERM):
             if term not in result:
                 result.append(term)
         return Complete(SetLiteralValue(tuple(result)))
+
+    def _build(self, ctx, **complete_operands) -> Outcome:
+        del ctx, complete_operands
+        raise AssertionError("SetCompSugar reduces through _desugar_with_effects")
 
 
 def _runtime_generator_reason(generator) -> str | None:

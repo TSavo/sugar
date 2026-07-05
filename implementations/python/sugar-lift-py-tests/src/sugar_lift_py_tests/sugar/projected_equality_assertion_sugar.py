@@ -64,5 +64,5 @@ class ProjectedEqualityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             ),
         )
 
-    def desugar(self, ctx):
+    def _build(self, ctx):
         return self.assertion_formula(ctx)

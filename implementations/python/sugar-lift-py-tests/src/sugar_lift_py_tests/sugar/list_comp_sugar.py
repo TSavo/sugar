@@ -40,6 +40,9 @@ ListCompPlan = _FiniteListComp | _RuntimeListComp
 class ListCompSugar(Sugar, role=SugarRole.TERM):
     plan: ListCompPlan
     blame: str
+    effect_consumer_reason = (
+        "binds comprehension variables while reducing element bodies"
+    )
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -127,7 +130,7 @@ class ListCompSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _desugar_with_effects(self, ctx) -> Outcome:
         if isinstance(self.plan, _RuntimeListComp):
             return _runtime_iterable_effect(self.blame, self.plan.reason)
         iterable_outcome = self.plan.iterable.reduce(ctx)
@@ -160,6 +163,10 @@ class ListCompSugar(Sugar, role=SugarRole.TERM):
                 return element_outcome
             result.append(complete_value(element_outcome, owner="ListCompSugar elt"))
         return Complete(ArrayLiteral(tuple(_array_element(item) for item in result)))
+
+    def _build(self, ctx, **complete_operands) -> Outcome:
+        del ctx, complete_operands
+        raise AssertionError("ListCompSugar reduces through _desugar_with_effects")
 
 
 def _finite_items(value: FloorValue) -> tuple[FloorValue, ...] | None:

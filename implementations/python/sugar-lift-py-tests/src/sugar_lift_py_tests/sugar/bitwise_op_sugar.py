@@ -90,7 +90,7 @@ class BitwiseOpSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, ctx=None) -> Outcome:
+    def _build(self, ctx=None) -> Outcome:
         left = complete_value(self.left.reduce(ctx), owner="BitwiseOpSugar left")
         right = complete_value(self.right.reduce(ctx), owner="BitwiseOpSugar right")
         return perform_operation(

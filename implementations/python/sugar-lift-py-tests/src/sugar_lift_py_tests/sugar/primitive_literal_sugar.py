@@ -40,7 +40,7 @@ class PrimitiveLiteralSugar(Sugar, role=SugarRole.TERM):
             return None
         return cls(value)
 
-    def desugar(self) -> Outcome:
+    def _build(self) -> Outcome:
         # Collapsed numeric type: int AND float are the same Number value (Int embeds in
         # Real losslessly), so 3 and 3.0 share one TermValue and 3.0 == 3 is reflexive.
         if isinstance(self.value, bool):

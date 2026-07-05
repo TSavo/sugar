@@ -37,6 +37,9 @@ DictCompPlan = _FiniteDictComp | _RuntimeDictComp
 class DictCompSugar(Sugar, role=SugarRole.TERM):
     plan: DictCompPlan
     blame: str
+    effect_consumer_reason = (
+        "binds comprehension variables while reducing element bodies"
+    )
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -94,7 +97,7 @@ class DictCompSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _desugar_with_effects(self, ctx) -> Outcome:
         if isinstance(self.plan, _RuntimeDictComp):
             return _runtime_iterable_effect(self.blame, self.plan.reason)
         iterable_outcome = self.plan.iterable.reduce(ctx)
@@ -138,6 +141,10 @@ class DictCompSugar(Sugar, role=SugarRole.TERM):
             )
             _dict_set(entries, key_term, value_term)
         return Complete(DictLiteralValue(tuple(entries)))
+
+    def _build(self, ctx, **complete_operands) -> Outcome:
+        del ctx, complete_operands
+        raise AssertionError("DictCompSugar reduces through _desugar_with_effects")
 
 
 def _dict_set(entries: list[tuple[Term, Term]], key: Term, value: Term) -> None:

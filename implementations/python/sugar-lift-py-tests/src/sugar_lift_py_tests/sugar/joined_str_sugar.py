@@ -130,7 +130,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
             )
         return cls(parts=tuple(parts), blame=site.blame)
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         pieces: list[str] = []
         symbolic_parts: list[Term] = []
         for part in self.parts:

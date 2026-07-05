@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from abc import ABC
-from typing import List
+from abc import ABC, abstractmethod
+from dataclasses import fields, is_dataclass
+import inspect
+from typing import Any, Callable, ClassVar, List, cast
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnesses
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 # Every Sugar subclass that declares a role self-registers its claim here at import
 # time, so the catalog is just this list -- no hand-wired CLAIM constants, impossible
@@ -113,17 +117,19 @@ class Sugar(ABC):
       * ``build(fragment, ctx)`` -- the constructor that composes child fragments
         through the factory (``ctx.build_body``) and hands them to ``__init__`` (was a
         loose ``build_X`` in sugar_constructors),
-      * ``desugar(ctx)`` -- the reduction to a Floor value.
+      * ``_build(ctx, ...)`` -- the post-child-reduction construction hook.
 
     Declaring ``class XSugar(Sugar, role=SugarRole.TERM)`` SELF-REGISTERS the claim
     into the catalog. A base with no ``role=`` is an intermediate (not registrable).
 
     Construction law: only ``build`` may call ``ctx.build_body`` (it constructs the
-    children). ``desugar`` must never pull its own body -- the factory already handed
-    the composed children to ``__init__``.
+    children). Subclasses do not override ``desugar``; the template method reduces
+    declared operands and propagates effects before calling ``_build``.
     """
 
     role: SugarRole
+    effect_consumer_reason: ClassVar[str | None] = None
+    template_operand_names: ClassVar[tuple[str, ...] | None] = None
 
     def __init_subclass__(
         cls,
@@ -165,5 +171,113 @@ class Sugar(ABC):
     def witnesses(cls) -> SugarWitnesses:
         raise NotImplementedError(f"{cls.__name__} must define witnesses()")
 
-    def desugar(self, ctx):
-        raise NotImplementedError(f"{type(self).__name__} must define desugar(ctx)")
+    def desugar(self, ctx=None) -> Outcome:
+        """Reduce declared operands once, then hand complete values to `_build`.
+
+        Ordinary sugars are monadic: their child `SugarBody` operands either reduce
+        to complete floor values, or the first `Incomplete` is returned unchanged.
+        Sugars that genuinely consume effects use `_desugar_with_effects`, named and
+        audited by tests, instead of shadowing this public entrypoint.
+        """
+
+        hook = getattr(self, "_desugar_with_effects", None)
+        if hook is not None:
+            if self.effect_consumer_reason is None:
+                raise TypeError(
+                    f"{type(self).__name__} defines _desugar_with_effects without "
+                    "effect_consumer_reason"
+                )
+            return cast(Callable[[Any], Outcome], hook)(ctx)
+
+        operands = _complete_declared_operands(self, ctx)
+        if isinstance(operands, Incomplete):
+            return operands
+        return _call_build(self, ctx, operands)
+
+    @abstractmethod
+    def _build(self, ctx, **complete_operands) -> Outcome:
+        raise NotImplementedError(f"{type(self).__name__} must define _build(ctx)")
+
+
+def _complete_declared_operands(sugar: Sugar, ctx) -> dict[str, Any] | Incomplete:
+    if not is_dataclass(sugar):
+        return {}
+    complete_operands: dict[str, Any] = {}
+    for field in fields(sugar):
+        if not _is_template_operand(type(sugar), field.name):
+            continue
+        value = getattr(sugar, field.name)
+        if not _contains_sugar_body(value):
+            continue
+        complete = _complete_operand(
+            value,
+            ctx,
+            owner=f"{type(sugar).__name__} {field.name}",
+        )
+        if isinstance(complete, Incomplete):
+            return complete
+        complete_operands[field.name] = complete
+    return complete_operands
+
+
+def _is_template_operand(cls: type[Sugar], name: str) -> bool:
+    declared = cls.template_operand_names
+    if declared is not None:
+        return name in declared
+    return False
+
+
+def _call_build(sugar: Sugar, ctx, operands: dict[str, Any]) -> Outcome:
+    build_hook = cast(Callable[..., Outcome], sugar._build)
+    signature = inspect.signature(build_hook)
+    params = signature.parameters
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
+        return build_hook(ctx, **operands)
+    build_params = [
+        param
+        for param in params.values()
+        if param.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }
+    ]
+    if not build_params:
+        return build_hook()
+    if len(build_params) == 1 and build_params[0].name == "ctx":
+        return build_hook(ctx)
+    operand_names = {param.name for param in build_params if param.name != "ctx"}
+    if operand_names and operand_names.issubset(operands):
+        kwargs = {name: operands[name] for name in operand_names}
+        if "ctx" in {param.name for param in build_params}:
+            return build_hook(ctx, **kwargs)
+        return build_hook(**kwargs)
+    return build_hook(ctx)
+
+
+def _contains_sugar_body(value: Any) -> bool:
+    if isinstance(value, SugarBody):
+        return True
+    if isinstance(value, tuple):
+        return any(_contains_sugar_body(item) for item in value)
+    return False
+
+
+def _complete_operand(value: Any, ctx, *, owner: str) -> Any | Incomplete:
+    if isinstance(value, SugarBody):
+        outcome = value.reduce(ctx)
+        if isinstance(outcome, Incomplete):
+            return outcome
+        if isinstance(outcome, Complete):
+            return outcome.value
+        return outcome
+    if isinstance(value, tuple):
+        completed = []
+        for index, item in enumerate(value):
+            item_value = _complete_operand(item, ctx, owner=f"{owner}[{index}]")
+            if isinstance(item_value, Incomplete):
+                return item_value
+            completed.append(item_value)
+        return tuple(completed)
+    return value

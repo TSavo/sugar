@@ -66,7 +66,7 @@ class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSu
             return None
         return cls(elements=elements)
 
-    def desugar(self, ctx=None) -> Outcome:
+    def _build(self, ctx=None) -> Outcome:
         items = []
         for element in self.elements:
             element_outcome = element.reduce(ctx)

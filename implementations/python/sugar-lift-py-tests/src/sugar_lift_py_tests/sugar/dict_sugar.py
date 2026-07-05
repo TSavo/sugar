@@ -67,7 +67,7 @@ class DictSugar(Sugar, role=SugarRole.TERM):
             )
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         entries: list[tuple[Term, Term]] = []
         for entry in self.entries:
             if entry.key is None:

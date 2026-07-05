@@ -79,7 +79,7 @@ class AsyncForSugar(Sugar, role=SugarRole.STATEMENT):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         iterable_outcome = self.iterable.reduce(ctx)
         if isinstance(iterable_outcome, Incomplete):
             return iterable_outcome

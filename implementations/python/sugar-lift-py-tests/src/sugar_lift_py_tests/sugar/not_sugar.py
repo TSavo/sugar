@@ -81,7 +81,7 @@ class NotSugar(Sugar, role=SugarRole.ASSERTION):
     def apply(self, formula: Formula) -> Formula:
         return not_(formula)
 
-    def desugar(self, ctx) -> Formula | Incomplete:
+    def _build(self, ctx) -> Formula | Incomplete:
         if self.runtime_reason is not None:
             return Incomplete(
                 RuntimeEffect(

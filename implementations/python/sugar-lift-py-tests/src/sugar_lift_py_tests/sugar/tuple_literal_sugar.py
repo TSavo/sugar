@@ -42,7 +42,7 @@ class TupleLiteralSugar(Sugar, role=SugarRole.TERM):
     def witnesses(cls):
         return tuple_literal_subscript_return_witness()
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         values = []
         for element in self.elements:
             outcome = element.reduce(ctx)

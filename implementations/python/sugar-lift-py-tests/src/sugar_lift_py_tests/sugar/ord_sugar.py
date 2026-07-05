@@ -43,7 +43,7 @@ class OrdByteSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             index=sub.subscript_index().literal_value(),
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         binding = ctx.temporal.value_outcome_for(self.source)
         if isinstance(binding, Complete) and isinstance(binding.value, StringValue):
             if 0 <= self.index < len(binding.value.value):

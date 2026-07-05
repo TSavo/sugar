@@ -85,7 +85,7 @@ class IfExpSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         if isinstance(self.plan, _RuntimeIfExp):
             return _runtime_condition_effect(self.blame, self.plan.reason)
         branch = (

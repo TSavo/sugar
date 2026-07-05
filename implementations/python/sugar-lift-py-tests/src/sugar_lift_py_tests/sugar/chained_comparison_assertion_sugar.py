@@ -105,7 +105,7 @@ class ChainedComparisonAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         ]
         return and_(formulas)
 
-    def desugar(self, ctx):
+    def _build(self, ctx):
         del ctx
         return self.assertion_formula()
 

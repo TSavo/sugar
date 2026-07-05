@@ -82,7 +82,7 @@ class ComparisonAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     def assertion_formula(self) -> Formula:
         return _OPERATOR_FORMULAS[self.operator](self.left, self.right)
 
-    def desugar(self, ctx):
+    def _build(self, ctx):
         del ctx
         return self.assertion_formula()
 

@@ -33,6 +33,6 @@ class AliasSugar(Sugar, role=SugarRole.TERM):
             raise TypeError("AliasSugar claim built a non-alias")
         return cls(name=site.alias_name(), bound_name=site.alias_bound_name())
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         del ctx
         return Complete(ImportAliasValue(name=self.name, bound_name=self.bound_name))

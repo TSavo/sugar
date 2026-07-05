@@ -41,7 +41,7 @@ class StarredSugar(Sugar, role=SugarRole.TERM):
         operand = terms[0].observed if terms else "<missing>"
         return cls(blame=site.blame, operand_observed=operand)
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         del ctx
         return _runtime_expansion_effect(self.blame, self.operand_observed)
 
