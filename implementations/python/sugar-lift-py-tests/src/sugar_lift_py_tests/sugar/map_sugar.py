@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import LambdaCallable
 from sugar_lift_py_tests.operations import MapOperation, perform_operation
-from sugar_lift_py_tests.outcome import Outcome, complete_value
+from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.array_literal_sugar import _map_method_witness
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
@@ -55,8 +55,14 @@ class MapSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         )
 
     def desugar(self, ctx=None) -> Outcome:
-        receiver = complete_value(self.receiver.reduce(ctx), owner="MapSugar receiver")
-        mapper = complete_value(self.mapper.reduce(ctx), owner="MapSugar mapper")
+        receiver_outcome = self.receiver.reduce(ctx)
+        if isinstance(receiver_outcome, Incomplete):
+            return receiver_outcome
+        receiver = complete_value(receiver_outcome, owner="MapSugar receiver")
+        mapper_outcome = self.mapper.reduce(ctx)
+        if isinstance(mapper_outcome, Incomplete):
+            return mapper_outcome
+        mapper = complete_value(mapper_outcome, owner="MapSugar mapper")
         if not isinstance(mapper, LambdaCallable):
             raise TypeError("MapSugar mapper must reduce to LambdaCallable")
         operation = MapOperation(mapper=mapper, owner="MapSugar", blame=self.blame)
