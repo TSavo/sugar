@@ -6,7 +6,8 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import SupportValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import inert_statement_return_witness
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
 
 
 @dataclass(frozen=True)
@@ -16,11 +17,18 @@ class PassSugar(Sugar, role=SugarRole.STATEMENT):
         return site.observed == "Pass"
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="SupportValue",
-            reason="pass is inert control-flow support",
+    def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
+        return (
+            NotVerdictBearing(
+                sugar_name=cls.__name__,
+                floor_name="SupportValue",
+                reason="pass is inert control-flow support",
+            ),
+            inert_statement_return_witness(
+                name="pass_support_return",
+                owner_sugar=cls.__name__,
+                statement="pass",
+            ),
         )
 
     @classmethod

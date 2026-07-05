@@ -6,7 +6,8 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import BitwiseOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import inert_statement_return_witness
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 _BITWISE_OPS = {
@@ -36,13 +37,20 @@ class BitwiseOpSugar(Sugar, role=SugarRole.TERM):
         return site.observed == "BinOp" and site.operator_kind() in _BITWISE_OPS
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="SupportValue",
-            reason=(
-                "bitwise terms are symbolic bitvector support until the "
-                "production solver path yields a SAT/UNSAT verdict"
+    def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
+        return (
+            NotVerdictBearing(
+                sugar_name=cls.__name__,
+                floor_name="SupportValue",
+                reason=(
+                    "bitwise terms are symbolic bitvector support until the "
+                    "production solver path yields a SAT/UNSAT verdict"
+                ),
+            ),
+            inert_statement_return_witness(
+                name="bitwise_support_return",
+                owner_sugar=cls.__name__,
+                statement="z & 1",
             ),
         )
 

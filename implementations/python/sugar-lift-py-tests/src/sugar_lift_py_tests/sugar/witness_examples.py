@@ -389,6 +389,50 @@ def with_return_witness() -> SugarWitnessPair:
     )
 
 
+def inert_statement_return_witness(
+    *,
+    name: str,
+    owner_sugar: str,
+    statement: str,
+    prefix: str = "",
+) -> SugarWitnessPair:
+    body = "".join(f"    {line}\n" for line in statement.splitlines())
+    source = prefix + f"def A(z):\n{body}    return z\n\n"
+    return _call_pair(
+        name=name,
+        owner_sugar=owner_sugar,
+        truthful=source + "def test_a():\n    assert A(1) == 1\n",
+        lying=source + "def test_a():\n    assert A(1) == 2\n",
+    )
+
+
+def ord_byte_support_witness(*, owner_sugar: str) -> SugarWitnessPair:
+    source = "def A(s):\n" "    ord(s[0])\n" "    return 1\n" "\n"
+    return _call_pair(
+        name="ord_byte_support_return",
+        owner_sugar=owner_sugar,
+        truthful=source + "def test_a():\n    assert A('x') == 1\n",
+        lying=source + "def test_a():\n    assert A('x') == 2\n",
+    )
+
+
+def collection_len_return_witness(
+    *,
+    name: str,
+    owner_sugar: str,
+    expression: str,
+    truthful: int,
+    lying: int,
+) -> SugarWitnessPair:
+    source = f"def A():\n    return len({expression})\n\n"
+    return _call_pair(
+        name=name,
+        owner_sugar=owner_sugar,
+        truthful=source + f"def test_a():\n    assert A() == {truthful}\n",
+        lying=source + f"def test_a():\n    assert A() == {lying}\n",
+    )
+
+
 def _boolop_wrapped_pair(
     *,
     name: str,

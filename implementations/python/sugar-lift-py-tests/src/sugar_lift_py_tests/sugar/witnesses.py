@@ -32,4 +32,9 @@ class NotVerdictBearing:
     reason: str
 
 
-SugarWitnesses = SugarWitnessPair | tuple[SugarWitnessPair, ...] | NotVerdictBearing
+SugarWitnesses = (
+    SugarWitnessPair
+    | tuple[SugarWitnessPair, ...]
+    | NotVerdictBearing
+    | tuple[SugarWitnessPair | NotVerdictBearing, ...]
+)

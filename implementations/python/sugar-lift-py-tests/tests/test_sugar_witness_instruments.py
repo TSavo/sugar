@@ -123,11 +123,19 @@ EXPECTED_OPT_OUT_SUGARS = {
     "SubscriptDeleteSugar",
 }
 EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
+    "AliasSugar",
+    "AsyncForSugar",
+    "AsyncWithSugar",
     "AttributeAssignSugar",
     "AttributeDeleteSugar",
+    "AwaitSugar",
     "BitwiseOpSugar",
-    "OrdByteSugar",
     "DictSugar",
+    "ListLiteralSugar",
+    "OrdByteSugar",
+    "StarredSugar",
+    "SubscriptAssignSugar",
+    "SubscriptDeleteSugar",
 }
 
 
@@ -216,7 +224,7 @@ def test_non_fol_opt_outs_are_owned_by_registered_sugars() -> None:
 
     for expected in EXPECTED_NON_FOL_OPT_OUTS:
         witness = claims[expected.sugar_name].witnesses()
-        assert witness == NotVerdictBearing(
+        assert _not_verdict_marker(witness) == NotVerdictBearing(
             sugar_name=expected.sugar_name,
             floor_name=expected.floor_name,
             reason=expected.reason,
@@ -233,6 +241,16 @@ def test_non_fol_opt_out_audit_bad_twins() -> None:
     unmarked_pin = replace(EXPECTED_NON_FOL_OPT_OUTS[0], floor_name="TermValue")
     unmarked = non_fol_opt_out_audit(pinned=(unmarked_pin,))
     assert unmarked.pinned_but_unmarked == (unmarked_pin,)
+
+
+def _not_verdict_marker(witness) -> NotVerdictBearing | None:
+    if isinstance(witness, NotVerdictBearing):
+        return witness
+    if isinstance(witness, tuple):
+        for item in witness:
+            if isinstance(item, NotVerdictBearing):
+                return item
+    return None
 
 
 def test_sugar_declared_social_opt_out_is_not_a_mechanism() -> None:
@@ -269,6 +287,47 @@ def test_no_temporal_opt_out_deferrals() -> None:
     # sugars defer. Pinning "there are exactly 5 retirable deferrals" was the
     # green badge on that debt.
     assert temporal_opt_outs() == []
+
+
+def test_temporal_opt_out_register_names_current_blockers() -> None:
+    rows = temporal_opt_outs()
+
+    assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
+    assert len(rows) == 13
+    assert all(row.retirement_condition for row in rows)
+    by_name = {row.sugar_name: row for row in rows}
+    assert "selects AliasSugar" in by_name["AliasSugar"].retirement_condition
+    assert "select ListLiteralSugar" in by_name["ListLiteralSugar"].retirement_condition
+    assert (
+        "runtime-effect witness harness" in by_name["AwaitSugar"].retirement_condition
+    )
+    assert (
+        "runtime-effect witness harness"
+        in by_name["AsyncForSugar"].retirement_condition
+    )
+    assert (
+        "runtime-effect witness harness"
+        in by_name["AsyncWithSugar"].retirement_condition
+    )
+    assert (
+        "runtime-effect witness harness" in by_name["StarredSugar"].retirement_condition
+    )
+    assert (
+        "single constraint has no sibling"
+        in by_name["AttributeAssignSugar"].retirement_condition
+    )
+    assert (
+        "single constraint has no sibling"
+        in by_name["AttributeDeleteSugar"].retirement_condition
+    )
+    assert (
+        "inert support-return path"
+        in by_name["SubscriptAssignSugar"].retirement_condition
+    )
+    assert (
+        "inert support-return path"
+        in by_name["SubscriptDeleteSugar"].retirement_condition
+    )
 
 
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:

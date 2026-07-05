@@ -7,7 +7,8 @@ from sugar_lift_py_tests.floor import SupportValue
 from sugar_lift_py_tests.operations import DelItemOperation, perform_operation
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+from sugar_lift_py_tests.sugar.witness_examples import inert_statement_return_witness
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -31,11 +32,24 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
         return len(targets) == 1 and targets[0].observed == "Subscript"
 
     @classmethod
-    def witnesses(cls) -> NotVerdictBearing:
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="SupportValue",
-            reason="subscript delete mutation produces no FOL assertion",
+    def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
+        return (
+            NotVerdictBearing(
+                sugar_name=cls.__name__,
+                floor_name="SupportValue",
+                reason="subscript delete mutation produces no FOL assertion",
+            ),
+            inert_statement_return_witness(
+                name="subscript_delete_dunder_return",
+                owner_sugar=cls.__name__,
+                prefix=(
+                    "class C:\n"
+                    "    def __delitem__(self, index):\n"
+                    "        return None\n"
+                    "\n"
+                ),
+                statement="c = C()\ndel c[0]",
+            ),
         )
 
     @classmethod
