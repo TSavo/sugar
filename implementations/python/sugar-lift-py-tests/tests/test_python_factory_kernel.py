@@ -10,12 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.claim import SugarCatalog, SugarClaim, SugarRole
 from sugar_lift_py_tests.factory import FactoryGap, build_next, build_node
 from sugar_lift_py_tests.factory.build import FactoryCandidateDeclined
-from sugar_lift_py_tests.floor import ArrayLiteral, Bv32Value, TermValue
-from sugar_lift_py_tests.ir import term_to_value
+from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.sugar.array_literal_sugar import (
@@ -462,7 +460,7 @@ def test_bitwise_op_factory_hits_missing_primitive_literal_leaf_first() -> None:
     }
 
 
-def test_bitwise_op_factory_requires_factory_built_operands() -> None:
+def test_bitwise_op_factory_folds_factory_built_concrete_operands() -> None:
     and_node = ast.parse("1 & 3", mode="eval").body
     shift_node = ast.parse("1 << 4", mode="eval").body
 
@@ -477,40 +475,8 @@ def test_bitwise_op_factory_requires_factory_built_operands() -> None:
     assert isinstance(and_result.sugar.right.sugar, PrimitiveLiteralSugar)
     and_value = complete_value(and_result.sugar.desugar(), owner="bitwise and")
     shift_value = complete_value(shift_result.sugar.desugar(), owner="bitwise shift")
-    assert isinstance(and_value, Bv32Value)
-    assert isinstance(shift_value, Bv32Value)
-    assert json.loads(encode_jcs(term_to_value(and_value.term))) == {
-        "args": [
-            {
-                "kind": "const",
-                "sort": {"kind": "primitive", "name": "Int"},
-                "value": 1,
-            },
-            {
-                "kind": "const",
-                "sort": {"kind": "primitive", "name": "Int"},
-                "value": 3,
-            },
-        ],
-        "kind": "ctor",
-        "name": "bv32.and",
-    }
-    assert json.loads(encode_jcs(term_to_value(shift_value.term))) == {
-        "args": [
-            {
-                "kind": "const",
-                "sort": {"kind": "primitive", "name": "Int"},
-                "value": 1,
-            },
-            {
-                "kind": "const",
-                "sort": {"kind": "primitive", "name": "Int"},
-                "value": 4,
-            },
-        ],
-        "kind": "ctor",
-        "name": "bv32.shl",
-    }
+    assert and_value == TermValue(1)
+    assert shift_value == TermValue(16)
     with pytest.raises(
         TypeError, match="BitwiseOpSugar operands must be factory-built bodies"
     ):
