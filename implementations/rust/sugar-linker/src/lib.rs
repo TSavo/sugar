@@ -613,6 +613,16 @@ fn discharge_obligation(
             file: None,
             call_site_locus_json: None,
         }),
+        ObligationVerdict::SolverTimeout => Some(LinkerError {
+            kind: "implication-solver-timeout".into(),
+            target_symbol: target_symbol.to_string(),
+            source_contract_cid: source_contract_cid.to_string(),
+            reason: format!(
+                "solver exceeded host timeout while checking `post_caller \u{2283} pre_callee` for target `{target_cid}`: {reason}"
+            ),
+            file: None,
+            call_site_locus_json: None,
+        }),
         // A refusal is distinct from "undecidable": there is no sound discharger
         // for this bridge's obligation (the precondition lowers to a construct the
         // solver cannot interpret). Surface it by its own honest name, not as an

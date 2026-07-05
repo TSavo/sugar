@@ -69,31 +69,76 @@ fn is_lean_compiler(ir_compiler: &str) -> bool {
 }
 
 /// Backstop solver timeout when the config sets none. A PINNED obligation is a
-/// closed ground consistency check — `and(out == <answer>, relation)` — which z3
-/// decides in microseconds. Anything that runs for seconds is not a slow answer:
-/// it is an UNPINNED / open lowering (free vars, nonlinear, deep string theory)
-/// that left the solver an open search. We cap it so such a query returns a
-/// loudly-bounded Undecidable instead of hanging forever (the old `None`).
-/// Override with `SUGAR_SOLVER_TIMEOUT_SECS` (0 = no timeout, restores `None`).
+/// closed ground consistency check, but loaded hosts can still starve a solver
+/// subprocess long enough to cross tiny budgets. We cap it so an open query
+/// returns a loudly-bounded `solver-timeout` instead of hanging forever, while
+/// leaving enough headroom for CI and battleaxe load.
+/// Override with `SUGAR_SOLVER_TIMEOUT_MS` / `SUGAR_SOLVER_TIMEOUT_SECS`
+/// (0 = no timeout, restores `None`). The environment override is intentionally
+/// stronger than per-project `timeout_seconds`: a loaded CI or battleaxe run can
+/// raise the host budget without editing every fixture.
+fn solver_timeout(sc: &SolverConfig) -> Option<Duration> {
+    env_solver_timeout().unwrap_or_else(|| {
+        sc.timeout_seconds
+            .map(Duration::from_secs)
+            .or(default_solver_timeout())
+    })
+}
+
 fn default_solver_timeout() -> Option<Duration> {
-    // A pinned ground check is microseconds; even with z3 process startup it is
-    // ~60ms. 250ms is generous headroom, so anything that hits it is an
-    // unpinned/open obligation -> loudly-bounded Undecidable. SUGAR_SOLVER_TIMEOUT_MS
-    // (preferred) or _SECS override; 0 disables (restores the old hang).
-    if let Ok(v) = std::env::var("SUGAR_SOLVER_TIMEOUT_MS") {
-        return match v.trim().parse::<u64>() {
-            Ok(0) => None,
-            Ok(n) => Some(Duration::from_millis(n)),
-            Err(_) => Some(Duration::from_millis(250)),
-        };
+    Some(Duration::from_secs(10))
+}
+
+fn env_solver_timeout() -> Option<Option<Duration>> {
+    if let Ok(raw) = std::env::var("SUGAR_SOLVER_TIMEOUT_MS") {
+        return Some(parse_solver_timeout_env(
+            "SUGAR_SOLVER_TIMEOUT_MS",
+            raw.trim(),
+            DurationUnit::Millis,
+        ));
     }
-    match std::env::var("SUGAR_SOLVER_TIMEOUT_SECS") {
-        Ok(v) => match v.trim().parse::<u64>() {
-            Ok(0) => None,
-            Ok(n) => Some(Duration::from_secs(n)),
-            Err(_) => Some(Duration::from_millis(250)),
-        },
-        Err(_) => Some(Duration::from_millis(250)),
+    std::env::var("SUGAR_SOLVER_TIMEOUT_SECS").ok().map(|raw| {
+        parse_solver_timeout_env(
+            "SUGAR_SOLVER_TIMEOUT_SECS",
+            raw.trim(),
+            DurationUnit::Seconds,
+        )
+    })
+}
+
+enum DurationUnit {
+    Millis,
+    Seconds,
+}
+
+fn parse_solver_timeout_env(key: &str, raw: &str, unit: DurationUnit) -> Option<Duration> {
+    match raw.parse::<u64>() {
+        Ok(0) => None,
+        Ok(n) => Some(match unit {
+            DurationUnit::Millis => Duration::from_millis(n),
+            DurationUnit::Seconds => Duration::from_secs(n),
+        }),
+        Err(_) => {
+            eprintln!(
+                "[sugar-verifier] invalid {key}={raw:?}; using default solver timeout {}",
+                format_timeout(default_solver_timeout())
+            );
+            default_solver_timeout()
+        }
+    }
+}
+
+pub(crate) fn format_timeout(timeout: Option<Duration>) -> String {
+    match timeout {
+        None => "disabled".to_string(),
+        Some(duration) => {
+            let millis = duration.as_millis();
+            if millis % 1000 == 0 {
+                format!("{}s", millis / 1000)
+            } else {
+                format!("{millis}ms")
+            }
+        }
     }
 }
 
@@ -110,10 +155,7 @@ fn build_one(seat: SolverSeat, sc: &SolverConfig) -> SolverHandle {
     if let Some(stub) = StubSolver::from_binary(name, &sc.binary) {
         return Arc::new(stub.with_identity(identity)) as SolverHandle;
     }
-    let timeout = sc
-        .timeout_seconds
-        .map(Duration::from_secs)
-        .or_else(default_solver_timeout);
+    let timeout = solver_timeout(sc);
     if is_coq_compiler(&sc.ir_compiler) {
         return Arc::new(
             CoqSubprocessSolver::new(name, bin, sc.version.clone(), timeout)
@@ -265,6 +307,66 @@ pub fn build_default_z3(z3_path: &str) -> HashMap<SolverSeat, SolverHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn solver_timeout_env_ms_overrides_configured_seconds() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _secs = EnvGuard::remove("SUGAR_SOLVER_TIMEOUT_SECS");
+        let _ms = EnvGuard::set("SUGAR_SOLVER_TIMEOUT_MS", "1234");
+        let sc = SolverConfig {
+            timeout_seconds: Some(1),
+            ..Default::default()
+        };
+
+        assert_eq!(solver_timeout(&sc), Some(Duration::from_millis(1234)));
+        assert_eq!(format_timeout(solver_timeout(&sc)), "1234ms");
+    }
+
+    #[test]
+    fn solver_timeout_env_zero_disables_timeout() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _secs = EnvGuard::remove("SUGAR_SOLVER_TIMEOUT_SECS");
+        let _ms = EnvGuard::set("SUGAR_SOLVER_TIMEOUT_MS", "0");
+        let sc = SolverConfig {
+            timeout_seconds: Some(1),
+            ..Default::default()
+        };
+
+        assert_eq!(solver_timeout(&sc), None);
+        assert_eq!(format_timeout(solver_timeout(&sc)), "disabled");
+    }
 
     #[test]
     fn build_from_stub_config() {

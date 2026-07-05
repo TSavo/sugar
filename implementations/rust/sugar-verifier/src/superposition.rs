@@ -150,7 +150,9 @@ pub fn fold_verdicts(items: &[(String, ObligationVerdict, String)]) -> Vec<Super
             ObligationVerdict::Unsatisfied | ObligationVerdict::Disagreement => {
                 entry.1.push(pin.clone())
             }
-            ObligationVerdict::Undecidable | ObligationVerdict::Refused => {}
+            ObligationVerdict::Undecidable
+            | ObligationVerdict::SolverTimeout
+            | ObligationVerdict::Refused => {}
         }
     }
     let mut out = Vec::new();

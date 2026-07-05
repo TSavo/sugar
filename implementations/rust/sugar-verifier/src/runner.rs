@@ -508,6 +508,7 @@ impl Runner {
                 ObligationVerdict::Discharged => entry.discharged += 1,
                 ObligationVerdict::Unsatisfied => entry.unsatisfied += 1,
                 ObligationVerdict::Undecidable => entry.undecidable += 1,
+                ObligationVerdict::SolverTimeout => entry.undecidable += 1,
                 ObligationVerdict::Disagreement => entry.undecidable += 1,
                 // A refusal is "no sound discharger" -- not the solver's failure;
                 // for per-solver telemetry it groups with the not-discharged bucket.
@@ -814,6 +815,7 @@ impl Runner {
                 ObligationVerdict::Discharged => entry.discharged += 1,
                 ObligationVerdict::Unsatisfied => entry.unsatisfied += 1,
                 ObligationVerdict::Undecidable => entry.undecidable += 1,
+                ObligationVerdict::SolverTimeout => entry.undecidable += 1,
                 ObligationVerdict::Disagreement => entry.undecidable += 1,
                 // A refusal is "no sound discharger" -- not the solver's failure;
                 // for per-solver telemetry it groups with the not-discharged bucket.

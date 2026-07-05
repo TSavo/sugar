@@ -68,7 +68,7 @@ impl StubSolver {
             "unsat" => (ObligationVerdict::Discharged, false),
             "sat" => (ObligationVerdict::Unsatisfied, false),
             "undecidable" => (ObligationVerdict::Undecidable, false),
-            "timeout" => (ObligationVerdict::Undecidable, true),
+            "timeout" => (ObligationVerdict::SolverTimeout, true),
             "disagreement" => (ObligationVerdict::Disagreement, false),
             _ => return None,
         };
@@ -108,6 +108,7 @@ impl Solver for StubSolver {
                 ObligationVerdict::Discharged => "unsat",
                 ObligationVerdict::Unsatisfied => "sat",
                 ObligationVerdict::Undecidable => "unknown",
+                ObligationVerdict::SolverTimeout => "timeout",
                 ObligationVerdict::Disagreement => "disagreement",
                 ObligationVerdict::Refused => "refused",
             }

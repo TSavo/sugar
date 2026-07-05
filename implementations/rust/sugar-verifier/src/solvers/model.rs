@@ -15,6 +15,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::solvers::registry::format_timeout;
 use sugar_ir_compiler_smt_lib::derive_query::parse_model_value;
 
 /// The outcome of a model-extraction query.
@@ -108,7 +109,7 @@ pub fn solve_with_model(
                             raw_stdout: String::new(),
                             wall_clock: started.elapsed(),
                             timed_out: true,
-                            error: format!("timeout after {}s", to.as_secs().max(1)),
+                            error: format!("timeout after {}", format_timeout(Some(to))),
                         };
                     }
                     std::thread::sleep(Duration::from_millis(20));

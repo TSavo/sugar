@@ -44,6 +44,10 @@ pub enum VerifyEffect {
         property_name: String,
         solver_reason: String,
     },
+    SolverTimeout {
+        property_name: String,
+        solver_reason: String,
+    },
     SolverNoSoundDischarger {
         solver_name: String,
     },
@@ -101,9 +105,14 @@ impl VerifyEffect {
             | VerifyEffect::NoSiblingToContradict { .. }
             | VerifyEffect::MissingIndependentKindWitness { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
+            | VerifyEffect::SolverTimeout { .. }
             | VerifyEffect::SolverNoSoundDischarger { .. }
             | VerifyEffect::WitnessOracleResolution { .. }
             | VerifyEffect::WitnessVerification { .. } => ObligationVerdict::Refused,
+        };
+        let verdict = match self {
+            VerifyEffect::SolverTimeout { .. } => ObligationVerdict::SolverTimeout,
+            _ => verdict,
         };
         let reason = self.to_string();
         let verification = match self {
@@ -140,6 +149,7 @@ impl VerifyEffect {
             VerifyEffect::NoSiblingToContradict { .. }
             | VerifyEffect::MissingIndependentKindWitness { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
+            | VerifyEffect::SolverTimeout { .. }
             | VerifyEffect::SolverNoSoundDischarger { .. }
             | VerifyEffect::WitnessOracleResolution { .. }
             | VerifyEffect::WitnessVerification { .. } => None,
@@ -159,6 +169,7 @@ impl VerifyEffect {
             }
             VerifyEffect::MissingProvenanceKind { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
+            | VerifyEffect::SolverTimeout { .. }
             | VerifyEffect::SolverNoSoundDischarger { .. }
             | VerifyEffect::UnwitnessedDischarge { .. }
             | VerifyEffect::WitnessOracleResolution { .. }
@@ -218,6 +229,13 @@ impl fmt::Display for VerifyEffect {
             } => write!(
                 f,
                 "refused: no sound discharger `{property_name}` [{solver_reason}]"
+            ),
+            VerifyEffect::SolverTimeout {
+                property_name,
+                solver_reason,
+            } => write!(
+                f,
+                "solver-timeout: solver exceeded host timeout for `{property_name}` [{solver_reason}]"
             ),
             VerifyEffect::SolverNoSoundDischarger { solver_name } => {
                 write!(f, "solver '{solver_name}' refused: no sound discharger")

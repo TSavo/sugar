@@ -180,6 +180,7 @@ pub fn format_report_pretty(r: &Report, quiet: bool) -> String {
                 ObligationVerdict::Discharged => "discharged".green().to_string(),
                 ObligationVerdict::Unsatisfied => "unsatisfied".red().to_string(),
                 ObligationVerdict::Undecidable => "undecidable".yellow().to_string(),
+                ObligationVerdict::SolverTimeout => "solver-timeout".yellow().to_string(),
                 ObligationVerdict::Disagreement => "disagreement".to_string(),
                 ObligationVerdict::Refused => "refused".to_string(),
             };

@@ -10,6 +10,7 @@ use serde_json::{json, Value as Json};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler_lean::{DIALECT, THEOREM_NAME};
 
+use crate::solvers::registry::format_timeout;
 use crate::solvers::{SolveResult, Solver, SolverExitKind, SolverExitMetadata, SolverIdentity};
 use crate::types::ObligationVerdict;
 
@@ -142,8 +143,8 @@ impl LeanSubprocessSolver {
                             let _ = child.kill();
                             let _ = child.wait();
                             return Err(format!(
-                                "lean: timeout after {}s",
-                                timeout.as_secs().max(1)
+                                "lean: timeout after {}",
+                                format_timeout(Some(timeout))
                             ));
                         }
                         std::thread::sleep(Duration::from_millis(20));
@@ -278,7 +279,7 @@ impl Solver for LeanSubprocessSolver {
             Err(error) => {
                 let _ = std::fs::remove_dir_all(&tmp_dir);
                 return SolveResult::with_evidence(
-                    ObligationVerdict::Undecidable,
+                    ObligationVerdict::SolverTimeout,
                     self.name.clone(),
                     self.version.clone(),
                     SolverExitMetadata::new(SolverExitKind::Timeout),

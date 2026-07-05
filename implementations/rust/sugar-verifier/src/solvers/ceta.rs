@@ -11,6 +11,8 @@ use serde::Serialize;
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler_maude::TrsSpec;
 
+use crate::solvers::registry::format_timeout;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CetaDecision {
     Accepted,
@@ -282,7 +284,8 @@ pub fn run_command_capture(
                         return Ok(CommandCapture {
                             status_success: false,
                             stdout: Vec::new(),
-                            stderr: format!("timeout after {}s", to.as_secs().max(1)).into_bytes(),
+                            stderr: format!("timeout after {}", format_timeout(Some(to)))
+                                .into_bytes(),
                             timed_out: true,
                         });
                     }
