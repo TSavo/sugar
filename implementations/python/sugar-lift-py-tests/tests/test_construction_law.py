@@ -350,7 +350,7 @@ def test_python_effect_status_boundary_lowers_legacy_status_once() -> None:
     )
     absent = SourceOracleEffect(reason="source function missing at pinned locus")
 
-    assert effect_status(runtime) == "refused"
+    assert effect_status(runtime) == "runtime-effect"
     assert effect_status(drifted) == "drifted"
     assert effect_status(absent) == "absent"
 
@@ -367,7 +367,7 @@ def test_refusal_record_gap_effects_are_typed_before_legacy_lowering() -> None:
         gap_info,
         FactoryAuditRow(
             role="BodyUniverse",
-            status="gap",
+            status="sugar-gap",
             observed="Dict",
             blame="factory",
             selected=None,

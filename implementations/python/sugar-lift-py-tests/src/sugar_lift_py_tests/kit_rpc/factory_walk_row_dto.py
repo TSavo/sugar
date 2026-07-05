@@ -2,11 +2,25 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, get_args
 
 from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
 from .source_span_dto import SourceSpanDto
+
+FactoryWalkStatus = Literal[
+    "warranted",
+    "support",
+    "unclassified",
+    "raise-effect",
+    "runtime-effect",
+    "coverage-gap",
+    "factory-gap",
+    "dig-refusal",
+    "absent",
+    "drifted",
+]
+_ALLOWED_STATUSES = frozenset(get_args(FactoryWalkStatus))
 
 
 @dataclass(frozen=True)
@@ -16,7 +30,7 @@ class FactoryWalkRowDto:
     requested_role: str
     ast_kind: str
     selected: str | None
-    status: str
+    status: FactoryWalkStatus
     output: Any
     source_memento: SourceMementoDto | dict[str, Any]
     span: SourceSpanDto | dict[str, Any] | None = None
@@ -24,6 +38,16 @@ class FactoryWalkRowDto:
     occurrences: int | None = None
     emitted_formula: Mapping[str, Any] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.status not in _ALLOWED_STATUSES:
+            allowed = ", ".join(sorted(_ALLOWED_STATUSES))
+            raise TypeError(
+                "FactoryWalkRowDto.status must be a lift factory-walk status: "
+                f"owner=FactoryWalkRowDto illegal={self.status!r} "
+                f"replacement=typed Effect status or warranted/support; "
+                f"allowed={allowed}"
+            )
 
     def to_rpc(self) -> dict[str, Any]:
         forbidden = {"source", "term", "site"} & set(self.extra)
@@ -37,7 +61,13 @@ class FactoryWalkRowDto:
         verdict_by_status = {
             "warranted": "complete",
             "support": "complete",
-            "refused": "incomplete",
+            "raise-effect": "incomplete",
+            "runtime-effect": "incomplete",
+            "coverage-gap": "incomplete",
+            "factory-gap": "incomplete",
+            "dig-refusal": "incomplete",
+            "absent": "incomplete",
+            "drifted": "incomplete",
             "unresolved": "gap",
         }
         if status not in verdict_by_status:

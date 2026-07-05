@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Never, NoReturn
+from typing import Literal, Never, NoReturn
 
 from .coverage_gap_effect import CoverageGapEffect
 from .dig_refusal_effect import DigRefusalEffect
@@ -17,6 +17,16 @@ Effect = (
     | DigRefusalEffect
     | SourceOracleEffect
 )
+
+EffectStatus = Literal[
+    "raise-effect",
+    "runtime-effect",
+    "coverage-gap",
+    "factory-gap",
+    "dig-refusal",
+    "absent",
+    "drifted",
+]
 
 
 def require_effect(effect: object) -> Effect:
@@ -71,17 +81,17 @@ def effect_reason(effect: Effect) -> str:
     return _unhandled_effect(effect)
 
 
-def effect_status(effect: Effect) -> str:
+def effect_status(effect: Effect) -> EffectStatus:
     if isinstance(effect, RaiseEffect):
-        return "refused"
+        return "raise-effect"
     if isinstance(effect, RuntimeEffect):
-        return "refused"
+        return "runtime-effect"
     if isinstance(effect, CoverageGapEffect):
-        return "refused"
+        return "coverage-gap"
     if isinstance(effect, FactoryGapEffect):
-        return "refused"
+        return "factory-gap"
     if isinstance(effect, DigRefusalEffect):
-        return "refused"
+        return "dig-refusal"
     if isinstance(effect, SourceOracleEffect):
         return effect.status
     return _unhandled_effect(effect)

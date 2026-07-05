@@ -130,7 +130,7 @@ def test_effectful_callsite_expected_emits_effect_not_euf_fact():
     assert isinstance(effect.effect, FactoryGapEffect)
     assert effect.effect.observed == "SymbolicValue.astype"
     assert effect.effect.requested == "symbolic receiver method floor"
-    assert [row.status for row in report.payload.factory_walk] == ["refused"]
+    assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
 
 
 def test_effectful_projected_equality_emits_effect_not_formula():
@@ -147,7 +147,7 @@ def test_effectful_projected_equality_emits_effect_not_formula():
     assert isinstance(effect.effect, FactoryGapEffect)
     assert effect.effect.observed == "SymbolicValue.__int__"
     assert effect.effect.requested == "symbolic receiver method floor"
-    assert [row.status for row in report.payload.factory_walk] == ["refused"]
+    assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
 
 
 def test_external_bridge_keyword_effect_is_not_forced_to_call_term():
@@ -168,7 +168,7 @@ def test_external_bridge_keyword_effect_is_not_forced_to_call_term():
     assert isinstance(effect.effect, FactoryGapEffect)
     assert effect.effect.owner == "TemporalContext"
     assert effect.effect.observed == "str"
-    assert [row.status for row in report.payload.factory_walk] == ["refused"]
+    assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
 
 
 def test_local_bridge_body_effect_is_not_forced_to_universe():
@@ -192,7 +192,7 @@ def test_local_bridge_body_effect_is_not_forced_to_universe():
     assert isinstance(effect.effect, FactoryGapEffect)
     assert effect.effect.owner == "TemporalContext"
     assert effect.effect.observed == "result"
-    assert [row.status for row in report.payload.factory_walk] == ["refused"]
+    assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
 
 
 def test_array_literal_element_effect_is_not_forced_to_value():
@@ -209,7 +209,7 @@ def test_array_literal_element_effect_is_not_forced_to_value():
     assert isinstance(effect.effect, FactoryGapEffect)
     assert effect.effect.owner == "TemporalContext"
     assert effect.effect.observed == "nan"
-    assert [row.status for row in report.payload.factory_walk] == ["refused"]
+    assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
 
 
 def test_external_call_class_field_is_constructor_field_not_missing_attribute():
@@ -278,15 +278,21 @@ def test_inherited_opaque_constructor_argument_becomes_typed_effect():
     assert effect.effect.gap_kind == "Constructor"
 
 
-def test_plain_zero_init_constructor_with_arguments_still_refuses_named():
+def test_plain_zero_init_constructor_with_arguments_becomes_typed_effect():
     source = "class Plain:\n" "    pass\n" "def t():\n" "    assert f(Plain(3)) == 1\n"
 
-    with pytest.raises(FactoryGap) as raised:
-        build_literal_call_report(
-            source=source,
-            filename="plain.py",
-            memento_file="plain.py",
-        )
+    report = build_literal_call_report(
+        source=source,
+        filename="plain.py",
+        memento_file="plain.py",
+    )
 
-    assert raised.value.info["observed"] == "Plain(...)"
-    assert raised.value.info["requested"] == "zero-arg constructor"
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    effect = report.payload.effects[0]
+    assert isinstance(effect.effect, FactoryGapEffect)
+    assert effect.effect.observed == "Plain(...)"
+    assert effect.effect.requested == "zero-arg constructor"
+    assert effect.effect.gap_kind == "Constructor"
+    assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]

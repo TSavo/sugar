@@ -172,7 +172,7 @@ def test_python_dtos_emit_rpc_report_shapes() -> None:
     assert rpc["planMementos"][0]["planAtoms"][1]["role"] == "proofir-compiler"
     assert rpc["implications"][0]["antecedentSlot"] == "post"
     assert rpc["effects"][0]["kind"] == "effect"
-    assert rpc["effects"][0]["status"] == "refused"
+    assert rpc["effects"][0]["status"] == "runtime-effect"
     assert rpc["effects"][0]["reason"] == "write more floor for this effect"
 
 
