@@ -35,8 +35,8 @@
 use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{make_var, Term};
-use syn::{Expr, ImplItemFn, ItemFn, Stmt};
+use sugar_ir_symbolic::{make_var, num, str_const, Term};
+use syn::{Expr, ExprLit, ImplItemFn, ItemFn, Lit, Stmt, UnOp};
 
 // Child of crate root: sees crate-root-private items (the Sugar hierarchy, the
 // collector, the resolver, the substitution, the disposition classifier).
@@ -47,9 +47,9 @@ use crate::{
     count_asserts_in_stmts, expr_head_key, helper_body_runtime_terminal_reason,
     is_consuming_iterator_method, receiver_is_versioned_iterator, refusal_disposition,
     resolve_inlinable_helper_call_scoped, resolve_inlinable_method_call_scoped,
-    stmts_have_runtime_terminal_body_shape, substitute_stmts, AssertionEntry, Disposition, Effect,
-    ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, SugarCtx,
-    TemporalScope, MAX_MACRO_EXPANSION_DEPTH,
+    stmts_have_runtime_terminal_body_shape, strip_refs_groups, substitute_stmts, AssertionEntry,
+    Disposition, ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions, ReductionCtx,
+    SugarCtx, TemporalScope, MAX_MACRO_EXPANSION_DEPTH,
 };
 
 /// Build the opaque panic-freedom subject for a call/method expression.
@@ -92,12 +92,8 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
         if callsite_child_is_opaque_value(expr) {
             return callsite_child_identity_term(expr, ctx.scope);
         }
-        match callsite_child_floor_term(expr, ctx) {
-            CallsiteChildFloorTerm::Term(term) => return term,
-            CallsiteChildFloorTerm::NotTerm => {}
-            CallsiteChildFloorTerm::Effect(effect) => {
-                let _ = effect;
-            }
+        if let Some(term) = direct_callsite_child_term(expr, ctx, 0) {
+            return term;
         }
         callsite_child_identity_term(expr, ctx.scope)
     };
@@ -143,6 +139,60 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
     }
 }
 
+fn direct_callsite_child_term(expr: &Expr, ctx: &SugarCtx, depth: usize) -> Option<Rc<Term>> {
+    if depth > 8 {
+        return None;
+    }
+    let expr = strip_refs_groups(expr);
+    if let Some(term) = literal_callsite_child_term(expr) {
+        return Some(term);
+    }
+    let Expr::Path(path) = expr else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let name = path.path.get_ident()?.to_string();
+    if let Some(term) = ctx.scope.stable_term_binding_for_term(&name) {
+        return Some(term);
+    }
+    let bound = ctx.scope.stable_bound_var_for_term(&name)?;
+    match bound.projected_source() {
+        Expr::Call(_) | Expr::MethodCall(_) => Some(opaque_callsite_call_or_method_term(
+            ctx,
+            bound.projected_source(),
+        )),
+        other => direct_callsite_child_term(other, ctx, depth + 1),
+    }
+}
+
+fn literal_callsite_child_term(expr: &Expr) -> Option<Rc<Term>> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Int(int), ..
+        }) => int.base10_parse::<i128>().ok().map(num),
+        Expr::Lit(ExprLit {
+            lit: Lit::Bool(value),
+            ..
+        }) => Some(crate::bool_const(value.value)),
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(value),
+            ..
+        }) => Some(str_const(value.value())),
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Neg(_)) => {
+            let Expr::Lit(ExprLit {
+                lit: Lit::Int(int), ..
+            }) = strip_refs_groups(&unary.expr)
+            else {
+                return None;
+            };
+            int.base10_parse::<i128>().ok().map(|value| num(-value))
+        }
+        _ => None,
+    }
+}
+
 fn callsite_child_is_opaque_value(expr: &Expr) -> bool {
     match expr {
         Expr::Closure(_) => true,
@@ -150,22 +200,6 @@ fn callsite_child_is_opaque_value(expr: &Expr) -> bool {
             !crate::sugar::block_term::has_transparent_term_tail(expr)
         }
         _ => false,
-    }
-}
-
-enum CallsiteChildFloorTerm {
-    Term(Rc<Term>),
-    NotTerm,
-    Effect(Effect),
-}
-
-fn callsite_child_floor_term(expr: &Expr, ctx: &SugarCtx) -> CallsiteChildFloorTerm {
-    match crate::sugar::factory::SugarBody::synthesized_term(expr, ctx).reduce(ctx) {
-        Outcome::Complete(desugared) => desugared
-            .into_term()
-            .map(CallsiteChildFloorTerm::Term)
-            .unwrap_or(CallsiteChildFloorTerm::NotTerm),
-        Outcome::Incomplete(effect) => CallsiteChildFloorTerm::Effect(effect),
     }
 }
 

@@ -14,7 +14,6 @@ use std::collections::BTreeMap;
 
 use syn::{Expr, Stmt};
 
-use crate::sugar::factory::SugarBuildCtx;
 use crate::{FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalScope};
 
 #[allow(clippy::too_many_arguments)]
@@ -28,11 +27,10 @@ pub(crate) fn desugar_initializer_composite(
     macro_depth: usize,
     factory_audits: Option<&FactoryAuditLog>,
 ) -> Option<Outcome> {
-    let fcx = SugarBuildCtx::new(scope, options, let_inits);
     let zero_len_literal_sequence =
         crate::sugar::method_family::literal_sequence_static_len_in_scope(expr, let_inits, scope)
             == Some(0);
-    if zero_len_literal_sequence || !initializer_fact_composite_selected(expr, &fcx) {
+    if zero_len_literal_sequence || !initializer_fact_composite_selected(expr) {
         return None;
     }
     Some(crate::sugar::statement_position::desugar_composite_expr(
@@ -47,22 +45,14 @@ pub(crate) fn desugar_initializer_composite(
     ))
 }
 
-fn initializer_fact_composite_selected(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
-    let Some(selected) = crate::sugar::catalog::matching_expr_claims_for_role(
-        expr,
-        fcx,
-        crate::sugar::claim::SugarRole::Composite,
-    )
-    .into_iter()
-    .next()
-    .map(|candidate| candidate.name()) else {
-        return false;
-    };
-
+fn initializer_fact_composite_selected(expr: &Expr) -> bool {
     // This eager let-initializer drain exists only for Composite sugars that emit
     // facts from a finite literal body. Ordinary value composites, such as `if`
     // initializers, stay lazy and are reduced only by the owning parent sugar.
-    matches!(selected, "fold" | "for_each")
+    let Expr::MethodCall(call) = expr else {
+        return false;
+    };
+    matches!(call.method.to_string().as_str(), "fold" | "for_each")
 }
 
 /// Statements whose fact surfaces are executed while evaluating a `let` initializer.
@@ -303,6 +293,41 @@ fn collect_eager_fact_stmts(expr: &Expr, out: &mut Vec<Stmt>) {
         // Driver/handoff sugar owns those boundaries.
         Expr::Closure(_) | Expr::Async(_) => {}
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod initializer_probe_tests {
+    use super::*;
+
+    #[test]
+    fn initializer_probe_accepts_fact_terminals_only() {
+        let fold: Expr = syn::parse_str("[1, 2].iter().fold(0, |acc, x| acc + x)").unwrap();
+        let for_each: Expr =
+            syn::parse_str("[1, 2].iter().for_each(|x| assert_eq!(*x, 1))").unwrap();
+
+        assert!(initializer_fact_composite_selected(&fold));
+        assert!(initializer_fact_composite_selected(&for_each));
+    }
+
+    #[test]
+    fn initializer_probe_declines_value_adapter() {
+        let map: Expr = syn::parse_str("[1, 2].iter().map(|x| x + 1)").unwrap();
+
+        assert!(!initializer_fact_composite_selected(&map));
+    }
+
+    #[test]
+    fn initializer_probe_is_syntactic_and_does_not_recurse_into_receiver() {
+        let chain: Expr = syn::parse_str(
+            r#"minted.contract_bindings.iter().find(|binding| binding.contract == wanted)"#,
+        )
+        .unwrap();
+
+        assert!(
+            !initializer_fact_composite_selected(&chain),
+            "non-terminal method chains must stay lazy instead of probing composite candidates"
+        );
     }
 }
 

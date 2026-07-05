@@ -20,7 +20,8 @@ use crate::sugar::temporal_floor::{
     TemporalFloorRefusal,
 };
 use crate::{
-    const_eval_option_closure, ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
+    const_eval_option_closure, token_key, ConstVal, Desugared, DesugaredElem, Effect, Outcome,
+    Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -106,23 +107,32 @@ impl Sugar for FilterMapSugar {
             Err(outcome) => return outcome,
         };
         let output = match floor.desugar(operand, seq, |elem| {
-            let v = elem
-                .value
-                .as_ref()
-                .unwrap_or_else(|| filter_map_gap("filter_map element was not literal"));
-            let mapped = self
-                .mapper
-                .eval(v)
-                .unwrap_or_else(|| filter_map_gap("filter_map closure did not reduce to Option"));
-            mapped.map(|mapped| {
-                let mexpr = mapped
-                    .to_expr()
-                    .unwrap_or_else(|| filter_map_gap("filter_map result could not materialize"));
-                DesugaredElem {
-                    expr: mexpr,
-                    value: Some(mapped),
-                }
-            })
+            let Some(v) = elem.value.as_ref() else {
+                return Err(filter_map_effect(
+                    "filter_map element was not literal",
+                    &elem.expr,
+                ));
+            };
+            let Some(mapped) = self.mapper.eval(v) else {
+                return Err(filter_map_effect(
+                    "filter_map closure did not reduce to Option",
+                    &elem.expr,
+                ));
+            };
+            mapped
+                .map(|mapped| {
+                    let Some(mexpr) = mapped.to_expr() else {
+                        return Err(filter_map_effect(
+                            "filter_map result could not materialize",
+                            &elem.expr,
+                        ));
+                    };
+                    Ok(DesugaredElem {
+                        expr: mexpr,
+                        value: Some(mapped),
+                    })
+                })
+                .transpose()
         }) {
             Ok(output) => output,
             Err(outcome) => return outcome,
@@ -134,6 +144,13 @@ impl Sugar for FilterMapSugar {
 
 fn filter_map_gap(reason: &str) -> ! {
     panic!("filter_map did not reach a lawful floor: {reason}")
+}
+
+fn filter_map_effect(reason: &str, boundary: &Expr) -> Outcome {
+    Outcome::Incomplete(Effect::RuntimeFilterMap {
+        reason: reason.to_string(),
+        boundary: token_key(boundary),
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -163,10 +180,11 @@ impl FilterMapFloor {
         mapper: F,
     ) -> Result<AdapterFloorOutput<DesugaredElem>, Outcome>
     where
-        F: FnMut(DesugaredElem) -> Option<DesugaredElem>,
+        F: FnMut(DesugaredElem) -> Result<Option<DesugaredElem>, Outcome>,
     {
         let visited = seq.len();
-        let out = seq.into_iter().filter_map(mapper).collect();
+        let measured = seq.into_iter().map(mapper).collect::<Result<Vec<_>, _>>()?;
+        let out = measured.into_iter().flatten().collect();
         self.counted
             .assert_input_count(&operand, visited)
             .map_err(filter_map_floor_refusal)?;
@@ -178,4 +196,99 @@ fn filter_map_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
     Outcome::Incomplete(Effect::CoverageGap {
         reason: err.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use syn::Item;
+
+    use crate::{
+        sugar::source_fragment::SourceFragment, sugar_ctx, FloatWidthScope, LiftOptions,
+        ReductionCtx, TemporalPlan, TemporalScope,
+    };
+
+    struct StubSeq {
+        elems: Vec<DesugaredElem>,
+    }
+
+    impl Sugar for StubSeq {
+        fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+            Outcome::Complete(Desugared::Seq(self.elems.clone()))
+        }
+    }
+
+    fn run(node: &FilterMapSugar) -> Outcome {
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let scope = TemporalScope::new("filter-map-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let mut fw = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+        node.desugar(&ctx)
+    }
+
+    fn elem(src: &str, value: Option<ConstVal>) -> DesugaredElem {
+        DesugaredElem {
+            expr: syn::parse_str(src).expect("element expr"),
+            value,
+        }
+    }
+
+    fn node_with_elems(elems: Vec<DesugaredElem>) -> FilterMapSugar {
+        let closure = syn::parse_str("|x| Some(x)").expect("filter_map closure");
+        FilterMapSugar {
+            inner: crate::sugar::factory::SugarBody::from_node(Box::new(StubSeq { elems })),
+            mapper: FilterMapClosure::new(closure),
+        }
+    }
+
+    #[test]
+    fn runtime_filter_map_element_is_typed_effect_not_floor_panic() {
+        let node = node_with_elems(vec![elem(
+            r#"edge.get("sourceContract").and_then(Value::as_str)"#,
+            None,
+        )]);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&node)))
+            .expect("runtime filter_map element must be a typed effect, not a floor panic");
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime filter_map element must not fabricate an adapter result");
+        };
+        assert!(
+            effect.reason().contains("runtime filter_map"),
+            "effect should name the filter_map boundary: {}",
+            effect.reason()
+        );
+    }
+
+    #[test]
+    fn literal_filter_map_still_keeps_some_values() {
+        let node = node_with_elems(vec![
+            elem("1", Some(ConstVal::Int(1))),
+            elem("2", Some(ConstVal::Int(2))),
+        ]);
+
+        let Outcome::Complete(Desugared::Seq(out)) = run(&node) else {
+            panic!("literal filter_map should reduce through the counted adapter floor");
+        };
+        assert_eq!(out.len(), 2);
+        assert!(out.iter().all(|elem| elem.value.is_some()));
+    }
+
+    #[test]
+    fn recognize_declines_non_filter_map_method() {
+        let expr: Expr = syn::parse_str("[1].iter().map(|x| Some(x))").expect("expr");
+        let frag = SourceFragment::expr(&expr, "test.rs");
+        let scope = TemporalScope::new("filter-map-structural", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        assert!(
+            recognize_composite(&frag, &fcx).is_none(),
+            "filter_map must not claim a non-filter_map method call"
+        );
+    }
 }

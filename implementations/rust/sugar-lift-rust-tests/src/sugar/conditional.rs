@@ -282,7 +282,7 @@ impl ConditionalSugar {
     }
 
     fn runtime_guard_or_gap(&self, reason: &str) -> Outcome {
-        if crate::if_guard_is_runtime(&self.cond) {
+        if matches!(&self.cond, Expr::Let(_)) || crate::if_guard_is_runtime(&self.cond) {
             return Outcome::Incomplete(Effect::IfGuardRuntime {
                 boundary: token_key(&self.cond),
             });
@@ -548,4 +548,71 @@ pub(crate) fn decompose_if(i: &syn::ExprIf, fcx: &SugarBuildCtx) -> Option<Condi
 
 fn branch_tail_body(stmts: &[Stmt], fcx: &SugarBuildCtx) -> Option<SugarBody<CompositeFloor>> {
     single_expr_tail(stmts).map(|tail| SugarBody::composite(tail, fcx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, ReductionCtx, TemporalPlan,
+        TemporalScope,
+    };
+
+    #[test]
+    fn if_let_sequence_guard_is_typed_effect_not_term_factory_gap() {
+        let expr: Expr = syn::parse_str("if let Some(req) = require { vec![req] } else { vec![] }")
+            .expect("parse if-let expression");
+        let Expr::If(if_expr) = expr else {
+            panic!("expected if expression");
+        };
+        let scope = TemporalScope::new("conditional-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = decompose_if(&if_expr, &fcx).expect("conditional recognizes if-let shape");
+        let items: Vec<syn::Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sugar.desugar(&ctx)))
+                .expect("if-let sequence guard must be a typed effect, not a term factory gap");
+
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("if-let guard must not fabricate a selected branch");
+        };
+        assert!(
+            effect.reason().contains("assertion under if context"),
+            "effect should name the runtime if-let guard: {}",
+            effect.reason()
+        );
+    }
+
+    #[test]
+    fn literal_sequence_conditional_still_selects_branch() {
+        let expr: Expr = syn::parse_str("if true { vec![1] } else { vec![2] }")
+            .expect("parse conditional expression");
+        let Expr::If(if_expr) = expr else {
+            panic!("expected if expression");
+        };
+        let scope = TemporalScope::new("conditional-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = decompose_if(&if_expr, &fcx).expect("conditional recognizes if shape");
+        let items: Vec<syn::Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+
+        let Outcome::Complete(Desugared::Seq(seq)) = sugar.desugar(&ctx) else {
+            panic!("literal guard should select a sequence branch");
+        };
+        assert_eq!(seq.len(), 1);
+        assert_eq!(
+            seq[0].value.as_ref().and_then(crate::ConstVal::as_int),
+            Some(1)
+        );
+    }
 }

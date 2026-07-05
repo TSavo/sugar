@@ -75,6 +75,15 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize,
     );
 
+pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::fallback_composite(
+        "index_composite_boundary",
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "runtime index requested as composite; literal slice/index floors own resolvable indexes",
+        ),
+        recognize_composite,
+    );
+
 /// TERM recognizer for `Expr::Index`. Gates on `frag.observed() == "Index"`;
 /// builds child bodies via `SugarBody::term_frag`. No raw syn in the body.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -82,6 +91,26 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     Some(Box::new(IndexSugar::new(frag, fcx)))
+}
+
+fn recognize_composite(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    (frag.observed() == "Index").then(|| {
+        Box::new(IndexCompositeBoundary {
+            boundary: frag.token_str(),
+        }) as Box<dyn Sugar>
+    })
+}
+
+struct IndexCompositeBoundary {
+    boundary: String,
+}
+
+impl Sugar for IndexCompositeBoundary {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeCompositeIndex {
+            boundary: self.boundary.clone(),
+        })
+    }
 }
 
 /// A general index read `a[i]` in term position, composed as a node whose `desugar`
@@ -509,5 +538,34 @@ mod tests {
             }
             other => panic!("expected a Ctor, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn composite_index_runtime_value_is_typed_effect_not_factory_gap() {
+        let expr: Expr =
+            syn::parse_str("parsed_json[\"unresolvedFactorySites\"][0]").expect("parse expr");
+        let scope = TemporalScope::new("index-composite-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let sugar = crate::sugar::factory::build_composite(&expr, &fcx);
+            let items: Vec<Item> = Vec::new();
+            let reducer = ReductionCtx::from_items(&items);
+            let mut fw = FloatWidthScope::new();
+            let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+            sugar.desugar(&ctx)
+        }))
+        .expect("composite index must be a typed effect, not a factory gap");
+
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime composite index must not fabricate a composite");
+        };
+        assert!(
+            effect.reason().contains("composite index"),
+            "effect should name the index boundary: {}",
+            effect.reason()
+        );
     }
 }

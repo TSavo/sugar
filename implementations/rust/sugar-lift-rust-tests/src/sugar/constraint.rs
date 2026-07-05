@@ -178,6 +178,14 @@ pub(crate) const IF_PANIC_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_bef
     recognize_if_panic,
 );
 
+pub(crate) const PATTERN_GUARD_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_constraint(
+    "constraint_pattern_guard",
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "if-let pattern guards are runtime control-flow evidence, not scalar constraints",
+    ),
+    recognize_pattern_guard,
+);
+
 pub(crate) const NO_PANIC_CALL_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_no_panic_call",
     SugarRole::SupportConstraint,
@@ -973,6 +981,28 @@ impl Sugar for IfPanicSugar {
     }
 }
 
+struct PatternGuardSugar {
+    boundary: String,
+}
+
+fn recognize_pattern_guard(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
+    if !matches!(expr, Expr::Let(_)) {
+        return None;
+    }
+    Some(Box::new(PatternGuardSugar {
+        boundary: token_key(expr),
+    }))
+}
+
+impl Sugar for PatternGuardSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::IfGuardRuntime {
+            boundary: self.boundary.clone(),
+        })
+    }
+}
+
 enum NoPanicKind {
     ReturnsNormally,
     UnconditionalPanic,
@@ -1589,6 +1619,37 @@ fn constraint_gap(reason: impl Into<String>) -> ! {
 mod tests {
     use super::*;
     use crate::{FloatWidthScope, TemporalPlan, TemporalScope};
+
+    #[test]
+    fn raw_if_let_guard_constraint_is_typed_effect_not_factory_gap() {
+        let expr: Expr = syn::parse_str("let Err(error) = write_output(path, bytes)")
+            .expect("parse raw if-let guard");
+        let frag = SourceFragment::expr(&expr, "<src>");
+        let scope = TemporalScope::new("constraint-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = recognize_pattern_guard(&frag, &fcx)
+            .expect("raw if-let guard must have a constraint-role typed owner");
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx =
+            sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
+
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sugar.desugar(&ctx)))
+                .expect("raw if-let guard must be a typed effect, not a constraint factory gap");
+
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("raw if-let guard must not fabricate a scalar constraint");
+        };
+        assert!(
+            effect.reason().contains("if-guard over a runtime value"),
+            "effect should name the raw runtime guard boundary: {}",
+            effect.reason()
+        );
+    }
 
     #[test]
     fn relation_capability_operand_check_only_classifies_the_compared_value() {

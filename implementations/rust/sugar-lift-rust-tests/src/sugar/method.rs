@@ -15,8 +15,8 @@ use sugar_ir_symbolic::{make_var, Term};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    angle_args_key, is_consuming_iterator_method, receiver_is_versioned_iterator, Desugared,
-    Outcome, Sugar, SugarCtx,
+    angle_args_key, is_consuming_iterator_method, receiver_is_versioned_iterator, token_key,
+    Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -26,6 +26,15 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
             "#3415 family i: generic method EUF semantic lie remains SAT",
         ),
         recognize,
+    );
+
+pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::fallback_composite(
+        "runtime_composite_method",
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "runtime method call requested as composite; concrete iterator/literal methods own liftable sequence shapes",
+        ),
+        recognize_composite,
     );
 
 /// TERM recognizer for `Expr::MethodCall`.
@@ -40,6 +49,18 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
             .map(|arg| SugarBody::term_frag(arg, fcx))
             .collect(),
     )))
+}
+
+fn recognize_composite(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
+    if matches!(expr, syn::Expr::MethodCall(call) if call.method == "for_each") {
+        return None;
+    }
+    frag.call_is_method_call().then(|| {
+        Box::new(RuntimeCompositeMethodSugar {
+            boundary: token_key(expr),
+        }) as Box<dyn Sugar>
+    })
 }
 
 /// The `method:<m>` ctor key: `method.turbofish` appends the angle-args key.
@@ -61,6 +82,10 @@ enum MethodSugar {
     },
 }
 
+struct RuntimeCompositeMethodSugar {
+    boundary: String,
+}
+
 impl MethodSugar {
     fn new(
         method: impl Into<String>,
@@ -72,6 +97,14 @@ impl MethodSugar {
             receiver,
             args,
         }
+    }
+}
+
+impl Sugar for RuntimeCompositeMethodSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeCompositeMethodCall {
+            boundary: self.boundary.clone(),
+        })
     }
 }
 
@@ -226,6 +259,67 @@ mod tests {
             }
             other => panic!("expected a Ctor, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn composite_method_runtime_chain_is_typed_effect_not_factory_gap() {
+        let expr: Expr = syn::parse_str(
+            r#"minted.contract_bindings.iter().find(|binding| binding["name"] == "qualified.callee").expect("producer binding")"#,
+        )
+        .expect("method chain parses");
+        let scope = TemporalScope::new("method-composite-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let sugar = crate::sugar::factory::build_composite(&expr, &fcx);
+            let items: Vec<Item> = Vec::new();
+            let reducer = ReductionCtx::from_items(&items);
+            let mut fw = FloatWidthScope::new();
+            let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+            sugar.desugar(&ctx)
+        }))
+        .expect("composite method call must be a typed effect, not a factory gap");
+
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime composite method must not fabricate a composite");
+        };
+        assert!(
+            effect.reason().contains("runtime composite method"),
+            "effect should name the method boundary: {}",
+            effect.reason()
+        );
+    }
+
+    #[test]
+    fn composite_method_boundary_declines_non_method_shapes() {
+        let expr = expr("rows[0]");
+        let frag = SourceFragment::expr(&expr, "test.rs");
+        let scope = TemporalScope::new("method-composite-structural", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        assert!(
+            super::recognize_composite(&frag, &fcx).is_none(),
+            "the runtime composite method fallback must not claim non-method shapes"
+        );
+    }
+
+    #[test]
+    fn composite_method_boundary_declines_for_each_terminal() {
+        let expr = expr("std::env::args().for_each(|x| assert!(!x.is_empty()))");
+        let frag = SourceFragment::expr(&expr, "test.rs");
+        let scope = TemporalScope::new("method-composite-for-each", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        assert!(
+            super::recognize_composite(&frag, &fcx).is_none(),
+            "the runtime composite method fallback must not swallow for_each's runtime iterator owner"
+        );
     }
 
     #[test]

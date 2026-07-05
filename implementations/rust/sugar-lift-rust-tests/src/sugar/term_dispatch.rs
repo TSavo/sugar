@@ -183,6 +183,7 @@ impl TermFloorAccept for Rc<Term> {
     }
 }
 
+#[cfg(test)]
 pub(crate) trait BoolFloorVisitor {
     type Output;
 
@@ -190,10 +191,12 @@ pub(crate) trait BoolFloorVisitor {
     fn visit_non_bool(self, term: &Rc<Term>) -> Self::Output;
 }
 
+#[cfg(test)]
 pub(crate) trait BoolFloorAccept {
     fn accept_bool_floor<V: BoolFloorVisitor>(&self, visitor: V) -> V::Output;
 }
 
+#[cfg(test)]
 impl BoolFloorAccept for Rc<Term> {
     fn accept_bool_floor<V: BoolFloorVisitor>(&self, visitor: V) -> V::Output {
         match self.as_ref() {
@@ -203,26 +206,6 @@ impl BoolFloorAccept for Rc<Term> {
             } => visitor.visit_bool(*value),
             _ => visitor.visit_non_bool(self),
         }
-    }
-}
-
-pub(crate) struct RequiredBoolVisitor<'a> {
-    pub(crate) owner: &'a str,
-}
-
-impl BoolFloorVisitor for RequiredBoolVisitor<'_> {
-    type Output = bool;
-
-    fn visit_bool(self, value: bool) -> Self::Output {
-        value
-    }
-
-    fn visit_non_bool(self, term: &Rc<Term>) -> Self::Output {
-        panic!(
-            "{} did not dispatch to BoolLiteral: {}",
-            self.owner,
-            canonical_term_sig(term)
-        )
     }
 }
 

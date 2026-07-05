@@ -23,8 +23,8 @@ use crate::sugar::factory::{FloorRead, LiteralStringFloor, SugarBody, SugarBuild
 use crate::sugar::format::stable_let_bindings;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, const_fold_int_term, simple_path_name, strip_refs_groups, Desugared, Effect,
-    Outcome, Sugar, SugarCtx,
+    bool_const, const_fold_int_term, simple_path_name, strip_refs_groups, token_key, Desugared,
+    Effect, Outcome, Sugar, SugarCtx,
 };
 
 /// Upper bound on a `.repeat(n)` expansion (bytes). A larger expansion DECLINES rather
@@ -112,6 +112,7 @@ enum StrMethodArgs {
     },
     Repeat {
         count: SugarBody<TermFloor>,
+        count_source: String,
     },
 }
 
@@ -209,7 +210,10 @@ impl StrMethodSugar {
             }
             StringMethodKind::Repeat => {
                 let n = match &self.args {
-                    StrMethodArgs::Repeat { count } => repeat_count(count, ctx)?,
+                    StrMethodArgs::Repeat {
+                        count,
+                        count_source,
+                    } => repeat_count(count, count_source, ctx)?,
                     _ => panic!("str_method repeat constructed without typed count"),
                 };
                 match recv.len().checked_mul(n) {
@@ -339,6 +343,7 @@ fn recognized_args(
             };
             Some(StrMethodArgs::Repeat {
                 count: SugarBody::term(count, fcx),
+                count_source: token_key(count),
             })
         }
         StrMethodKind::String(_)
@@ -451,13 +456,22 @@ impl StrPatternArg {
     }
 }
 
-fn repeat_count(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<usize, Outcome> {
+fn repeat_count(
+    body: &SugarBody<TermFloor>,
+    source: &str,
+    ctx: &SugarCtx,
+) -> Result<usize, Outcome> {
     let term = term_body(body, ctx)?;
     let Some(value) = const_fold_int_term(&term) else {
-        panic!("str repeat count did not reduce to an integer literal");
+        return Err(Outcome::Incomplete(Effect::RuntimeStringRepeatCount {
+            boundary: source.to_string(),
+        }));
     };
-    Ok(usize::try_from(value)
-        .unwrap_or_else(|_| panic!("str repeat count is negative or too large")))
+    usize::try_from(value).map_err(|_| {
+        Outcome::Incomplete(Effect::RuntimeStringRepeatCount {
+            boundary: source.to_string(),
+        })
+    })
 }
 
 fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {

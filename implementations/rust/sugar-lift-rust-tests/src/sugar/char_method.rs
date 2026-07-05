@@ -13,8 +13,8 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, callsite_assertion_name, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx,
-    Warrant,
+    bool_const, callsite_assertion_name, AssertionFactKind, Desugared, Effect, Outcome, Sugar,
+    SugarCtx, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
@@ -93,6 +93,8 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     };
 
     Some(Box::new(CharMethodSugar {
+        boundary: stripped.token_str(),
+        method: method_key,
         receiver: SugarBody::term_frag(&receiver_frag, fcx),
         kind,
     }))
@@ -148,6 +150,8 @@ fn eval_bool_method(method: &str, ch: char) -> Option<bool> {
 }
 
 struct CharMethodSugar {
+    boundary: String,
+    method: String,
     receiver: SugarBody<TermFloor>,
     kind: CharMethodKind,
 }
@@ -224,31 +228,65 @@ impl Sugar for CharMethodSugar {
                 }
             }
             CharMethodKind::AsciiUpper => {
-                let ch = require_char(&receiver, "to_ascii_uppercase receiver");
+                let ch =
+                    match literal_char_or_runtime_effect(&receiver, &self.method, &self.boundary) {
+                        Ok(ch) => ch,
+                        Err(outcome) => return outcome,
+                    };
                 str_const(ch.to_ascii_uppercase().to_string())
             }
             CharMethodKind::AsciiLower => {
-                let ch = require_char(&receiver, "to_ascii_lowercase receiver");
+                let ch =
+                    match literal_char_or_runtime_effect(&receiver, &self.method, &self.boundary) {
+                        Ok(ch) => ch,
+                        Err(outcome) => return outcome,
+                    };
                 str_const(ch.to_ascii_lowercase().to_string())
             }
             CharMethodKind::UnicodeUpper => {
-                let ch = require_char(&receiver, "to_uppercase receiver");
+                let ch =
+                    match literal_char_or_runtime_effect(&receiver, &self.method, &self.boundary) {
+                        Ok(ch) => ch,
+                        Err(outcome) => return outcome,
+                    };
                 str_const(ch.to_uppercase().collect::<String>())
             }
             CharMethodKind::UnicodeLower => {
-                let ch = require_char(&receiver, "to_lowercase receiver");
+                let ch =
+                    match literal_char_or_runtime_effect(&receiver, &self.method, &self.boundary) {
+                        Ok(ch) => ch,
+                        Err(outcome) => return outcome,
+                    };
                 str_const(ch.to_lowercase().collect::<String>())
             }
             CharMethodKind::ToString => match term_to_string_const(&receiver) {
                 Some(value) => str_const(value),
-                None => str_const(require_char(&receiver, "to_string receiver").to_string()),
+                None => {
+                    let ch = match literal_char_or_runtime_effect(
+                        &receiver,
+                        &self.method,
+                        &self.boundary,
+                    ) {
+                        Ok(ch) => ch,
+                        Err(outcome) => return outcome,
+                    };
+                    str_const(ch.to_string())
+                }
             },
             CharMethodKind::LenUtf8 => {
-                let ch = require_char(&receiver, "len_utf8 receiver");
+                let ch =
+                    match literal_char_or_runtime_effect(&receiver, &self.method, &self.boundary) {
+                        Ok(ch) => ch,
+                        Err(outcome) => return outcome,
+                    };
                 num(ch.len_utf8() as i128)
             }
             CharMethodKind::ToDigit { radix } => {
-                let ch = require_char(&receiver, "to_digit receiver");
+                let ch =
+                    match literal_char_or_runtime_effect(&receiver, &self.method, &self.boundary) {
+                        Ok(ch) => ch,
+                        Err(outcome) => return outcome,
+                    };
                 let radix = match term_body(radix, ctx) {
                     Ok(term) => require_radix(&term),
                     Err(outcome) => return outcome,
@@ -297,6 +335,19 @@ fn term_to_char(term: &Rc<Term>) -> Option<char> {
 fn require_char(term: &Rc<Term>, context: &str) -> char {
     term_to_char(term).unwrap_or_else(|| {
         panic!("{context} did not reduce to a literal char; write the owning Sugar before Outcome")
+    })
+}
+
+fn literal_char_or_runtime_effect(
+    term: &Rc<Term>,
+    method: &str,
+    boundary: &str,
+) -> Result<char, Outcome> {
+    term_to_char(term).ok_or_else(|| {
+        Outcome::Incomplete(Effect::RuntimeTextMethod {
+            method: method.to_string(),
+            boundary: boundary.to_string(),
+        })
     })
 }
 
@@ -382,5 +433,33 @@ mod tests {
         assert_eq!(frag.call_method_key(), None);
         assert!(!frag.call_has_turbofish());
         assert!(frag.call_receiver().is_none());
+    }
+
+    #[test]
+    fn runtime_case_receiver_returns_typed_effect_not_factory_gap() {
+        let expr: syn::Expr = syn::parse_str("c.to_lowercase()").expect("parse expr");
+        let frag = SourceFragment::expr(&expr, "<test>");
+        let scope = crate::TemporalScope::new("test", crate::TemporalPlan::default());
+        let options = crate::LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = crate::sugar::factory::SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = super::recognize(&frag, &fcx).expect("char method recognizes the shape");
+        let items: Vec<syn::Item> = Vec::new();
+        let reducer = crate::ReductionCtx::from_items(&items);
+        let mut float_widths = crate::FloatWidthScope::new();
+        let ctx = crate::sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sugar.desugar(&ctx)))
+                .expect("runtime case conversion must be a typed effect, not a factory panic");
+
+        let crate::Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime case conversion must not fabricate a value");
+        };
+        assert!(
+            effect.reason().contains("runtime text method"),
+            "effect should name the runtime text boundary: {}",
+            effect.reason()
+        );
     }
 }

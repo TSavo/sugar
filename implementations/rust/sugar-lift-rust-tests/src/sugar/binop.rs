@@ -25,11 +25,10 @@ use sugar_ir_symbolic::{ConstValue, Term};
 use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::sugar::term_dispatch::{BoolFloorAccept, RequiredBoolVisitor};
 use crate::sugar::term_leaf::resolved_term;
 use crate::{
-    bool_const, const_fold_int_term, const_fold_u128_term, num, u128_term, Desugared, Outcome,
-    Sugar, SugarCtx,
+    bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num, u128_term,
+    Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -135,7 +134,16 @@ fn bool_body_value(
             .unwrap_or_else(|| binop_gap("boolean child completed as non-term")),
         Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
     };
-    Ok(term.accept_bool_floor(RequiredBoolVisitor { owner }))
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Bool(value),
+            ..
+        } => Ok(*value),
+        _ => Err(Outcome::Incomplete(Effect::RuntimeBoolLogic {
+            owner: owner.to_string(),
+            boundary: canonical_term_sig(&term),
+        })),
+    }
 }
 
 /// The constructive arithmetic-term node. `left`/`right` are the pre-built operand
@@ -350,6 +358,25 @@ mod tests {
             Outcome::Incomplete(_) => panic!("expected left-true || to complete before right"),
         };
         assert!(bool_const_value(&term));
+    }
+
+    #[test]
+    fn bool_logic_runtime_operand_is_typed_effect_not_floor_panic() {
+        let node = BoolLogicSugar {
+            left: SugarBody::from_node(Box::new(StubTerm(make_var("behavior_ok")))),
+            right: SugarBody::from_node(Box::new(StubTerm(bool_const(true)))),
+            is_and: true,
+        };
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&node)))
+            .expect("runtime bool logic must be a typed effect, not a floor dispatch panic");
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("runtime bool logic must not fabricate a truth value");
+        };
+        assert!(
+            effect.reason().contains("runtime bool logic"),
+            "effect should name the runtime bool boundary: {}",
+            effect.reason()
+        );
     }
 
     #[test]

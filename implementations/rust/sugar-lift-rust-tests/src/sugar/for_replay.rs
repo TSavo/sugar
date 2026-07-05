@@ -1279,7 +1279,34 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         if let Expr::Macro(expr_macro) = &mut expr {
             expr_macro.mac.tokens = substitute_macro_tokens(mac, &self.bindings)?;
         }
+        if self.emit_assertion_macro_payload(&expr).is_some() {
+            return Some(());
+        }
         self.emit_constraint_expr(&expr)
+    }
+
+    fn emit_assertion_macro_payload(&mut self, expr: &Expr) -> Option<()> {
+        let Expr::Macro(expr_macro) = expr else {
+            return None;
+        };
+        let name = expr_macro.mac.path.segments.last()?.ident.to_string();
+        let args = crate::parse_macro_args(expr_macro.mac.tokens.clone()).ok()?;
+        match name.as_str() {
+            "assert" | "debug_assert" => self.emit_constraint_expr(args.exprs.first()?),
+            "assert_eq" | "debug_assert_eq" | "assert_eq_const_safe" if args.exprs.len() >= 2 => {
+                let lhs = &args.exprs[0];
+                let rhs = &args.exprs[1];
+                let relation: Expr = syn::parse_quote!(#lhs == #rhs);
+                self.emit_constraint_expr(&relation)
+            }
+            "assert_ne" | "debug_assert_ne" if args.exprs.len() >= 2 => {
+                let lhs = &args.exprs[0];
+                let rhs = &args.exprs[1];
+                let relation: Expr = syn::parse_quote!(#lhs != #rhs);
+                self.emit_constraint_expr(&relation)
+            }
+            _ => None,
+        }
     }
 
     fn emit_constraint_expr(&mut self, expr: &Expr) -> Option<()> {
