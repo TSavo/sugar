@@ -153,6 +153,10 @@ def _attr(receiver: dict[str, object], name: str) -> dict[str, object]:
     return _call_term("python:attribute", receiver, _str(name))
 
 
+def _len_term(value: dict[str, object]) -> dict[str, object]:
+    return _call_term("python:len", value)
+
+
 def _atom(
     name: str, lhs: dict[str, object], rhs: dict[str, object]
 ) -> dict[str, object]:
@@ -278,6 +282,30 @@ def test_finite_literal_membership_guard_lowers_to_disjunction_precondition():
             _atom("=", _var("device"), _unit()),
         ],
     }
+
+
+def test_len_equality_guard_lowers_to_negated_len_precondition():
+    source = (
+        "def first(items):\n"
+        "    if len(items) == 0:\n"
+        "        raise ValueError\n"
+        "    return items[0]\n"
+    )
+    contract = _fn_contract(source)
+
+    assert contract["pre"] == _atom("≠", _len_term(_var("items")), _int(0))
+
+
+def test_len_greater_than_guard_lowers_to_negated_len_precondition():
+    source = (
+        "def single(pyf_files):\n"
+        "    if len(pyf_files) > 1:\n"
+        "        raise ValueError\n"
+        "    return pyf_files[0]\n"
+    )
+    contract = _fn_contract(source)
+
+    assert contract["pre"] == _atom("≤", _len_term(_var("pyf_files")), _int(1))
 
 
 def test_mixed_supported_guard_shapes_compose_without_residual():
