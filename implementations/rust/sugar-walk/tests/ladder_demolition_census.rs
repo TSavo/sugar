@@ -297,10 +297,10 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 1926,
+        line: 2002,
         enclosing_fn: "collect_guarded_panic_effects_in_expr",
         family: "panic-loop-effects",
-        max_signals: 39,
+        max_signals: 40,
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
@@ -803,6 +803,23 @@ fn classify_family(
         return family("value-kind-macros");
     }
     if file.ends_with("lift.rs") {
+        if matches!(
+            enclosing_fn,
+            "collect_assertion_guard_facts"
+                | "collect_local_value_facts"
+                | "expr_root_ident"
+                | "len_receiver_root_expr"
+                | "local_binding_ident_for_pat"
+                | "pure_free_guard_expr_is_pure_read"
+        ) {
+            return family("guard-assertion-facts");
+        }
+        if enclosing_fn == "is_pure_value_term" {
+            return family("wp-contract-seeds");
+        }
+        if enclosing_fn == "lift_stmt_contribution" {
+            return family("value-kind-macros");
+        }
         if enclosing_fn.contains("tail")
             || enclosing_fn.contains("ite")
             || enclosing_fn.contains("formula_to_term")

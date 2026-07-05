@@ -45,9 +45,9 @@ use sugar_walk::source_oracle::{
 use sugar_walk::{
     build_function_contract_with_file_and_post_override, build_shadow_source,
     collect_explicit_function_return_facts, lift_function_postcondition_with_return_facts,
-    lift_function_postcondition_with_return_facts_and_pure_free_guards, lift_function_precondition,
-    pure_free_guard_arg_is_stable, pure_free_guard_expr_effect_roots, CalleeContract,
-    PureFreeGuardRule,
+    lift_function_postcondition_with_return_facts_and_pure_free_guards_detailed,
+    lift_function_precondition, pure_free_guard_arg_is_stable, pure_free_guard_expr_effect_roots,
+    CalleeContract, PureFreeGuardRule,
 };
 use syn::spanned::Spanned;
 use tracing::{debug, info, trace, warn};
@@ -7353,12 +7353,14 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
         );
 
         for target in collect_function_contract_targets(&file) {
-            let post_formula = lift_function_postcondition_with_return_facts_and_pure_free_guards(
-                &target.item_fn,
-                &return_facts,
-                &pure_free_guard_rules,
-            )
-            .into_formula();
+            let lifted_post =
+                lift_function_postcondition_with_return_facts_and_pure_free_guards_detailed(
+                    &target.item_fn,
+                    &return_facts,
+                    &pure_free_guard_rules,
+                );
+            let body_lift_refusal = lifted_post.body_discharge_refusal_reason.clone();
+            let post_formula = lifted_post.wp.into_formula();
             factory_walk.extend(function_contract_body_factory_walk_rows(
                 rel.as_str(),
                 &src,
@@ -7373,6 +7375,10 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
             );
             let (body_discharge_eligible, refusal_reason) =
                 body_discharge_eligibility(&contract.post, &contract.formals);
+            let (body_discharge_eligible, refusal_reason) = match body_lift_refusal {
+                Some(reason) => (false, Some(reason)),
+                None => (body_discharge_eligible, refusal_reason),
+            };
             let mut entry: Value =
                 serde_json::from_slice(&contract.canonical_bytes).map_err(|e| e.to_string())?;
             entry["name"] = json!(target.fn_name.clone());
@@ -14144,6 +14150,65 @@ pub fn identity(value: i64) -> i64 {
         assert!(
             err.contains("Cargo package name"),
             "unexpected error: {err}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn function_contract_lift_refuses_write_macro_match_arm_without_transport_panic() {
+        let root = temp_workspace("function_contract_write_macro_match_arm");
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        write_cargo_package(&root, "write-macro-match-arm");
+        fs::write(
+            src_dir.join("lib.rs"),
+            r#"
+use std::fmt;
+
+pub enum DemoError {
+    Bad,
+}
+
+impl fmt::Display for DemoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bad => write!(f, "bad"),
+        }
+    }
+}
+"#,
+        )
+        .expect("write source");
+
+        let resp = function_contract_lift(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "source_paths": ["."]
+        }))
+        .expect("function contract lift must survive opaque write! match arm");
+
+        let entries = resp["ir"].as_array().expect("ir array");
+        let fmt_entry = entries
+            .iter()
+            .find(|entry| entry["name"] == "<DemoError as fmt::Display>::fmt")
+            .unwrap_or_else(|| panic!("missing fmt contract: {entries:?}"));
+        assert_eq!(fmt_entry["bodyDischargeEligible"], false);
+        let reason = fmt_entry["bodyDischargeRefusalReason"]
+            .as_str()
+            .expect("refusal reason");
+        assert!(
+            reason.contains("opaque-macro-assignment-root") && reason.contains("write"),
+            "refusal must name the opaque write! macro root gap: {reason}"
+        );
+        assert!(
+            resp["diagnostics"]
+                .as_array()
+                .is_some_and(
+                    |items| items.iter().any(|item| item["kind"] == "body-discharge-gap"
+                        && item["function"] == "<DemoError as fmt::Display>::fmt"
+                        && item["reason"].as_str() == Some(reason))
+                ),
+            "diagnostics must carry the reasoned body-discharge gap: {resp:?}"
         );
 
         let _ = fs::remove_dir_all(root);

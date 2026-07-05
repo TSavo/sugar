@@ -44,9 +44,10 @@ pub use envelope::{
 pub use lift::{
     collect_explicit_function_return_facts, lift_function_postcondition,
     lift_function_postcondition_with_return_facts,
-    lift_function_postcondition_with_return_facts_and_pure_free_guards, lift_function_precondition,
-    lift_predicate, pure_free_guard_arg_is_stable, pure_free_guard_expr_effect_roots,
-    PureFreeGuardRule,
+    lift_function_postcondition_with_return_facts_and_pure_free_guards,
+    lift_function_postcondition_with_return_facts_and_pure_free_guards_detailed,
+    lift_function_precondition, lift_predicate, pure_free_guard_arg_is_stable,
+    pure_free_guard_expr_effect_roots, PureFreeGuardRule,
 };
 pub use shadow::{
     build_shadow_source, compose_chain, compose_edges, edge_memento_cid, edge_memento_value,
