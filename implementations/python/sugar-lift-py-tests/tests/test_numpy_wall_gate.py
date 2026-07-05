@@ -92,12 +92,20 @@ def test_build_uses_sugarbin_and_reuses_one_audit_workspace(tmp_path: Path) -> N
     ) -> CommandResult:
         commands.append(command)
         if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
-            return CommandResult(0, str(tmp_path / "shelf" / "sugar") + "\n", "")
-        if command[:4] == ["sugar", "lift", "--report", "--visual"]:
+            return CommandResult(
+                0,
+                str(tmp_path / "shelf" / "sugar-darwin-x86_64-release-stamp") + "\n",
+                "",
+            )
+        if command[1:4] == ["lift", "--report", "--visual"]:
+            assert command[0].endswith("sugar-darwin-x86_64-release-stamp")
             assert command[-1].startswith(str(tmp_path / "wall" / "workspace"))
+            assert env["SUGAR_BIN"] == command[0]
             return CommandResult(0, "    pkg.py:1  GREEN\n", "")
-        if command[:4] == ["sugar", "lift", "--report", "--json"]:
+        if command[1:4] == ["lift", "--report", "--json"]:
+            assert command[0].endswith("sugar-darwin-x86_64-release-stamp")
             assert command[-1].startswith(str(tmp_path / "wall" / "workspace"))
+            assert env["SUGAR_BIN"] == command[0]
             return CommandResult(
                 0,
                 '{"contracts": [{"pre": {"kind": "atomic"}}], "callEdges": [{"kind": "implication"}]}\n',
@@ -149,10 +157,16 @@ def test_wall_gate_fails_on_breach(tmp_path: Path) -> None:
         command: list[str], cwd: Path, env: dict[str, str]
     ) -> CommandResult:
         if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
-            return CommandResult(0, str(tmp_path / "shelf" / "sugar") + "\n", "")
-        if command[:4] == ["sugar", "lift", "--report", "--visual"]:
+            return CommandResult(
+                0,
+                str(tmp_path / "shelf" / "sugar-darwin-x86_64-release-stamp") + "\n",
+                "",
+            )
+        if command[1:4] == ["lift", "--report", "--visual"]:
+            assert env["SUGAR_BIN"] == command[0]
             return CommandResult(0, "    pkg.py:1  GREEN\n", "")
-        if command[:4] == ["sugar", "lift", "--report", "--json"]:
+        if command[1:4] == ["lift", "--report", "--json"]:
+            assert env["SUGAR_BIN"] == command[0]
             return CommandResult(0, '{"contracts": [], "callEdges": []}\n', "")
         raise AssertionError(f"unexpected command: {command}")
 

@@ -138,7 +138,9 @@ def build_numpy_wall(
     env = _wall_env(root, sugar_bin)
 
     visual_result = runner(
-        ["sugar", "lift", "--report", "--visual", str(workspace)], root, env
+        [os.fspath(sugar_bin), "lift", "--report", "--visual", str(workspace)],
+        root,
+        env,
     )
     visual_path = output_dir / "wall.txt"
     _write_command_receipt(visual_path, visual_result)
@@ -149,7 +151,9 @@ def build_numpy_wall(
         )
 
     report_result = runner(
-        ["sugar", "lift", "--report", "--json", str(workspace)], root, env
+        [os.fspath(sugar_bin), "lift", "--report", "--json", str(workspace)],
+        root,
+        env,
     )
     report_path = output_dir / "report.json"
     _write_command_receipt(report_path, report_result)
@@ -315,7 +319,7 @@ def _resolve_sugar_bin(root: Path, profile: str, runner: RunCommand) -> Path:
 
 def _wall_env(root: Path, sugar_bin: Path) -> dict[str, str]:
     env = os.environ.copy()
-    env["PATH"] = f"{sugar_bin.parent}{os.pathsep}{env.get('PATH', '')}"
+    env["SUGAR_BIN"] = os.fspath(sugar_bin)
     source_paths = [
         root / "implementations/python/sugar-lift-py-tests/src",
         root / "implementations/python/sugar-lift-python-source/src",

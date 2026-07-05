@@ -27,6 +27,14 @@ def _python_files() -> list[Path]:
     return sorted(files)
 
 
+def _runtime_python_files() -> list[Path]:
+    files: list[Path] = []
+    for root in PY_KIT_ROOTS:
+        src = root / "src"
+        files.extend(path for path in src.rglob("*.py"))
+    return sorted(files)
+
+
 def _literal_text(node: ast.AST) -> str | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
@@ -48,6 +56,33 @@ def _is_cargo_build_call(node: ast.Call) -> bool:
     return False
 
 
+def _is_bare_sugar_subprocess_call(node: ast.Call) -> bool:
+    if not (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"run", "check_call", "check_output", "Popen"}
+    ):
+        return False
+    if not node.args:
+        return False
+    argv = node.args[0]
+    if not isinstance(argv, ast.List) or not argv.elts:
+        return False
+    return _literal_text(argv.elts[0]) == "sugar"
+
+
+def _is_sugar_path_lookup(node: ast.Call) -> bool:
+    if not (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "which"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "shutil"
+    ):
+        return False
+    if not node.args:
+        return False
+    return _literal_text(node.args[0]) == "sugar"
+
+
 def test_python_kit_has_no_ad_hoc_cargo_build_shells() -> None:
     offenders: list[str] = []
     for path in _python_files():
@@ -64,6 +99,21 @@ def test_python_kit_has_no_ad_hoc_cargo_build_shells() -> None:
             ):
                 rel = path.relative_to(ROOT)
                 offenders.append(f"{rel}:{node.lineno}: cargo build prose")
+    assert offenders == []
+
+
+def test_python_runtime_has_no_bare_sugar_binary_acquisition() -> None:
+    offenders: list[str] = []
+    for path in _runtime_python_files():
+        with tokenize.open(path) as source:
+            tree = ast.parse(source.read(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _is_bare_sugar_subprocess_call(node):
+                rel = path.relative_to(ROOT)
+                offenders.append(f"{rel}:{node.lineno}: subprocess bare sugar")
+            if isinstance(node, ast.Call) and _is_sugar_path_lookup(node):
+                rel = path.relative_to(ROOT)
+                offenders.append(f"{rel}:{node.lineno}: shutil.which sugar")
     assert offenders == []
 
 

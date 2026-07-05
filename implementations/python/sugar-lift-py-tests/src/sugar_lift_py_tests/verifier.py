@@ -14,10 +14,11 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import List, Optional
+
+from .sugar_binary import SugarBinaryResolutionError, resolve_sugar_binary
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -48,7 +49,7 @@ class HandshakeReport:
 
 
 class VerifierNotFoundError(Exception):
-    """Raised when the sugar CLI is not installed or not on PATH."""
+    """Raised when the sugar CLI cannot be resolved through ``bin/sugarbin``."""
 
     pass
 
@@ -68,8 +69,11 @@ class VerifierProtocolError(RuntimeError):
 
 
 def find_sugar_cli() -> Optional[str]:
-    """Locate the ``sugar`` binary on PATH."""
-    return shutil.which("sugar")
+    """Resolve the ``sugar`` binary through the repository hand-off entrypoint."""
+    try:
+        return str(resolve_sugar_binary())
+    except SugarBinaryResolutionError:
+        return None
 
 
 def _raise_malformed_cli_json(action: str, stdout: str, stderr: str) -> None:
@@ -96,7 +100,8 @@ def verify_project(
     cli = find_sugar_cli()
     if cli is None:
         raise VerifierNotFoundError(
-            "sugar CLI not found on PATH. Install it via: cargo install sugar"
+            "sugar CLI could not be resolved through bin/sugarbin; "
+            "set SUGAR_BIN or repair the repository binary hand-off"
         )
 
     cmd = [cli, "verify", project_root]
@@ -140,7 +145,9 @@ def prove_contract(
     """
     cli = find_sugar_cli()
     if cli is None:
-        raise VerifierNotFoundError("sugar CLI not found on PATH")
+        raise VerifierNotFoundError(
+            "sugar CLI could not be resolved through bin/sugarbin"
+        )
 
     cmd = [cli, "prove", contract_file]
     if extra_args:
