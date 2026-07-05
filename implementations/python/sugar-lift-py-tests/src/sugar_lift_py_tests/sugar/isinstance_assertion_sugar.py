@@ -84,7 +84,7 @@ class IsInstanceAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             return formulas[0]
         return or_(formulas)
 
-    def desugar(self, ctx):
+    def _build(self, ctx):
         del ctx
         if self.classinfo_effect is not None:
             return Incomplete(self.classinfo_effect)

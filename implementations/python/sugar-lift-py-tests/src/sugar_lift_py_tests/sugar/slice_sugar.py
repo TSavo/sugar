@@ -70,7 +70,7 @@ class SliceSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             return None
         return cls(lower=lower, upper=upper, step=step)
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         lower = _reduce_optional(self.lower, ctx, "lower")
         if isinstance(lower, Incomplete):
             return lower

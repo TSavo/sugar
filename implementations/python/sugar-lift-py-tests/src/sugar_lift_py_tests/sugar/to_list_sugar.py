@@ -44,7 +44,7 @@ class ToListSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         receiver = complete_value(self.receiver.reduce(ctx), owner="ToListSugar")
         return perform_operation(
             owner="ToListSugar",

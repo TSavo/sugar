@@ -36,6 +36,9 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
     else_body: SugarBody | None
     finally_body: SugarBody | None
     blame: str
+    effect_consumer_reason = (
+        "routes Incomplete raise-like effects through handlers/finally"
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.body, SugarBody):
@@ -154,11 +157,15 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _desugar_with_effects(self, ctx) -> Outcome:
         exit_outcome = self._try_exit(ctx)
         if self.finally_body is None:
             return exit_outcome
         return _apply_finally(exit_outcome, self.finally_body, ctx, self.blame)
+
+    def _build(self, ctx, **complete_operands) -> Outcome:
+        del ctx, complete_operands
+        raise AssertionError("TrySugar reduces through _desugar_with_effects")
 
     def _try_exit(self, ctx) -> Outcome:
         outcome = self.body.reduce(ctx)

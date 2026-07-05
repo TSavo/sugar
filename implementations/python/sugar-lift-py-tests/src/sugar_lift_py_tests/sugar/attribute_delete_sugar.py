@@ -72,7 +72,7 @@ class AttributeDeleteSugar(Sugar, role=SugarRole.STATEMENT):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         receiver_outcome = self.receiver.reduce(ctx)
         if isinstance(receiver_outcome, Incomplete):
             return receiver_outcome

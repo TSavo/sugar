@@ -40,7 +40,7 @@ class BoolOpAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             ),
         )
 
-    def desugar(self, ctx) -> Formula | Incomplete:
+    def _build(self, ctx) -> Formula | Incomplete:
         formulas: list[Formula] = []
         for value in self.values:
             formula = value.reduce(ctx)

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.operations import AddOperation, perform_operation
-from sugar_lift_py_tests.outcome import Outcome, complete_value
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import add_method_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -16,6 +16,7 @@ class AddSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     receiver: SugarBody
     operand: SugarBody
     blame: str
+    template_operand_names = ("receiver", "operand")
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -50,9 +51,7 @@ class AddSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
-        receiver = complete_value(self.receiver.reduce(ctx), owner="AddSugar receiver")
-        operand = complete_value(self.operand.reduce(ctx), owner="AddSugar operand")
+    def _build(self, ctx, *, receiver, operand) -> Outcome:
         if not isinstance(operand, TermValue):
             raise TypeError("AddSugar operand must reduce to TermValue")
         return perform_operation(

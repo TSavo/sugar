@@ -120,7 +120,7 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     def assertion_formula(self) -> Formula:
         return atomic("py.truthy", [self.term])
 
-    def desugar(self, ctx):
+    def _build(self, ctx):
         projection = _require_truth_projection(self.projection)
         if isinstance(projection, Degraded):
             return self.assertion_formula()

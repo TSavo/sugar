@@ -43,6 +43,9 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
 
     statements: tuple[SugarBody, ...]
     blame: str
+    effect_consumer_reason = (
+        "folds statement effects through block control-flow composition"
+    )
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -63,8 +66,12 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _desugar_with_effects(self, ctx) -> Outcome:
         return self.fold_with_context(ctx).outcome
+
+    def _build(self, ctx, **complete_operands) -> Outcome:
+        del ctx, complete_operands
+        raise AssertionError("BlockSugar reduces through _desugar_with_effects")
 
     def fold_with_context(self, ctx) -> BlockFold:
         outcomes: list[object] = []

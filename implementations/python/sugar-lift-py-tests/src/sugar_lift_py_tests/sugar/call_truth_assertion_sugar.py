@@ -59,7 +59,7 @@ class CallTruthAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             return eq(self.call, bool_const(True))
         return atomic("py.truthy", [self.call])
 
-    def desugar(self, ctx):
+    def _build(self, ctx):
         if self.call_body is None:
             return self.assertion_formula()
         call_outcome = self.call_body.reduce(ctx)

@@ -70,6 +70,6 @@ class IdentityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             return formula
         return self.polarity.apply(formula)
 
-    def desugar(self, ctx):
+    def _build(self, ctx):
         del ctx
         return self.assertion_formula()

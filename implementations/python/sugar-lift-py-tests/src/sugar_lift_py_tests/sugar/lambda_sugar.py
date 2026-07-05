@@ -18,6 +18,7 @@ class LambdaSugar(Sugar, role=SugarRole.TERM):
     body: SugarBody | None
     blame: str
     runtime_reason: str | None = None
+    template_operand_names = ()
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -68,7 +69,7 @@ class LambdaSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, _ctx) -> Outcome:
+    def _build(self, _ctx) -> Outcome:
         if self.runtime_reason is not None:
             return Incomplete(
                 RuntimeEffect(

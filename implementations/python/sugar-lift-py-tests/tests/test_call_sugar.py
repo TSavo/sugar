@@ -48,11 +48,11 @@ def test_owns_is_shape_only_a_call_yes_a_non_call_no():
     assert CallSugar.owns(_frag("x + 1")) is False
 
 
-def test_desugar_is_a_single_delegation_no_context_branch():
-    # structural: desugar's only statement delegates to the strategy.
+def test_build_is_a_single_delegation_no_context_branch():
+    # structural: the post-template hook only delegates to the strategy.
     import inspect
 
-    src = inspect.getsource(CallSugar.desugar)
+    src = inspect.getsource(CallSugar._build)
     body = [
         ln.strip()
         for ln in src.splitlines()

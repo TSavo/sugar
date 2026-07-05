@@ -57,7 +57,7 @@ class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
             return None
         return cls(receiver=receiver, index=index, blame=blame)
 
-    def desugar(self, ctx=None) -> Outcome:
+    def _build(self, ctx=None) -> Outcome:
         receiver_outcome = self.receiver.reduce(ctx)
         if isinstance(receiver_outcome, Incomplete):
             return receiver_outcome

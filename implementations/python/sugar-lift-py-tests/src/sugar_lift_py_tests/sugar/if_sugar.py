@@ -68,7 +68,7 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         then_outcome = self.then.reduce(ctx)
         if isinstance(then_outcome, Incomplete):
             return then_outcome

@@ -55,7 +55,7 @@ class SetSugar(Sugar, role=SugarRole.TERM):
             )
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         items: list[Term] = []
         for element in self.elements:
             outcome = element.reduce(ctx)

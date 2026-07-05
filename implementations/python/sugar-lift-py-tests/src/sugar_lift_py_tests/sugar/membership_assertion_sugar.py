@@ -51,7 +51,7 @@ class MembershipAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             blame=site.blame,
         )
 
-    def desugar(self, ctx):
+    def _build(self, ctx):
         item_outcome = self.item.reduce(ctx)
         if isinstance(item_outcome, Incomplete):
             return item_outcome

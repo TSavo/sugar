@@ -47,7 +47,7 @@ class ExprSugar(Sugar, role=SugarRole.STATEMENT):
             raise TypeError("ExprSugar claim built a non-expression statement")
         return cls(value=ctx.build_body(site.expr_value(), SugarRole.TERM))
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         outcome = self.value.reduce(ctx)
         if isinstance(outcome, Incomplete):
             return outcome

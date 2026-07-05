@@ -40,7 +40,7 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
     def witnesses(cls):
         return raise_try_return_witness()
 
-    def desugar(self, ctx=None) -> Outcome:
+    def _build(self, ctx=None) -> Outcome:
         return Complete(
             RaiseValue(RaiseEffect(self.exception_name, self.blame), scope=ctx)
         )

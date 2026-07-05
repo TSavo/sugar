@@ -60,7 +60,7 @@ class ReturnSugar(Sugar, role=SugarRole.STATEMENT):
             return cls(value=None)
         return cls(value=ctx.build_body(value_site, SugarRole.TERM))
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         if self.value is None:
             return Complete(ReturnValue(SymbolicValue(ctor("None", []))))
         # match the returned expression: an Incomplete (its evaluation raises) bubbles

@@ -37,5 +37,5 @@ class PassSugar(Sugar, role=SugarRole.STATEMENT):
             raise TypeError("PassSugar claim built a non-pass statement")
         return cls()
 
-    def desugar(self, ctx=None) -> Outcome:
+    def _build(self, ctx=None) -> Outcome:
         return Complete(SupportValue())

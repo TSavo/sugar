@@ -49,7 +49,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             has_else=site.for_orelse_count() != 0,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         del ctx
         else_note = " with else/fallthrough" if self.has_else else ""
         return Incomplete(

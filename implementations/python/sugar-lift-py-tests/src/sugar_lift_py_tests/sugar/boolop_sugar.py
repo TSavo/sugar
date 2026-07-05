@@ -38,7 +38,7 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
             raise TypeError("BoolOpSugar claim built a non-boolop expression")
         return cls(operator=site.boolop_op_kind(), blame=site.blame)
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         del ctx
         return Incomplete(
             RuntimeEffect(

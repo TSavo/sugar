@@ -61,7 +61,7 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         if self.runtime_reason is not None:
             return _runtime_receiver_effect(self.blame, self.runtime_reason)
         if self.term is None:

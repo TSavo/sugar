@@ -57,7 +57,7 @@ class ObjectRichComparisonTermSugar(Sugar, role=SugarRole.TERM):
     def witnesses(cls):
         return object_rich_compare_return_witness()
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         left_outcome = self.left.reduce(ctx)
         if isinstance(left_outcome, Incomplete):
             return left_outcome

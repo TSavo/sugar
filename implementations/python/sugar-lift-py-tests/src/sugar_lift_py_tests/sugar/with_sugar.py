@@ -59,7 +59,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
     def witnesses(cls):
         return with_return_witness()
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         manager_outcome = self.manager.reduce(ctx)
         if isinstance(manager_outcome, Incomplete):
             return manager_outcome

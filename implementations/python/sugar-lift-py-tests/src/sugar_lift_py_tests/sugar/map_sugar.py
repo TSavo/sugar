@@ -6,7 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import LambdaCallable
 from sugar_lift_py_tests.operations import MapOperation, perform_operation
-from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
+from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.array_literal_sugar import _map_method_witness
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
@@ -18,6 +18,7 @@ class MapSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     blame: str
     receiver: SugarBody
     mapper: SugarBody
+    template_operand_names = ("receiver", "mapper")
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -55,15 +56,7 @@ class MapSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             mapper=mapper,
         )
 
-    def desugar(self, ctx=None) -> Outcome:
-        receiver_outcome = self.receiver.reduce(ctx)
-        if isinstance(receiver_outcome, Incomplete):
-            return receiver_outcome
-        receiver = complete_value(receiver_outcome, owner="MapSugar receiver")
-        mapper_outcome = self.mapper.reduce(ctx)
-        if isinstance(mapper_outcome, Incomplete):
-            return mapper_outcome
-        mapper = complete_value(mapper_outcome, owner="MapSugar mapper")
+    def _build(self, ctx=None, *, receiver, mapper) -> Outcome:
         if not isinstance(mapper, LambdaCallable):
             return Incomplete(
                 RuntimeEffect(

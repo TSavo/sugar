@@ -41,7 +41,7 @@ class NameSugar(Sugar, role=SugarRole.TERM):
     def from_site(cls, site, _ctx) -> "NameSugar | None":
         return cls._from_site(site, _ctx)
 
-    def desugar(self, ctx) -> Outcome:
+    def _build(self, ctx) -> Outcome:
         outcome = ctx.temporal.value_outcome_for(self.identifier)
         if isinstance(outcome, Incomplete):
             return outcome
