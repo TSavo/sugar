@@ -3270,6 +3270,15 @@ fn mint_ir_document_with_source_and_plan_mementos(
         } else {
             None
         };
+        let binding_bridge_source_symbol: Option<String> =
+            if kind == "function-contract" && formals_json.is_some() {
+                decl.get("bridgeSourceSymbol")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| bridge_source_symbol.clone())
+            } else {
+                bridge_source_symbol.clone()
+            };
         let authority = optional_str(decl, "authority")
             .map(|authority_id| {
                 authorities_by_id.get(authority_id).ok_or_else(|| {
@@ -3432,7 +3441,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                     body_discharge_eligible,
                     body_discharge_refusal_reason: body_discharge_refusal_reason.clone(),
                     library: library.clone(),
-                    bridge_source_symbol: bridge_source_symbol.clone(),
+                    bridge_source_symbol: binding_bridge_source_symbol.clone(),
                     formals: formals_binding.clone(),
                     formal_sorts: formal_sorts_binding.clone(),
                 });
@@ -3631,6 +3640,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
             // fact (carries only `inv` -> nothing for a general call site
             // to prove).
             let name = &contract.contract_name;
+            let has_inv = contract.inv_hash.is_some();
             let has_pre = contract.has_nontrivial_pre;
             let has_post = contract.post_hash.is_some();
             let body_bearing = (has_pre || has_post) && contract.body_discharge_eligible;
@@ -3638,6 +3648,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 "name": name,
                 "contract_cid": contract.attestation_cid.clone(),
                 "body_bearing": body_bearing,
+                "has_inv": has_inv,
                 "has_pre": has_pre,
                 "has_post": has_post,
                 "bodyDischargeEligible": contract.body_discharge_eligible,
@@ -6463,6 +6474,56 @@ mod tests {
         assert_eq!(
             binding["post"],
             json!({"kind": "atomic", "name": "true", "args": []})
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mint_ir_document_forwards_pre_only_bridge_source_symbol_to_bindings() {
+        let root = temp_workspace("mint_contract_pre_only_bridge_source_symbol_forward");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let ir = vec![json!({
+            "kind": "function-contract",
+            "name": "pkg.guarded",
+            "bridgeSourceSymbol": "pkg.guarded",
+            "formals": ["x"],
+            "formalSorts": [{"kind": "primitive", "name": "Value"}],
+            "returnSort": {"kind": "primitive", "name": "Value"},
+            "pre": {
+                "kind": "atomic",
+                "name": "≥",
+                "args": [
+                    {"kind": "var", "name": "x"},
+                    {
+                        "kind": "const",
+                        "value": 2,
+                        "sort": {"kind": "primitive", "name": "Int"}
+                    }
+                ]
+            },
+            "bodyDischargeEligible": false,
+            "bodyDischargeRefusalReason": "precondition-only guard contract"
+        })];
+
+        let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true)
+            .expect("mint pre-only ir-document");
+        let binding = minted
+            .contract_bindings
+            .iter()
+            .find(|binding| binding["name"] == "pkg.guarded")
+            .expect("producer binding");
+        assert_eq!(binding["bridgeSourceSymbol"], "pkg.guarded");
+        assert_eq!(binding["has_pre"], true);
+        assert_eq!(binding["has_post"], false);
+
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        assert!(
+            graph
+                .members_view()
+                .all(|member| member.kind() != Some(MemberKind::Bridge)),
+            "pre-only contracts are implication targets, not body bridges"
         );
 
         let _ = std::fs::remove_dir_all(root);

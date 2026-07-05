@@ -1128,6 +1128,7 @@ struct LiftSourceReport {
     factory_audits: Vec<Value>,
     factory_walk: Vec<Value>,
     assertion_surface_audits: Vec<Value>,
+    diagnostics: Vec<Value>,
     source_mementos: Vec<Value>,
     plan_mementos: Vec<Value>,
     contracts: Vec<Value>,
@@ -1692,6 +1693,12 @@ fn source_report_from_lift_response(
     trace_lift_collection_checkpoint("source_report.plan_mementos", plan_mementos.len());
     let vendor_conjoins = vendor_conjoins_from_lift_response(response, contract_filter)?;
     trace_lift_collection_checkpoint("source_report.vendor_conjoins", vendor_conjoins.len());
+    let diagnostics = response
+        .get("diagnostics")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    trace_lift_collection_checkpoint("source_report.diagnostics", diagnostics.len());
 
     Ok(LiftSourceReport {
         ledger,
@@ -1699,6 +1706,7 @@ fn source_report_from_lift_response(
         factory_audits,
         factory_walk,
         assertion_surface_audits,
+        diagnostics,
         source_mementos,
         plan_mementos,
         contracts,
@@ -1882,6 +1890,7 @@ fn source_report_from_proof_pool(
         factory_audits: Vec::new(),
         factory_walk,
         assertion_surface_audits,
+        diagnostics: Vec::new(),
         source_mementos,
         plan_mementos,
         contracts,
@@ -3062,6 +3071,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "factoryAudits": report.factory_audits,
         "factoryWalk": report.factory_walk,
         "assertionSurfaceAudits": report.assertion_surface_audits,
+        "diagnostics": report.diagnostics,
         "sourceMementos": report.source_mementos,
         "planMementos": report.plan_mementos,
         "contracts": report.contracts,
@@ -6518,7 +6528,11 @@ fn contract_name(audit: &Value) -> Option<&str> {
 }
 
 fn contract_value_name(contract: &Value) -> Option<&str> {
-    contract.get("name").and_then(Value::as_str)
+    contract
+        .get("name")
+        .or_else(|| contract.get("fnName"))
+        .or_else(|| contract.get("fn_name"))
+        .and_then(Value::as_str)
 }
 
 fn contract_group_key(name: &str) -> String {
@@ -7860,6 +7874,7 @@ mod tests {
             factory_audits: vec![],
             factory_walk: vec![],
             assertion_surface_audits: vec![],
+            diagnostics: vec![],
             source_mementos: vec![],
             plan_mementos: vec![],
             contracts: vec![],
@@ -12303,6 +12318,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             factory_audits: vec![],
             factory_walk: vec![],
             assertion_surface_audits: vec![],
+            diagnostics: vec![],
             source_mementos: vec![],
             plan_mementos: vec![],
             contracts: vec![],

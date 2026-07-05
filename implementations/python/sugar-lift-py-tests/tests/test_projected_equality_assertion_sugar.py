@@ -442,6 +442,65 @@ def test_lift_rpc_bindings_backed_pass_returns_implication_consumer_payload(
     ]
 
 
+def test_lift_rpc_producer_pass_includes_source_guard_preconditions(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "guarded.py").write_text(
+        "def guarded(x):\n"
+        "    if x < 2:\n"
+        "        raise ValueError('too small')\n"
+        "    return x\n",
+        encoding="utf-8",
+    )
+    (project / "test_guarded.py").write_text(
+        "from guarded import guarded\n\n"
+        "def test_guarded():\n"
+        "    assert guarded(5) == 5\n",
+        encoding="utf-8",
+    )
+
+    result = _run_lift_rpc(project)
+
+    guarded_contract = next(
+        (
+            item
+            for item in result["ir"]
+            if item.get("kind") == "function-contract"
+            and item.get("fnName") == "guarded.guarded"
+        ),
+        None,
+    )
+    assert guarded_contract is not None, result["ir"]
+    assert guarded_contract.get("bridgeSourceSymbol") == "guarded.guarded"
+    assert "post" not in guarded_contract
+    assert guarded_contract.get("bodyDischargeEligible") is False
+    assert guarded_contract["pre"] == {
+        "kind": "atomic",
+        "name": "≥",
+        "args": [
+            {"kind": "var", "name": "x"},
+            {
+                "kind": "const",
+                "value": 2,
+                "sort": {"kind": "primitive", "name": "Int"},
+            },
+        ],
+    }
+    assert result["callEdges"] == [
+        {
+            "kind": "call-edge",
+            "schemaVersion": "1",
+            "sourceContract": "guarded.guarded#euf#c:call:guarded.guarded(i:5)::assertion",
+            "targetSymbol": "call:guarded.guarded",
+            "targetContract": None,
+            "targetContractCid": None,
+            "callSiteLocus": {"file": "test_guarded.py", "line": 4, "column": 11},
+        }
+    ]
+
+
 def test_projected_equality_lifts_fstring_rhs_attribute() -> None:
     report = build_literal_call_report(
         source=(

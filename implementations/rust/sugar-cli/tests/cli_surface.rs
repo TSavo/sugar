@@ -956,6 +956,142 @@ done
 }
 
 #[test]
+fn lift_report_python_assertions_join_source_guard_preconditions() {
+    if !python_blake3_available() {
+        eprintln!("python3/blake3 not on PATH: skipping Python guard precondition report test");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let manifest_dir = project.join(".sugar/lift/python");
+    fs::create_dir_all(&manifest_dir).expect("create manifest dir");
+    fs::write(
+        project.join("guarded.py"),
+        r#"def guarded(x):
+    if x < 2:
+        raise ValueError('too small')
+    return x
+
+def complex_guard(x: int) -> int:
+    if expensive(x):
+        raise ValueError('not flat')
+    return x
+
+def expensive(x: int) -> bool:
+    return x < 0
+"#,
+    )
+    .expect("write guarded.py");
+    fs::write(
+        project.join("test_guarded.py"),
+        r#"from guarded import guarded
+
+def test_guarded():
+    assert guarded(5) == 5
+"#,
+    )
+    .expect("write test_guarded.py");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "python-audit-lift"
+kind = "lift"
+surface = "python"
+emit = "ir-document"
+"#,
+    )
+    .expect("write project config");
+
+    let py_tests_src = repo_root()
+        .join("implementations")
+        .join("python")
+        .join("sugar-lift-py-tests")
+        .join("src");
+    let py_source_src = repo_root()
+        .join("implementations")
+        .join("python")
+        .join("sugar-lift-python-source")
+        .join("src");
+    let plugin = dir.path().join("python-lift.sh");
+    write_executable(
+        &plugin,
+        &format!(
+            "#!/bin/sh\nexport PYTHONPATH=\"{}:{}${{PYTHONPATH:+:$PYTHONPATH}}\"\nexec python3 -m sugar_lift_py_tests.lift_rpc --rpc\n",
+            py_tests_src.display(),
+            py_source_src.display()
+        ),
+    );
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            "name = \"python-audit-lift\"\ncommand = [\"{}\"]\nworking_dir = \".\"\n",
+            plugin.display()
+        ),
+    )
+    .expect("write manifest");
+
+    let output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--json")
+            .arg(&project),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "lift report must join source guard preconditions into the assertion report path\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("report JSON parses");
+    let contracts = report["contracts"].as_array().expect("contracts array");
+    let contract_names = contracts
+        .iter()
+        .filter_map(|contract| {
+            contract["name"]
+                .as_str()
+                .or_else(|| contract["fnName"].as_str())
+        })
+        .collect::<Vec<_>>();
+    let guarded = contracts
+        .iter()
+        .find(|contract| {
+            contract["name"].as_str() == Some("guarded.guarded")
+                || contract["fnName"].as_str() == Some("guarded.guarded")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "source-lifter function contract for guarded must be minted; names={contract_names:?}; report={report:#?}"
+            )
+        });
+    assert_eq!(
+        guarded["pre"]["name"].as_str(),
+        Some("≥"),
+        "guarded contract must carry the negated if-raise guard as its precondition: {guarded:#?}"
+    );
+    let call_edges = report["callEdges"].as_array().expect("callEdges array");
+    assert!(
+        call_edges.iter().any(|edge| {
+            edge["kind"].as_str() == Some("implication")
+                && edge["targetContract"].as_str() == Some("guarded.guarded")
+                && edge["sourceSlot"].as_str() == Some("inv")
+                && edge["targetSlot"].as_str() == Some("pre")
+                && edge["prover"].as_str() == Some("python-implications")
+        }),
+        "report must render the post-to-pre implication edge once the source precondition binding exists; callEdges={call_edges:#?}"
+    );
+    let diagnostics = report["diagnostics"].as_array().expect("diagnostics array");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["kind"].as_str() == Some("precondition-guard-skipped")
+                && diagnostic["function"].as_str() == Some("guarded.complex_guard")
+        }),
+        "non-flat if-raise guard residual must surface as a diagnostic, not disappear; diagnostics={diagnostics:#?}"
+    );
+}
+
+#[test]
 fn lift_report_rehydrates_assertion_surface_audits_from_minted_proof() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");
