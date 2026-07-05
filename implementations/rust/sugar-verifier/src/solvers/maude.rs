@@ -167,7 +167,11 @@ impl Solver for MaudeSubprocessSolver {
                     &queries,
                     Vec::new(),
                     MaudeDecision::NoMatch,
-                    ObligationVerdict::Undecidable,
+                    if c.timed_out {
+                        ObligationVerdict::SolverTimeout
+                    } else {
+                        ObligationVerdict::Undecidable
+                    },
                     ceta_result.receipt,
                 );
                 return unknown_result(
@@ -392,7 +396,11 @@ fn unknown_result(
     solver_stdout: String,
 ) -> SolveResult {
     SolveResult::with_evidence(
-        ObligationVerdict::Undecidable,
+        if timed_out {
+            ObligationVerdict::SolverTimeout
+        } else {
+            ObligationVerdict::Undecidable
+        },
         name.to_string(),
         version.to_string(),
         SolverExitMetadata::new(if timed_out {

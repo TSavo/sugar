@@ -400,6 +400,9 @@ fn reason_for(r: &SolveResult) -> String {
             ObligationVerdict::Undecidable => {
                 format!("solver '{}' returned unknown", r.solver_name)
             }
+            ObligationVerdict::SolverTimeout => {
+                format!("solver '{}' timed out", r.solver_name)
+            }
             ObligationVerdict::Disagreement => {
                 format!("solver '{}' produced disagreement", r.solver_name)
             }

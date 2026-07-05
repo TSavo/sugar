@@ -12,6 +12,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::solvers::registry::format_timeout;
 use crate::solvers::{SolveResult, Solver, SolverExitKind, SolverExitMetadata, SolverIdentity};
 use crate::types::ObligationVerdict;
 
@@ -132,20 +133,20 @@ impl Solver for SubprocessSolver {
                             let _ = child.wait();
                             // A pinned obligation is microseconds; hitting the
                             // timeout means this query was UNPINNED/open (free
-                            // vars / hard theory). Loudly bounded -> Undecidable,
+                            // vars / hard theory). Loudly bounded -> SolverTimeout,
                             // never a hang.
                             eprintln!(
-                                "[verify] {} TIMEOUT after {}s — unpinned/open obligation \
-                                 (a pinned check is microseconds); -> Undecidable",
+                                "[verify] {} TIMEOUT after {} — unpinned/open obligation \
+                                 (a pinned check is microseconds); -> SolverTimeout",
                                 self.name,
-                                to.as_secs().max(1)
+                                format_timeout(Some(to))
                             );
                             return SolveResult::with_evidence(
-                                ObligationVerdict::Undecidable,
+                                ObligationVerdict::SolverTimeout,
                                 self.name.clone(),
                                 self.version.clone(),
                                 SolverExitMetadata::new(SolverExitKind::Timeout),
-                                Some(format!("timeout after {}s", to.as_secs().max(1))),
+                                Some(format!("timeout after {}", format_timeout(Some(to)))),
                                 None,
                                 None,
                                 started.elapsed(),

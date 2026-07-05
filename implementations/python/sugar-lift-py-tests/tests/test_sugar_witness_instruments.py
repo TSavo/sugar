@@ -45,6 +45,7 @@ from sugar_lift_py_tests.witness_harness import (
     WitnessPipelineResult,
     WitnessPipelineError,
     _stage_cli_project,
+    mint_and_prove,
     prove_verdict,
     run_lift_rpc,
     run_source_through_real_solver,
@@ -1037,6 +1038,46 @@ def test_literal_call_residue_rows_emit_derived_fact_and_refute_lie(
         truthful_rhs: {"Derived"},
         lying_rhs: {"Stated"},
     }
+
+
+def test_solver_timeout_is_typed_not_logical_undecidable(
+    tmp_path: Path,
+) -> None:
+    seed = next(
+        item
+        for item in DEFAULT_SUGAR_WITNESS_SEEDS
+        if item.name == "tuple_literal_subscript_return"
+    )
+    project = tmp_path / "solver-timeout"
+    _stage_cli_project(project, seed.truthful.source)
+    config = project / ".sugar" / "config.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "timeout_seconds = 10", "timeout_seconds = 0"
+        ),
+        encoding="utf-8",
+    )
+
+    result = mint_and_prove(project)
+
+    rows = result.prove_doc.get("rows", [])
+    statuses = [row.get("status") for row in rows]
+    trace = {
+        "seed": seed.name,
+        "statuses": statuses,
+        "rows": rows,
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert result.verdict == "solver-timeout"
+    assert statuses == ["solver-timeout"]
+    assert "undecidable" not in statuses
+    verification = rows[0]["verification"]
+    invocation = verification["solverInvocations"][0]
+    assert invocation["verdict"] == "solver-timeout"
+    assert invocation["exit"]["kind"] == "timeout"
+    assert invocation["exit"]["timedOut"] is True
+    assert "timeout after" in rows[0]["reason"]
 
 
 @pytest.mark.parametrize(

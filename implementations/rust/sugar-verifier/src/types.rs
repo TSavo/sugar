@@ -1571,6 +1571,11 @@ pub enum ObligationVerdict {
     Discharged,
     Unsatisfied,
     Undecidable,
+    /// The solver did not return a verdict before the configured host timeout.
+    /// This is not a logical `undecidable`: it is a statement about the host /
+    /// budget that ran the solver. Keep it distinct so load cannot masquerade as
+    /// a formula fact.
+    SolverTimeout,
     Disagreement,
     /// First-class, loudly-bounded REFUSAL: there is no sound discharger for this
     /// obligation (e.g. its precondition lowers to a construct the solver cannot
@@ -1587,6 +1592,7 @@ impl ObligationVerdict {
             Self::Discharged => "discharged",
             Self::Unsatisfied => "unsatisfied",
             Self::Undecidable => "undecidable",
+            Self::SolverTimeout => "solver-timeout",
             Self::Disagreement => "disagreement",
             Self::Refused => "refused",
         }

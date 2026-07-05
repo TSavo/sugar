@@ -25,6 +25,7 @@
 // So we INVERT the solver verdict:
 //   raw z3 `sat`   (solver reports Unsatisfied) -> PROVEN-consistent
 //   raw z3 `unsat` (solver reports Discharged)  -> REFUSED-contradictory
+//   timeout        (host/budget exhaustion)     -> SolverTimeout, reported LOUD
 //   anything else  (Undecidable / unknown)      -> Undecidable, reported LOUD
 //
 // CLAIM. A PROVEN row here claims EXACTLY "test assertions mutually
@@ -296,6 +297,16 @@ fn consistency_verdict(
         // with the generic encoding-STOP message.
         ObligationVerdict::Refused => {
             let effect = VerifyEffect::ConsistencyNoSoundDischarger {
+                property_name: property_name.to_string(),
+                solver_reason: raw_reason.to_string(),
+            };
+            let boundary = effect.to_legacy_boundary();
+            (boundary.verdict, boundary.reason, Some(effect))
+        }
+        // Host/budget timeout is not formula undecidability. Keep it as its own
+        // typed outcome so load can never be mistaken for a solver claim.
+        ObligationVerdict::SolverTimeout => {
+            let effect = VerifyEffect::SolverTimeout {
                 property_name: property_name.to_string(),
                 solver_reason: raw_reason.to_string(),
             };
@@ -1399,12 +1410,15 @@ fn check_inv_consistency_with_vacuity_reason(
         );
     }
     let (verdict, reason, effect) = consistency_verdict(raw, property_name, &raw_reason);
-    if verdict == ObligationVerdict::Undecidable {
+    if matches!(
+        verdict,
+        ObligationVerdict::Undecidable | ObligationVerdict::SolverTimeout
+    ) {
         warn!(
             contract = %property_name,
             cid = %cid,
             raw = ?raw,
-            "consistency: UNDECIDABLE/ill-sorted -- encoding STOP, NOT a pass"
+            "consistency: undecided solver outcome -- encoding STOP, NOT a pass"
         );
     }
     ConsistencyResult {

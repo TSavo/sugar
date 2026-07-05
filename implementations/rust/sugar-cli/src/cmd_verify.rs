@@ -723,11 +723,12 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
 fn format_undecided_rows(report: &sugar_verifier::Report, undecided_rows: usize) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "  undecided rows  : {}", undecided_rows);
-    for row in report
-        .rows
-        .iter()
-        .filter(|row| row.status == ObligationVerdict::Undecidable)
-    {
+    for row in report.rows.iter().filter(|row| {
+        matches!(
+            row.status,
+            ObligationVerdict::Undecidable | ObligationVerdict::SolverTimeout
+        )
+    }) {
         let _ = writeln!(out, "      reason: {}", row.reason);
     }
     out
@@ -750,7 +751,9 @@ fn proof_report_gate(report: &sugar_verifier::Report) -> ProofReportGate {
             ObligationVerdict::Unsatisfied
             | ObligationVerdict::Refused
             | ObligationVerdict::Disagreement => hard_failed_rows += 1,
-            ObligationVerdict::Undecidable => undecided_rows += 1,
+            ObligationVerdict::Undecidable | ObligationVerdict::SolverTimeout => {
+                undecided_rows += 1
+            }
         }
     }
     let proof_ok = !report.rows.is_empty()
@@ -1592,6 +1595,7 @@ fn emit_human_receipt(
             ObligationVerdict::Discharged => "pass".green().to_string(),
             ObligationVerdict::Unsatisfied => "FAIL".red().to_string(),
             ObligationVerdict::Undecidable => "undecidable".yellow().to_string(),
+            ObligationVerdict::SolverTimeout => "solver-timeout".yellow().to_string(),
             ObligationVerdict::Disagreement => "disagreement".yellow().to_string(),
             ObligationVerdict::Refused => "refused".yellow().to_string(),
         };
@@ -1811,6 +1815,7 @@ mod tests {
             (ObligationVerdict::Discharged, EXIT_OK),
             (ObligationVerdict::Unsatisfied, EXIT_VERIFY_FAIL),
             (ObligationVerdict::Undecidable, EXIT_SOLVER_FAIL),
+            (ObligationVerdict::SolverTimeout, EXIT_SOLVER_FAIL),
             (ObligationVerdict::Disagreement, EXIT_VERIFY_FAIL),
             (ObligationVerdict::Refused, EXIT_VERIFY_FAIL),
         ];

@@ -14,7 +14,7 @@ from sugar_lift_py_tests.sugar_binary import (
     resolve_sugar_binary,
 )
 
-Verdict = Literal["sat", "unsat"]
+Verdict = Literal["sat", "unsat", "solver-timeout"]
 
 ROOT = Path(__file__).resolve().parents[5]
 PY_TESTS = ROOT / "implementations" / "python" / "sugar-lift-py-tests"
@@ -109,6 +109,7 @@ default = "z3"
 binary = "z3"
 ir_compiler = "smt-lib-v2.6"
 flags = ["-smt2", "-in"]
+timeout_seconds = 10
 """,
         encoding="utf-8",
     )
@@ -324,6 +325,8 @@ def prove_verdict(prove_doc: dict) -> Verdict:
         return "unsat"
     if statuses and all(status == "discharged" for status in statuses):
         return "sat"
+    if "solver-timeout" in statuses:
+        return "solver-timeout"
     raise WitnessPipelineError(
         f"sugar prove returned no SAT/UNSAT verdict; statuses={statuses!r}"
     )

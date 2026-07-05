@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use sugar_ir_compiler_coq::DIALECT;
 
+use crate::solvers::registry::format_timeout;
 use crate::solvers::{SolveResult, Solver, SolverExitKind, SolverExitMetadata, SolverIdentity};
 use crate::types::ObligationVerdict;
 
@@ -146,11 +147,11 @@ impl Solver for CoqSubprocessSolver {
                             let _ = child.wait();
                             let _ = std::fs::remove_dir_all(&tmp_dir);
                             return SolveResult::with_evidence(
-                                ObligationVerdict::Undecidable,
+                                ObligationVerdict::SolverTimeout,
                                 self.name.clone(),
                                 self.version.clone(),
                                 SolverExitMetadata::new(SolverExitKind::Timeout),
-                                Some(format!("coq: timeout after {}s", to.as_secs().max(1))),
+                                Some(format!("coq: timeout after {}", format_timeout(Some(to)))),
                                 None,
                                 None,
                                 started.elapsed(),
