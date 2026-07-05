@@ -1071,6 +1071,26 @@ fn witness_provenance_kind_error(
     ))
 }
 
+fn is_panic_callsite_member(body: &Json) -> bool {
+    contract_property_name(body).contains("#panic_callsite#")
+}
+
+fn panic_callsite_provenance_kind_error(
+    body: &Json,
+    provenance_kind: ProofIrProvenanceKind,
+) -> Option<String> {
+    if !is_panic_callsite_member(body) || provenance_kind == ProofIrProvenanceKind::Derived {
+        return None;
+    }
+    Some(format!(
+        "panic-callsite contract carries wrong provenance KIND; \
+         owner=sugar-verifier/consistency panic-callsite ambient replay; \
+         shape=proofirProvenance.warrants[].kind={}; \
+         replacement=proofirProvenance.warrants[].kind=Derived",
+        provenance_kind.label()
+    ))
+}
+
 fn provenance_kind_refusal(cid: String, body: &Json, reason: String) -> ConsistencyResult {
     let property_name = contract_property_name(body).to_string();
     let effect = VerifyEffect::MissingProvenanceKind {
@@ -2264,13 +2284,15 @@ pub fn verify_consistency(
         }
         match contract_provenance_kind(member, &body) {
             Ok(provenance_kind) => {
-                if let Some(reason) = witness_provenance_kind_error(&body, provenance_kind) {
+                if let Some(reason) = witness_provenance_kind_error(&body, provenance_kind)
+                    .or_else(|| panic_callsite_provenance_kind_error(&body, provenance_kind))
+                {
                     warn!(
                         cid = %cid,
                         contract = contract_property_name(&body),
                         provenance_kind = provenance_kind.label(),
                         reason = %reason,
-                        "verifier/ambient: custom witness contract carries wrong provenance KIND; refusing rather than defaulting"
+                        "verifier/ambient: contract carries wrong provenance KIND; refusing rather than defaulting"
                     );
                     provenance_refusals.push(provenance_kind_refusal(
                         cid.to_string(),
@@ -4323,6 +4345,38 @@ mod tests {
 
         std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
         let _ = std::fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn stated_provenance_cannot_discharge_panic_callsite_testimony() {
+        let mut pool = MementoPool::default();
+        insert_contract_with_provenance(
+            &mut pool,
+            "panic-callsite-stated-kind",
+            "tests::f#panic_callsite#euf#c:callresult_f_panic_callsite_a1(i:1)::assertion",
+            ne(var("panic"), none()),
+            "Stated",
+        );
+        let (plan, reg) = z3_plan_and_registry();
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+
+        assert_eq!(res.len(), 1, "one panic-callsite obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "Stated provenance is the wrong kind for derived panic-callsite testimony: {res:?}"
+        );
+        assert!(
+            res[0].reason.contains("panic-callsite")
+                && res[0].reason.contains("Derived")
+                && res[0].reason.contains("Stated"),
+            "wrong-kind refusal must name the crime and replacement: {}",
+            res[0].reason
+        );
+        assert!(
+            !res[0].witnessed,
+            "wrong-kind panic-callsite testimony must refuse before ambient replay"
+        );
     }
 
     /// A contract WITHOUT a custom witness is untouched by the arm (falls through

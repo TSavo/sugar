@@ -1533,10 +1533,17 @@ fn attach_assertion_source_warrants(
     }
 
     for entry in &mut entries {
-        let Some(name) = entry.get("name").and_then(Value::as_str) else {
+        let Some(name) = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
             continue;
         };
-        let Some(queue) = warrants_by_contract.get_mut(name) else {
+        if name.contains("#panic_callsite#") && entry.get("proofirProvenance").is_none() {
+            entry["proofirProvenance"] = panic_callsite_proofir_provenance(&name);
+        }
+        let Some(queue) = warrants_by_contract.get_mut(&name) else {
             continue;
         };
         if let Some(mementos) = queue.pop_front() {
@@ -1545,6 +1552,24 @@ fn attach_assertion_source_warrants(
     }
 
     entries
+}
+
+fn panic_callsite_proofir_provenance(contract_name: &str) -> Value {
+    json!({
+        "kind": "proofir-provenance",
+        "nodeClass": "PanicCallsiteFact",
+        "constructionSite": {
+            "surface": SURFACE,
+            "contract": contract_name,
+        },
+        "warrants": [
+            {
+                "kind": "Derived",
+                "floorChain": ["rust-test-assertions", "panic-callsite-support"],
+                "contract": contract_name,
+            }
+        ],
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8503,6 +8528,63 @@ mod tests {
                 })),
             "assertion fact must bridge to answer source contract: {response}"
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn panic_callsite_contracts_carry_derived_provenance_kind() {
+        let root = unique_temp_dir("panic_callsite_contracts_carry_derived_provenance_kind");
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(
+            root.join("src/lib.rs"),
+            r#"
+fn answer() -> i32 { 42 }
+
+#[cfg(test)]
+mod tests {
+    use super::answer;
+
+    #[test]
+    fn support_only() {
+        answer();
+    }
+}
+"#,
+        )
+        .expect("write rust source");
+
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+        let ir = response["ir"].as_array().expect("ir array");
+        let panic_contracts = ir
+            .iter()
+            .filter(|entry| {
+                entry["kind"] == json!("contract")
+                    && entry["name"]
+                        .as_str()
+                        .is_some_and(|name| name.contains("#panic_callsite#"))
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            !panic_contracts.is_empty(),
+            "fixture must emit panic-callsite support contracts: {response}"
+        );
+        for contract in panic_contracts {
+            assert_eq!(
+                contract["proofirProvenance"]["nodeClass"],
+                json!("PanicCallsiteFact"),
+                "panic-callsite testimony must name its typed node class: {contract:#}"
+            );
+            assert_eq!(
+                contract["proofirProvenance"]["warrants"][0]["kind"],
+                json!("Derived"),
+                "panic-callsite testimony is derived from lifted source-locus support, not a source-stated vendor fact: {contract:#}"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(root);
     }
