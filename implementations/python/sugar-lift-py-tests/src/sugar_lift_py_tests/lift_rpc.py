@@ -238,6 +238,121 @@ def _source_oracle_api():
     return SourceOracleRefusal, resolve_source_memento
 
 
+def _python_source_verify_api():
+    try:
+        from sugar_lift_python_source.verify_rpc import lift_workspace
+    except ModuleNotFoundError:
+        sibling_src = (
+            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
+        )
+        if str(sibling_src) not in sys.path:
+            sys.path.insert(0, str(sibling_src))
+        from sugar_lift_python_source.verify_rpc import lift_workspace
+    return lift_workspace
+
+
+def _python_source_lifter_api():
+    try:
+        from sugar_lift_python_source.lifter import lift_source as source_lift_source
+    except ModuleNotFoundError:
+        sibling_src = (
+            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
+        )
+        if str(sibling_src) not in sys.path:
+            sys.path.insert(0, str(sibling_src))
+        from sugar_lift_python_source.lifter import lift_source as source_lift_source
+    return source_lift_source
+
+
+def _is_python_test_file(path: Path) -> bool:
+    name = path.name
+    return (name.startswith("test_") and name.endswith(".py")) or name.endswith(
+        "_test.py"
+    )
+
+
+def _is_true_formula(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("kind") == "atomic"
+        and value.get("name") == "true"
+        and value.get("args") in (None, [])
+    )
+
+
+def _source_precondition_only_contracts(
+    workspace_root: str, existing_contracts: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    source_lift_source = _python_source_lifter_api()
+    root = Path(workspace_root or ".").resolve()
+    existing_names = {
+        str(item.get("fnName") or item.get("name"))
+        for item in existing_contracts
+        if isinstance(item, dict) and (item.get("fnName") or item.get("name"))
+    }
+    out: List[Dict[str, Any]] = []
+    for filename in _iter_python_files(str(root), ["."]):
+        path = Path(filename)
+        if _is_python_test_file(path):
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            rel = path.name
+        lifted = source_lift_source(source, rel)
+        for item in lifted.ir:
+            if not isinstance(item, dict) or item.get("kind") != "function-contract":
+                continue
+            fn_name = item.get("fnName")
+            if not isinstance(fn_name, str) or fn_name.startswith("<source-unit"):
+                continue
+            if fn_name in existing_names:
+                continue
+            precondition = item.get("pre")
+            if _is_true_formula(precondition):
+                continue
+            contract = {
+                "schemaVersion": item.get("schemaVersion", "1"),
+                "kind": "function-contract",
+                "fnName": fn_name,
+                "formals": list(item.get("formals") or []),
+                "formalSorts": list(item.get("formalSorts") or []),
+                "returnSort": item.get(
+                    "returnSort", {"kind": "primitive", "name": "Value"}
+                ),
+                "pre": precondition,
+                "bodyDischargeEligible": False,
+                "bodyDischargeRefusalReason": (
+                    "precondition-only source guard contract; report path imports "
+                    "the source-lifter-owned precondition without importing the raw "
+                    "Python body as a dischargeable post"
+                ),
+                "locus": item.get("locus"),
+            }
+            contract["bridgeSourceSymbol"] = fn_name
+            out.append(contract)
+            existing_names.add(fn_name)
+    return out
+
+
+def _source_lifter_function_contracts(
+    workspace_root: str,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    lift_workspace = _python_source_verify_api()
+    ir_items, diagnostics = lift_workspace(workspace_root, "bare")
+    contracts = [
+        item
+        for item in ir_items
+        if isinstance(item, dict) and item.get("kind") == "function-contract"
+    ]
+    contracts.extend(_source_precondition_only_contracts(workspace_root, contracts))
+    return contracts, diagnostics
+
+
 def _source_memento_from_params(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     raw = (
         params.get("memento")
@@ -394,6 +509,10 @@ def _handle_lift(
         payload = LiftReportPayloadDto(source_ledger={})
         bindings_backed_pass = bool(contract_bindings)
         root = Path(workspace_root).resolve()
+        if not bindings_backed_pass:
+            contracts, diagnostics = _source_lifter_function_contracts(workspace_root)
+            payload.ir.extend(contracts)
+            payload.diagnostics.extend(diagnostics)
         for path in _iter_python_files(workspace_root, source_paths):
             full_path = Path(path)
             try:

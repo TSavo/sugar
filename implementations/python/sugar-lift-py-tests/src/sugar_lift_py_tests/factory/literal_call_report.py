@@ -652,6 +652,7 @@ def _lift_assert(
         source_lines=source_lines,
         ctx=assertion_ctx,
         call_return_sort=call_return_sort,
+        contract_bindings=contract_bindings,
     )
     factory_audits.extend(universe_factory_audits)
     return _merge_many(
@@ -1385,6 +1386,7 @@ def _lift_callsite_assertion(
     source_lines: list[str],
     ctx: FactoryBuildContext | None = None,
     call_return_sort: ProofSort | None = None,
+    contract_bindings: list | None = None,
 ) -> LiftResult:
     """The fact. `callee(args) == expected` lifts to the euf callsite obligation
     `eq(call:callee(args), expected)`, contract-named `callee#euf#<arg_sig>::assertion`.
@@ -1476,7 +1478,10 @@ def _lift_callsite_assertion(
         memento_file=memento_file,
         source_lines=source_lines,
         warrant=Stated(locus=_proofir_construction_site(stmt, memento_file)),
+        callsite=callsite,
+        emit_call_edge=True,
         call_return_sort=call_return_sort,
+        contract_bindings=contract_bindings or [],
     )
 
 
@@ -1491,7 +1496,10 @@ def _emit_euf_fact(
     memento_file: str,
     source_lines: list[str],
     warrant: Stated | Derived,
+    callsite: SourceFragment | None = None,
+    emit_call_edge: bool = False,
     call_return_sort: ProofSort | None = None,
+    contract_bindings: list | None = None,
 ) -> LiftResult:
     """Emit one `<callee>#euf#<args>::assertion` fact: `eq(call:callee(args), value)`.
 
@@ -1577,12 +1585,41 @@ def _emit_euf_fact(
         role="python.literal-call-sugar",
         ast_kind="Assert",
     )
+    edges: list[dict[str, Any]] = []
+    if emit_call_edge:
+        if callsite is None:
+            raise TypeError("emit_call_edge requires callsite")
+        target_symbol = f"call:{callee_name}"
+        binding = _binding_for_bridge_symbol(contract_bindings or [], target_symbol)
+        edges.append(
+            CallEdgeDecl(
+                bridge=BridgeAtom(
+                    source_contract=contract_name,
+                    target_symbol=target_symbol,
+                    target_contract=(
+                        binding.get("name") if binding is not None else None
+                    ),
+                    target_contract_cid=(
+                        _binding_cid(binding) if binding is not None else None
+                    ),
+                    target_proof_cid=(
+                        _binding_proof_cid(binding) if binding is not None else None
+                    ),
+                    call_site_locus=Locus(memento_file, callsite.line, callsite.col),
+                ),
+                provenance=Provenance(
+                    node_class=CallEdgeDecl.node_class,
+                    construction_site=_proofir_construction_site(stmt, memento_file),
+                    warrant=Derived(floor_chain=("literal-callsite-assertion",)),
+                ),
+            ).to_declaration()
+        )
     return (
         [EqualityFactEmission(member, (memento,))],
         [memento],
         [audit],
         [walk],
-        [],
+        edges,
         [],
     )
 
@@ -2831,7 +2868,7 @@ def _precondition_implications_from_call_edges(
     edges: list[dict[str, Any]], contract_bindings: list
 ) -> list[ImplicationDto]:
     implications: list[ImplicationDto] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for edge in edges:
         source_contract = edge.get("sourceContract")
         target_contract = edge.get("targetContract")
@@ -2839,20 +2876,24 @@ def _precondition_implications_from_call_edges(
             continue
         source_binding = _binding_for_contract_name(contract_bindings, source_contract)
         target_binding = _binding_for_contract_name(contract_bindings, target_contract)
-        if not _binding_bool(source_binding, "has_post"):
+        if _binding_bool(source_binding, "has_post"):
+            source_slot = "post"
+        elif _binding_bool(source_binding, "has_inv"):
+            source_slot = "inv"
+        else:
             continue
         if not _binding_bool(target_binding, "has_pre"):
             continue
-        key = (source_contract, target_contract)
+        key = (source_contract, source_slot, target_contract)
         if key in seen:
             continue
         seen.add(key)
         implications.append(
             ImplicationDto(
-                name=f"{source_contract}.post-implies-{target_contract}.pre",
+                name=f"{source_contract}.{source_slot}-implies-{target_contract}.pre",
                 antecedent=source_contract,
                 consequent=target_contract,
-                antecedent_slot="post",
+                antecedent_slot=source_slot,
                 consequent_slot="pre",
                 prover="python-implications",
             )
