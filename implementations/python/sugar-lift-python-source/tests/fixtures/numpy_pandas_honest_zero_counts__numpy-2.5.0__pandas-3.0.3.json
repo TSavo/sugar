@@ -1,0 +1,30 @@
+{
+  "package_versions": {
+    "numpy": "2.5.0",
+    "pandas": "3.0.3"
+  },
+  "total_files": 1828,
+  "counts_by_kind": {
+    "async-refused": 3,
+    "callee-binop-refused": 97,
+    "callee-boolop-refused": 1,
+    "callee-call-refused": 7,
+    "callee-compare-refused": 160,
+    "callee-constant-refused": 294,
+    "callee-dict-refused": 23,
+    "callee-ifexp-refused": 2,
+    "callee-joinedstr-refused": 33,
+    "callee-set-refused": 1,
+    "callee-subscript-refused": 30,
+    "callee-unaryop-refused": 8,
+    "decorator-refused": 8989,
+    "enum-pin-refused": 50,
+    "for-else-refused": 6,
+    "generator-refused": 91,
+    "global-nonlocal-refused": 37,
+    "match-refused": 14,
+    "multi-target-assign-refused": 73,
+    "non-literal-default": 245,
+    "value-pin-refused": 499
+  }
+}
