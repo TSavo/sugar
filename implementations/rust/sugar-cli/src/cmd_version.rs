@@ -12,6 +12,8 @@ use serde_json::{json, Value};
 use crate::VersionArgs;
 
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
+const BUILD_GIT_HEAD: &str = env!("SUGAR_BUILD_GIT_HEAD");
+const BUILD_STAMP: &str = env!("SUGAR_BUILD_STAMP");
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum VersionCmd {
@@ -42,6 +44,8 @@ pub fn run(args: VersionArgs) -> u8 {
         let payload = json!({
             "name": "sugar",
             "version": CLI_VERSION,
+            "buildGitHead": BUILD_GIT_HEAD,
+            "buildStamp": BUILD_STAMP,
         });
         println!("{}", serde_json::to_string_pretty(&payload).unwrap());
     } else {
@@ -184,6 +188,8 @@ mod tests {
     fn version_string_present() {
         // The crate version string isn't empty: env! is compile-time.
         assert!(!CLI_VERSION.is_empty());
+        assert!(!BUILD_GIT_HEAD.is_empty());
+        assert!(!BUILD_STAMP.is_empty());
     }
 
     #[test]

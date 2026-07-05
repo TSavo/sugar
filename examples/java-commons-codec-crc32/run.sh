@@ -12,7 +12,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
 BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
+SUGAR="$("$REPO/bin/sugarbin" --profile release)"
 KIT_JAVA="$(which java)"
 
 echo "SCOPE: java-commons-codec-crc32 — PureJavaCrc32 from Apache Commons Codec rel/commons-codec-1.16.1."
@@ -21,10 +21,7 @@ echo "SCOPE: GOOD: CRC32(\"123456789\") == 0xCBF43926."
 echo "SCOPE: BAD:  CRC32(\"123456789\") == 0xCBF43927 is refuted by the walked slicing-by-8 table relation."
 
 echo
-echo "== build the sugar CLI =="
-if [ "${JAVA_COMMONS_CRC32_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  cargo build --manifest-path "$RUST/Cargo.toml" -p sugar-cli --bin sugar >/dev/null
-fi
+echo "== resolve the sugar CLI =="
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not at $SUGAR"; exit 1; }
 
 echo

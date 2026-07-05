@@ -6,7 +6,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-BIN="$REPO/implementations/rust/target/debug/sugar"
+BIN="$("$REPO/bin/sugarbin" --profile release)"
 VENV="${PANDAS_WITNESS_VENV:-/tmp/pandas-witness-venv}"
 
 if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" - <<'PY' >/dev/null 2>&1
@@ -17,8 +17,7 @@ then
   "$VENV/bin/pip" install -q pandas pytest pynacl blake3 cbor2
 fi
 
-echo "== build the CLI =="
-cargo build --manifest-path "$REPO/implementations/rust/Cargo.toml" -p sugar-cli --bin sugar >/dev/null
+[ -x "$BIN" ] || { echo "FAIL: sugarbin returned a missing binary: $BIN"; exit 1; }
 
 cd "$HERE/good"
 rm -f blake3-512_*.proof .pandas-source-report.json .pandas-source-report.txt 2>/dev/null || true

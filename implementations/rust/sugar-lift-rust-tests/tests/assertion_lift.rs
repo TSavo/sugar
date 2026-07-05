@@ -15538,62 +15538,46 @@ fn assertion_cli_toml_string(value: &str) -> String {
 
 fn assertion_cli_sugar_bin_or_panic() -> std::path::PathBuf {
     let workspace = assertion_cli_rust_workspace();
-    let profile_dir = assertion_cli_profile_dir();
-    let sugar_name = format!("sugar{}", std::env::consts::EXE_SUFFIX);
-    let candidate = profile_dir.join(&sugar_name);
-    if candidate.is_file() {
-        return candidate;
-    }
-
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let mut build = std::process::Command::new(cargo);
-    build
-        .current_dir(&workspace)
-        .arg("build")
-        .arg("-p")
-        .arg("sugar-cli")
-        .arg("--bin")
-        .arg("sugar");
-    if !cfg!(debug_assertions) {
-        build.arg("--release");
-    }
-    let output = build
+    let repo = workspace
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("rust workspace lives under implementations/rust");
+    let sugarbin = repo.join("bin/sugarbin");
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let output = std::process::Command::new(&sugarbin)
+        .arg("--profile")
+        .arg(profile)
         .output()
-        .unwrap_or_else(|err| panic!("spawn cargo build for production sugar CLI: {err}"));
+        .unwrap_or_else(|err| panic!("spawn bin/sugarbin for production sugar CLI: {err}"));
     if !output.status.success() {
         panic!(
             "crime=soundness verdict without production CLI; owner=assertion_lift; \
-             illegal shape=cargo could not build active-profile sugar binary; \
-             replacement=repair `cargo build -p sugar-cli --bin sugar` before this harness\n\
+             illegal shape=bin/sugarbin could not resolve active-profile sugar binary; \
+             replacement=repair the sugarbin handoff path before this harness\n\
              status={}\nstdout:\n{}\nstderr:\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    let path = String::from_utf8(output.stdout)
+        .expect("sugarbin emits utf-8 path")
+        .trim()
+        .to_owned();
+    let candidate = std::path::PathBuf::from(path);
     if candidate.is_file() {
-        return candidate;
-    }
-    panic!(
-        "crime=soundness verdict without production CLI; owner=assertion_lift; \
-         illegal shape=active-profile sugar binary missing after successful cargo build at {}; \
-         replacement=repair the sugar-cli binary artifact path for this test profile",
-        candidate.display()
-    );
-}
-
-fn assertion_cli_profile_dir() -> std::path::PathBuf {
-    let exe = std::env::current_exe().expect("resolve current assertion_lift test binary");
-    let parent = exe
-        .parent()
-        .expect("current assertion_lift test binary has a parent");
-    if parent.file_name().is_some_and(|name| name == "deps") {
-        parent
-            .parent()
-            .expect("deps directory has a profile parent")
-            .to_path_buf()
+        candidate
     } else {
-        parent.to_path_buf()
+        panic!(
+            "crime=soundness verdict without production CLI; owner=assertion_lift; \
+             illegal shape=bin/sugarbin returned missing binary at {}; \
+             replacement=repair the sugarbin handoff path for this test profile",
+            candidate.display()
+        );
     }
 }
 

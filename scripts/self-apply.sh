@@ -22,7 +22,7 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || { echo "not in the sugar repo"; exit 1; }
 
-BIN=implementations/rust/target/debug/sugar
+BIN="$(bin/sugarbin --profile release)"
 CLI=implementations/rust/sugar-cli
 IMPORTS="$CLI/.sugar/imports"
 SCRATCH=/tmp/self-apply
@@ -34,8 +34,8 @@ ORACLE_ENV=()
 # attestation ("lifter binary not found: producing empty-set attestation") and no
 # .proof -- a hollow green. Check loudly. `-p sugar-walk` alone does NOT build the
 # rpc bin; need `--bins`. sugar-lift is its own crate.
-BUILD_HINT="(cd implementations/rust && cargo build -p sugar-cli --bin sugar && cargo build -p sugar-walk --bins && cargo build -p sugar-lift)"
-[ -x "$BIN" ] || { echo "build first: $BUILD_HINT"; exit 1; }
+BUILD_HINT="bin/sugarbin --profile release && (cd implementations/rust && cargo build -p sugar-walk --bins && cargo build -p sugar-lift)"
+[ -x "$BIN" ] || { echo "sugarbin did not return an executable: $BIN"; exit 1; }
 for lifter in sugar-walk-rpc sugar-lift; do
   [ -x "implementations/rust/target/debug/$lifter" ] || {
     echo "missing lifter binary '$lifter' -- mint would write a hollow empty-set attestation."

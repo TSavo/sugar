@@ -16,7 +16,6 @@
 
 .DEFAULT_GOAL := help
 
-SUGAR := implementations/rust/target/release/sugar
 PYTHON ?= python3
 PYTHON := $(shell command -v '$(PYTHON)' 2>/dev/null || printf '%s\n' '$(PYTHON)')
 LOCAL_BIN ?= /tmp/sugar-local-bin
@@ -94,10 +93,11 @@ build-all: build-rust build-python
 .PHONY: build-rust
 build-rust:
 	$(call CARGO_SYNC_BINS,sugar sugar-lift) build --release --manifest-path implementations/rust/Cargo.toml
+	bin/sugarbin --profile release >/dev/null
 
 .PHONY: build-rust-cli
 build-rust-cli:
-	$(call CARGO_SYNC_BINS,sugar) build --release --manifest-path implementations/rust/Cargo.toml -p sugar-cli
+	bin/sugarbin --profile release >/dev/null
 
 .PHONY: build-go
 build-go:
@@ -222,11 +222,12 @@ test-c: build-c
 .PHONY: test-python
 test-python: build-python
 	@failed=""; \
+	sugar_bin="$$(bin/sugarbin --profile release)" || exit $$?; \
 	(cd implementations/python/sugar-lift-py-tests && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
 		python -m pip install --quiet -e . pytest numpy pandas scikit-learn pyright==1.1.411 && \
-		pytest) || failed="$$failed sugar-lift-py-tests"; \
+		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-py-tests"; \
 	(cd implementations/python/sugar-emit-python-pytest && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
@@ -236,17 +237,17 @@ test-python: build-python
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
 		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest blake3 numpy pandas && \
-		pytest) || failed="$$failed sugar-lift-python-source"; \
+		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-python-source"; \
 	(cd implementations/python/sugar-lift-py-pytest-witness && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
 		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest pynacl blake3 cbor2 && \
-		pytest) || failed="$$failed sugar-lift-py-pytest-witness"; \
+		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-py-pytest-witness"; \
 	(cd implementations/python/sugar-build-witness && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
 		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest pynacl blake3 cbor2 && \
-		pytest) || failed="$$failed sugar-build-witness"; \
+		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-build-witness"; \
 	if [ -n "$$failed" ]; then echo "test-python FAIL:$$failed"; exit 1; fi
 
 .PHONY: test-python-format
@@ -349,7 +350,6 @@ test-showcases:
 	if [ "$${SHOWCASES_ON_REMOTE:-0}" != "1" ] && [ "$$(uname -s)" != "Linux" ] && [ "$${USE_BCARGO:-1}" != "0" ]; then \
 	  echo "==== test-showcases on battleaxe via bcargo ===="; \
 	  $(BCARGO) build --manifest-path implementations/rust/Cargo.toml \
-	    -p sugar-cli --bin sugar \
 	    -p sugar-walk --bin sugar-walk-rpc \
 	    -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
 	    -p sugar-lift-rust-cargo-test-witness --bin discharge_cli \
@@ -363,8 +363,7 @@ test-showcases:
 	  ssh -o BatchMode=yes "$$remote_host" "bash -lc $$(printf '%q' "$$remote_cmd")"; \
 	  exit $$?; \
 	fi; \
-	$(CARGO) build --manifest-path implementations/rust/Cargo.toml \
-	  -p sugar-cli --bin sugar >/dev/null || exit $$?; \
+	bin/sugarbin --profile release >/dev/null || exit $$?; \
 	failed=""; \
 	for s in $(SHOWCASE_RUNS); do \
 	  echo ""; \
@@ -391,9 +390,10 @@ test-showcases:
 # producer -> gate, on the very tool doing the gating.
 self-attest: build-rust
 	@set -e; \
+	sugar_bin="$$(bin/sugarbin --profile release)"; \
 	tmp=$$(mktemp -d); \
-	$(SUGAR) package release --manifest sugar-release.toml --receipts $$tmp; \
-	$(SUGAR) package release --manifest sugar-release.toml --receipts $$tmp --verify-only; \
+	"$$sugar_bin" package release --manifest sugar-release.toml --receipts $$tmp; \
+	"$$sugar_bin" package release --manifest sugar-release.toml --receipts $$tmp --verify-only; \
 	echo "self-attest: PASS (manifest artifacts pinned + verified)"; \
 	rm -rf $$tmp
 
@@ -414,7 +414,6 @@ coretests-source-audit:
 	if [ "$${CORETESTS_SOURCE_AUDIT_ON_REMOTE:-0}" != "1" ] && [ "$$(uname -s)" != "Linux" ] && [ "$${USE_BCARGO:-1}" != "0" ]; then \
 	  echo "==== coretests-source-audit on battleaxe via bcargo ===="; \
 	  $(BCARGO) build --manifest-path implementations/rust/Cargo.toml \
-	    -p sugar-cli --bin sugar \
 	    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null || exit $$?; \
 	  remote_host="$${BCARGO_REMOTE_HOST:-battleaxe}"; \
 	  remote_tag="$$(printf '%s' "$$(pwd -P)" | shasum 2>/dev/null | cut -c1-12)"; \
@@ -425,8 +424,8 @@ coretests-source-audit:
 	  ssh -o BatchMode=yes "$$remote_host" "bash -lc $$(printf '%q' "$$remote_cmd")"; \
 	  exit $$?; \
 	fi; \
+	sugar_bin="$$(bin/sugarbin --profile release)" || exit $$?; \
 	$(CARGO_LOCAL) build --manifest-path implementations/rust/Cargo.toml --release \
-	  -p sugar-cli --bin sugar \
 	  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null || exit $$?; \
 	bin_dir="$$(pwd -P)/implementations/rust/target/release"; \
 	corpus="$(CORETESTS_SOURCE_AUDIT_CORPUS)"; \
@@ -434,7 +433,7 @@ coretests-source-audit:
 	sed "s|@BIN_DIR@|$$bin_dir|g" "$$manifest_dir/manifest.toml.in" > "$$manifest_dir/manifest.toml"; \
 	echo "==== coretests-source-audit: panic-armed source totality ===="; \
 	cd "$$corpus"; \
-	RUST_LOG=error NO_COLOR=1 CLICOLOR=0 TERM=dumb "$$bin_dir/sugar" lift --report --report-summary
+	RUST_LOG=error NO_COLOR=1 CLICOLOR=0 TERM=dumb "$$sugar_bin" lift --report --report-summary
 
 .PHONY: coretests-invariants
 coretests-invariants:

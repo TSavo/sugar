@@ -23,7 +23,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-BIN="$REPO/implementations/rust/target/debug/sugar"
+BIN="$("$REPO/bin/sugarbin" --profile release)"
 
 # The witness lifter RUNS pandas's tests, so it needs pandas + the kit deps in a
 # venv (PEP 668: never --break-system-packages). The lift manifests point their
