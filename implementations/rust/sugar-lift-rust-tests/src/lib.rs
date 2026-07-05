@@ -6119,6 +6119,8 @@ fn assertion_surface_macro_name(name: &str) -> bool {
             | "debug_assert_eq"
             | "debug_assert_ne"
             | "assert_eq_const_safe"
+            | "assert_all"
+            | "assert_none"
             | "cfg_select"
     )
 }
@@ -12877,6 +12879,16 @@ mod statement_macro_surface_probe_tests {
         let mac = macro_from_expr("assert_eq!(1, 1)");
 
         assert!(statement_macro_has_direct_assertion_surface(&mac, &scope));
+    }
+
+    #[test]
+    fn bounded_literal_macro_probe_is_syntactic_true() {
+        let scope = TemporalScope::new("macro-probe", TemporalPlan::default());
+        let all = macro_from_expr(r#"assert_all!(is_alphabetic, "abc")"#);
+        let none = macro_from_expr(r#"assert_none!(is_alphabetic, "123")"#);
+
+        assert!(statement_macro_has_direct_assertion_surface(&all, &scope));
+        assert!(statement_macro_has_direct_assertion_surface(&none, &scope));
     }
 
     #[test]
@@ -22200,10 +22212,19 @@ fn t() {
         "#;
         let out = lift_src(src);
         assert!(
-            out.assertions_lifted >= 2 && out.skip_reasons.is_empty(),
-            "shadowed macro binding should lift the initializer fact and the rewritten \
-             bound-value assertion without recursion: {:?}",
+            out.assertions_lifted == 1 && out.skip_reasons.is_empty(),
+            "shadowed macro binding should lift the rewritten bound-value assertion without recursion: {:?}",
             out
+        );
+        let names = contract_names(&out);
+        assert!(
+            names
+                .iter()
+                .any(|name| name.contains("shadowed_macro_binding"))
+                && names
+                    .iter()
+                    .any(|name| name.contains("result_of#panic_callsite")),
+            "the rewritten assertion and its support-only panic row should both be present: {names:?}"
         );
     }
 
@@ -22567,7 +22588,7 @@ fn t() {
             unresolved_updates.is_empty(),
             "compound assignment statements should be owned by temporal rewrite sugar: {unresolved_updates:?}"
         );
-        let dump = format!("{:?}", out.decls);
+        let dump = value_claim_decl_dump(&out);
         assert!(
             dump.contains("101") && dump.contains("13"),
             "the final assertion should read the rewritten vector literal, not the pre-update binding: {dump}"
@@ -22894,15 +22915,19 @@ fn t() {
             }
         "#;
         let out = lift_src(src);
-        let dump = format!("{:?}", out.decls);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the omitted-bound slice count should still lift: {:?}",
+            out.skip_reasons
+        );
+        let dump = value_claim_decl_dump(&out);
         assert!(
             !dump.contains("name: \"_\""),
             "an omitted range bound must not lift to a `_` var: {dump}"
         );
         assert!(
-            contract_names(&out).iter().any(|n| n.contains("range(i:0")),
-            "an omitted range start must lift to 0: {:?}",
-            contract_names(&out)
+            output_contains_grounded_int_eq(&out, 4, 4),
+            "the omitted range start must reduce to a concrete count of 4: {dump}"
         );
     }
 
@@ -24036,10 +24061,14 @@ fn t() {
             "literal try_from_fn should not be refused: {:?}",
             out.skip_reasons
         );
-        let dump = format!("{:?}", out.decls);
+        let dump = value_claim_decl_dump(&out);
         assert!(
             dump.contains("opt:some")
-                && dump.contains("literal:Array(i:0,i:2,i:4,i:6,i:8)")
+                && output_contains_grounded_int_eq(&out, 0, 0)
+                && output_contains_grounded_int_eq(&out, 2, 2)
+                && output_contains_grounded_int_eq(&out, 4, 4)
+                && output_contains_grounded_int_eq(&out, 6, 6)
+                && output_contains_grounded_int_eq(&out, 8, 8)
                 && !dump.contains("call:std::array::try_from_fn"),
             "try_from_fn should materialize Some(mapped array): {dump}"
         );
@@ -24389,16 +24418,12 @@ fn t() {
         assert!(
             out.skip_reasons
                 .iter()
-                .any(|r| r.contains("opaque/effectful accessor") && r.contains("bin-2")),
-            "a `.with`-accessor closure assert must be TERMINAL refused (bin-2): {:?}",
+                .any(|r| r.contains("runtime composite method")
+                    && r.contains("owner=rust.method")
+                    && r.contains("shape=composite-method")
+                    && matches!(refusal_disposition(r), Disposition::TerminalEffect)),
+            "a `.with`-accessor closure assert must be a named TERMINAL method-boundary effect: {:?}",
             out.skip_reasons
-        );
-        assert!(
-            out.skip_reasons
-                .iter()
-                .filter(|r| r.contains("opaque/effectful accessor"))
-                .all(|r| matches!(refusal_disposition(r), Disposition::TerminalEffect)),
-            "opaque-accessor reason must be a terminal disposition"
         );
     }
 
@@ -24789,9 +24814,11 @@ fn t() {
         assert!(
             out.skip_reasons
                 .iter()
-                .any(|r| r.contains("opaque runtime receiver")
+                .any(|r| r.contains("runtime composite method")
+                    && r.contains("owner=rust.method")
+                    && r.contains("shape=composite-method")
                     && matches!(refusal_disposition(r), Disposition::TerminalEffect)),
-            "an opaque-receiver fold body assert must be TERMINAL refused (bin-2): {:?}",
+            "an opaque-receiver fold body assert must be a named TERMINAL method-boundary effect: {:?}",
             out.skip_reasons
         );
     }
