@@ -23,9 +23,12 @@ from sugar_lift_py_tests.idd.collect_panic_audit import (
     _cached_audit_workspace,
     _prepare_audit_workspace,
 )
-from sugar_lift_py_tests.witness_harness import _ensure_sugar_bin
 
 ROOT = Path(__file__).resolve().parents[4]
+
+
+def _is_visual_lift(command: list[str]) -> bool:
+    return command[1:4] == ["lift", "--report", "--visual"]
 
 
 def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
@@ -67,9 +70,7 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
     }
     assert len(report.records) == 3
     assert all("--audit-only" not in command for command in calls)
-    assert all(
-        command[:4] == ["sugar", "lift", "--report", "--visual"] for command in calls
-    )
+    assert all(_is_visual_lift(command) for command in calls)
 
     text = render_text(report)
     assert "python numpy/pandas lift panic audit" in text
@@ -124,9 +125,7 @@ def test_installed_package_audit_target_counts_against_language_axis(tmp_path) -
         "pandas_floor_panics": 0,
         "unexpected_panics": 0,
     }
-    assert all(
-        command[:4] == ["sugar", "lift", "--report", "--visual"] for command in calls
-    )
+    assert all(_is_visual_lift(command) for command in calls)
 
 
 def test_audit_workspace_manifest_passes_audit_flag_to_python_lifter(tmp_path) -> None:
@@ -217,7 +216,7 @@ def test_lift_command_uses_cached_audit_workspace(
 
     monkeypatch.setattr(panic_audit_module, "_run_subprocess", fake_subprocess)
 
-    command = ["sugar", "lift", "--report", "--visual", str(target)]
+    command = ["/cache/sugar-stamp", "lift", "--report", "--visual", str(target)]
     assert panic_audit_module._run_command(command, ROOT).returncode == 0
     assert panic_audit_module._run_command(command, ROOT).returncode == 0
 
@@ -346,13 +345,7 @@ def test_extracts_audit_only_gaps_when_rust_adds_trailing_context() -> None:
     }
 
 
-def test_installed_numpy_totality_gate_is_stable_zero(monkeypatch) -> None:
-    sugar = _ensure_sugar_bin()
-    monkeypatch.setenv(
-        "PATH",
-        f"{sugar.parent}{os.pathsep}{os.environ.get('PATH', '')}",
-    )
-
+def test_installed_numpy_totality_gate_is_stable_zero() -> None:
     report = collect_panic_audit(
         ROOT,
         installed_packages=("numpy",),
@@ -404,11 +397,15 @@ def test_missing_sugar_binary_counts_as_unexpected(tmp_path, monkeypatch) -> Non
     (tmp_path / "examples/pandas-showcase").mkdir(parents=True)
     monkeypatch.setenv("PATH", "")
 
-    report = collect_panic_audit(tmp_path)
+    report = collect_panic_audit(tmp_path, sugar_bin=tmp_path / "missing-stamp-sugar")
 
     assert report.r.values["unexpected_panics"] == 2
     assert all(record.observed == "exit=127" for record in report.records)
-    assert all("unable to execute sugar" in record.message for record in report.records)
+    assert all(
+        "unable to execute" in record.message
+        and "missing-stamp-sugar" in record.message
+        for record in report.records
+    )
 
 
 def test_module_entrypoint_runs_cli(tmp_path) -> None:
@@ -416,7 +413,7 @@ def test_module_entrypoint_runs_cli(tmp_path) -> None:
     (tmp_path / "examples/pandas-showcase").mkdir(parents=True)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    sugar = fake_bin / "sugar"
+    sugar = fake_bin / "sugar-darwin-x86_64-release-blake3_abc123"
     sugar.write_text(
         """#!/bin/sh
 case "$*" in
@@ -436,7 +433,8 @@ exit 0
     sugar.chmod(0o755)
     env = {
         **os.environ,
-        "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        "SUGAR_BIN": os.fspath(sugar),
+        "PATH": os.environ.get("PATH", ""),
         "PYTHONPATH": str(ROOT / "implementations/python/sugar-lift-py-tests/src"),
     }
 

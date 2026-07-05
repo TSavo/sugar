@@ -16,6 +16,7 @@ from .extract_panic_records import extract_panic_records
 from .lift_target import LiftTarget
 from .panic_audit_report import PanicAuditReport
 from .panic_record import PanicRecord
+from ..sugar_binary import SugarBinaryResolutionError, resolve_sugar_binary
 
 RunCommand = Callable[[List[str], Path], CommandResult]
 PackagePathResolver = Callable[[str], Path]
@@ -36,9 +37,11 @@ def collect_panic_audit(
     installed_packages: Iterable[str] = (),
     package_path_resolver: Optional[PackagePathResolver] = None,
     include_showcases: bool = True,
+    sugar_bin: Optional[Path] = None,
 ) -> PanicAuditReport:
     root = root.resolve()
     runner = run_command or _run_command
+    sugar = _resolve_audit_sugar_bin(sugar_bin)
     targets: list[LiftTarget] = []
     if include_showcases:
         targets.extend(
@@ -91,7 +94,7 @@ def collect_panic_audit(
                 )
             )
             continue
-        command = ["sugar", "lift", "--report", "--visual", str(target.path)]
+        command = [os.fspath(sugar), "lift", "--report", "--visual", str(target.path)]
         result = runner(command, root)
         target_records = extract_panic_records(target, result.stdout, result.stderr)
         records.extend(target_records)
@@ -140,11 +143,24 @@ def _resolve_installed_package_path(package: str) -> Path:
 
 
 def _run_command(command: List[str], cwd: Path) -> CommandResult:
-    if command[:4] == ["sugar", "lift", "--report", "--visual"] and command:
+    if _is_visual_lift_command(command):
         target = Path(command[-1])
         audit_workspace = _cached_audit_workspace(target, cwd).workspace
         return _run_subprocess([*command[:-1], str(audit_workspace)], cwd)
     return _run_subprocess(command, cwd)
+
+
+def _is_visual_lift_command(command: List[str]) -> bool:
+    return len(command) >= 5 and command[1:4] == ["lift", "--report", "--visual"]
+
+
+def _resolve_audit_sugar_bin(sugar_bin: Optional[Path]) -> Path:
+    if sugar_bin is not None:
+        return Path(sugar_bin)
+    try:
+        return resolve_sugar_binary()
+    except SugarBinaryResolutionError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def _run_subprocess(command: List[str], cwd: Path) -> CommandResult:
