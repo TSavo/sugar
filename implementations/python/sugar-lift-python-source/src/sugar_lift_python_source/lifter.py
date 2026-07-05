@@ -2988,6 +2988,18 @@ def _lift_guard_term(node: ast.expr) -> Json | None:
         if receiver is None:
             return None
         return ctor("python:attribute", receiver, str_const(node.attr))
+    if isinstance(node, ast.Call):
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "len"
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            operand = _lift_guard_term(node.args[0])
+            if operand is None:
+                return None
+            return ctor("python:len", operand)
+        return None
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
         operand = node.operand
         if isinstance(operand, ast.Constant) and type(operand.value) is int:
