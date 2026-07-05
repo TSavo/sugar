@@ -42,8 +42,8 @@ class DictSugar(Sugar, role=SugarRole.TERM):
                 sugar_name=cls.__name__,
                 floor_name="DictLiteralValue",
                 reason=(
-                    "dict literals are structural term support; the current solver "
-                    "path has no standalone dict-constructor verdict witness"
+                    "dict literals are structural term support; the production "
+                    "solver path lacks dictionary key/value-pair equality"
                 ),
             ),
             inert_statement_return_witness(

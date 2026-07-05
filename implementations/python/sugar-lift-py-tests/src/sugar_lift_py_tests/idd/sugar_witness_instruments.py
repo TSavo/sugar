@@ -234,16 +234,23 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         sugar_name="DictSugar",
         floor_name="DictLiteralValue",
         reason=(
-            "dict literals are structural term support; the current solver "
-            "path has no standalone dict-constructor verdict witness"
+            "dict literals are structural term support; the production "
+            "solver path lacks dictionary key/value-pair equality"
         ),
         retirement_condition=(
-            "until dict-constructor equality carries a verdict witness "
-            "through the solver path (assert {1:2} == {1:3} is a "
-            "verdict-bearing claim; current probes select DictSugar and "
-            "refuse at DictLiteralValue.project_callsite_with, while the "
-            "structural-identity tests already prove the twin is "
-            "constructible the moment that bridge exists)"
+            "retire when dict-constructor equality is represented as "
+            "key/value-pair structural testimony, matching Python's mapping "
+            "rule that dictionaries compare equal iff they have the same "
+            "(key, value) pairs regardless of order "
+            "(docs.python.org/3/library/stdtypes.html#mapping-types-dict). "
+            "Current path: literal_call_report.py:2197/2219 demands the "
+            "callee floor and operations/callsite_projection_operation.py:61 falls "
+            "through to a Projection gap for DictLiteralValue. A probe that "
+            "adds only DictLiteralValue.project_callsite_with emits a Derived "
+            "python:dict sibling, but the production solver still discharges "
+            "the lie `A()->{1:2}; assert A()=={1:3}`; the missing owner is "
+            "structural dict equality / entry decomposition, not a safe "
+            "projection arm alone."
         ),
     ),
     NonFolOptOut(
