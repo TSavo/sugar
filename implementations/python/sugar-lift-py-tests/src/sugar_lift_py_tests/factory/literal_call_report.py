@@ -29,7 +29,9 @@ from sugar_lift_py_tests.ir import (
     and_,
     ctor,
     eq,
+    term_to_value,
 )
+from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
     EffectDto,
@@ -121,6 +123,10 @@ def euf_call_term(callee_name: str, arg_terms):
     callsite of the same callee+args builds the byte-identical term that mint coalesces.
     """
     return ctor(f"call:{callee_name}", arg_terms)
+
+
+def _term_to_rpc(term: Term) -> dict[str, Any]:
+    return json.loads(encode_jcs(term_to_value(term)))
 
 
 def euf_callsite_name(callee_name: str, euf_term, *, suffix: str) -> str:
@@ -1516,6 +1522,65 @@ def _lift_callsite_assertion(
                     f"lists): {exc}"
                 ),
             )
+    for keyword in callsite.call_keywords():
+        name = keyword.keyword_arg_name()
+        keyword_frag = keyword.keyword_value()
+        if name is None:
+            return _effect_lift(
+                keyword_frag,
+                fn,
+                Incomplete(
+                    RuntimeEffect(
+                        "callsite keyword runtime boundary: **kwargs expansion "
+                        "cannot be statically bound to imported contract formals; "
+                        "Python resolves the keyword set at runtime. Keep as "
+                        "typed red until double-star callsite binding sugar owns "
+                        f"the shape. replacement=CallsiteKeywordActuals; "
+                        f"blame={memento_file}:{keyword.line}:{keyword.col}"
+                    )
+                ),
+                stmt=stmt,
+                selected="CallsiteKeywordRuntimeEffect",
+                requested_role="CallsiteKeywordActuals",
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+            )
+        try:
+            keyword_value = _literal_floor_via_factory(keyword_frag, filename, ctx=ctx)
+            if isinstance(keyword_value, Incomplete):
+                return _effect_lift(
+                    keyword_frag,
+                    fn,
+                    keyword_value,
+                    stmt=stmt,
+                    selected="TypedEffect",
+                    requested_role="CallsiteKeywordActual",
+                    filename=filename,
+                    memento_file=memento_file,
+                    source_lines=source_lines,
+                )
+            arg_terms.append(
+                ctor(
+                    f"kw:{name}",
+                    [
+                        floor_to_term(
+                            keyword_value, owner=f"literal_call_report kw:{name}"
+                        )
+                    ],
+                )
+            )
+        except TypeError as exc:
+            _panic_no_sugar(
+                keyword_frag,
+                memento_file,
+                observed=f"callsite-keyword:{keyword_frag.observed}-unliftable",
+                requested="LiftableCallKeywordArg",
+                fix=(
+                    "lift this keyword-arg shape (e.g. nested arrays, mixed-type "
+                    f"lists): {exc}"
+                ),
+            )
     return _emit_euf_fact(
         stmt,
         fn,
@@ -1642,6 +1707,7 @@ def _emit_euf_fact(
             raise TypeError("emit_call_edge requires callsite")
         target_symbol = f"call:{callee_name}"
         binding = _binding_for_bridge_symbol(contract_bindings or [], target_symbol)
+        formal_actuals = _formal_actuals_for_binding(binding, list(arg_terms))
         edges.append(
             CallEdgeDecl(
                 bridge=BridgeAtom(
@@ -1657,6 +1723,7 @@ def _emit_euf_fact(
                         _binding_proof_cid(binding) if binding is not None else None
                     ),
                     call_site_locus=Locus(memento_file, callsite.line, callsite.col),
+                    formal_actuals=formal_actuals,
                 ),
                 provenance=Provenance(
                     node_class=CallEdgeDecl.node_class,
@@ -2876,12 +2943,14 @@ def _external_bridge_edges(
             continue
         seen.add(key)
         binding = _binding_for_bridge_symbol(contract_bindings, target_symbol)
+        formal_actuals = _formal_actuals_for_binding(binding, item.get("argTerms"))
         bridge = BridgeAtom(
             source_contract=source_contract,
             target_symbol=target_symbol,
             target_contract=binding.get("name") if binding is not None else None,
             target_contract_cid=_binding_cid(binding) if binding is not None else None,
             call_site_locus=Locus(memento_file, item["line"], item["column"]),
+            formal_actuals=formal_actuals,
         )
         edge = CallEdgeDecl(
             bridge=bridge,
@@ -2900,6 +2969,42 @@ def _external_bridge_edges(
             edge["targetProofCid"] = proof_cid
         edges.append(edge)
     return edges
+
+
+def _formal_actuals_for_binding(
+    binding: dict[str, Any] | None, arg_terms: object
+) -> dict[str, Any] | None:
+    if binding is None or not isinstance(arg_terms, list):
+        return None
+    formals = binding.get("formals")
+    if not isinstance(formals, list) or not all(
+        isinstance(formal, str) for formal in formals
+    ):
+        return None
+    positional: list[Term] = []
+    keywords: dict[str, Term] = {}
+    for term in arg_terms:
+        if (
+            isinstance(term, _Ctor)
+            and term.name.startswith("kw:")
+            and len(term.args) == 1
+        ):
+            keywords[term.name.removeprefix("kw:")] = term.args[0]
+        elif isinstance(
+            term, (_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor)
+        ):
+            positional.append(term)
+        else:
+            return None
+    actuals: dict[str, Any] = {}
+    for index, formal in enumerate(formals):
+        if formal in keywords:
+            actuals[formal] = _term_to_rpc(keywords[formal])
+        elif index < len(positional):
+            actuals[formal] = _term_to_rpc(positional[index])
+        else:
+            return None
+    return actuals
 
 
 def _module_statements(root_frag: SourceFragment) -> list[SourceFragment]:

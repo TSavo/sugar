@@ -309,6 +309,47 @@ def test_projected_equality_external_bridge_edge_uses_dependency_binding() -> No
     assert edge["targetProofCid"] == "blake3-512:math-proof"
 
 
+def test_projected_equality_external_bridge_edge_binds_keyword_formal_actuals() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import math\n"
+            "def test_round(actual):\n"
+            "    assert actual.value == math.floor(x=4)\n"
+        ),
+        filename="test_round.py",
+        memento_file="test_round.py",
+        contract_bindings=[
+            {
+                "name": "native::floor::callable",
+                "contract_cid": "blake3-512:floor-contract",
+                "target_proof_cid": "blake3-512:math-proof",
+                "bridgeSourceSymbol": "call:math.floor",
+                "formals": ["x"],
+                "has_pre": True,
+            }
+        ],
+    )
+
+    assert report is not None
+    edge = report.payload.call_edges[0]
+    assert edge["targetSymbol"] == "call:math.floor"
+    assert edge["targetContract"] == "native::floor::callable"
+    assert edge["targetContractCid"] == "blake3-512:floor-contract"
+    assert edge["targetProofCid"] == "blake3-512:math-proof"
+    assert edge["callsite"] == {
+        "panicSite": False,
+        "file": "test_round.py",
+        "line": 3,
+        "formalActuals": {
+            "x": {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Int"},
+                "value": 4,
+            },
+        },
+    }
+
+
 def test_projected_equality_resolved_post_to_pre_edge_emits_implication() -> None:
     source = (
         "import math\n"
@@ -390,6 +431,45 @@ def test_projected_equality_resolved_edge_without_target_pre_is_not_implication(
     assert report is not None
     assert report.payload.call_edges[0]["targetContract"] == "native::sqrt::callable"
     assert report.payload.implications == []
+
+
+def test_projected_equality_direct_callsite_edge_binds_keyword_formal_actuals() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import math\n" "def test_floor():\n" "    assert math.floor(x=4) == 4\n"
+        ),
+        filename="test_floor.py",
+        memento_file="test_floor.py",
+        contract_bindings=[
+            {
+                "name": "native::floor::callable",
+                "contract_cid": "blake3-512:floor-contract",
+                "target_proof_cid": "blake3-512:math-proof",
+                "bridgeSourceSymbol": "call:math.floor",
+                "formals": ["x"],
+                "has_pre": True,
+            }
+        ],
+    )
+
+    assert report is not None
+    edge = report.payload.call_edges[0]
+    assert edge["targetSymbol"] == "call:math.floor"
+    assert edge["targetContract"] == "native::floor::callable"
+    assert edge["targetContractCid"] == "blake3-512:floor-contract"
+    assert edge["targetProofCid"] == "blake3-512:math-proof"
+    assert edge["callsite"] == {
+        "panicSite": False,
+        "file": "test_floor.py",
+        "line": 3,
+        "formalActuals": {
+            "x": {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Int"},
+                "value": 4,
+            },
+        },
+    }
 
 
 def test_lift_rpc_bindings_backed_pass_returns_implication_consumer_payload(

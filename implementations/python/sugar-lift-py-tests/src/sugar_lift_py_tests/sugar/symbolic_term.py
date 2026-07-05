@@ -424,6 +424,7 @@ def symbolic_term(
                         "targetName": import_target,
                         "line": site.line,
                         "column": site.col,
+                        "argTerms": args,
                     }
                 )
             args = []

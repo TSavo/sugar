@@ -238,6 +238,46 @@ fn producer_responses_have_call_edges(responses: &[PerPluginDispatch]) -> bool {
         .any(|dispatch| response_has_call_edges(&dispatch.response))
 }
 
+fn bridge_ir_from_resolved_call_edge(edge: &Value) -> Option<Value> {
+    let target_contract_cid = edge
+        .get("targetContractCid")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())?;
+    let target_symbol = edge
+        .get("targetSymbol")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())?;
+    let mut bridge = json!({
+        "kind": "bridge",
+        "schemaVersion": "1",
+        "sourceLayer": "source",
+        "sourceSymbol": target_symbol,
+        "targetContractCid": target_contract_cid,
+        "targetLayer": "kit",
+    });
+    if let Some(target_proof_cid) = edge
+        .get("targetProofCid")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        bridge["targetProofCid"] = Value::String(target_proof_cid.to_string());
+    }
+    if let Some(callsite) = edge.get("callsite").and_then(Value::as_object) {
+        bridge["callsite"] = Value::Object(callsite.clone());
+    } else if let Some(locus) = edge.get("callSiteLocus").and_then(Value::as_object) {
+        let mut callsite = serde_json::Map::new();
+        callsite.insert("panicSite".to_string(), Value::Bool(false));
+        if let Some(file) = locus.get("file").and_then(Value::as_str) {
+            callsite.insert("file".to_string(), Value::String(file.to_string()));
+        }
+        if let Some(line) = locus.get("line").or_else(|| locus.get("start_line")) {
+            callsite.insert("line".to_string(), line.clone());
+        }
+        bridge["callsite"] = Value::Object(callsite);
+    }
+    Some(bridge)
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct OracleObservation {
     requested: bool,
@@ -466,6 +506,15 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
             .and_then(|v| v.as_array())
         {
             merged_plan_mementos.extend(arr.iter().cloned());
+        }
+    }
+    for edge in &merged_call_edges {
+        let Some(bridge) = bridge_ir_from_resolved_call_edge(edge) else {
+            continue;
+        };
+        let dedup_key = canonical_dedup_key(&bridge);
+        if seen_content.insert(dedup_key) {
+            merged_ir.push(bridge);
         }
     }
     let bridges_emitted = merged_ir
@@ -1376,6 +1425,11 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
             Option<String>,
             bool,
             Option<String>,
+            Option<String>,
+            Option<Vec<String>>,
+            Option<Vec<Value>>,
+            Option<Value>,
+            Option<Value>,
         ),
     > = std::collections::BTreeMap::new();
     for (cid, member) in pool.contract_members() {
@@ -1410,7 +1464,35 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
+        let bridge_source_symbol = member
+            .field("bridgeSourceSymbol")
+            .or_else(|| member.field("bridge_source_symbol"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
         let resolved_body = pool.contract_body_for_member(member);
+        let pre_body = resolved_body
+            .as_ref()
+            .and_then(|body| body.get("pre"))
+            .cloned();
+        let post_body = resolved_body
+            .as_ref()
+            .and_then(|body| body.get("post"))
+            .cloned();
+        let formals = member
+            .field("formals")
+            .and_then(|v| v.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            });
+        let formal_sorts = member
+            .field("formalSorts")
+            .or_else(|| member.field("formal_sorts"))
+            .and_then(|v| v.as_array())
+            .cloned();
         let has_pre = resolved_body
             .as_ref()
             .and_then(|body| body.get("pre"))
@@ -1444,9 +1526,20 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
         let new_rank = rank(has_pre, body_bearing, body_discharge_eligible);
         let take = match by_key.get(&key) {
             None => true,
-            Some((_, incumbent_bb, incumbent_has_pre, _, _, incumbent_eligible, _)) => {
-                new_rank > rank(*incumbent_has_pre, *incumbent_bb, *incumbent_eligible)
-            }
+            Some((
+                _,
+                incumbent_bb,
+                incumbent_has_pre,
+                _,
+                _,
+                incumbent_eligible,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+            )) => new_rank > rank(*incumbent_has_pre, *incumbent_bb, *incumbent_eligible),
         };
         if take {
             by_key.insert(
@@ -1459,6 +1552,11 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
                     bundle,
                     body_discharge_eligible,
                     body_discharge_refusal_reason,
+                    bridge_source_symbol,
+                    formals,
+                    formal_sorts,
+                    pre_body,
+                    post_body,
                 ),
             );
         }
@@ -1476,9 +1574,14 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
                     bundle,
                     body_discharge_eligible,
                     body_discharge_refusal_reason,
+                    bridge_source_symbol,
+                    formals,
+                    formal_sorts,
+                    pre_body,
+                    post_body,
                 ),
             )| {
-                json!({
+                let mut binding = json!({
                     "name": name,
                     "contract_cid": cid,
                     "body_bearing": body_bearing,
@@ -1492,7 +1595,23 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
                     // The crate this dependency contract belongs to: the lifter
                     // keys the call site by (crate, leaf) to match it.
                     "library": library,
-                })
+                });
+                if let Some(bridge_source_symbol) = bridge_source_symbol {
+                    binding["bridgeSourceSymbol"] = json!(bridge_source_symbol);
+                }
+                if let Some(formals) = formals {
+                    binding["formals"] = json!(formals);
+                }
+                if let Some(formal_sorts) = formal_sorts {
+                    binding["formalSorts"] = Value::Array(formal_sorts);
+                }
+                if let Some(pre) = pre_body {
+                    binding["pre"] = pre;
+                }
+                if let Some(post) = post_body {
+                    binding["post"] = post;
+                }
+                binding
             },
         )
         .collect()
@@ -2305,6 +2424,18 @@ fn mint_lift_response(
                 .get("ir")
                 .and_then(|v| v.as_array())
                 .ok_or("ir-document response missing `ir` array")?;
+            let mut ir_entries = ir.clone();
+            if let Some(call_edges) = lift_resp
+                .get("callEdges")
+                .or_else(|| lift_resp.get("call_edges"))
+                .and_then(Value::as_array)
+            {
+                for edge in call_edges {
+                    if let Some(bridge) = bridge_ir_from_resolved_call_edge(edge) {
+                        ir_entries.push(bridge);
+                    }
+                }
+            }
 
             let authorities = lift_resp.get("authorities").and_then(|v| v.as_array());
             let implications = lift_resp.get("implications").and_then(|v| v.as_array());
@@ -2326,11 +2457,11 @@ fn mint_lift_response(
                 .or_else(|| lift_resp.get("assertion_surface_audits"))
                 .and_then(Value::as_array);
             debug!(
-                ir_entries = ir.len(),
+                ir_entries = ir_entries.len(),
                 "mint: minting ir-document into .proof bundle"
             );
             let minted = mint_ir_document_with_source_and_plan_mementos(
-                ir,
+                &ir_entries,
                 source_mementos,
                 plan_mementos,
                 factory_walk,
@@ -2798,6 +2929,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
         principal: String,
     }
 
+    #[derive(Clone)]
     struct MintedContractRef {
         contract_name: String,
         attestation_cid: String,
@@ -2870,6 +3002,144 @@ fn mint_ir_document_with_source_and_plan_mementos(
         .filter(|s| !s.is_empty());
     let witness_cids_by_contract =
         emit_witnesses_by_contract(witnesses, project_root, out_dir, quiet)?;
+
+    let dependency_contract_refs = || -> (BTreeMap<String, MintedContractRef>, BTreeMap<String, Vec<String>>) {
+        let imports_dir = project_root.join(".sugar").join("imports");
+        let mut proof_files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&imports_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("proof") {
+                    proof_files.push(path);
+                }
+            }
+        }
+        if proof_files.is_empty() {
+            return (BTreeMap::new(), BTreeMap::new());
+        }
+
+        let mut pool = sugar_verifier::types::MementoPool::default();
+        sugar_verifier::load_all_proofs::load_files_into_pool(&proof_files, &mut pool);
+
+        let mut by_cid = BTreeMap::new();
+        let mut by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (cid, member) in pool.contract_members() {
+            let Some(name) = member
+                .field("contractName")
+                .or_else(|| member.field("name"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let resolved_body = pool.contract_body_for_member(member);
+            let pre_body = resolved_body
+                .as_ref()
+                .and_then(|body| body.get("pre"))
+                .cloned();
+            let post_body = resolved_body
+                .as_ref()
+                .and_then(|body| body.get("post"))
+                .cloned();
+            let pre_hash = pre_body
+                .as_ref()
+                .map(|formula| formula_hash(&json_to_cvalue(formula)));
+            let post_hash = post_body
+                .as_ref()
+                .map(|formula| formula_hash(&json_to_cvalue(formula)))
+                .or_else(|| {
+                    member
+                        .field("postHash")
+                        .or_else(|| member.field("post_hash"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                });
+            let inv_hash = resolved_body
+                .as_ref()
+                .and_then(|body| body.get("inv"))
+                .map(|formula| formula_hash(&json_to_cvalue(formula)))
+                .or_else(|| {
+                    member
+                        .field("invHash")
+                        .or_else(|| member.field("inv_hash"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                });
+            if pre_hash.is_none() && post_hash.is_none() && inv_hash.is_none() {
+                continue;
+            }
+
+            let body_policy = body_discharge_policy_from_fields(
+                member
+                    .field("bodyDischargeEligible")
+                    .or_else(|| member.field("body_discharge_eligible")),
+                member
+                    .field("bodyDischargeRefusalReason")
+                    .or_else(|| member.field("body_discharge_refusal_reason")),
+                member.field("dischargePolicy"),
+            );
+            log_body_discharge_policy_warnings(
+                "mint-dependency-implication-endpoint",
+                &name,
+                &body_policy.warnings,
+            );
+            let library = member
+                .field("library")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let bridge_source_symbol = member
+                .field("bridgeSourceSymbol")
+                .or_else(|| member.field("bridge_source_symbol"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let formals = member
+                .field("formals")
+                .and_then(|v| v.as_array())
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                });
+            let formal_sorts = member
+                .field("formalSorts")
+                .or_else(|| member.field("formal_sorts"))
+                .and_then(|v| v.as_array())
+                .cloned();
+
+            let cid_string = cid.to_string();
+            by_name
+                .entry(name.clone())
+                .or_default()
+                .push(cid_string.clone());
+            by_cid.insert(
+                cid_string.clone(),
+                MintedContractRef {
+                    contract_name: name,
+                    attestation_cid: cid_string,
+                    pre_hash,
+                    post_hash,
+                    inv_hash,
+                    pre_body,
+                    post_body,
+                    has_nontrivial_pre: resolved_body
+                        .as_ref()
+                        .and_then(|body| body.get("pre"))
+                        .is_some_and(has_nontrivial_pre_json),
+                    body_discharge_eligible: body_policy.body_discharge_eligible,
+                    body_discharge_refusal_reason: body_policy.body_discharge_refusal_reason,
+                    library,
+                    bridge_source_symbol,
+                    formals,
+                    formal_sorts,
+                },
+            );
+        }
+
+        (by_cid, by_name)
+    };
 
     if let Some(source_mementos) = source_mementos {
         for source_memento in source_mementos {
@@ -3363,6 +3633,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 emit_empty_formals,
                 formal_sorts: formal_sorts.clone(),
                 library: library.clone(),
+                bridge_source_symbol: binding_bridge_source_symbol.clone(),
                 body_discharge_eligible,
                 body_discharge_refusal_reason: body_discharge_refusal_reason.clone(),
                 panic_loci: panic_loci.clone(),
@@ -3521,6 +3792,23 @@ fn mint_ir_document_with_source_and_plan_mementos(
     }
 
     if let Some(implications) = implications {
+        let (dependency_contracts_by_cid, dependency_cids_by_name) = dependency_contract_refs();
+        let resolve_by_slot = |by_cid: &BTreeMap<String, MintedContractRef>,
+                               by_name: &BTreeMap<String, Vec<String>>,
+                               ref_name: &str,
+                               slot: &str|
+         -> Option<MintedContractRef> {
+            by_name.get(ref_name).and_then(|cids| {
+                cids.iter()
+                    .filter_map(|cid| by_cid.get(cid))
+                    .find(|c| c.slot_hash(slot).is_some())
+                    // Fall back to the first shape under this name when the
+                    // slot is absent everywhere (the error is raised below
+                    // on the missing slot, with a clear message).
+                    .or_else(|| cids.first().and_then(|cid| by_cid.get(cid)))
+                    .cloned()
+            })
+        };
         for implication in implications {
             let name = implication
                 .get("name")
@@ -3536,27 +3824,44 @@ fn mint_ir_document_with_source_and_plan_mementos(
             // that actually carries the slot this implication references (e.g.
             // a `post`-slot antecedent needs the contract whose CID carries a
             // post). This keeps name a convenience for authoring while identity
-            // stays the CID. Ambiguity that the slot does not resolve is a hard
-            // error, never a silent pick.
-            let resolve_by_slot = |ref_name: &str, slot: &str| -> Option<&MintedContractRef> {
-                cids_by_name.get(ref_name).and_then(|cids| {
-                    cids.iter()
-                        .filter_map(|cid| contracts_by_cid.get(cid))
-                        .find(|c| c.slot_hash(slot).is_some())
-                        // Fall back to the first shape under this name when the
-                        // slot is absent everywhere (the error is raised below
-                        // on the missing slot, with a clear message).
-                        .or_else(|| cids.first().and_then(|cid| contracts_by_cid.get(cid)))
-                })
-            };
-            let antecedent =
-                resolve_by_slot(antecedent_name, antecedent_slot).ok_or_else(|| {
-                    format!("implication `{name}` references missing contract `{antecedent_name}`")
-                })?;
-            let consequent =
-                resolve_by_slot(consequent_name, consequent_slot).ok_or_else(|| {
-                    format!("implication `{name}` references missing contract `{consequent_name}`")
-                })?;
+            // stays the CID. Imported dependency proofs are in the same lookup
+            // horizon as local contracts for implication endpoints: the
+            // consumer-authored implication row still names a contract, but the
+            // memento stores the imported contract CID and slot hash.
+            let antecedent = resolve_by_slot(
+                &contracts_by_cid,
+                &cids_by_name,
+                antecedent_name,
+                antecedent_slot,
+            )
+            .or_else(|| {
+                resolve_by_slot(
+                    &dependency_contracts_by_cid,
+                    &dependency_cids_by_name,
+                    antecedent_name,
+                    antecedent_slot,
+                )
+            })
+            .ok_or_else(|| {
+                format!("implication `{name}` references missing contract `{antecedent_name}`")
+            })?;
+            let consequent = resolve_by_slot(
+                &contracts_by_cid,
+                &cids_by_name,
+                consequent_name,
+                consequent_slot,
+            )
+            .or_else(|| {
+                resolve_by_slot(
+                    &dependency_contracts_by_cid,
+                    &dependency_cids_by_name,
+                    consequent_name,
+                    consequent_slot,
+                )
+            })
+            .ok_or_else(|| {
+                format!("implication `{name}` references missing contract `{consequent_name}`")
+            })?;
             let antecedent_hash = antecedent.slot_hash(antecedent_slot).ok_or_else(|| {
                 format!(
                     "implication `{name}` references missing slot `{antecedent_slot}` on contract `{antecedent_name}`"
@@ -5513,6 +5818,63 @@ mod tests {
     }
 
     #[test]
+    fn merge_ir_document_responses_materializes_resolved_call_edges_as_bridges() {
+        let target_cid = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let target_proof_cid = "blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        let resolved = json!({
+            "kind": "call-edge",
+            "sourceContract": "caller",
+            "targetSymbol": "call:numpy.load",
+            "targetContract": "lib._npyio_impl.load",
+            "targetContractCid": target_cid,
+            "targetProofCid": target_proof_cid,
+            "callSiteLocus": {"file": "test_load.py", "line": 3, "column": 27},
+            "callsite": {
+                "panicSite": false,
+                "file": "test_load.py",
+                "line": 3,
+                "formalActuals": {
+                    "file": {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "data.npy"
+                    },
+                    "encoding": {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "latin1"
+                    }
+                }
+            }
+        });
+        let merged = merge_ir_document_responses(vec![PerPluginDispatch {
+            surface: "python-implicit-implications".to_string(),
+            response: json!({
+                "kind": "ir-document",
+                "ir": [],
+                "callEdges": [resolved],
+                "diagnostics": []
+            }),
+        }])
+        .expect("merge ir-documents");
+
+        let bridges: Vec<_> = merged["ir"]
+            .as_array()
+            .expect("ir entries")
+            .iter()
+            .filter(|entry| entry["kind"].as_str() == Some("bridge"))
+            .collect();
+        assert_eq!(bridges.len(), 1, "one bridge materialized: {merged:#}");
+        assert_eq!(bridges[0]["sourceSymbol"], "call:numpy.load");
+        assert_eq!(bridges[0]["targetContractCid"], target_cid);
+        assert_eq!(bridges[0]["targetProofCid"], target_proof_cid);
+        assert_eq!(
+            bridges[0]["callsite"]["formalActuals"]["encoding"]["value"],
+            "latin1"
+        );
+    }
+
+    #[test]
     fn dispatch_result_to_value_propagates_oracle_observation_from_lift() {
         let result = DispatchResult {
             filename_cid: "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
@@ -6663,6 +7025,220 @@ mod tests {
 
         assert_eq!(binding["bodyDischargeEligible"], false);
         assert_eq!(binding["bodyDischargeRefusalReason"], "totality-axiom");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dependency_contract_bindings_forward_bridge_source_symbol_for_imported_pre_targets() {
+        let root = temp_workspace("dependency_contract_bridge_source_symbol_forward");
+        let imports_dir = root.join(".sugar").join("imports");
+        std::fs::create_dir_all(&imports_dir).expect("create imports dir");
+        let ir = vec![json!({
+            "kind": "function-contract",
+            "name": "lib._npyio_impl.load",
+            "bridgeSourceSymbol": "numpy.load",
+            "formals": ["file", "encoding"],
+            "formalSorts": [
+                {"kind": "primitive", "name": "String"},
+                {"kind": "primitive", "name": "String"}
+            ],
+            "returnSort": {"kind": "primitive", "name": "String"},
+            "pre": {
+                "kind": "or",
+                "args": [
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "encoding"},
+                            {
+                                "kind": "const",
+                                "value": "ASCII",
+                                "sort": {"kind": "primitive", "name": "String"}
+                            }
+                        ]
+                    },
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "encoding"},
+                            {
+                                "kind": "const",
+                                "value": "latin1",
+                                "sort": {"kind": "primitive", "name": "String"}
+                            }
+                        ]
+                    },
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "encoding"},
+                            {
+                                "kind": "const",
+                                "value": "bytes",
+                                "sort": {"kind": "primitive", "name": "String"}
+                            }
+                        ]
+                    }
+                ]
+            },
+            "bodyDischargeEligible": false,
+            "bodyDischargeRefusalReason": "precondition-only source guard contract"
+        })];
+        let (proof_bytes, proof_cid, _) =
+            mint_from_ir_document(&ir, None, None, None, &root, &root, false)
+                .expect("mint dependency proof");
+        std::fs::write(imports_dir.join(format!("{proof_cid}.proof")), &proof_bytes)
+            .expect("write dependency proof");
+
+        let bindings = contract_bindings_from_dependency_proofs(&root);
+        let binding = bindings
+            .iter()
+            .find(|binding| binding["name"] == "lib._npyio_impl.load")
+            .unwrap_or_else(|| panic!("missing lib._npyio_impl.load binding: {bindings:#?}"));
+
+        assert_eq!(
+            binding["bridgeSourceSymbol"], "numpy.load",
+            "dependency bindings must preserve the vendor-declared public call spelling so consumer call edges join imported preconditions"
+        );
+        assert_eq!(binding["target_proof_cid"], proof_cid);
+        assert_eq!(binding["has_pre"], true);
+        assert_eq!(binding["has_post"], false);
+        assert_eq!(binding["formals"], json!(["file", "encoding"]));
+        assert_eq!(
+            binding["pre"]["kind"], "or",
+            "dependency bindings must carry the pre body so consumers can bind callsite actuals"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mint_ir_document_resolves_implication_targets_from_imported_proofs() {
+        let root = temp_workspace("mint_imported_implication_target");
+        let imports_dir = root.join(".sugar").join("imports");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&imports_dir).expect("create imports dir");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+
+        let dependency_ir = vec![json!({
+            "kind": "function-contract",
+            "name": "lib._npyio_impl.load",
+            "bridgeSourceSymbol": "numpy.load",
+            "formals": ["file", "encoding"],
+            "formalSorts": [
+                {"kind": "primitive", "name": "String"},
+                {"kind": "primitive", "name": "String"}
+            ],
+            "returnSort": {"kind": "primitive", "name": "String"},
+            "pre": {
+                "kind": "or",
+                "args": [
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "encoding"},
+                            {
+                                "kind": "const",
+                                "value": "ASCII",
+                                "sort": {"kind": "primitive", "name": "String"}
+                            }
+                        ]
+                    },
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "encoding"},
+                            {
+                                "kind": "const",
+                                "value": "latin1",
+                                "sort": {"kind": "primitive", "name": "String"}
+                            }
+                        ]
+                    }
+                ]
+            },
+            "bodyDischargeEligible": false,
+            "bodyDischargeRefusalReason": "precondition-only source guard contract"
+        })];
+        let (dependency_bytes, dependency_proof_cid, _) =
+            mint_from_ir_document(&dependency_ir, None, None, None, &root, &root, false)
+                .expect("mint dependency proof");
+        std::fs::write(
+            imports_dir.join(format!("{dependency_proof_cid}.proof")),
+            &dependency_bytes,
+        )
+        .expect("write dependency proof");
+        let imported_binding = contract_bindings_from_dependency_proofs(&root)
+            .into_iter()
+            .find(|binding| binding["name"] == "lib._npyio_impl.load")
+            .expect("imported load binding");
+        let imported_contract_cid = imported_binding["contract_cid"]
+            .as_str()
+            .expect("imported contract cid")
+            .to_string();
+
+        let consumer_ir = vec![json!({
+            "kind": "contract",
+            "name": "call:numpy.load(s:'data.npy')::assertion",
+            "outBinding": "ok",
+            "inv": {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "ctor", "name": "call:numpy.load", "args": [
+                        {
+                            "kind": "const",
+                            "value": "data.npy",
+                            "sort": {"kind": "primitive", "name": "String"}
+                        }
+                    ]},
+                    {
+                        "kind": "const",
+                        "value": "data.npy",
+                        "sort": {"kind": "primitive", "name": "String"}
+                    }
+                ]
+            }
+        })];
+        let implications = vec![json!({
+            "name": "consumer-load-implies-imported-pre",
+            "antecedent": "call:numpy.load(s:'data.npy')::assertion",
+            "consequent": "lib._npyio_impl.load",
+            "antecedentSlot": "inv",
+            "consequentSlot": "pre"
+        })];
+
+        let (consumer_bytes, _, _) = mint_from_ir_document(
+            &consumer_ir,
+            None,
+            Some(&implications),
+            None,
+            &root,
+            &out_dir,
+            true,
+        )
+        .expect("consumer implication should resolve imported precondition");
+        let graph = ProofGraph::read(&consumer_bytes).expect("decode consumer proof");
+        let mut implications = graph
+            .members_view()
+            .filter(|member| member.kind() == Some(MemberKind::Implication));
+        let implication = implications.next().expect("minted implication");
+        assert!(
+            implications.next().is_none(),
+            "expected exactly one implication"
+        );
+        let Ok(Member::Implication(imp)) = Member::from_value(&implication.json()) else {
+            panic!("expected implication member");
+        };
+        assert_eq!(imp.consequent_cid.as_str(), imported_contract_cid);
+        assert_eq!(imp.consequent_slot.as_deref(), Some("pre"));
+        assert_eq!(imp.antecedent_slot.as_deref(), Some("inv"));
 
         let _ = std::fs::remove_dir_all(root);
     }

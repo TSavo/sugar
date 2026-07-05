@@ -253,6 +253,7 @@ pub fn mint_args(
         emit_empty_formals: contract.formals.is_empty(),
         formal_sorts,
         library: None,
+        bridge_source_symbol: None,
         body_discharge_eligible: true,
         body_discharge_refusal_reason: None,
         // PANIC-LOCUS PRESERVATION (#1745/#1749): header metadata only.
