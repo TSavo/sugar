@@ -125,7 +125,6 @@ EXPECTED_MIGRATED_SEED_NAMES = {
 EXPECTED_PINNED_FAILURE_SEED_NAMES: set[str] = set()
 EXPECTED_OPT_OUT_SUGARS = {
     "AliasSugar",
-    "BitwiseOpSugar",
     "CommentSugar",
     "DictCompSugar",
     "DictSugar",
@@ -137,7 +136,6 @@ EXPECTED_OPT_OUT_SUGARS = {
 }
 EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
     "AliasSugar",
-    "BitwiseOpSugar",
     "DictSugar",
     "ListLiteralSugar",
 }
@@ -297,12 +295,11 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
     rows = temporal_opt_outs()
 
     assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 4
+    assert len(rows) == 3
     assert all(row.retirement_condition for row in rows)
     by_name = {row.sugar_name: row for row in rows}
     expected_needles = {
         "AliasSugar": "factory/literal_call_report.py:304",
-        "BitwiseOpSugar": "prove reports undecidable",
         "DictSugar": "DictLiteralValue.project_callsite_with",
         "ListLiteralSugar": "sugar/array_literal_sugar.py:29",
     }
@@ -410,6 +407,43 @@ def test_list_literal_temporal_opt_out_reproduces_shadowed_owner_blocker(
     assert "BuiltinCallSugar" in truthful_result.selected_sugars
     assert "ListLiteralSugar" not in truthful_result.selected_sugars
     assert "ListLiteralSugar" not in lying_result.selected_sugars
+
+
+def test_bitwise_literal_fold_witness_discharges_and_refutes(tmp_path: Path) -> None:
+    prefix = "def A(z):\n    return 3 & 1\n\n"
+    truthful = prefix + "def test_a():\n    assert A(0) == 1\n"
+    lying = prefix + "def test_a():\n    assert A(0) == 0\n"
+
+    truthful_result = run_source_through_real_solver(
+        tmp_path / "bitwise-literal-truth", truthful
+    )
+    lying_result = run_source_through_real_solver(
+        tmp_path / "bitwise-literal-lie", lying
+    )
+
+    trace = {
+        "truthful": {
+            "verdict": truthful_result.verdict,
+            "selectedSugars": truthful_result.selected_sugars,
+            "ir": _euf_rows(truthful_result.lift_doc),
+            "rows": truthful_result.prove_doc.get("rows"),
+        },
+        "lying": {
+            "verdict": lying_result.verdict,
+            "selectedSugars": lying_result.selected_sugars,
+            "ir": _euf_rows(lying_result.lift_doc),
+            "rows": lying_result.prove_doc.get("rows"),
+        },
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert "BitwiseOpSugar" in truthful_result.selected_sugars
+    assert truthful_result.verdict == "sat"
+    assert _prove_statuses(truthful_result.prove_doc) == ["discharged"]
+
+    assert "BitwiseOpSugar" in lying_result.selected_sugars
+    assert lying_result.verdict == "unsat"
+    assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
 
 
 def test_subscript_assignment_post_state_witness_discharges_and_refutes(
@@ -1217,14 +1251,14 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "witness_triples_failing": EXPECTED_TRIPLE_FAILURES,
         "witnesses_not_dispatching_to_owner": 0,
         "non_fol_opt_out_drift": 0,
-        "temporal_opt_outs": 4,
-        "total": 4,
+        "temporal_opt_outs": 3,
+        "total": 3,
     }
     assert "R(unenrolled-sugars): 0" in text
     assert "R(witness-triples-failing): 0" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
-    assert "R(temporal-opt-outs): 4" in text
+    assert "R(temporal-opt-outs): 3" in text
     assert "unenrolled sugars:" not in text
 
 
@@ -1239,12 +1273,13 @@ def test_sugar_witness_cli_exits_clean_only_when_residue_is_zero(
     status = cli.main(["--root", str(ROOT), "--sugar-witness-frontier"])
 
     # IDD invariant: the frontier exits clean only when every residue is zero.
-    # Red until the temporal-opt-out debt is actually retired — not pinned at 5.
+    # Red until the temporal-opt-out debt is actually retired -- not pinned at
+    # an old count.
     stdout = capsys.readouterr().out
     assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
-    assert "R(temporal-opt-outs): 4" in stdout
+    assert "R(temporal-opt-outs): 3" in stdout
     assert status == 1
 
 

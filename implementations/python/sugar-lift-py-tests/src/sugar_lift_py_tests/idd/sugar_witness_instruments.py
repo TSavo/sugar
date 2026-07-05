@@ -226,20 +226,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         ),
     ),
     NonFolOptOut(
-        sugar_name="BitwiseOpSugar",
-        floor_name="SupportValue",
-        reason=(
-            "bitwise terms are symbolic bitvector support until the production "
-            "solver path yields a SAT/UNSAT verdict"
-        ),
-        retirement_condition=(
-            "retire when bitwise Bv32 terms are decidable and typed-provenance "
-            "bearing in the production solver path; current variable and "
-            "constant probes select BitwiseOpSugar but prove reports "
-            "undecidable with an untyped FactoryWalkMemento formula"
-        ),
-    ),
-    NonFolOptOut(
         sugar_name="CommentSugar",
         floor_name="SupportValue",
         reason="comments are inert source support",
