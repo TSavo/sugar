@@ -1,0 +1,2019 @@
+{
+  "schemaVersion": 1,
+  "kind": "pandas-gap-census",
+  "partOf": "#3503",
+  "summary": {
+    "totalGaps": 68,
+    "templateCount": 25,
+    "byKind": {
+      "Constructor": 1,
+      "Floor": 49,
+      "ProofIR": 1,
+      "Sugar": 17
+    }
+  },
+  "render": {
+    "command": "/Users/tsavo/.cache/sugar/binaries/sugar-darwin-x86_64-release-blake3-512_71db7fb178cb95914ca9f45266f5de5551d88e74b12a3cf0080cbd696dceffb7bf228affcf3a0bc5ddc190050cd12929982f626670fdb9efccad96ce2b490091 lift --report --json /Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas",
+    "exitCode": 2,
+    "runtimeSeconds": 511.13,
+    "stdoutBytes": 0,
+    "stderrBytes": 113919,
+    "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrSha256": "554e254980365bfd35b576cd4edf6cc90315c4919b22069b5221008574cba7ca",
+    "sugarBinary": "/Users/tsavo/.cache/sugar/binaries/sugar-darwin-x86_64-release-blake3-512_71db7fb178cb95914ca9f45266f5de5551d88e74b12a3cf0080cbd696dceffb7bf228affcf3a0bc5ddc190050cd12929982f626670fdb9efccad96ce2b490091",
+    "sugarBinaryFile": "/Users/tsavo/.cache/sugar/binaries/sugar-darwin-x86_64-release-blake3-512_71db7fb178cb95914ca9f45266f5de5551d88e74b12a3cf0080cbd696dceffb7bf228affcf3a0bc5ddc190050cd12929982f626670fdb9efccad96ce2b490091: Mach-O 64-bit executable x86_64",
+    "sugarBinaryFileSha256": "774296fc4873956045c4442160696d89154dcb4fde13a842d5f57a12213e9d0a",
+    "workspace": "/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas",
+    "workspaceCacheKey": "e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7",
+    "pandasVersion": "3.0.3",
+    "pythonFiles": 1421
+  },
+  "templates": [
+    {
+      "id": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "count": 10,
+      "examples": [
+        {
+          "label": "pandas/core/apply.py",
+          "blame": {
+            "raw": "pandas/core/apply.py:1652:8",
+            "path": "pandas/core/apply.py",
+            "line": 1652,
+            "column": 8
+          }
+        },
+        {
+          "label": "pandas/core/arrays/_ranges.py",
+          "blame": {
+            "raw": "pandas/core/arrays/_ranges.py:127:4",
+            "path": "pandas/core/arrays/_ranges.py",
+            "line": 127,
+            "column": 4
+          }
+        }
+      ],
+      "closestExistingPrecedent": "ContainsOperation currently handles ArrayLiteral.contains(TermValue) and symbolic/string/set contains at operations/contains_operation.py:35-100; ArrayLiteral dispatches contains_with at floor/array_literal.py:53-54."
+    },
+    {
+      "id": "pandas-gap-02-sugar-python-factory-generatorexp-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "GeneratorExp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar",
+      "count": 8,
+      "examples": [
+        {
+          "label": "pandas/io/pytables.py",
+          "blame": {
+            "raw": "pandas/io/pytables.py:4124:18",
+            "path": "pandas/io/pytables.py",
+            "line": 4124,
+            "column": 18
+          }
+        },
+        {
+          "label": "pandas/tests/arrays/sparse/test_constructors.py",
+          "blame": {
+            "raw": "pandas/tests/arrays/sparse/test_constructors.py:80:13",
+            "path": "pandas/tests/arrays/sparse/test_constructors.py",
+            "line": 80,
+            "column": 13
+          }
+        }
+      ],
+      "closestExistingPrecedent": "Factory gaps are raised by factory/build.py:125-142; grammar_ledger.py:369-372 classifies GeneratorExp as lazy sequence-universe debt."
+    },
+    {
+      "id": "pandas-gap-03-floor-arrayliteralsugar-dictliteralvalue-array-element-floor",
+      "kind": "Floor",
+      "owner": "ArrayLiteralSugar",
+      "observed": "DictLiteralValue",
+      "requested": "array element floor",
+      "replacement": "add ArrayLiteral element floor for DictLiteralValue",
+      "count": 6,
+      "examples": [
+        {
+          "label": "pandas/tests/frame/methods/test_to_dict.py",
+          "blame": {
+            "raw": "pandas/tests/frame/methods/test_to_dict.py:37:28",
+            "path": "pandas/tests/frame/methods/test_to_dict.py",
+            "line": 37,
+            "column": 28
+          }
+        },
+        {
+          "label": "pandas/tests/groupby/test_groupby.py",
+          "blame": {
+            "raw": "pandas/tests/groupby/test_groupby.py:2150:20",
+            "path": "pandas/tests/groupby/test_groupby.py",
+            "line": 2150,
+            "column": 20
+          }
+        }
+      ],
+      "closestExistingPrecedent": "ArrayLiteral item admissibility is declared at floor/array_literal.py:17-22; DictLiteralValue is a non-FOL support carrier with to_term/project_callsite at floor/dict_literal_value.py:13-47."
+    },
+    {
+      "id": "pandas-gap-04-floor-binopsugar-stringvalue-termvalue-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "StringValue*TermValue",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for StringValue * TermValue",
+      "count": 5,
+      "examples": [
+        {
+          "label": "pandas/tests/indexes/multi/test_formats.py",
+          "blame": {
+            "raw": "pandas/tests/indexes/multi/test_formats.py:201:40",
+            "path": "pandas/tests/indexes/multi/test_formats.py",
+            "line": 201,
+            "column": 40
+          }
+        },
+        {
+          "label": "pandas/tests/io/formats/test_format.py",
+          "blame": {
+            "raw": "pandas/tests/io/formats/test_format.py:273:25",
+            "path": "pandas/tests/io/formats/test_format.py",
+            "line": 273,
+            "column": 25
+          }
+        }
+      ],
+      "closestExistingPrecedent": "BinaryOperatorOperation handles TermValue, SymbolicValue, StringValue equality, ArrayLiteral/TupleLiteral repeat, and gaps at operations/binary_operator_operation.py:52-113 and :243-267."
+    },
+    {
+      "id": "pandas-gap-05-floor-builtincallsugar-stringvalue-dunder-floatdunder-string-builtin-method-floor",
+      "kind": "Floor",
+      "owner": "BuiltinCallSugar",
+      "observed": "StringValue.__float__",
+      "requested": "string builtin method floor",
+      "replacement": "add StringValue method floor for `__float__`",
+      "count": 5,
+      "examples": [
+        {
+          "label": "pandas/tests/arrays/string_/test_string.py",
+          "blame": {
+            "raw": "pandas/tests/arrays/string_/test_string.py:55:56",
+            "path": "pandas/tests/arrays/string_/test_string.py",
+            "line": 55,
+            "column": 56
+          }
+        },
+        {
+          "label": "pandas/tests/indexes/period/test_indexing.py",
+          "blame": {
+            "raw": "pandas/tests/indexes/period/test_indexing.py:783:15",
+            "path": "pandas/tests/indexes/period/test_indexing.py",
+            "line": 783,
+            "column": 15
+          }
+        }
+      ],
+      "closestExistingPrecedent": "BuiltinCallSugar maps float() to __float__ at sugar/builtin_call_sugar.py:351-367; StringValue only owns __int__ and __format__ at floor/string_value.py:21-40."
+    },
+    {
+      "id": "pandas-gap-06-sugar-python-factory-compare-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "Compare",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.compare.compare_sugar",
+      "count": 5,
+      "examples": [
+        {
+          "label": "pandas/tests/api/test_api.py",
+          "blame": {
+            "raw": "pandas/tests/api/test_api.py:555:14",
+            "path": "pandas/tests/api/test_api.py",
+            "line": 555,
+            "column": 14
+          }
+        },
+        {
+          "label": "pandas/tests/arrays/categorical/test_indexing.py",
+          "blame": {
+            "raw": "pandas/tests/arrays/categorical/test_indexing.py:318:17",
+            "path": "pandas/tests/arrays/categorical/test_indexing.py",
+            "line": 318,
+            "column": 17
+          }
+        }
+      ],
+      "closestExistingPrecedent": "ComparisonAssertionSugar and ChainedComparisonAssertionSugar own assertion compares; ObjectRichComparisonTermSugar is the existing term-compare precedent at sugar/object_rich_comparison_term_sugar.py:27-92."
+    },
+    {
+      "id": "pandas-gap-07-floor-stringsubscriptsugar-dictliteralvalue-subscript-with",
+      "kind": "Floor",
+      "owner": "StringSubscriptSugar",
+      "observed": "DictLiteralValue",
+      "requested": "subscript_with",
+      "replacement": "add subscript_with to DictLiteralValue or emit a real effect",
+      "count": 4,
+      "examples": [
+        {
+          "label": "pandas/tests/frame/test_query_eval.py",
+          "blame": {
+            "raw": "pandas/tests/frame/test_query_eval.py:180:61",
+            "path": "pandas/tests/frame/test_query_eval.py",
+            "line": 180,
+            "column": 61
+          }
+        },
+        {
+          "label": "pandas/tests/scalar/test_na_scalar.py",
+          "blame": {
+            "raw": "pandas/tests/scalar/test_na_scalar.py:54:11",
+            "path": "pandas/tests/scalar/test_na_scalar.py",
+            "line": 54,
+            "column": 11
+          }
+        }
+      ],
+      "closestExistingPrecedent": "SubscriptOperation has String/Array/Tuple/Object/Symbolic arms at operations/subscript_operation.py:41-108; DictLiteralValue currently has no subscript_with arm at floor/dict_literal_value.py:13-47."
+    },
+    {
+      "id": "pandas-gap-08-floor-membershipassertionsugar-tupleliteralvalue-contains-with",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "TupleLiteralValue",
+      "requested": "contains_with",
+      "replacement": "add contains_with to TupleLiteralValue or emit a real effect",
+      "count": 3,
+      "examples": [
+        {
+          "label": "pandas/core/interchange/from_dataframe.py",
+          "blame": {
+            "raw": "pandas/core/interchange/from_dataframe.py:332:4",
+            "path": "pandas/core/interchange/from_dataframe.py",
+            "line": 332,
+            "column": 4
+          }
+        },
+        {
+          "label": "pandas/tests/io/test_sql.py",
+          "blame": {
+            "raw": "pandas/tests/io/test_sql.py:382:4",
+            "path": "pandas/tests/io/test_sql.py",
+            "line": 382,
+            "column": 4
+          }
+        }
+      ],
+      "closestExistingPrecedent": "TupleLiteralValue dispatches binary/subscript/materialize/project but no contains_with at floor/tuple_literal_value.py:22-50; ContainsOperation is the membership precedent."
+    },
+    {
+      "id": "pandas-gap-09-floor-attributesugar-callsitevalue-attribute-with",
+      "kind": "Floor",
+      "owner": "AttributeSugar",
+      "observed": "CallSiteValue",
+      "requested": "attribute_with",
+      "replacement": "add attribute_with to CallSiteValue or emit a real effect",
+      "count": 2,
+      "examples": [
+        {
+          "label": "pandas/tests/arrays/integer/test_construction.py",
+          "blame": {
+            "raw": "pandas/tests/arrays/integer/test_construction.py:171:11",
+            "path": "pandas/tests/arrays/integer/test_construction.py",
+            "line": 171,
+            "column": 11
+          }
+        },
+        {
+          "label": "pandas/tests/tseries/offsets/test_offsets.py",
+          "blame": {
+            "raw": "pandas/tests/tseries/offsets/test_offsets.py:950:11",
+            "path": "pandas/tests/tseries/offsets/test_offsets.py",
+            "line": 950,
+            "column": 11
+          }
+        }
+      ],
+      "closestExistingPrecedent": "AttributeLookupOperation owns ObjectValue attribute semantics at operations/attribute_lookup_operation.py:28-78; CallSiteValue can force/project calls at floor/call_site_value.py:37-142 but has no attribute_with arm."
+    },
+    {
+      "id": "pandas-gap-10-floor-binopsugar-arrayliteral-arrayliteral-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "ArrayLiteral+ArrayLiteral",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for ArrayLiteral + ArrayLiteral",
+      "count": 2,
+      "examples": [
+        {
+          "label": "pandas/tests/frame/test_stack_unstack.py",
+          "blame": {
+            "raw": "pandas/tests/frame/test_stack_unstack.py:883:23",
+            "path": "pandas/tests/frame/test_stack_unstack.py",
+            "line": 883,
+            "column": 23
+          }
+        },
+        {
+          "label": "pandas/tests/window/test_groupby.py",
+          "blame": {
+            "raw": "pandas/tests/window/test_groupby.py:856:23",
+            "path": "pandas/tests/window/test_groupby.py",
+            "line": 856,
+            "column": 23
+          }
+        }
+      ],
+      "closestExistingPrecedent": "ArrayLiteral dispatches binary_operator_with at floor/array_literal.py:35-36; BinaryOperatorOperation currently only repeats arrays by TermValue or reports symbolic repeat effects at operations/binary_operator_operation.py:107-113."
+    },
+    {
+      "id": "pandas-gap-11-floor-binopsugar-symbolicvalue-stringvalue-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "SymbolicValue+StringValue",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for SymbolicValue + StringValue",
+      "count": 2,
+      "examples": [
+        {
+          "label": "pandas/tests/arithmetic/test_object.py",
+          "blame": {
+            "raw": "pandas/tests/arithmetic/test_object.py:291:17",
+            "path": "pandas/tests/arithmetic/test_object.py",
+            "line": 291,
+            "column": 17
+          }
+        },
+        {
+          "label": "pandas/tests/indexes/datetimes/methods/test_tz_convert.py",
+          "blame": {
+            "raw": "pandas/tests/indexes/datetimes/methods/test_tz_convert.py:59:41",
+            "path": "pandas/tests/indexes/datetimes/methods/test_tz_convert.py",
+            "line": 59,
+            "column": 41
+          }
+        }
+      ],
+      "closestExistingPrecedent": "BinaryOperatorOperation supports SymbolicValue with TermValue/SymbolicValue and StringValue equality only at operations/binary_operator_operation.py:87-98."
+    },
+    {
+      "id": "pandas-gap-12-floor-mapsugar-symbolicvalue-map-with",
+      "kind": "Floor",
+      "owner": "MapSugar",
+      "observed": "SymbolicValue",
+      "requested": "map_with",
+      "replacement": "add map_with to SymbolicValue or emit a real effect",
+      "count": 2,
+      "examples": [
+        {
+          "label": "pandas/tests/io/formats/style/test_style.py",
+          "blame": {
+            "raw": "pandas/tests/io/formats/style/test_style.py:520:12",
+            "path": "pandas/tests/io/formats/style/test_style.py",
+            "line": 520,
+            "column": 12
+          }
+        },
+        {
+          "label": "pandas/tests/series/methods/test_map.py",
+          "blame": {
+            "raw": "pandas/tests/series/methods/test_map.py:278:13",
+            "path": "pandas/tests/series/methods/test_map.py",
+            "line": 278,
+            "column": 13
+          }
+        }
+      ],
+      "closestExistingPrecedent": "MapSugar requires a LambdaCallable mapper then dispatches map_with at sugar/map_sugar.py:59-78; ArrayLiteral maps via CallableMapOperation at operations/callable_map_operation.py:10-28."
+    },
+    {
+      "id": "pandas-gap-13-floor-literal-call-report-kw-float-format-lambdacallable-project-this-floor-value-to-a-term",
+      "kind": "Floor",
+      "owner": "literal_call_report kw:float_format",
+      "observed": "LambdaCallable",
+      "requested": "project this floor value to a term",
+      "replacement": "write more Floor: implement LambdaCallable.to_term",
+      "count": 2,
+      "examples": [
+        {
+          "label": "pandas/tests/frame/methods/test_to_csv.py",
+          "blame": {
+            "raw": "LambdaCallable"
+          }
+        },
+        {
+          "label": "pandas/tests/io/formats/test_to_csv.py",
+          "blame": {
+            "raw": "LambdaCallable"
+          }
+        }
+      ],
+      "closestExistingPrecedent": "literal_call_report projects keyword values through floor_to_term at factory/literal_call_report.py:1660; LambdaCallable intentionally only applies a body, with no to_term, at floor/lambda_callable.py:11-31."
+    },
+    {
+      "id": "pandas-gap-14-constructor-attributesugar-t-a-constructor-bound-field",
+      "kind": "Constructor",
+      "owner": "AttributeSugar",
+      "observed": "T.a",
+      "requested": "constructor-bound field",
+      "replacement": "bind `self.a` in `T.__init__`, define `__getattr__` on `T`, or add the floor that owns this attribute",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/base/test_constructors.py",
+          "blame": {
+            "raw": "pandas/tests/base/test_constructors.py:110:15",
+            "path": "pandas/tests/base/test_constructors.py",
+            "line": 110,
+            "column": 15
+          }
+        }
+      ],
+      "closestExistingPrecedent": "AttributeLookupOperation reports constructor-bound field gaps when ObjectValue lacks the field and __getattr__ at operations/attribute_lookup_operation.py:39-78."
+    },
+    {
+      "id": "pandas-gap-15-floor-callsugar-stringvalue-format-string-builtin-method-floor",
+      "kind": "Floor",
+      "owner": "CallSugar",
+      "observed": "StringValue.format",
+      "requested": "string builtin method floor",
+      "replacement": "add StringValue method floor for `format`",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/io/formats/style/test_html.py",
+          "blame": {
+            "raw": "pandas/tests/io/formats/style/test_html.py:833:11",
+            "path": "pandas/tests/io/formats/style/test_html.py",
+            "line": 833,
+            "column": 11
+          }
+        }
+      ],
+      "closestExistingPrecedent": "Builtin format() routes to __format__ at sugar/builtin_call_sugar.py:288-348 and StringValue owns __format__; method-call .format currently reaches StringValue.call_method_with at floor/string_value.py:21-40."
+    },
+    {
+      "id": "pandas-gap-16-floor-membershipassertionsugar-importaliasvalue-contains-with",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ImportAliasValue",
+      "requested": "contains_with",
+      "replacement": "add contains_with to ImportAliasValue or emit a real effect",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/core/arrays/arrow/extension_types.py",
+          "blame": {
+            "raw": "pandas/core/arrays/arrow/extension_types.py:66:8",
+            "path": "pandas/core/arrays/arrow/extension_types.py",
+            "line": 66,
+            "column": 8
+          }
+        }
+      ],
+      "closestExistingPrecedent": "ContainsOperation is the membership dispatch precedent at operations/contains_operation.py:35-100; ImportAliasValue exposes to_term/subscript but no contains_with."
+    },
+    {
+      "id": "pandas-gap-17-floor-stringsubscriptsugar-arrayliteral-1-bounds-safe-sequence-subscript",
+      "kind": "Floor",
+      "owner": "StringSubscriptSugar",
+      "observed": "ArrayLiteral[-1]",
+      "requested": "bounds-safe sequence subscript",
+      "replacement": "add bounds-safe projection support for ArrayLiteral",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/config/test_config.py",
+          "blame": {
+            "raw": "pandas/tests/config/test_config.py:366:15",
+            "path": "pandas/tests/config/test_config.py",
+            "line": 366,
+            "column": 15
+          }
+        }
+      ],
+      "closestExistingPrecedent": "SubscriptOperation sequence projection currently accepts only 0 <= index < len(items) and gaps otherwise at operations/subscript_operation.py:111-137."
+    },
+    {
+      "id": "pandas-gap-18-floor-subscriptassignsugar-symbolicvalue-setitem-with",
+      "kind": "Floor",
+      "owner": "SubscriptAssignSugar",
+      "observed": "SymbolicValue",
+      "requested": "setitem_with",
+      "replacement": "add setitem_with to SymbolicValue or emit a real effect",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/copy_view/test_methods.py",
+          "blame": {
+            "raw": "pandas/tests/copy_view/test_methods.py:1503:8",
+            "path": "pandas/tests/copy_view/test_methods.py",
+            "line": 1503,
+            "column": 8
+          }
+        }
+      ],
+      "closestExistingPrecedent": "SetItemOperation owns array/object assignment at operations/setitem_operation.py:33-87; SymbolicValue has no setitem_with arm."
+    },
+    {
+      "id": "pandas-gap-19-floor-unaryopsugar-callsitevalue-unary-operator-with",
+      "kind": "Floor",
+      "owner": "UnaryOpSugar",
+      "observed": "CallSiteValue",
+      "requested": "unary_operator_with",
+      "replacement": "add unary_operator_with to CallSiteValue or emit a real effect",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/scalar/timedelta/test_timedelta.py",
+          "blame": {
+            "raw": "pandas/tests/scalar/timedelta/test_timedelta.py:521:35",
+            "path": "pandas/tests/scalar/timedelta/test_timedelta.py",
+            "line": 521,
+            "column": 35
+          }
+        }
+      ],
+      "closestExistingPrecedent": "UnaryOperatorOperation handles TermValue/SymbolicValue only at operations/unary_operator_operation.py:26-47; CallSiteValue can be forced/projected at floor/call_site_value.py:37-142."
+    },
+    {
+      "id": "pandas-gap-20-floor-unaryopsugar-py-invert-termvalue-unary-operator-floor",
+      "kind": "Floor",
+      "owner": "UnaryOpSugar",
+      "observed": "py.invert(TermValue)",
+      "requested": "unary operator floor",
+      "replacement": "add UnaryOperatorOperation support for py.invert on TermValue",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/computation/test_eval.py",
+          "blame": {
+            "raw": "pandas/tests/computation/test_eval.py:583:62",
+            "path": "pandas/tests/computation/test_eval.py",
+            "line": 583,
+            "column": 62
+          }
+        }
+      ],
+      "closestExistingPrecedent": "UnaryOperatorOperation handles py.pos and py.neg for TermValue/SymbolicValue, then gaps at operations/unary_operator_operation.py:26-55."
+    },
+    {
+      "id": "pandas-gap-21-proofir-proofir-scope-postcondition-illegal-free-var-s-os-free-vars-only-from-declared-formals-p",
+      "kind": "ProofIR",
+      "owner": "proofir.scope.PostCondition",
+      "observed": "illegal free var(s): os",
+      "requested": "free vars only from declared formals plus out",
+      "replacement": "declare the variable in the contract scope or remove it from the formula",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/io/test_html.py",
+          "blame": {
+            "raw": "proofir-construction-law"
+          }
+        }
+      ],
+      "closestExistingPrecedent": "PostCondition and ClosedFormula enforce allowed variables at proofir/scope/__init__.py:77-91 and :348-359."
+    },
+    {
+      "id": "pandas-gap-22-sugar-python-factory-assign-statement",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "Assign",
+      "requested": "statement",
+      "replacement": "create sugar_lift_py_tests.sugar.assign.assign_sugar",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/frame/methods/test_info.py",
+          "blame": {
+            "raw": "pandas/tests/frame/methods/test_info.py:199:4",
+            "path": "pandas/tests/frame/methods/test_info.py",
+            "line": 199,
+            "column": 4
+          }
+        }
+      ],
+      "closestExistingPrecedent": "AssignSugar exists for single-name assignment at sugar/assign_sugar.py:14-37; this row is a factory-selection gap for the statement shape in context."
+    },
+    {
+      "id": "pandas-gap-23-sugar-python-factory-namedexpr-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "NamedExpr",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.named_expr.named_expr_sugar",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/extension/uuid/test_uuid.py",
+          "blame": {
+            "raw": "pandas/tests/extension/uuid/test_uuid.py:83:41",
+            "path": "pandas/tests/extension/uuid/test_uuid.py",
+            "line": 83,
+            "column": 41
+          }
+        }
+      ],
+      "closestExistingPrecedent": "grammar_ledger.py:358 names NamedExpr as walrus-tail debt; factory/build.py:125-142 raises the missing sugar row."
+    },
+    {
+      "id": "pandas-gap-24-sugar-python-factory-unaryop-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "UnaryOp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.unary_op.unary_op_sugar",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/indexes/datetimes/test_indexing.py",
+          "blame": {
+            "raw": "pandas/tests/indexes/datetimes/test_indexing.py:80:15",
+            "path": "pandas/tests/indexes/datetimes/test_indexing.py",
+            "line": 80,
+            "column": 15
+          }
+        }
+      ],
+      "closestExistingPrecedent": "UnaryOpSugar owns supported unary term sites at sugar/unary_op_sugar.py:20-64; this row is the factory fall-through for an unsupported unary shape."
+    },
+    {
+      "id": "pandas-gap-25-sugar-python-factory-literal-call-callsite-arg-call-unliftable-liftablecallarg",
+      "kind": "Sugar",
+      "owner": "python.factory.literal-call",
+      "observed": "callsite-arg:Call-unliftable",
+      "requested": "LiftableCallArg",
+      "replacement": "lift this call-arg shape (e.g. nested arrays, mixed-type lists): AddSugar operand must reduce to TermValue",
+      "count": 1,
+      "examples": [
+        {
+          "label": "pandas/tests/internals/test_internals.py",
+          "blame": {
+            "raw": "tests/internals/test_internals.py:1182:20",
+            "path": "tests/internals/test_internals.py",
+            "line": 1182,
+            "column": 20
+          }
+        }
+      ],
+      "closestExistingPrecedent": "literal_call_report requires call arguments to project through floor_to_term and emits this gap at factory/literal_call_report.py:1605-1616; AddSugar keeps the TermValue operand law at sugar/add_sugar.py:56."
+    }
+  ],
+  "gaps": [
+    {
+      "index": 1,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/apply.py:1652:8",
+        "path": "pandas/core/apply.py",
+        "line": 1652,
+        "column": 8
+      },
+      "label": "pandas/core/apply.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/apply.py:1652:8 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 2,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/arrays/_ranges.py:127:4",
+        "path": "pandas/core/arrays/_ranges.py",
+        "line": 127,
+        "column": 4
+      },
+      "label": "pandas/core/arrays/_ranges.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/arrays/_ranges.py:127:4 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 3,
+      "templateId": "pandas-gap-16-floor-membershipassertionsugar-importaliasvalue-contains-with",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ImportAliasValue",
+      "requested": "contains_with",
+      "replacement": "add contains_with to ImportAliasValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/arrays/arrow/extension_types.py:66:8",
+        "path": "pandas/core/arrays/arrow/extension_types.py",
+        "line": 66,
+        "column": 8
+      },
+      "label": "pandas/core/arrays/arrow/extension_types.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains_with",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/arrays/arrow/extension_types.py:66:8 observed=ImportAliasValue requested=contains_with fix=add contains_with to ImportAliasValue or emit a real effect"
+    },
+    {
+      "index": 4,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/arrays/datetimelike.py:1366:8",
+        "path": "pandas/core/arrays/datetimelike.py",
+        "line": 1366,
+        "column": 8
+      },
+      "label": "pandas/core/arrays/datetimelike.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/arrays/datetimelike.py:1366:8 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 5,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/arrays/datetimes.py:2618:4",
+        "path": "pandas/core/arrays/datetimes.py",
+        "line": 2618,
+        "column": 4
+      },
+      "label": "pandas/core/arrays/datetimes.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/arrays/datetimes.py:2618:4 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 6,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/arrays/period.py:1036:8",
+        "path": "pandas/core/arrays/period.py",
+        "line": 1036,
+        "column": 8
+      },
+      "label": "pandas/core/arrays/period.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/arrays/period.py:1036:8 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 7,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/arrays/timedeltas.py:1127:4",
+        "path": "pandas/core/arrays/timedeltas.py",
+        "line": 1127,
+        "column": 4
+      },
+      "label": "pandas/core/arrays/timedeltas.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/arrays/timedeltas.py:1127:4 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 8,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/generic.py:11780:8",
+        "path": "pandas/core/generic.py",
+        "line": 11780,
+        "column": 8
+      },
+      "label": "pandas/core/generic.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/generic.py:11780:8 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 9,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/groupby/ops.py:959:8",
+        "path": "pandas/core/groupby/ops.py",
+        "line": 959,
+        "column": 8
+      },
+      "label": "pandas/core/groupby/ops.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/groupby/ops.py:959:8 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 10,
+      "templateId": "pandas-gap-08-floor-membershipassertionsugar-tupleliteralvalue-contains-with",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "TupleLiteralValue",
+      "requested": "contains_with",
+      "replacement": "add contains_with to TupleLiteralValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/interchange/from_dataframe.py:332:4",
+        "path": "pandas/core/interchange/from_dataframe.py",
+        "line": 332,
+        "column": 4
+      },
+      "label": "pandas/core/interchange/from_dataframe.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains_with",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/interchange/from_dataframe.py:332:4 observed=TupleLiteralValue requested=contains_with fix=add contains_with to TupleLiteralValue or emit a real effect"
+    },
+    {
+      "index": 11,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/core/missing.py:254:4",
+        "path": "pandas/core/missing.py",
+        "line": 254,
+        "column": 4
+      },
+      "label": "pandas/core/missing.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/core/missing.py:254:4 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 12,
+      "templateId": "pandas-gap-01-floor-membershipassertionsugar-arrayliteral-contains-symbolicvalue-contains-item-floor",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "ArrayLiteral.contains(SymbolicValue)",
+      "requested": "contains item floor",
+      "replacement": "add contains support for ArrayLiteral with SymbolicValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/io/excel/_util.py:80:4",
+        "path": "pandas/io/excel/_util.py",
+        "line": 80,
+        "column": 4
+      },
+      "label": "pandas/io/excel/_util.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains item floor",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/io/excel/_util.py:80:4 observed=ArrayLiteral.contains(SymbolicValue) requested=contains item floor fix=add contains support for ArrayLiteral with SymbolicValue"
+    },
+    {
+      "index": 13,
+      "templateId": "pandas-gap-02-sugar-python-factory-generatorexp-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "GeneratorExp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/io/pytables.py:4124:18",
+        "path": "pandas/io/pytables.py",
+        "line": 4124,
+        "column": 18
+      },
+      "label": "pandas/io/pytables.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/io/pytables.py:4124:18 observed=GeneratorExp requested=term fix=create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar"
+    },
+    {
+      "index": 14,
+      "templateId": "pandas-gap-06-sugar-python-factory-compare-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "Compare",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.compare.compare_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/api/test_api.py:555:14",
+        "path": "pandas/tests/api/test_api.py",
+        "line": 555,
+        "column": 14
+      },
+      "label": "pandas/tests/api/test_api.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/api/test_api.py:555:14 observed=Compare requested=term fix=create sugar_lift_py_tests.sugar.compare.compare_sugar"
+    },
+    {
+      "index": 15,
+      "templateId": "pandas-gap-11-floor-binopsugar-symbolicvalue-stringvalue-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "SymbolicValue+StringValue",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for SymbolicValue + StringValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/arithmetic/test_object.py:291:17",
+        "path": "pandas/tests/arithmetic/test_object.py",
+        "line": 291,
+        "column": 17
+      },
+      "label": "pandas/tests/arithmetic/test_object.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "binary operator operand floor",
+      "message": "write more Floor for this Construction: owner=BinOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/arithmetic/test_object.py:291:17 observed=SymbolicValue+StringValue requested=binary operator operand floor fix=add BinaryOperatorOperation support for SymbolicValue + StringValue"
+    },
+    {
+      "index": 16,
+      "templateId": "pandas-gap-06-sugar-python-factory-compare-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "Compare",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.compare.compare_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/arrays/categorical/test_indexing.py:318:17",
+        "path": "pandas/tests/arrays/categorical/test_indexing.py",
+        "line": 318,
+        "column": 17
+      },
+      "label": "pandas/tests/arrays/categorical/test_indexing.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/arrays/categorical/test_indexing.py:318:17 observed=Compare requested=term fix=create sugar_lift_py_tests.sugar.compare.compare_sugar"
+    },
+    {
+      "index": 17,
+      "templateId": "pandas-gap-09-floor-attributesugar-callsitevalue-attribute-with",
+      "kind": "Floor",
+      "owner": "AttributeSugar",
+      "observed": "CallSiteValue",
+      "requested": "attribute_with",
+      "replacement": "add attribute_with to CallSiteValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/arrays/integer/test_construction.py:171:11",
+        "path": "pandas/tests/arrays/integer/test_construction.py",
+        "line": 171,
+        "column": 11
+      },
+      "label": "pandas/tests/arrays/integer/test_construction.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "attribute_with",
+      "message": "write more Floor for this Construction: owner=AttributeSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/arrays/integer/test_construction.py:171:11 observed=CallSiteValue requested=attribute_with fix=add attribute_with to CallSiteValue or emit a real effect"
+    },
+    {
+      "index": 18,
+      "templateId": "pandas-gap-02-sugar-python-factory-generatorexp-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "GeneratorExp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/arrays/sparse/test_constructors.py:80:13",
+        "path": "pandas/tests/arrays/sparse/test_constructors.py",
+        "line": 80,
+        "column": 13
+      },
+      "label": "pandas/tests/arrays/sparse/test_constructors.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/arrays/sparse/test_constructors.py:80:13 observed=GeneratorExp requested=term fix=create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar"
+    },
+    {
+      "index": 19,
+      "templateId": "pandas-gap-05-floor-builtincallsugar-stringvalue-dunder-floatdunder-string-builtin-method-floor",
+      "kind": "Floor",
+      "owner": "BuiltinCallSugar",
+      "observed": "StringValue.__float__",
+      "requested": "string builtin method floor",
+      "replacement": "add StringValue method floor for `__float__`",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/arrays/string_/test_string.py:55:56",
+        "path": "pandas/tests/arrays/string_/test_string.py",
+        "line": 55,
+        "column": 56
+      },
+      "label": "pandas/tests/arrays/string_/test_string.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "string builtin method floor",
+      "message": "write more Floor for this Construction: owner=BuiltinCallSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/arrays/string_/test_string.py:55:56 observed=StringValue.__float__ requested=string builtin method floor fix=add StringValue method floor for `__float__`"
+    },
+    {
+      "index": 20,
+      "templateId": "pandas-gap-14-constructor-attributesugar-t-a-constructor-bound-field",
+      "kind": "Constructor",
+      "owner": "AttributeSugar",
+      "observed": "T.a",
+      "requested": "constructor-bound field",
+      "replacement": "bind `self.a` in `T.__init__`, define `__getattr__` on `T`, or add the floor that owns this attribute",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/base/test_constructors.py:110:15",
+        "path": "pandas/tests/base/test_constructors.py",
+        "line": 110,
+        "column": 15
+      },
+      "label": "pandas/tests/base/test_constructors.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "constructor-bound field",
+      "message": "write more Constructor for this Construction: owner=AttributeSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/base/test_constructors.py:110:15 observed=T.a requested=constructor-bound field fix=bind `self.a` in `T.__init__`, define `__getattr__` on `T`, or add the floor that owns this attribute"
+    },
+    {
+      "index": 21,
+      "templateId": "pandas-gap-20-floor-unaryopsugar-py-invert-termvalue-unary-operator-floor",
+      "kind": "Floor",
+      "owner": "UnaryOpSugar",
+      "observed": "py.invert(TermValue)",
+      "requested": "unary operator floor",
+      "replacement": "add UnaryOperatorOperation support for py.invert on TermValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/computation/test_eval.py:583:62",
+        "path": "pandas/tests/computation/test_eval.py",
+        "line": 583,
+        "column": 62
+      },
+      "label": "pandas/tests/computation/test_eval.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "unary operator floor",
+      "message": "write more Floor for this Construction: owner=UnaryOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/computation/test_eval.py:583:62 observed=py.invert(TermValue) requested=unary operator floor fix=add UnaryOperatorOperation support for py.invert on TermValue"
+    },
+    {
+      "index": 22,
+      "templateId": "pandas-gap-17-floor-stringsubscriptsugar-arrayliteral-1-bounds-safe-sequence-subscript",
+      "kind": "Floor",
+      "owner": "StringSubscriptSugar",
+      "observed": "ArrayLiteral[-1]",
+      "requested": "bounds-safe sequence subscript",
+      "replacement": "add bounds-safe projection support for ArrayLiteral",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/config/test_config.py:366:15",
+        "path": "pandas/tests/config/test_config.py",
+        "line": 366,
+        "column": 15
+      },
+      "label": "pandas/tests/config/test_config.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "bounds-safe sequence subscript",
+      "message": "write more Floor for this Construction: owner=StringSubscriptSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/config/test_config.py:366:15 observed=ArrayLiteral[-1] requested=bounds-safe sequence subscript fix=add bounds-safe projection support for ArrayLiteral"
+    },
+    {
+      "index": 23,
+      "templateId": "pandas-gap-18-floor-subscriptassignsugar-symbolicvalue-setitem-with",
+      "kind": "Floor",
+      "owner": "SubscriptAssignSugar",
+      "observed": "SymbolicValue",
+      "requested": "setitem_with",
+      "replacement": "add setitem_with to SymbolicValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/copy_view/test_methods.py:1503:8",
+        "path": "pandas/tests/copy_view/test_methods.py",
+        "line": 1503,
+        "column": 8
+      },
+      "label": "pandas/tests/copy_view/test_methods.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "setitem_with",
+      "message": "write more Floor for this Construction: owner=SubscriptAssignSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/copy_view/test_methods.py:1503:8 observed=SymbolicValue requested=setitem_with fix=add setitem_with to SymbolicValue or emit a real effect"
+    },
+    {
+      "index": 24,
+      "templateId": "pandas-gap-06-sugar-python-factory-compare-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "Compare",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.compare.compare_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/dtypes/test_dtypes.py:974:19",
+        "path": "pandas/tests/dtypes/test_dtypes.py",
+        "line": 974,
+        "column": 19
+      },
+      "label": "pandas/tests/dtypes/test_dtypes.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/dtypes/test_dtypes.py:974:19 observed=Compare requested=term fix=create sugar_lift_py_tests.sugar.compare.compare_sugar"
+    },
+    {
+      "index": 25,
+      "templateId": "pandas-gap-02-sugar-python-factory-generatorexp-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "GeneratorExp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/dtypes/test_generic.py:98:23",
+        "path": "pandas/tests/dtypes/test_generic.py",
+        "line": 98,
+        "column": 23
+      },
+      "label": "pandas/tests/dtypes/test_generic.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/dtypes/test_generic.py:98:23 observed=GeneratorExp requested=term fix=create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar"
+    },
+    {
+      "index": 26,
+      "templateId": "pandas-gap-02-sugar-python-factory-generatorexp-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "GeneratorExp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/dtypes/test_inference.py:152:5",
+        "path": "pandas/tests/dtypes/test_inference.py",
+        "line": 152,
+        "column": 5
+      },
+      "label": "pandas/tests/dtypes/test_inference.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/dtypes/test_inference.py:152:5 observed=GeneratorExp requested=term fix=create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar"
+    },
+    {
+      "index": 27,
+      "templateId": "pandas-gap-23-sugar-python-factory-namedexpr-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "NamedExpr",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.named_expr.named_expr_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/extension/uuid/test_uuid.py:83:41",
+        "path": "pandas/tests/extension/uuid/test_uuid.py",
+        "line": 83,
+        "column": 41
+      },
+      "label": "pandas/tests/extension/uuid/test_uuid.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/extension/uuid/test_uuid.py:83:41 observed=NamedExpr requested=term fix=create sugar_lift_py_tests.sugar.named_expr.named_expr_sugar"
+    },
+    {
+      "index": 28,
+      "templateId": "pandas-gap-22-sugar-python-factory-assign-statement",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "Assign",
+      "requested": "statement",
+      "replacement": "create sugar_lift_py_tests.sugar.assign.assign_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/frame/methods/test_info.py:199:4",
+        "path": "pandas/tests/frame/methods/test_info.py",
+        "line": 199,
+        "column": 4
+      },
+      "label": "pandas/tests/frame/methods/test_info.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "statement",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/frame/methods/test_info.py:199:4 observed=Assign requested=statement fix=create sugar_lift_py_tests.sugar.assign.assign_sugar"
+    },
+    {
+      "index": 29,
+      "templateId": "pandas-gap-13-floor-literal-call-report-kw-float-format-lambdacallable-project-this-floor-value-to-a-term",
+      "kind": "Floor",
+      "owner": "literal_call_report kw:float_format",
+      "observed": "LambdaCallable",
+      "requested": "project this floor value to a term",
+      "replacement": "write more Floor: implement LambdaCallable.to_term",
+      "locus": "Projection",
+      "blame": {
+        "raw": "LambdaCallable"
+      },
+      "label": "pandas/tests/frame/methods/test_to_csv.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "to_term",
+      "message": "write more Floor for this Projection: owner=literal_call_report kw:float_format blame=LambdaCallable observed=LambdaCallable requested=project this floor value to a term fix=write more Floor: implement LambdaCallable.to_term"
+    },
+    {
+      "index": 30,
+      "templateId": "pandas-gap-03-floor-arrayliteralsugar-dictliteralvalue-array-element-floor",
+      "kind": "Floor",
+      "owner": "ArrayLiteralSugar",
+      "observed": "DictLiteralValue",
+      "requested": "array element floor",
+      "replacement": "add ArrayLiteral element floor for DictLiteralValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/frame/methods/test_to_dict.py:37:28",
+        "path": "pandas/tests/frame/methods/test_to_dict.py",
+        "line": 37,
+        "column": 28
+      },
+      "label": "pandas/tests/frame/methods/test_to_dict.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "array element floor",
+      "message": "write more Floor for this Construction: owner=ArrayLiteralSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/frame/methods/test_to_dict.py:37:28 observed=DictLiteralValue requested=array element floor fix=add ArrayLiteral element floor for DictLiteralValue"
+    },
+    {
+      "index": 31,
+      "templateId": "pandas-gap-02-sugar-python-factory-generatorexp-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "GeneratorExp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/frame/test_constructors.py:2573:22",
+        "path": "pandas/tests/frame/test_constructors.py",
+        "line": 2573,
+        "column": 22
+      },
+      "label": "pandas/tests/frame/test_constructors.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/frame/test_constructors.py:2573:22 observed=GeneratorExp requested=term fix=create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar"
+    },
+    {
+      "index": 32,
+      "templateId": "pandas-gap-07-floor-stringsubscriptsugar-dictliteralvalue-subscript-with",
+      "kind": "Floor",
+      "owner": "StringSubscriptSugar",
+      "observed": "DictLiteralValue",
+      "requested": "subscript_with",
+      "replacement": "add subscript_with to DictLiteralValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/frame/test_query_eval.py:180:61",
+        "path": "pandas/tests/frame/test_query_eval.py",
+        "line": 180,
+        "column": 61
+      },
+      "label": "pandas/tests/frame/test_query_eval.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "subscript_with",
+      "message": "write more Floor for this Construction: owner=StringSubscriptSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/frame/test_query_eval.py:180:61 observed=DictLiteralValue requested=subscript_with fix=add subscript_with to DictLiteralValue or emit a real effect"
+    },
+    {
+      "index": 33,
+      "templateId": "pandas-gap-10-floor-binopsugar-arrayliteral-arrayliteral-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "ArrayLiteral+ArrayLiteral",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for ArrayLiteral + ArrayLiteral",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/frame/test_stack_unstack.py:883:23",
+        "path": "pandas/tests/frame/test_stack_unstack.py",
+        "line": 883,
+        "column": 23
+      },
+      "label": "pandas/tests/frame/test_stack_unstack.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "binary operator operand floor",
+      "message": "write more Floor for this Construction: owner=BinOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/frame/test_stack_unstack.py:883:23 observed=ArrayLiteral+ArrayLiteral requested=binary operator operand floor fix=add BinaryOperatorOperation support for ArrayLiteral + ArrayLiteral"
+    },
+    {
+      "index": 34,
+      "templateId": "pandas-gap-03-floor-arrayliteralsugar-dictliteralvalue-array-element-floor",
+      "kind": "Floor",
+      "owner": "ArrayLiteralSugar",
+      "observed": "DictLiteralValue",
+      "requested": "array element floor",
+      "replacement": "add ArrayLiteral element floor for DictLiteralValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/groupby/test_groupby.py:2150:20",
+        "path": "pandas/tests/groupby/test_groupby.py",
+        "line": 2150,
+        "column": 20
+      },
+      "label": "pandas/tests/groupby/test_groupby.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "array element floor",
+      "message": "write more Floor for this Construction: owner=ArrayLiteralSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/groupby/test_groupby.py:2150:20 observed=DictLiteralValue requested=array element floor fix=add ArrayLiteral element floor for DictLiteralValue"
+    },
+    {
+      "index": 35,
+      "templateId": "pandas-gap-06-sugar-python-factory-compare-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "Compare",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.compare.compare_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/indexes/categorical/test_indexing.py:405:17",
+        "path": "pandas/tests/indexes/categorical/test_indexing.py",
+        "line": 405,
+        "column": 17
+      },
+      "label": "pandas/tests/indexes/categorical/test_indexing.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/indexes/categorical/test_indexing.py:405:17 observed=Compare requested=term fix=create sugar_lift_py_tests.sugar.compare.compare_sugar"
+    },
+    {
+      "index": 36,
+      "templateId": "pandas-gap-11-floor-binopsugar-symbolicvalue-stringvalue-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "SymbolicValue+StringValue",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for SymbolicValue + StringValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/indexes/datetimes/methods/test_tz_convert.py:59:41",
+        "path": "pandas/tests/indexes/datetimes/methods/test_tz_convert.py",
+        "line": 59,
+        "column": 41
+      },
+      "label": "pandas/tests/indexes/datetimes/methods/test_tz_convert.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "binary operator operand floor",
+      "message": "write more Floor for this Construction: owner=BinOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/indexes/datetimes/methods/test_tz_convert.py:59:41 observed=SymbolicValue+StringValue requested=binary operator operand floor fix=add BinaryOperatorOperation support for SymbolicValue + StringValue"
+    },
+    {
+      "index": 37,
+      "templateId": "pandas-gap-24-sugar-python-factory-unaryop-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "UnaryOp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.unary_op.unary_op_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/indexes/datetimes/test_indexing.py:80:15",
+        "path": "pandas/tests/indexes/datetimes/test_indexing.py",
+        "line": 80,
+        "column": 15
+      },
+      "label": "pandas/tests/indexes/datetimes/test_indexing.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/indexes/datetimes/test_indexing.py:80:15 observed=UnaryOp requested=term fix=create sugar_lift_py_tests.sugar.unary_op.unary_op_sugar"
+    },
+    {
+      "index": 38,
+      "templateId": "pandas-gap-04-floor-binopsugar-stringvalue-termvalue-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "StringValue*TermValue",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for StringValue * TermValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/indexes/multi/test_formats.py:201:40",
+        "path": "pandas/tests/indexes/multi/test_formats.py",
+        "line": 201,
+        "column": 40
+      },
+      "label": "pandas/tests/indexes/multi/test_formats.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "binary operator operand floor",
+      "message": "write more Floor for this Construction: owner=BinOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/indexes/multi/test_formats.py:201:40 observed=StringValue*TermValue requested=binary operator operand floor fix=add BinaryOperatorOperation support for StringValue * TermValue"
+    },
+    {
+      "index": 39,
+      "templateId": "pandas-gap-05-floor-builtincallsugar-stringvalue-dunder-floatdunder-string-builtin-method-floor",
+      "kind": "Floor",
+      "owner": "BuiltinCallSugar",
+      "observed": "StringValue.__float__",
+      "requested": "string builtin method floor",
+      "replacement": "add StringValue method floor for `__float__`",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/indexes/period/test_indexing.py:783:15",
+        "path": "pandas/tests/indexes/period/test_indexing.py",
+        "line": 783,
+        "column": 15
+      },
+      "label": "pandas/tests/indexes/period/test_indexing.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "string builtin method floor",
+      "message": "write more Floor for this Construction: owner=BuiltinCallSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/indexes/period/test_indexing.py:783:15 observed=StringValue.__float__ requested=string builtin method floor fix=add StringValue method floor for `__float__`"
+    },
+    {
+      "index": 40,
+      "templateId": "pandas-gap-06-sugar-python-factory-compare-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "Compare",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.compare.compare_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/indexes/test_base.py:1082:17",
+        "path": "pandas/tests/indexes/test_base.py",
+        "line": 1082,
+        "column": 17
+      },
+      "label": "pandas/tests/indexes/test_base.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/indexes/test_base.py:1082:17 observed=Compare requested=term fix=create sugar_lift_py_tests.sugar.compare.compare_sugar"
+    },
+    {
+      "index": 41,
+      "templateId": "pandas-gap-05-floor-builtincallsugar-stringvalue-dunder-floatdunder-string-builtin-method-floor",
+      "kind": "Floor",
+      "owner": "BuiltinCallSugar",
+      "observed": "StringValue.__float__",
+      "requested": "string builtin method floor",
+      "replacement": "add StringValue method floor for `__float__`",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/indexes/timedeltas/test_indexing.py:109:28",
+        "path": "pandas/tests/indexes/timedeltas/test_indexing.py",
+        "line": 109,
+        "column": 28
+      },
+      "label": "pandas/tests/indexes/timedeltas/test_indexing.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "string builtin method floor",
+      "message": "write more Floor for this Construction: owner=BuiltinCallSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/indexes/timedeltas/test_indexing.py:109:28 observed=StringValue.__float__ requested=string builtin method floor fix=add StringValue method floor for `__float__`"
+    },
+    {
+      "index": 42,
+      "templateId": "pandas-gap-02-sugar-python-factory-generatorexp-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "GeneratorExp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/interchange/test_spec_conformance.py:132:14",
+        "path": "pandas/tests/interchange/test_spec_conformance.py",
+        "line": 132,
+        "column": 14
+      },
+      "label": "pandas/tests/interchange/test_spec_conformance.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/interchange/test_spec_conformance.py:132:14 observed=GeneratorExp requested=term fix=create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar"
+    },
+    {
+      "index": 43,
+      "templateId": "pandas-gap-25-sugar-python-factory-literal-call-callsite-arg-call-unliftable-liftablecallarg",
+      "kind": "Sugar",
+      "owner": "python.factory.literal-call",
+      "observed": "callsite-arg:Call-unliftable",
+      "requested": "LiftableCallArg",
+      "replacement": "lift this call-arg shape (e.g. nested arrays, mixed-type lists): AddSugar operand must reduce to TermValue",
+      "locus": "AST",
+      "blame": {
+        "raw": "tests/internals/test_internals.py:1182:20",
+        "path": "tests/internals/test_internals.py",
+        "line": 1182,
+        "column": 20
+      },
+      "label": "pandas/tests/internals/test_internals.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "LiftableCallArg",
+      "message": "write more Sugar for this AST: owner=python.factory.literal-call blame=tests/internals/test_internals.py:1182:20 observed=callsite-arg:Call-unliftable requested=LiftableCallArg fix=lift this call-arg shape (e.g. nested arrays, mixed-type lists): AddSugar operand must reduce to TermValue"
+    },
+    {
+      "index": 44,
+      "templateId": "pandas-gap-15-floor-callsugar-stringvalue-format-string-builtin-method-floor",
+      "kind": "Floor",
+      "owner": "CallSugar",
+      "observed": "StringValue.format",
+      "requested": "string builtin method floor",
+      "replacement": "add StringValue method floor for `format`",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/io/formats/style/test_html.py:833:11",
+        "path": "pandas/tests/io/formats/style/test_html.py",
+        "line": 833,
+        "column": 11
+      },
+      "label": "pandas/tests/io/formats/style/test_html.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "string builtin method floor",
+      "message": "write more Floor for this Construction: owner=CallSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/formats/style/test_html.py:833:11 observed=StringValue.format requested=string builtin method floor fix=add StringValue method floor for `format`"
+    },
+    {
+      "index": 45,
+      "templateId": "pandas-gap-12-floor-mapsugar-symbolicvalue-map-with",
+      "kind": "Floor",
+      "owner": "MapSugar",
+      "observed": "SymbolicValue",
+      "requested": "map_with",
+      "replacement": "add map_with to SymbolicValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/io/formats/style/test_style.py:520:12",
+        "path": "pandas/tests/io/formats/style/test_style.py",
+        "line": 520,
+        "column": 12
+      },
+      "label": "pandas/tests/io/formats/style/test_style.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "map_with",
+      "message": "write more Floor for this Construction: owner=MapSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/formats/style/test_style.py:520:12 observed=SymbolicValue requested=map_with fix=add map_with to SymbolicValue or emit a real effect"
+    },
+    {
+      "index": 46,
+      "templateId": "pandas-gap-04-floor-binopsugar-stringvalue-termvalue-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "StringValue*TermValue",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for StringValue * TermValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/io/formats/test_format.py:273:25",
+        "path": "pandas/tests/io/formats/test_format.py",
+        "line": 273,
+        "column": 25
+      },
+      "label": "pandas/tests/io/formats/test_format.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "binary operator operand floor",
+      "message": "write more Floor for this Construction: owner=BinOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/formats/test_format.py:273:25 observed=StringValue*TermValue requested=binary operator operand floor fix=add BinaryOperatorOperation support for StringValue * TermValue"
+    },
+    {
+      "index": 47,
+      "templateId": "pandas-gap-13-floor-literal-call-report-kw-float-format-lambdacallable-project-this-floor-value-to-a-term",
+      "kind": "Floor",
+      "owner": "literal_call_report kw:float_format",
+      "observed": "LambdaCallable",
+      "requested": "project this floor value to a term",
+      "replacement": "write more Floor: implement LambdaCallable.to_term",
+      "locus": "Projection",
+      "blame": {
+        "raw": "LambdaCallable"
+      },
+      "label": "pandas/tests/io/formats/test_to_csv.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "to_term",
+      "message": "write more Floor for this Projection: owner=literal_call_report kw:float_format blame=LambdaCallable observed=LambdaCallable requested=project this floor value to a term fix=write more Floor: implement LambdaCallable.to_term"
+    },
+    {
+      "index": 48,
+      "templateId": "pandas-gap-04-floor-binopsugar-stringvalue-termvalue-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "StringValue*TermValue",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for StringValue * TermValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/io/formats/test_to_html.py:957:25",
+        "path": "pandas/tests/io/formats/test_to_html.py",
+        "line": 957,
+        "column": 25
+      },
+      "label": "pandas/tests/io/formats/test_to_html.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "binary operator operand floor",
+      "message": "write more Floor for this Construction: owner=BinOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/formats/test_to_html.py:957:25 observed=StringValue*TermValue requested=binary operator operand floor fix=add BinaryOperatorOperation support for StringValue * TermValue"
+    },
+    {
+      "index": 49,
+      "templateId": "pandas-gap-02-sugar-python-factory-generatorexp-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "GeneratorExp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/io/formats/test_to_string.py:262:18",
+        "path": "pandas/tests/io/formats/test_to_string.py",
+        "line": 262,
+        "column": 18
+      },
+      "label": "pandas/tests/io/formats/test_to_string.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/formats/test_to_string.py:262:18 observed=GeneratorExp requested=term fix=create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar"
+    },
+    {
+      "index": 50,
+      "templateId": "pandas-gap-03-floor-arrayliteralsugar-dictliteralvalue-array-element-floor",
+      "kind": "Floor",
+      "owner": "ArrayLiteralSugar",
+      "observed": "DictLiteralValue",
+      "requested": "array element floor",
+      "replacement": "add ArrayLiteral element floor for DictLiteralValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/io/json/test_json_table_schema.py:66:16",
+        "path": "pandas/tests/io/json/test_json_table_schema.py",
+        "line": 66,
+        "column": 16
+      },
+      "label": "pandas/tests/io/json/test_json_table_schema.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "array element floor",
+      "message": "write more Floor for this Construction: owner=ArrayLiteralSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/json/test_json_table_schema.py:66:16 observed=DictLiteralValue requested=array element floor fix=add ArrayLiteral element floor for DictLiteralValue"
+    },
+    {
+      "index": 51,
+      "templateId": "pandas-gap-03-floor-arrayliteralsugar-dictliteralvalue-array-element-floor",
+      "kind": "Floor",
+      "owner": "ArrayLiteralSugar",
+      "observed": "DictLiteralValue",
+      "requested": "array element floor",
+      "replacement": "add ArrayLiteral element floor for DictLiteralValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/io/json/test_json_table_schema_ext_dtype.py:50:16",
+        "path": "pandas/tests/io/json/test_json_table_schema_ext_dtype.py",
+        "line": 50,
+        "column": 16
+      },
+      "label": "pandas/tests/io/json/test_json_table_schema_ext_dtype.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "array element floor",
+      "message": "write more Floor for this Construction: owner=ArrayLiteralSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/json/test_json_table_schema_ext_dtype.py:50:16 observed=DictLiteralValue requested=array element floor fix=add ArrayLiteral element floor for DictLiteralValue"
+    },
+    {
+      "index": 52,
+      "templateId": "pandas-gap-03-floor-arrayliteralsugar-dictliteralvalue-array-element-floor",
+      "kind": "Floor",
+      "owner": "ArrayLiteralSugar",
+      "observed": "DictLiteralValue",
+      "requested": "array element floor",
+      "replacement": "add ArrayLiteral element floor for DictLiteralValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/io/json/test_normalize.py:601:16",
+        "path": "pandas/tests/io/json/test_normalize.py",
+        "line": 601,
+        "column": 16
+      },
+      "label": "pandas/tests/io/json/test_normalize.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "array element floor",
+      "message": "write more Floor for this Construction: owner=ArrayLiteralSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/json/test_normalize.py:601:16 observed=DictLiteralValue requested=array element floor fix=add ArrayLiteral element floor for DictLiteralValue"
+    },
+    {
+      "index": 53,
+      "templateId": "pandas-gap-04-floor-binopsugar-stringvalue-termvalue-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "StringValue*TermValue",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for StringValue * TermValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/io/json/test_pandas.py:680:25",
+        "path": "pandas/tests/io/json/test_pandas.py",
+        "line": 680,
+        "column": 25
+      },
+      "label": "pandas/tests/io/json/test_pandas.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "binary operator operand floor",
+      "message": "write more Floor for this Construction: owner=BinOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/json/test_pandas.py:680:25 observed=StringValue*TermValue requested=binary operator operand floor fix=add BinaryOperatorOperation support for StringValue * TermValue"
+    },
+    {
+      "index": 54,
+      "templateId": "pandas-gap-21-proofir-proofir-scope-postcondition-illegal-free-var-s-os-free-vars-only-from-declared-formals-p",
+      "kind": "ProofIR",
+      "owner": "proofir.scope.PostCondition",
+      "observed": "illegal free var(s): os",
+      "requested": "free vars only from declared formals plus out",
+      "replacement": "declare the variable in the contract scope or remove it from the formula",
+      "locus": "ConstructionLaw",
+      "blame": {
+        "raw": "proofir-construction-law"
+      },
+      "label": "pandas/tests/io/test_html.py",
+      "auditStatus": "proofir-gap",
+      "auditRole": "proofir-construction-law",
+      "message": "write more ProofIR for this ConstructionLaw: owner=proofir.scope.PostCondition blame=proofir-construction-law observed=illegal free var(s): os requested=free vars only from declared formals plus out fix=declare the variable in the contract scope or remove it from the formula"
+    },
+    {
+      "index": 55,
+      "templateId": "pandas-gap-08-floor-membershipassertionsugar-tupleliteralvalue-contains-with",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "TupleLiteralValue",
+      "requested": "contains_with",
+      "replacement": "add contains_with to TupleLiteralValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/io/test_sql.py:382:4",
+        "path": "pandas/tests/io/test_sql.py",
+        "line": 382,
+        "column": 4
+      },
+      "label": "pandas/tests/io/test_sql.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains_with",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/io/test_sql.py:382:4 observed=TupleLiteralValue requested=contains_with fix=add contains_with to TupleLiteralValue or emit a real effect"
+    },
+    {
+      "index": 56,
+      "templateId": "pandas-gap-05-floor-builtincallsugar-stringvalue-dunder-floatdunder-string-builtin-method-floor",
+      "kind": "Floor",
+      "owner": "BuiltinCallSugar",
+      "observed": "StringValue.__float__",
+      "requested": "string builtin method floor",
+      "replacement": "add StringValue method floor for `__float__`",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/libs/test_hashtable.py:546:16",
+        "path": "pandas/tests/libs/test_hashtable.py",
+        "line": 546,
+        "column": 16
+      },
+      "label": "pandas/tests/libs/test_hashtable.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "string builtin method floor",
+      "message": "write more Floor for this Construction: owner=BuiltinCallSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/libs/test_hashtable.py:546:16 observed=StringValue.__float__ requested=string builtin method floor fix=add StringValue method floor for `__float__`"
+    },
+    {
+      "index": 57,
+      "templateId": "pandas-gap-02-sugar-python-factory-generatorexp-term",
+      "kind": "Sugar",
+      "owner": "python.factory",
+      "observed": "GeneratorExp",
+      "requested": "term",
+      "replacement": "create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar",
+      "locus": "AST",
+      "blame": {
+        "raw": "pandas/tests/plotting/frame/test_frame_color.py:239:25",
+        "path": "pandas/tests/plotting/frame/test_frame_color.py",
+        "line": 239,
+        "column": 25
+      },
+      "label": "pandas/tests/plotting/frame/test_frame_color.py",
+      "auditStatus": "sugar-gap",
+      "auditRole": "term",
+      "message": "write more Sugar for this AST: owner=python.factory blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/plotting/frame/test_frame_color.py:239:25 observed=GeneratorExp requested=term fix=create sugar_lift_py_tests.sugar.generator_exp.generator_exp_sugar"
+    },
+    {
+      "index": 58,
+      "templateId": "pandas-gap-05-floor-builtincallsugar-stringvalue-dunder-floatdunder-string-builtin-method-floor",
+      "kind": "Floor",
+      "owner": "BuiltinCallSugar",
+      "observed": "StringValue.__float__",
+      "requested": "string builtin method floor",
+      "replacement": "add StringValue method floor for `__float__`",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/scalar/interval/test_contains.py:36:29",
+        "path": "pandas/tests/scalar/interval/test_contains.py",
+        "line": 36,
+        "column": 29
+      },
+      "label": "pandas/tests/scalar/interval/test_contains.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "string builtin method floor",
+      "message": "write more Floor for this Construction: owner=BuiltinCallSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/scalar/interval/test_contains.py:36:29 observed=StringValue.__float__ requested=string builtin method floor fix=add StringValue method floor for `__float__`"
+    },
+    {
+      "index": 59,
+      "templateId": "pandas-gap-07-floor-stringsubscriptsugar-dictliteralvalue-subscript-with",
+      "kind": "Floor",
+      "owner": "StringSubscriptSugar",
+      "observed": "DictLiteralValue",
+      "requested": "subscript_with",
+      "replacement": "add subscript_with to DictLiteralValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/scalar/test_na_scalar.py:54:11",
+        "path": "pandas/tests/scalar/test_na_scalar.py",
+        "line": 54,
+        "column": 11
+      },
+      "label": "pandas/tests/scalar/test_na_scalar.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "subscript_with",
+      "message": "write more Floor for this Construction: owner=StringSubscriptSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/scalar/test_na_scalar.py:54:11 observed=DictLiteralValue requested=subscript_with fix=add subscript_with to DictLiteralValue or emit a real effect"
+    },
+    {
+      "index": 60,
+      "templateId": "pandas-gap-19-floor-unaryopsugar-callsitevalue-unary-operator-with",
+      "kind": "Floor",
+      "owner": "UnaryOpSugar",
+      "observed": "CallSiteValue",
+      "requested": "unary_operator_with",
+      "replacement": "add unary_operator_with to CallSiteValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/scalar/timedelta/test_timedelta.py:521:35",
+        "path": "pandas/tests/scalar/timedelta/test_timedelta.py",
+        "line": 521,
+        "column": 35
+      },
+      "label": "pandas/tests/scalar/timedelta/test_timedelta.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "unary_operator_with",
+      "message": "write more Floor for this Construction: owner=UnaryOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/scalar/timedelta/test_timedelta.py:521:35 observed=CallSiteValue requested=unary_operator_with fix=add unary_operator_with to CallSiteValue or emit a real effect"
+    },
+    {
+      "index": 61,
+      "templateId": "pandas-gap-03-floor-arrayliteralsugar-dictliteralvalue-array-element-floor",
+      "kind": "Floor",
+      "owner": "ArrayLiteralSugar",
+      "observed": "DictLiteralValue",
+      "requested": "array element floor",
+      "replacement": "add ArrayLiteral element floor for DictLiteralValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/scalar/timestamp/test_formats.py:145:40",
+        "path": "pandas/tests/scalar/timestamp/test_formats.py",
+        "line": 145,
+        "column": 40
+      },
+      "label": "pandas/tests/scalar/timestamp/test_formats.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "array element floor",
+      "message": "write more Floor for this Construction: owner=ArrayLiteralSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/scalar/timestamp/test_formats.py:145:40 observed=DictLiteralValue requested=array element floor fix=add ArrayLiteral element floor for DictLiteralValue"
+    },
+    {
+      "index": 62,
+      "templateId": "pandas-gap-07-floor-stringsubscriptsugar-dictliteralvalue-subscript-with",
+      "kind": "Floor",
+      "owner": "StringSubscriptSugar",
+      "observed": "DictLiteralValue",
+      "requested": "subscript_with",
+      "replacement": "add subscript_with to DictLiteralValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/scalar/timestamp/test_timestamp.py:397:15",
+        "path": "pandas/tests/scalar/timestamp/test_timestamp.py",
+        "line": 397,
+        "column": 15
+      },
+      "label": "pandas/tests/scalar/timestamp/test_timestamp.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "subscript_with",
+      "message": "write more Floor for this Construction: owner=StringSubscriptSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/scalar/timestamp/test_timestamp.py:397:15 observed=DictLiteralValue requested=subscript_with fix=add subscript_with to DictLiteralValue or emit a real effect"
+    },
+    {
+      "index": 63,
+      "templateId": "pandas-gap-12-floor-mapsugar-symbolicvalue-map-with",
+      "kind": "Floor",
+      "owner": "MapSugar",
+      "observed": "SymbolicValue",
+      "requested": "map_with",
+      "replacement": "add map_with to SymbolicValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/series/methods/test_map.py:278:13",
+        "path": "pandas/tests/series/methods/test_map.py",
+        "line": 278,
+        "column": 13
+      },
+      "label": "pandas/tests/series/methods/test_map.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "map_with",
+      "message": "write more Floor for this Construction: owner=MapSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/series/methods/test_map.py:278:13 observed=SymbolicValue requested=map_with fix=add map_with to SymbolicValue or emit a real effect"
+    },
+    {
+      "index": 64,
+      "templateId": "pandas-gap-09-floor-attributesugar-callsitevalue-attribute-with",
+      "kind": "Floor",
+      "owner": "AttributeSugar",
+      "observed": "CallSiteValue",
+      "requested": "attribute_with",
+      "replacement": "add attribute_with to CallSiteValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/tseries/offsets/test_offsets.py:950:11",
+        "path": "pandas/tests/tseries/offsets/test_offsets.py",
+        "line": 950,
+        "column": 11
+      },
+      "label": "pandas/tests/tseries/offsets/test_offsets.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "attribute_with",
+      "message": "write more Floor for this Construction: owner=AttributeSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/tseries/offsets/test_offsets.py:950:11 observed=CallSiteValue requested=attribute_with fix=add attribute_with to CallSiteValue or emit a real effect"
+    },
+    {
+      "index": 65,
+      "templateId": "pandas-gap-08-floor-membershipassertionsugar-tupleliteralvalue-contains-with",
+      "kind": "Floor",
+      "owner": "MembershipAssertionSugar",
+      "observed": "TupleLiteralValue",
+      "requested": "contains_with",
+      "replacement": "add contains_with to TupleLiteralValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/tseries/offsets/test_year.py:338:4",
+        "path": "pandas/tests/tseries/offsets/test_year.py",
+        "line": 338,
+        "column": 4
+      },
+      "label": "pandas/tests/tseries/offsets/test_year.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "contains_with",
+      "message": "write more Floor for this Construction: owner=MembershipAssertionSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/tseries/offsets/test_year.py:338:4 observed=TupleLiteralValue requested=contains_with fix=add contains_with to TupleLiteralValue or emit a real effect"
+    },
+    {
+      "index": 66,
+      "templateId": "pandas-gap-07-floor-stringsubscriptsugar-dictliteralvalue-subscript-with",
+      "kind": "Floor",
+      "owner": "StringSubscriptSugar",
+      "observed": "DictLiteralValue",
+      "requested": "subscript_with",
+      "replacement": "add subscript_with to DictLiteralValue or emit a real effect",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/tslibs/test_liboffsets.py:138:61",
+        "path": "pandas/tests/tslibs/test_liboffsets.py",
+        "line": 138,
+        "column": 61
+      },
+      "label": "pandas/tests/tslibs/test_liboffsets.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "subscript_with",
+      "message": "write more Floor for this Construction: owner=StringSubscriptSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/tslibs/test_liboffsets.py:138:61 observed=DictLiteralValue requested=subscript_with fix=add subscript_with to DictLiteralValue or emit a real effect"
+    },
+    {
+      "index": 67,
+      "templateId": "pandas-gap-04-floor-binopsugar-stringvalue-termvalue-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "StringValue*TermValue",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for StringValue * TermValue",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/tslibs/test_parse_iso8601.py:74:39",
+        "path": "pandas/tests/tslibs/test_parse_iso8601.py",
+        "line": 74,
+        "column": 39
+      },
+      "label": "pandas/tests/tslibs/test_parse_iso8601.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "binary operator operand floor",
+      "message": "write more Floor for this Construction: owner=BinOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/tslibs/test_parse_iso8601.py:74:39 observed=StringValue*TermValue requested=binary operator operand floor fix=add BinaryOperatorOperation support for StringValue * TermValue"
+    },
+    {
+      "index": 68,
+      "templateId": "pandas-gap-10-floor-binopsugar-arrayliteral-arrayliteral-binary-operator-operand-floor",
+      "kind": "Floor",
+      "owner": "BinOpSugar",
+      "observed": "ArrayLiteral+ArrayLiteral",
+      "requested": "binary operator operand floor",
+      "replacement": "add BinaryOperatorOperation support for ArrayLiteral + ArrayLiteral",
+      "locus": "Construction",
+      "blame": {
+        "raw": "pandas/tests/window/test_groupby.py:856:23",
+        "path": "pandas/tests/window/test_groupby.py",
+        "line": 856,
+        "column": 23
+      },
+      "label": "pandas/tests/window/test_groupby.py",
+      "auditStatus": "floor-gap",
+      "auditRole": "binary operator operand floor",
+      "message": "write more Floor for this Construction: owner=BinOpSugar blame=/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/e14a41e91240eb8f3232be7fb66e9b4999a19aee9458c920644ea3213f201ad7/pandas/tests/window/test_groupby.py:856:23 observed=ArrayLiteral+ArrayLiteral requested=binary operator operand floor fix=add BinaryOperatorOperation support for ArrayLiteral + ArrayLiteral"
+    }
+  ]
+}
