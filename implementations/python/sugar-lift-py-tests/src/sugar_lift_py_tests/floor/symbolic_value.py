@@ -88,6 +88,20 @@ class SymbolicValue(FloorValue):
     def project_sequence_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
 
+    def map_with(self, operation, ctx):
+        del ctx
+        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            RuntimeEffect(
+                "map receiver runtime boundary: SymbolicValue.map depends on "
+                "the receiver's runtime collection semantics and pandas mapping "
+                "rules; keep as typed red until a narrower symbolic map floor "
+                f"owns this shape. blame={operation.blame}"
+            )
+        )
+
     def str_with(self, operation, ctx):
         return operation.str_symbolic(self, ctx)
 

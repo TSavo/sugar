@@ -484,6 +484,95 @@ def test_pandas_array_literal_concat_discharges_and_refutes(tmp_path: Path) -> N
     )
 
 
+def test_pandas_symbolic_string_concat_is_typed_runtime_effect() -> None:
+    outcome, selected = _term_outcome(
+        'prefix + "US/Eastern"',
+        {"prefix": SymbolicValue(make_var("prefix"))},
+    )
+
+    assert "BinOpSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "symbolic string concatenation runtime boundary" in outcome.effect.reason
+    assert "SymbolicValue + StringValue" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
+
+
+def test_pandas_symbolic_string_concat_typed_red_witness_has_bad_twin(
+    tmp_path: Path,
+) -> None:
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        _symbolic_string_concat_witness(),
+        tmp_path,
+    )
+
+
+def test_pandas_symbolic_map_receiver_is_typed_runtime_effect() -> None:
+    outcome, selected = _term_outcome(
+        "values.map(lambda x: x + 1)",
+        {"values": SymbolicValue(make_var("values"))},
+    )
+
+    assert "MapSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "map receiver runtime boundary" in outcome.effect.reason
+    assert "SymbolicValue.map" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
+
+
+def test_pandas_symbolic_map_typed_red_witness_has_bad_twin(
+    tmp_path: Path,
+) -> None:
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        _symbolic_map_witness(),
+        tmp_path,
+    )
+
+
+def test_pandas_literal_call_lambda_keyword_becomes_typed_red_effect() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_to_csv(df):\n"
+            "    assert df.to_csv(float_format=lambda x: x) == 'x'\n"
+        ),
+        filename="pandas/tests/frame/methods/test_to_csv.py",
+        memento_file="pandas/tests/frame/methods/test_to_csv.py",
+    )
+
+    assert report is not None
+    red_rows = [
+        row for row in report.payload.factory_walk if row.status == "runtime-effect"
+    ]
+    assert len(red_rows) == 1
+    row = red_rows[0]
+    assert row.selected == "CallsiteKeywordRuntimeEffect"
+    assert row.requested_role == "CallsiteKeywordActual"
+    assert row.ast_kind == "Lambda"
+    assert "callsite keyword runtime boundary" in row.reason
+    assert "kw:float_format:LambdaCallable-unliftable" in row.reason
+    assert "pandas/tests/frame/methods/test_to_csv.py:2:" in row.reason
+    assert "callsite argument runtime boundary" not in row.reason
+
+
+def test_pandas_literal_call_lambda_keyword_effect_is_not_green() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_to_csv(df):\n"
+            "    assert df.to_csv(float_format=lambda x: x) == 'x'\n"
+        ),
+        filename="pandas/tests/frame/methods/test_to_csv.py",
+        memento_file="pandas/tests/frame/methods/test_to_csv.py",
+    )
+
+    assert report is not None
+    assert not report.payload.ir
+    assert len(report.payload.effects) == 1
+    assert (
+        "callsite keyword runtime boundary" in report.payload.effects[0].effect.reason
+    )
+
+
 def test_pandas_string_repeat_reduces_to_string_value() -> None:
     outcome, selected = _term_outcome("'ab' * 3")
 
@@ -824,6 +913,62 @@ def _symbolic_subscript_assignment_witness() -> SugarRedEffectWitnessPair:
         ),
         lying=EffectWitnessSource(
             source=("def A(xs):\n" "    xs[0] = 1\n" "    return xs\n"),
+            expectation=wrong_effect,
+            expected_match=False,
+        ),
+    )
+
+
+def _symbolic_string_concat_witness() -> SugarRedEffectWitnessPair:
+    right_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="symbolic string concatenation runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    wrong_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="map receiver runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    return SugarRedEffectWitnessPair(
+        name="pandas_symbolic_string_concat_runtime_effect",
+        owner_sugar="BinOpSugar",
+        family="pandas-floor-gap",
+        truthful=EffectWitnessSource(
+            source=('def A(prefix):\n    return prefix + "US/Eastern"\n'),
+            expectation=right_effect,
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=('def A(prefix):\n    return prefix + "US/Eastern"\n'),
+            expectation=wrong_effect,
+            expected_match=False,
+        ),
+    )
+
+
+def _symbolic_map_witness() -> SugarRedEffectWitnessPair:
+    right_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="map receiver runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    wrong_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="symbolic string concatenation runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    return SugarRedEffectWitnessPair(
+        name="pandas_symbolic_map_runtime_effect",
+        owner_sugar="MapSugar",
+        family="pandas-floor-gap",
+        truthful=EffectWitnessSource(
+            source=("def A(values):\n    return values.map(lambda x: x + 1)\n"),
+            expectation=right_effect,
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=("def A(values):\n    return values.map(lambda x: x + 1)\n"),
             expectation=wrong_effect,
             expected_match=False,
         ),
