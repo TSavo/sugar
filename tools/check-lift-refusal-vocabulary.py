@@ -23,7 +23,18 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CENSUS = ROOT / "tools" / "lift_refusal_vocabulary_census.json"
 REFUS_PATTERN = re.compile(r"refus", re.IGNORECASE)
-SCAN_PATHS = (":(glob)implementations/python/*/src/**/*.py",)
+SCAN_PATHS = (
+    ":(glob)implementations/python/*/src/**/*.py",
+    ":(glob)implementations/rust/sugar-lift-rust-tests/src/**/*.rs",
+    ":(glob)implementations/rust/sugar-walk/src/**/*.rs",
+    "implementations/rust/sugar-cli/src/cmd_lift.rs",
+    "implementations/rust/sugar-cli/src/cmd_mint.rs",
+    "implementations/rust/sugar-cli/src/lift_plugin.rs",
+    "implementations/rust/sugar-cli/src/report_fmt.rs",
+    "implementations/rust/sugar-cli/src/report_witness.rs",
+)
+# sugar-verifier is deliberately excluded: it legitimately speaks the
+# verifier's refusal vocabulary and is not a lift-output surface.
 
 LIFT_OUTPUT_SPEAKER = "lift-output-backlog"
 
@@ -69,6 +80,8 @@ def wire_marker_for(path: str, text: str, speaker: str) -> str:
         "refusal-record",
         "RefusalRecord",
         "source_refused",
+        "sugar-refused",
+        "RefusalMemento",
     )
     for needle in protocol_needles:
         if needle in text:
@@ -192,6 +205,30 @@ def classify(path: str, text: str) -> Classified:
             "not-lift-output",
             "python emitter provenance guard or RPC quote, not the lifter's own output",
             "keep only while it quotes external/referee state",
+        )
+
+    if path.endswith("/report_fmt.rs") and "ObligationVerdict::Refused" in text:
+        return Classified(
+            "verifier-verdict-quote",
+            "not-lift-output",
+            "report formatter matches the prove-side ObligationVerdict enum",
+            "keep verifier status vocabulary; do not use as lift output name",
+        )
+    if path.endswith("/sugar-walk/src/source_oracle.rs"):
+        return Classified(
+            "provenance-oracle-guard",
+            "not-lift-output",
+            "rust-analyzer source oracle guards sealed evidence identity, not lifter output",
+            "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
+        )
+    if path.endswith("/sugar-walk/src/ra_oracle.rs") or path.endswith(
+        "/sugar-walk/src/ra_daemon_client.rs"
+    ):
+        return Classified(
+            "provenance-oracle-guard",
+            "not-lift-output",
+            "rust-analyzer daemon oracle guards referee identity, not lifter output",
+            "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
         )
 
     if "verifier" in text.lower() or "prove-side" in text.lower():
