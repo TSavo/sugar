@@ -1,0 +1,431 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: bin/brun [options] [--] <command> [args...]
+
+Sync the Sugar workspace to battleaxe, then run an arbitrary command there
+from the same repo-relative cwd. Generalizes bin/bcargo: bcargo is
+`brun ... -- cargo ...` plus cargo-specific target-dir bookkeeping.
+
+Options:
+  --path-prefix DIR    Remote dir to prepend to PATH (repeatable, kept in order).
+  --env NAME[,NAME]    Forward these variables from the local environment into
+                       the remote command's environment (repeatable).
+  --sync-back R:L      After success, rsync remote path R back to local path L
+                       (both absolute; repeatable).
+  --no-python-env      Skip remote Python kit env provisioning
+                       (same as BCARGO_PYTHON_ENV=0).
+
+Environment (shared with bcargo so roots, caps and test harnesses apply):
+  BCARGO_REMOTE_HOST   SSH host alias (default: battleaxe)
+  BCARGO_REMOTE_ROOT   Remote scratch root (default: /home/tsavo/remote/sugar-bcargo-<checkout-hash>)
+  BCARGO_CLEAN_REMOTE_ROOT        never | success | always (default: never)
+  BCARGO_CLEAN_REMOTE_ROOT_UNSAFE Set to 1 to allow cleanup outside
+                                  /home/tsavo/remote/sugar-bcargo-*
+  BCARGO_PYTHON_ENV    Set to 0 to skip remote Python kit env provisioning
+  BCARGO_SSH, BCARGO_RSYNC        Override the ssh/rsync binaries (test harness)
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
+path_prefixes=()
+env_names=()
+sync_backs=()
+python_env_flag=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --path-prefix)
+      [[ $# -ge 2 ]] || { echo "brun: --path-prefix requires a value" >&2; exit 2; }
+      path_prefixes+=("$2")
+      shift 2
+      ;;
+    --env)
+      [[ $# -ge 2 ]] || { echo "brun: --env requires a value" >&2; exit 2; }
+      IFS=',' read -r -a parsed_env <<<"$2"
+      for name in "${parsed_env[@]}"; do
+        [[ -n "$name" ]] && env_names+=("$name")
+      done
+      shift 2
+      ;;
+    --sync-back)
+      [[ $# -ge 2 ]] || { echo "brun: --sync-back requires REMOTE:LOCAL" >&2; exit 2; }
+      case "$2" in
+        /*:/*) sync_backs+=("$2") ;;
+        *)
+          echo "brun: --sync-back must be <absolute remote>:<absolute local>, got: $2" >&2
+          exit 2
+          ;;
+      esac
+      shift 2
+      ;;
+    --no-python-env)
+      python_env_flag="0"
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "brun: unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ $# -eq 0 ]]; then
+  echo "brun: no command given" >&2
+  usage >&2
+  exit 2
+fi
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$repo_root" ]]; then
+  echo "brun: must be run from inside a git checkout" >&2
+  exit 2
+fi
+repo_root="$(cd "$repo_root" && pwd -P)"
+local_cwd="$(pwd -P)"
+
+case "$local_cwd" in
+  "$repo_root")
+    rel_cwd=""
+    ;;
+  "$repo_root"/*)
+    rel_cwd="${local_cwd#"$repo_root"/}"
+    ;;
+  *)
+    echo "brun: current directory is outside $repo_root" >&2
+    exit 2
+    ;;
+esac
+
+remote_host="${BCARGO_REMOTE_HOST:-battleaxe}"
+# Per-checkout remote root so concurrent worktrees/agents do not clobber each
+# other. All checkouts previously shared one root, and `rsync -az --delete`
+# from one wiped another's source mid-build (stale/false builds, stalls). Derive
+# a stable suffix from the absolute checkout path so each worktree gets its own
+# remote scratch; the shared sccache cache still gives cross-checkout reuse.
+_brun_root_tag="$(printf '%s' "$repo_root" | shasum 2>/dev/null | cut -c1-12)"
+_brun_root_tag="${_brun_root_tag:-default}"
+remote_root="${BCARGO_REMOTE_ROOT:-/home/tsavo/remote/sugar-bcargo-${_brun_root_tag}}"
+remote_repo="$remote_root/sugar"
+remote_python_venv="$remote_root/python-kit-env"
+remote_python_bin="$remote_python_venv/bin"
+remote_python="$remote_python_bin/python"
+provision_python_env="${python_env_flag:-${BCARGO_PYTHON_ENV:-1}}"
+clean_remote_root="${BCARGO_CLEAN_REMOTE_ROOT:-never}"
+clean_remote_root_unsafe="${BCARGO_CLEAN_REMOTE_ROOT_UNSAFE:-0}"
+ssh_bin="${BCARGO_SSH:-ssh}"
+rsync_bin="${BCARGO_RSYNC:-rsync}"
+
+quote_sh() {
+  printf "'"
+  printf "%s" "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
+remote_parent() {
+  local path="$1"
+  dirname "$path"
+}
+
+run_ssh() {
+  "$ssh_bin" -o BatchMode=yes "$remote_host" "$@"
+}
+
+case "$clean_remote_root" in
+  "" | 0 | false | no | never)
+    clean_remote_root="never"
+    ;;
+  1 | true | yes | success)
+    clean_remote_root="success"
+    ;;
+  always)
+    ;;
+  *)
+    echo "brun: BCARGO_CLEAN_REMOTE_ROOT must be never, success, or always" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$clean_remote_root" != "never" ]]; then
+  case "$remote_root" in
+    /home/tsavo/remote/sugar-bcargo-*)
+      ;;
+    *)
+      if [[ "$clean_remote_root_unsafe" != "1" ]]; then
+        echo "brun: refusing to clean unsafe remote root: $remote_root" >&2
+        echo "brun: set BCARGO_CLEAN_REMOTE_ROOT_UNSAFE=1 only for an explicitly disposable root" >&2
+        exit 2
+      fi
+      ;;
+  esac
+fi
+
+cleanup_remote_root() {
+  run_ssh "rm -rf $(quote_sh "$remote_root")"
+}
+
+# Reap orphaned sibling roots. Remote roots are per-checkout (see above), so a
+# deleted local worktree leaves its remote root behind forever; 97 of those
+# once filled the disk to 0 and stalled every build on the box. Each run
+# touches its own root (marking it live) and removes sugar-bcargo-* siblings
+# nobody has touched in BCARGO_REAP_DAYS days. Best-effort and backgrounded on
+# the remote so it never blocks or fails the build. Set BCARGO_REAP_DAYS=0 to
+# disable.
+reap_days="${BCARGO_REAP_DAYS:-2}"
+reap_stale_remote_roots() {
+  [[ "$reap_days" == "0" ]] && return 0
+  run_ssh "mkdir -p $(quote_sh "$remote_root") && touch $(quote_sh "$remote_root") && nohup find /home/tsavo/remote -mindepth 1 -maxdepth 1 -name 'sugar-bcargo-*' ! -path $(quote_sh "$remote_root") -mtime +$(quote_sh "$reap_days") -exec rm -rf {} + >/dev/null 2>&1 &" || true
+}
+
+exclude_args=(
+  --exclude='target/'
+  --exclude='.git/'
+  --exclude='.jj/'
+  --exclude='.worktrees/'
+  --exclude='.claude/'
+  --exclude='.ruff_cache/'
+  --exclude='.venv-test-rust/'
+  --exclude='.understand-anything/'
+  --exclude='node_modules/'
+  --exclude='bazel-bin'
+  --exclude='bazel-out'
+  --exclude='bazel-sugar'
+  --exclude='bazel-testlogs'
+  --exclude='sugar-warnings/'
+  --exclude='sugar-worktrees/'
+  --exclude='.sugar/runs/'
+  --exclude='.sugar/witnesses/'
+  # NOTE: `.sugar/lift/` is intentionally NOT excluded. Those are the
+  # hand-authored per-project lift manifests (tiny TOMLs naming the plugin
+  # commands) that `sugar mint` needs; excluding them made remote mint
+  # impossible. Only the generated `runs/` and `witnesses/` outputs are skipped.
+)
+
+sync_dir() {
+  local rel_path="$1"
+  local local_path="$repo_root/$rel_path"
+  local remote_path="$remote_repo/$rel_path"
+
+  [[ -d "$local_path" ]] || return 0
+  run_ssh "mkdir -p $(quote_sh "$(remote_parent "$remote_path")")"
+  "$rsync_bin" -az --delete "${exclude_args[@]}" "$local_path/" "$remote_host:$remote_path/"
+}
+
+sync_fixture_dir() {
+  local rel_path="$1"
+  local local_path="$repo_root/$rel_path"
+  local remote_path="$remote_repo/$rel_path"
+
+  [[ -d "$local_path" ]] || return 0
+  run_ssh "mkdir -p $(quote_sh "$(remote_parent "$remote_path")")"
+  "$rsync_bin" -az --delete "$local_path/" "$remote_host:$remote_path/"
+}
+
+sync_file() {
+  local rel_path="$1"
+  local local_path="$repo_root/$rel_path"
+  local remote_path="$remote_repo/$rel_path"
+
+  [[ -f "$local_path" ]] || return 0
+  run_ssh "mkdir -p $(quote_sh "$(remote_parent "$remote_path")")"
+  "$rsync_bin" -az "$local_path" "$remote_host:$remote_path"
+}
+
+remove_remote_dir() {
+  local rel_path="$1"
+  local remote_path="$remote_repo/$rel_path"
+
+  run_ssh "rm -rf $(quote_sh "$remote_path")"
+}
+
+file_description() {
+  local path="$1"
+  if ! command -v file >/dev/null 2>&1; then
+    return 1
+  fi
+  file -b "$path" 2>/dev/null || return 1
+}
+
+is_foreign_synced_binary() {
+  local path="$1"
+  local host_os
+  host_os="$(uname -s 2>/dev/null || true)"
+  if [[ "$host_os" == "Linux" ]]; then
+    return 1
+  fi
+  local desc
+  desc="$(file_description "$path" || true)"
+  [[ "$desc" == *"ELF"* ]]
+}
+
+remove_stale_foreign_binary_if_present() {
+  local path="$1"
+  [[ -e "$path" ]] || return 0
+  if is_foreign_synced_binary "$path"; then
+    rm -f "$path"
+  fi
+}
+
+warn_foreign_synced_binary() {
+  local local_bin="$1"
+  local tmp_bin="$2"
+  local desc
+  desc="$(file_description "$tmp_bin" || true)"
+  desc="${desc:-unknown binary format}"
+  echo "brun: refusing to deposit foreign-platform binary: crime=foreign-platform-binary owner=bin/brun shape=$desc path=$local_bin replacement=run the binary on $remote_host through brun, or rebuild locally before local use" >&2
+}
+
+reap_stale_remote_roots
+
+sync_file Cargo.toml
+sync_file Cargo.lock
+sync_file Makefile
+sync_file sugar-release.toml
+sync_file bin/bcargo
+sync_file bin/brun
+sync_file bin/bpytest
+sync_file bin/sugarbin
+sync_file package.json
+sync_file pnpm-lock.yaml
+sync_file rust-toolchain
+sync_file rust-toolchain.toml
+# Repo-root workspace config and hand-authored plugin manifests. Generated
+# `.sugar/` outputs (runs/, witnesses/, cache/, baselines/, etc.) stay out
+# of the remote copy, but lift/realize manifests are source inputs for CLI
+# dispatch and must travel with brun.
+sync_file .sugar/config.toml
+sync_dir .sugar/lift
+sync_dir .sugar/realize
+sync_dir .sugar/ir-compilers
+sync_dir .github
+
+sync_dir implementations/rust
+sync_dir implementations/python
+sync_dir implementations/go
+sync_dir implementations/java
+sync_dir examples
+# These are tiny checked-in proof fixtures, not local run products. Keep the
+# broad generated-output exclusion above, then put these committed artifacts
+# back so remote integrity tests see the same trust-root corpus as local cargo.
+sync_fixture_dir examples/serde-json-showcase/bad/.sugar/runs
+sync_fixture_dir examples/serde-json-showcase/good/.sugar/runs
+remove_remote_dir menagerie
+sync_dir menagerie/csharp-language-signature/specs
+sync_dir menagerie/python-language-signature/specs
+sync_dir tools
+sync_dir protocol
+sync_dir docs/perf
+sync_dir docs/self-application
+sync_dir scripts
+sync_dir bootstrap
+sync_dir conformance
+sync_dir tests
+
+remote_cwd="$remote_repo"
+if [[ -n "$rel_cwd" ]]; then
+  remote_cwd="$remote_repo/$rel_cwd"
+fi
+
+remote_args=()
+for arg in "$@"; do
+  if [[ "$arg" == "$repo_root" ]]; then
+    arg="$remote_repo"
+  elif [[ "$arg" == "$repo_root"/* ]]; then
+    arg="$remote_repo/${arg#"$repo_root"/}"
+  fi
+  remote_args+=("$(quote_sh "$arg")")
+done
+
+provision_steps=()
+cmd_env=()
+
+path_prefix=""
+for prefix in ${path_prefixes[@]+"${path_prefixes[@]}"}; do
+  if [[ -z "$path_prefix" ]]; then
+    path_prefix="$prefix"
+  else
+    path_prefix="$path_prefix:$prefix"
+  fi
+done
+
+if [[ "$provision_python_env" != "0" ]]; then
+  provision_steps+=("BCARGO_PYTHON_VENV=$(quote_sh "$remote_python_venv") make --quiet bcargo-python-kit-env")
+  cmd_env+=("PYTHON=$(quote_sh "$remote_python")")
+  if [[ -z "$path_prefix" ]]; then
+    path_prefix="$remote_python_bin"
+  else
+    path_prefix="$path_prefix:$remote_python_bin"
+  fi
+fi
+if [[ -n "$path_prefix" ]]; then
+  cmd_env+=("PATH=$(quote_sh "$path_prefix"):\$PATH")
+fi
+
+for name in ${env_names[@]+"${env_names[@]}"}; do
+  if [[ "${!name+x}" == "x" ]]; then
+    cmd_env+=("$name=$(quote_sh "${!name}")")
+  fi
+done
+
+if ((${#provision_steps[@]} == 0)); then
+  inner="cd $(quote_sh "$remote_cwd") && "
+else
+  inner="cd $(quote_sh "$remote_repo")"
+  for step in "${provision_steps[@]}"; do
+    inner+=" && $step"
+  done
+  inner+=" && cd $(quote_sh "$remote_cwd") && "
+fi
+for assignment in ${cmd_env[@]+"${cmd_env[@]}"}; do
+  inner+="$assignment "
+done
+inner+="exec"
+for arg in "${remote_args[@]}"; do
+  inner+=" $arg"
+done
+
+set +e
+run_ssh "bash -lc $(quote_sh "$inner")"
+status=$?
+set -e
+
+if [[ "$status" -ne 0 ]]; then
+  if [[ "$clean_remote_root" == "always" ]]; then
+    if ! cleanup_remote_root; then
+      echo "brun: remote root cleanup failed after command failure: $remote_root" >&2
+    fi
+  fi
+  exit "$status"
+fi
+
+for pair in ${sync_backs[@]+"${sync_backs[@]}"}; do
+  remote_path="${pair%%:*}"
+  local_path="${pair#*:}"
+  mkdir -p "$(dirname "$local_path")"
+  tmp_local="$(mktemp "${local_path}.brun-sync.XXXXXX")"
+  "$rsync_bin" -az "$remote_host:$remote_path" "$tmp_local"
+  if is_foreign_synced_binary "$tmp_local"; then
+    warn_foreign_synced_binary "$local_path" "$tmp_local"
+    rm -f "$tmp_local"
+    remove_stale_foreign_binary_if_present "$local_path"
+    continue
+  fi
+  mv -f "$tmp_local" "$local_path"
+done
+
+if [[ "$clean_remote_root" != "never" ]]; then
+  cleanup_remote_root
+fi
