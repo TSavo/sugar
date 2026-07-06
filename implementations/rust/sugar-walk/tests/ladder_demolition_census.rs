@@ -574,7 +574,6 @@ fn patterns_types_call_edges_family_is_drained() {
 }
 
 #[test]
-#[ignore = "red-by-design: demolition slices delete rows until this reaches zero-or-declared"]
 fn ladder_census_is_zero() {
     let observed = collect_ladder_sites(&repo_root());
     assert!(
