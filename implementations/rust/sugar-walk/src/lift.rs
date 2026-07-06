@@ -1494,166 +1494,232 @@ fn invalidate_assignment_targets(expr: &Expr, ctx: &mut LiftCtx) {
     }
 }
 
+/// Claims and recurses/side-effects on every syntactic shape that can carry
+/// or contain an assignment target, in the same order and with the same
+/// effects as the original ladder. Each named recognizer claims exactly one
+/// `syn::Expr` variant (or the small transparent-wrapper/no-op groups
+/// below); the trailing panic default is unchanged.
 fn collect_assignment_target_roots_in_expr(
     expr: &Expr,
     roots: &mut BTreeSet<String>,
     ctx: &mut LiftCtx,
 ) {
-    match expr {
-        Expr::Assign(assign) => {
-            collect_assignment_roots_lift(&assign.left, roots);
-            collect_assignment_target_roots_in_expr(&assign.right, roots, ctx);
-        }
-        Expr::Binary(binary) => {
-            if binop_is_assignment_lift(&binary.op) {
-                collect_assignment_roots_lift(&binary.left, roots);
-            } else {
-                collect_assignment_target_roots_in_expr(&binary.left, roots, ctx);
-            }
-            collect_assignment_target_roots_in_expr(&binary.right, roots, ctx);
-        }
-        Expr::Array(array) => {
-            for elem in &array.elems {
-                collect_assignment_target_roots_in_expr(elem, roots, ctx);
-            }
-        }
-        Expr::Async(async_expr) => {
-            collect_assignment_target_roots_in_stmts(&async_expr.block.stmts, roots, ctx)
-        }
-        Expr::Await(await_expr) => {
-            collect_assignment_target_roots_in_expr(&await_expr.base, roots, ctx)
-        }
-        Expr::Block(block) => {
-            collect_assignment_target_roots_in_stmts(&block.block.stmts, roots, ctx)
-        }
-        Expr::Break(break_expr) => {
-            if let Some(expr) = &break_expr.expr {
-                collect_assignment_target_roots_in_expr(expr, roots, ctx);
-            }
-        }
-        Expr::Call(call) => {
-            collect_assignment_target_roots_in_expr(&call.func, roots, ctx);
-            for arg in &call.args {
-                collect_assignment_target_roots_in_expr(arg, roots, ctx);
-            }
-        }
-        Expr::Cast(cast) => collect_assignment_target_roots_in_expr(&cast.expr, roots, ctx),
-        Expr::Closure(_) => {}
-        Expr::Const(const_expr) => {
-            collect_assignment_target_roots_in_stmts(&const_expr.block.stmts, roots, ctx)
-        }
-        Expr::Field(field) => collect_assignment_target_roots_in_expr(&field.base, roots, ctx),
-        Expr::ForLoop(for_loop) => {
-            collect_assignment_target_roots_in_expr(&for_loop.expr, roots, ctx);
-            collect_assignment_target_roots_in_stmts(&for_loop.body.stmts, roots, ctx);
-        }
-        Expr::Group(group) => collect_assignment_target_roots_in_expr(&group.expr, roots, ctx),
-        Expr::If(if_expr) => {
-            collect_assignment_target_roots_in_expr(&if_expr.cond, roots, ctx);
-            collect_assignment_target_roots_in_stmts(&if_expr.then_branch.stmts, roots, ctx);
-            if let Some((_, else_expr)) = &if_expr.else_branch {
-                collect_assignment_target_roots_in_expr(else_expr, roots, ctx);
-            }
-        }
-        Expr::Index(index) => {
-            collect_assignment_target_roots_in_expr(&index.expr, roots, ctx);
-            collect_assignment_target_roots_in_expr(&index.index, roots, ctx);
-        }
-        Expr::Let(let_expr) => collect_assignment_target_roots_in_expr(&let_expr.expr, roots, ctx),
-        Expr::Loop(loop_expr) => {
-            collect_assignment_target_roots_in_stmts(&loop_expr.body.stmts, roots, ctx)
-        }
-        Expr::Match(match_expr) => {
-            collect_assignment_target_roots_in_expr(&match_expr.expr, roots, ctx);
-            for arm in &match_expr.arms {
-                if let Some((_, guard)) = &arm.guard {
-                    collect_assignment_target_roots_in_expr(guard, roots, ctx);
-                }
-                collect_assignment_target_roots_in_expr(&arm.body, roots, ctx);
-            }
-        }
-        Expr::MethodCall(method) => {
-            collect_assignment_target_roots_in_expr(&method.receiver, roots, ctx);
-            for arg in &method.args {
-                collect_assignment_target_roots_in_expr(arg, roots, ctx);
-            }
-        }
-        Expr::Paren(paren) => collect_assignment_target_roots_in_expr(&paren.expr, roots, ctx),
-        Expr::Range(range) => {
-            if let Some(start) = &range.start {
-                collect_assignment_target_roots_in_expr(start, roots, ctx);
-            }
-            if let Some(end) = &range.end {
-                collect_assignment_target_roots_in_expr(end, roots, ctx);
-            }
-        }
-        Expr::RawAddr(raw_addr) => {
-            collect_assignment_target_roots_in_expr(&raw_addr.expr, roots, ctx)
-        }
-        Expr::Reference(reference) => {
-            if reference.mutability.is_some() {
-                collect_assignment_roots_lift(&reference.expr, roots);
-            }
-            collect_assignment_target_roots_in_expr(&reference.expr, roots, ctx);
-        }
-        Expr::Repeat(repeat) => {
-            collect_assignment_target_roots_in_expr(&repeat.expr, roots, ctx);
-            collect_assignment_target_roots_in_expr(&repeat.len, roots, ctx);
-        }
-        Expr::Return(return_expr) => {
-            if let Some(expr) = &return_expr.expr {
-                collect_assignment_target_roots_in_expr(expr, roots, ctx);
-            }
-        }
-        Expr::Struct(struct_expr) => {
-            for field in &struct_expr.fields {
-                collect_assignment_target_roots_in_expr(&field.expr, roots, ctx);
-            }
-            if let Some(rest) = &struct_expr.rest {
-                collect_assignment_target_roots_in_expr(rest, roots, ctx);
-            }
-        }
-        Expr::Try(try_expr) => collect_assignment_target_roots_in_expr(&try_expr.expr, roots, ctx),
-        Expr::TryBlock(try_block) => {
-            collect_assignment_target_roots_in_stmts(&try_block.block.stmts, roots, ctx)
-        }
-        Expr::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                collect_assignment_target_roots_in_expr(elem, roots, ctx);
-            }
-        }
-        Expr::Unary(unary) => collect_assignment_target_roots_in_expr(&unary.expr, roots, ctx),
-        Expr::Unsafe(unsafe_expr) => {
-            collect_assignment_target_roots_in_stmts(&unsafe_expr.block.stmts, roots, ctx)
-        }
-        Expr::While(while_expr) => {
-            collect_assignment_target_roots_in_expr(&while_expr.cond, roots, ctx);
-            collect_assignment_target_roots_in_stmts(&while_expr.body.stmts, roots, ctx);
-        }
-        Expr::Yield(yield_expr) => {
-            if let Some(expr) = &yield_expr.expr {
-                collect_assignment_target_roots_in_expr(expr, roots, ctx);
-            }
-        }
-        Expr::Continue(_) | Expr::Infer(_) | Expr::Lit(_) | Expr::Path(_) => {}
-        Expr::Macro(expr_macro) if assignment_target_macro_has_no_roots(&expr_macro.mac) => {}
-        Expr::Macro(expr_macro) => {
-            ctx.refuse_body_discharge_for_unknown_mutation(opaque_macro_assignment_root_refusal(
-                "Expr::Macro",
-                &expr_macro.mac,
-            ));
-        }
-        Expr::Verbatim(_) => {
-            ctx.refuse_body_discharge_for_unknown_mutation(
-                "opaque-macro-assignment-root: crime=unclassified assignment target may mutate tracked roots; owner=sugar-walk assignment target collector; shape=Expr::Verbatim; replacement=add a typed root classifier or emit a terminal body-discharge refusal"
-                    .to_string(),
-            );
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk assignment target collector refused unknown syn::Expr variant")
-        }
+    if let Expr::Assign(assign) = expr {
+        collect_assignment_roots_lift(&assign.left, roots);
+        collect_assignment_target_roots_in_expr(&assign.right, roots, ctx);
+        return;
     }
+    if let Expr::Binary(binary) = expr {
+        if binop_is_assignment_lift(&binary.op) {
+            collect_assignment_roots_lift(&binary.left, roots);
+        } else {
+            collect_assignment_target_roots_in_expr(&binary.left, roots, ctx);
+        }
+        collect_assignment_target_roots_in_expr(&binary.right, roots, ctx);
+        return;
+    }
+    if let Expr::Array(array) = expr {
+        for elem in &array.elems {
+            collect_assignment_target_roots_in_expr(elem, roots, ctx);
+        }
+        return;
+    }
+    if let Expr::Async(async_expr) = expr {
+        collect_assignment_target_roots_in_stmts(&async_expr.block.stmts, roots, ctx);
+        return;
+    }
+    if let Expr::Await(await_expr) = expr {
+        collect_assignment_target_roots_in_expr(&await_expr.base, roots, ctx);
+        return;
+    }
+    if let Expr::Block(block) = expr {
+        collect_assignment_target_roots_in_stmts(&block.block.stmts, roots, ctx);
+        return;
+    }
+    if let Expr::Break(break_expr) = expr {
+        if let Some(inner) = &break_expr.expr {
+            collect_assignment_target_roots_in_expr(inner, roots, ctx);
+        }
+        return;
+    }
+    if let Expr::Call(call) = expr {
+        collect_assignment_target_roots_in_expr(&call.func, roots, ctx);
+        for arg in &call.args {
+            collect_assignment_target_roots_in_expr(arg, roots, ctx);
+        }
+        return;
+    }
+    if let Some(inner) = assignment_target_transparent_recurse_expr(expr) {
+        collect_assignment_target_roots_in_expr(inner, roots, ctx);
+        return;
+    }
+    if let Expr::Closure(_) = expr {
+        return;
+    }
+    if let Expr::Const(const_expr) = expr {
+        collect_assignment_target_roots_in_stmts(&const_expr.block.stmts, roots, ctx);
+        return;
+    }
+    if let Expr::ForLoop(for_loop) = expr {
+        collect_assignment_target_roots_in_expr(&for_loop.expr, roots, ctx);
+        collect_assignment_target_roots_in_stmts(&for_loop.body.stmts, roots, ctx);
+        return;
+    }
+    if let Expr::If(if_expr) = expr {
+        collect_assignment_target_roots_in_expr(&if_expr.cond, roots, ctx);
+        collect_assignment_target_roots_in_stmts(&if_expr.then_branch.stmts, roots, ctx);
+        if let Some((_, else_expr)) = &if_expr.else_branch {
+            collect_assignment_target_roots_in_expr(else_expr, roots, ctx);
+        }
+        return;
+    }
+    if let Expr::Index(index) = expr {
+        collect_assignment_target_roots_in_expr(&index.expr, roots, ctx);
+        collect_assignment_target_roots_in_expr(&index.index, roots, ctx);
+        return;
+    }
+    if let Expr::Loop(loop_expr) = expr {
+        collect_assignment_target_roots_in_stmts(&loop_expr.body.stmts, roots, ctx);
+        return;
+    }
+    if let Expr::Match(match_expr) = expr {
+        collect_assignment_target_roots_in_expr(&match_expr.expr, roots, ctx);
+        for arm in &match_expr.arms {
+            if let Some((_, guard)) = &arm.guard {
+                collect_assignment_target_roots_in_expr(guard, roots, ctx);
+            }
+            collect_assignment_target_roots_in_expr(&arm.body, roots, ctx);
+        }
+        return;
+    }
+    if let Expr::MethodCall(method) = expr {
+        collect_assignment_target_roots_in_expr(&method.receiver, roots, ctx);
+        for arg in &method.args {
+            collect_assignment_target_roots_in_expr(arg, roots, ctx);
+        }
+        return;
+    }
+    if let Expr::Range(range) = expr {
+        if let Some(start) = &range.start {
+            collect_assignment_target_roots_in_expr(start, roots, ctx);
+        }
+        if let Some(end) = &range.end {
+            collect_assignment_target_roots_in_expr(end, roots, ctx);
+        }
+        return;
+    }
+    if let Expr::Reference(reference) = expr {
+        if reference.mutability.is_some() {
+            collect_assignment_roots_lift(&reference.expr, roots);
+        }
+        collect_assignment_target_roots_in_expr(&reference.expr, roots, ctx);
+        return;
+    }
+    if let Expr::Repeat(repeat) = expr {
+        collect_assignment_target_roots_in_expr(&repeat.expr, roots, ctx);
+        collect_assignment_target_roots_in_expr(&repeat.len, roots, ctx);
+        return;
+    }
+    if let Expr::Return(return_expr) = expr {
+        if let Some(inner) = &return_expr.expr {
+            collect_assignment_target_roots_in_expr(inner, roots, ctx);
+        }
+        return;
+    }
+    if let Expr::Struct(struct_expr) = expr {
+        for field in &struct_expr.fields {
+            collect_assignment_target_roots_in_expr(&field.expr, roots, ctx);
+        }
+        if let Some(rest) = &struct_expr.rest {
+            collect_assignment_target_roots_in_expr(rest, roots, ctx);
+        }
+        return;
+    }
+    if let Expr::TryBlock(try_block) = expr {
+        collect_assignment_target_roots_in_stmts(&try_block.block.stmts, roots, ctx);
+        return;
+    }
+    if let Expr::Tuple(tuple) = expr {
+        for elem in &tuple.elems {
+            collect_assignment_target_roots_in_expr(elem, roots, ctx);
+        }
+        return;
+    }
+    if let Expr::Unsafe(unsafe_expr) = expr {
+        collect_assignment_target_roots_in_stmts(&unsafe_expr.block.stmts, roots, ctx);
+        return;
+    }
+    if let Expr::While(while_expr) = expr {
+        collect_assignment_target_roots_in_expr(&while_expr.cond, roots, ctx);
+        collect_assignment_target_roots_in_stmts(&while_expr.body.stmts, roots, ctx);
+        return;
+    }
+    if let Expr::Yield(yield_expr) = expr {
+        if let Some(inner) = &yield_expr.expr {
+            collect_assignment_target_roots_in_expr(inner, roots, ctx);
+        }
+        return;
+    }
+    if known_no_assignment_target_root_expr(expr) {
+        return;
+    }
+    if let Expr::Macro(expr_macro) = expr {
+        if assignment_target_macro_has_no_roots(&expr_macro.mac) {
+            return;
+        }
+        ctx.refuse_body_discharge_for_unknown_mutation(opaque_macro_assignment_root_refusal(
+            "Expr::Macro",
+            &expr_macro.mac,
+        ));
+        return;
+    }
+    if let Expr::Verbatim(_) = expr {
+        ctx.refuse_body_discharge_for_unknown_mutation(
+            "opaque-macro-assignment-root: crime=unclassified assignment target may mutate tracked roots; owner=sugar-walk assignment target collector; shape=Expr::Verbatim; replacement=add a typed root classifier or emit a terminal body-discharge refusal"
+                .to_string(),
+        );
+        return;
+    }
+    panic!("sugar-walk assignment target collector refused unknown syn::Expr variant")
+}
+
+/// Transparent single-child recursion wrappers that carry no side effect of
+/// their own: `Cast`, `Field`, `Group`, `Let`, `Paren`, `Try`, `Unary`.
+fn assignment_target_transparent_recurse_expr(expr: &Expr) -> Option<&Expr> {
+    if let Expr::Cast(cast) = expr {
+        return Some(&cast.expr);
+    }
+    if let Expr::Field(field) = expr {
+        return Some(&field.base);
+    }
+    if let Expr::Group(group) = expr {
+        return Some(&group.expr);
+    }
+    if let Expr::Let(let_expr) = expr {
+        return Some(&let_expr.expr);
+    }
+    if let Expr::Paren(paren) = expr {
+        return Some(&paren.expr);
+    }
+    if let Expr::Try(try_expr) = expr {
+        return Some(&try_expr.expr);
+    }
+    if let Expr::Unary(unary) = expr {
+        return Some(&unary.expr);
+    }
+    if let Expr::RawAddr(raw_addr) = expr {
+        return Some(&raw_addr.expr);
+    }
+    None
+}
+
+/// Shapes that never carry an assignment target and never need recursion:
+/// `Continue`, `Infer`, `Lit`, `Path`.
+fn known_no_assignment_target_root_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Continue(_) | Expr::Infer(_) | Expr::Lit(_) | Expr::Path(_)
+    )
 }
 
 fn collect_assignment_target_roots_in_stmts(
@@ -1662,20 +1728,27 @@ fn collect_assignment_target_roots_in_stmts(
     ctx: &mut LiftCtx,
 ) {
     for stmt in stmts {
-        match stmt {
-            Stmt::Local(local) => {
-                if let Some(init) = &local.init {
-                    collect_assignment_target_roots_in_expr(&init.expr, roots, ctx);
-                }
+        if let Stmt::Local(local) = stmt {
+            if let Some(init) = &local.init {
+                collect_assignment_target_roots_in_expr(&init.expr, roots, ctx);
             }
-            Stmt::Expr(expr, _) => collect_assignment_target_roots_in_expr(expr, roots, ctx),
-            Stmt::Item(_) => {}
-            Stmt::Macro(stmt_macro) if assignment_target_macro_has_no_roots(&stmt_macro.mac) => {}
-            Stmt::Macro(stmt_macro) => {
-                ctx.refuse_body_discharge_for_unknown_mutation(
-                    opaque_macro_assignment_root_refusal("Stmt::Macro", &stmt_macro.mac),
-                );
+            continue;
+        }
+        if let Stmt::Expr(expr, _) = stmt {
+            collect_assignment_target_roots_in_expr(expr, roots, ctx);
+            continue;
+        }
+        if let Stmt::Item(_) = stmt {
+            continue;
+        }
+        if let Stmt::Macro(stmt_macro) = stmt {
+            if assignment_target_macro_has_no_roots(&stmt_macro.mac) {
+                continue;
             }
+            ctx.refuse_body_discharge_for_unknown_mutation(opaque_macro_assignment_root_refusal(
+                "Stmt::Macro",
+                &stmt_macro.mac,
+            ));
         }
     }
 }
@@ -1701,58 +1774,90 @@ fn assignment_target_macro_has_no_roots(mac: &Macro) -> bool {
     }
 }
 
+/// Claims each syntactic shape that carries a known value kind and
+/// recognizes it (literal, tracked local, transparent wrapper, `to_string`/
+/// `clone`, string-returning call/`?`, indexed JSON field, macro literal).
+/// Every other shape falls through to the fail-safe `ValueKind::Unknown`
+/// default, exactly as the original wildcard arm did.
 fn infer_value_kind(expr: &Expr, ctx: &LiftCtx) -> ValueKind {
-    match expr {
-        Expr::Lit(lit) => match &lit.lit {
-            Lit::Str(_) => ValueKind::String,
-            Lit::Int(_) | Lit::Float(_) => ValueKind::Number,
-            Lit::Bool(_) => ValueKind::Bool,
-            _ => ValueKind::Unknown,
-        },
-        Expr::Path(path) => match path.path.segments.last() {
-            Some(seg) => match ctx.local_value_kinds.get(&seg.ident.to_string()) {
-                Some(kind) => kind.clone(),
-                None => ValueKind::Unknown,
-            },
-            None => ValueKind::Unknown,
-        },
-        Expr::Paren(paren) => infer_value_kind(&paren.expr, ctx),
-        Expr::Reference(reference) => infer_value_kind(&reference.expr, ctx),
-        Expr::Group(group) => infer_value_kind(&group.expr, ctx),
-        Expr::MethodCall(method) => {
-            let method_name = method.method.to_string();
-            match method_name.as_str() {
-                "to_string" => ValueKind::String,
-                "clone" if method.args.is_empty() => infer_value_kind(&method.receiver, ctx),
-                _ => ValueKind::Unknown,
-            }
+    if let Expr::Lit(lit) = expr {
+        return literal_value_kind(&lit.lit);
+    }
+    if let Expr::Path(path) = expr {
+        let Some(seg) = path.path.segments.last() else {
+            return ValueKind::Unknown;
+        };
+        return ctx
+            .local_value_kinds
+            .get(&seg.ident.to_string())
+            .cloned()
+            .unwrap_or(ValueKind::Unknown);
+    }
+    if let Expr::Paren(paren) = expr {
+        return infer_value_kind(&paren.expr, ctx);
+    }
+    if let Expr::Reference(reference) = expr {
+        return infer_value_kind(&reference.expr, ctx);
+    }
+    if let Expr::Group(group) = expr {
+        return infer_value_kind(&group.expr, ctx);
+    }
+    if let Expr::MethodCall(method) = expr {
+        let method_name = method.method.to_string();
+        if method_name == "to_string" {
+            return ValueKind::String;
         }
-        Expr::Call(call) => {
-            let Some(callee) = call_callee_name(call) else {
-                return ValueKind::Unknown;
-            };
-            if ctx.return_facts.direct_string.contains(&callee) {
-                ValueKind::String
-            } else {
-                // A bare call to `fn f() -> Result<String, _>` is not a string;
-                // only `f()?` produces the inner String in this slice.
-                ValueKind::Unknown
-            }
+        if method_name == "clone" && method.args.is_empty() {
+            return infer_value_kind(&method.receiver, ctx);
         }
-        Expr::Try(try_expr) => {
-            if let Expr::Call(call) = &*try_expr.expr {
-                if let Some(callee) = call_callee_name(call) {
-                    if ctx.return_facts.result_string.contains(&callee) {
-                        return ValueKind::String;
-                    }
+        return ValueKind::Unknown;
+    }
+    if let Expr::Call(call) = expr {
+        let Some(callee) = call_callee_name(call) else {
+            return ValueKind::Unknown;
+        };
+        return if ctx.return_facts.direct_string.contains(&callee) {
+            ValueKind::String
+        } else {
+            // A bare call to `fn f() -> Result<String, _>` is not a string;
+            // only `f()?` produces the inner String in this slice.
+            ValueKind::Unknown
+        };
+    }
+    if let Expr::Try(try_expr) = expr {
+        if let Expr::Call(call) = &*try_expr.expr {
+            if let Some(callee) = call_callee_name(call) {
+                if ctx.return_facts.result_string.contains(&callee) {
+                    return ValueKind::String;
                 }
             }
-            ValueKind::Unknown
         }
-        Expr::Index(index) => infer_indexed_json_value_kind(index, ctx),
-        Expr::Macro(expr_macro) => infer_macro_value_kind(&expr_macro.mac, ctx),
-        _ => ValueKind::Unknown,
+        return ValueKind::Unknown;
     }
+    if let Expr::Index(index) = expr {
+        return infer_indexed_json_value_kind(index, ctx);
+    }
+    if let Expr::Macro(expr_macro) = expr {
+        return infer_macro_value_kind(&expr_macro.mac, ctx);
+    }
+    ValueKind::Unknown
+}
+
+/// Claims the three literal shapes that carry a known `ValueKind`
+/// (`Str`/`Int`/`Float`/`Bool`); every other `syn::Lit` variant falls
+/// through to the same fail-safe `ValueKind::Unknown` default as the
+/// original wildcard arm.
+fn literal_value_kind(lit: &Lit) -> ValueKind {
+    if let Lit::Str(_) = lit {
+        return ValueKind::String;
+    }
+    if matches!(lit, Lit::Int(_) | Lit::Float(_)) {
+        return ValueKind::Number;
+    }
+    if let Lit::Bool(_) = lit {
+        return ValueKind::Bool;
+    }
+    ValueKind::Unknown
 }
 
 fn call_callee_name(call: &syn::ExprCall) -> Option<String> {
@@ -2702,58 +2807,76 @@ fn keyset_source_from_map_expr(expr: &Expr, ctx: &mut LiftCtx) -> Option<KeysetM
     })
 }
 
+/// Claims an immutably-borrowed map expression (`&map_expr`) and recurses
+/// through `Paren`/`Group` wrappers to find one. A mutable reference is a
+/// recognized non-source shape (`None`); every shape in
+/// `known_non_keyset_source_expr` is likewise `None`. The panic defaults are
+/// unchanged.
 fn keyset_source_from_borrowed_map_expr(expr: &Expr, ctx: &mut LiftCtx) -> Option<KeysetMapSource> {
-    match expr {
-        Expr::Reference(reference) if reference.mutability.is_none() => {
-            keyset_source_from_map_expr(&reference.expr, ctx)
+    if let Expr::Reference(reference) = expr {
+        if reference.mutability.is_none() {
+            return keyset_source_from_map_expr(&reference.expr, ctx);
         }
-        Expr::Paren(paren) => keyset_source_from_borrowed_map_expr(&paren.expr, ctx),
-        Expr::Group(group) => keyset_source_from_borrowed_map_expr(&group.expr, ctx),
-        Expr::Reference(_) => None,
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::Field(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::MethodCall(_)
-        | Expr::Path(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        Expr::Verbatim(_) => {
-            panic!("sugar-walk keyset source classifier refused uninterpreted verbatim expression")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk keyset source classifier refused unknown syn::Expr variant")
-        }
+        return None;
     }
+    if let Expr::Paren(paren) = expr {
+        return keyset_source_from_borrowed_map_expr(&paren.expr, ctx);
+    }
+    if let Expr::Group(group) = expr {
+        return keyset_source_from_borrowed_map_expr(&group.expr, ctx);
+    }
+    if known_non_keyset_source_expr(expr) {
+        return None;
+    }
+    if matches!(expr, Expr::Verbatim(_)) {
+        panic!("sugar-walk keyset source classifier refused uninterpreted verbatim expression");
+    }
+    panic!("sugar-walk keyset source classifier refused unknown syn::Expr variant")
+}
+
+/// Shapes that can never resolve to a borrowed keyset map source: neither
+/// the reference itself nor a transparent `Paren`/`Group` wrapper around
+/// one.
+fn known_non_keyset_source_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::Field(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::MethodCall(_)
+            | Expr::Path(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn keyset_snapshot_source_for_expr(
@@ -2903,58 +3026,77 @@ fn method_turbofish_mentions_ident(method: &syn::ExprMethodCall, needle: &str) -
     })
 }
 
+/// Claims a `syn::ExprMethodCall` and recurses through `Paren`/`Group`
+/// wrappers and an immutable `Reference` to find one. A mutable reference is
+/// a recognized non-method-call shape (`None`), matching every shape in
+/// `known_non_method_call_expr`.
 fn expr_as_method_call_lift(expr: &Expr) -> Option<&syn::ExprMethodCall> {
-    match expr {
-        Expr::MethodCall(method) => Some(method),
-        Expr::Paren(paren) => expr_as_method_call_lift(&paren.expr),
-        Expr::Group(group) => expr_as_method_call_lift(&group.expr),
-        Expr::Reference(reference) if reference.mutability.is_none() => {
-            expr_as_method_call_lift(&reference.expr)
-        }
-        Expr::Reference(_) => None,
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::Field(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::Path(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        Expr::Verbatim(_) => {
-            panic!("sugar-walk method-call classifier refused uninterpreted verbatim expression")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk method-call classifier refused unknown syn::Expr variant")
-        }
+    if let Expr::MethodCall(method) = expr {
+        return Some(method);
     }
+    if let Expr::Paren(paren) = expr {
+        return expr_as_method_call_lift(&paren.expr);
+    }
+    if let Expr::Group(group) = expr {
+        return expr_as_method_call_lift(&group.expr);
+    }
+    if let Expr::Reference(reference) = expr {
+        if reference.mutability.is_none() {
+            return expr_as_method_call_lift(&reference.expr);
+        }
+        return None;
+    }
+    if known_non_method_call_expr(expr) {
+        return None;
+    }
+    if matches!(expr, Expr::Verbatim(_)) {
+        panic!("sugar-walk method-call classifier refused uninterpreted verbatim expression");
+    }
+    panic!("sugar-walk method-call classifier refused unknown syn::Expr variant")
+}
+
+/// Shapes that can never resolve to a method call: neither the call itself
+/// nor a transparent `Paren`/`Group`/immutable-`Reference` wrapper around
+/// one.
+fn known_non_method_call_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::Field(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::Path(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn invalidate_statement_guard_facts_for_expr_effects(
@@ -3001,55 +3143,70 @@ fn invalidate_statement_guard_facts_for_pat(pat: &Pat, guard_facts: &mut Stateme
     invalidate_statement_guard_facts_for_roots(&roots, guard_facts);
 }
 
+/// Claims a `syn::ExprCall` and recurses through `Paren`/`Group` wrappers to
+/// find one; every shape in `known_non_call_expr` is a recognized
+/// non-call.
 fn expr_as_call_lift(expr: &Expr) -> Option<&syn::ExprCall> {
-    match expr {
-        Expr::Call(call) => Some(call),
-        Expr::Paren(paren) => expr_as_call_lift(&paren.expr),
-        Expr::Group(group) => expr_as_call_lift(&group.expr),
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::Field(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::MethodCall(_)
-        | Expr::Path(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Reference(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        Expr::Verbatim(_) => {
-            panic!("sugar-walk call classifier refused uninterpreted verbatim expression")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk call classifier refused unknown syn::Expr variant")
-        }
+    if let Expr::Call(call) = expr {
+        return Some(call);
     }
+    if let Expr::Paren(paren) = expr {
+        return expr_as_call_lift(&paren.expr);
+    }
+    if let Expr::Group(group) = expr {
+        return expr_as_call_lift(&group.expr);
+    }
+    if known_non_call_expr(expr) {
+        return None;
+    }
+    if matches!(expr, Expr::Verbatim(_)) {
+        panic!("sugar-walk call classifier refused uninterpreted verbatim expression");
+    }
+    panic!("sugar-walk call classifier refused unknown syn::Expr variant")
+}
+
+/// Shapes that can never resolve to a call: neither the call itself nor a
+/// transparent `Paren`/`Group` wrapper around one.
+fn known_non_call_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::Field(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::MethodCall(_)
+            | Expr::Path(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Reference(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn expr_vecs_ast_equal_lift(left: &[Expr], right: &[Expr]) -> bool {
@@ -3176,149 +3333,226 @@ fn expr_roots_for_lift_args(args: &[Expr]) -> BTreeSet<String> {
     roots
 }
 
+/// Claims every syntactic shape that can carry or contain a variable root,
+/// recursing/recording in the same order and with the same effects as the
+/// original ladder. Both opaque shapes (`Macro`, `Verbatim`) and truly
+/// unknown ones panic; the two messages are unchanged.
 fn collect_expr_roots_lift(expr: &Expr, roots: &mut BTreeSet<String>) {
-    match expr {
-        Expr::Path(path) if path.path.segments.len() == 1 => {
+    if let Expr::Path(path) = expr {
+        if path.path.segments.len() == 1 {
             if let Some(segment) = path.path.segments.first() {
                 roots.insert(segment.ident.to_string());
             }
         }
-        Expr::Path(_) => {}
-        Expr::Assign(assign) => {
-            collect_expr_roots_lift(&assign.left, roots);
-            collect_expr_roots_lift(&assign.right, roots);
-        }
-        Expr::Array(array) => {
-            for elem in &array.elems {
-                collect_expr_roots_lift(elem, roots);
-            }
-        }
-        Expr::Async(async_expr) => collect_stmt_roots_lift(&async_expr.block.stmts, roots),
-        Expr::Await(await_expr) => collect_expr_roots_lift(&await_expr.base, roots),
-        Expr::Binary(binary) => {
-            collect_expr_roots_lift(&binary.left, roots);
-            collect_expr_roots_lift(&binary.right, roots);
-        }
-        Expr::Block(block) => collect_stmt_roots_lift(&block.block.stmts, roots),
-        Expr::Break(break_expr) => {
-            if let Some(expr) = &break_expr.expr {
-                collect_expr_roots_lift(expr, roots);
-            }
-        }
-        Expr::Call(call) => {
-            collect_expr_roots_lift(&call.func, roots);
-            for arg in &call.args {
-                collect_expr_roots_lift(arg, roots);
-            }
-        }
-        Expr::Cast(cast) => collect_expr_roots_lift(&cast.expr, roots),
-        Expr::Closure(closure) => collect_expr_roots_lift(&closure.body, roots),
-        Expr::Const(const_expr) => collect_stmt_roots_lift(&const_expr.block.stmts, roots),
-        Expr::Field(field) => collect_expr_roots_lift(&field.base, roots),
-        Expr::ForLoop(for_loop) => {
-            collect_expr_roots_lift(&for_loop.expr, roots);
-            collect_stmt_roots_lift(&for_loop.body.stmts, roots);
-        }
-        Expr::Group(group) => collect_expr_roots_lift(&group.expr, roots),
-        Expr::If(if_expr) => {
-            collect_expr_roots_lift(&if_expr.cond, roots);
-            collect_stmt_roots_lift(&if_expr.then_branch.stmts, roots);
-            if let Some((_, else_expr)) = &if_expr.else_branch {
-                collect_expr_roots_lift(else_expr, roots);
-            }
-        }
-        Expr::Index(index) => {
-            collect_expr_roots_lift(&index.expr, roots);
-            collect_expr_roots_lift(&index.index, roots);
-        }
-        Expr::Let(let_expr) => collect_expr_roots_lift(&let_expr.expr, roots),
-        Expr::Loop(loop_expr) => collect_stmt_roots_lift(&loop_expr.body.stmts, roots),
-        Expr::Match(match_expr) => {
-            collect_expr_roots_lift(&match_expr.expr, roots);
-            for arm in &match_expr.arms {
-                if let Some((_, guard)) = &arm.guard {
-                    collect_expr_roots_lift(guard, roots);
-                }
-                collect_expr_roots_lift(&arm.body, roots);
-            }
-        }
-        Expr::MethodCall(method) => {
-            collect_expr_roots_lift(&method.receiver, roots);
-            for arg in &method.args {
-                collect_expr_roots_lift(arg, roots);
-            }
-        }
-        Expr::Paren(paren) => collect_expr_roots_lift(&paren.expr, roots),
-        Expr::Range(range) => {
-            if let Some(start) = &range.start {
-                collect_expr_roots_lift(start, roots);
-            }
-            if let Some(end) = &range.end {
-                collect_expr_roots_lift(end, roots);
-            }
-        }
-        Expr::RawAddr(raw_addr) => collect_expr_roots_lift(&raw_addr.expr, roots),
-        Expr::Reference(reference) => collect_expr_roots_lift(&reference.expr, roots),
-        Expr::Repeat(repeat) => {
-            collect_expr_roots_lift(&repeat.expr, roots);
-            collect_expr_roots_lift(&repeat.len, roots);
-        }
-        Expr::Return(return_expr) => {
-            if let Some(expr) = &return_expr.expr {
-                collect_expr_roots_lift(expr, roots);
-            }
-        }
-        Expr::Struct(struct_expr) => {
-            for field in &struct_expr.fields {
-                collect_expr_roots_lift(&field.expr, roots);
-            }
-            if let Some(rest) = &struct_expr.rest {
-                collect_expr_roots_lift(rest, roots);
-            }
-        }
-        Expr::Try(try_expr) => collect_expr_roots_lift(&try_expr.expr, roots),
-        Expr::TryBlock(try_block) => collect_stmt_roots_lift(&try_block.block.stmts, roots),
-        Expr::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                collect_expr_roots_lift(elem, roots);
-            }
-        }
-        Expr::Unary(unary) => collect_expr_roots_lift(&unary.expr, roots),
-        Expr::Unsafe(unsafe_expr) => collect_stmt_roots_lift(&unsafe_expr.block.stmts, roots),
-        Expr::While(while_expr) => {
-            collect_expr_roots_lift(&while_expr.cond, roots);
-            collect_stmt_roots_lift(&while_expr.body.stmts, roots);
-        }
-        Expr::Yield(yield_expr) => {
-            if let Some(expr) = &yield_expr.expr {
-                collect_expr_roots_lift(expr, roots);
-            }
-        }
-        Expr::Continue(_) | Expr::Infer(_) | Expr::Lit(_) => {}
-        Expr::Macro(_) | Expr::Verbatim(_) => {
-            panic!("sugar-walk expression root collector refused opaque syn::Expr variant")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk expression root collector refused unknown syn::Expr variant")
-        }
+        return;
     }
+    if let Expr::Assign(assign) = expr {
+        collect_expr_roots_lift(&assign.left, roots);
+        collect_expr_roots_lift(&assign.right, roots);
+        return;
+    }
+    if let Expr::Array(array) = expr {
+        for elem in &array.elems {
+            collect_expr_roots_lift(elem, roots);
+        }
+        return;
+    }
+    if let Expr::Async(async_expr) = expr {
+        collect_stmt_roots_lift(&async_expr.block.stmts, roots);
+        return;
+    }
+    if let Expr::Binary(binary) = expr {
+        collect_expr_roots_lift(&binary.left, roots);
+        collect_expr_roots_lift(&binary.right, roots);
+        return;
+    }
+    if let Expr::Block(block) = expr {
+        collect_stmt_roots_lift(&block.block.stmts, roots);
+        return;
+    }
+    if let Expr::Break(break_expr) = expr {
+        if let Some(inner) = &break_expr.expr {
+            collect_expr_roots_lift(inner, roots);
+        }
+        return;
+    }
+    if let Expr::Call(call) = expr {
+        collect_expr_roots_lift(&call.func, roots);
+        for arg in &call.args {
+            collect_expr_roots_lift(arg, roots);
+        }
+        return;
+    }
+    if let Expr::Closure(closure) = expr {
+        collect_expr_roots_lift(&closure.body, roots);
+        return;
+    }
+    if let Expr::Const(const_expr) = expr {
+        collect_stmt_roots_lift(&const_expr.block.stmts, roots);
+        return;
+    }
+    if let Expr::ForLoop(for_loop) = expr {
+        collect_expr_roots_lift(&for_loop.expr, roots);
+        collect_stmt_roots_lift(&for_loop.body.stmts, roots);
+        return;
+    }
+    if let Expr::If(if_expr) = expr {
+        collect_expr_roots_lift(&if_expr.cond, roots);
+        collect_stmt_roots_lift(&if_expr.then_branch.stmts, roots);
+        if let Some((_, else_expr)) = &if_expr.else_branch {
+            collect_expr_roots_lift(else_expr, roots);
+        }
+        return;
+    }
+    if let Expr::Index(index) = expr {
+        collect_expr_roots_lift(&index.expr, roots);
+        collect_expr_roots_lift(&index.index, roots);
+        return;
+    }
+    if let Expr::Loop(loop_expr) = expr {
+        collect_stmt_roots_lift(&loop_expr.body.stmts, roots);
+        return;
+    }
+    if let Expr::Match(match_expr) = expr {
+        collect_expr_roots_lift(&match_expr.expr, roots);
+        for arm in &match_expr.arms {
+            if let Some((_, guard)) = &arm.guard {
+                collect_expr_roots_lift(guard, roots);
+            }
+            collect_expr_roots_lift(&arm.body, roots);
+        }
+        return;
+    }
+    if let Expr::MethodCall(method) = expr {
+        collect_expr_roots_lift(&method.receiver, roots);
+        for arg in &method.args {
+            collect_expr_roots_lift(arg, roots);
+        }
+        return;
+    }
+    if let Expr::Range(range) = expr {
+        if let Some(start) = &range.start {
+            collect_expr_roots_lift(start, roots);
+        }
+        if let Some(end) = &range.end {
+            collect_expr_roots_lift(end, roots);
+        }
+        return;
+    }
+    if let Expr::Repeat(repeat) = expr {
+        collect_expr_roots_lift(&repeat.expr, roots);
+        collect_expr_roots_lift(&repeat.len, roots);
+        return;
+    }
+    if let Expr::Return(return_expr) = expr {
+        if let Some(inner) = &return_expr.expr {
+            collect_expr_roots_lift(inner, roots);
+        }
+        return;
+    }
+    if let Expr::Struct(struct_expr) = expr {
+        for field in &struct_expr.fields {
+            collect_expr_roots_lift(&field.expr, roots);
+        }
+        if let Some(rest) = &struct_expr.rest {
+            collect_expr_roots_lift(rest, roots);
+        }
+        return;
+    }
+    if let Expr::TryBlock(try_block) = expr {
+        collect_stmt_roots_lift(&try_block.block.stmts, roots);
+        return;
+    }
+    if let Expr::Tuple(tuple) = expr {
+        for elem in &tuple.elems {
+            collect_expr_roots_lift(elem, roots);
+        }
+        return;
+    }
+    if let Expr::Unsafe(unsafe_expr) = expr {
+        collect_stmt_roots_lift(&unsafe_expr.block.stmts, roots);
+        return;
+    }
+    if let Expr::While(while_expr) = expr {
+        collect_expr_roots_lift(&while_expr.cond, roots);
+        collect_stmt_roots_lift(&while_expr.body.stmts, roots);
+        return;
+    }
+    if let Expr::Yield(yield_expr) = expr {
+        if let Some(inner) = &yield_expr.expr {
+            collect_expr_roots_lift(inner, roots);
+        }
+        return;
+    }
+    if let Some(inner) = expr_roots_transparent_recurse_expr(expr) {
+        collect_expr_roots_lift(inner, roots);
+        return;
+    }
+    if known_no_expr_roots_expr(expr) {
+        return;
+    }
+    if matches!(expr, Expr::Macro(_) | Expr::Verbatim(_)) {
+        panic!("sugar-walk expression root collector refused opaque syn::Expr variant");
+    }
+    panic!("sugar-walk expression root collector refused unknown syn::Expr variant")
+}
+
+/// Transparent single-child recursion wrappers that carry no root of their
+/// own: `Cast`, `Field`, `Group`, `Let`, `Paren`, `RawAddr`, `Reference`,
+/// `Try`, `Unary`.
+fn expr_roots_transparent_recurse_expr(expr: &Expr) -> Option<&Expr> {
+    if let Expr::Cast(cast) = expr {
+        return Some(&cast.expr);
+    }
+    if let Expr::Field(field) = expr {
+        return Some(&field.base);
+    }
+    if let Expr::Group(group) = expr {
+        return Some(&group.expr);
+    }
+    if let Expr::Let(let_expr) = expr {
+        return Some(&let_expr.expr);
+    }
+    if let Expr::Paren(paren) = expr {
+        return Some(&paren.expr);
+    }
+    if let Expr::RawAddr(raw_addr) = expr {
+        return Some(&raw_addr.expr);
+    }
+    if let Expr::Reference(reference) = expr {
+        return Some(&reference.expr);
+    }
+    if let Expr::Try(try_expr) = expr {
+        return Some(&try_expr.expr);
+    }
+    if let Expr::Unary(unary) = expr {
+        return Some(&unary.expr);
+    }
+    None
+}
+
+/// Shapes that never carry a variable root and never need recursion:
+/// `Continue`, `Infer`, `Lit`.
+fn known_no_expr_roots_expr(expr: &Expr) -> bool {
+    matches!(expr, Expr::Continue(_) | Expr::Infer(_) | Expr::Lit(_))
 }
 
 fn collect_stmt_roots_lift(stmts: &[Stmt], roots: &mut BTreeSet<String>) {
     for stmt in stmts {
-        match stmt {
-            Stmt::Local(local) => {
-                if let Some(init) = &local.init {
-                    collect_expr_roots_lift(&init.expr, roots);
-                }
+        if let Stmt::Local(local) = stmt {
+            if let Some(init) = &local.init {
+                collect_expr_roots_lift(&init.expr, roots);
             }
-            Stmt::Expr(expr, _) => collect_expr_roots_lift(expr, roots),
-            Stmt::Item(_) => {}
-            Stmt::Macro(_) => {
-                panic!("sugar-walk expression root collector refused opaque statement macro")
-            }
+            continue;
         }
+        if let Stmt::Expr(expr, _) = stmt {
+            collect_expr_roots_lift(expr, roots);
+            continue;
+        }
+        if let Stmt::Item(_) = stmt {
+            continue;
+        }
+        panic!("sugar-walk expression root collector refused opaque statement macro")
     }
 }
 
@@ -3379,67 +3613,103 @@ fn statement_expr_assignment_roots(expr: &Expr) -> BTreeSet<String> {
     roots
 }
 
+/// Claims each assignment-target-carrying shape (a single-segment `Path`
+/// root, or a transparent wrapper around one). A `Unary` claims only when it
+/// is a deref (`*x = ...`); a non-deref `Unary` falls through to the no-op
+/// group like every other non-root-carrying shape.
 fn collect_assignment_roots_lift(expr: &Expr, roots: &mut BTreeSet<String>) {
-    match expr {
-        Expr::Path(path) if path.path.segments.len() == 1 => {
+    if let Expr::Path(path) = expr {
+        if path.path.segments.len() == 1 {
             if let Some(segment) = path.path.segments.first() {
                 roots.insert(segment.ident.to_string());
             }
         }
-        Expr::Path(_) => {}
-        Expr::Field(field) => collect_assignment_roots_lift(&field.base, roots),
-        Expr::Group(group) => collect_assignment_roots_lift(&group.expr, roots),
-        Expr::Index(index) => collect_assignment_roots_lift(&index.expr, roots),
-        Expr::Paren(paren) => collect_assignment_roots_lift(&paren.expr, roots),
-        Expr::Reference(reference) => collect_assignment_roots_lift(&reference.expr, roots),
-        Expr::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                collect_assignment_roots_lift(elem, roots);
-            }
-        }
-        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
-            collect_assignment_roots_lift(&unary.expr, roots)
-        }
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::MethodCall(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => {}
-        Expr::Verbatim(_) => {
-            panic!("sugar-walk assignment root collector refused uninterpreted verbatim expression")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk assignment root collector refused unknown syn::Expr variant")
-        }
+        return;
     }
+    if let Expr::Unary(unary) = expr {
+        if matches!(unary.op, syn::UnOp::Deref(_)) {
+            collect_assignment_roots_lift(&unary.expr, roots);
+        }
+        return;
+    }
+    if let Some(inner) = assignment_roots_transparent_recurse_expr(expr) {
+        collect_assignment_roots_lift(inner, roots);
+        return;
+    }
+    if let Expr::Tuple(tuple) = expr {
+        for elem in &tuple.elems {
+            collect_assignment_roots_lift(elem, roots);
+        }
+        return;
+    }
+    if known_no_assignment_root_expr(expr) {
+        return;
+    }
+    if matches!(expr, Expr::Verbatim(_)) {
+        panic!("sugar-walk assignment root collector refused uninterpreted verbatim expression");
+    }
+    panic!("sugar-walk assignment root collector refused unknown syn::Expr variant")
+}
+
+/// Transparent single-child recursion wrappers that carry no root of their
+/// own: `Field`, `Group`, `Index`, `Paren`, `Reference`.
+fn assignment_roots_transparent_recurse_expr(expr: &Expr) -> Option<&Expr> {
+    if let Expr::Field(field) = expr {
+        return Some(&field.base);
+    }
+    if let Expr::Group(group) = expr {
+        return Some(&group.expr);
+    }
+    if let Expr::Index(index) = expr {
+        return Some(&index.expr);
+    }
+    if let Expr::Paren(paren) = expr {
+        return Some(&paren.expr);
+    }
+    if let Expr::Reference(reference) = expr {
+        return Some(&reference.expr);
+    }
+    None
+}
+
+/// Shapes that never carry an assignment root and never need recursion
+/// (including a non-deref `Unary`, handled by its own guard above).
+fn known_no_assignment_root_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::MethodCall(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn binop_is_assignment_lift(op: &BinOp) -> bool {
@@ -3603,13 +3873,15 @@ fn lift_return_stmt_postcondition(
 /// implicit precondition? Returns None for statements that don't lift
 /// (let-bindings, plain expressions, etc.).
 fn lift_stmt_contribution(stmt: &Stmt, ctx: &mut LiftCtx) -> Option<IrFormula> {
-    match stmt {
-        Stmt::Expr(e, _) => lift_expr_contribution(e, ctx),
-        // `assert!(c);` at statement position parses to Stmt::Macro
-        // (with optional trailing semicolon), not Stmt::Expr(Expr::Macro).
-        Stmt::Macro(StmtMacro { mac, .. }) => lift_macro_contribution(mac, ctx),
-        Stmt::Item(_) | Stmt::Local(_) => None,
+    if let Stmt::Expr(e, _) = stmt {
+        return lift_expr_contribution(e, ctx);
     }
+    // `assert!(c);` at statement position parses to Stmt::Macro (with
+    // optional trailing semicolon), not Stmt::Expr(Expr::Macro).
+    if let Stmt::Macro(StmtMacro { mac, .. }) = stmt {
+        return lift_macro_contribution(mac, ctx);
+    }
+    None
 }
 
 /// Recognize and lift macro contributions at statement or expression
@@ -4589,21 +4861,26 @@ fn negate(f: IrFormula) -> IrFormula {
     // Sir's "every else is the contraposition" — when the lifter
     // produces the contraposition of `a && b` for an if-then-panic,
     // the result is `¬a ∨ ¬b`, not the harder-to-discharge `¬(a ∧ b)`.
-    match f {
-        IrFormula::And { operands } => IrFormula::Or {
+    if let IrFormula::And { operands } = f {
+        return IrFormula::Or {
             operands: operands.into_iter().map(negate).collect(),
-        },
-        IrFormula::Or { operands } => IrFormula::And {
-            operands: operands.into_iter().map(negate).collect(),
-        },
-        IrFormula::Not { mut operands } if operands.len() == 1 => {
-            // Double-negation elimination: ¬¬a → a.
-            operands.pop().unwrap()
-        }
-        other => IrFormula::Not {
-            operands: vec![other],
-        },
+        };
     }
+    if let IrFormula::Or { operands } = f {
+        return IrFormula::And {
+            operands: operands.into_iter().map(negate).collect(),
+        };
+    }
+    if let IrFormula::Not { operands } = &f {
+        if operands.len() == 1 {
+            // Double-negation elimination: ¬¬a → a.
+            let IrFormula::Not { mut operands } = f else {
+                unreachable!()
+            };
+            return operands.pop().unwrap();
+        }
+    }
+    IrFormula::Not { operands: vec![f] }
 }
 
 fn simplify_conjunction(parts: Vec<IrFormula>) -> IrFormula {
