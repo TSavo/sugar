@@ -9,6 +9,11 @@ SUGAR="$BIN_DIR/sugar"
 ASSERT_RPC="$BIN_DIR/rust_test_assertions_rpc"
 WITNESS_RPC="$BIN_DIR/witness_rpc"
 DISCHARGE_CLI="$BIN_DIR/discharge_cli"
+WALK_RPC="$BIN_DIR/sugar-walk-rpc"
+SMT_IR="$BIN_DIR/sugar-ir-smt-lib"
+LEAN_IR="$BIN_DIR/sugar-ir-lean"
+COQ_IR="$BIN_DIR/sugar-ir-coq"
+MAUDE_IR="$BIN_DIR/sugar-ir-maude"
 
 for suite in good bad; do
   if [ ! -d "$HERE/$suite" ]; then
@@ -23,6 +28,11 @@ if [ "${POLARS_SHOWCASE_ON_REMOTE:-0}" != "1" ] \
   echo "== run polars showcase on battleaxe via bcargo =="
   "$REPO/bin/bcargo" build --manifest-path "$RUST/Cargo.toml" \
     -p sugar-cli --bin sugar \
+    -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
+    -p sugar-ir-compiler-lean --bin sugar-ir-lean \
+    -p sugar-ir-compiler-coq --bin sugar-ir-coq \
+    -p sugar-ir-compiler-maude --bin sugar-ir-maude \
+    -p sugar-walk --bin sugar-walk-rpc \
     -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
     -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
     -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
@@ -41,17 +51,46 @@ if [ "${POLARS_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
   echo "== build local proof binaries =="
   cargo build --manifest-path "$RUST/Cargo.toml" \
     -p sugar-cli --bin sugar \
+    -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
+    -p sugar-ir-compiler-lean --bin sugar-ir-lean \
+    -p sugar-ir-compiler-coq --bin sugar-ir-coq \
+    -p sugar-ir-compiler-maude --bin sugar-ir-maude \
+    -p sugar-walk --bin sugar-walk-rpc \
     -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
     -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
     -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
 fi
 
-for bin in "$SUGAR" "$ASSERT_RPC" "$WITNESS_RPC" "$DISCHARGE_CLI"; do
+for bin in "$SUGAR" "$ASSERT_RPC" "$WITNESS_RPC" "$DISCHARGE_CLI" "$WALK_RPC" "$SMT_IR" "$LEAN_IR" "$COQ_IR" "$MAUDE_IR"; do
   if [ ! -x "$bin" ]; then
     echo "missing executable: $bin" >&2
     exit 1
   fi
 done
+
+write_component_manifest() {
+  local name="$1"
+  local command="$2"
+  local dir="$HERE/.sugar/components/$name"
+  mkdir -p "$dir"
+  cat > "$dir/manifest.toml" <<TOML
+name = "$name"
+version = "0.1.0"
+protocol_version = "sugar-component/1"
+command = ["$command"]
+TOML
+}
+
+write_component_registry() {
+  rm -rf "$HERE/.sugar/components"
+  write_component_manifest "rust-test-assertions" "$ASSERT_RPC"
+  write_component_manifest "rust-cargo-test-witness" "$WITNESS_RPC"
+  write_component_manifest "rust-walk" "$WALK_RPC"
+  write_component_manifest "ir-compiler-smt-lib" "$SMT_IR"
+  write_component_manifest "ir-compiler-lean" "$LEAN_IR"
+  write_component_manifest "ir-compiler-coq" "$COQ_IR"
+  write_component_manifest "ir-compiler-maude" "$MAUDE_IR"
+}
 
 render_manifests() {
   local suite="$1"
@@ -195,7 +234,7 @@ run_suite() {
   clean_suite "$suite"
 
   echo "== mint $suite =="
-  (cd "$dir" && "$SUGAR" mint --out .) >/dev/null
+  (cd "$dir" && SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" mint --out .) >/dev/null
 
   local proof
   proof="$(find "$dir" -maxdepth 1 -name 'blake3-512_*.proof' -print -quit)"
@@ -206,7 +245,7 @@ run_suite() {
 
   echo "== prove $suite =="
   set +e
-  (cd "$dir" && "$SUGAR" prove . --json) > "$dir/.prove.json" 2>&1
+  (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" prove . --json) > "$dir/.prove.json" 2>&1
   local prove_rc=$?
   set -e
 
@@ -238,7 +277,7 @@ run_suite() {
     : "$prove_rc"
 
     echo "== verify $suite witness =="
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json" 2>&1
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" verify --project . --json) > "$dir/.verify.json" 2>&1
     local verify_verdict
     verify_verdict="$(witness_verdict "$dir/.verify.json")"
     if [ "$verify_verdict" != "verified" ]; then
@@ -248,7 +287,7 @@ run_suite() {
     fi
 
     rm -rf "$dir/.sugar/witnesses"
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify_recompute.json" 2>&1
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" verify --project . --json) > "$dir/.verify_recompute.json" 2>&1
     local recompute_strategy
     recompute_strategy="$(witness_recompute_strategy "$dir/.verify_recompute.json")"
     if [ "$recompute_strategy" != "content-address:recompute" ]; then
@@ -266,6 +305,8 @@ run_suite() {
 
   echo "$suite consistency=$got_consistency witness=$got_witness"
 }
+
+write_component_registry
 
 run_suite good discharged discharged
 run_suite bad refused refused

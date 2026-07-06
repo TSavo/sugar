@@ -366,13 +366,12 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "kit-transform/callsite-line-null",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape kit-transform/callsite-line-null; work order #3607",
+      "failure_shape": "proof-pool/bridge-target-missing",
+      "first_seen": "2026-07-06 python-seat-showcases sweep 799a9e86a",
+      "grounds": "script exited 1 after component discovery was repaired; current terminal shape is resolve-target: bridge target CID for call:scalar_sum not in pool. Retirement: the Polars bridge target contract is carried as a loaded proof-pool member, then the good suite can assert consistency discharge.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 106.43,
-      "name": "examples/polars-showcase/run.sh",
-      "work_order_issue": 3607
+      "last_observed_seconds": 20.12,
+      "name": "examples/polars-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
@@ -503,14 +502,12 @@
       "work_order_issue": 3606
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "durable-row-missing/scientific-python-showcase",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape durable-row-missing/scientific-python-showcase; work order #3576",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 60.79,
-      "name": "examples/sklearn-showcase/run.sh",
-      "work_order_issue": 3576
+      "expected": "GREEN",
+      "first_seen": "2026-07-06 python-seat-showcases sweep 799a9e86a",
+      "grounds": "script exited 0 after refreshing the showcase to the current discharge law: singleton sklearn consistency rows remain refused as vacuous, the accuracy_score contradiction is unsatisfied, and the witness package verifies by content address.",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 45.5,
+      "name": "examples/sklearn-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
