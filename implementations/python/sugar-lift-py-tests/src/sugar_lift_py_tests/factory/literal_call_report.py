@@ -1440,6 +1440,8 @@ _COMPUTABLE_NUMPY_INTEGER_UFUNCS = frozenset(
     {
         "numpy.add",
         "numpy.floor_divide",
+        "numpy.maximum",
+        "numpy.minimum",
         "numpy.mod",
         "numpy.multiply",
         "numpy.power",
@@ -1535,6 +1537,10 @@ def _numpy_integer_ufunc_result(
         result = _numpy_integer_power_result(left, right)
         if result is None:
             return None
+    elif callee_name == "numpy.maximum":
+        result = max(left, right)
+    elif callee_name == "numpy.minimum":
+        result = min(left, right)
     else:
         return None
     if not _fits_numpy_int64(result):
