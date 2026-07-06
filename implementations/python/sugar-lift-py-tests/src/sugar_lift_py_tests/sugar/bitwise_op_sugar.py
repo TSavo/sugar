@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import BitwiseOperation, perform_operation
-from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -24,6 +24,7 @@ class BitwiseOpSugar(Sugar, role=SugarRole.TERM):
     left: SugarBody
     right: SugarBody
     blame: str = "<unknown>"
+    template_operand_names = ("left", "right")
 
     def __post_init__(self) -> None:
         if not isinstance(self.left, SugarBody):
@@ -90,15 +91,7 @@ class BitwiseOpSugar(Sugar, role=SugarRole.TERM):
             blame=site.blame,
         )
 
-    def _build(self, ctx=None) -> Outcome:
-        left_outcome = self.left.reduce(ctx)
-        if isinstance(left_outcome, Incomplete):
-            return left_outcome
-        left = complete_value(left_outcome, owner="BitwiseOpSugar left")
-        right_outcome = self.right.reduce(ctx)
-        if isinstance(right_outcome, Incomplete):
-            return right_outcome
-        right = complete_value(right_outcome, owner="BitwiseOpSugar right")
+    def _build(self, ctx=None, *, left, right) -> Outcome:
         return perform_operation(
             owner="BitwiseOpSugar",
             blame=self.blame,
