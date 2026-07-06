@@ -40,7 +40,7 @@ def _offending_axis(line: str) -> str | None:
     # In-memory colon-prefix stripping by hand instead of cid_hex().
     if (
         'removeprefix("blake3-512:")' in t
-        or ".lstrip(\"blake3-512:\")" in t
+        or '.lstrip("blake3-512:")' in t
         or '[len("blake3-512:") :]' in t
         or '[len("blake3-512:"):]' in t
     ):
