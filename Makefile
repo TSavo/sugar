@@ -72,6 +72,7 @@ help:
 	@echo "Per-language test:"
 	@echo "  make test-rust  test-python   (the proven provers)"
 	@echo "  make numpy-wall                build and ratchet-check the NumPy lift wall"
+	@echo "  make pandas-wall               build and ratchet-check the pandas lift wall"
 	@echo "  make test-python-format       Black check for implementations/python"
 	@echo "  make test-<lang>              go / csharp / php / c"
 	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
@@ -168,6 +169,10 @@ check-cargo-entrypoint:
 .PHONY: numpy-wall
 numpy-wall:
 	python3 tools/numpy_wall.py
+
+.PHONY: pandas-wall
+pandas-wall:
+	python3 tools/pandas_wall.py
 
 .PHONY: setup-git-hooks
 setup-git-hooks:
