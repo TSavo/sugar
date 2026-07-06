@@ -13,6 +13,7 @@ from sugar_lift_py_tests.factory import (
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     BoolValue,
+    DictLiteralValue,
     ImportAliasValue,
     ObjectValue,
     StringValue,
@@ -73,16 +74,30 @@ class ArrayLiteralSugar(Sugar, role=SugarRole.TERM):
             element_outcome = element.reduce(ctx)
             if isinstance(element_outcome, Incomplete):
                 return element_outcome
-            items.append(
-                _array_element(
-                    complete_value(element_outcome, owner="ArrayLiteralSugar"),
-                    element=element,
-                )
+            item = _array_element(
+                complete_value(element_outcome, owner="ArrayLiteralSugar"),
+                element=element,
             )
+            if isinstance(item, Incomplete):
+                return item
+            items.append(item)
         return Complete(ArrayLiteral(tuple(items)))
 
 
 def _array_element(value, *, element: SugarBody):
+    if isinstance(value, DictLiteralValue):
+        from sugar_lift_py_tests.effect import RuntimeEffect
+
+        return Incomplete(
+            RuntimeEffect(
+                "array literal non-FOL element runtime boundary: "
+                "DictLiteralValue is a support carrier, but nested dict "
+                "constructor equality inside ArrayLiteral is not refutable by "
+                "the current production solver path; keep as typed red until "
+                "a dict-in-array witness or decomposition floor owns the "
+                f"shape. blame={_element_blame(element)}"
+            )
+        )
     if not isinstance(
         value,
         (

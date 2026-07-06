@@ -21,6 +21,7 @@ from sugar_lift_py_tests.floor import (
     EncodedStringValue,
     StringValue,
     SymbolicValue,
+    TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
@@ -128,6 +129,29 @@ def test_string_slice_uses_python_string_value():
     assert reduce_value("'abcdef'[1:3]") == StringValue("bc")
     assert reduce_value("'abcdef'[::2]") == StringValue("ace")
     assert reduce_value("'abcdef'[-2:]") == StringValue("ef")
+
+
+def test_dict_literal_subscript_dispatches_concrete_key():
+    assert reduce_value("{'a': 1}['a']") == TermValue(1)
+
+
+def test_nested_dict_literal_subscript_dispatches_concrete_keys():
+    assert reduce_value("{3: {-3: -2}}[3][-3]") == TermValue(-2)
+
+
+def test_dict_literal_missing_key_is_typed_runtime_effect() -> None:
+    build_ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    body = build_ctx.build_body(
+        ast.parse("{'a': 1}['b']", mode="eval").body,
+        SugarRole.TERM,
+    )
+
+    outcome = body.reduce(ReduceContext(temporal=TemporalContext.empty()))
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "dict subscript runtime boundary" in outcome.effect.reason
+    assert "DictLiteralValue[missing-key]" in outcome.effect.reason
 
 
 def test_subscript_receiver_runtime_effect_bubbles() -> None:
