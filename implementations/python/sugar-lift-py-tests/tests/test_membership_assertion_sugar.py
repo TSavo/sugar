@@ -214,6 +214,63 @@ def test_membership_assertion_uses_array_floor_contains() -> None:
     }
 
 
+def test_membership_assertion_emits_symbolic_array_contains_predicate() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert result_year in [1973, 1999]",
+        {"result_year": SymbolicValue(make_var("result_year"))},
+    )
+
+    assert formula == atomic(
+        "contains",
+        [ctor("array", [num(1973), num(1999)]), make_var("result_year")],
+    )
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+    ]
+
+
+def test_membership_assertion_negates_symbolic_array_not_in_predicate() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert result_year not in [1973, 1999]",
+        {"result_year": SymbolicValue(make_var("result_year"))},
+    )
+
+    assert formula == not_(
+        atomic(
+            "contains",
+            [ctor("array", [num(1973), num(1999)]), make_var("result_year")],
+        )
+    )
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+    ]
+
+
+def test_membership_assertion_array_symbolic_contains_reaches_production_cli(
+    tmp_path: Path,
+) -> None:
+    result = run_source_through_real_solver(
+        tmp_path / "array-symbolic-membership",
+        "def test_array_symbolic_membership(result_year):\n"
+        "    assert result_year in [1973, 1999]\n",
+    )
+
+    assert "MembershipAssertionSugar" in result.selected_sugars
+    assert _first_contract_inv(result.lift_doc) == {
+        "kind": "atomic",
+        "name": "contains",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "array",
+                "args": [_int_const(1973), _int_const(1999)],
+            },
+            {"kind": "var", "name": "result_year"},
+        ],
+    }
+    assert _prove_statuses(result.prove_doc) == ["refused"]
+
+
 def test_membership_assertion_uses_tuple_floor_contains() -> None:
     formula, operation_log = _reduce_assertion_with_operation_log(
         "assert 2 in (1, 2, 3)"
@@ -432,6 +489,14 @@ def _first_contract_inv(lift_doc: dict) -> dict:
     contracts = [row for row in lift_doc.get("ir", []) if row.get("kind") == "contract"]
     assert contracts
     return contracts[0]["inv"]
+
+
+def _int_const(value: int) -> dict:
+    return {
+        "kind": "const",
+        "sort": {"kind": "primitive", "name": "Int"},
+        "value": value,
+    }
 
 
 def _prove_statuses(prove_doc: dict) -> list[str]:

@@ -51,19 +51,10 @@ class CallSiteValue(FloorValue):
 
     def unary_operator_with(self, operation, ctx):
         from sugar_lift_py_tests.effect import RuntimeEffect
-        from sugar_lift_py_tests.factory import FactoryGap
         from sugar_lift_py_tests.operations import perform_operation
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-        try:
-            floor = force_floor(
-                self,
-                ctx,
-                owner=f"{operation.owner} callsite unary operand",
-                project_callsite=False,
-            )
-        except FactoryGap as exc:
-            observed = str(exc.info.get("observed", "callsite floor unavailable"))
+        def runtime_boundary(detail: str):
             return Incomplete(
                 RuntimeEffect(
                     "unary operator runtime boundary: callsite value "
@@ -71,8 +62,39 @@ class CallSiteValue(FloorValue):
                     f"`{operation.operator}`. Python evaluates the call result "
                     "at runtime before the unary operator; keep as typed red "
                     "until a narrower callsite floor owns this shape. "
-                    f"force_floor={observed}; blame={operation.blame}"
+                    f"force_floor={detail}; blame={operation.blame}"
                 )
+            )
+
+        if self.body is None:
+            return runtime_boundary("callsite has no reducible body")
+        if len(self.parameters) != len(self.arg_values):
+            floor = force_floor(
+                self,
+                ctx,
+                owner=f"{operation.owner} callsite unary operand",
+                project_callsite=False,
+            )
+        else:
+            reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
+            outcome = _reduce_callsite_body(
+                self.body,
+                reduce_ctx,
+                blame=self.target_name,
+            )
+            if isinstance(outcome, Incomplete):
+                return runtime_boundary(
+                    f"callsite body reduced to runtime effect: {outcome.reason}"
+                )
+            value = complete_value(
+                outcome,
+                owner=f"{operation.owner} callsite unary operand",
+            )
+            floor = force_floor(
+                value,
+                reduce_ctx,
+                owner=f"{operation.owner} callsite unary operand",
+                project_callsite=False,
             )
         return perform_operation(
             owner=operation.owner,
