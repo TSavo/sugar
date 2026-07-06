@@ -1290,6 +1290,85 @@ fn count_top_level_constraints(inv: &Json) -> usize {
     }
 }
 
+/// Does a LONE fact carry a COVERING DOMAIN UNIVERSE that genuinely decides it?
+///
+/// The vacuity guard (`count_top_level_constraints < 2`) refuses lone facts
+/// because a bare opaque equality `=(call:foo(x), 99)` is trivially SAT — the
+/// callsite ctor is uninterpreted, so any model assigns it 99 and the "discharge"
+/// is not entailed. That reasoning holds ONLY for the degenerate `=` universe over
+/// an uninterpreted term. A lone fact stated against a REAL theory universe is a
+/// different animal: `str.in-regex(subject, R)` is regex-as-language membership,
+/// and z3's string/regex sort GENUINELY decides it — SAT iff `subject` is in the
+/// language of `R`, UNSAT otherwise. So a lone membership over a PINNED GROUND
+/// subject is a substantive verdict, not a vacuous one, and must reach the solver.
+///
+/// SOUNDNESS RAIL. The subject must be pinned: a closed ground term with NO
+/// uninterpreted `call:` ctor. An UNPINNED subject (a free var or an opaque
+/// callresult) is trivially SAT again — the solver would pick some member string
+/// and falsely discharge — so it stays vacuous and refused. This is the same line
+/// the `=` case draws: interpreted+ground universe decides; uninterpreted operand
+/// does not.
+fn lone_fact_has_covering_universe(inv: &Json) -> bool {
+    // Unwrap a single-operand `and([...])` (the lifter conjoins a contract's atoms,
+    // so a one-atom contract arrives as `and([atom])`). A 0- or >=2-operand `and`
+    // is handled by the ordinary constraint-count path, not here.
+    let node = match inv.get("kind").and_then(|k| k.as_str()) {
+        Some("and") => match inv.get("operands").and_then(|v| v.as_array()) {
+            Some(operands) if operands.len() == 1 => &operands[0],
+            _ => return false,
+        },
+        _ => inv,
+    };
+    is_ground_regex_membership(node)
+}
+
+/// A `str.in-regex(subject, R)` membership atom whose SUBJECT is a pinned ground
+/// term (closed, no uninterpreted `call:` ctor) and whose PATTERN is a String
+/// const literal (the vendor's walked regex, the emitter's required shape). This
+/// is the regex-as-language covering universe: z3 decides membership outright.
+fn is_ground_regex_membership(node: &Json) -> bool {
+    if node.get("kind").and_then(|k| k.as_str()) != Some("atomic") {
+        return false;
+    }
+    if node.get("name").and_then(|v| v.as_str()) != Some("str.in-regex") {
+        return false;
+    }
+    let Some(args) = node.get("args").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    if args.len() != 2 {
+        return false;
+    }
+    let subject = &args[0];
+    let pattern = &args[1];
+    let subject_pinned =
+        formula_is_closed(subject, &mut Vec::new()) && !term_has_opaque_call(subject);
+    let pattern_is_const_literal = pattern.get("kind").and_then(|k| k.as_str()) == Some("const");
+    subject_pinned && pattern_is_const_literal
+}
+
+/// True if any `call:*` ctor appears anywhere in `term`. Such a ctor is an
+/// uninterpreted callresult; a fact whose operand contains one is not pinned to a
+/// concrete value and cannot be a substantive lone-fact discharge.
+fn term_has_opaque_call(term: &Json) -> bool {
+    if is_callsite_ctor_term(term) {
+        return true;
+    }
+    for key in ["args", "operands"] {
+        if let Some(arr) = term.get(key).and_then(|v| v.as_array()) {
+            if arr.iter().any(term_has_opaque_call) {
+                return true;
+            }
+        }
+    }
+    if let Some(body) = term.get("body") {
+        if term_has_opaque_call(body) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Run the raw-satisfiability consistency check on a single `inv` and label it.
 /// Shared by the per-contract path and the cross-proof conjoined path.
 fn check_inv_consistency(
@@ -1332,8 +1411,16 @@ fn check_inv_consistency_with_vacuity_reason(
     // value. Refuse early so a lone opaque equality like `=(call:foo(x), 99)` is
     // never counted as a substantive discharge. Conjunctions (count >= 2) proceed:
     // two constraints CAN contradict each other, making SAT genuinely informative.
+    //
+    // COVERING-UNIVERSE EXCEPTION. The count<2 test counts JOIN PARTNERS (siblings),
+    // but a lone fact can still be genuinely decided by its RIGHT-HAND SORT'S
+    // UNIVERSE when that universe is a real theory rather than the degenerate `=`
+    // over an uninterpreted term. `str.in-regex(subject, R)` with a pinned ground
+    // subject is regex-as-language membership: z3 returns real SAT/UNSAT, so it is a
+    // substantive verdict and must reach the solver. Vacuous is therefore: alone in
+    // the bucket AND no covering universe — not merely count<2.
     let constraint_count = count_top_level_constraints(&inv);
-    if constraint_count < 2 {
+    if constraint_count < 2 && !lone_fact_has_covering_universe(&inv) {
         let effect = match vacuity_kind {
             VacuityRefusalKind::NoSiblingToContradict => VerifyEffect::NoSiblingToContradict {
                 contract_cid: cid.clone(),
@@ -3383,6 +3470,131 @@ mod tests {
             res[0].reason.contains("String vs Int"),
             "reason must name both regimes: {}",
             res[0].reason
+        );
+    }
+
+    fn str_const(v: &str) -> Json {
+        json!({"kind":"const","sort":{"kind":"primitive","name":"String"},"value":v})
+    }
+    fn str_in_regex(subject: Json, pattern: &str) -> Json {
+        json!({"kind":"atomic","name":"str.in-regex","args":[subject, str_const(pattern)]})
+    }
+
+    /// COVERING UNIVERSE — regex-as-language. A LONE `str.in-regex(subject, R)` over
+    /// a PINNED GROUND subject is NOT vacuous: z3's string/regex sort decides
+    /// membership. A matching literal subject -> str.in_re SAT -> DISCHARGED. Before
+    /// the covering-universe exception this lone fact tripped the count<2 vacuity
+    /// guard and was falsely Refused; the regex-membership showcase good suite is
+    /// built on this discharge.
+    #[test]
+    fn lone_ground_regex_membership_matching_subject_discharges() {
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "is_match#euf#callresult_is_match_a1(s:1)::assertion";
+        let inv = str_in_regex(str_const("alice_01"), "^[a-z][a-z0-9_]{2,15}$");
+        let mut pool = MementoPool::default();
+        insert_contract(&mut pool, "blake3-512:regexgood", name, inv);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 1, "one membership row: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Discharged,
+            "a matching literal subject is a MEMBER of the walked language -> discharged: {res:?}"
+        );
+    }
+
+    /// THE TEETH (bad twin, same universe). A LONE `str.in-regex` over a NON-matching
+    /// pinned subject -> str.in_re UNSAT -> the membership is REFUTED (Unsatisfied),
+    /// by the regular language itself, not a within-test contradiction. Same atom
+    /// shape as the good twin, subject the regex rejects, z3 flips the verdict.
+    #[test]
+    fn lone_ground_regex_membership_nonmatching_subject_is_refuted() {
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "is_match#euf#callresult_is_match_a1(s:1)::assertion";
+        // "Alice!": uppercase lead AND '!' body char, both outside the class.
+        let inv = str_in_regex(str_const("Alice!"), "^[a-z][a-z0-9_]{2,15}$");
+        let mut pool = MementoPool::default();
+        insert_contract(&mut pool, "blake3-512:regexbad", name, inv);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 1, "one membership row: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "a non-matching subject is REFUTED by z3 str.in_re UNSAT -> the teeth: {res:?}"
+        );
+    }
+
+    /// SOUNDNESS RAIL. The covering-universe exception fires ONLY for a PINNED
+    /// ground subject. A membership over an UNPINNED subject (an uninterpreted
+    /// `call:` callresult) is trivially SAT — z3 picks some member string — so it
+    /// must STAY vacuous and Refused, never a false discharge. This keeps the
+    /// pre-vacuity-fix false-Discharged bug impossible on the membership path.
+    #[test]
+    fn lone_regex_membership_unpinned_subject_stays_vacuous_refused() {
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "is_match#euf#callresult_is_match_a1(s:1)::assertion";
+        let opaque_subject = json!({"kind":"ctor","name":"call:subject","args":[]});
+        let inv = str_in_regex(opaque_subject, "^[a-z][a-z0-9_]{2,15}$");
+        let mut pool = MementoPool::default();
+        insert_contract(&mut pool, "blake3-512:regexopaque", name, inv);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 1, "one membership row: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "an unpinned (uninterpreted callresult) subject is trivially SAT -> must stay vacuous/Refused, not falsely Discharged: {res:?}"
+        );
+        assert!(
+            res[0].reason.contains("single constraint has no sibling"),
+            "vacuity reason must surface (read-compat pin preserved): {}",
+            res[0].reason
+        );
+    }
+
+    /// MIXED-OPERATOR SAME-TERM, number sort universe. Two facts about the SAME
+    /// left-operand call term but DIFFERENT operators must JOIN and let the number
+    /// sort decide. `enc(5) < 10 ∧ enc(5) > 20` has no Int model -> UNSAT -> REFUSED.
+    /// The operator is not part of the bucket key; a (term, operator) bucket would
+    /// throw this verdict away. This joins through the existing callsite-keyed
+    /// conjoin path (same `#euf#` name -> one obligation -> number sort in the pot).
+    #[test]
+    fn mixed_operator_same_term_lt_and_gt_is_unsat() {
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "enc#euf#callresult_enc_a1(i:1)::assertion";
+        let enc5 = || json!({"kind":"ctor","name":"call:enc","args":[int(5)]});
+        let lt10 = json!({"kind":"atomic","name":"<","args":[enc5(), int(10)]});
+        let gt20 = json!({"kind":"atomic","name":">","args":[enc5(), int(20)]});
+        let mut pool = MementoPool::default();
+        insert_contract(&mut pool, "blake3-512:enclt", name, lt10);
+        insert_contract(&mut pool, "blake3-512:encgt", name, gt20);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 1, "same-named facts conjoin to one obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "enc(5)<10 AND enc(5)>20 is UNSAT through the number sort universe: {res:?}"
+        );
+    }
+
+    /// MIXED-OPERATOR SAME-TERM, satisfiable twin. `enc(5) < 10 ∧ enc(5) < 15` HAS
+    /// an Int model -> SAT -> DISCHARGED, through the same number sort universe. The
+    /// good/bad pair proves the join genuinely decides (both directions flip through
+    /// the same key/universe structure), not a structural "a universe is nearby".
+    #[test]
+    fn mixed_operator_same_term_lt_and_lt_is_sat() {
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "enc#euf#callresult_enc_a1(i:1)::assertion";
+        let enc5 = || json!({"kind":"ctor","name":"call:enc","args":[int(5)]});
+        let lt10 = json!({"kind":"atomic","name":"<","args":[enc5(), int(10)]});
+        let lt15 = json!({"kind":"atomic","name":"<","args":[enc5(), int(15)]});
+        let mut pool = MementoPool::default();
+        insert_contract(&mut pool, "blake3-512:enclt10", name, lt10);
+        insert_contract(&mut pool, "blake3-512:enclt15", name, lt15);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 1, "same-named facts conjoin to one obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Discharged,
+            "enc(5)<10 AND enc(5)<15 is SAT through the number sort universe: {res:?}"
         );
     }
 
