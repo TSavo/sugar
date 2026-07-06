@@ -105,6 +105,13 @@ class BinaryOperatorOperation:
             return Complete(StringValue(receiver.value + self.right.value))
         if self.operator == "*" and isinstance(self.right, TermValue):
             return self._repeat_string(receiver, self.right)
+        if self.operator == "*" and isinstance(self.right, SymbolicValue):
+            return self._symbolic_sequence_repeat_effect(receiver="StringValue")
+        if self.operator == "+" and isinstance(self.right, SymbolicValue):
+            return self._symbolic_string_concat_effect(
+                observed="StringValue + SymbolicValue",
+                carrier="right operand's runtime __radd__ carrier",
+            )
         if isinstance(self.right, StringValue) and self.operator in {"==", "!="}:
             equal = receiver.value == self.right.value
             return Complete(BoolValue(equal if self.operator == "==" else not equal))
@@ -260,12 +267,16 @@ class BinaryOperatorOperation:
             )
         )
 
-    def _symbolic_string_concat_effect(self) -> Outcome:
+    def _symbolic_string_concat_effect(
+        self,
+        *,
+        observed: str = "SymbolicValue + StringValue",
+        carrier: str = "receiver's runtime __add__ carrier",
+    ) -> Outcome:
         return Incomplete(
             RuntimeEffect(
                 "symbolic string concatenation runtime boundary: "
-                "SymbolicValue + StringValue depends on the receiver's runtime "
-                "__add__ carrier and the string-concat universe bridge is not "
+                f"{observed} depends on the {carrier} and the string-concat universe bridge is not "
                 "proof-bearing yet; keep as typed red until a cited String-sorted "
                 f"concat floor owns this shape. blame={self.blame}"
             )

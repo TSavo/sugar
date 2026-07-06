@@ -1,23 +1,15 @@
 {
   "kind": "pandas-wall-ratchet-floors",
   "floors": {
-    "mode": "construction-gaps",
+    "mode": "complete",
     "construction_gaps": {
-      "total_ceiling": 11,
-      "templates": {
-        "Constructor|BuiltinCallSugar|T.__dir__|constructor-bound method": 1,
-        "Floor|BinOpSugar|StringValue+StringValue|binary operator operand floor": 1,
-        "Floor|BinOpSugar|StringValue+SymbolicValue|binary operator operand floor": 1,
-        "Floor|BinOpSugar|SymbolicValue+StringValue|binary operator operand floor": 2,
-        "Floor|MapSugar|SymbolicValue|map_with": 2,
-        "Floor|literal_call_report kw:float_format|LambdaCallable|project this floor value to a term": 3,
-        "Sugar|python.factory|Assert|statement": 1
-      }
+      "total_ceiling": 0,
+      "templates": {}
     },
     "complete_floors": {
-      "green": 0,
+      "green": 7870,
       "implications": 0,
-      "pre_bearing": 0
+      "pre_bearing": 69
     },
     "frontier": {
       "message_needle": "",

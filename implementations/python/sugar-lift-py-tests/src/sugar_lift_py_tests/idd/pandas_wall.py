@@ -11,6 +11,7 @@ from typing import Any, Callable, Literal, Mapping, Optional, Sequence
 
 from .collect_panic_audit import (
     _cached_audit_workspace,
+    _prepare_audit_workspace,
     _resolve_installed_package_path,
     CachedAuditWorkspace,
 )
@@ -234,7 +235,7 @@ def build_pandas_wall(
 
     sugar_bin = _resolve_sugar_bin(root, profile, runner)
     package_path = resolver("pandas").resolve()
-    cached = _cached_workspace(package_path, root, cache_root)
+    cached = _workspace_for_mode(package_path, root, output_dir, floors, cache_root)
     workspace = cached.workspace
     env = _wall_env(root, sugar_bin)
 
@@ -671,6 +672,24 @@ def _int_value(value: object, label: str) -> int:
     if not isinstance(value, int) or value < 0:
         raise TypeError(f"pandas wall floor {label} must be a non-negative integer")
     return value
+
+
+def _workspace_for_mode(
+    package_path: Path,
+    root: Path,
+    output_dir: Path,
+    floors: PandasWallFloors,
+    cache_root: Optional[Path],
+) -> CachedAuditWorkspace:
+    if floors.mode == "complete":
+        workspace = output_dir / "workspace" / package_path.name
+        _prepare_audit_workspace(package_path, root, workspace, audit_only=False)
+        return CachedAuditWorkspace(
+            workspace=workspace,
+            cache_key="complete-report-workspace",
+            hit=False,
+        )
+    return _cached_workspace(package_path, root, cache_root)
 
 
 def _cached_workspace(

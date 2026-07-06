@@ -327,6 +327,10 @@ def test_build_complete_mode_runs_json_report_and_checks_full_floors(
     assert result.report_path is not None
     assert result.frontier_path is None
     assert result.breaches == ()
+    manifest = result.workspace_path / ".sugar/lift/python/manifest.toml"
+    manifest_text = manifest.read_text(encoding="utf-8")
+    assert '"--rpc"' in manifest_text
+    assert '"--audit-only"' not in manifest_text
 
 
 def _gap(
