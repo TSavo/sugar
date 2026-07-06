@@ -2,6 +2,7 @@
 name = "sugar-check"
 version = "0.1.0"
 description = "Behavioral semver for Python packages: sugar diff over the harvested pytest contracts."
+license = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.9"
 # Requires the sugar pytest lifter importable in this interpreter, and the
 # `sugar` binary on PATH (or SUGAR_BIN). sugar-lift-py-tests is published from
