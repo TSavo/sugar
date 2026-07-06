@@ -13,7 +13,7 @@ use serde_json::{json, Value as Json};
 use crate::types::ObligationVerdict;
 
 const NO_SIBLING_TO_CONTRADICT_REASON: &str =
-    "consistency check vacuous: single constraint has no sibling to contradict — not a substantive discharge";
+    "consistency check vacuous: single constraint has no sibling to contradict and no covering universe joins the left-operand term — not a substantive discharge";
 const MISSING_INDEPENDENT_KIND_REASON: &str =
     "consistency check lacks an independent-KIND witness: Stated testimony cannot corroborate Stated testimony";
 
