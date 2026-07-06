@@ -125,5 +125,110 @@ class ExamplesGateComparisonTest(unittest.TestCase):
         )
 
 
+class RunnerEnvClassificationTest(unittest.TestCase):
+    def test_venv_permission_denied_classifies_as_runner_env(self) -> None:
+        log = "bash: /tmp/numpy-witness-venv/bin/python: Permission denied\n"
+        self.assertEqual(
+            examples_gate.classify_failure(log),
+            "runner-env/venv-permission-denied",
+        )
+
+    def test_native_extension_mmap_failure_classifies_as_runner_env(self) -> None:
+        log = (
+            "ImportError: numpy.core.multiarray failed to import\n"
+            "OSError: [Errno 12] cannot mmap\n"
+        )
+        self.assertEqual(
+            examples_gate.classify_failure(log),
+            "runner-env/native-extension-load-failure",
+        )
+
+    def test_missing_module_in_temp_venv_classifies_as_runner_env(self) -> None:
+        log = (
+            "/tmp/sklearn-witness-venv/bin/python3: "
+            "ModuleNotFoundError: No module named 'sklearn'\n"
+        )
+        self.assertEqual(
+            examples_gate.classify_failure(log),
+            "runner-env/missing-module-in-temp-venv",
+        )
+
+    def test_runner_env_shadows_ambiguous_product_pattern_text(self) -> None:
+        # A run.sh permission-denied failure can legitimately contain product
+        # shape text (e.g. from a prior successful phase's saved output) but
+        # must still classify as runner-env, never as product drift.
+        log = (
+            "expected PROVEN\n"
+            "bash: /tmp/pandas-witness-venv/run.sh: Permission denied\n"
+        )
+        self.assertEqual(
+            examples_gate.classify_failure(log),
+            "runner-env/venv-permission-denied",
+        )
+
+    def test_product_shape_still_classifies_when_no_runner_env_signal(self) -> None:
+        log = "self-check: expected PROVEN\n"
+        self.assertEqual(
+            examples_gate.classify_failure(log),
+            "verdict-drift/expected-proven-label",
+        )
+
+    def test_is_runner_env_shape(self) -> None:
+        self.assertTrue(
+            examples_gate.is_runner_env_shape("runner-env/venv-permission-denied")
+        )
+        self.assertFalse(examples_gate.is_runner_env_shape("verdict-drift/expected-proven-label"))
+        self.assertFalse(examples_gate.is_runner_env_shape(None))
+
+
+class WriteExpectationsTest(unittest.TestCase):
+    def test_refuses_to_write_when_a_row_is_runner_env(self) -> None:
+        summary = {
+            "version": 1,
+            "suite": "smoke",
+            "examples": [
+                {
+                    "name": "examples/numpy-showcase/run.sh",
+                    "rc": 1,
+                    "verdict": "NAMED_RED",
+                    "failure_shape": "runner-env/missing-module-in-temp-venv",
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            expectation_path = pathlib.Path(tmp) / "expectations.json"
+            rc = examples_gate.write_expectations_from_summary(
+                summary=summary,
+                expectation_path=expectation_path,
+                output=sys.stdout,
+            )
+            self.assertEqual(rc, 1)
+            self.assertFalse(expectation_path.exists())
+
+    def test_writes_expectations_when_no_runner_env_rows(self) -> None:
+        summary = {
+            "version": 1,
+            "suite": "smoke",
+            "examples": [
+                {
+                    "name": "examples/demo/run.sh",
+                    "rc": 0,
+                    "verdict": "GREEN",
+                    "failure_shape": None,
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            expectation_path = pathlib.Path(tmp) / "expectations.json"
+            rc = examples_gate.write_expectations_from_summary(
+                summary=summary,
+                expectation_path=expectation_path,
+                output=sys.stdout,
+            )
+            self.assertEqual(rc, 0)
+            written = json.loads(expectation_path.read_text(encoding="utf-8"))
+            self.assertEqual(written["examples"][0]["expected"], "GREEN")
+
+
 if __name__ == "__main__":
     unittest.main()
