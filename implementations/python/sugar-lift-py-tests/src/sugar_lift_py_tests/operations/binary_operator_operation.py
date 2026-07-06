@@ -101,6 +101,8 @@ class BinaryOperatorOperation:
 
     def binary_string(self, receiver: StringValue, ctx: object) -> Outcome:
         del ctx
+        if self.operator == "+" and isinstance(self.right, StringValue):
+            return Complete(StringValue(receiver.value + self.right.value))
         if self.operator == "*" and isinstance(self.right, TermValue):
             return self._repeat_string(receiver, self.right)
         if isinstance(self.right, StringValue) and self.operator in {"==", "!="}:
