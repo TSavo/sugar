@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -18,11 +17,6 @@ from .command_result import CommandResult
 
 RunCommand = Callable[[list[str], Path, dict[str, str]], CommandResult]
 PackagePathResolver = Callable[[str], Path]
-
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-_REASONED_RED_RE = re.compile(
-    r"\bRED(?: HERE)? (?:effect|gap)(?::|\s+at\b)|\bRED via (?:effect|gap)\b"
-)
 
 
 @dataclass(frozen=True)
@@ -64,7 +58,6 @@ class NumpyWallFloors:
 class NumpyWallResult:
     summary: NumpyWallSummary
     breaches: tuple[str, ...]
-    visual_path: Path
     report_path: Path
     summary_path: Path
 
@@ -73,10 +66,34 @@ def load_wall_floors(path: Path) -> NumpyWallFloors:
     return NumpyWallFloors.from_json_dict(json.loads(path.read_text(encoding="utf-8")))
 
 
-def summarize_numpy_wall(
-    visual_text: str, report_json: Mapping[str, Any]
-) -> NumpyWallSummary:
-    green, red_reasoned, red_bare = _visual_counts(visual_text)
+def summarize_numpy_wall(report_json: Mapping[str, Any]) -> NumpyWallSummary:
+    """Summarize a wall from `sugar lift --report --json`'s `lineAccounting`
+    (implementations/rust/sugar-cli/src/line_accounting.rs), never the
+    `--visual` ANSI render -- Criterion 14 (#3706) retires that scrape.
+
+    green         -- lines classified `warrant` or `support`: proofir-bearing
+                      or affirmatively inert, the total non-effect coverage.
+    red_reasoned  -- lines classified `effect`: a named typed effect with
+                      grounds anchored to the line.
+    red_bare      -- effect lines with no grounds. `line_accounting`
+                      always attaches grounds (the refusal reason, or the
+                      callee name as a fallback), so this is 0 by
+                      construction; kept as a field so the invariant stays
+                      visible and the floor check below still fires if that
+                      construction is ever broken.
+    """
+    entries = _json_array(report_json, "lineAccounting")
+    green = sum(1 for e in entries if e.get("class") in ("warrant", "support"))
+    red_reasoned = sum(
+        1
+        for e in entries
+        if e.get("class") == "effect" and str(e.get("grounds") or "").strip()
+    )
+    red_bare = sum(
+        1
+        for e in entries
+        if e.get("class") == "effect" and not str(e.get("grounds") or "").strip()
+    )
     contracts = _json_array(report_json, "contracts")
     call_edges = _json_array(report_json, "callEdges")
     return NumpyWallSummary(
@@ -137,19 +154,10 @@ def build_numpy_wall(
     _prepare_audit_workspace(package_path, root, workspace, audit_only=False)
     env = _wall_env(root, sugar_bin)
 
-    visual_result = runner(
-        [os.fspath(sugar_bin), "lift", "--report", "--visual", str(workspace)],
-        root,
-        env,
-    )
-    visual_path = output_dir / "wall.txt"
-    _write_command_receipt(visual_path, visual_result)
-    if visual_result.returncode != 0:
-        raise RuntimeError(
-            "numpy wall visual render failed "
-            f"exit={visual_result.returncode}; see {visual_path}"
-        )
-
+    # Criterion 14 (#3706): the wall consumes `--report --json`'s
+    # `lineAccounting` only. It no longer runs `--report --visual` at all --
+    # that ANSI render is a human-facing product, not eligible evidence, and
+    # scraping it here is exactly the practice this criterion retires.
     report_result = runner(
         [os.fspath(sugar_bin), "lift", "--report", "--json", str(workspace)],
         root,
@@ -169,7 +177,7 @@ def build_numpy_wall(
     if not isinstance(report_json, Mapping):
         raise RuntimeError("numpy wall json report must be a JSON object")
 
-    summary = summarize_numpy_wall(visual_result.stdout, report_json)
+    summary = summarize_numpy_wall(report_json)
     summary_path = output_dir / "summary.json"
     summary_path.write_text(
         json.dumps(summary.to_json_dict(), indent=2, sort_keys=True) + "\n",
@@ -179,7 +187,6 @@ def build_numpy_wall(
     return NumpyWallResult(
         summary=summary,
         breaches=breaches,
-        visual_path=visual_path,
         report_path=report_path,
         summary_path=summary_path,
     )
@@ -233,28 +240,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"- {breach}", file=sys.stderr)
         print(f"summary: {result.summary_path}", file=sys.stderr)
         print(f"report: {result.report_path}", file=sys.stderr)
-        print(f"visual: {result.visual_path}", file=sys.stderr)
         return 1
     print(f"numpy wall ratchet PASS: {result.summary_path}", file=sys.stderr)
     return 0
-
-
-def _visual_counts(visual_text: str) -> tuple[int, int, int]:
-    green = 0
-    red_reasoned = 0
-    red_bare = 0
-    for raw_line in visual_text.splitlines():
-        line = _ANSI_RE.sub("", raw_line)
-        if not line.startswith("    "):
-            continue
-        if re.search(r"\bGREEN\b", line):
-            green += 1
-        if re.search(r"\bRED\b", line):
-            if _REASONED_RED_RE.search(line):
-                red_reasoned += 1
-            else:
-                red_bare += 1
-    return green, red_reasoned, red_bare
 
 
 def _json_array(

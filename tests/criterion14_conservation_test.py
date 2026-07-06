@@ -1,20 +1,28 @@
 """Criterion 14 conservation ratchet tests.
 
-Part of #3686. Pins the exact, honestly-measured residue
+Part of #3686 / #3706. Pins the exact, honestly-measured residue
 R(unaccounted-lines-over-itsdangerous) for a small real itsdangerous slice
 (url_safe.py's base64 helpers, tests/fixtures/criterion14/) against the
-report shape `sugar lift --report --json` emits today
-(implementations/rust/sugar-cli/src/report_fmt.rs).
+report shape `sugar lift --report --json` emits
+(implementations/rust/sugar-cli/src/report_fmt.rs +
+implementations/rust/sugar-cli/src/line_accounting.rs).
 
-R is NOT zero today, and this test does not pretend otherwise: the report
-schema only expresses "warrant" (a discharged row with a followable CID).
-There is no field for "support" or "effect" yet, so every line the fixture
-report does not name as a discharged, CID-bearing row is unaccounted --
-including the docstrings, blank lines, the `def` lines, and even the
-`refused` Exception row (refused is not a terminal state Criterion 14
-recognizes; only warrant/support/effect are). That residue count is the
-campaign meter: it should shrink only as real support/effect classification
-lands in the report schema, never by relaxing this test.
+As of #3706 the report grew a `lineAccounting` array: warrant (a discharged
+row with a followable CID) and effect (a refused row: callee names the
+effect, `reason` is the grounds) come from callsite rows alone; support (an
+affirmatively inert line: blank, import, docstring, bare def/class
+signature) is layered on top by `cmd_lift::render_report_json`, which has
+source-file access `report_fmt` does not.
+
+R is NOT zero on this slice, and this test does not pretend otherwise: the
+support classifier is deliberately narrow (blank/import/docstring/signature
+only). Ordinary statement lines inside a warranted function body -- the
+`if isinstance(...)`/`.encode(...)` lines, and the `raise` line whose
+refused-effect row is anchored one line up at the `except:` line -- are not
+support and are not separately warranted, so they stay honest residue. That
+residue count is the campaign meter: it should shrink only as real
+classification coverage lands (e.g. body lines under an already-discharged
+function's CID becoming warrant too), never by relaxing this test.
 """
 
 from __future__ import annotations
@@ -34,6 +42,11 @@ FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "criterion14"
 SOURCE = FIXTURE_DIR / "itsdangerous_url_safe_slice.py"
 REPORT = FIXTURE_DIR / "itsdangerous_url_safe_slice.report.json"
 
+RESIDUE_LINES = frozenset({15, 16, 25, 26, 27, 28, 31})
+SUPPORT_LINES = frozenset(
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19, 20, 21, 22, 23, 24}
+)
+
 
 @pytest.fixture(scope="module")
 def report_json():
@@ -46,39 +59,48 @@ def test_warrant_lines_are_the_discharged_cid_bearing_rows(report_json):
     assert result.warrant == 2
 
 
-def test_report_schema_cannot_express_support_or_effect_today(report_json):
+def test_refused_row_is_now_an_effect_line(report_json):
     result = check_conservation(report_json, SOURCE)
-    # Honest measurement, not a design choice: today's report_to_json has no
-    # field a "support" or "effect" classification could live in. When
-    # implementations/rust/sugar-cli/src/report_fmt.rs grows one, this
-    # assertion is exactly what should start failing.
-    assert result.support == 0
-    assert result.effect == 0
+    # Line 30 (the refused Exception row) is now classified `effect`: the
+    # row's callee names the effect, its `reason` is the grounds. It must
+    # NOT show up in the residue any more.
+    assert result.effect_lines == frozenset({30})
+    assert result.effect == 1
+    assert not any(r.line == 30 for r in result.unaccounted)
 
 
-def test_refused_row_does_not_count_as_accounted(report_json):
+def test_support_lines_cover_blanks_imports_docstrings_and_signatures(report_json):
     result = check_conservation(report_json, SOURCE)
-    # Line 30 (the refused Exception row) is neither warrant, support, nor
-    # effect -- Criterion 14 recognizes exactly three terminal states, and
-    # "refused" is not one of them. It must show up in the residue.
-    assert any(r.line == 30 for r in result.unaccounted)
+    assert result.support_lines == SUPPORT_LINES
+    assert result.support == len(SUPPORT_LINES)
+
+
+def test_ordinary_statement_lines_stay_honest_residue(report_json):
+    result = check_conservation(report_json, SOURCE)
+    # The `if isinstance(...)`/`.encode(...)` body lines are neither
+    # support (they are not inert) nor separately warranted (no row anchors
+    # a CID to them); they must remain unaccounted, not be invented as
+    # support just to shrink the number.
+    residue_lines = {r.line for r in result.unaccounted}
+    assert residue_lines == RESIDUE_LINES
 
 
 def test_measured_conservation_residue_pinned_baseline(report_json):
     """R(unaccounted-lines-over-itsdangerous) baseline for this slice.
 
-    Measured today: 31 total lines, 2 warrant, 0 support, 0 effect -> 29
-    unaccounted. This is the honest pin (T's law: never fake a zero). Ratchet
-    direction is downward only: a future PR may lower this number by growing
-    real support/effect classification in the report schema, or by widening
-    the fixture; it must never raise it silently.
+    Measured after #3706: 31 total lines, 2 warrant, 21 support, 1 effect ->
+    7 unaccounted (down from the pre-#3706 baseline of 29). This is the
+    honest pin (T's law: never fake a zero). Ratchet direction is downward
+    only: a future PR may lower this number by growing real classification
+    coverage in the report schema or lift pipeline, or by widening the
+    fixture; it must never raise it silently.
     """
     result = check_conservation(report_json, SOURCE)
     assert result.total_lines == 31
     assert result.warrant == 2
-    assert result.support == 0
-    assert result.effect == 0
-    assert result.residue == 29
+    assert result.support == 21
+    assert result.effect == 1
+    assert result.residue == 7
     assert not result.conserved()
 
 
@@ -99,12 +121,12 @@ def test_cli_exits_nonzero_naming_offenders(capsys):
     exit_code = main([str(REPORT), str(SOURCE)])
     captured = capsys.readouterr()
     assert exit_code == 1
-    assert "R(unaccounted-lines-over-itsdangerous_url_safe_slice.py) = 29" in captured.err
-    assert "UNACCOUNTED itsdangerous_url_safe_slice.py:1" in captured.err
+    assert "R(unaccounted-lines-over-itsdangerous_url_safe_slice.py) = 7" in captured.err
+    assert "UNACCOUNTED itsdangerous_url_safe_slice.py:15" in captured.err
 
 
 def test_cli_max_residue_escape_hatch_permits_pinned_baseline(capsys):
     from criterion14_conservation import main
 
-    exit_code = main([str(REPORT), str(SOURCE), "--max-residue", "29"])
+    exit_code = main([str(REPORT), str(SOURCE), "--max-residue", "7"])
     assert exit_code == 0

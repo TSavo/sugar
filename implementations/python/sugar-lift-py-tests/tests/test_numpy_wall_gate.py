@@ -15,20 +15,15 @@ from sugar_lift_py_tests.idd.numpy_wall import (
 
 
 def test_summarizes_wall_with_report_json_census_definitions() -> None:
-    visual = """
-report sections: unit test facts=1541, body universes=1566, factory report=37230, implications=736, source mementos=2383
-universe visual:
-  universe demo::post
-    a.py:1  GREEN
-    a.py:2  RED HERE effect: runtime-effect owner=await
-    a.py:3  RED via gap at a.py:2
-    a.py:4  RED
-factory visual:
-call edges observed:
-  - a.post -> b.pre cid=blake3-512:abc [pre: x > 0]
-  - a.post -> missing.pre cid=null
-"""
+    # Criterion 14 (#3706): the summary is built entirely from
+    # `lineAccounting`, never a scrape of `--visual` ANSI text.
     report = {
+        "lineAccounting": [
+            {"file": "a.py", "line": 1, "class": "warrant", "grounds": "cid:blake3-512:x"},
+            {"file": "a.py", "line": 2, "class": "effect", "grounds": "runtime-effect owner=await"},
+            {"file": "a.py", "line": 3, "class": "effect", "grounds": "gap at a.py:2"},
+            {"file": "a.py", "line": 4, "class": "effect", "grounds": ""},
+        ],
         "contracts": [
             {"name": "plain", "post": {"kind": "atomic"}},
             {"name": "pre-one", "pre": {"kind": "atomic"}},
@@ -44,7 +39,7 @@ call edges observed:
         ],
     }
 
-    assert summarize_numpy_wall(visual, report) == NumpyWallSummary(
+    assert summarize_numpy_wall(report) == NumpyWallSummary(
         green=1,
         red_reasoned=2,
         red_bare=1,
@@ -97,18 +92,14 @@ def test_build_uses_sugarbin_and_reuses_one_audit_workspace(tmp_path: Path) -> N
                 str(tmp_path / "shelf" / "sugar-darwin-x86_64-release-stamp") + "\n",
                 "",
             )
-        if command[1:4] == ["lift", "--report", "--visual"]:
-            assert command[0].endswith("sugar-darwin-x86_64-release-stamp")
-            assert command[-1].startswith(str(tmp_path / "wall" / "workspace"))
-            assert env["SUGAR_BIN"] == command[0]
-            return CommandResult(0, "    pkg.py:1  GREEN\n", "")
         if command[1:4] == ["lift", "--report", "--json"]:
             assert command[0].endswith("sugar-darwin-x86_64-release-stamp")
             assert command[-1].startswith(str(tmp_path / "wall" / "workspace"))
             assert env["SUGAR_BIN"] == command[0]
             return CommandResult(
                 0,
-                '{"contracts": [{"pre": {"kind": "atomic"}}], "callEdges": [{"kind": "implication"}]}\n',
+                '{"lineAccounting": [{"file": "pkg.py", "line": 1, "class": "warrant", "grounds": "cid:blake3-512:x"}], '
+                '"contracts": [{"pre": {"kind": "atomic"}}], "callEdges": [{"kind": "implication"}]}\n',
                 "",
             )
         raise AssertionError(f"unexpected command: {command}")
@@ -128,18 +119,18 @@ def test_build_uses_sugarbin_and_reuses_one_audit_workspace(tmp_path: Path) -> N
     assert result.breaches == ()
     assert commands[0] == [str(root / "bin/sugarbin"), "--profile", "release"]
     assert all(command[0] != "cargo" for command in commands)
+    # Criterion 14 (#3706): the wall no longer runs `lift --report --visual`
+    # at all -- only `--json`'s `lineAccounting` feeds the summary.
+    assert all(command[1:4] != ["lift", "--report", "--visual"] for command in commands)
     manifest = (
         tmp_path / "wall" / "workspace" / "numpy" / ".sugar/lift/python/manifest.toml"
     )
     assert '"--rpc"' in manifest.read_text(encoding="utf-8")
     assert '"--audit-only"' not in manifest.read_text(encoding="utf-8")
-    assert (tmp_path / "wall" / "wall.txt").read_text(encoding="utf-8") == (
-        "    pkg.py:1  GREEN\n"
-    )
     assert (
         (tmp_path / "wall" / "report.json")
         .read_text(encoding="utf-8")
-        .startswith('{"contracts"')
+        .startswith('{"lineAccounting"')
     )
     assert '"implications": 1' in (tmp_path / "wall" / "summary.json").read_text()
 
@@ -162,12 +153,14 @@ def test_wall_gate_fails_on_breach(tmp_path: Path) -> None:
                 str(tmp_path / "shelf" / "sugar-darwin-x86_64-release-stamp") + "\n",
                 "",
             )
-        if command[1:4] == ["lift", "--report", "--visual"]:
-            assert env["SUGAR_BIN"] == command[0]
-            return CommandResult(0, "    pkg.py:1  GREEN\n", "")
         if command[1:4] == ["lift", "--report", "--json"]:
             assert env["SUGAR_BIN"] == command[0]
-            return CommandResult(0, '{"contracts": [], "callEdges": []}\n', "")
+            return CommandResult(
+                0,
+                '{"lineAccounting": [{"file": "pkg.py", "line": 1, "class": "warrant", "grounds": "cid:blake3-512:x"}], '
+                '"contracts": [], "callEdges": []}\n',
+                "",
+            )
         raise AssertionError(f"unexpected command: {command}")
 
     result = build_numpy_wall(

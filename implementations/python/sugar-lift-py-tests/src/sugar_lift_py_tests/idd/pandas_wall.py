@@ -185,9 +185,11 @@ def summarize_pandas_frontier_error(output_text: str) -> Optional[PandasWallSumm
 
 
 def summarize_pandas_completed_wall(
-    visual_text: str, report_json: Mapping[str, Any]
+    report_json: Mapping[str, Any],
 ) -> PandasWallSummary:
-    summary = summarize_numpy_wall(visual_text, report_json)
+    # Criterion 14 (#3706): green/red_reasoned/red_bare come from the JSON
+    # report's `lineAccounting`, never a scrape of the `--visual` render.
+    summary = summarize_numpy_wall(report_json)
     return PandasWallSummary(
         mode="complete",
         gaps_total=0,
@@ -328,7 +330,7 @@ def build_pandas_wall(
     if not isinstance(report_json, Mapping):
         raise RuntimeError("pandas wall json report must be a JSON object")
 
-    summary = summarize_pandas_completed_wall(visual_result.stdout, report_json)
+    summary = summarize_pandas_completed_wall(report_json)
     summary_path = _write_summary(output_dir, summary)
     return PandasWallResult(
         summary=summary,
