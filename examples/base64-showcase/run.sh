@@ -183,6 +183,9 @@ next((r.get('status') for r in d.get('rows', []) if 'classify#euf#' in (r.get('p
     [ "$encoder64_status" = "unsatisfied" ] || {
       echo "FAIL[$suite]: encode64 consistency row must be unsatisfied (refuted), got $encoder64_status"; exit 1
     }
+    [ "$encoder20_status" = "unsatisfied" ] || {
+      echo "FAIL[$suite]: encode20 consistency row must be unsatisfied (refuted), got $encoder20_status"; exit 1
+    }
     # pick/classify wrong-value twins must also be UNSATISFIED (BlockSugar teeth).
     [ "$pick_status" = "unsatisfied" ] || {
       echo "FAIL[$suite]: pick consistency row must be unsatisfied (refuted), got $pick_status"; exit 1
@@ -281,6 +284,8 @@ else:
     # Bad: encode64 row must be unsatisfied (refuted by body post).
     if encoder64_rows != ["unsatisfied"]:
         raise SystemExit(f"FAIL[{suite}]: encode64 durable consistency must be ['unsatisfied'], got {encoder64_rows}")
+    if encoder20_rows != ["unsatisfied"]:
+        raise SystemExit(f"FAIL[{suite}]: encode20 durable consistency must be ['unsatisfied'], got {encoder20_rows}")
     # pick/classify wrong-value twins must all be unsatisfied (BlockSugar refutes).
     if not pick_rows or any(s != "unsatisfied" for s in pick_rows):
         raise SystemExit(f"FAIL[{suite}]: pick durable consistency must all be 'unsatisfied', got {pick_rows}")

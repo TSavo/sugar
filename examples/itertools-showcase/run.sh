@@ -68,16 +68,23 @@ run_suite() {
   consistency_status="$(pyget "$prove_json" "
 ','.join([r.get('status') for r in d.get('rows', []) if (r.get('property', '') or '').startswith('consistency:') and 'witness-package' not in (r.get('property', '') or '')]) or 'MISSING'
 ")"
+  all_equal_status="$(pyget "$prove_json" "
+','.join([r.get('status') for r in d.get('rows', []) if (r.get('property', '') or '').startswith('consistency:') and 'method:all_equal#euf#' in (r.get('property', '') or '') and 'panic_callsite' not in (r.get('property', '') or '')]) or 'MISSING'
+")"
   witness_status="$(pyget "$prove_json" "
 next((r.get('status') for r in d.get('rows', []) if 'witness-package' in (r.get('property', '') or '')), 'MISSING')
 ")"
   echo "   prove consistency statuses: $consistency_status"
+  echo "   prove all_equal statuses: $all_equal_status"
   echo "   prove witness-package status: $witness_status"
 
   if [ "$expect_consistency" = "DISCHARGE" ]; then
     echo "$consistency_status" | grep -qv 'unsatisfied' || { echo "FAIL[$suite]: expected consistency discharge, got $consistency_status"; exit 1; }
+    [ "$all_equal_status" != "MISSING" ] || { echo "FAIL[$suite]: missing all_equal consistency rows"; exit 1; }
+    echo "$all_equal_status" | grep -Eq '^(discharged)(,discharged)*$' || { echo "FAIL[$suite]: expected all_equal discharge, got $all_equal_status"; exit 1; }
   else
     echo "$consistency_status" | grep -q 'unsatisfied' || { echo "FAIL[$suite]: expected consistency refusal, got $consistency_status"; exit 1; }
+    echo "$all_equal_status" | grep -q 'unsatisfied' || { echo "FAIL[$suite]: expected all_equal refutation, got $all_equal_status"; exit 1; }
   fi
 
   if [ "$expect_witness" = "DISCHARGE" ]; then
@@ -119,6 +126,13 @@ consistency = [
     if (r.get("property") or "").startswith("consistency:")
     and "witness-package" not in (r.get("property") or "")
 ]
+all_equal = [
+    r.get("status")
+    for r in rows
+    if (r.get("property") or "").startswith("consistency:")
+    and "method:all_equal#euf#" in (r.get("property") or "")
+    and "panic_callsite" not in (r.get("property") or "")
+]
 witness = [
     r.get("status")
     for r in rows
@@ -127,11 +141,15 @@ witness = [
 if not consistency:
     raise SystemExit(f"FAIL[{suite}]: durable verify has no consistency rows")
 if expect_consistency == "DISCHARGE":
-    if any(status != "discharged" for status in consistency):
+    if "unsatisfied" in consistency:
         raise SystemExit(f"FAIL[{suite}]: durable consistency statuses {consistency}")
+    if not all_equal or any(status != "discharged" for status in all_equal):
+        raise SystemExit(f"FAIL[{suite}]: durable all_equal statuses {all_equal}")
 else:
     if "unsatisfied" not in consistency:
         raise SystemExit(f"FAIL[{suite}]: durable consistency statuses {consistency}")
+    if "unsatisfied" not in all_equal:
+        raise SystemExit(f"FAIL[{suite}]: durable all_equal statuses {all_equal}")
 if expect_witness == "DISCHARGE":
     if witness != ["discharged"]:
         raise SystemExit(f"FAIL[{suite}]: durable witness statuses {witness}")
@@ -145,6 +163,7 @@ verified = any(
 if not verified:
     raise SystemExit(f"FAIL[{suite}]: witness dimension did not verify")
 print(f"   durable consistency statuses: {','.join(consistency)}")
+print(f"   durable all_equal statuses: {','.join(all_equal)}")
 print(f"   durable witness statuses: {','.join(witness)}")
 print("   durable witness dimension: verified")
 PY

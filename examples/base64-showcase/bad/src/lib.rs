@@ -34,6 +34,19 @@ fn encode64(value: &str) -> String {
     .collect()
 }
 
+/// Same correct 20-char encoder body as in the good suite.
+/// GenericBodySugar fires and emits the str.eq-bv-blocks post.
+fn encode20(value: &str) -> String {
+    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRST";
+    let b0 = value.as_bytes()[0] as u32;
+    [
+        ALPHA[(b0 & 15) as usize] as char,
+        ALPHA[((b0 >> 4) & 15) as usize] as char,
+    ]
+    .into_iter()
+    .collect()
+}
+
 /// Correct pick body -- same as good suite.  Wrong assertions below.
 fn pick(b: bool) -> u32 {
     if b { 1 } else { 2 }
@@ -60,6 +73,14 @@ mod tests {
         // this assertion claims "XXXX" -> UNSAT -> UNSATISFIED (refuted).
         // Also panics at runtime -> witness REFUSES independently.
         assert_eq!("XXXX", encode64("abc"));
+    }
+
+    #[test]
+    fn marquee_encode20_wrong() {
+        // WRONG: encode20("a") is "BG", not "ZZ".
+        // This pins the one-byte encoder's body-post bridge just like encode64:
+        // the body post forces callresult="BG"; this assertion claims "ZZ".
+        assert_eq!("ZZ", encode20("a"));
     }
 
     // ── Integer wrong-value control (original wrong row) ─────────────────────
