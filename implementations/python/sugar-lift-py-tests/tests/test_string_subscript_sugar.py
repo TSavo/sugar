@@ -181,7 +181,9 @@ def test_symbolic_string_slice_bound_reaches_named_floor_gap():
             {"s": StringValue("abcdef"), "i": SymbolicValue(make_var("i"))},
         )
 
-    assert raised.value.info["owner"] == "StringSubscriptSugar.string_slice"
-    assert raised.value.info["observed"] == "SymbolicValue"
-    assert raised.value.info["requested"] == "concrete slice bounds"
-    assert raised.value.info["fix"] == "add symbolic StringValue slice lowering"
+    assert raised.value.info.to_json()["owner"] == "StringSubscriptSugar.string_slice"
+    assert raised.value.info.to_json()["observed"] == "SymbolicValue"
+    assert raised.value.info.to_json()["requested"] == "concrete slice bounds"
+    assert (
+        raised.value.info.to_json()["fix"] == "add symbolic StringValue slice lowering"
+    )

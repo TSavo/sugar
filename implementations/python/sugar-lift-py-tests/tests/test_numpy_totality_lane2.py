@@ -9,6 +9,7 @@ from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.effect import FactoryGapEffect
 from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import GapKind, GapLocus
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.floor import StringValue, SymbolicValue, TermValue
@@ -38,8 +39,8 @@ def test_symbolic_method_call_is_registered_runtime_effect():
     assert outcome.effect.blame == "numpy/_core/tests/test_scalar_ctors.py:148:15"
     assert outcome.effect.observed == "SymbolicValue.astype"
     assert outcome.effect.requested == "symbolic receiver method floor"
-    assert outcome.effect.gap_kind == "Floor"
-    assert outcome.effect.gap_locus == "Construction"
+    assert outcome.effect.gap_kind is GapKind.FLOOR
+    assert outcome.effect.gap_locus is GapLocus.CONSTRUCTION
 
 
 def test_symbolic_method_effect_does_not_green_by_fiat():
@@ -89,8 +90,8 @@ def test_temporal_unbound_name_is_registered_floor_effect():
     assert name.effect.owner == "TemporalContext"
     assert name.effect.observed == "np"
     assert name.effect.requested == "value"
-    assert name.effect.gap_kind == "Floor"
-    assert name.effect.gap_locus == "Construction"
+    assert name.effect.gap_kind is GapKind.FLOOR
+    assert name.effect.gap_locus is GapLocus.CONSTRUCTION
 
 
 def test_temporal_bound_name_still_reduces_to_value():
@@ -225,8 +226,8 @@ def test_prior_assignment_block_effect_is_reported_at_assignment_locus():
                 "add cited warrant for SymbolicValue.mode or keep the opaque "
                 "runtime method as a typed effect"
             ),
-            gap_kind="Floor",
-            gap_locus="Construction",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
     )
 
@@ -297,8 +298,8 @@ def test_callsite_symbolic_expected_becomes_typed_proofir_effect():
     assert effect.effect.owner == "literal_call_report.equality_fact"
     assert effect.effect.observed == "open term variable(s): expected"
     assert effect.effect.requested == "closed EqualityFact terms"
-    assert effect.effect.gap_kind == "ProofIR"
-    assert effect.effect.gap_locus == "ConstructionLaw"
+    assert effect.effect.gap_kind is GapKind.PROOFIR
+    assert effect.effect.gap_locus is GapLocus.CONSTRUCTION_LAW
 
 
 def test_inherited_opaque_constructor_argument_becomes_typed_effect():
@@ -323,7 +324,7 @@ def test_inherited_opaque_constructor_argument_becomes_typed_effect():
     assert effect.effect.owner == "python.factory"
     assert effect.effect.observed == "my_int16(...)"
     assert effect.effect.requested == "inherited opaque constructor effect"
-    assert effect.effect.gap_kind == "Constructor"
+    assert effect.effect.gap_kind is GapKind.CONSTRUCTOR
 
 
 def test_plain_zero_init_constructor_with_arguments_becomes_typed_effect():
@@ -342,5 +343,5 @@ def test_plain_zero_init_constructor_with_arguments_becomes_typed_effect():
     assert isinstance(effect.effect, FactoryGapEffect)
     assert effect.effect.observed == "Plain(...)"
     assert effect.effect.requested == "zero-arg constructor"
-    assert effect.effect.gap_kind == "Constructor"
+    assert effect.effect.gap_kind is GapKind.CONSTRUCTOR
     assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]

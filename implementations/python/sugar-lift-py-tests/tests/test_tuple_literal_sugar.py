@@ -107,7 +107,7 @@ def test_list_literal_bad_element_floor_is_named_by_array_owner() -> None:
             ),
         )
 
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "ArrayLiteralSugar",
         "blame": "t.py:1:1",
         "observed": "SetLiteralValue",

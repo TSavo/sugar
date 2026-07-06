@@ -195,7 +195,7 @@ def test_factory_without_sugar_panics_on_last_popped_source_fragment() -> None:
 
     gap = raised.value
     assert str(gap).startswith("write more Sugar for this AST")
-    assert gap.info == {
+    assert gap.info.to_json() == {
         "owner": "python.factory",
         "blame": "base64.py:2:4",
         "observed": "Global",
@@ -290,7 +290,7 @@ def test_factory_panics_when_multiple_claims_own_the_same_ast_without_ordering()
         build_node(node, filename="ambiguous.py", role=SugarRole.TERM, catalog=catalog)
 
     assert str(raised.value).startswith("write more Sugar ordering for this AST")
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "python.factory",
         "blame": "ambiguous.py:1:0",
         "observed": "PrimitiveLiteral candidates=[AlphaLiteralSugar, BetaLiteralSugar]",
@@ -407,7 +407,7 @@ def test_array_literal_factory_hits_missing_primitive_literal_leaf_first() -> No
             catalog=SugarCatalog([ARRAY_LITERAL_CLAIM]),
         )
 
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "python.factory",
         "blame": "array.py:1:1",
         "observed": "PrimitiveLiteral",
@@ -449,7 +449,7 @@ def test_bitwise_op_factory_hits_missing_primitive_literal_leaf_first() -> None:
             catalog=SugarCatalog([BITWISE_OP_CLAIM]),
         )
 
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "python.factory",
         "blame": "bitwise.py:1:0",
         "observed": "PrimitiveLiteral",

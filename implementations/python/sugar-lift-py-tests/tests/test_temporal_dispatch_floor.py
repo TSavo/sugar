@@ -100,7 +100,7 @@ def test_temporal_dispatch_gap_names_missing_operation() -> None:
             ctx=ctx,
         )
 
-    assert gap.value.info == {
+    assert gap.value.info.to_json() == {
         "owner": "test gap",
         "blame": "t.py:1:0",
         "observed": "_UnknownTemporalOperation",
@@ -137,7 +137,7 @@ def test_rewrite_temporal_add_assign_bad_operand_names_floor_gap() -> None:
             blame="t.py:2:0",
         )
 
-    assert gap.value.info == {
+    assert gap.value.info.to_json() == {
         "owner": "test rewrite",
         "blame": "t.py:2:0",
         "observed": "TermValue+ArrayLiteral",

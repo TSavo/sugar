@@ -33,7 +33,7 @@ def test_operation_without_method_name_refuses_at_operation_class() -> None:
             ctx=object(),
         )
 
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "test",
         "blame": "t.py:1:0",
         "observed": "MissingMethodNameOperation",
@@ -57,7 +57,7 @@ def test_typoed_operation_method_name_blames_operation_not_receiver() -> None:
             ctx=object(),
         )
 
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "test",
         "blame": "t.py:1:0",
         "observed": "TypoedMethodNameOperation",

@@ -123,8 +123,8 @@ async def t():
     with pytest.raises(FactoryGap) as exc:
         body.reduce(reduce_ctx)
 
-    assert exc.value.info["observed"] == "AsyncFor.__anext__"
-    assert exc.value.info["requested"] == "async iteration stop floor"
+    assert exc.value.info.to_json()["observed"] == "AsyncFor.__anext__"
+    assert exc.value.info.to_json()["requested"] == "async iteration stop floor"
     assert (
         "AsyncForSugar",
         "async_iter_with",

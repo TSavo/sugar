@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import NoReturn
 
 from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
@@ -41,8 +42,8 @@ class TemporalContext:
                 observed=name,
                 requested="value",
                 fix=f"bind `{name}` before reducing NameSugar",
-                gap_kind="Floor",
-                gap_locus="Construction",
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
             )
         )
 

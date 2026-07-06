@@ -597,7 +597,7 @@ def _handle_lift(
                     "code": -32603,
                     "message": str(exc),
                     "data": {
-                        "info": exc.info,
+                        "info": exc.info.to_json(),
                         "factoryAudit": exc.audit_row.to_json(),
                     },
                 },

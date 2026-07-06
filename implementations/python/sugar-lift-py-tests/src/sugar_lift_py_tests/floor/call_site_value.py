@@ -63,7 +63,7 @@ class CallSiteValue(FloorValue):
                 project_callsite=False,
             )
         except FactoryGap as exc:
-            observed = str(exc.info.get("observed", "callsite floor unavailable"))
+            observed = exc.info.observed
             return Incomplete(
                 RuntimeEffect(
                     "unary operator runtime boundary: callsite value "

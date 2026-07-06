@@ -55,7 +55,7 @@ def _capture(src: str) -> dict:
         )
         return {"contracts": contracts}
     except FactoryGap as g:
-        return {"panic": {"observed": g.info.get("observed"), "fix": g.info.get("fix")}}
+        return {"panic": {"observed": g.info.observed, "fix": g.info.fix}}
     except (
         Exception
     ) as e:  # noqa: BLE001 -- a captured error is part of the golden behavior

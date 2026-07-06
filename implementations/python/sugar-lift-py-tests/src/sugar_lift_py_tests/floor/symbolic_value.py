@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
 from sugar_lift_py_tests.ir import Term
 
 from .floor_value import FloorValue
@@ -71,8 +72,8 @@ class SymbolicValue(FloorValue):
                     f"add cited warrant for SymbolicValue.{operation.name} "
                     "or keep the opaque runtime method as a typed effect"
                 ),
-                gap_kind="Floor",
-                gap_locus="Construction",
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
             )
         )
 

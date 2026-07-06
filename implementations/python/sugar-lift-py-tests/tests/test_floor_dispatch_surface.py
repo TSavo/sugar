@@ -51,7 +51,7 @@ def test_inherited_construction_gap_keeps_production_owner_blame() -> None:
             ctx=None,
         )
 
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "dispatch-owner",
         "blame": "dispatch.py:3:4",
         "observed": "TermValue",

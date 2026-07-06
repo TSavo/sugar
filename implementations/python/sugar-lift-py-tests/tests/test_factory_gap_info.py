@@ -127,6 +127,69 @@ def test_gap_locus_construction_canonicalizes_to_title_case() -> None:
     assert "write more Floor for this Construction" in info.message
 
 
+def test_factory_gap_preserves_typed_info_until_effect_boundary() -> None:
+    info = FactoryGapInfo(
+        owner="o",
+        blame="b",
+        observed="x",
+        requested="r",
+        fix="f",
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
+    )
+    gap = FactoryGap(
+        info,
+        FactoryAuditRow(
+            role="term",
+            status="floor-gap",
+            observed="x",
+            blame="b",
+            selected=None,
+            candidates=[],
+            message=info.message,
+        ),
+    )
+
+    assert gap.info is info
+
+    effect = FactoryGapEffect.from_gap(gap)
+    assert effect.gap_kind is GapKind.FLOOR
+    assert effect.gap_locus is GapLocus.CONSTRUCTION
+    assert effect.reason.startswith("write more Floor for this Construction: ")
+
+
+def test_factory_gap_effect_rejects_stringly_kind_and_locus() -> None:
+    with pytest.raises(TypeError) as kind_error:
+        FactoryGapEffect(
+            owner="o",
+            blame="b",
+            observed="x",
+            requested="r",
+            fix="f",
+            gap_kind="Floor",
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+    assert str(kind_error.value) == (
+        "FactoryGapEffect.gap_kind must be GapKind: owner=FactoryGapEffect "
+        "shape=str replacement=GapKind.FLOOR"
+    )
+
+    with pytest.raises(TypeError) as locus_error:
+        FactoryGapEffect(
+            owner="o",
+            blame="b",
+            observed="x",
+            requested="r",
+            fix="f",
+            gap_kind=GapKind.FLOOR,
+            gap_locus="Construction",
+        )
+    assert str(locus_error.value) == (
+        "FactoryGapEffect.gap_locus must be GapLocus: owner=FactoryGapEffect "
+        "shape=str replacement=GapLocus.CONSTRUCTION"
+    )
+
+
 def test_gap_kind_status_handles_each_member() -> None:
     assert gap_kind_status(GapKind.FLOOR) == "floor-gap"
     assert gap_kind_status(GapKind.SUGAR) == "sugar-gap"
@@ -220,7 +283,7 @@ class Box:
     assert isinstance(outcome.effect, FactoryGapEffect)
 
     assert outcome.effect.requested == "1 constructor arguments"
-    assert outcome.effect.gap_kind == "Constructor"
+    assert outcome.effect.gap_kind is GapKind.CONSTRUCTOR
 
 
 def test_set_name_descriptor_gap_carries_structured_kind() -> None:
@@ -236,5 +299,5 @@ class Box:
     with pytest.raises(FactoryGap) as raised:
         _reduce_expr(source, "Box().value")
 
-    assert raised.value.info["requested"] == "class descriptor __set_name__ effect"
-    assert raised.value.info["gap_kind"] == "Constructor"
+    assert raised.value.info.requested == "class descriptor __set_name__ effect"
+    assert raised.value.info.gap_kind is GapKind.CONSTRUCTOR

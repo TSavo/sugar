@@ -178,7 +178,7 @@ def test_tuple_unpack_projection_unsupported_floor_names_floor_gap() -> None:
     with pytest.raises(FactoryGap) as raised:
         projection.desugar(reduce_ctx)
 
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "TupleUnpackProjection",
         "blame": "f.py:1:0",
         "observed": "TermValue",

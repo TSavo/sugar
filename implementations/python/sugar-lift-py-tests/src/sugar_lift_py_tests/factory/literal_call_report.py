@@ -1340,6 +1340,8 @@ def _proofir_effect_lift(
     memento_file: str,
     source_lines: list[str],
 ) -> LiftResult:
+    from .factory_gap_info import GapKind, GapLocus
+
     return _effect_lift(
         frag,
         fn,
@@ -1350,8 +1352,8 @@ def _proofir_effect_lift(
                 observed=observed,
                 requested=requested,
                 fix=fix,
-                gap_kind="ProofIR",
-                gap_locus="ConstructionLaw",
+                gap_kind=GapKind.PROOFIR,
+                gap_locus=GapLocus.CONSTRUCTION_LAW,
             )
         ),
         stmt=stmt,

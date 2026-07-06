@@ -149,9 +149,9 @@ def test_mutual_recursion_refuses_floor_honestly_without_false_literal() -> None
     with pytest.raises(FactoryGap) as raised:
         force_floor(values["a"], ctx, owner="mutual recursion demand")
 
-    assert raised.value.info["gap_kind"] == "Floor"
-    assert raised.value.info["observed"] == "recursive callsite value demand"
-    assert raised.value.info["requested"] == "force callsite floor"
+    assert raised.value.info.to_json()["gap_kind"] == "Floor"
+    assert raised.value.info.to_json()["observed"] == "recursive callsite value demand"
+    assert raised.value.info.to_json()["requested"] == "force callsite floor"
 
 
 def test_callsite_force_floor_budget_refuses_deep_unique_chain() -> None:
@@ -191,9 +191,12 @@ def test_callsite_force_floor_budget_refuses_deep_unique_chain() -> None:
     with pytest.raises(FactoryGap) as raised:
         force_floor(values["c0"], ctx, owner="deep chain demand", budget=2)
 
-    assert raised.value.info["gap_kind"] == "Floor"
-    assert raised.value.info["observed"] == "callsite value demand budget exhausted"
-    assert raised.value.info["requested"] == "force callsite floor"
+    assert raised.value.info.to_json()["gap_kind"] == "Floor"
+    assert (
+        raised.value.info.to_json()["observed"]
+        == "callsite value demand budget exhausted"
+    )
+    assert raised.value.info.to_json()["requested"] == "force callsite floor"
 
 
 def test_effectful_callsite_refuses_floor_without_fabricated_value() -> None:
@@ -207,9 +210,9 @@ def f():
     with pytest.raises(FactoryGap) as raised:
         force_floor(callsite, ctx, owner="effectful callsite demand")
 
-    assert raised.value.info["gap_kind"] == "Floor"
-    assert raised.value.info["observed"] == "Incomplete"
-    assert "runtime effect" in raised.value.info["fix"]
+    assert raised.value.info.to_json()["gap_kind"] == "Floor"
+    assert raised.value.info.to_json()["observed"] == "Incomplete"
+    assert "runtime effect" in raised.value.info.to_json()["fix"]
 
 
 def test_callsite_projects_to_bridge_but_floors_only_when_value_is_demanded() -> None:
@@ -391,8 +394,8 @@ def test_methodless_object_equality_refuses_without_identity_testimony() -> None
             ctx=ReduceContext.root(owner="object equality identity"),
         )
 
-    assert raised.value.info["requested"] == "object identity equality"
-    assert "ObjectValue identities" in raised.value.info["fix"]
+    assert raised.value.info.to_json()["requested"] == "object identity equality"
+    assert "ObjectValue identities" in raised.value.info.to_json()["fix"]
 
 
 def test_reflected_object_multiply_projects_to_dunder_method_bridge() -> None:

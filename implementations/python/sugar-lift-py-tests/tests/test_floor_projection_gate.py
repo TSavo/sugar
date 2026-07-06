@@ -26,8 +26,8 @@ def test_unprojectable_floor_value_gap_panics() -> None:
 
     with pytest.raises(FactoryGap) as exc:
         NewFloor().to_term(owner="test")
-    assert exc.value.info["gap_kind"] == "Floor"
-    assert exc.value.info["gap_locus"] == "Projection"
+    assert exc.value.info.to_json()["gap_kind"] == "Floor"
+    assert exc.value.info.to_json()["gap_locus"] == "Projection"
 
 
 _FLOOR_TYPES = {

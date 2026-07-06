@@ -60,8 +60,8 @@ class FactoryGapStrategy:
                 observed=self.info.observed,
                 requested=self.info.requested,
                 fix=self.info.fix,
-                gap_kind=self.info.gap_kind.value,
-                gap_locus=self.info.gap_locus.value,
+                gap_kind=self.info.gap_kind,
+                gap_locus=self.info.gap_locus,
             )
         )
 
@@ -713,8 +713,8 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                                 f"link or prove constructor semantics for `{target}`'s "
                                 "base class; do not fabricate a local __init__"
                             ),
-                            gap_kind="Constructor",
-                            gap_locus="AST",
+                            gap_kind=GapKind.CONSTRUCTOR,
+                            gap_locus=GapLocus.AST,
                         )
                     )
                 )

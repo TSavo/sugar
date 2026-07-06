@@ -28,7 +28,7 @@ def collect_construction_gaps(walkers: Iterable[AuditWalker]) -> list[AuditOnlyG
             gaps.append(
                 AuditOnlyGap(
                     label=label,
-                    info=exc.info,
+                    info=exc.info.to_json(),
                     audit_row=exc.audit_row,
                     message=str(exc),
                 )
