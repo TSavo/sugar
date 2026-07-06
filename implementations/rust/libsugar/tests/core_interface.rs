@@ -19,8 +19,8 @@ use serde_json::json;
 use sugar_canonicalizer::Value;
 use sugar_ir_types::{
     composition_refusal_compose_input_cid, composition_refusal_header_cid,
-    composition_refusal_signature, CompositionRefusalEnvelope, CompositionRefusalHeader,
-    CompositionRefusalMemento, CompositionRefusalMetadata, IrFormula, IrTerm, Sort,
+    composition_refusal_signature, CompositionBoundaryMemento, CompositionRefusalEnvelope,
+    CompositionRefusalHeader, CompositionRefusalMetadata, IrFormula, IrTerm, Sort,
 };
 
 fn any_sort() -> Sort {
@@ -1213,7 +1213,10 @@ fn conformance_declaration_round_trips_through_json() {
     assert_eq!(decode(non_carrier_json), non_carrier);
 }
 
-fn refusal_for_failure_kind(failure_kind: &str, failure_detail: &str) -> CompositionRefusalMemento {
+fn refusal_for_failure_kind(
+    failure_kind: &str,
+    failure_detail: &str,
+) -> CompositionBoundaryMemento {
     let atoms_cids = vec![address(&format!("atom:{failure_kind}")).to_string()];
     let effect_set_cids = Vec::new();
     let compose_input_cid =
@@ -1236,7 +1239,7 @@ fn refusal_for_failure_kind(failure_kind: &str, failure_detail: &str) -> Composi
     header.cid = composition_refusal_header_cid(&header);
     let metadata = CompositionRefusalMetadata::default();
     let signature = composition_refusal_signature(&header, &metadata);
-    CompositionRefusalMemento {
+    CompositionBoundaryMemento {
         envelope: CompositionRefusalEnvelope {
             declared_at: "1970-01-01T00:00:00Z".to_string(),
             signature,
@@ -1264,7 +1267,7 @@ fn target_failure_kinds_round_trip_through_jcs() {
         let refusal = refusal_for_failure_kind(failure_kind, failure_detail);
         let value = serde_json::to_value(&refusal).expect("refusal serializes");
         let jcs = libsugar::canonical::json_jcs(&value).expect("refusal JCS");
-        let decoded: CompositionRefusalMemento =
+        let decoded: CompositionBoundaryMemento =
             serde_json::from_str(&jcs).expect("JCS refusal decodes");
 
         assert_eq!(decoded, refusal);

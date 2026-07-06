@@ -511,7 +511,7 @@ fn lift(params: &Value) -> Value {
                 .unwrap_or(0);
             if memento_bytes > MEMENTO_EMIT_BYTE_BOUND {
                 memento_json = json!({
-                    "sugar-refused": "source-memento-exceeds-emit-bound",
+                    "sugar-bound-exceeded": "source-memento-exceeds-emit-bound",
                     "reason": format!(
                         "source memento exceeds emit bound ({} > {} bytes) -- unbounded source expansion, refused (finite-or-refuse)",
                         memento_bytes,

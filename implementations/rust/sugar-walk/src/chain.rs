@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use syn::Expr;
 
 use crate::contract::{
-    compose_chain_contracts, ChainStep, ComposedFunctionContract, CompositionRefusalMemento,
+    compose_chain_contracts, ChainStep, ComposedFunctionContract, CompositionBoundaryMemento,
     FunctionContractMemento,
 };
 
@@ -65,7 +65,7 @@ pub fn detect_method_chain(expr: &Expr) -> Option<Vec<MethodCallStep>> {
 pub fn compose_method_chain(
     chain: &[MethodCallStep],
     registry: &HashMap<String, FunctionContractMemento>,
-) -> Result<Option<ComposedFunctionContract>, CompositionRefusalMemento> {
+) -> Result<Option<ComposedFunctionContract>, CompositionBoundaryMemento> {
     if chain.len() < 2 {
         return Ok(None);
     }

@@ -27,8 +27,8 @@ use std::collections::HashMap;
 
 use sugar_ir_types::{
     composition_refusal_compose_input_cid, composition_refusal_header_cid,
-    composition_refusal_signature, CompositionRefusalEnvelope, CompositionRefusalHeader,
-    CompositionRefusalMemento, CompositionRefusalMetadata, MissingRequirement,
+    composition_refusal_signature, CompositionBoundaryMemento, CompositionRefusalEnvelope,
+    CompositionRefusalHeader, CompositionRefusalMetadata, MissingRequirement,
 };
 use thiserror::Error;
 
@@ -301,12 +301,12 @@ pub enum PathExecutionError {
     Kit(#[from] KitError),
     /// Execution refused with a durable composition-refusal memento.
     #[error("path execution refused")]
-    Refused(Box<CompositionRefusalMemento>),
+    Refused(Box<CompositionBoundaryMemento>),
 }
 
 impl PathExecutionError {
     /// Borrow the durable refusal memento when this error is a refusal.
-    pub fn composition_refusal(&self) -> Option<&CompositionRefusalMemento> {
+    pub fn composition_refusal(&self) -> Option<&CompositionBoundaryMemento> {
         match self {
             Self::Refused(refusal) => Some(refusal),
             _ => None,
@@ -314,7 +314,7 @@ impl PathExecutionError {
     }
 }
 
-fn missing_kit_refusal(step: &PathAlgebra) -> CompositionRefusalMemento {
+fn missing_kit_refusal(step: &PathAlgebra) -> CompositionBoundaryMemento {
     composition_refusal_for_missing_requirement(
         step,
         "kit-registry",
@@ -326,7 +326,7 @@ fn missing_kit_refusal(step: &PathAlgebra) -> CompositionRefusalMemento {
     )
 }
 
-fn missing_input_refusal(step: &PathAlgebra, cid: &Cid) -> CompositionRefusalMemento {
+fn missing_input_refusal(step: &PathAlgebra, cid: &Cid) -> CompositionBoundaryMemento {
     composition_refusal_for_missing_requirement(
         step,
         "input-catalog",
@@ -347,7 +347,7 @@ fn prove_error(step: &PathAlgebra, error: KitError) -> PathExecutionError {
     }
 }
 
-fn prove_not_supported_refusal(step: &PathAlgebra) -> CompositionRefusalMemento {
+fn prove_not_supported_refusal(step: &PathAlgebra) -> CompositionBoundaryMemento {
     composition_refusal_for_missing_requirement(
         step,
         "kit-prove",
@@ -364,7 +364,7 @@ fn composition_refusal_for_missing_requirement(
     role: &str,
     memento_kind: &str,
     reason: String,
-) -> CompositionRefusalMemento {
+) -> CompositionBoundaryMemento {
     let atoms_cids: Vec<String> = step.inputs.iter().map(ToString::to_string).collect();
     let effect_set_cids = Vec::new();
     let compose_input_cid =
@@ -392,7 +392,7 @@ fn composition_refusal_for_missing_requirement(
     header.cid = composition_refusal_header_cid(&header);
     let metadata = CompositionRefusalMetadata::default();
     let signature = composition_refusal_signature(&header, &metadata);
-    CompositionRefusalMemento {
+    CompositionBoundaryMemento {
         envelope: CompositionRefusalEnvelope {
             declared_at: "1970-01-01T00:00:00Z".to_string(),
             signature,

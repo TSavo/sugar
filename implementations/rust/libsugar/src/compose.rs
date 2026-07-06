@@ -37,8 +37,8 @@ use std::sync::Arc;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_ir_types::{
     composition_refusal_compose_input_cid, composition_refusal_header_cid,
-    composition_refusal_signature, AggregationStrategy, BlockingEffect, CompositionRefusalEnvelope,
-    CompositionRefusalHeader, CompositionRefusalMemento, CompositionRefusalMetadata,
+    composition_refusal_signature, AggregationStrategy, BlockingEffect, CompositionBoundaryMemento,
+    CompositionRefusalEnvelope, CompositionRefusalHeader, CompositionRefusalMetadata,
     CompoundContractMemento, EffectOccurrence, EvidenceMemento, EvidenceRef, IrFormula, IrTerm,
     OccurrenceKind, OccurrenceRole, Sort, SourceKind, SourceLocator, SourceLocatorPoint,
     SourceLocatorSpan,
@@ -1025,7 +1025,7 @@ impl CompositionError {
 /// JSON-RPC subprocess) call into this function.
 pub fn compose_chain_contracts(
     steps: &[ChainStep<'_>],
-) -> Result<ComposedFunctionContract, CompositionRefusalMemento> {
+) -> Result<ComposedFunctionContract, CompositionBoundaryMemento> {
     compose_chain_contracts_internal(steps)
         .map_err(|error| composition_error_to_refusal(steps, error))
 }
@@ -1086,7 +1086,7 @@ fn compose_chain_contracts_internal(
 fn composition_error_to_refusal(
     steps: &[ChainStep<'_>],
     error: CompositionError,
-) -> CompositionRefusalMemento {
+) -> CompositionBoundaryMemento {
     let atoms_cids: Vec<String> = steps.iter().map(|s| s.contract.cid.clone()).collect();
     let effect_set_cids: Vec<String> = steps
         .iter()
@@ -1123,7 +1123,7 @@ fn composition_error_to_refusal(
     header.cid = composition_refusal_header_cid(&header);
     let metadata = CompositionRefusalMetadata::default();
     let signature = composition_refusal_signature(&header, &metadata);
-    CompositionRefusalMemento {
+    CompositionBoundaryMemento {
         envelope: CompositionRefusalEnvelope {
             declared_at: "1970-01-01T00:00:00Z".to_string(),
             signature,

@@ -18,7 +18,7 @@ use libsugar::core::{
 };
 use owo_colors::OwoColorize;
 use serde_json::Value as Json;
-use sugar_ir_types::{CompositionRefusalMemento, Sort};
+use sugar_ir_types::{CompositionBoundaryMemento, Sort};
 
 use crate::{EXIT_OK, EXIT_USER_ERROR};
 
@@ -182,7 +182,7 @@ fn run_bind_path(term_json: Json, args: &BindArgs) -> Result<Json, BindCliError>
 
 #[derive(Debug)]
 enum BindCliError {
-    Refused(Box<CompositionRefusalMemento>),
+    Refused(Box<CompositionBoundaryMemento>),
     Failed(String),
 }
 

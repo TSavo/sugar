@@ -17,7 +17,7 @@ use libsugar::core::{
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sugar_ir_types::CompositionRefusalMemento;
+use sugar_ir_types::CompositionBoundaryMemento;
 
 use crate::component_plan::PlannedLiftManifest;
 
@@ -169,7 +169,7 @@ impl std::fmt::Display for LiftPluginDiagnosticPayload {
 #[derive(Debug, Clone)]
 pub(crate) enum LiftPluginError {
     MissingBinary { binary: String },
-    Refused(Box<CompositionRefusalMemento>),
+    Refused(Box<CompositionBoundaryMemento>),
     Diagnostic(LiftPluginDiagnosticPayload),
 }
 

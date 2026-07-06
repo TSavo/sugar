@@ -4115,7 +4115,7 @@ fn is_namespaced_extension(value: &str) -> bool {
 // ============================================================
 
 // ============================================================
-// MANUAL EXTENSION BLOCK -- CompositionRefusalMemento
+// MANUAL EXTENSION BLOCK -- CompositionBoundaryMemento
 // Source of truth:
 //   protocol/specs/2026-05-13-composition-refusal-memento.md §1, §4
 //
@@ -4228,7 +4228,7 @@ pub struct CompositionRefusalMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompositionRefusalMemento {
+pub struct CompositionBoundaryMemento {
     pub envelope: CompositionRefusalEnvelope,
     pub header: CompositionRefusalHeader,
     pub metadata: CompositionRefusalMetadata,
@@ -4242,7 +4242,7 @@ fn canonical_value_from_json(value: serde_json::Value) -> sugar_canonicalizer::V
             n.as_i64()
                 .map(i128::from)
                 .or_else(|| n.as_u64().map(i128::from))
-                .expect("CompositionRefusalMemento canonical numbers must fit i64/u64"),
+                .expect("CompositionBoundaryMemento canonical numbers must fit i64/u64"),
         ),
         serde_json::Value::String(s) => sugar_canonicalizer::Value::String(s),
         serde_json::Value::Array(items) => sugar_canonicalizer::Value::Array(
@@ -4311,7 +4311,7 @@ mod composition_refusal_tests {
         format!("blake3-512:{}", ch.to_string().repeat(128))
     }
 
-    fn canonical_impure_refusal() -> CompositionRefusalMemento {
+    fn canonical_impure_refusal() -> CompositionBoundaryMemento {
         let atoms_cids = vec![cid('a'), cid('b')];
         let effect_set_cids = vec![cid('c'), cid('d')];
         let occurrence = EffectOccurrence {
@@ -4348,7 +4348,7 @@ mod composition_refusal_tests {
         header.cid = composition_refusal_header_cid(&header);
         let metadata = CompositionRefusalMetadata::default();
         let signature = composition_refusal_signature(&header, &metadata);
-        CompositionRefusalMemento {
+        CompositionBoundaryMemento {
             envelope: CompositionRefusalEnvelope {
                 declared_at: "1970-01-01T00:00:00Z".to_string(),
                 signature,
@@ -4363,7 +4363,7 @@ mod composition_refusal_tests {
     fn canonical_impure_refusal_round_trips_and_recomputes_cid() {
         let refusal = canonical_impure_refusal();
         let json = serde_json::to_string(&refusal).expect("serialize refusal");
-        let decoded: CompositionRefusalMemento =
+        let decoded: CompositionBoundaryMemento =
             serde_json::from_str(&json).expect("deserialize refusal");
 
         assert_eq!(decoded, refusal);
@@ -4387,7 +4387,7 @@ mod composition_refusal_tests {
 }
 
 // ============================================================
-// End manual extension block -- CompositionRefusalMemento
+// End manual extension block -- CompositionBoundaryMemento
 // ============================================================
 
 // ============================================================

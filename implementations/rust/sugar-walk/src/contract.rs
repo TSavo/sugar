@@ -29,7 +29,7 @@ pub use libsugar::compose::{
     EffectSet, EmptyOpacityPool, FunctionContractMemento, Locus, OpacityError,
     OpacityMementoLookup, PinInvariantMementoView,
 };
-pub use sugar_ir_types::CompositionRefusalMemento;
+pub use sugar_ir_types::CompositionBoundaryMemento;
 
 // ---- AST builders ----
 
