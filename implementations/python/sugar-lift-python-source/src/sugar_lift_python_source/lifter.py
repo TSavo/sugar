@@ -2959,7 +2959,7 @@ def _lift_guard_membership_compare(
 
 
 def _lift_guard_literal_options(node: ast.expr) -> list[Json] | None:
-    if not isinstance(node, (ast.List, ast.Tuple)):
+    if not isinstance(node, (ast.List, ast.Tuple, ast.Set)):
         return None
     values: list[Json] = []
     for elt in node.elts:

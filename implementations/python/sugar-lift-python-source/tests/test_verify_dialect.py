@@ -284,6 +284,83 @@ def test_finite_literal_membership_guard_lowers_to_disjunction_precondition():
     }
 
 
+def test_finite_set_literal_membership_guard_lowers_to_disjunction_precondition():
+    source = (
+        "def supported(name):\n"
+        '    if name not in {"cummin", "cummax"}:\n'
+        "        raise ValueError\n"
+        "    return 1\n"
+    )
+    contract = _fn_contract(source)
+
+    assert contract["pre"] == {
+        "kind": "or",
+        "operands": [
+            _atom("=", _var("name"), _str("cummin")),
+            _atom("=", _var("name"), _str("cummax")),
+        ],
+    }
+
+
+def test_set_literal_membership_with_runtime_element_stays_residual():
+    source = (
+        "def supported(name):\n"
+        "    if name not in {runtime_name()}:\n"
+        "        raise ValueError\n"
+        "    return 1\n"
+    )
+    result = lift_source(source, "m.py")
+    contract = next(
+        item
+        for item in result.ir
+        if item.get("kind") == "function-contract"
+        and not str(item.get("fnName", "")).startswith("<source-unit")
+    )
+
+    assert contract["pre"] == {"kind": "atomic", "name": "true", "args": []}
+    assert any(
+        item.get("kind") == "precondition-guard-skipped" for item in result.diagnostics
+    )
+
+
+def test_set_literal_membership_composes_with_attribute_none_guard():
+    source = (
+        "class Box:\n"
+        "    def supported(self, name):\n"
+        "        if self.value is None:\n"
+        "            raise ValueError\n"
+        '        if name not in {"left", "right"}:\n'
+        "            raise ValueError\n"
+        "        return 1\n"
+    )
+    result = lift_source(source, "m.py")
+    contract = next(
+        item
+        for item in result.ir
+        if item.get("kind") == "function-contract"
+        and not str(item.get("fnName", "")).startswith("<source-unit")
+    )
+
+    assert contract["pre"] == {
+        "kind": "and",
+        "operands": [
+            _atom("≠", _attr(_var("self"), "value"), _unit()),
+            {
+                "kind": "or",
+                "operands": [
+                    _atom("=", _var("name"), _str("left")),
+                    _atom("=", _var("name"), _str("right")),
+                ],
+            },
+        ],
+    }
+    assert not [
+        item
+        for item in result.diagnostics
+        if item.get("kind") == "precondition-guard-skipped"
+    ]
+
+
 def test_len_equality_guard_lowers_to_negated_len_precondition():
     source = (
         "def first(items):\n"
