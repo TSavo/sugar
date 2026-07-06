@@ -1,0 +1,20 @@
+{
+  "kind": "pandas-wall-ratchet-floors",
+  "floors": {
+    "mode": "frontier",
+    "construction_gaps": {
+      "total_ceiling": 0,
+      "templates": {}
+    },
+    "complete_floors": {
+      "green": 0,
+      "implications": 0,
+      "pre_bearing": 0
+    },
+    "frontier": {
+      "message_needle": "named expression runtime boundary",
+      "owner": "NamedExprSugar",
+      "shape": "NamedExpr target `u` value `Call`"
+    }
+  }
+}
