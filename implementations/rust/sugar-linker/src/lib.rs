@@ -73,7 +73,7 @@ pub type Registry = HashMap<SolverSeat, SolverHandle>;
 /// Both the `contracts` from the rust-kit lifter and the `declarations` emitted
 /// by go/other kit lifters are normalised into this shape before passing to
 /// `link()`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LinkerContract {
     /// Function / method name as declared in the source kit.
     pub name: String,
@@ -87,6 +87,21 @@ pub struct LinkerContract {
     /// Post-condition formula as a `serde_json::Value` (ProofIR term).
     /// `None` if the function has no post-condition annotation.
     pub post_json: Option<Json>,
+    /// Declared formal parameter names, in order. Part of the contract's
+    /// exported signature: an importing call edge whose [`ImportSignature`]
+    /// disagrees with these is rejected by [`bind`] as `signature-mismatch`.
+    /// Empty (default) means the contract exports no formal-name signature to
+    /// check against — pre-existing wire payloads that omit it deserialize
+    /// cleanly and never trip the check.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub formals: Vec<String>,
+    /// Declared formal sorts, positionally aligned with `formals`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub formal_sorts: Vec<Json>,
+    /// EUF coordinate (the `enc#euf#c:...` segment) this contract answers to,
+    /// if it is an EUF-callsite contract. `None` for ordinary contracts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub euf_coordinate: Option<String>,
 }
 
 /// A call edge emitted by a kit lifter.
@@ -94,7 +109,7 @@ pub struct LinkerContract {
 /// Describes a call site where one contracted function calls another. Cross-kit
 /// calls have `target_contract_cid: None` and `target_symbol` set to a
 /// `"<kit>:<name>"` string for linker resolution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LinkerCallEdge {
     /// CID of the calling function's contract.
     pub source_contract_cid: String,
@@ -107,11 +122,176 @@ pub struct LinkerCallEdge {
     pub call_site_locus_json: Json,
     /// ProofIR evidence term encoding the satisfaction obligation `post_B ⊃ pre_A`.
     pub evidence_term_json: Json,
+    /// The typed import signature the call site declares for its target: the
+    /// symbol plus the formals/sorts/EUF coordinate the caller expects the
+    /// callee to export. When present, [`bind`] type-checks it against the
+    /// resolved contract's exported signature; disagreement is
+    /// `signature-mismatch`. Absent (default) on pre-existing wire payloads,
+    /// which therefore only exercise the resolution (undefined-symbol) check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_signature: Option<ImportSignature>,
+}
+
+/// The unbound half of a call edge's typed two-state target: the import
+/// signature a call site declares before the linker resolves it.
+///
+/// This is the extern declaration in ProofIR clothing. It is what today lives
+/// flattened inside the `<kit>:<name>` `target_symbol` string plus the runtime
+/// formals/sorts kind-checks re-derived at verify time. Hoisting it to a type
+/// lets [`bind`] discharge the signature match in a single constructor
+/// signature instead of scattered runtime checks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImportSignature {
+    /// `<kit>:<name>` symbol the call site imports.
+    pub symbol: String,
+    /// Formal names the caller expects the callee to export, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub formals: Vec<String>,
+    /// Formal sorts, positionally aligned with `formals`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sorts: Vec<Json>,
+    /// EUF coordinate the caller expects the callee to answer to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub euf_coordinate: Option<String>,
+}
+
+impl ImportSignature {
+    /// Type-check this declared import signature against a resolved contract's
+    /// exported signature. `Ok(())` when they agree (a bound edge may be
+    /// minted); `Err(reason)` names the disagreement for a `signature-mismatch`
+    /// [`LinkerError`]. Only dimensions the caller actually declares are
+    /// checked: a signature that names no formals imposes no formal-arity
+    /// constraint, so pre-signature wire edges never spuriously fail.
+    fn check(&self, target: &LinkerContract) -> Result<(), String> {
+        if !self.formals.is_empty() && self.formals != target.formals {
+            return Err(format!(
+                "formals disagree: caller imports {:?}, callee exports {:?}",
+                self.formals, target.formals
+            ));
+        }
+        if !self.sorts.is_empty() && self.sorts != target.formal_sorts {
+            return Err(format!(
+                "formal sorts disagree: caller imports {:?}, callee exports {:?}",
+                self.sorts, target.formal_sorts
+            ));
+        }
+        if let Some(coord) = &self.euf_coordinate {
+            if target.euf_coordinate.as_ref() != Some(coord) {
+                return Err(format!(
+                    "EUF coordinate disagrees: caller imports {:?}, callee exports {:?}",
+                    Some(coord),
+                    target.euf_coordinate
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 // -------------------------------------------------------------------
 // Public output types
 // -------------------------------------------------------------------
+
+/// The typed vocabulary of linker failures.
+///
+/// Every way `link()` can refuse to mint a bound edge or discharge an
+/// obligation is one of these variants. The two edge-binding failures the
+/// migrated `resolve_target` join used to re-derive at verify time now live
+/// here as first-class names:
+///
+/// - [`LinkerErrorKind::UnresolvedSymbol`] — no member answers the import
+///   (the undefined-symbol case).
+/// - [`LinkerErrorKind::SignatureMismatch`] — a member exists but its
+///   formals/sorts/EUF coordinate disagree with the call site's declared
+///   [`ImportSignature`].
+///
+/// The remaining variants are the obligation-discharge outcomes. Each variant
+/// serializes to a stable wire string via [`LinkerErrorKind::wire_str`]; the
+/// custom `Serialize`/`Deserialize` impls keep the `errorKind` JSON field
+/// byte-identical to the pre-migration string it replaced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkerErrorKind {
+    /// No contract in the union answers the edge's target symbol / CID.
+    UnresolvedSymbol,
+    /// A target contract was found, but its exported signature disagrees with
+    /// the call site's declared [`ImportSignature`].
+    SignatureMismatch,
+    /// Caller post-condition absent; `post_caller ⊃ pre_callee` unprovable.
+    UnprovableObligation,
+    /// Solver reports the implication is violated (SAT counter-example).
+    ImplicationUnprovable,
+    /// Solver could not decide the implication (or none was registered).
+    ImplicationUndecidable,
+    /// Solver exceeded the host timeout on the implication.
+    ImplicationSolverTimeout,
+    /// No sound discharger exists for this obligation; refused, not guessed.
+    ImplicationRefused,
+}
+
+impl LinkerErrorKind {
+    /// The stable wire string for this kind. These strings are load-bearing:
+    /// the polyglot smoke fixtures and LSP diagnostics pin them.
+    pub fn wire_str(self) -> &'static str {
+        match self {
+            LinkerErrorKind::UnresolvedSymbol => "unresolved-symbol",
+            LinkerErrorKind::SignatureMismatch => "signature-mismatch",
+            LinkerErrorKind::UnprovableObligation => "unprovable-obligation",
+            LinkerErrorKind::ImplicationUnprovable => "implication-unprovable",
+            LinkerErrorKind::ImplicationUndecidable => "implication-undecidable",
+            LinkerErrorKind::ImplicationSolverTimeout => "implication-solver-timeout",
+            LinkerErrorKind::ImplicationRefused => "implication-refused",
+        }
+    }
+
+    /// Inverse of [`wire_str`](Self::wire_str). Unknown strings deserialize to
+    /// `None`.
+    fn from_wire(s: &str) -> Option<Self> {
+        Some(match s {
+            "unresolved-symbol" => LinkerErrorKind::UnresolvedSymbol,
+            "signature-mismatch" => LinkerErrorKind::SignatureMismatch,
+            "unprovable-obligation" => LinkerErrorKind::UnprovableObligation,
+            "implication-unprovable" => LinkerErrorKind::ImplicationUnprovable,
+            "implication-undecidable" => LinkerErrorKind::ImplicationUndecidable,
+            "implication-solver-timeout" => LinkerErrorKind::ImplicationSolverTimeout,
+            "implication-refused" => LinkerErrorKind::ImplicationRefused,
+            _ => return None,
+        })
+    }
+}
+
+impl Serialize for LinkerErrorKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.wire_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for LinkerErrorKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        LinkerErrorKind::from_wire(&s)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown linker error kind `{s}`")))
+    }
+}
+
+/// A non-nullable, linker-minted contract CID: the bound half of a call edge's
+/// typed two-state target.
+///
+/// The inner field is private and there is no public constructor, so a
+/// `BoundContractCid` can only be produced inside this crate by [`bind`], and
+/// only from a contract that actually answered the edge. That makes
+/// "a bound edge carrying a null / unresolved CID" **unrepresentable**: the
+/// null lives only in the *unbound* input (`LinkerCallEdge.target_contract_cid:
+/// Option<String>`), never in a value of this type. The linker is thus the sole
+/// minter of bound edges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundContractCid(String);
+
+impl BoundContractCid {
+    /// Borrow the resolved CID string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 /// A linker error memento emitted when a satisfaction obligation cannot be
 /// discharged, or when a cross-kit symbol cannot be resolved.
@@ -120,8 +300,10 @@ pub struct LinkerCallEdge {
 /// so the daemon can attach LSP diagnostics to the correct source file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkerError {
-    /// Error kind: `"unresolved-symbol"` or `"unprovable-obligation"`.
-    pub kind: String,
+    /// Typed error kind. Serializes to its stable wire string (see
+    /// [`LinkerErrorKind::wire_str`]) so `linkBundle.linkerErrors[*].errorKind`
+    /// and the linkerd LSP diagnostics keep their byte-for-byte shape.
+    pub kind: LinkerErrorKind,
     /// The target symbol that was unresolved or whose obligation was unprovable.
     pub target_symbol: String,
     /// CID of the contract that made the call.
@@ -239,10 +421,14 @@ fn derive_link_bundle_inner(
     registry: &Registry,
     plan: &SolverPlan,
 ) -> LinkerOutput {
-    // Build cross-kit resolution index: (name, kit) -> contract_cid
+    // Build the resolution indices once:
+    //   name_kit_index   : (name, kit) -> contract_cid   (cross-kit symbol join)
+    //   contracts_by_cid : cid -> &LinkerContract         (member lookup)
     let mut name_kit_index: BTreeMap<(String, String), String> = BTreeMap::new();
+    let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();
     for c in &all_contracts {
         name_kit_index.insert((c.name.clone(), c.kit.clone()), c.contract_cid.clone());
+        contracts_by_cid.insert(c.contract_cid.as_str(), c);
     }
 
     // contractSetCid
@@ -276,57 +462,49 @@ fn derive_link_bundle_inner(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let resolved_target_cid = if let Some(ref cid) = edge.target_contract_cid {
-            Some(cid.clone())
-        } else {
-            resolve_target_symbol(&edge.target_symbol, &name_kit_index)
+        // bind: the sole minter of a `BoundContractCid`, with two outcomes —
+        // the bound target, or the typed failure (undefined-symbol /
+        // signature-mismatch). This is the migrated resolve_target join: the
+        // string join and the member check that verify used to re-derive now
+        // live in one constructor signature.
+        let bound = match bind(edge, &name_kit_index, &contracts_by_cid) {
+            Ok(bound) => bound,
+            Err(mut err) => {
+                err.file = locus_file;
+                err.call_site_locus_json = Some(edge.call_site_locus_json.clone());
+                linker_errors_out.push(err);
+                continue;
+            }
         };
+        let target_cid = bound.as_str();
 
-        match resolved_target_cid {
-            None => {
-                linker_errors_out.push(LinkerError {
-                    kind: "unresolved-symbol".into(),
-                    target_symbol: edge.target_symbol.clone(),
-                    source_contract_cid: edge.source_contract_cid.clone(),
-                    reason: format!(
-                        "targetSymbol `{}` did not resolve to any contract in the union",
-                        edge.target_symbol
-                    ),
-                    file: locus_file,
-                    call_site_locus_json: Some(edge.call_site_locus_json.clone()),
-                });
-            }
-            Some(target_cid) => {
-                let target_contract = all_contracts.iter().find(|c| c.contract_cid == target_cid);
-                let source_contract = all_contracts
-                    .iter()
-                    .find(|c| c.contract_cid == edge.source_contract_cid);
+        let source_post = contracts_by_cid
+            .get(edge.source_contract_cid.as_str())
+            .and_then(|c| c.post_json.as_ref());
+        let target_pre = contracts_by_cid
+            .get(target_cid)
+            .and_then(|c| c.pre_json.as_ref());
 
-                let source_post = source_contract.and_then(|c| c.post_json.as_ref());
-                let target_pre = target_contract.and_then(|c| c.pre_json.as_ref());
+        let bridge = derive_bridge(
+            &edge.source_contract_cid,
+            target_cid,
+            &edge.call_site_locus_json,
+            &edge.evidence_term_json,
+        );
+        bridges.push(bridge);
 
-                let bridge = derive_bridge(
-                    &edge.source_contract_cid,
-                    &target_cid,
-                    &edge.call_site_locus_json,
-                    &edge.evidence_term_json,
-                );
-                bridges.push(bridge);
-
-                if let Some(mut err) = discharge_obligation(
-                    source_post,
-                    target_pre,
-                    &edge.source_contract_cid,
-                    &target_cid,
-                    &edge.target_symbol,
-                    registry,
-                    plan,
-                ) {
-                    err.file = locus_file;
-                    err.call_site_locus_json = Some(edge.call_site_locus_json.clone());
-                    linker_errors_out.push(err);
-                }
-            }
+        if let Some(mut err) = discharge_obligation(
+            source_post,
+            target_pre,
+            &edge.source_contract_cid,
+            target_cid,
+            &edge.target_symbol,
+            registry,
+            plan,
+        ) {
+            err.file = locus_file;
+            err.call_site_locus_json = Some(edge.call_site_locus_json.clone());
+            linker_errors_out.push(err);
         }
     }
 
@@ -417,6 +595,109 @@ fn derive_link_bundle_inner(
         linker_errors: linker_errors_out,
         bundle_json,
     }
+}
+
+// -------------------------------------------------------------------
+// Edge binding: the typed two-state target + the sole bound-edge minter
+// -------------------------------------------------------------------
+
+/// A call edge's declared target, as a typed two-state sum — the linker
+/// vocabulary that replaces `targetContractCid: null | string` (a sum
+/// flattened to null).
+///
+/// `Unbound` is an import the linker must still resolve, carrying the call
+/// site's [`ImportSignature`]. `Bound` is a kit-supplied CID *claim* the linker
+/// will re-check against the member index before minting the authoritative
+/// [`BoundContractCid`]. There is no third, null state: an edge with neither a
+/// resolvable symbol nor a member behind its CID simply fails to [`bind`].
+enum EdgeTarget<'a> {
+    Unbound(ImportSignature),
+    Bound(&'a str),
+}
+
+impl LinkerCallEdge {
+    /// Classify this edge's declared target into the typed two-state sum. The
+    /// kit-supplied `target_contract_cid` is only a claim (`Bound`); an edge
+    /// without one is `Unbound` and carries its [`ImportSignature`] (synthesized
+    /// symbol-only when the wire payload predates signatures).
+    fn edge_target(&self) -> EdgeTarget<'_> {
+        match &self.target_contract_cid {
+            Some(cid) => EdgeTarget::Bound(cid),
+            None => EdgeTarget::Unbound(self.import_signature.clone().unwrap_or_else(|| {
+                ImportSignature {
+                    symbol: self.target_symbol.clone(),
+                    formals: Vec::new(),
+                    sorts: Vec::new(),
+                    euf_coordinate: None,
+                }
+            })),
+        }
+    }
+}
+
+/// Mint a [`BoundContractCid`] from an unbound call edge, or return the typed
+/// failure. The migrated `resolve_target` join, expressed as a constructor with
+/// exactly two outcomes:
+///
+/// - `Ok(BoundContractCid)` — a member answered and, if the edge declared an
+///   [`ImportSignature`], its exported signature agrees.
+/// - `Err(LinkerError)` — [`LinkerErrorKind::UnresolvedSymbol`] (no member
+///   answers) or [`LinkerErrorKind::SignatureMismatch`] (member exists, its
+///   formals/sorts/EUF coordinate disagree).
+///
+/// `bind` is the only place a `BoundContractCid` is constructed, so every bound
+/// edge in a `LinkBundle` was minted here from a contract that exists in the
+/// union. A kit-supplied `target_contract_cid` is re-checked against the member
+/// index, so a kit cannot forge a bound edge to a CID with no contract behind
+/// it.
+fn bind(
+    edge: &LinkerCallEdge,
+    name_kit_index: &BTreeMap<(String, String), String>,
+    contracts_by_cid: &BTreeMap<&str, &LinkerContract>,
+) -> Result<BoundContractCid, LinkerError> {
+    let undefined = || LinkerError {
+        kind: LinkerErrorKind::UnresolvedSymbol,
+        target_symbol: edge.target_symbol.clone(),
+        source_contract_cid: edge.source_contract_cid.clone(),
+        reason: format!(
+            "targetSymbol `{}` did not resolve to any contract in the union",
+            edge.target_symbol
+        ),
+        file: None,
+        call_site_locus_json: None,
+    };
+
+    // Resolve to a candidate CID: the kit's claim, else the cross-kit symbol
+    // join. A symbol that resolves to nothing is undefined.
+    let cid: String = match edge.edge_target() {
+        EdgeTarget::Bound(cid) => cid.to_string(),
+        EdgeTarget::Unbound(sig) => {
+            resolve_target_symbol(&sig.symbol, name_kit_index).ok_or_else(undefined)?
+        }
+    };
+
+    // The member must answer: a CID with no contract behind it is undefined.
+    let target = contracts_by_cid.get(cid.as_str()).ok_or_else(undefined)?;
+
+    // Signature match: the declared import must agree with the exported
+    // contract on formals / sorts / EUF coordinate.
+    if let Some(sig) = &edge.import_signature {
+        if let Err(reason) = sig.check(target) {
+            return Err(LinkerError {
+                kind: LinkerErrorKind::SignatureMismatch,
+                target_symbol: edge.target_symbol.clone(),
+                source_contract_cid: edge.source_contract_cid.clone(),
+                reason: format!(
+                    "import signature for `{}` does not match contract {}: {reason}",
+                    edge.target_symbol, cid
+                ),
+                file: None,
+                call_site_locus_json: None,
+            });
+        }
+    }
+
+    Ok(BoundContractCid(cid))
 }
 
 // -------------------------------------------------------------------
@@ -515,7 +796,7 @@ fn discharge_obligation(
     let post = match source_post {
         None | Some(Json::Null) => {
             return Some(LinkerError {
-                kind: "unprovable-obligation".into(),
+                kind: LinkerErrorKind::UnprovableObligation,
                 target_symbol: target_symbol.to_string(),
                 source_contract_cid: source_contract_cid.to_string(),
                 reason: format!(
@@ -556,7 +837,7 @@ fn discharge_obligation(
         Ok(input) => input,
         Err(error) => {
             return Some(LinkerError {
-                kind: "implication-undecidable".into(),
+                kind: LinkerErrorKind::ImplicationUndecidable,
                 target_symbol: target_symbol.to_string(),
                 source_contract_cid: source_contract_cid.to_string(),
                 reason: format!(
@@ -577,7 +858,7 @@ fn discharge_obligation(
             // Compilation failed: cannot ask the solver. Surface as
             // undecidable rather than silent-discharge.
             return Some(LinkerError {
-                kind: "implication-undecidable".into(),
+                kind: LinkerErrorKind::ImplicationUndecidable,
                 target_symbol: target_symbol.to_string(),
                 source_contract_cid: source_contract_cid.to_string(),
                 reason: format!(
@@ -594,7 +875,7 @@ fn discharge_obligation(
     match verdict {
         ObligationVerdict::Discharged => None,
         ObligationVerdict::Unsatisfied => Some(LinkerError {
-            kind: "implication-unprovable".into(),
+            kind: LinkerErrorKind::ImplicationUnprovable,
             target_symbol: target_symbol.to_string(),
             source_contract_cid: source_contract_cid.to_string(),
             reason: format!(
@@ -604,7 +885,7 @@ fn discharge_obligation(
             call_site_locus_json: None,
         }),
         ObligationVerdict::Undecidable | ObligationVerdict::Disagreement => Some(LinkerError {
-            kind: "implication-undecidable".into(),
+            kind: LinkerErrorKind::ImplicationUndecidable,
             target_symbol: target_symbol.to_string(),
             source_contract_cid: source_contract_cid.to_string(),
             reason: format!(
@@ -614,7 +895,7 @@ fn discharge_obligation(
             call_site_locus_json: None,
         }),
         ObligationVerdict::SolverTimeout => Some(LinkerError {
-            kind: "implication-solver-timeout".into(),
+            kind: LinkerErrorKind::ImplicationSolverTimeout,
             target_symbol: target_symbol.to_string(),
             source_contract_cid: source_contract_cid.to_string(),
             reason: format!(
@@ -628,7 +909,7 @@ fn discharge_obligation(
         // solver cannot interpret). Surface it by its own honest name, not as an
         // undecidable gap.
         ObligationVerdict::Refused => Some(LinkerError {
-            kind: "implication-refused".into(),
+            kind: LinkerErrorKind::ImplicationRefused,
             target_symbol: target_symbol.to_string(),
             source_contract_cid: source_contract_cid.to_string(),
             reason: format!(
@@ -708,6 +989,7 @@ mod tests {
                 ]
             })),
             post_json: None,
+            ..Default::default()
         }
     }
 
@@ -718,6 +1000,7 @@ mod tests {
             contract_cid: "blake3-512:ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002".into(),
             pre_json: None,
             post_json: None,
+            ..Default::default()
         }
     }
 
@@ -728,6 +1011,7 @@ mod tests {
             contract_cid: "blake3-512:ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003".into(),
             pre_json: None,
             post_json: None,
+            ..Default::default()
         }
     }
 
@@ -746,6 +1030,7 @@ mod tests {
                 "name": "call-site-obligation",
                 "args": [{"kind": "Var", "name": "GoCallerFail", "sort": "String"}]
             }),
+            ..Default::default()
         }
     }
 
@@ -757,7 +1042,10 @@ mod tests {
         });
 
         assert!(!output.linker_errors.is_empty());
-        assert_eq!(output.linker_errors[0].kind, "unprovable-obligation");
+        assert_eq!(
+            output.linker_errors[0].kind.wire_str(),
+            "unprovable-obligation"
+        );
         assert_eq!(output.linker_errors[0].target_symbol, "rust-kit:process");
         assert_eq!(
             output.linker_errors[0].file.as_deref(),
@@ -828,5 +1116,122 @@ mod tests {
             "blake3-512:31fab69f197f4b279594972e35de7844f954a98ddce44b35edd14b77f53bd2ddb8ce95511bbef00f15476cc2f75f998ac4e419e5fe2c2162c008ba1c7c925131",
             "success-case linkBundleCid must match baseline from PR #124 smoke test"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Slice-1 teeth: the migrated resolve_target join, as typed edge
+    // binding failures the linker now owns.
+    // -----------------------------------------------------------------
+
+    /// A `process` contract that exports the formal `n: Int`. Used as the
+    /// resolved callee for the signature-mismatch tooth.
+    fn make_process_contract_with_signature() -> LinkerContract {
+        LinkerContract {
+            formals: vec!["n".into()],
+            formal_sorts: vec![serde_json::json!({"kind": "primitive", "name": "Int"})],
+            ..make_process_contract()
+        }
+    }
+
+    /// TOOTH: a planted signature mismatch — the call site imports `process`
+    /// with formals `[n, extra]`, but the resolved contract exports only `[n]`.
+    /// `bind` must refuse with the named `SignatureMismatch` error, and no
+    /// bridge is minted for the edge.
+    #[test]
+    fn test_planted_signature_mismatch_is_named_linker_error() {
+        let mut edge = make_cgo_call_edge(&make_go_caller_fail_contract());
+        edge.import_signature = Some(ImportSignature {
+            symbol: "rust-kit:process".into(),
+            formals: vec!["n".into(), "extra".into()],
+            sorts: vec![],
+            euf_coordinate: None,
+        });
+
+        let output = link(LinkerInputs {
+            contracts: vec![
+                make_process_contract_with_signature(),
+                make_go_caller_fail_contract(),
+            ],
+            call_edges: vec![edge],
+        });
+
+        let mismatch = output
+            .linker_errors
+            .iter()
+            .find(|e| e.kind == LinkerErrorKind::SignatureMismatch)
+            .expect("planted mismatch must surface as SignatureMismatch");
+        assert_eq!(mismatch.kind.wire_str(), "signature-mismatch");
+        assert_eq!(mismatch.target_symbol, "rust-kit:process");
+        // No bridge for a mismatched edge: bind refused before derivation.
+        let bridges = output
+            .bundle_json
+            .get("bridges")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert!(
+            bridges.is_empty(),
+            "no bridge is minted for a mismatched edge"
+        );
+    }
+
+    /// TOOTH: the polars `scalar_sum` call shape — an edge whose target symbol
+    /// resolves to no member in the union. `bind` must refuse with the named
+    /// `UnresolvedSymbol` (undefined-symbol) error.
+    #[test]
+    fn test_polars_scalar_sum_shape_is_undefined_symbol() {
+        let caller = LinkerContract {
+            name: "frame_pipeline".into(),
+            kit: "polars-kit".into(),
+            contract_cid: "blake3-512:1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111".into(),
+            post_json: Some(serde_json::json!({"kind": "atomic", "name": "true", "args": []})),
+            ..Default::default()
+        };
+        let edge = LinkerCallEdge {
+            source_contract_cid: caller.contract_cid.clone(),
+            target_contract_cid: None,
+            // No `polars-kit:scalar_sum` contract is present in the union.
+            target_symbol: "polars-kit:scalar_sum".into(),
+            call_site_locus_json: serde_json::json!({"file": "pipeline.py", "line": 3, "column": 5}),
+            evidence_term_json: serde_json::json!({"kind": "Atomic", "name": "obligation", "args": []}),
+            ..Default::default()
+        };
+
+        let output = link(LinkerInputs {
+            contracts: vec![caller],
+            call_edges: vec![edge],
+        });
+
+        let undefined = output
+            .linker_errors
+            .iter()
+            .find(|e| e.kind == LinkerErrorKind::UnresolvedSymbol)
+            .expect("scalar_sum must surface as UnresolvedSymbol");
+        assert_eq!(undefined.kind.wire_str(), "unresolved-symbol");
+        assert_eq!(undefined.target_symbol, "polars-kit:scalar_sum");
+    }
+
+    /// A `BoundContractCid` is only mintable by `bind`, and only from a
+    /// contract that actually answered the edge — so its inner CID is never
+    /// null. `bind`'s success carries the resolved CID; a bound edge with a
+    /// null CID is unrepresentable (see `BoundContractCid`'s private field).
+    #[test]
+    fn test_bound_edge_cid_is_linker_minted_non_null() {
+        let mut name_kit_index: BTreeMap<(String, String), String> = BTreeMap::new();
+        let process = make_process_contract();
+        name_kit_index.insert(
+            ("process".into(), "rust-kit".into()),
+            process.contract_cid.clone(),
+        );
+        let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();
+        contracts_by_cid.insert(process.contract_cid.as_str(), &process);
+
+        let go = make_go_caller_fail_contract();
+        let edge = make_cgo_call_edge(&go);
+        let bound = bind(&edge, &name_kit_index, &contracts_by_cid)
+            .expect("resolvable edge binds to a contract");
+        // The minted CID is exactly the resolved contract's — never null.
+        assert_eq!(bound.as_str(), process.contract_cid);
+        assert!(!bound.as_str().is_empty());
     }
 }

@@ -268,6 +268,7 @@ mod tests {
             contract_cid: cid.to_string(),
             pre_json: None,
             post_json: None,
+            ..Default::default()
         }
     }
 
@@ -345,6 +346,7 @@ mod tests {
                     "name": "true",
                     "args": []
                 })),
+                ..Default::default()
             }],
             vec![LinkerCallEdge {
                 source_contract_cid: source_cid.into(),
@@ -356,6 +358,7 @@ mod tests {
                     "name": "obligation",
                     "args": []
                 }),
+                ..Default::default()
             }],
         );
 

@@ -71,6 +71,7 @@ fn caller(post: Option<Json>) -> LinkerContract {
         contract_cid: CALLER_CID.into(),
         pre_json: None,
         post_json: post,
+        ..Default::default()
     }
 }
 
@@ -81,6 +82,7 @@ fn callee(pre: Option<Json>) -> LinkerContract {
         contract_cid: CALLEE_CID.into(),
         pre_json: pre,
         post_json: None,
+        ..Default::default()
     }
 }
 
@@ -95,6 +97,7 @@ fn cgo_edge() -> LinkerCallEdge {
             "column": 1
         }),
         evidence_term_json: json!({"kind": "Atomic", "name": "obligation", "args": []}),
+        ..Default::default()
     }
 }
 
@@ -221,7 +224,8 @@ fn logically_incompatible_emits_implication_unprovable() {
         "expected exactly one linker error"
     );
     assert_eq!(
-        out.linker_errors[0].kind, "implication-unprovable",
+        out.linker_errors[0].kind.wire_str(),
+        "implication-unprovable",
         "weak-post case must surface implication-unprovable, got {:?}",
         out.linker_errors[0]
     );
@@ -272,7 +276,10 @@ fn solver_undecidable_does_not_silently_discharge() {
     let (registry, plan) = stub_registry_and_plan(ObligationVerdict::Undecidable);
     let out = link_with_solvers(inputs(Some(post), Some(pre)), &registry, &plan);
     assert_eq!(out.linker_errors.len(), 1);
-    assert_eq!(out.linker_errors[0].kind, "implication-undecidable");
+    assert_eq!(
+        out.linker_errors[0].kind.wire_str(),
+        "implication-undecidable"
+    );
 }
 
 // -------------------------------------------------------------------
@@ -287,7 +294,8 @@ fn pure_link_with_no_registry_emits_undecidable_for_distinct_predicates() {
     let out = link(inputs(Some(post), Some(pre)));
     assert_eq!(out.linker_errors.len(), 1, "expected one error");
     assert_eq!(
-        out.linker_errors[0].kind, "implication-undecidable",
+        out.linker_errors[0].kind.wire_str(),
+        "implication-undecidable",
         "pure link() with no solver must surface undecidable, never silent-discharge"
     );
 }
@@ -315,7 +323,10 @@ fn callee_pre_absent_is_vacuously_discharged() {
 fn caller_post_absent_emits_unprovable_obligation() {
     let out = link(inputs(None, Some(ge_x_n(0))));
     assert_eq!(out.linker_errors.len(), 1);
-    assert_eq!(out.linker_errors[0].kind, "unprovable-obligation");
+    assert_eq!(
+        out.linker_errors[0].kind.wire_str(),
+        "unprovable-obligation"
+    );
 }
 
 // -------------------------------------------------------------------

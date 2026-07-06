@@ -198,6 +198,7 @@ fn make_process_contract() -> LinkerContract {
             ]
         })),
         post_json: None,
+        ..Default::default()
     }
 }
 
@@ -220,6 +221,7 @@ fn make_go_caller_fail_contract() -> LinkerContract {
         contract_cid: "blake3-512:ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002ccddee1100000002".into(),
         pre_json: None,
         post_json: None, // no post → linker cannot discharge obligation
+        ..Default::default()
     }
 }
 
@@ -238,6 +240,7 @@ fn make_go_caller_ok_contract() -> LinkerContract {
         contract_cid: "blake3-512:ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003ffeedd2200000003".into(),
         pre_json: None,
         post_json: None,
+        ..Default::default()
     }
 }
 
@@ -260,6 +263,7 @@ fn make_cgo_call_edge(go_contract: &LinkerContract) -> LinkerCallEdge {
             "name": "call-site-obligation",
             "args": [{"kind": "Var", "name": "GoCallerFail", "sort": "String"}]
         }),
+        ..Default::default()
     }
 }
 
