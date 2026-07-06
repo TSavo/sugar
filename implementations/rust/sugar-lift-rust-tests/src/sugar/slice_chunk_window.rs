@@ -74,13 +74,8 @@ pub(crate) fn recognize_composite(
 }
 
 pub(crate) fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    if !runtime_chunk_window_source_expr(expr, fcx, 0) {
-        return None;
-    }
-    Some(Box::new(RuntimeChunkSourceSugar {
-        boundary: frag.token_str(),
-    }))
+    let boundary = frag.runtime_boundary_token(|expr| runtime_chunk_window_source_expr(expr, fcx, 0))?;
+    Some(Box::new(RuntimeChunkSourceSugar { boundary }))
 }
 
 pub(crate) struct SliceChunkWindowSugar {

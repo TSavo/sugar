@@ -707,6 +707,28 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
     })
 }
 
+/// Catalog-boundary predicate: does `expr` directly ground a scan-terminal
+/// reduction (`<scan(...)>.sum()` / `<scan(...)>.last()`)? This is the shape
+/// `constraint.rs` needs to know whether a panic-freedom effect on a relation
+/// side is already discharged by a terminal owned by this module, without
+/// constraint.rs re-encoding the terminal method set itself. Callers outside
+/// this module must route through this function rather than matching
+/// `call.method` against scan-terminal names directly.
+pub(crate) fn is_scan_terminal_grounding_call(expr: &Expr) -> bool {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    let method = call.method.to_string();
+    let grounds = method == "sum" || method == "last";
+    if !grounds {
+        return false;
+    }
+    let Expr::MethodCall(receiver) = strip_refs_groups(&call.receiver) else {
+        return false;
+    };
+    receiver.method == "scan"
+}
+
 fn recognizes_scan_inner(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return false;

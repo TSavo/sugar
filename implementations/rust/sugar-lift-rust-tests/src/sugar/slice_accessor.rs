@@ -271,14 +271,13 @@ fn recognize_kind_frag(frag: &SourceFragment) -> Option<AccessKind> {
 }
 
 fn runtime_slice_source_boundary(receiver: &SourceFragment, fcx: &SugarBuildCtx) -> Option<String> {
-    let expr = receiver.as_expr()?;
-    runtime_slice_source_expr(expr, fcx, 0).then(|| receiver.token_str())
+    receiver.runtime_boundary_token(|expr| runtime_slice_source_expr(expr, fcx, 0))
 }
 
 fn runtime_chunk_source_boundary(receiver: &SourceFragment, fcx: &SugarBuildCtx) -> Option<String> {
-    let expr = receiver.as_expr()?;
-    crate::sugar::slice_chunk_window::runtime_chunk_window_source_expr(expr, fcx, 0)
-        .then(|| receiver.token_str())
+    receiver.runtime_boundary_token(|expr| {
+        crate::sugar::slice_chunk_window::runtime_chunk_window_source_expr(expr, fcx, 0)
+    })
 }
 
 fn runtime_slice_source_expr(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {

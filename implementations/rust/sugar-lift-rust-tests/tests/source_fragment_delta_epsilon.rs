@@ -82,16 +82,17 @@ fn collect_offenders() -> Vec<Offender> {
 
 fn expected_frontier_counts() -> BTreeMap<&'static str, (usize, usize)> {
     BTreeMap::from([
-        // Owned upward pin from #3493 / 6590ad822
-        // ("Drain assertion lift runtime boundary frontier").
-        // The slice/chunk/window and slice_accessor typed-effect lift delivery
-        // added production SourceFragment escape use in real lift code:
-        //   * slice_accessor.rs:275 and :280, both blamed to 6590ad822
-        //   * slice_chunk_window.rs:77, blamed to 6590ad822
-        // Compared with pre-#3493 parent 74080ce72, this accounts for
-        // source_fragment_escape_accessor moving 94 files / 151 lines ->
-        // 95 files / 154 lines. The related raw AST signature / variant
-        // growth below is the same new lift footprint, not silent drift.
+        // #3498 drained the owned upward pin from #3493 / 6590ad822
+        // ("Drain assertion lift runtime boundary frontier"). The
+        // slice_accessor.rs (runtime_slice_source_boundary,
+        // runtime_chunk_source_boundary) and slice_chunk_window.rs
+        // (recognize_term) runtime-boundary probes now route through
+        // SourceFragment::runtime_boundary_token, so the `as_expr()` escape
+        // for that shape lives once in source_fragment.rs (an exempt file)
+        // instead of at each call site. This drains
+        // source_fragment_escape_accessor by one locus (99 files / 160 lines
+        // -> 98 files / 157 lines). The related raw AST signature / variant
+        // growth below is unrelated lift footprint, not silent drift.
         //
         // Current main also carries the ExtractIfSugar replay recognizer
         // footprint in extract_if.rs. It accounts for the additional raw AST
@@ -107,7 +108,7 @@ fn expected_frontier_counts() -> BTreeMap<&'static str, (usize, usize)> {
         ("raw_ast_signature", (142, 1119)),
         ("raw_ast_variant_pattern", (116, 1969)),
         ("raw_syn_import", (120, 120)),
-        ("source_fragment_escape_accessor", (99, 160)),
+        ("source_fragment_escape_accessor", (98, 157)),
     ])
 }
 
