@@ -52,10 +52,10 @@ use crate::{OutputFlags, EXIT_OK, EXIT_SOLVER_FAIL, EXIT_USER_ERROR};
 pub struct ModelArgs {
     /// Read the BV expression tree from a minted .proof file.
     ///
-    /// Walks the catalog's members for an `int32.eq-bv-expr` universe atom and
-    /// extracts its `args[1]` (the bv_tree walked from the vendor source). This
-    /// is the no-vendor-axiom path: the formula comes from the lifted universe,
-    /// never from a built-in. If no universe atom is present, REFUSES.
+    /// Walks the proof graph for an `int32.eq-bv-expr` universe atom and extracts
+    /// its `args[1]` (the bv_tree walked from the vendor source). This is the
+    /// no-vendor-axiom path: the formula comes from the lifted universe, never
+    /// from a built-in. If no universe atom is present, REFUSES.
     #[arg(long = "from-proof", conflicts_with = "bv_expr")]
     pub from_proof: Option<PathBuf>,
 
@@ -473,8 +473,8 @@ fn run_blocks_derive(args: &ModelArgs, payload_json: &str) -> u8 {
     EXIT_OK
 }
 
-/// Read a minted .proof catalog and extract the bv_tree (args[1]) of the first
-/// `int32.eq-bv-expr` universe atom found in any member.
+/// Read a minted .proof catalog and extract the bv_tree (args[1]) of the single
+/// distinct `int32.eq-bv-expr` universe definition found in the proof graph.
 ///
 /// Returns an error (REFUSE) if the proof carries no such atom — there is no
 /// built-in fallback. This is the no-vendor-axiom guard: the bv_tree is only
@@ -484,13 +484,23 @@ fn extract_bv_tree_from_proof(path: &PathBuf) -> Result<Json, String> {
     let graph =
         ProofGraph::read(&bytes).map_err(|e| format!("CBOR decode {}: {e}", path.display()))?;
 
-    // Collect EVERY int32.eq-bv-expr universe bv_tree across all members. We
-    // never first-match: ambiguity must refuse. Note one universe is often
-    // lifted at several call-sites (e.g. abs(5), abs(-5), abs(MIN)) — those
-    // carry the SAME bv_tree (only the call-site subject differs). The choice
-    // that matters is the DISTINCT universe DEFINITION. So we dedup by structure
-    // and require exactly one distinct bv_tree.
+    // Collect EVERY int32.eq-bv-expr universe bv_tree across proof atoms and any
+    // legacy inline member JSON. Current typed proofs store formula fragments as
+    // FlatAtom leaves reached through ContractBody nodes; older tests/fixtures
+    // may still carry inline member bodies. We never first-match: ambiguity must
+    // refuse. Note one universe is often lifted at several call-sites (e.g.
+    // abs(5), abs(-5), abs(MIN)) — those carry the SAME bv_tree (only the
+    // call-site subject differs). The choice that matters is the DISTINCT
+    // universe DEFINITION. So we dedup by structure and require exactly one
+    // distinct bv_tree.
     let mut trees: Vec<Json> = Vec::new();
+    for atom in graph.atoms() {
+        let parsed: Json = match serde_json::from_slice(atom.bytes()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        collect_universe_bv_trees(&parsed, &mut trees);
+    }
     for view in graph.members_view() {
         let parsed: Json = match serde_json::from_slice(view.bytes()) {
             Ok(v) => v,
@@ -509,7 +519,7 @@ fn extract_bv_tree_from_proof(path: &PathBuf) -> Result<Json, String> {
     }
 
     match distinct.len() {
-        0 => Err("no int32.eq-bv-expr universe atom in any catalog member".to_string()),
+        0 => Err("no int32.eq-bv-expr universe atom in any proof graph atom or member".to_string()),
         1 => Ok(distinct.into_iter().next().unwrap()),
         n => Err(format!(
             "ambiguous: {n} distinct int32.eq-bv-expr universe definitions in proof, \
@@ -690,6 +700,83 @@ mod tests {
         assert!(
             err.contains("ambiguous") && err.contains("2 distinct"),
             "refusal must name the ambiguity, got: {err}"
+        );
+    }
+
+    #[test]
+    fn extract_reads_universe_from_typed_graph_atoms() {
+        use std::sync::Arc;
+
+        use sugar_canonicalizer::Value as CValue;
+        use sugar_proof_envelope::{
+            build_proof_envelope, ContractBody, ContractMemento, FlatAtom, ProofEnvelopeInput,
+            ProofGraph,
+        };
+
+        fn json_to_cvalue(value: &Json) -> Arc<CValue> {
+            match value {
+                Json::Null => CValue::null(),
+                Json::Bool(b) => CValue::boolean(*b),
+                Json::Number(n) => {
+                    let i = n
+                        .as_i64()
+                        .or_else(|| n.as_u64().and_then(|u| i64::try_from(u).ok()))
+                        .expect("test JSON only uses integer numbers");
+                    CValue::integer(i128::from(i))
+                }
+                Json::String(s) => CValue::string(s),
+                Json::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
+                Json::Object(map) => CValue::object(
+                    map.iter()
+                        .map(|(k, v)| (k.as_str(), json_to_cvalue(v)))
+                        .collect::<Vec<_>>(),
+                ),
+            }
+        }
+
+        // Current minted proofs store the invariant formula as a FlatAtom reached
+        // through a ContractBody; the member itself only points at the body CID.
+        // derive --from-proof must read that graph layer, not just inline members.
+        let member = member_with_universe(i32::MIN.into(), abs_tree());
+        let inv = member
+            .pointer("/header/inv")
+            .expect("test member contains header.inv");
+        let mut graph = ProofGraph::new();
+        let inv_atom = FlatAtom::new(json_to_cvalue(inv));
+        let inv_memento = graph.register_atom(inv_atom);
+        let metadata = graph.register_atom(FlatAtom::empty_metadata());
+        let body = graph.register_body(ContractBody::new_inv(&inv_memento));
+        let contract = ContractMemento::new_with_metadata_at(
+            "abs#euf#c:callresult_abs_a1(i:-2147483648)::assertion",
+            &body,
+            &metadata,
+            [0x42; 32],
+            "2026-04-30T00:00:00.000Z",
+        );
+        graph.register_contract(contract);
+
+        let proof_bytes = build_proof_envelope(&ProofEnvelopeInput {
+            name: "@x/java-abs-model".into(),
+            version: "0.0.1".into(),
+            binary_cid: None,
+            metadata: None,
+            graph,
+            signer_cid: "blake3-512:bb".into(),
+            signer_seed: [0x11; 32],
+            declared_at: "2026-04-30T00:00:00.000Z".into(),
+        })
+        .bytes;
+
+        let path = std::env::temp_dir().join(format!(
+            "sugar-derive-typed-atoms-{}.proof",
+            std::process::id()
+        ));
+        std::fs::write(&path, proof_bytes).expect("write tmp proof");
+        let tree = extract_bv_tree_from_proof(&path).expect("extract from typed graph atoms");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            tree["name"], "bv32.ite",
+            "must collect args[1] from the graph atom formula"
         );
     }
 

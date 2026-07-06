@@ -57,7 +57,7 @@ mf="$DIR/.sugar/lift/java-test-assertions/manifest.toml"
 sed "s#@KIT_JAVA@#${KIT_JAVA}#g; s#@KIT_DIR@#${KIT_DIR}#g" "$mfin" > "$mf"
 for p in "$DIR"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
 rm -rf "$DIR/.sugar/runs" 2>/dev/null || true
-rm -f "$DIR/.dump.json" "$DIR/.bv-tree.json" "$DIR/no-universe.proof" 2>/dev/null || true
+rm -f "$DIR/.from-proof-receipt.json" "$DIR/.bv-tree.json" "$DIR/no-universe.proof" 2>/dev/null || true
 rm -f "$HERE/good-receipt.json" "$HERE/bad-receipt.json" "$HERE/no-universe-receipt.json" 2>/dev/null || true
 
 # ── 1. MINT: walk Math.java -> the int32.eq-bv-expr universe atom ────────────
@@ -71,51 +71,35 @@ for p in "$DIR"/blake3-512_*.proof; do [ -e "$p" ] && PROOF="$p"; done
 echo "   minted: $(basename "$PROOF")"
 
 # The universe row MUST be in the minted proof. No row = no teeth.
-if ! grep -q 'int32.eq-bv-expr' "$PROOF"; then
-  echo "FAIL: minted .proof carries no int32.eq-bv-expr universe atom"
-  exit 1
-fi
-echo "   minted .proof carries the int32.eq-bv-expr universe row (walked from Math.java)."
+python3 - "$PROOF" <<'PY'
+import sys
+proof = sys.argv[1]
+needle = b"int32.eq-bv-expr"
+data = open(proof, "rb").read()
+count = data.count(needle)
+if count == 0:
+    raise SystemExit("FAIL: minted .proof carries no int32.eq-bv-expr universe atom")
+print(f"   minted .proof carries {count} int32.eq-bv-expr universe row(s) (walked from Math.java).")
+PY
 
 # ── 2. EXTRACT the bv_tree FROM the minted artifact ─────────────────────────
 echo
 echo "== 2. extract: pull the bv_tree (universe atom args[1]) OUT of the minted .proof =="
-"$SUGAR" dump "$PROOF" --json 2>/dev/null > "$DIR/.dump.json" || { echo "FAIL: sugar dump failed"; exit 1; }
+"$SUGAR" derive \
+  --from-proof "$PROOF" \
+  --input=-2147483648 \
+  --receipt-out "$DIR/.from-proof-receipt.json" \
+  --quiet 2>/dev/null || { echo "FAIL: sugar derive --from-proof could not extract the universe atom"; exit 1; }
 
-# Extract args[1] of an int32.eq-bv-expr atom whose subject is abs(MIN_VALUE),
-# straight out of the dumped proof. This is the ONLY source of the formula.
-python3 - "$DIR/.dump.json" "$DIR/.bv-tree.json" <<'PY'
+# Extract args[1] of an int32.eq-bv-expr atom through the production proof
+# reader. This is the ONLY source of the formula.
+python3 - "$DIR/.from-proof-receipt.json" "$DIR/.bv-tree.json" <<'PY'
 import json, sys
-dump_path, out_path = sys.argv[1], sys.argv[2]
-d = json.load(open(dump_path, encoding="utf-8"))
-
-def find_universe_for_min(node):
-    """Return args[1] (bv_tree) of an int32.eq-bv-expr atom whose subject
-    is call:abs(-2147483648). Recursive — no hardcoded JSON path."""
-    if isinstance(node, dict):
-        if node.get("name") == "int32.eq-bv-expr":
-            args = node.get("args", [])
-            if len(args) == 2:
-                subject = args[0]
-                # subject ctor args carry the call-site int literal.
-                subj_args = subject.get("args", []) if isinstance(subject, dict) else []
-                vals = [a.get("value") for a in subj_args if isinstance(a, dict)]
-                if -2147483648 in vals:
-                    return args[1]
-        for v in node.values():
-            r = find_universe_for_min(v)
-            if r is not None:
-                return r
-    elif isinstance(node, list):
-        for v in node:
-            r = find_universe_for_min(v)
-            if r is not None:
-                return r
-    return None
-
-tree = find_universe_for_min(d)
+receipt_path, out_path = sys.argv[1], sys.argv[2]
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+tree = receipt.get("bv_tree")
 if tree is None:
-    raise SystemExit("FAIL: no int32.eq-bv-expr universe atom for abs(MIN_VALUE) in the dumped proof")
+    raise SystemExit("FAIL: derive receipt has no bv_tree extracted from the minted proof")
 
 # Guard: the extracted tree must be the walked body shape — not a literal we typed.
 s = json.dumps(tree)
@@ -125,6 +109,7 @@ for op in ("bv32.ite", "bv32.slt", "bv32.neg"):
 
 json.dump(tree, open(out_path, "w", encoding="utf-8"))
 print(f"   bv_tree extracted FROM the minted .proof (not typed into run.sh).")
+print(f"   extraction path: {receipt.get('bv_tree_source')}")
 print(f"   walked operators present: bv32.ite, bv32.slt, bv32.neg")
 print(f"   bv_tree: {s}")
 PY
