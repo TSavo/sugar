@@ -7,14 +7,16 @@ import os
 import pkgutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
+from typing import get_args
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.add_sugar import AddSugar
+from sugar_lift_py_tests.sugar.bitwise_op_sugar import BitwiseOpSugar
 from sugar_lift_py_tests.sugar.map_sugar import MapSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar, registered_claims
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -29,6 +31,11 @@ EFFECT_CONSUMER_OVERRIDES: dict[str, str] = {
     "ListCompSugar": "binds comprehension variables while reducing element bodies",
     "SetCompSugar": "binds comprehension variables while reducing element bodies",
     "TrySugar": "routes Incomplete raise-like effects through handlers/finally",
+}
+
+MANUAL_COMPLETE_VALUE_FORCES: dict[str, tuple[str, ...]] = {
+    "BuilderCtorSugar": ("items",),
+    "ToListSugar": ("receiver",),
 }
 
 
@@ -101,6 +108,31 @@ def test_registered_sugars_do_not_override_desugar_outside_named_hook() -> None:
 
     assert desugar_overrides == []
     assert hook_overrides == EFFECT_CONSUMER_OVERRIDES
+
+
+def test_registered_sugars_do_not_force_body_operands_outside_template() -> None:
+    _import_all_sugar_modules()
+    forced_operands: dict[str, tuple[str, ...]] = {}
+
+    for claim in registered_claims():
+        cls = claim.build.__self__
+        if not dataclass_is_concrete(cls):
+            continue
+        try:
+            source = inspect.getsource(cls)
+        except OSError:
+            source = ""
+        forced = tuple(
+            field.name
+            for field in fields(cls)
+            if _annotation_mentions_sugar_body(field.type)
+            and _source_forces_sugar_body(source, field.name)
+            and field.name not in (getattr(cls, "template_operand_names", None) or ())
+        )
+        if forced:
+            forced_operands[claim.name] = forced
+
+    assert forced_operands == MANUAL_COMPLETE_VALUE_FORCES
 
 
 def test_unmigrated_sugar_missing_build_is_a_pyright_error(tmp_path: Path) -> None:
@@ -179,6 +211,38 @@ def test_map_sugar_receiver_incomplete_emits_typed_effect_from_template() -> Non
     assert sugar.desugar(None) == Incomplete(effect)
 
 
+def test_bitwise_op_sugar_left_incomplete_emits_typed_effect_from_template() -> None:
+    effect = RuntimeEffect(
+        "write more Sugar for this AST: owner=python.factory "
+        "observed=call-method:notna requested=term"
+    )
+    sugar = BitwiseOpSugar(
+        operator="&",
+        left=SugarBody(_IncompleteChild(effect), SugarRole.TERM),
+        right=SugarBody(_CompleteChild(TermValue(1)), SugarRole.TERM),
+        blame="pandas/tests/test_sorting.py:300:20",
+    )
+
+    assert "_desugar_with_effects" not in BitwiseOpSugar.__dict__
+    assert sugar.desugar(None) == Incomplete(effect)
+
+
+def test_bitwise_op_sugar_right_incomplete_emits_typed_effect_from_template() -> None:
+    effect = RuntimeEffect(
+        "write more Sugar for this AST: owner=python.factory "
+        "observed=call-method:notna requested=term"
+    )
+    sugar = BitwiseOpSugar(
+        operator="&",
+        left=SugarBody(_CompleteChild(TermValue(1)), SugarRole.TERM),
+        right=SugarBody(_IncompleteChild(effect), SugarRole.TERM),
+        blame="pandas/tests/test_sorting.py:300:20",
+    )
+
+    assert "_desugar_with_effects" not in BitwiseOpSugar.__dict__
+    assert sugar.desugar(None) == Incomplete(effect)
+
+
 def _import_all_sugar_modules() -> None:
     import sugar_lift_py_tests.sugar as sugar_package
 
@@ -187,6 +251,23 @@ def _import_all_sugar_modules() -> None:
         if module_info.ispkg:
             continue
         importlib.import_module(module_info.name)
+
+
+def dataclass_is_concrete(cls: type) -> bool:
+    return hasattr(cls, "__dataclass_fields__")
+
+
+def _annotation_mentions_sugar_body(annotation: object) -> bool:
+    if annotation is SugarBody:
+        return True
+    if isinstance(annotation, str):
+        return "SugarBody" in annotation
+    return any(_annotation_mentions_sugar_body(arg) for arg in get_args(annotation))
+
+
+def _source_forces_sugar_body(source: str, field_name: str) -> bool:
+    needle = f"complete_value(self.{field_name}.reduce("
+    return needle in source
 
 
 def _run_lift_rpc(project: Path) -> dict:
