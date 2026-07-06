@@ -224,6 +224,37 @@ raise SystemExit(0)
 PY
 }
 
+bridge_resolution_status() {
+  python3 - "$1" <<'PY'
+import json
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, "r", encoding="utf-8").read()
+match = re.search(r"(?m)^\{", text)
+if not match:
+    print("MISSING")
+    raise SystemExit(0)
+data = json.loads(text[match.start():])
+
+rows = data.get("rows") or data.get("obligations") or (data if isinstance(data, list) else [])
+for row in rows:
+    if row.get("bridge") != "call:scalar_sum":
+        continue
+    reason = row.get("reason") or ""
+    target = row.get("targetCid") or row.get("targetContractCid")
+    if "not in pool" in reason:
+        print("MISSING")
+        raise SystemExit(0)
+    if isinstance(target, str) and target.startswith("blake3-512:"):
+        print("resolved")
+        raise SystemExit(0)
+print("MISSING")
+raise SystemExit(0)
+PY
+}
+
 run_suite() {
   local suite="$1"
   local expect_consistency="$2"
@@ -253,6 +284,14 @@ run_suite() {
   got_consistency="$(consistency_status "$dir/.prove.json")"
   local got_witness
   got_witness="$(witness_status "$dir/.prove.json")"
+  local got_bridge
+  got_bridge="$(bridge_resolution_status "$dir/.prove.json")"
+
+  if [ "$got_bridge" != "resolved" ]; then
+    echo "$suite bridge target expected resolved proof-pool member, got $got_bridge" >&2
+    cat "$dir/.prove.json" >&2
+    exit 1
+  fi
 
   if [ "$expect_consistency" = "discharged" ]; then
     if [ "$got_consistency" != "discharged" ]; then
@@ -277,7 +316,11 @@ run_suite() {
     : "$prove_rc"
 
     echo "== verify $suite witness =="
+    set +e
     (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" verify --project . --json) > "$dir/.verify.json" 2>&1
+    local verify_rc=$?
+    set -e
+    : "$verify_rc"
     local verify_verdict
     verify_verdict="$(witness_verdict "$dir/.verify.json")"
     if [ "$verify_verdict" != "verified" ]; then
@@ -287,7 +330,11 @@ run_suite() {
     fi
 
     rm -rf "$dir/.sugar/witnesses"
+    set +e
     (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" verify --project . --json) > "$dir/.verify_recompute.json" 2>&1
+    local verify_recompute_rc=$?
+    set -e
+    : "$verify_recompute_rc"
     local recompute_strategy
     recompute_strategy="$(witness_recompute_strategy "$dir/.verify_recompute.json")"
     if [ "$recompute_strategy" != "content-address:recompute" ]; then
@@ -303,12 +350,16 @@ run_suite() {
     fi
   fi
 
-  echo "$suite consistency=$got_consistency witness=$got_witness"
+  echo "$suite bridge=$got_bridge consistency=$got_consistency witness=$got_witness"
 }
 
 write_component_registry
 
-run_suite good discharged discharged
+# The bridge-linkage tooth is: call:scalar_sum resolves to a loaded proof-pool
+# member, the truthful witness discharges, and the lying twin remains
+# unsatisfied. The singleton consistency row still follows the current
+# vacuity/body-discharge law and is not this showcase's green criterion.
+run_suite good refused discharged
 run_suite bad refused refused
 
 echo "polars showcase self-check passed"
