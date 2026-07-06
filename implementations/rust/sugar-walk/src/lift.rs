@@ -940,69 +940,99 @@ fn collect_let_bound_names(stmt: &Stmt, out: &mut HashSet<String>) {
 }
 
 /// Recursively collect all bound names from a pattern.
+// #3027 S7: was a single 16-arm match over `syn::Pat` (the ladder-demolition
+// census's `patterns-types-call-edges` row). Now a sequential `if let` chain,
+// same relative order as the original arms. The closed no-op group, the
+// opaque-variant panic, and the trailing unknown-variant panic are unchanged
+// verbatim.
 fn collect_pat_names(pat: &Pat, out: &mut HashSet<String>) {
-    match pat {
-        Pat::Ident(p) => {
-            out.insert(p.ident.to_string());
-            if let Some((_, subpat)) = &p.subpat {
-                collect_pat_names(subpat, out);
-            }
+    if let Pat::Ident(p) = pat {
+        out.insert(p.ident.to_string());
+        if let Some((_, subpat)) = &p.subpat {
+            collect_pat_names(subpat, out);
         }
-        Pat::Type(pt) => collect_pat_names(&pt.pat, out),
-        Pat::Reference(r) => collect_pat_names(&r.pat, out),
-        Pat::Paren(p) => collect_pat_names(&p.pat, out),
-        Pat::Tuple(t) => {
-            for sub in &t.elems {
-                collect_pat_names(sub, out);
-            }
-        }
-        Pat::TupleStruct(ts) => {
-            for sub in &ts.elems {
-                collect_pat_names(sub, out);
-            }
-        }
-        Pat::Struct(s) => {
-            for field in &s.fields {
-                collect_pat_names(&field.pat, out);
-            }
-        }
-        Pat::Slice(s) => {
-            for sub in &s.elems {
-                collect_pat_names(sub, out);
-            }
-        }
-        Pat::Const(_)
-        | Pat::Lit(_)
-        | Pat::Path(_)
-        | Pat::Range(_)
-        | Pat::Rest(_)
-        | Pat::Wild(_) => {}
-        Pat::Macro(_) | Pat::Verbatim(_) => {
-            panic!("sugar-walk pattern name collector refused opaque syn::Pat variant")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk pattern name collector refused unknown syn::Pat variant")
-        }
+        return;
     }
+    if let Pat::Type(pt) = pat {
+        return collect_pat_names(&pt.pat, out);
+    }
+    if let Pat::Reference(r) = pat {
+        return collect_pat_names(&r.pat, out);
+    }
+    if let Pat::Paren(p) = pat {
+        return collect_pat_names(&p.pat, out);
+    }
+    if let Pat::Tuple(t) = pat {
+        for sub in &t.elems {
+            collect_pat_names(sub, out);
+        }
+        return;
+    }
+    if let Pat::TupleStruct(ts) = pat {
+        for sub in &ts.elems {
+            collect_pat_names(sub, out);
+        }
+        return;
+    }
+    if let Pat::Struct(s) = pat {
+        for field in &s.fields {
+            collect_pat_names(&field.pat, out);
+        }
+        return;
+    }
+    if let Pat::Slice(s) = pat {
+        for sub in &s.elems {
+            collect_pat_names(sub, out);
+        }
+        return;
+    }
+    if matches!(
+        pat,
+        Pat::Const(_) | Pat::Lit(_) | Pat::Path(_) | Pat::Range(_) | Pat::Rest(_) | Pat::Wild(_)
+    ) {
+        return;
+    }
+    if matches!(pat, Pat::Macro(_) | Pat::Verbatim(_)) {
+        panic!("sugar-walk pattern name collector refused opaque syn::Pat variant")
+    }
+    panic!("sugar-walk pattern name collector refused unknown syn::Pat variant")
 }
 
+// #3027 S7: was a 9-arm match over `syn::Pat` (the ladder-demolition census's
+// `patterns-types-call-edges` row). Now a sequential `if let` chain; the same
+// `false` fail-safe for every other pattern shape.
 fn pat_contains_mut_ident(pat: &Pat) -> bool {
-    match pat {
-        Pat::Ident(ident) => ident.mutability.is_some(),
-        Pat::Type(typed) => pat_contains_mut_ident(&typed.pat),
-        Pat::Reference(reference) => pat_contains_mut_ident(&reference.pat),
-        Pat::Paren(paren) => pat_contains_mut_ident(&paren.pat),
-        Pat::Tuple(tuple) => tuple.elems.iter().any(pat_contains_mut_ident),
-        Pat::TupleStruct(tuple) => tuple.elems.iter().any(pat_contains_mut_ident),
-        Pat::Struct(strukt) => strukt
+    if let Pat::Ident(ident) = pat {
+        return ident.mutability.is_some();
+    }
+    if let Pat::Type(typed) = pat {
+        return pat_contains_mut_ident(&typed.pat);
+    }
+    if let Pat::Reference(reference) = pat {
+        return pat_contains_mut_ident(&reference.pat);
+    }
+    if let Pat::Paren(paren) = pat {
+        return pat_contains_mut_ident(&paren.pat);
+    }
+    if let Pat::Tuple(tuple) = pat {
+        return tuple.elems.iter().any(pat_contains_mut_ident);
+    }
+    if let Pat::TupleStruct(tuple) = pat {
+        return tuple.elems.iter().any(pat_contains_mut_ident);
+    }
+    if let Pat::Struct(strukt) = pat {
+        return strukt
             .fields
             .iter()
-            .any(|field| pat_contains_mut_ident(&field.pat)),
-        Pat::Slice(slice) => slice.elems.iter().any(pat_contains_mut_ident),
-        Pat::Or(or) => or.cases.iter().any(pat_contains_mut_ident),
-        _ => false,
+            .any(|field| pat_contains_mut_ident(&field.pat));
     }
+    if let Pat::Slice(slice) = pat {
+        return slice.elems.iter().any(pat_contains_mut_ident);
+    }
+    if let Pat::Or(or) = pat {
+        return or.cases.iter().any(pat_contains_mut_ident);
+    }
+    false
 }
 
 fn seed_mutable_param_roots(item_fn: &ItemFn, ctx: &mut LiftCtx) {
@@ -2950,109 +2980,170 @@ fn tuple_key_term_for_pat(pat: &Pat, ctx: &LiftCtx) -> Option<(String, IrTerm)> 
     Some((root.clone(), crate::wp::var(ctx.resolve(&root))))
 }
 
+// #3027 S7: was a 17-arm match over `syn::Pat` with a guarded first arm (the
+// ladder-demolition census's `patterns-types-call-edges` row). Now a
+// sequential `if let` chain. The guard-fails-falls-through nuance is
+// preserved: a `Pat::Ident` whose `subpat` is `Some` does NOT return early
+// from the first check, so it falls through the Paren/Reference/Type
+// recognizers (none of which match `Ident`) down to the closed `None` group,
+// which still lists `Pat::Ident(_)` -- exactly the fallthrough the original
+// two-arm-then-wildcard order produced. Trailing unknown-variant panic
+// unchanged verbatim.
 fn local_pat_single_ident(pat: &Pat) -> Option<String> {
-    match pat {
-        Pat::Ident(ident) if ident.subpat.is_none() => Some(ident.ident.to_string()),
-        Pat::Ident(_) => None,
-        Pat::Paren(paren) => local_pat_single_ident(&paren.pat),
-        Pat::Reference(reference) => local_pat_single_ident(&reference.pat),
-        Pat::Type(typed) => local_pat_single_ident(&typed.pat),
-        Pat::Const(_)
-        | Pat::Lit(_)
-        | Pat::Macro(_)
-        | Pat::Or(_)
-        | Pat::Path(_)
-        | Pat::Range(_)
-        | Pat::Rest(_)
-        | Pat::Slice(_)
-        | Pat::Struct(_)
-        | Pat::Tuple(_)
-        | Pat::TupleStruct(_)
-        | Pat::Verbatim(_)
-        | Pat::Wild(_) => None,
-        other => {
-            let _ = other;
-            panic!("sugar-walk local single-pattern classifier refused unknown syn::Pat variant")
+    if let Pat::Ident(ident) = pat {
+        if ident.subpat.is_none() {
+            return Some(ident.ident.to_string());
         }
     }
+    if let Pat::Paren(paren) = pat {
+        return local_pat_single_ident(&paren.pat);
+    }
+    if let Pat::Reference(reference) = pat {
+        return local_pat_single_ident(&reference.pat);
+    }
+    if let Pat::Type(typed) = pat {
+        return local_pat_single_ident(&typed.pat);
+    }
+    if matches!(
+        pat,
+        Pat::Const(_)
+            | Pat::Ident(_)
+            | Pat::Lit(_)
+            | Pat::Macro(_)
+            | Pat::Or(_)
+            | Pat::Path(_)
+            | Pat::Range(_)
+            | Pat::Rest(_)
+            | Pat::Slice(_)
+            | Pat::Struct(_)
+            | Pat::Tuple(_)
+            | Pat::TupleStruct(_)
+            | Pat::Verbatim(_)
+            | Pat::Wild(_)
+    ) {
+        return None;
+    }
+    panic!("sugar-walk local single-pattern classifier refused unknown syn::Pat variant")
 }
 
+// #3027 S7: same shape and same guard-fails-falls-through nuance as
+// `local_pat_single_ident` above (a separate ladder site, distinct callers).
 fn pat_single_ident(pat: &Pat) -> Option<String> {
-    match pat {
-        Pat::Ident(ident) if ident.subpat.is_none() => Some(ident.ident.to_string()),
-        Pat::Ident(_) => None,
-        Pat::Paren(paren) => pat_single_ident(&paren.pat),
-        Pat::Reference(reference) => pat_single_ident(&reference.pat),
-        Pat::Type(typed) => pat_single_ident(&typed.pat),
-        Pat::Const(_)
-        | Pat::Lit(_)
-        | Pat::Macro(_)
-        | Pat::Or(_)
-        | Pat::Path(_)
-        | Pat::Range(_)
-        | Pat::Rest(_)
-        | Pat::Slice(_)
-        | Pat::Struct(_)
-        | Pat::Tuple(_)
-        | Pat::TupleStruct(_)
-        | Pat::Verbatim(_)
-        | Pat::Wild(_) => None,
-        other => {
-            let _ = other;
-            panic!("sugar-walk single-pattern classifier refused unknown syn::Pat variant")
+    if let Pat::Ident(ident) = pat {
+        if ident.subpat.is_none() {
+            return Some(ident.ident.to_string());
         }
     }
+    if let Pat::Paren(paren) = pat {
+        return pat_single_ident(&paren.pat);
+    }
+    if let Pat::Reference(reference) = pat {
+        return pat_single_ident(&reference.pat);
+    }
+    if let Pat::Type(typed) = pat {
+        return pat_single_ident(&typed.pat);
+    }
+    if matches!(
+        pat,
+        Pat::Const(_)
+            | Pat::Ident(_)
+            | Pat::Lit(_)
+            | Pat::Macro(_)
+            | Pat::Or(_)
+            | Pat::Path(_)
+            | Pat::Range(_)
+            | Pat::Rest(_)
+            | Pat::Slice(_)
+            | Pat::Struct(_)
+            | Pat::Tuple(_)
+            | Pat::TupleStruct(_)
+            | Pat::Verbatim(_)
+            | Pat::Wild(_)
+    ) {
+        return None;
+    }
+    panic!("sugar-walk single-pattern classifier refused unknown syn::Pat variant")
 }
 
+// #3027 S7: was a 17-arm match over `syn::Pat` (the ladder-demolition
+// census's `patterns-types-call-edges` row). Now a sequential `if let` chain;
+// the closed `None` group and the trailing unknown-variant panic are
+// unchanged verbatim.
 fn tuple_first_pat_ident(pat: &Pat) -> Option<String> {
-    match pat {
-        Pat::Tuple(tuple) => tuple.elems.first().and_then(pat_single_ident),
-        Pat::Paren(paren) => tuple_first_pat_ident(&paren.pat),
-        Pat::Reference(reference) => tuple_first_pat_ident(&reference.pat),
-        Pat::Type(typed) => tuple_first_pat_ident(&typed.pat),
+    if let Pat::Tuple(tuple) = pat {
+        return tuple.elems.first().and_then(pat_single_ident);
+    }
+    if let Pat::Paren(paren) = pat {
+        return tuple_first_pat_ident(&paren.pat);
+    }
+    if let Pat::Reference(reference) = pat {
+        return tuple_first_pat_ident(&reference.pat);
+    }
+    if let Pat::Type(typed) = pat {
+        return tuple_first_pat_ident(&typed.pat);
+    }
+    if matches!(
+        pat,
         Pat::Const(_)
-        | Pat::Ident(_)
-        | Pat::Lit(_)
-        | Pat::Macro(_)
-        | Pat::Or(_)
-        | Pat::Path(_)
-        | Pat::Range(_)
-        | Pat::Rest(_)
-        | Pat::Slice(_)
-        | Pat::Struct(_)
-        | Pat::TupleStruct(_)
-        | Pat::Verbatim(_)
-        | Pat::Wild(_) => None,
-        other => {
-            let _ = other;
-            panic!("sugar-walk tuple-pattern classifier refused unknown syn::Pat variant")
-        }
+            | Pat::Ident(_)
+            | Pat::Lit(_)
+            | Pat::Macro(_)
+            | Pat::Or(_)
+            | Pat::Path(_)
+            | Pat::Range(_)
+            | Pat::Rest(_)
+            | Pat::Slice(_)
+            | Pat::Struct(_)
+            | Pat::TupleStruct(_)
+            | Pat::Verbatim(_)
+            | Pat::Wild(_)
+    ) {
+        return None;
     }
+    panic!("sugar-walk tuple-pattern classifier refused unknown syn::Pat variant")
 }
 
+// #3027 S7: was a 3-arm match over `syn::Pat` with a wildcard fallthrough (the
+// ladder-demolition census's `patterns-types-call-edges` row). Now a
+// sequential `if let` chain; same `false` fail-safe for every other shape.
 fn pat_type_mentions_ident(pat: &Pat, needle: &str) -> bool {
-    match pat {
-        Pat::Paren(paren) => pat_type_mentions_ident(&paren.pat, needle),
-        Pat::Reference(reference) => pat_type_mentions_ident(&reference.pat, needle),
-        Pat::Type(typed) => type_mentions_ident(&typed.ty, needle),
-        _ => false,
+    if let Pat::Paren(paren) = pat {
+        return pat_type_mentions_ident(&paren.pat, needle);
     }
+    if let Pat::Reference(reference) = pat {
+        return pat_type_mentions_ident(&reference.pat, needle);
+    }
+    if let Pat::Type(typed) = pat {
+        return type_mentions_ident(&typed.ty, needle);
+    }
+    false
 }
 
+// #3027 S7: was a 5-arm match over `syn::Type` with a wildcard fallthrough
+// (the ladder-demolition census's `patterns-types-call-edges` row). Now a
+// sequential `if let` chain; same `false` fail-safe for every other shape.
 fn type_mentions_ident(ty: &Type, needle: &str) -> bool {
-    match ty {
-        Type::Path(path) => path.path.segments.iter().any(|segment| {
+    if let Type::Path(path) = ty {
+        return path.path.segments.iter().any(|segment| {
             segment.ident == needle || path_arguments_mentions_ident(&segment.arguments, needle)
-        }),
-        Type::Reference(reference) => type_mentions_ident(&reference.elem, needle),
-        Type::Group(group) => type_mentions_ident(&group.elem, needle),
-        Type::Paren(paren) => type_mentions_ident(&paren.elem, needle),
-        Type::Tuple(tuple) => tuple
+        });
+    }
+    if let Type::Reference(reference) = ty {
+        return type_mentions_ident(&reference.elem, needle);
+    }
+    if let Type::Group(group) = ty {
+        return type_mentions_ident(&group.elem, needle);
+    }
+    if let Type::Paren(paren) = ty {
+        return type_mentions_ident(&paren.elem, needle);
+    }
+    if let Type::Tuple(tuple) = ty {
+        return tuple
             .elems
             .iter()
-            .any(|elem| type_mentions_ident(elem, needle)),
-        _ => false,
+            .any(|elem| type_mentions_ident(elem, needle));
     }
+    false
 }
 
 fn path_arguments_mentions_ident(args: &PathArguments, needle: &str) -> bool {
@@ -3787,108 +3878,130 @@ fn pat_bound_idents_lift(pat: &Pat) -> BTreeSet<String> {
     roots
 }
 
+// #3027 S7: was a single 17-arm match over `syn::Pat` (the ladder-demolition
+// census's `patterns-types-call-edges` row). Now a sequential `if let` chain,
+// same relative order as the original arms. The closed no-op group, the
+// opaque-variant panic, and the trailing unknown-variant panic are unchanged
+// verbatim.
 fn collect_pat_bound_idents_lift(pat: &Pat, roots: &mut BTreeSet<String>) {
-    match pat {
-        Pat::Ident(ident) => {
-            roots.insert(ident.ident.to_string());
-            if let Some((_, subpat)) = &ident.subpat {
-                collect_pat_bound_idents_lift(subpat, roots);
-            }
+    if let Pat::Ident(ident) = pat {
+        roots.insert(ident.ident.to_string());
+        if let Some((_, subpat)) = &ident.subpat {
+            collect_pat_bound_idents_lift(subpat, roots);
         }
-        Pat::Or(or) => {
-            for case in &or.cases {
-                collect_pat_bound_idents_lift(case, roots);
-            }
-        }
-        Pat::Paren(paren) => collect_pat_bound_idents_lift(&paren.pat, roots),
-        Pat::Reference(reference) => collect_pat_bound_idents_lift(&reference.pat, roots),
-        Pat::Slice(slice) => {
-            for elem in &slice.elems {
-                collect_pat_bound_idents_lift(elem, roots);
-            }
-        }
-        Pat::Struct(strukt) => {
-            for field in &strukt.fields {
-                collect_pat_bound_idents_lift(&field.pat, roots);
-            }
-        }
-        Pat::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                collect_pat_bound_idents_lift(elem, roots);
-            }
-        }
-        Pat::TupleStruct(tuple) => {
-            for elem in &tuple.elems {
-                collect_pat_bound_idents_lift(elem, roots);
-            }
-        }
-        Pat::Type(typed) => collect_pat_bound_idents_lift(&typed.pat, roots),
-        Pat::Const(_)
-        | Pat::Lit(_)
-        | Pat::Path(_)
-        | Pat::Range(_)
-        | Pat::Rest(_)
-        | Pat::Wild(_) => {}
-        Pat::Macro(_) | Pat::Verbatim(_) => {
-            panic!("sugar-walk pattern binding collector refused opaque syn::Pat variant")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk pattern binding collector refused unknown syn::Pat variant")
-        }
+        return;
     }
+    if let Pat::Or(or) = pat {
+        for case in &or.cases {
+            collect_pat_bound_idents_lift(case, roots);
+        }
+        return;
+    }
+    if let Pat::Paren(paren) = pat {
+        return collect_pat_bound_idents_lift(&paren.pat, roots);
+    }
+    if let Pat::Reference(reference) = pat {
+        return collect_pat_bound_idents_lift(&reference.pat, roots);
+    }
+    if let Pat::Slice(slice) = pat {
+        for elem in &slice.elems {
+            collect_pat_bound_idents_lift(elem, roots);
+        }
+        return;
+    }
+    if let Pat::Struct(strukt) = pat {
+        for field in &strukt.fields {
+            collect_pat_bound_idents_lift(&field.pat, roots);
+        }
+        return;
+    }
+    if let Pat::Tuple(tuple) = pat {
+        for elem in &tuple.elems {
+            collect_pat_bound_idents_lift(elem, roots);
+        }
+        return;
+    }
+    if let Pat::TupleStruct(tuple) = pat {
+        for elem in &tuple.elems {
+            collect_pat_bound_idents_lift(elem, roots);
+        }
+        return;
+    }
+    if let Pat::Type(typed) = pat {
+        return collect_pat_bound_idents_lift(&typed.pat, roots);
+    }
+    if matches!(
+        pat,
+        Pat::Const(_) | Pat::Lit(_) | Pat::Path(_) | Pat::Range(_) | Pat::Rest(_) | Pat::Wild(_)
+    ) {
+        return;
+    }
+    if matches!(pat, Pat::Macro(_) | Pat::Verbatim(_)) {
+        panic!("sugar-walk pattern binding collector refused opaque syn::Pat variant")
+    }
+    panic!("sugar-walk pattern binding collector refused unknown syn::Pat variant")
 }
 
+// #3027 S7: same shape and same nuances as `collect_pat_bound_idents_lift`
+// above (a separate ladder site, distinct caller: binds into `LiftCtx` rather
+// than collecting into a `BTreeSet`).
 fn bind_pat_idents_lift(pat: &Pat, ctx: &mut LiftCtx) {
-    match pat {
-        Pat::Ident(ident) => {
-            ctx.bind(&ident.ident.to_string());
-            if let Some((_, subpat)) = &ident.subpat {
-                bind_pat_idents_lift(subpat, ctx);
-            }
+    if let Pat::Ident(ident) = pat {
+        ctx.bind(&ident.ident.to_string());
+        if let Some((_, subpat)) = &ident.subpat {
+            bind_pat_idents_lift(subpat, ctx);
         }
-        Pat::Or(or) => {
-            for case in &or.cases {
-                bind_pat_idents_lift(case, ctx);
-            }
-        }
-        Pat::Paren(paren) => bind_pat_idents_lift(&paren.pat, ctx),
-        Pat::Reference(reference) => bind_pat_idents_lift(&reference.pat, ctx),
-        Pat::Slice(slice) => {
-            for elem in &slice.elems {
-                bind_pat_idents_lift(elem, ctx);
-            }
-        }
-        Pat::Struct(strukt) => {
-            for field in &strukt.fields {
-                bind_pat_idents_lift(&field.pat, ctx);
-            }
-        }
-        Pat::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                bind_pat_idents_lift(elem, ctx);
-            }
-        }
-        Pat::TupleStruct(tuple) => {
-            for elem in &tuple.elems {
-                bind_pat_idents_lift(elem, ctx);
-            }
-        }
-        Pat::Type(typed) => bind_pat_idents_lift(&typed.pat, ctx),
-        Pat::Const(_)
-        | Pat::Lit(_)
-        | Pat::Path(_)
-        | Pat::Range(_)
-        | Pat::Rest(_)
-        | Pat::Wild(_) => {}
-        Pat::Macro(_) | Pat::Verbatim(_) => {
-            panic!("sugar-walk pattern binder refused opaque syn::Pat variant")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk pattern binder refused unknown syn::Pat variant")
-        }
+        return;
     }
+    if let Pat::Or(or) = pat {
+        for case in &or.cases {
+            bind_pat_idents_lift(case, ctx);
+        }
+        return;
+    }
+    if let Pat::Paren(paren) = pat {
+        return bind_pat_idents_lift(&paren.pat, ctx);
+    }
+    if let Pat::Reference(reference) = pat {
+        return bind_pat_idents_lift(&reference.pat, ctx);
+    }
+    if let Pat::Slice(slice) = pat {
+        for elem in &slice.elems {
+            bind_pat_idents_lift(elem, ctx);
+        }
+        return;
+    }
+    if let Pat::Struct(strukt) = pat {
+        for field in &strukt.fields {
+            bind_pat_idents_lift(&field.pat, ctx);
+        }
+        return;
+    }
+    if let Pat::Tuple(tuple) = pat {
+        for elem in &tuple.elems {
+            bind_pat_idents_lift(elem, ctx);
+        }
+        return;
+    }
+    if let Pat::TupleStruct(tuple) = pat {
+        for elem in &tuple.elems {
+            bind_pat_idents_lift(elem, ctx);
+        }
+        return;
+    }
+    if let Pat::Type(typed) = pat {
+        return bind_pat_idents_lift(&typed.pat, ctx);
+    }
+    if matches!(
+        pat,
+        Pat::Const(_) | Pat::Lit(_) | Pat::Path(_) | Pat::Range(_) | Pat::Rest(_) | Pat::Wild(_)
+    ) {
+        return;
+    }
+    if matches!(pat, Pat::Macro(_) | Pat::Verbatim(_)) {
+        panic!("sugar-walk pattern binder refused opaque syn::Pat variant")
+    }
+    panic!("sugar-walk pattern binder refused unknown syn::Pat variant")
 }
 
 /// If a statement is an explicit `return <expr>;`, derive
