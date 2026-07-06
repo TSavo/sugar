@@ -1693,12 +1693,19 @@ fn source_report_from_lift_response(
     trace_lift_collection_checkpoint("source_report.plan_mementos", plan_mementos.len());
     let vendor_conjoins = vendor_conjoins_from_lift_response(response, contract_filter)?;
     trace_lift_collection_checkpoint("source_report.vendor_conjoins", vendor_conjoins.len());
-    let diagnostics = response
+    let mut diagnostics = response
         .get("diagnostics")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
     trace_lift_collection_checkpoint("source_report.diagnostics", diagnostics.len());
+    if let Some(condition) = no_vendor_test_corpus_condition(
+        &ledger,
+        &assertion_surface_audits,
+        &contracts,
+    ) {
+        diagnostics.push(condition);
+    }
 
     Ok(LiftSourceReport {
         ledger,
@@ -4806,6 +4813,46 @@ fn short_cid(cid: &str) -> String {
     cid.to_string()
 }
 
+/// #3766 named terminal: THE ONE DOOR TEST is a raw `git clone <vendor>; sugar
+/// lift`, and a vendor tree with real source but no test corpus checked out
+/// (or a corpus the kit could not locate) must never read as exit-0-empty.
+/// This is a lift-side TYPED CONDITION -- not `refus*` vocabulary, which is
+/// reserved for the verifier's decision-space (see #3632) -- so it names the
+/// missing-corpus shape distinctly: `"kind": "no-vendor-test-corpus"`. It
+/// fires only when the workspace actually carried real source loci (an empty
+/// tree is a different, prior condition) yet zero vendor assertions were
+/// observed as facts.
+fn no_vendor_test_corpus_condition(
+    ledger: &Value,
+    assertion_surface_audits: &[Value],
+    contracts: &[Value],
+) -> Option<Value> {
+    let source_loci = source_count(ledger, "source_loci");
+    if source_loci <= 0 {
+        // No source at all is a prior, differently-named condition; this
+        // terminal is specifically "source present, tests absent".
+        return None;
+    }
+    let audit_facts = assertion_surface_audits
+        .iter()
+        .map(assertion_surface_fact_count)
+        .sum::<usize>();
+    let contract_facts = contracts
+        .iter()
+        .filter(|contract| contract_inv_is_observed_fact(contract))
+        .count();
+    if audit_facts.max(contract_facts) > 0 {
+        return None;
+    }
+    Some(serde_json::json!({
+        "kind": "no-vendor-test-corpus",
+        "level": "error",
+        "message": format!(
+            "no vendor test corpus in workspace: {source_loci} source loci lifted but zero vendor test assertions were observed as facts. This tree either lacks its test suite (a bare `pip install`/wheel checkout, or a source clone missing the tests/ directory) or the kit could not locate one. Vendor tests ARE the spec; clone the vendor source WITH its test corpus (`git clone <vendor>` at the release tag, not just the installed package) and re-run."
+        ),
+    }))
+}
+
 fn report_unit_test_fact_count(report: &LiftSourceReport) -> usize {
     let audit_facts = report
         .assertion_surface_audits
@@ -4824,6 +4871,13 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
     trace_lift_source_report("render_source_report_human.start", report);
     let mut out = String::new();
     out.push_str(&render_report_plan_roll_call(report));
+    for diagnostic in &report.diagnostics {
+        if diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus") {
+            if let Some(message) = diagnostic.get("message").and_then(Value::as_str) {
+                out.push_str(&format!("NAMED CONDITION [no-vendor-test-corpus]: {message}\n"));
+            }
+        }
+    }
     out.push_str(&format!(
         "source audit: {}\n",
         format_counts(&report.ledger)
@@ -5549,6 +5603,10 @@ fn source_report_has_hard_failures(report: &LiftSourceReport) -> bool {
         .vendor_conjoins
         .iter()
         .any(|row| matches!(row.vendor_source, Some(VendorSourceResolution::Drifted(_))))
+        || report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus"))
 }
 
 fn vendor_conjoins_from_lift_response(
@@ -12533,6 +12591,63 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
+    fn zero_test_assertions_over_real_source_is_a_named_hard_failure() {
+        // #3766: a lifted tree with real source but zero vendor test
+        // assertions must never read as exit-0-empty. This is the discharge
+        // discrimination test: positive (source + assertions => quiet),
+        // negative (source, no assertions => loud named condition), and
+        // structural (no source at all => a different, prior condition, not
+        // this one).
+        let condition =
+            no_vendor_test_corpus_condition(&serde_json::json!({ "source_loci": 42 }), &[], &[]);
+        let condition = condition.expect("zero-assertion source tree must name the condition");
+        assert_eq!(condition["kind"], "no-vendor-test-corpus");
+        assert!(
+            condition["message"]
+                .as_str()
+                .unwrap()
+                .contains("no vendor test corpus in workspace")
+        );
+    }
+
+    #[test]
+    fn source_with_test_assertions_carries_no_named_terminal() {
+        let contracts = vec![serde_json::json!({
+            "name": "test_mod::tests::test_thing::assert:1:1::assertion"
+        })];
+        let condition =
+            no_vendor_test_corpus_condition(&serde_json::json!({ "source_loci": 42 }), &[], &contracts);
+        assert!(
+            condition.is_none(),
+            "a workspace with observed test facts must not carry the empty-corpus terminal"
+        );
+    }
+
+    #[test]
+    fn empty_workspace_does_not_claim_the_no_test_corpus_terminal() {
+        // Zero source loci is a prior, different condition (nothing was
+        // lifted at all); it must not masquerade as "tests are missing".
+        let condition =
+            no_vendor_test_corpus_condition(&serde_json::json!({ "source_loci": 0 }), &[], &[]);
+        assert!(condition.is_none());
+    }
+
+    #[test]
+    fn no_vendor_test_corpus_condition_is_a_hard_report_failure() {
+        let mut report = minimal_source_report();
+        report.ledger = serde_json::json!({ "source_loci": 42, "source_unresolved": 0 });
+        report.diagnostics = vec![
+            no_vendor_test_corpus_condition(&report.ledger, &[], &[]).expect("condition")
+        ];
+        assert!(source_report_has_hard_failures(&report));
+        let human = render_source_report_human(&report);
+        assert!(
+            human.contains("NAMED CONDITION [no-vendor-test-corpus]"),
+            "{human}"
+        );
+    }
+
+    #[test]
     fn unresolved_referenced_vendor_proof_cid_is_a_report_error() {
         let mut response = lift_response_with_vendor_conjoin(serde_json::json!({
             "status": "absent",
@@ -12554,7 +12669,14 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     fn lift_response_with_vendor_conjoin(vendor_source: Value) -> Value {
         serde_json::json!({
             "kind": "ir-document",
-            "ir": [],
+            // A real local test assertion backs the vendor conjoin below (its
+            // name matches `localContract`); this keeps the fixture honest
+            // against the #3766 no-vendor-test-corpus terminal, which these
+            // tests are not exercising -- they exercise vendor conjoin
+            // resolution instead.
+            "ir": [
+                {"name": "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion"}
+            ],
             "sourceLedger": {
                 "source_loci": 1,
                 "source_warranted": 1,
