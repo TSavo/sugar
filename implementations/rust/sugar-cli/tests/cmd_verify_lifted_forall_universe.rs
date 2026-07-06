@@ -22,12 +22,15 @@
 // We detect MEANING by verifier rows, never by string/AST matching:
 //   * g(3)==2  -> UNSATISFIED  (z3 instantiates the universe at x=3: g(3)==1,
 //                 contradicting g(3)==2 -- EUF: a pure g(3) has one value).
-//   * g(4)==1  -> REFUSED      (the current discharge law forbids Stated
-//                 testimony from corroborating Stated testimony).
-// The universe still decides the false un-named input. The true un-named input
-// stays refused until there is an independent-KIND witness. `g`'s body is opaque
-// (the fn is never defined in the fixture), so the ONLY source of g's behavior is
-// the lifted universe.
+//   * g(4)==1  -> DISCHARGED   (the lifted universe is minted as a Derived member:
+//                 Sugar's temporal floor walked the literal range `0..5` and
+//                 counted the universe by its own construction path, so it is
+//                 independent testimony -- an independent-KIND witness that
+//                 corroborates the user's g(4)==1. See T's Part-2 ruling, #3445).
+// The universe decides BOTH un-named inputs: it refutes the false one and
+// corroborates the true one. `g`'s body is opaque (the fn is never defined in the
+// fixture), so the ONLY source of g's behavior is the lifted universe -- a
+// discharge of g(4) can therefore come only from the floor-derived universe.
 //
 // REAL-WORK PROOF (non-triviality): an identical fixture WITHOUT the vendor loop
 // (no universe) must NOT refute `g(3)==2` -- it is refused as vacuous instead of
@@ -348,20 +351,66 @@ fn lifted_universe_refutes_false_unnamed_input_without_self_discharge() {
 
     // The universe `forall x in 0..5. g(x)==1` REFUTES the user's g(3)==2 -- x=3
     // was never materialized; z3 instantiated the conjoined quantifier at 3.
-    // The matching true claim is not discharged by the same ambient Stated source:
-    // current verifier law requires an independent-KIND witness.
-    // Prove row order follows bridge-member traversal; the semantic floor here is
-    // the statuses: the lying EUF is unsatisfied, and no panic/true/vendor row
-    // self-discharges.
+    // The matching TRUE claim g(4)==1 is now DISCHARGED: the universe is minted as
+    // a Derived member (Sugar's temporal floor counted it from the walked literal
+    // range), so it is the independent-KIND witness the discharge law requires --
+    // exactly the flip T's Part-2 ruling (#3445) authorized. The universe member
+    // itself (VENDOR_LOOP) is a lone forall with no sibling to contradict, so it
+    // stays refused; the panic-callsite rows have no covering universe of their
+    // own sort and stay refused. Prove row order follows bridge-member traversal.
     assert_rows(
         &rows,
         &[
             (USER_FALSE_EUF, "unsatisfied"),
             (USER_FALSE_PANIC, "refused"),
-            (USER_TRUE_EUF, "refused"),
+            (USER_TRUE_EUF, "discharged"),
             (USER_TRUE_PANIC, "refused"),
             (VENDOR_LOOP, "refused"),
         ],
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// DISCRIMINATION twin (T's Part-2 ruling, #3445): a Stated-sourced covering fact
+/// must NOT confirm a matching Stated user claim. The guard is unchanged; only the
+/// FLOOR-DERIVED universe path flips. Here the vendor covers x=4 with a DIRECT
+/// point assertion `assert_eq!(g(4), 1)` -- a vendor STATED fact, not a universe
+/// Sugar's temporal floor counted from program structure. Its provenance stays
+/// Stated, so it cannot corroborate the user's Stated `g(4)==1`: g(4) stays
+/// REFUSED (Stated->Stated still refuses; MissingIndependentKindWitness intact).
+#[test]
+fn stated_point_source_does_not_confirm_matching_true_claim() {
+    if !z3_available() {
+        eprintln!("z3 not on PATH: skipping Stated-point discrimination twin");
+        return;
+    }
+    let dir = build_fixture(true, "stated-point");
+    // Replace the floor-derived loop universe with a direct vendor point assertion.
+    fs::write(
+        dir.join("tests/vendor.rs"),
+        "#[test]\nfn vendor_point() {\n    assert_eq!(g(4), 1);\n}\n",
+    )
+    .unwrap();
+    let rows = mint_and_prove(&dir);
+    eprintln!("STATED POINT rows: {rows:?}");
+    let status_of = |property: &str| -> Option<&str> {
+        rows.iter()
+            .find(|row| row.property == property)
+            .map(|row| row.status.as_str())
+    };
+    // The Stated point cannot confirm the user's matching Stated claim.
+    assert_eq!(
+        status_of(USER_TRUE_EUF),
+        Some("refused"),
+        "a Stated point source must not self-discharge a matching Stated user claim: {rows:#?}"
+    );
+    // No universe covers x=3, so the lying g(3)==2 cannot be refuted here (refused
+    // as a lone uncorroborated constraint, NOT unsatisfied) -- the refutation in
+    // the acceptance test came from the floor-derived universe, not a point fact.
+    assert_eq!(
+        status_of(USER_FALSE_EUF),
+        Some("refused"),
+        "without a covering universe the lying point is refused, not refuted: {rows:#?}"
     );
     let _ = fs::remove_dir_all(&dir);
 }

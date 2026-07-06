@@ -1545,6 +1545,22 @@ fn attach_assertion_source_warrants(
         if name.contains("#panic_callsite#") && entry.get("proofirProvenance").is_none() {
             entry["proofirProvenance"] = panic_callsite_proofir_provenance(&name);
         }
+        // FLOOR-DERIVED COUNTED UNIVERSE (T's Part-2 ruling, #3445). A bounded
+        // universal Sugar's temporal floor minted by walking PROGRAM STRUCTURE
+        // (a `for v in <range/array>` loop / a `.for_each` over a literal
+        // sequence) is Derived: the count/emission is Sugar's own construction
+        // path, not a replay of the vendor's stated assertion, so it is
+        // independent testimony. Its warrant name carries the floor's kind
+        // segment (`::loop::` / `::for_each::`) -- the same construction-label
+        // convention the `#panic_callsite#` case above keys on. A universe whose
+        // standing rides a Stated value never reaches this path (the floor only
+        // completes over source-literal domains), so Stated->Stated confirmation
+        // is untouched. The empty-domain no-panic sentinel is not a counted
+        // universe and is excluded by `is_floor_derived_counted_universe_name`.
+        if is_floor_derived_counted_universe_name(&name) && entry.get("proofirProvenance").is_none()
+        {
+            entry["proofirProvenance"] = floor_derived_universe_proofir_provenance(&name);
+        }
         let Some(queue) = warrants_by_contract.get_mut(&name) else {
             continue;
         };
@@ -1554,6 +1570,40 @@ fn attach_assertion_source_warrants(
     }
 
     entries
+}
+
+/// True when a contract name is a floor-derived counted universe: a bounded
+/// universal `ForAllSugar` minted from a walked `for v in <range/array>` loop or
+/// a `.for_each` over a literal sequence. Sugar mints the warrant name
+/// `<scope>::loop::<var>` / `<scope>::for_each::<var>`; the `::loop::` /
+/// `::for_each::` segment is the floor's own kind label (the recognizer only
+/// completes over source-literal / floor-constructed domains, never a
+/// Stated-value domain), so the label exactly identifies the Derived case. The
+/// empty-domain no-panic sentinel (`::loop::<var>::empty-domain`) is not a
+/// counted universe and is excluded.
+fn is_floor_derived_counted_universe_name(name: &str) -> bool {
+    if name.ends_with("::empty-domain") {
+        return false;
+    }
+    name.contains("::loop::") || name.contains("::for_each::")
+}
+
+fn floor_derived_universe_proofir_provenance(contract_name: &str) -> Value {
+    json!({
+        "kind": "proofir-provenance",
+        "nodeClass": "FloorDerivedCountedUniverse",
+        "constructionSite": {
+            "surface": SURFACE,
+            "contract": contract_name,
+        },
+        "warrants": [
+            {
+                "kind": "Derived",
+                "floorChain": ["rust-test-assertions", "temporal-floor-counted-universe"],
+                "contract": contract_name,
+            }
+        ],
+    })
 }
 
 fn panic_callsite_proofir_provenance(contract_name: &str) -> Value {
@@ -9304,6 +9354,91 @@ mod tests {
             );
         }
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // -- Part-2 (#3445): floor-derived counted universes mint as Derived --
+
+    #[test]
+    fn floor_derived_universe_name_predicate_discriminates() {
+        // Positive: the floor's own kind label on a walked loop / for_each.
+        assert!(is_floor_derived_counted_universe_name(
+            "vendor_universe::loop::x"
+        ));
+        assert!(is_floor_derived_counted_universe_name(
+            "tests::checker::for_each::v"
+        ));
+        // Discrimination: a plain point/function assertion is NOT a counted
+        // universe -- its standing rides the vendor's stated fact (Stated).
+        assert!(!is_floor_derived_counted_universe_name("vendor_universe"));
+        assert!(!is_floor_derived_counted_universe_name(
+            "tests::user_true_claim::g#euf#c:callresult_g_a1(i:4)::assertion"
+        ));
+        // Structural: the empty-domain no-panic sentinel is not a counted
+        // universe (it covers no in-range point) and stays Stated.
+        assert!(!is_floor_derived_counted_universe_name(
+            "vendor_universe::loop::x::empty-domain"
+        ));
+    }
+
+    #[test]
+    fn floor_derived_loop_universe_contract_carries_derived_provenance_kind() {
+        // A bounded loop `for x in 0..5 { assert_eq!(g(x), 1); }` is the ONLY
+        // fact covering the in-range inputs -- Sugar's temporal floor walked the
+        // literal range and minted the counted universe by its own construction
+        // path. Per T's Part-2 ruling that is independent testimony: the minted
+        // universe member must carry a Derived proofirProvenance so the confirm
+        // side can honor it as an independent-KIND witness.
+        let (root, response) = lift_fixture_at(
+            "floor_derived_loop_universe_contract_carries_derived_provenance_kind",
+            "tests/vendor.rs",
+            "#[test]\nfn vendor_universe() {\n    for x in 0..5 {\n        assert_eq!(g(x), 1);\n    }\n}\n",
+        );
+        let ir = response["ir"].as_array().expect("ir array");
+        let universe = ir
+            .iter()
+            .find(|entry| {
+                entry["kind"] == json!("contract")
+                    && entry["name"]
+                        .as_str()
+                        .is_some_and(|name| name.contains("::loop::"))
+            })
+            .unwrap_or_else(|| panic!("fixture must emit a loop-universe contract: {response}"));
+        assert_eq!(
+            universe["proofirProvenance"]["nodeClass"],
+            json!("FloorDerivedCountedUniverse"),
+            "floor-derived counted universe must name its typed node class: {universe:#}"
+        );
+        assert_eq!(
+            universe["proofirProvenance"]["warrants"][0]["kind"],
+            json!("Derived"),
+            "a universe the temporal floor counted from program structure is Derived, not a replayed vendor Stated fact: {universe:#}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plain_point_assertion_contract_stays_stated_not_floor_derived() {
+        // DISCRIMINATION twin: a direct point assertion `assert_eq!(g(4), 1)` is
+        // a vendor Stated fact, NOT a floor-counted universe. It must NOT gain a
+        // FloorDerivedCountedUniverse Derived provenance -- its standing rides
+        // the vendor's stated assertion, so it stays Stated and cannot self-
+        // confirm a matching Stated user claim. This is the guard the flip must
+        // leave untouched.
+        let (root, response) = lift_fixture_at(
+            "plain_point_assertion_contract_stays_stated_not_floor_derived",
+            "tests/vendor.rs",
+            "#[test]\nfn vendor_point() {\n    assert_eq!(g(4), 1);\n}\n",
+        );
+        let ir = response["ir"].as_array().expect("ir array");
+        for entry in ir {
+            let is_floor_derived =
+                entry["proofirProvenance"]["nodeClass"] == json!("FloorDerivedCountedUniverse");
+            assert!(
+                !is_floor_derived,
+                "a plain point assertion must never be minted as a floor-derived counted universe: {entry:#}"
+            );
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 
