@@ -54,7 +54,7 @@
       "bodyDischargeTier": null,
       "verification": {},
       "file": "itsdangerous_url_safe_slice.py",
-      "line": 30,
+      "line": 31,
       "callee": "Exception",
       "callsiteBundleCid": null,
       "panicSite": false
@@ -63,6 +63,13 @@
   "lineAccounting": [
     {"file": "itsdangerous_url_safe_slice.py", "line": 17, "class": "warrant", "grounds": "cid:sha256:2f6b8b1c2f0d4a1b9e6a7c5d8f3e2a1b4c6d9e0f1a2b3c4d5e6f7a8b9c0d1e2f"},
     {"file": "itsdangerous_url_safe_slice.py", "line": 29, "class": "warrant", "grounds": "cid:sha256:3a7c9e1d5b2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a"},
+    {"file": "itsdangerous_url_safe_slice.py", "line": 31, "class": "effect", "grounds": "no vendor assertion found for raised Exception grounds"},
+    {"file": "itsdangerous_url_safe_slice.py", "line": 15, "class": "warrant", "grounds": "cid:sha256:2f6b8b1c2f0d4a1b9e6a7c5d8f3e2a1b4c6d9e0f1a2b3c4d5e6f7a8b9c0d1e2f"},
+    {"file": "itsdangerous_url_safe_slice.py", "line": 16, "class": "warrant", "grounds": "cid:sha256:2f6b8b1c2f0d4a1b9e6a7c5d8f3e2a1b4c6d9e0f1a2b3c4d5e6f7a8b9c0d1e2f"},
+    {"file": "itsdangerous_url_safe_slice.py", "line": 25, "class": "warrant", "grounds": "cid:sha256:3a7c9e1d5b2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a"},
+    {"file": "itsdangerous_url_safe_slice.py", "line": 26, "class": "warrant", "grounds": "cid:sha256:3a7c9e1d5b2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a"},
+    {"file": "itsdangerous_url_safe_slice.py", "line": 27, "class": "warrant", "grounds": "cid:sha256:3a7c9e1d5b2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a"},
+    {"file": "itsdangerous_url_safe_slice.py", "line": 28, "class": "warrant", "grounds": "cid:sha256:3a7c9e1d5b2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a6c8e0d2f4a"},
     {"file": "itsdangerous_url_safe_slice.py", "line": 30, "class": "effect", "grounds": "no vendor assertion found for raised Exception grounds"},
     {"file": "itsdangerous_url_safe_slice.py", "line": 1, "class": "support", "grounds": "docstring"},
     {"file": "itsdangerous_url_safe_slice.py", "line": 2, "class": "support", "grounds": "docstring"},

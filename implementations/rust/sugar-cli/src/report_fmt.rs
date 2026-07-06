@@ -2,7 +2,7 @@
 //
 // Pretty + JSON formatting for the verifier `Report`.
 
-use crate::line_accounting::{entries_to_json, row_line_accounting};
+use crate::line_accounting::{entries_to_json, line_class_for_row, row_line_accounting, LineClass};
 use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
 use std::fmt::Write as _;
@@ -185,13 +185,23 @@ pub fn format_report_pretty(r: &Report, quiet: bool) -> String {
         );
         out.push('\n');
         for row in &r.rows {
-            let status_pretty = match row.status {
-                ObligationVerdict::Discharged => "discharged".green().to_string(),
-                ObligationVerdict::Unsatisfied => "unsatisfied".red().to_string(),
-                ObligationVerdict::Undecidable => "undecidable".yellow().to_string(),
-                ObligationVerdict::SolverTimeout => "solver-timeout".yellow().to_string(),
-                ObligationVerdict::Disagreement => "disagreement".to_string(),
-                ObligationVerdict::Refused => "refused".to_string(),
+            // The visual tone is a RENDER of `line_class_for_row`, the same
+            // classifier `row_line_accounting` uses to build the JSON
+            // `lineAccounting` field (#3706 follow-up: one classifier, visual
+            // = render). A `Discharged` row without a followable CID is not
+            // painted green here for the same reason it is not a `warrant`
+            // entry there: it stays plain, honestly unclassified.
+            let status_pretty = match (row.status, line_class_for_row(row)) {
+                (ObligationVerdict::Discharged, Some((LineClass::Warrant, _))) => {
+                    "discharged".green().to_string()
+                }
+                (ObligationVerdict::Discharged, _) => "discharged".to_string(),
+                (ObligationVerdict::Refused, Some((LineClass::Effect, _))) => "refused".to_string(),
+                (ObligationVerdict::Unsatisfied, _) => "unsatisfied".red().to_string(),
+                (ObligationVerdict::Undecidable, _) => "undecidable".yellow().to_string(),
+                (ObligationVerdict::SolverTimeout, _) => "solver-timeout".yellow().to_string(),
+                (ObligationVerdict::Disagreement, _) => "disagreement".to_string(),
+                (ObligationVerdict::Refused, _) => "refused".to_string(),
             };
             let _ = writeln!(
                 out,

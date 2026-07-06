@@ -3174,7 +3174,47 @@ fn layer_support_line_accounting(
             .unwrap_or_default();
         let support =
             crate::line_accounting::support_line_accounting(&file, &source_text, &claimed);
-        for entry in support {
+        for entry in &support {
+            entries.push(entry.to_json());
+        }
+
+        // Body-span expansion runs last, over warrant/effect entries AND the
+        // support entries just added, so it never touches an already-claimed
+        // line -- it only fills the genuine residue gap between an anchor
+        // row and the previous claimed line (or its function's start). See
+        // `line_accounting::expand_body_span_line_accounting` for the exact
+        // rule.
+        let current_entries: Vec<crate::line_accounting::LineAccountingEntry> = entries
+            .iter()
+            .filter_map(|entry_json| {
+                let entry_file = entry_json.get("file")?.as_str()?;
+                if entry_file != file {
+                    return None;
+                }
+                let line = entry_json.get("line")?.as_u64()? as usize;
+                let class = match entry_json.get("class")?.as_str()? {
+                    "warrant" => crate::line_accounting::LineClass::Warrant,
+                    "support" => crate::line_accounting::LineClass::Support,
+                    "effect" => crate::line_accounting::LineClass::Effect,
+                    _ => return None,
+                };
+                let grounds = entry_json
+                    .get("grounds")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                Some(crate::line_accounting::LineAccountingEntry {
+                    file: entry_file.to_string(),
+                    line,
+                    class,
+                    grounds,
+                })
+            })
+            .collect();
+        let expanded = crate::line_accounting::expand_body_span_line_accounting(
+            &source_text,
+            &current_entries,
+        );
+        for entry in expanded {
             entries.push(entry.to_json());
         }
     }

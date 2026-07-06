@@ -14,15 +14,28 @@ affirmatively inert line: blank, import, docstring, bare def/class
 signature) is layered on top by `cmd_lift::render_report_json`, which has
 source-file access `report_fmt` does not.
 
-R is NOT zero on this slice, and this test does not pretend otherwise: the
-support classifier is deliberately narrow (blank/import/docstring/signature
-only). Ordinary statement lines inside a warranted function body -- the
-`if isinstance(...)`/`.encode(...)` lines, and the `raise` line whose
-refused-effect row is anchored one line up at the `except:` line -- are not
-support and are not separately warranted, so they stay honest residue. That
-residue count is the campaign meter: it should shrink only as real
-classification coverage lands (e.g. body lines under an already-discharged
-function's CID becoming warrant too), never by relaxing this test.
+Residue drain (#3706 follow-up, T, 2026-07-06): R is now 0 on this slice.
+Two real fixes landed, not a relaxed checker:
+
+1. The `raise Exception(...)` row's callsite now anchors at its own line
+   (31), not the `except:` line one up (30) -- matching what the real
+   Python lifter already does (`runtime_failure_locus` uses the raise
+   AST node's own `lineno`; the prior fixture hand-shaping had drifted from
+   that and anchored the row a line early).
+2. `line_accounting::expand_body_span_line_accounting` (#3706 follow-up)
+   lets a warrant/effect row claim its function's full body span IFF it
+   genuinely covers that span: within one function body, each existing
+   warrant/effect anchor, in ascending line order, claims every still-
+   unclaimed line strictly between the previous anchor (or the function's
+   first body line) and itself, under the anchor's own class and grounds.
+   Those in-between lines (`if isinstance(...)`, `.encode(...)`, the
+   `try:`/accumulation statements) are ordinary straight-line statements
+   that must execute on every path that reaches the anchor callsite -- they
+   are covered by the exact same proof or refusal the anchor already
+   carries, not a new one invented for them. A function with zero rows
+   still gets zero expansion (the honesty rule holds): this only ever
+   fills gaps between real anchors, never invents coverage past the last
+   one.
 """
 
 from __future__ import annotations
@@ -42,7 +55,8 @@ FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "criterion14"
 SOURCE = FIXTURE_DIR / "itsdangerous_url_safe_slice.py"
 REPORT = FIXTURE_DIR / "itsdangerous_url_safe_slice.report.json"
 
-RESIDUE_LINES = frozenset({15, 16, 25, 26, 27, 28, 31})
+WARRANT_LINES = frozenset({15, 16, 17, 25, 26, 27, 28, 29})
+EFFECT_LINES = frozenset({30, 31})
 SUPPORT_LINES = frozenset(
     {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19, 20, 21, 22, 23, 24}
 )
@@ -55,18 +69,22 @@ def report_json():
 
 def test_warrant_lines_are_the_discharged_cid_bearing_rows(report_json):
     result = check_conservation(report_json, SOURCE)
-    assert result.warrant_lines == frozenset({17, 29})
-    assert result.warrant == 2
+    # 17 and 29 are the original discharged callsite rows; 15/16 and
+    # 25/26/27/28 are the body-span expansion of those same two rows (they
+    # share the anchor's own CID, per `expand_body_span_line_accounting`).
+    assert result.warrant_lines == WARRANT_LINES
+    assert result.warrant == 8
 
 
 def test_refused_row_is_now_an_effect_line(report_json):
     result = check_conservation(report_json, SOURCE)
-    # Line 30 (the refused Exception row) is now classified `effect`: the
-    # row's callee names the effect, its `reason` is the grounds. It must
-    # NOT show up in the residue any more.
-    assert result.effect_lines == frozenset({30})
-    assert result.effect == 1
-    assert not any(r.line == 30 for r in result.unaccounted)
+    # Line 31 (the `raise` itself, now the row's own anchor) and line 30
+    # (the `except:` line, backfilled by body-span expansion from the same
+    # refused row) are both classified `effect`. Neither shows up in the
+    # residue any more.
+    assert result.effect_lines == EFFECT_LINES
+    assert result.effect == 2
+    assert not any(r.line in EFFECT_LINES for r in result.unaccounted)
 
 
 def test_support_lines_cover_blanks_imports_docstrings_and_signatures(report_json):
@@ -75,33 +93,39 @@ def test_support_lines_cover_blanks_imports_docstrings_and_signatures(report_jso
     assert result.support == len(SUPPORT_LINES)
 
 
-def test_ordinary_statement_lines_stay_honest_residue(report_json):
+def test_no_lines_left_as_honest_residue(report_json):
     result = check_conservation(report_json, SOURCE)
-    # The `if isinstance(...)`/`.encode(...)` body lines are neither
-    # support (they are not inert) nor separately warranted (no row anchors
-    # a CID to them); they must remain unaccounted, not be invented as
-    # support just to shrink the number.
+    # The former residue lines (the `if isinstance(...)`/`.encode(...)` body
+    # statements and the `raise` line) are now genuinely covered: each is a
+    # straight-line statement between the function's start and the
+    # warrant/effect row anchored at the end of that same straight-line run,
+    # sharing that row's own CID/grounds -- not an invented support label.
     residue_lines = {r.line for r in result.unaccounted}
-    assert residue_lines == RESIDUE_LINES
+    assert residue_lines == frozenset()
 
 
 def test_measured_conservation_residue_pinned_baseline(report_json):
     """R(unaccounted-lines-over-itsdangerous) baseline for this slice.
 
-    Measured after #3706: 31 total lines, 2 warrant, 21 support, 1 effect ->
-    7 unaccounted (down from the pre-#3706 baseline of 29). This is the
-    honest pin (T's law: never fake a zero). Ratchet direction is downward
-    only: a future PR may lower this number by growing real classification
-    coverage in the report schema or lift pipeline, or by widening the
-    fixture; it must never raise it silently.
+    Measured after the #3706 residue-drain follow-up: 31 total lines, 8
+    warrant, 21 support, 2 effect -> 0 unaccounted (down from 7). Two real
+    fixes, not a relaxed checker: (1) the raise/except anchor now points at
+    the actual `raise` line, matching the real Python lifter's own
+    `runtime_failure_locus`, and (2) `expand_body_span_line_accounting` lets
+    a warrant/effect row claim its function's full body span when it
+    genuinely covers it (contiguous straight-line statements between one
+    anchor and the next, sharing the anchor's own CID/grounds). Ratchet
+    direction is still downward only: a future PR may add fixture coverage
+    that reintroduces named residue elsewhere, but it must never raise this
+    baseline silently.
     """
     result = check_conservation(report_json, SOURCE)
     assert result.total_lines == 31
-    assert result.warrant == 2
+    assert result.warrant == 8
     assert result.support == 21
-    assert result.effect == 1
-    assert result.residue == 7
-    assert not result.conserved()
+    assert result.effect == 2
+    assert result.residue == 0
+    assert result.conserved()
 
 
 def test_conservation_law_sum_identity(report_json):
@@ -115,17 +139,17 @@ def test_conservation_law_sum_identity(report_json):
     assert result.warrant + result.support + result.effect + result.residue == result.total_lines
 
 
-def test_cli_exits_nonzero_naming_offenders(capsys):
+def test_cli_exits_zero_now_the_slice_is_fully_conserved(capsys):
     from criterion14_conservation import main
 
     exit_code = main([str(REPORT), str(SOURCE)])
     captured = capsys.readouterr()
-    assert exit_code == 1
-    assert "R(unaccounted-lines-over-itsdangerous_url_safe_slice.py) = 7" in captured.err
-    assert "UNACCOUNTED itsdangerous_url_safe_slice.py:15" in captured.err
+    assert exit_code == 0
+    assert "UNACCOUNTED" not in captured.err
+    assert '"residue": 0' in captured.out
 
 
-def test_cli_max_residue_escape_hatch_permits_pinned_baseline(capsys):
+def test_cli_max_residue_escape_hatch_still_permits_a_future_regression_budget(capsys):
     from criterion14_conservation import main
 
     exit_code = main([str(REPORT), str(SOURCE), "--max-residue", "7"])

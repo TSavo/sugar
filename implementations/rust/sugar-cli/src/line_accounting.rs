@@ -18,11 +18,22 @@
 // ONE WAY LAW: this module is the single owner of the classification.
 // `report_fmt::report_to_json` calls `row_line_accounting` (warrant/effect,
 // no source text needed) and `cmd_lift::render_report_json` layers
-// `support_line_accounting` on top for lines the rows leave unclaimed (it
-// alone has source-file access). Nothing else may grow a second, parallel
-// classifier of the same lines; the `--visual` renderer's own tone painting
-// predates this module and is tracked as residue to route through it in a
-// follow-up (#3706), not silently duplicated logic.
+// `support_line_accounting` (and, after it, `expand_body_span_line_accounting`)
+// on top for lines the rows leave unclaimed (it alone has source-file
+// access). Nothing else may grow a second, parallel classifier of the same
+// lines.
+//
+// `report_fmt::format_report_pretty`'s `--visual` per-row status coloring
+// calls `line_class_for_row` -- the exact same per-row rule
+// `row_line_accounting` uses -- so that painter is now a render of this
+// classifier, not a second one (#3706 follow-up). Still-named residue: the
+// separate, older `--visual` SOURCE-annotation painter in `cmd_lift.rs`
+// (`visual_factory_walk_rows` and friends), which tones GREEN/RED per
+// source line from `LiftSourceReport.factory_walk` -- a richer, differently
+// shaped structure (per-symbol universes, superposition) than the
+// `sugar_verifier::Report` rows this module classifies. Routing that
+// painter through this same classifier is real, further work (its own
+// follow-up under #3706), not silently duplicated logic in the meantime.
 
 use serde_json::{json, Value as Json};
 use std::collections::HashSet;
@@ -85,12 +96,36 @@ fn row_cid(row: &ReportRow) -> Option<String> {
         })
 }
 
+/// The single per-row classification rule: what class (if any) does this row
+/// carry, and what is its grounds. `row_line_accounting` (the JSON path) and
+/// `format_report_pretty`'s `--visual` row painter (the human-facing path)
+/// both call this ONE function so the tone painted for a row's status can
+/// never drift from the class its own JSON `lineAccounting` entry carries --
+/// there is exactly one classifier, and visual output is a render of it, not
+/// a second, parallel decision. Mirrors `tools/criterion14_conservation.py`'s
+/// own warrant classification exactly: a discharged row without a followable
+/// CID is NOT a warrant, it stays unclassified (`None`).
+pub fn line_class_for_row(row: &ReportRow) -> Option<(LineClass, String)> {
+    match row.status {
+        ObligationVerdict::Discharged => row_cid(row).map(|cid| (LineClass::Warrant, cid)),
+        ObligationVerdict::Refused => {
+            let grounds = if !row.reason.is_empty() {
+                row.reason.clone()
+            } else {
+                row.callsite
+                    .callee
+                    .clone()
+                    .unwrap_or_else(|| "refused".to_string())
+            };
+            Some((LineClass::Effect, grounds))
+        }
+        _ => None,
+    }
+}
+
 /// Warrant + effect entries derivable from callsite rows alone: no source
 /// text is needed, so this is what `report_fmt::report_to_json` can always
-/// emit, for `sugar prove`/`sugar verify`/`sugar lift`. Mirrors
-/// `tools/criterion14_conservation.py`'s own warrant classification exactly:
-/// a discharged row without a followable CID is NOT a warrant, it stays
-/// unaccounted.
+/// emit, for `sugar prove`/`sugar verify`/`sugar lift`.
 pub fn row_line_accounting(rows: &[ReportRow]) -> Vec<LineAccountingEntry> {
     let mut entries = Vec::new();
     for row in rows {
@@ -103,34 +138,13 @@ pub fn row_line_accounting(rows: &[ReportRow]) -> Vec<LineAccountingEntry> {
         if line == 0 {
             continue;
         }
-        match row.status {
-            ObligationVerdict::Discharged => {
-                if let Some(cid) = row_cid(row) {
-                    entries.push(LineAccountingEntry {
-                        file,
-                        line,
-                        class: LineClass::Warrant,
-                        grounds: Some(cid),
-                    });
-                }
-            }
-            ObligationVerdict::Refused => {
-                let grounds = if !row.reason.is_empty() {
-                    row.reason.clone()
-                } else {
-                    row.callsite
-                        .callee
-                        .clone()
-                        .unwrap_or_else(|| "refused".to_string())
-                };
-                entries.push(LineAccountingEntry {
-                    file,
-                    line,
-                    class: LineClass::Effect,
-                    grounds: Some(grounds),
-                });
-            }
-            _ => {}
+        if let Some((class, grounds)) = line_class_for_row(row) {
+            entries.push(LineAccountingEntry {
+                file,
+                line,
+                class,
+                grounds: Some(grounds),
+            });
         }
     }
     entries
@@ -259,6 +273,105 @@ pub fn entries_to_json(entries: &[LineAccountingEntry]) -> Json {
     Json::Array(entries.iter().map(LineAccountingEntry::to_json).collect())
 }
 
+/// Physical `(body_start, body_end)` 1-based line ranges for every top-level
+/// `def`/`async def` in `source_text`, found by indentation alone: a
+/// function's body is every line strictly more indented than its `def`,
+/// running from the line after the signature until the next non-blank line
+/// at or below the `def`'s own indentation (or EOF). Coarse on purpose --
+/// callers only ever fill gaps between already-claimed lines inside a range,
+/// so a body range that also spans already-claimed support lines (a
+/// docstring, a blank line) is harmless: those lines are simply skipped.
+fn function_body_ranges(source_text: &str) -> Vec<(usize, usize)> {
+    let lines: Vec<&str> = source_text.lines().collect();
+    let mut defs: Vec<(usize, usize)> = Vec::new();
+    for (idx, raw) in lines.iter().enumerate() {
+        let line_no = idx + 1;
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("def ") || trimmed.starts_with("async def ") {
+            let indent = raw.len() - trimmed.len();
+            defs.push((line_no, indent));
+        }
+    }
+    let mut ranges = Vec::new();
+    for &(def_line, indent) in &defs {
+        let body_start = def_line + 1;
+        let mut body_end = lines.len();
+        for idx in body_start..=lines.len() {
+            let raw = lines[idx - 1];
+            if raw.trim().is_empty() {
+                continue;
+            }
+            let cur_indent = raw.len() - raw.trim_start().len();
+            if cur_indent <= indent {
+                body_end = idx - 1;
+                break;
+            }
+        }
+        if body_start <= body_end {
+            ranges.push((body_start, body_end));
+        }
+    }
+    ranges
+}
+
+/// Criterion 14 residue drain (#3706 follow-up): a `warrant`/`effect` entry
+/// claims its enclosing function's full body span IFF it genuinely covers
+/// that span -- never by widening the schema past what the row actually
+/// proves.
+///
+/// THE RULE: within one function body range, take every existing
+/// `warrant`/`effect` entry already anchored inside it, in ascending line
+/// order. Each anchor claims every still-unclaimed line strictly between
+/// the previous anchor (or the function's first body line, if none) and
+/// itself, under the SAME class and the SAME grounds (the same followable
+/// CID, or the same refusal reason) as the anchor. This is honest because
+/// those in-between lines are ordinary straight-line statements that must
+/// execute, unconditionally, on every path that reaches the anchor
+/// callsite -- they are covered by the exact same proof/refusal the anchor
+/// already carries, not a new one invented for them.
+///
+/// This never invents coverage past the LAST anchor in a function: trailing
+/// body lines after the final warrant/effect stay unaccounted, same as a
+/// function with zero rows contributes zero expansion (the honesty rule --
+/// a line inside a function whose lift produced NO row stays residue).
+/// Lines already claimed (by an earlier row, or by `support_line_accounting`)
+/// are never reclassified, so a line is still claimed at most once.
+pub fn expand_body_span_line_accounting(
+    source_text: &str,
+    entries: &[LineAccountingEntry],
+) -> Vec<LineAccountingEntry> {
+    let mut claimed: HashSet<usize> = entries.iter().map(|e| e.line).collect();
+    let mut new_entries = Vec::new();
+
+    for (body_start, body_end) in function_body_ranges(source_text) {
+        let mut anchors: Vec<&LineAccountingEntry> = entries
+            .iter()
+            .filter(|e| {
+                matches!(e.class, LineClass::Warrant | LineClass::Effect)
+                    && e.line >= body_start
+                    && e.line <= body_end
+            })
+            .collect();
+        anchors.sort_by_key(|e| e.line);
+
+        let mut cursor = body_start;
+        for anchor in anchors {
+            for line in cursor..anchor.line {
+                if claimed.insert(line) {
+                    new_entries.push(LineAccountingEntry {
+                        file: anchor.file.clone(),
+                        line,
+                        class: anchor.class,
+                        grounds: anchor.grounds.clone(),
+                    });
+                }
+            }
+            cursor = anchor.line + 1;
+        }
+    }
+    new_entries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +462,76 @@ mod tests {
             !classes.contains(&10),
             "claimed line must not be reclassified"
         );
+    }
+
+    #[test]
+    fn body_span_expansion_fills_gap_up_to_sole_anchor() {
+        let source = "def f(x):\n    if isinstance(x, str):\n        x = x.encode(\"utf-8\")\n    return g(x)\n";
+        let entries = vec![LineAccountingEntry {
+            file: "f.py".into(),
+            line: 4,
+            class: LineClass::Warrant,
+            grounds: Some("cid:sha256:abc".into()),
+        }];
+        let expanded = expand_body_span_line_accounting(source, &entries);
+        let by_line: std::collections::BTreeMap<usize, &LineAccountingEntry> =
+            expanded.iter().map(|e| (e.line, e)).collect();
+        assert_eq!(
+            by_line.len(),
+            2,
+            "expected lines 2 and 3 filled: {expanded:?}"
+        );
+        for line in [2, 3] {
+            let entry = by_line.get(&line).expect("line must be filled");
+            assert!(matches!(entry.class, LineClass::Warrant));
+            assert_eq!(entry.grounds.as_deref(), Some("cid:sha256:abc"));
+        }
+    }
+
+    #[test]
+    fn body_span_expansion_never_touches_already_claimed_lines() {
+        let source = "def f(x):\n    \"\"\"doc\"\"\"\n    if isinstance(x, str):\n        x = x.encode(\"utf-8\")\n    return g(x)\n";
+        let mut entries = vec![LineAccountingEntry {
+            file: "f.py".into(),
+            line: 5,
+            class: LineClass::Warrant,
+            grounds: Some("cid:sha256:abc".into()),
+        }];
+        entries.push(LineAccountingEntry {
+            file: "f.py".into(),
+            line: 2,
+            class: LineClass::Support,
+            grounds: Some("docstring".into()),
+        });
+        let expanded = expand_body_span_line_accounting(source, &entries);
+        let lines: HashSet<usize> = expanded.iter().map(|e| e.line).collect();
+        assert_eq!(lines, [3, 4].into_iter().collect::<HashSet<_>>());
+    }
+
+    #[test]
+    fn body_span_expansion_never_fills_past_last_anchor() {
+        let source = "def f(x):\n    return g(x)\n\n\n";
+        let entries = vec![LineAccountingEntry {
+            file: "f.py".into(),
+            line: 2,
+            class: LineClass::Warrant,
+            grounds: Some("cid:sha256:abc".into()),
+        }];
+        let expanded = expand_body_span_line_accounting(source, &entries);
+        assert!(
+            expanded.is_empty(),
+            "trailing lines past the last anchor must stay residue: {expanded:?}"
+        );
+    }
+
+    #[test]
+    fn body_span_expansion_contributes_nothing_with_zero_rows_in_function() {
+        // Honesty rule: a function with NO warrant/effect anchor at all gets
+        // zero expansion, even though its body is discoverable by the
+        // indentation scan.
+        let source = "def f(x):\n    if isinstance(x, str):\n        x = x.encode(\"utf-8\")\n";
+        let entries: Vec<LineAccountingEntry> = Vec::new();
+        assert!(expand_body_span_line_accounting(source, &entries).is_empty());
     }
 
     #[test]
