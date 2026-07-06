@@ -152,7 +152,10 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     assertion_warrant = assertion_contract["proofirProvenance"]
     assert assertion_warrant["kind"] == "proofir-provenance"
     assert assertion_warrant["nodeClass"] == "EqualityFact"
-    assert [warrant["kind"] for warrant in assertion_warrant["warrants"]] == ["Stated"]
+    assert [warrant["kind"] for warrant in assertion_warrant["warrants"]] == [
+        "Derived",
+        "Stated",
+    ]
     assert assertion_contract["sourceWarrants"][0]["sourceFunctionName"] == (
         "test_encode_base64"
     )
@@ -172,14 +175,24 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     # composes via ambient-post specialization rather than a bespoke warrant.
     assert "warrantedBy" not in assertion_contract
     _assert_assertion_inv(assertion_contract, "YWJj")
-    _assert_assertion_inv(bad_doc["ir"][1], "AAAA")
+    assert [row["name"] for row in bad_doc["ir"]] == [
+        "test_base64::encodeBase64::callable",
+        "encodeBase64#euf#c:call:encodeBase64(s:'abc')::assertion",
+        "encodeBase64#euf#c:call:encodeBase64(s:'abc')::assertion",
+    ]
+    assert [
+        [warrant["kind"] for warrant in row["proofirProvenance"]["warrants"]]
+        for row in bad_doc["ir"][1:]
+    ] == [["Derived"], ["Stated"]]
+    _assert_assertion_inv(bad_doc["ir"][1], "YWJj")
+    _assert_assertion_inv(bad_doc["ir"][2], "AAAA")
     # The dig emits no call-edge: composition is ambient-post specialization keyed on
     # the `call:` ctor head, which needs no explicit edge.
     assert good_doc["callEdges"] == []
     # One row per source line, in build order, named by the sugar that owns it. The
     # body composes through one Block (no base64-specific dispatch); the four lets are
     # support (inert, inlined into the universe), the return emits the str.eq-bv-blocks
-    # universe, the assert row emits the inv.
+    # universe, and the assert emits the derived floor fact plus the stated inv.
     walk = good_doc["factoryAuditSummary"]["factoryWalk"]
     assert [row["selected"] for row in walk] == [
         "AssignSugar",
@@ -188,13 +201,16 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
         "AssignSugar",
         "ReturnSugar",
         "CallSugar",
+        "CallSugar",
     ]
     assert [row["requested_role"] for row in walk] == [
         *["FunctionBodyConstraint"] * 5,
         "AssertionSurface",
+        "AssertionSurface",
     ]
     assert [row["status"] for row in walk] == [
         *["support"] * 4,
+        "warranted",
         "warranted",
         "warranted",
     ]
@@ -202,6 +218,9 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
         assert "emittedFormula" not in support_row
     _assert_base64_payload(walk[4]["emittedFormula"])
     assert walk[5]["emittedFormula"] == assertion_contract["inv"]
+    assert walk[5]["reason"] == "derived from callsite floor"
+    assert walk[6]["emittedFormula"] == assertion_contract["inv"]
+    assert walk[6].get("reason") is None
     assert good_doc["sourceLedger"]["source_loci"] == 2
     assert good_doc["sourceLedger"]["source_warranted"] == 2
 

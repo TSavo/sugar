@@ -54,6 +54,8 @@ def collect_gap_swallow_frontier(root: str | Path) -> GapSwallowReport:
                     continue
                 if _handler_records_the_gap(handler):
                     continue
+                if _handler_emits_typed_effect(handler):
+                    continue
                 offenders.append(
                     GapSwallowSite(
                         file=rel,
@@ -130,6 +132,23 @@ def _handler_records_the_gap(handler: SourceFragment) -> bool:
             fragment.observed == "Call"
             and _call_name(fragment) in _SANCTIONED_RECORDERS
             and _call_references_name(fragment, gap_name)
+        ):
+            return True
+    return False
+
+
+def _handler_emits_typed_effect(handler: SourceFragment) -> bool:
+    for stmt in handler.except_handler_body().statements():
+        if stmt.observed != "Return":
+            continue
+        value = stmt.return_value()
+        if value is None or value.observed != "Call":
+            continue
+        if _call_name(value) != "Incomplete":
+            continue
+        if any(
+            fragment.observed == "Call" and _call_name(fragment) == "RuntimeEffect"
+            for fragment in value.walk()
         ):
             return True
     return False

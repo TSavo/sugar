@@ -30,14 +30,26 @@ def test_base20_lifts_by_generic_composition_not_a_base64_sugar() -> None:
     rep = _lift("BE")
     # One row per source line, named by the sugar that owns it -- nothing
     # base64-specific. The table and the ord byte are support (inert lets), the return
-    # warrants the str.eq-bv-blocks universe, the call warrants the assertion inv.
+    # warrants the str.eq-bv-blocks universe, and the assertion call emits both
+    # the derived floor fact and the stated vendor assertion under one key.
     selected = [row.selected for row in rep.payload.factory_walk]
-    assert selected == ["AssignSugar", "AssignSugar", "ReturnSugar", "CallSugar"]
+    assert selected == [
+        "AssignSugar",
+        "AssignSugar",
+        "ReturnSugar",
+        "CallSugar",
+        "CallSugar",
+    ]
     assert [row.status for row in rep.payload.factory_walk] == [
         "support",
         "support",
         "warranted",
         "warranted",
+        "warranted",
+    ]
+    assert [row.reason for row in rep.payload.factory_walk[-2:]] == [
+        "derived from callsite floor",
+        None,
     ]
     names = [c.name for c in rep.payload.ir]
     assert names == [

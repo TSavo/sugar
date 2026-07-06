@@ -62,3 +62,21 @@ def test_sanctioned_recorders_are_not_offenders() -> None:
 
     assert "lift_rpc.py" not in files
     assert "audit_only/collect_construction_gaps.py" not in files
+
+
+def test_typed_effect_terminal_is_not_a_gap_swallow(tmp_path) -> None:
+    kit_src = tmp_path / "src" / "sugar_lift_py_tests" / "floor"
+    kit_src.mkdir(parents=True)
+    (kit_src / "typed_effect.py").write_text(
+        "def planted(term, ctx):\n"
+        "    try:\n"
+        "        floor = term.reduce(ctx)\n"
+        "    except FactoryGap:\n"
+        "        return Incomplete(RuntimeEffect('runtime boundary'))\n"
+        "    return floor\n",
+        encoding="utf-8",
+    )
+
+    report = collect_gap_swallow_frontier(tmp_path)
+
+    assert report.is_zero, report.to_json()

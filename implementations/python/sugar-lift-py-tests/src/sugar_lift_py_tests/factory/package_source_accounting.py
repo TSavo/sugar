@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import ast
 import importlib.util
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
+
+from .source_fragment import SourceFragment
 
 _LEDGER_KEYS = (
     "source_loci",
@@ -24,11 +25,11 @@ def package_source_audits_for_source(
     if _package_accounting_mode() != "structural":
         return []
     try:
-        tree = ast.parse(source, filename=filename)
+        root_fragment = SourceFragment.from_source(source, filename)
     except SyntaxError:
         return []
     audits: list[dict[str, Any]] = []
-    for package in _imported_top_level_packages(tree):
+    for package in _imported_top_level_packages(root_fragment):
         root = _package_root(package)
         if root is None:
             continue
@@ -69,20 +70,10 @@ def source_ledger_for_source_audits(
     return ledger
 
 
-def _imported_top_level_packages(tree: ast.Module) -> tuple[str, ...]:
+def _imported_top_level_packages(root: SourceFragment) -> tuple[str, ...]:
     packages: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                package = alias.name.split(".", 1)[0]
-                if package and package != "__future__":
-                    packages.add(package)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level != 0 or not node.module:
-                continue
-            package = node.module.split(".", 1)[0]
-            if package and package != "__future__":
-                packages.add(package)
+    for fragment in [root, *root.walk()]:
+        packages.update(fragment.imported_top_level_packages())
     return tuple(sorted(packages))
 
 
@@ -114,7 +105,7 @@ def _package_accounting_summary(root: Path) -> dict[str, Any]:
         file_count += 1
         try:
             source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(path))
+            root_fragment = SourceFragment.from_source(source, str(path))
         except (OSError, SyntaxError) as exc:
             locus = _source_locus(
                 path,
@@ -130,20 +121,19 @@ def _package_accounting_summary(root: Path) -> dict[str, Any]:
             elif len(samples) < sample_limit:
                 samples.append(locus)
             continue
-        for node in ast.walk(tree):
-            line = getattr(node, "lineno", None)
-            if not isinstance(line, int):
+        for fragment in [root_fragment, *root_fragment.walk()]:
+            if not fragment.has_position():
                 continue
-            status, reason = _structural_status(node)
+            status, reason = _structural_status(fragment)
             locus = _source_locus(
                 path,
-                line=line,
-                col=int(getattr(node, "col_offset", 0) or 0),
+                line=fragment.line,
+                col=fragment.col,
                 status=status,
-                ast_kind=type(node).__name__,
+                ast_kind=fragment.observed,
                 reason=reason,
-                end_line=getattr(node, "end_lineno", None),
-                end_col=getattr(node, "end_col_offset", None),
+                end_line=fragment.end_line,
+                end_col=fragment.end_col,
             )
             _account_locus(totals, ast_type_counts, locus)
             if include_loci:
@@ -162,39 +152,8 @@ def _package_accounting_summary(root: Path) -> dict[str, Any]:
     return result
 
 
-def _structural_status(node: ast.AST) -> tuple[str, str]:
-    if isinstance(node, (ast.Import, ast.ImportFrom, ast.alias)):
-        return (
-            "unclassified",
-            "import metadata is not classified by any emitted Python source warrant",
-        )
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return (
-            "unclassified",
-            "function declaration is not classified by any emitted Python source warrant",
-        )
-    if isinstance(node, ast.ClassDef):
-        return (
-            "unclassified",
-            "class declaration is not classified by any emitted Python source warrant",
-        )
-    if isinstance(node, ast.arg):
-        return (
-            "unclassified",
-            "function parameter metadata is not classified by any emitted Python source warrant",
-        )
-    if isinstance(node, ast.Pass):
-        return (
-            "unclassified",
-            "pass no-op scaffolding is not classified by any emitted Python source warrant",
-        )
-    if (
-        isinstance(node, ast.Expr)
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
-    ):
-        return "inactive", "docstring metadata is inactive at runtime"
-    return "unclassified", "not classified by any emitted Python source warrant"
+def _structural_status(fragment: SourceFragment) -> tuple[str, str]:
+    return fragment.package_accounting_status()
 
 
 def _source_locus(

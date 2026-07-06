@@ -574,6 +574,11 @@ class SourceFragment:
         self._require(ast.Assert)
         return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
 
+    def assert_has_message(self) -> bool:
+        """Return True when an Assert node has an assertion message expression."""
+        self._require(ast.Assert)
+        return self.node.msg is not None  # type: ignore[attr-defined]
+
     def assert_with_test(self, test: "SourceFragment") -> "SourceFragment":
         """Return this Assert as a new Assert fragment with a different test.
 
@@ -596,6 +601,39 @@ class SourceFragment:
         """Return a SourceFragment for the expression inside an Expr statement node."""
         self._require(ast.Expr)
         return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+
+    def package_accounting_status(self) -> tuple[str, str]:
+        """Return the package-source accounting status/reason for this node."""
+        if isinstance(self.node, (ast.Import, ast.ImportFrom, ast.alias)):
+            return (
+                "unclassified",
+                "import metadata is not classified by any emitted Python source warrant",
+            )
+        if isinstance(self.node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return (
+                "unclassified",
+                "function declaration is not classified by any emitted Python source warrant",
+            )
+        if isinstance(self.node, ast.ClassDef):
+            return (
+                "unclassified",
+                "class declaration is not classified by any emitted Python source warrant",
+            )
+        if isinstance(self.node, ast.arg):
+            return (
+                "unclassified",
+                "function parameter metadata is not classified by any emitted Python source warrant",
+            )
+        if isinstance(self.node, ast.Pass):
+            return (
+                "unclassified",
+                "pass no-op scaffolding is not classified by any emitted Python source warrant",
+            )
+        if isinstance(self.node, ast.Expr):
+            value = self.node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return "inactive", "docstring metadata is inactive at runtime"
+        return "unclassified", "not classified by any emitted Python source warrant"
 
     # --- unary / bool ops -------------------------------------------------
 
@@ -826,6 +864,23 @@ class SourceFragment:
         """Return (name, asname) pairs for an ImportFrom node."""
         self._require(ast.ImportFrom)
         return [(alias.name, alias.asname) for alias in self.node.names]  # type: ignore[attr-defined]
+
+    def imported_top_level_packages(self) -> tuple[str, ...]:
+        """Return top-level package names imported by an Import/ImportFrom node."""
+        if isinstance(self.node, ast.Import):
+            packages = {
+                alias.name.split(".", 1)[0]
+                for alias in self.node.names
+                if alias.name.split(".", 1)[0] != "__future__"
+            }
+            return tuple(sorted(package for package in packages if package))
+        if isinstance(self.node, ast.ImportFrom):
+            if self.node.level != 0 or not self.node.module:
+                return ()
+            package = self.node.module.split(".", 1)[0]
+            if package and package != "__future__":
+                return (package,)
+        return ()
 
     def alias_name(self) -> str:
         """Return the imported name for an alias node."""
