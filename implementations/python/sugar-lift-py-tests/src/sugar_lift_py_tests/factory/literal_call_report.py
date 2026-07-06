@@ -1636,6 +1636,51 @@ def _lift_callsite_assertion(
     # yet shape into a term is kept as typed red so one opaque arg cannot kill the
     # report.
     arg_terms = []
+    edge_target_symbol: str | None = None
+    receiver = callsite.call_receiver()
+    if receiver is not None and callee_name == callsite.call_target_name():
+        try:
+            receiver_value = _literal_floor_via_factory(receiver, filename, ctx=ctx)
+            if isinstance(receiver_value, Incomplete):
+                return _effect_lift(
+                    receiver,
+                    fn,
+                    receiver_value,
+                    stmt=stmt,
+                    selected="TypedEffect",
+                    requested_role="CallsiteReceiver",
+                    filename=filename,
+                    memento_file=memento_file,
+                    source_lines=source_lines,
+                )
+            arg_terms.append(
+                floor_to_term(receiver_value, owner="literal_call_report.receiver")
+            )
+            edge_target_symbol = f"method:{callee_name}"
+        except (OverflowError, RuntimeError, TypeError, ValueError) as exc:
+            return _effect_lift(
+                receiver,
+                fn,
+                Incomplete(
+                    RuntimeEffect(
+                        "callsite receiver runtime boundary: "
+                        "crime=method receiver could not be projected to a "
+                        "ProofIR term; "
+                        "owner=literal_call_report; "
+                        f"shape=receiver:{receiver.observed}-unliftable; "
+                        "replacement=route receiver identity through the alias "
+                        "floor or keep this method callsite as typed red; "
+                        f"{exc}; "
+                        f"blame={memento_file}:{receiver.line}:{receiver.col}"
+                    )
+                ),
+                stmt=stmt,
+                selected="CallsiteReceiverRuntimeEffect",
+                requested_role="CallsiteReceiver",
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+            )
     for arg_frag in callsite.call_args():
         try:
             arg_value = _literal_floor_via_factory(arg_frag, filename, ctx=ctx)
@@ -1793,6 +1838,7 @@ def _lift_callsite_assertion(
             call_return_sort=call_return_sort,
             contract_bindings=contract_bindings or [],
             include_whole_call_fact=True,
+            edge_target_symbol=edge_target_symbol,
         )
     return _emit_euf_fact(
         stmt,
@@ -1808,6 +1854,7 @@ def _lift_callsite_assertion(
         emit_call_edge=emit_call_edge,
         call_return_sort=call_return_sort,
         contract_bindings=contract_bindings or [],
+        edge_target_symbol=edge_target_symbol,
     )
 
 
@@ -1827,6 +1874,7 @@ def _emit_dict_literal_callsite_facts(
     call_return_sort: ProofSort | None = None,
     contract_bindings: list | None = None,
     include_whole_call_fact: bool,
+    edge_target_symbol: str | None = None,
 ) -> LiftResult:
     from sugar_lift_py_tests.floor import TermValue
 
@@ -1847,6 +1895,7 @@ def _emit_dict_literal_callsite_facts(
                 emit_call_edge=emit_call_edge,
                 call_return_sort=call_return_sort,
                 contract_bindings=contract_bindings or [],
+                edge_target_symbol=edge_target_symbol,
             )
         )
     entries = _canonical_dict_entries(value)
@@ -1913,6 +1962,7 @@ def _emit_euf_fact(
     emit_call_edge: bool = False,
     call_return_sort: ProofSort | None = None,
     contract_bindings: list | None = None,
+    edge_target_symbol: str | None = None,
 ) -> LiftResult:
     """Emit one `<callee>#euf#<args>::assertion` fact: `eq(call:callee(args), value)`.
 
@@ -2005,8 +2055,10 @@ def _emit_euf_fact(
     if emit_call_edge:
         if callsite is None:
             raise TypeError("emit_call_edge requires callsite")
-        target_symbol = f"call:{callee_name}"
-        binding = _binding_for_bridge_symbol(contract_bindings or [], target_symbol)
+        target_symbol = edge_target_symbol or f"call:{callee_name}"
+        binding = _binding_for_bridge_symbol(
+            contract_bindings or [], target_symbol, arg_terms=list(arg_terms)
+        )
         formal_actuals = _formal_actuals_for_binding(binding, list(arg_terms))
         edges.append(
             CallEdgeDecl(
@@ -3511,7 +3563,9 @@ def _external_bridge_edges(
         if key in seen:
             continue
         seen.add(key)
-        binding = _binding_for_bridge_symbol(contract_bindings, target_symbol)
+        binding = _binding_for_bridge_symbol(
+            contract_bindings, target_symbol, arg_terms=item.get("argTerms")
+        )
         formal_actuals = _formal_actuals_for_binding(binding, item.get("argTerms"))
         bridge = BridgeAtom(
             source_contract=source_contract,
@@ -3586,16 +3640,81 @@ def _module_statements(root_frag: SourceFragment) -> list[SourceFragment]:
 def _binding_for_bridge_symbol(
     contract_bindings: list,
     target_symbol: str,
+    *,
+    arg_terms: object = None,
 ) -> dict[str, Any] | None:
-    target_name = target_symbol.removeprefix("call:")
+    target_symbols = _bridge_symbol_match_candidates(target_symbol, arg_terms)
     for binding in contract_bindings:
         if not isinstance(binding, dict):
             continue
-        if binding.get("bridgeSourceSymbol") in {target_symbol, target_name}:
+        if _binding_bridge_candidates(binding) & target_symbols:
             return binding
-        name = binding.get("name")
-        if name in {target_symbol, target_name}:
-            return binding
+    return None
+
+
+def _bridge_symbol_match_candidates(
+    target_symbol: str, arg_terms: object = None
+) -> set[str]:
+    candidates = {target_symbol}
+    if target_symbol.startswith("call:"):
+        candidates.add(target_symbol.removeprefix("call:"))
+    if target_symbol.startswith("method:"):
+        method_name = target_symbol.removeprefix("method:")
+        candidates.add(method_name)
+        receiver_term = _first_arg_term(arg_terms)
+        receiver_ctor = _receiver_constructor_name(receiver_term)
+        if receiver_ctor is not None:
+            candidates.add(f"{receiver_ctor}.{method_name}")
+    return {candidate for candidate in candidates if candidate}
+
+
+def _binding_bridge_candidates(binding: dict[str, Any]) -> set[str]:
+    candidates: set[str] = set()
+    for key in ("bridgeSourceSymbol", "name"):
+        value = binding.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        candidates.add(value)
+        if value.startswith("call:"):
+            candidates.add(value.removeprefix("call:"))
+        elif not value.startswith("method:"):
+            candidates.add(f"call:{value}")
+    for library in _binding_libraries(binding):
+        for value in tuple(candidates):
+            if value.startswith(("call:", "method:")):
+                continue
+            if value == library or value.startswith(f"{library}."):
+                continue
+            candidates.add(f"{library}.{value}")
+            candidates.add(f"call:{library}.{value}")
+    return candidates
+
+
+def _binding_libraries(binding: dict[str, Any]) -> tuple[str, ...]:
+    libraries: list[str] = []
+    for key in ("library", "library_tag", "target_library_tag", "targetLibraryTag"):
+        value = binding.get(key)
+        if isinstance(value, str) and value:
+            libraries.append(value)
+    return tuple(dict.fromkeys(libraries))
+
+
+def _first_arg_term(arg_terms: object) -> Term | None:
+    if not isinstance(arg_terms, list) or not arg_terms:
+        return None
+    first = arg_terms[0]
+    return (
+        first
+        if isinstance(
+            first, (_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor)
+        )
+        else None
+    )
+
+
+def _receiver_constructor_name(term: Term | None) -> str | None:
+    if isinstance(term, _Ctor) and term.name.startswith("call:"):
+        return term.name.removeprefix("call:")
     return None
 
 

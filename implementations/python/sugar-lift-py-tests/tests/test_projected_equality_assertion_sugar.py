@@ -309,6 +309,135 @@ def test_projected_equality_external_bridge_edge_uses_dependency_binding() -> No
     assert edge["targetProofCid"] == "blake3-512:math-proof"
 
 
+def test_external_bridge_edge_resolves_declared_package_root_prefix() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import pkg\n"
+            "def test_to_time(actual):\n"
+            "    assert actual.value == pkg.core.tools.times.to_time(5)\n"
+        ),
+        filename="test_to_time.py",
+        memento_file="test_to_time.py",
+        contract_bindings=[
+            {
+                "name": "core.tools.times.to_time::callable",
+                "contract_cid": "blake3-512:to-time-contract",
+                "target_proof_cid": "blake3-512:pandas-proof",
+                "bridgeSourceSymbol": "core.tools.times.to_time",
+                "library": "pkg",
+                "has_pre": True,
+            }
+        ],
+    )
+
+    assert report is not None
+    edge = report.payload.call_edges[0]
+    assert edge["targetSymbol"] == "call:pkg.core.tools.times.to_time"
+    assert edge["targetContract"] == "core.tools.times.to_time::callable"
+    assert edge["targetContractCid"] == "blake3-512:to-time-contract"
+    assert edge["targetProofCid"] == "blake3-512:pandas-proof"
+
+
+def test_callsite_method_edge_carries_alias_floor_receiver_identity() -> None:
+    source = (
+        "import pkg as pd\n"
+        "def test_view():\n"
+        "    arr = pd.api.extensions.ExtensionArray()\n"
+        "    assert arr.view() == 1\n"
+    )
+    first_pass = build_literal_call_report(
+        source=source,
+        filename="test_view.py",
+        memento_file="test_view.py",
+    )
+    assert first_pass is not None
+    source_contract = first_pass.payload.ir[0].name
+
+    report = build_literal_call_report(
+        source=source,
+        filename="test_view.py",
+        memento_file="test_view.py",
+        contract_bindings=[
+            {
+                "name": source_contract,
+                "contract_cid": "blake3-512:source-contract",
+                "has_post": True,
+            },
+            {
+                "name": "pandas.api.extensions.ExtensionArray.view::callable",
+                "contract_cid": "blake3-512:view-contract",
+                "target_proof_cid": "blake3-512:pandas-proof",
+                "bridgeSourceSymbol": "pkg.api.extensions.ExtensionArray.view",
+                "library": "pkg",
+                "formals": ["self"],
+                "has_pre": True,
+            },
+        ],
+    )
+
+    assert report is not None
+    edge = report.payload.call_edges[0]
+    assert edge["targetSymbol"] == "method:view"
+    assert (
+        edge["targetContract"] == "pandas.api.extensions.ExtensionArray.view::callable"
+    )
+    assert edge["targetContractCid"] == "blake3-512:view-contract"
+    assert edge["targetProofCid"] == "blake3-512:pandas-proof"
+    assert edge["callsite"]["formalActuals"]["self"] == {
+        "kind": "ctor",
+        "name": "call:pkg.api.extensions.ExtensionArray",
+        "args": [],
+    }
+    assert len(report.payload.implications) == 1
+
+
+def test_callsite_method_receiver_projection_runtime_boundary_is_typed_effect() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_view():\n"
+            "    arr = {'values': [1e309]}\n"
+            "    assert arr.view() == 1\n"
+        ),
+        filename="test_view.py",
+        memento_file="test_view.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert report.payload.call_edges == []
+    assert len(report.payload.effects) == 1
+    row = report.payload.factory_walk[0]
+    assert row.selected == "CallsiteReceiverRuntimeEffect"
+    assert row.requested_role == "CallsiteReceiver"
+    assert row.status == "runtime-effect"
+    assert "callsite receiver runtime boundary" in row.reason
+    assert "receiver:Name-unliftable" in row.reason
+    assert "cannot convert float infinity to integer" in row.reason
+
+
+def test_callsite_method_receiver_projection_incomplete_effect_is_typed_effect() -> (
+    None
+):
+    report = build_literal_call_report(
+        source=(
+            "def test_view():\n"
+            "    arr = {'binary': [bytes.fromhex('00')]}\n"
+            "    assert arr.view() == 1\n"
+        ),
+        filename="test_view.py",
+        memento_file="test_view.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert report.payload.call_edges == []
+    row = report.payload.factory_walk[0]
+    assert row.selected == "TypedEffect"
+    assert row.requested_role == "CallsiteReceiver"
+    assert row.status == "factory-gap"
+    assert "call-method:fromhex" in row.reason
+
+
 def test_projected_equality_external_bridge_edge_binds_keyword_formal_actuals() -> None:
     report = build_literal_call_report(
         source=(
