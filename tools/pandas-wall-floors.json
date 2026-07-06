@@ -1,10 +1,19 @@
 {
   "kind": "pandas-wall-ratchet-floors",
   "floors": {
-    "mode": "frontier",
+    "mode": "construction-gaps",
     "construction_gaps": {
-      "total_ceiling": 0,
-      "templates": {}
+      "total_ceiling": 22,
+      "templates": {
+        "Constructor|BuiltinCallSugar|T.__dir__|constructor-bound method": 1,
+        "Floor|BinOpSugar|StringValue+StringValue|binary operator operand floor": 1,
+        "Floor|BinOpSugar|StringValue+SymbolicValue|binary operator operand floor": 1,
+        "Floor|BinOpSugar|SymbolicValue+StringValue|binary operator operand floor": 2,
+        "Floor|MapSugar|SymbolicValue|map_with": 2,
+        "Floor|MembershipAssertionSugar|ArrayLiteral.contains(SymbolicValue)|contains item floor": 11,
+        "Floor|literal_call_report kw:float_format|LambdaCallable|project this floor value to a term": 3,
+        "Sugar|python.factory|Assert|statement": 1
+      }
     },
     "complete_floors": {
       "green": 0,
@@ -12,9 +21,9 @@
       "pre_bearing": 0
     },
     "frontier": {
-      "message_needle": "named expression runtime boundary",
-      "owner": "NamedExprSugar",
-      "shape": "NamedExpr target `u` value `Call`"
+      "message_needle": "",
+      "owner": "",
+      "shape": ""
     }
   }
 }

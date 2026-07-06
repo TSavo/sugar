@@ -11,7 +11,7 @@ from sugar_lift_py_tests.factory import (
 )
 from sugar_lift_py_tests.floor import ObjectField, ObjectMethodValue, ObjectValue
 from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
-from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -43,14 +43,18 @@ class ConstructorStrategy:
 
     def emit(self, sugar, ctx) -> Outcome:
         del sugar
-        arg_values = tuple(
-            complete_value(
-                argument.reduce(ctx),
-                owner=f"{self.class_name} constructor argument",
+        arg_values = []
+        for argument in self.arguments:
+            argument_outcome = argument.reduce(ctx)
+            if isinstance(argument_outcome, Incomplete):
+                return argument_outcome
+            arg_values.append(
+                complete_value(
+                    argument_outcome,
+                    owner=f"{self.class_name} constructor argument",
+                )
             )
-            for argument in self.arguments
-        )
-        field_ctx = _ctx_with_curried_args(ctx, self.parameters, arg_values)
+        field_ctx = _ctx_with_curried_args(ctx, self.parameters, tuple(arg_values))
         return Complete(
             ObjectValue(
                 class_name=self.class_name,
