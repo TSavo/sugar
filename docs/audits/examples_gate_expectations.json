@@ -60,9 +60,9 @@
       "expected": "NAMED_RED",
       "failure_shape": "mint-missing/base64-decode-property-rows",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape mint-missing/base64-decode-property-rows; work order #3578",
+      "grounds": "script exited 1 after unrelated failed components were allowed; current terminal shape is still no base64_decode property rows in the receipt. Manual vendor-proof probe showed python-bind emits library-sugar-binding-entry members, not contract members, so imported itsdangerous proofs do not currently supply bridge-resolvable target contracts; work order #3578.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 44.56,
+      "last_observed_seconds": 18.25,
       "name": "examples/itsdangerous-token-padding/run.sh",
       "work_order_issue": 3578
     },
@@ -368,9 +368,9 @@
       "expected": "NAMED_RED",
       "failure_shape": "proof-pool/bridge-target-missing",
       "first_seen": "2026-07-06 python-seat-showcases sweep 799a9e86a",
-      "grounds": "script exited 1 after component discovery was repaired; current terminal shape is resolve-target: bridge target CID for call:scalar_sum not in pool. Retirement: the Polars bridge target contract is carried as a loaded proof-pool member, then the good suite can assert consistency discharge.",
+      "grounds": "script exited 1 after component discovery was repaired; current terminal shape is resolve-target: bridge target CID for call:scalar_sum not in pool. Diagnosis: the proof pool contains rust-source::scalar_sum, but the implication-lifted callsite bridge targets a different pre-mint/content CID, so this is bridge target derivation rather than a proof file not loading. Retirement: callsite bridges target loaded minted member CIDs, then the good suite can assert consistency discharge.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 20.12,
+      "last_observed_seconds": 251.02,
       "name": "examples/polars-showcase/run.sh"
     },
     {

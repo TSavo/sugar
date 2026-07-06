@@ -65,7 +65,7 @@ audit_good_source() {
   echo "== source audit: sugar lift --report itsdangerous.encoding.base64_encode =="
   local report
   report="$(mktemp)"
-  ( cd "$HERE/good" && "$BIN" lift --report --json . ) > "$report" || {
+  ( cd "$HERE/good" && "$BIN" lift --allow-failed-components --report --json . ) > "$report" || {
     echo "FAIL: source audit lift report"
     rm -f "$report"
     return 1
@@ -1423,7 +1423,7 @@ run_twin() {
   rm -f "$dir"/.prove*.json "$dir"/.verify*.json 2>/dev/null
 
   ( cd "$dir" && "$BIN" mint --out . ) >/dev/null || { echo "FAIL: mint ($twin)"; return 1; }
-  ( cd "$dir" && "$BIN" verify --project . --json > .verify.json ) || true
+  ( cd "$dir" && "$BIN" verify --allow-failed-components --project . --json > .verify.json ) || true
   [ -s "$dir/.verify.json" ] || { echo "FAIL: no verify receipt ($twin)"; return 1; }
 
   EXPECT="$expect" TWIN="$twin" python3 - "$dir/.verify.json" <<'PY' || return 1
