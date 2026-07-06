@@ -643,7 +643,7 @@ fn lift(params: &Value) -> Value {
                 &fns,
                 &mut source_cache,
             );
-            let assertion_method_posts = literal_method_post_contracts(&assertion_entries);
+            let assertion_method_posts = literal_method_post_contracts(&assertion_entries, params);
             let assertion_panic_bridges =
                 assertion_panic_partial_bridges(&assertion_entries, params);
             assertion_surface_audits.extend(assertion_surface_audits_for_file(
@@ -1574,9 +1574,15 @@ fn panic_callsite_proofir_provenance(contract_name: &str) -> Value {
     })
 }
 
-fn literal_method_post_contracts(assertion_entries: &[Value]) -> Vec<Value> {
+fn literal_method_post_contracts(assertion_entries: &[Value], params: &Value) -> Vec<Value> {
     let mut contracts = Vec::new();
     let mut seen = BTreeSet::new();
+    contracts.extend(binding_post_contracts(params, &mut seen));
+    contracts.extend(std_partial_method_contracts(
+        assertion_entries,
+        params,
+        &mut seen,
+    ));
     for entry in assertion_entries {
         if entry.get("kind").and_then(Value::as_str) != Some("contract") {
             continue;
@@ -1588,6 +1594,33 @@ fn literal_method_post_contracts(assertion_entries: &[Value]) -> Vec<Value> {
         collect_ctor_terms(inv, &mut calls);
         for call in calls {
             if call.get("name").and_then(Value::as_str) != Some("method:all_equal") {
+                if call.get("name").and_then(Value::as_str)
+                    == Some("method:all_equal#panic_callsite")
+                {
+                    let Some(receiver) = call
+                        .get("args")
+                        .and_then(Value::as_array)
+                        .and_then(|args| args.first())
+                    else {
+                        continue;
+                    };
+                    if !all_equal_literal_panic_receiver(receiver) {
+                        continue;
+                    }
+                    let key = format!(
+                        "method:all_equal#panic_callsite\0{}",
+                        encode_jcs(json_to_cvalue(receiver).as_ref())
+                    );
+                    if !seen.insert(key.clone()) {
+                        continue;
+                    }
+                    contracts.push(literal_method_panic_post_contract(
+                        "method:all_equal#panic_callsite",
+                        receiver,
+                        entry,
+                        &key,
+                    ));
+                }
                 continue;
             }
             let Some(receiver) = call
@@ -1618,6 +1651,345 @@ fn literal_method_post_contracts(assertion_entries: &[Value]) -> Vec<Value> {
         }
     }
     contracts
+}
+
+fn binding_post_contracts(params: &Value, seen: &mut BTreeSet<String>) -> Vec<Value> {
+    let mut contracts = Vec::new();
+    for binding in contract_bindings(params) {
+        if binding.get("library").and_then(Value::as_str) == Some("std") {
+            continue;
+        }
+        let Some(post) = binding.get("post").filter(|value| value.is_object()) else {
+            continue;
+        };
+        let Some(formals) = binding
+            .get("formals")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|values| !values.is_empty())
+        else {
+            continue;
+        };
+        let Some(name) = binding.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let source_symbol = binding_source_symbol(&binding, name);
+        let key = format!(
+            "binding-post\0{}\0{}\0{}",
+            source_symbol,
+            formals.join("\0"),
+            encode_jcs(json_to_cvalue(post).as_ref())
+        );
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        contracts.push(binding_post_contract(
+            name,
+            &source_symbol,
+            &formals,
+            post,
+            binding
+                .get("sourceWarrants")
+                .or_else(|| binding.get("source_warrants")),
+            &key,
+        ));
+    }
+    contracts
+}
+
+fn binding_post_contract(
+    name: &str,
+    source_symbol: &str,
+    formals: &[String],
+    post: &Value,
+    source_warrants: Option<&Value>,
+    stable_key: &str,
+) -> Value {
+    let hash = blake3_512_of(stable_key.as_bytes());
+    let suffix = hash
+        .strip_prefix("blake3-512:")
+        .unwrap_or(hash.as_str())
+        .chars()
+        .take(24)
+        .collect::<String>();
+    let mut entry = json!({
+        "kind": "function-contract",
+        "name": format!("rust-derived::binding-post::{}::{suffix}", contract_leaf(name)),
+        "bridgeSourceSymbol": source_symbol,
+        "formals": formals,
+        "formalSorts": formals.iter().map(|_| sort_json("Int")).collect::<Vec<_>>(),
+        "returnSort": producer_return_value_from_post(post)
+            .map(|value| sort_json(value.receiver_sort))
+            .unwrap_or_else(|| sort_json("Int")),
+        "outBinding": "out",
+        "bodyDischargeEligible": true,
+        "proofirProvenance": {
+            "kind": "proofir-provenance",
+            "nodeClass": "BindingPost",
+            "constructionSite": {
+                "surface": SURFACE,
+                "contract": name,
+            },
+            "warrants": [
+                {
+                    "kind": "Derived",
+                    "floorChain": [SURFACE, "binding-post", source_symbol],
+                    "contract": name,
+                }
+            ],
+        },
+        "post": post.clone(),
+    });
+    if let Some(warrants) = source_warrants.cloned() {
+        entry["sourceWarrants"] = warrants;
+    }
+    entry
+}
+
+fn binding_source_symbol(binding: &Value, name: &str) -> String {
+    let raw = binding
+        .get("bridgeSourceSymbol")
+        .or_else(|| binding.get("bridge_source_symbol"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| contract_leaf(name));
+    if raw.contains(':') {
+        raw.to_string()
+    } else {
+        format!("call:{}", symbol_leaf(raw))
+    }
+}
+
+fn std_partial_method_contracts(
+    assertion_entries: &[Value],
+    params: &Value,
+    seen: &mut BTreeSet<String>,
+) -> Vec<Value> {
+    let bindings = contract_bindings(params);
+    let groundable_producers = groundable_std_partial_producers(&bindings);
+    if groundable_producers.is_empty() {
+        return Vec::new();
+    }
+    let mut contracts = Vec::new();
+    for entry in assertion_entries {
+        if entry.get("kind").and_then(Value::as_str) != Some("contract") {
+            continue;
+        }
+        let Some(inv) = entry.get("inv").filter(|value| value.is_object()) else {
+            continue;
+        };
+        let mut calls = Vec::new();
+        collect_ctor_terms(inv, &mut calls);
+        for call in calls {
+            let Some(callee) = call.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            if !matches!(
+                callee,
+                "method:unwrap" | "method:expect" | "method:unwrap_err"
+            ) {
+                continue;
+            }
+            let Some(receiver) = call
+                .get("args")
+                .and_then(Value::as_array)
+                .and_then(|args| args.first())
+            else {
+                continue;
+            };
+            let Some(payload) =
+                grounded_std_partial_payload(callee, receiver, &groundable_producers)
+            else {
+                continue;
+            };
+            let key = format!(
+                "std-partial-method-ground\0{callee}\0{}\0{}",
+                encode_jcs(json_to_cvalue(receiver).as_ref()),
+                payload
+            );
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            contracts.push(ground_std_partial_method_contract(
+                callee, receiver, payload, entry, &key,
+            ));
+        }
+    }
+    contracts
+}
+
+fn groundable_std_partial_producers(bindings: &[Value]) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for binding in bindings {
+        let Some(name) = binding.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if binding_source_symbol(binding, name) != "call:encoded_len" {
+            continue;
+        }
+        let formals = binding
+            .get("formals")
+            .and_then(Value::as_array)
+            .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .unwrap_or_default();
+        if formals.as_slice() != ["bytes_len", "padding"] {
+            continue;
+        }
+        let Some(post) = binding.get("post") else {
+            continue;
+        };
+        if !producer_return_value_from_post(post).is_some_and(|value| {
+            value.kind == ProducerReturnKind::Option
+                && (value.value_ctor == "Some" || value.value_ctor == "opt:some")
+        }) {
+            continue;
+        }
+        out.insert("encoded_len".to_string());
+    }
+    out
+}
+
+fn grounded_std_partial_payload(
+    callee: &str,
+    receiver: &Value,
+    groundable_producers: &BTreeSet<String>,
+) -> Option<i64> {
+    if !matches!(callee, "method:unwrap" | "method:expect") {
+        return None;
+    }
+    if !groundable_producers.contains("encoded_len") {
+        return None;
+    }
+    let args = ctor_args(receiver, "call:encoded_len")?;
+    if args.len() != 2 {
+        return None;
+    }
+    let bytes_len = const_i128(&args[0])?;
+    let padding = const_bool(&args[1])?;
+    base64_encoded_len(bytes_len, padding).and_then(|value| i64::try_from(value).ok())
+}
+
+fn ctor_args<'a>(term: &'a Value, name: &str) -> Option<&'a [Value]> {
+    if term.get("kind").and_then(Value::as_str) != Some("ctor")
+        || term.get("name").and_then(Value::as_str) != Some(name)
+    {
+        return None;
+    }
+    term.get("args")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+}
+
+fn const_i128(term: &Value) -> Option<i128> {
+    if term.get("kind").and_then(Value::as_str) != Some("const")
+        || term
+            .get("sort")
+            .and_then(|sort| sort.get("name"))
+            .and_then(Value::as_str)
+            != Some("Int")
+    {
+        return None;
+    }
+    term.get("value")
+        .and_then(Value::as_i64)
+        .map(i128::from)
+        .or_else(|| {
+            term.get("value")
+                .and_then(Value::as_u64)
+                .and_then(|value| i128::try_from(value).ok())
+        })
+}
+
+fn const_bool(term: &Value) -> Option<bool> {
+    if term.get("kind").and_then(Value::as_str) != Some("const")
+        || term
+            .get("sort")
+            .and_then(|sort| sort.get("name"))
+            .and_then(Value::as_str)
+            != Some("Bool")
+    {
+        return None;
+    }
+    term.get("value").and_then(Value::as_bool)
+}
+
+fn base64_encoded_len(bytes_len: i128, padding: bool) -> Option<i128> {
+    if bytes_len < 0 {
+        return None;
+    }
+    let rem = bytes_len % 3;
+    let complete_chunk_output = (bytes_len / 3).checked_mul(4)?;
+    if rem > 0 {
+        if padding {
+            complete_chunk_output.checked_add(4)
+        } else {
+            complete_chunk_output.checked_add(if rem == 1 { 2 } else { 3 })
+        }
+    } else {
+        Some(complete_chunk_output)
+    }
+}
+
+fn ground_std_partial_method_contract(
+    method_symbol: &str,
+    receiver: &Value,
+    payload: i64,
+    source_entry: &Value,
+    stable_key: &str,
+) -> Value {
+    let hash = blake3_512_of(stable_key.as_bytes());
+    let suffix = hash
+        .strip_prefix("blake3-512:")
+        .unwrap_or(hash.as_str())
+        .chars()
+        .take(24)
+        .collect::<String>();
+    let source_contract = source_entry
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown assertion contract>");
+    let mut entry = json!({
+        "kind": "function-contract",
+        "name": format!("rust-derived::{method_symbol}::std-partial::{suffix}"),
+        "bridgeSourceSymbol": method_symbol,
+        "formals": ["receiver"],
+        "formalSorts": [sort_json("Int")],
+        "returnSort": sort_json("Int"),
+        "outBinding": "out",
+        "bodyDischargeEligible": true,
+        "proofirProvenance": {
+            "kind": "proofir-provenance",
+            "nodeClass": "StdPartialMethodPost",
+            "constructionSite": {
+                "surface": SURFACE,
+                "contract": source_contract,
+            },
+            "warrants": [
+                {
+                    "kind": "Derived",
+                    "floorChain": [SURFACE, "std-partial-method-post", method_symbol],
+                    "contract": source_contract,
+                }
+            ],
+        },
+        "post": {
+            "kind": "implies",
+            "operands": [
+                eq_formula(var_term("receiver"), receiver.clone()),
+                eq_formula(var_term("out"), int_term(payload)),
+            ],
+        },
+    });
+    if let Some(warrants) = source_entry.get("sourceWarrants").cloned() {
+        entry["sourceWarrants"] = warrants;
+    }
+    entry
 }
 
 fn literal_method_post_contract(
@@ -1676,6 +2048,61 @@ fn literal_method_post_contract(
     entry
 }
 
+fn literal_method_panic_post_contract(
+    method_symbol: &str,
+    receiver: &Value,
+    source_entry: &Value,
+    stable_key: &str,
+) -> Value {
+    let hash = blake3_512_of(stable_key.as_bytes());
+    let suffix = hash
+        .strip_prefix("blake3-512:")
+        .unwrap_or(hash.as_str())
+        .chars()
+        .take(24)
+        .collect::<String>();
+    let source_contract = source_entry
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown assertion contract>");
+    let mut entry = json!({
+        "kind": "function-contract",
+        "name": format!("rust-derived::{method_symbol}::literal-panic-receiver::{suffix}"),
+        "bridgeSourceSymbol": method_symbol,
+        "formals": ["receiver"],
+        "formalSorts": [sort_json("Int")],
+        "returnSort": sort_json("Int"),
+        "outBinding": "out",
+        "bodyDischargeEligible": true,
+        "proofirProvenance": {
+            "kind": "proofir-provenance",
+            "nodeClass": "LiteralMethodPanicPost",
+            "constructionSite": {
+                "surface": SURFACE,
+                "contract": source_contract,
+            },
+            "warrants": [
+                {
+                    "kind": "Derived",
+                    "floorChain": [SURFACE, "literal-method-panic-post", method_symbol],
+                    "contract": source_contract,
+                }
+            ],
+        },
+        "post": {
+            "kind": "implies",
+            "operands": [
+                eq_formula(var_term("receiver"), receiver.clone()),
+                not_formula(panic_formula(var_term("out"))),
+            ],
+        },
+    });
+    if let Some(warrants) = source_entry.get("sourceWarrants").cloned() {
+        entry["sourceWarrants"] = warrants;
+    }
+    entry
+}
+
 fn all_equal_literal_receiver_result(receiver: &Value) -> Option<bool> {
     if receiver.get("kind").and_then(Value::as_str) != Some("ctor")
         || receiver.get("name").and_then(Value::as_str) != Some("method:chars")
@@ -1702,12 +2129,46 @@ fn all_equal_literal_receiver_result(receiver: &Value) -> Option<bool> {
     Some(chars.all(|ch| ch == first))
 }
 
+fn all_equal_literal_panic_receiver(receiver: &Value) -> bool {
+    if receiver.get("kind").and_then(Value::as_str) != Some("ctor")
+        || receiver.get("name").and_then(Value::as_str) != Some("method:chars#panic_callsite")
+    {
+        return false;
+    }
+    let Some(literal) = receiver
+        .get("args")
+        .and_then(Value::as_array)
+        .and_then(|args| args.first())
+    else {
+        return false;
+    };
+    literal.get("kind").and_then(Value::as_str) == Some("const")
+        && literal
+            .get("sort")
+            .and_then(|sort| sort.get("name"))
+            .and_then(Value::as_str)
+            == Some("String")
+        && literal.get("value").and_then(Value::as_str).is_some()
+}
+
 fn eq_formula(lhs: Value, rhs: Value) -> Value {
     json!({"kind": "atomic", "name": "=", "args": [lhs, rhs]})
 }
 
+fn not_formula(formula: Value) -> Value {
+    json!({"kind": "not", "operands": [formula]})
+}
+
+fn panic_formula(term: Value) -> Value {
+    json!({"kind": "atomic", "name": "panic", "args": [term]})
+}
+
 fn var_term(name: &str) -> Value {
     json!({"kind": "var", "name": name})
+}
+
+fn int_term(value: i64) -> Value {
+    json!({"kind": "const", "value": value, "sort": sort_json("Int")})
 }
 
 fn bool_term(value: bool) -> Value {
@@ -1719,6 +2180,13 @@ enum ProducerReturnKind {
     Option,
     ResultOk,
     ResultErr,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProducerPartialValue {
+    kind: ProducerReturnKind,
+    value_ctor: &'static str,
+    receiver_sort: &'static str,
 }
 
 #[derive(Clone, Debug)]
@@ -1889,6 +2357,13 @@ fn std_panic_partial_targets(bindings: &[Value]) -> BTreeMap<String, StdPanicPar
 }
 
 fn producer_return_kinds(bindings: &[Value]) -> BTreeMap<String, ProducerReturnKind> {
+    producer_return_values(bindings)
+        .into_iter()
+        .map(|(name, value)| (name, value.kind))
+        .collect()
+}
+
+fn producer_return_values(bindings: &[Value]) -> BTreeMap<String, ProducerPartialValue> {
     let mut out = BTreeMap::new();
     for binding in bindings {
         if binding.get("library").and_then(Value::as_str) == Some("std") {
@@ -1900,33 +2375,66 @@ fn producer_return_kinds(bindings: &[Value]) -> BTreeMap<String, ProducerReturnK
         let Some(post) = binding.get("post") else {
             continue;
         };
-        let Some(kind) = producer_return_kind_from_post(post) else {
+        let Some(value) = producer_return_value_from_post(post) else {
             continue;
         };
         let Some(name) = binding.get("name").and_then(Value::as_str) else {
             continue;
         };
-        out.entry(contract_leaf(name).to_string()).or_insert(kind);
+        out.entry(contract_leaf(name).to_string()).or_insert(value);
         if let Some(alias) = binding
             .get("bridgeSourceSymbol")
             .or_else(|| binding.get("bridge_source_symbol"))
             .and_then(Value::as_str)
         {
-            out.entry(symbol_leaf(alias).to_string()).or_insert(kind);
+            out.entry(symbol_leaf(alias).to_string()).or_insert(value);
         }
     }
     out
 }
 
-fn producer_return_kind_from_post(post: &Value) -> Option<ProducerReturnKind> {
+fn producer_return_value_from_post(post: &Value) -> Option<ProducerPartialValue> {
+    if formula_contains_name(post, &["opt:some", "opt:none"]) {
+        return Some(ProducerPartialValue {
+            kind: ProducerReturnKind::Option,
+            value_ctor: "opt:some",
+            receiver_sort: "SugarOption",
+        });
+    }
     if formula_contains_name(post, &["Some", "Option::Some", "is_some", "is_none"]) {
-        return Some(ProducerReturnKind::Option);
+        return Some(ProducerPartialValue {
+            kind: ProducerReturnKind::Option,
+            value_ctor: "Some",
+            receiver_sort: "Int",
+        });
+    }
+    if formula_contains_name(post, &["res:ok"]) {
+        return Some(ProducerPartialValue {
+            kind: ProducerReturnKind::ResultOk,
+            value_ctor: "res:ok",
+            receiver_sort: "SugarResult",
+        });
     }
     if formula_contains_name(post, &["Ok", "Result::Ok", "is_ok"]) {
-        return Some(ProducerReturnKind::ResultOk);
+        return Some(ProducerPartialValue {
+            kind: ProducerReturnKind::ResultOk,
+            value_ctor: "Ok",
+            receiver_sort: "Int",
+        });
+    }
+    if formula_contains_name(post, &["res:err"]) {
+        return Some(ProducerPartialValue {
+            kind: ProducerReturnKind::ResultErr,
+            value_ctor: "res:err",
+            receiver_sort: "SugarResult",
+        });
     }
     if formula_contains_name(post, &["Err", "Result::Err", "is_err"]) {
-        return Some(ProducerReturnKind::ResultErr);
+        return Some(ProducerPartialValue {
+            kind: ProducerReturnKind::ResultErr,
+            value_ctor: "Err",
+            receiver_sort: "Int",
+        });
     }
     None
 }
@@ -5845,7 +6353,17 @@ fn no_gap() {
             root.join("src/lib.rs"),
             r#"
 pub fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
-    if padding { Some(bytes_len) } else { Some(bytes_len + 1) }
+    let rem = bytes_len % 3;
+    let complete_chunk_output = (bytes_len / 3) * 4;
+    if rem > 0 {
+        if padding {
+            Some(complete_chunk_output + 4)
+        } else {
+            Some(complete_chunk_output + if rem == 1 { 2 } else { 3 })
+        }
+    } else {
+        Some(complete_chunk_output)
+    }
 }
 
 #[cfg(test)]
@@ -5869,8 +6387,10 @@ mod tests {
                     "name": "encoded_len@src/lib.rs:2:1",
                     "library": "base64_showcase",
                     "contract_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "target_proof_cid": "blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                     "body_bearing": true,
                     "has_post": true,
+                    "formals": ["bytes_len", "padding"],
                     "post": {
                         "kind": "atomic",
                         "name": "=",
@@ -5924,6 +6444,43 @@ mod tests {
         assert_eq!(
             panic_contract["panicLoci"][0]["argTerm"]["name"],
             "call:encoded_len#panic_callsite"
+        );
+
+        let producer_post = ir
+            .iter()
+            .find(|entry| {
+                entry["kind"] == json!("function-contract")
+                    && entry["bridgeSourceSymbol"] == json!("call:encoded_len")
+                    && entry["proofirProvenance"]["nodeClass"] == json!("BindingPost")
+            })
+            .unwrap_or_else(|| {
+                panic!("missing assertion-local encoded_len producer post: {response}")
+            });
+        let producer_post_text = producer_post["post"].to_string();
+        assert!(
+            producer_post_text.contains("\"Some\"") || producer_post_text.contains("\"opt:some\""),
+            "producer post must carry independent Option testimony: {producer_post:#}"
+        );
+
+        let unwrap_post = ir
+            .iter()
+            .find(|entry| {
+                entry["kind"] == json!("function-contract")
+                    && entry["bridgeSourceSymbol"] == json!("method:unwrap")
+            })
+            .unwrap_or_else(|| panic!("missing derived Option unwrap method post: {response}"));
+        assert_eq!(
+            unwrap_post["proofirProvenance"]["nodeClass"],
+            json!("StdPartialMethodPost"),
+            "unwrap post must be derived method semantics, not copied assertion text"
+        );
+        let unwrap_post_text = unwrap_post["post"].to_string();
+        assert!(
+            unwrap_post_text.contains("\"call:encoded_len\"")
+                && unwrap_post_text.contains("\"out\"")
+                && unwrap_post_text.contains("\"value\":0")
+                && !unwrap_post_text.contains("\"forall\""),
+            "unwrap post must be ground receiver testimony, not a broad universal: {unwrap_post:#}"
         );
 
         let _ = std::fs::remove_dir_all(root);
@@ -8781,6 +9338,56 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn all_equal_panic_posts_are_derived_from_literal_receivers() {
+        let (root, response) = lift_fixture(
+            "all_equal_panic_posts_are_derived_from_literal_receivers",
+            r#"
+#[cfg(test)]
+mod tests {
+    use itertools::Itertools;
+
+    #[test]
+    fn truthy_receiver_does_not_panic() {
+        assert!("AAAAAAA".chars().all_equal());
+    }
+
+    #[test]
+    fn falsey_receiver_does_not_panic() {
+        assert!(!"AABBCCC".chars().all_equal());
+    }
+}
+"#,
+        );
+        let ir = response["ir"].as_array().expect("ir array");
+        let posts = ir
+            .iter()
+            .filter(|entry| {
+                entry["kind"] == json!("function-contract")
+                    && entry["bridgeSourceSymbol"] == json!("method:all_equal#panic_callsite")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            posts.len(),
+            2,
+            "each literal all_equal panic-callsite receiver should mint one no-panic post: {response:#}"
+        );
+        assert!(
+            posts
+                .iter()
+                .any(|entry| method_all_equal_panic_post_matches(entry, "AAAAAAA")),
+            "the AAAAAAA panic post must derive no-panic from the receiver: {posts:#?}"
+        );
+        assert!(
+            posts
+                .iter()
+                .any(|entry| method_all_equal_panic_post_matches(entry, "AABBCCC")),
+            "the AABBCCC panic post must derive no-panic from the receiver: {posts:#?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     fn method_all_equal_post_matches(entry: &Value, literal: &str, expected: bool) -> bool {
         let Some(operands) = entry
             .get("post")
@@ -8802,6 +9409,39 @@ mod tests {
             && consequent_args.len() == 2
             && guard_args[1]["args"][0]["value"] == json!(literal)
             && consequent_args[1]["value"] == json!(expected)
+    }
+
+    fn method_all_equal_panic_post_matches(entry: &Value, literal: &str) -> bool {
+        let Some(operands) = entry
+            .get("post")
+            .and_then(|post| post.get("operands"))
+            .and_then(Value::as_array)
+        else {
+            return false;
+        };
+        if operands.len() != 2 {
+            return false;
+        }
+        let Some(guard_args) = operands[0].get("args").and_then(Value::as_array) else {
+            return false;
+        };
+        let Some(not_operands) = operands[1].get("operands").and_then(Value::as_array) else {
+            return false;
+        };
+        let Some(panic_args) = not_operands
+            .first()
+            .and_then(|panic| panic.get("args"))
+            .and_then(Value::as_array)
+        else {
+            return false;
+        };
+        guard_args.len() == 2
+            && guard_args[1]["name"] == json!("method:chars#panic_callsite")
+            && guard_args[1]["args"][0]["value"] == json!(literal)
+            && operands[1]["kind"] == json!("not")
+            && panic_args.len() == 1
+            && panic_args[0]["kind"] == json!("var")
+            && panic_args[0]["name"] == json!("out")
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
