@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar, NoReturn, TypeGuard
+from typing import TYPE_CHECKING, ClassVar, NoReturn, TypeGuard
 
 from sugar_lift_py_tests.factory import (
     FactoryAuditRow,
@@ -17,6 +17,9 @@ from .descriptor_operation import DescriptorOperation
 from .object_method_call import call_object_method_value
 from .perform_operation import perform_operation
 
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
+
 
 @dataclass(frozen=True)
 class AttributeLookupOperation:
@@ -25,7 +28,9 @@ class AttributeLookupOperation:
     owner: str = "AttributeSugar"
     blame: str = "<unknown>"
 
-    def attribute_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
+    def attribute_object(
+        self, receiver: ObjectValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         if receiver.has_method("__getattribute__"):
             return call_object_method_value(
                 receiver,
@@ -36,7 +41,9 @@ class AttributeLookupOperation:
             )
         return self._default_attribute_object(receiver, ctx)
 
-    def _default_attribute_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
+    def _default_attribute_object(
+        self, receiver: ObjectValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         descriptor = receiver.class_field_value(self.name)
         if _is_data_descriptor(descriptor):
             return self._descriptor_get(receiver, descriptor, ctx)
@@ -78,7 +85,10 @@ class AttributeLookupOperation:
         )
 
     def _descriptor_get(
-        self, receiver: ObjectValue, descriptor: ObjectValue, ctx: object
+        self,
+        receiver: ObjectValue,
+        descriptor: ObjectValue,
+        ctx: FactoryBuildContext | None,
     ) -> Outcome:
         return perform_operation(
             owner=self.owner,

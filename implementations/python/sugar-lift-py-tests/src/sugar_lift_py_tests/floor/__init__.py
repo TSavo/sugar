@@ -10,6 +10,7 @@ from .call_site_value import CallSiteValue
 from .dict_literal_value import DictLiteralValue
 from .encoded_string_value import EncodedStringValue
 from .floor_dispatch_surface import (
+    BinaryOperatorFloor,
     FLOOR_OPERATION_METHOD_NAMES,
     FloorDispatchSurface,
     require_floor_dispatch_surface,
@@ -71,6 +72,7 @@ for _floor_type in REGISTERED_FLOOR_TYPES:
 __all__ = [
     "ArrayLiteral",
     "BASE_CONSTRUCTION_GAP_METHOD_NAMES",
+    "BinaryOperatorFloor",
     "BlockValue",
     "BoolValue",
     "BoundVar",

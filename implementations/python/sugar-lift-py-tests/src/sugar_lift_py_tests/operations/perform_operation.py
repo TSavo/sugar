@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Callable, cast
 
+from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory import FactoryGap, FactoryGapInfo, GapKind, GapLocus
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.floor import BASE_CONSTRUCTION_GAP_METHOD_NAMES, FloorValue
+from sugar_lift_py_tests.operations.floor_operation import FloorOperation
 from sugar_lift_py_tests.outcome import Outcome
 
 _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.operations."
 
 
-def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
+def _operation_method_name(*, owner: str, blame: str, operation: FloorOperation) -> str:
     operation_name = type(operation).__name__
     method_name = getattr(operation, "method_name", None)
     if isinstance(method_name, str):
@@ -93,8 +95,8 @@ def perform_operation(
     owner: str,
     blame: str,
     receiver: FloorValue,
-    operation: object,
-    ctx: Any,
+    operation: FloorOperation,
+    ctx: FactoryBuildContext | None,
 ) -> Outcome:
     method_name = _operation_method_name(owner=owner, blame=blame, operation=operation)
     method = getattr(receiver, method_name, None)
@@ -145,4 +147,8 @@ def perform_operation(
     recorder = None if ctx is None else ctx.record_operation
     if recorder is not None:
         recorder(owner=owner, method_name=method_name, operation=operation)
-    return method(operation, ctx)
+    operation_method = cast(
+        Callable[[FloorOperation, FactoryBuildContext | None], Outcome],
+        method,
+    )
+    return operation_method(operation, ctx)

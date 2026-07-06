@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar, NoReturn
+from typing import TYPE_CHECKING, ClassVar, NoReturn
 
 from sugar_lift_py_tests.factory import (
     FactoryAuditRow,
@@ -24,6 +24,9 @@ from sugar_lift_py_tests.outcome.complete_value import complete_value
 
 from .object_method_call import call_object_method_value
 
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
+
 
 @dataclass(frozen=True)
 class SequenceProjectionOperation:
@@ -40,7 +43,9 @@ class SequenceProjectionOperation:
         del ctx
         return Complete(self._item(receiver.items, receiver="ArrayLiteral"))
 
-    def project_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
+    def project_object(
+        self, receiver: ObjectValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         iter_value = force_floor(
             complete_value(
                 call_object_method_value(

@@ -11,6 +11,8 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 class CallableMapOperation:
     method_name: ClassVar[str] = "map_with"
     callable: FunctionCallable
+    owner: str = "MapBuiltinSugar"
+    blame: str = "<unknown>"
 
     def map_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
         del ctx

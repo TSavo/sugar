@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, ClassVar
+from typing import TYPE_CHECKING, Callable, ClassVar
 
 from sugar_lift_py_tests.factory import (
     FactoryAuditRow,
@@ -19,6 +19,9 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.ir import Term, bvand, bvlshr, bvor, bvshl, bvxor, num
 from sugar_lift_py_tests.outcome import Complete, Outcome
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
 
 _BITWISE_TERMS: dict[str, Callable[[Term, Term], Term]] = {
     "&": bvand,
@@ -45,7 +48,9 @@ class BitwiseOperation:
     owner: str = "BitwiseOpSugar"
     blame: str = "<unknown>"
 
-    def bitwise_term(self, receiver: TermValue, ctx: object) -> Outcome:
+    def bitwise_term(
+        self, receiver: TermValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         if isinstance(self.operand, ObjectValue):
             return self._reflect_bitwise(receiver, ctx)
         folded = self._fold_concrete_ints(receiver)
@@ -53,17 +58,23 @@ class BitwiseOperation:
             return Complete(TermValue(folded))
         return self._complete(_bv32_term(receiver))
 
-    def bitwise_bv32(self, receiver: Bv32Value, ctx: object) -> Outcome:
+    def bitwise_bv32(
+        self, receiver: Bv32Value, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         if isinstance(self.operand, ObjectValue):
             return self._reflect_bitwise(receiver, ctx)
         return self._complete(receiver.term)
 
-    def bitwise_symbolic(self, receiver: SymbolicValue, ctx: object) -> Outcome:
+    def bitwise_symbolic(
+        self, receiver: SymbolicValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         if isinstance(self.operand, ObjectValue):
             return self._reflect_bitwise(receiver, ctx)
         return self._complete(receiver.term)
 
-    def _reflect_bitwise(self, left: FloorValue, ctx: object) -> Outcome:
+    def _reflect_bitwise(
+        self, left: FloorValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         from sugar_lift_py_tests.operations.perform_operation import perform_operation
         from sugar_lift_py_tests.operations.reflected_binary_operator_operation import (
             ReflectedBinaryOperatorOperation,

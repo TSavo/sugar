@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, NoReturn, TypeVar
+from typing import Any, Callable, NoReturn, TypeVar, cast
 
 from sugar_lift_py_tests.factory.array_map_report import (
     _callsite_string,
@@ -2302,7 +2302,7 @@ def _factory_walk_key(row: FactoryWalkRowDto) -> object:
     )
 
 
-def _small_rpc_row_key(row: _T) -> object:
+def _small_rpc_row_key(row: object) -> object:
     return _stable_json(to_rpc_value(row))
 
 
@@ -2677,7 +2677,7 @@ def _construct_callsite_from_factory_term(
                         owner="literal_call_report.callsite_floor",
                         blame=call_value.target_name,
                     ),
-                    ctx=reduce_ctx,
+                    ctx=cast(Any, reduce_ctx),
                 )
             )
         except (TypeError, ValueError, FactoryGap) as exc:

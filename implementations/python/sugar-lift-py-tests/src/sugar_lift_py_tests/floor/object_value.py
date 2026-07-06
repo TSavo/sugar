@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from .floor_value import FloorValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.operations.binary_operator_operation import (
+        BinaryOperatorOperation,
+    )
+    from sugar_lift_py_tests.outcome import Outcome
 
 
 @dataclass(frozen=True)
@@ -118,7 +125,11 @@ class ObjectValue(FloorValue):
     def project_sequence_with(self, operation, ctx):
         return operation.project_object(self, ctx)
 
-    def binary_operator_with(self, operation, ctx):
+    def binary_operator_with(
+        self,
+        operation: BinaryOperatorOperation,
+        ctx: FactoryBuildContext | None,
+    ) -> Outcome:
         method_name = _BINARY_DUNDER_METHODS.get(operation.operator)
         if method_name is None:
             return self._floor_gap(
@@ -235,7 +246,7 @@ class ObjectValue(FloorValue):
         owner: str,
         blame: str,
         ctx: Any | None = None,
-    ):
+    ) -> Outcome:
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
@@ -314,7 +325,7 @@ class ObjectValue(FloorValue):
         observed: str,
         requested: str,
         fix: str,
-    ) -> None:
+    ) -> NoReturn:
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow,
             FactoryGap,
