@@ -306,19 +306,16 @@ pub fn plan_workspace_with_options(
     plan
 }
 
-#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove.
 pub(crate) fn planned_lift_plugins(project_root: &Path) -> Vec<PluginEntry> {
     plan_workspace(project_root, PlanIntent::Lift).plugins
 }
 
-#[allow(dead_code)] // Used by CLI modules; the library test target does not compile those consumers.
 pub(crate) fn first_error_diagnostic(plan: &ComponentPlan) -> Option<&ComponentDiagnostic> {
     plan.diagnostics
         .iter()
         .find(|diagnostic| matches!(diagnostic.level, DiagnosticLevel::Error))
 }
 
-#[allow(dead_code)] // Used by CLI modules; the library test target does not compile those consumers.
 pub(crate) fn warning_diagnostics(
     plan: &ComponentPlan,
 ) -> impl Iterator<Item = &ComponentDiagnostic> {
@@ -337,17 +334,10 @@ pub(crate) fn planned_lift_manifest(
         .find(|manifest| manifest.surface == surface)
 }
 
-#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile witness_verify.
-pub(crate) fn planned_lift_manifests(project_root: &Path) -> Vec<PlannedLiftManifest> {
-    plan_workspace(project_root, PlanIntent::Lift).lift_manifests
-}
-
-#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
 pub(crate) fn planned_ir_compilers(project_root: &Path) -> Vec<PlannedIrCompiler> {
     plan_workspace(project_root, PlanIntent::Prove).ir_compilers
 }
 
-#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
 pub(crate) fn compiler_registry(project_root: &Path) -> CompilerRegistry {
     let mut registry = sugar_verifier::compiler_registry::build(project_root);
     register_planned_ir_compilers(
@@ -358,7 +348,6 @@ pub(crate) fn compiler_registry(project_root: &Path) -> CompilerRegistry {
     registry
 }
 
-#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
 pub(crate) fn compiler_registry_from_plan(
     project_root: &Path,
     plan: &ComponentPlan,
@@ -368,7 +357,6 @@ pub(crate) fn compiler_registry_from_plan(
     registry
 }
 
-#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
 fn register_planned_ir_compilers(
     registry: &mut CompilerRegistry,
     project_root: &Path,
@@ -550,7 +538,6 @@ fn forensic_item_to_json(item: &ForensicItem) -> Value {
     })
 }
 
-#[allow(dead_code)] // Exercised by unit tests; integration builds do not compile the test module.
 fn missing_kit_message_from_census(census: &WorkspaceCensus) -> Option<String> {
     let evidence = census.languages.first()?;
     Some(missing_kit_message(evidence))
@@ -1438,7 +1425,6 @@ fn absolute_path(path: &Path) -> PathBuf {
         .join(path)
 }
 
-#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile witness_verify.
 pub(crate) fn resolve_project_relative_working_dir(
     project_root: &Path,
     working_dir: Option<&PathBuf>,
@@ -1480,7 +1466,6 @@ pub(crate) fn plan_artifact_memento(
     })
 }
 
-#[allow(dead_code)] // Replay entry for PlanArtifact-aware consumers; current CLI still discovers when no artifact is supplied.
 pub(crate) fn plan_workspace_for_replay(
     project_root: &Path,
     intent: PlanIntent,
@@ -1493,7 +1478,6 @@ pub(crate) fn plan_workspace_for_replay(
     }
 }
 
-#[allow(dead_code)] // Used by PlanArtifact construction tests and future replay importers.
 pub(crate) fn file_bytes_cid(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|error| {
         format!(
@@ -1550,7 +1534,6 @@ fn plan_artifact_body(
     })
 }
 
-#[allow(dead_code)]
 fn component_plan_from_plan_artifact(
     artifact: &PlanArtifactMemento,
 ) -> Result<ComponentPlan, String> {
@@ -1627,7 +1610,6 @@ fn component_plan_from_plan_artifact(
     plan_from_artifact_body(body)
 }
 
-#[allow(dead_code)]
 fn plan_from_artifact_body(body: &Value) -> Result<ComponentPlan, String> {
     let selected_components = array_field(body, "selectedComponents")
         .iter()
@@ -1664,7 +1646,6 @@ fn plan_from_artifact_body(body: &Value) -> Result<ComponentPlan, String> {
     })
 }
 
-#[allow(dead_code)]
 fn plan_artifact_replay_refusal(crime: &str, shape: &str, replacement: &str) -> String {
     format!(
         "PlanArtifact replay refusal: crime={crime}; owner=component-plan seam; shape={shape}; replacement={replacement}"
@@ -1683,7 +1664,6 @@ fn planned_component_to_value(component: &PlannedComponent) -> Value {
     })
 }
 
-#[allow(dead_code)]
 fn planned_component_from_value(value: &Value) -> Result<PlannedComponent, String> {
     Ok(PlannedComponent {
         name: required_string(value, "name", "selected component")?,
@@ -1707,7 +1687,6 @@ fn plugin_entry_to_value(plugin: &PluginEntry) -> Value {
     })
 }
 
-#[allow(dead_code)]
 fn plugin_entry_from_artifact_value(value: &Value) -> Result<PluginEntry, String> {
     Ok(PluginEntry {
         name: string_field(value, "name"),
@@ -1736,7 +1715,6 @@ fn planned_lift_manifest_to_value(manifest: &PlannedLiftManifest) -> Value {
     })
 }
 
-#[allow(dead_code)]
 fn planned_lift_manifest_from_artifact_value(value: &Value) -> Result<PlannedLiftManifest, String> {
     Ok(PlannedLiftManifest {
         surface: required_string(value, "surface", "PlanArtifact lift manifest")?,
@@ -1767,7 +1745,6 @@ fn planned_ir_compiler_to_value(compiler: &PlannedIrCompiler) -> Value {
     })
 }
 
-#[allow(dead_code)]
 fn planned_ir_compiler_from_artifact_value(value: &Value) -> Result<PlannedIrCompiler, String> {
     Ok(PlannedIrCompiler {
         name: required_string(value, "name", "PlanArtifact IR compiler")?,
@@ -1799,7 +1776,6 @@ fn workspace_census_to_value(census: &WorkspaceCensus) -> Value {
     })
 }
 
-#[allow(dead_code)]
 fn workspace_census_from_value(value: &Value) -> Result<WorkspaceCensus, String> {
     Ok(WorkspaceCensus {
         languages: array_field(value, "languages")
@@ -1821,7 +1797,6 @@ fn language_evidence_to_value(evidence: &LanguageEvidence) -> Value {
     })
 }
 
-#[allow(dead_code)]
 fn language_evidence_from_value(value: &Value) -> Result<LanguageEvidence, String> {
     Ok(LanguageEvidence {
         language: required_string(value, "language", "PlanArtifact census language")?,
@@ -1840,7 +1815,6 @@ fn forensic_item_to_value(item: &ForensicItem) -> Value {
     })
 }
 
-#[allow(dead_code)]
 fn forensic_item_from_value(value: &Value) -> Result<ForensicItem, String> {
     Ok(ForensicItem {
         id: required_string(value, "id", "PlanArtifact census item")?,
@@ -1851,7 +1825,6 @@ fn forensic_item_from_value(value: &Value) -> Result<ForensicItem, String> {
     })
 }
 
-#[allow(dead_code)]
 fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {
     value
         .get(key)
@@ -1860,7 +1833,6 @@ fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {
         .unwrap_or(&[])
 }
 
-#[allow(dead_code)]
 fn required_string(value: &Value, key: &str, shape: &str) -> Result<String, String> {
     string_field(value, key).ok_or_else(|| {
         plan_artifact_replay_refusal(

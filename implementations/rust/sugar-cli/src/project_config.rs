@@ -456,7 +456,6 @@ fn strip_comment(s: &str) -> &str {
 }
 
 /// Surface menu shown by `sugar init`.
-#[allow(dead_code)] // public API; menu data for `sugar init` interactive flow (TODO: wire up)
 pub const KNOWN_SURFACES: &[&str] = &[
     "default",
     "rust-sugar-decorator",
@@ -487,14 +486,6 @@ pub const KNOWN_SURFACES: &[&str] = &[
     "clr-bytecode",
     "swift-source",
     "zig-source",
-];
-
-/// Solver menu shown by `sugar init`. These are the in-tree logical solver
-/// names the verifier registry understands from `.sugar/config.toml`; third
-/// party solver/compiler pairs can still be supplied through manifests.
-#[allow(dead_code)] // public API; menu data for `sugar init` interactive flow (TODO: wire up)
-pub const KNOWN_SOLVERS: &[&str] = &[
-    "maude", "z3", "cvc5", "vampire", "coq", "lean", "bitwuzla", "yices2", "mathsat",
 ];
 
 #[cfg(test)]

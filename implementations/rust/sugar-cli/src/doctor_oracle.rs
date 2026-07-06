@@ -48,7 +48,6 @@ pub enum OracleHostLocatability {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum OracleHostReadiness {
     NotRequested,
     Ready { detail: String },
@@ -57,7 +56,6 @@ pub enum OracleHostReadiness {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum OracleHostEngagement {
     NotRequested,
     Engaged { detail: String },
@@ -65,7 +63,6 @@ pub enum OracleHostEngagement {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum OracleResolutionConvergence {
     NotRequested,
     Deferred { detail: String },
