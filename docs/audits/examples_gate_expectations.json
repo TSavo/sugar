@@ -5,38 +5,38 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 0 after showcase vacuity pairs and unwrap producer-post pairing landed",
       "last_observed_rc": 0,
-      "last_observed_seconds": 628.0,
+      "last_observed_seconds": 98.786,
       "name": "examples/base64-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "failure_shape": "durable-verify-mismatch/consistency-refused-at-durable",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape durable-verify-mismatch/consistency-refused-at-durable in the recensus4 clean sweep; work order #3749. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 87.35,
+      "last_observed_seconds": 4.378,
       "name": "examples/bitflags-showcase/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3749
     },
     {
       "expected": "NAMED_RED",
       "failure_shape": "prove-refused/provenance-kind-required",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 9.534,
+      "last_observed_seconds": 37.618,
       "name": "examples/build-witness-showcase/run.sh",
       "work_order_issue": 3587
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "failure_shape": "durable-verify-mismatch/consistency-refused-at-durable",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape durable-verify-mismatch/consistency-refused-at-durable in the recensus4 clean sweep; work order #3749. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 19.185,
+      "last_observed_seconds": 3.123,
       "name": "examples/forall-loop-showcase/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3749
     },
     {
       "expected": "NAMED_RED",
@@ -44,7 +44,7 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 1 with terminal shape mint-missing/forall-vampire-claim-rows; work order #3579",
       "last_observed_rc": 1,
-      "last_observed_seconds": 78.488,
+      "last_observed_seconds": 11.194,
       "name": "examples/forall-vampire-showcase/run.sh",
       "work_order_issue": 3579
     },
@@ -53,7 +53,7 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 0 after all_equal value and panic-callsite testimony paired",
       "last_observed_rc": 0,
-      "last_observed_seconds": 24.0,
+      "last_observed_seconds": 10.542,
       "name": "examples/itertools-showcase/run.sh"
     },
     {
@@ -62,262 +62,262 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 1 after unrelated failed components were allowed; current terminal shape is still no base64_decode property rows in the receipt. Manual vendor-proof probe showed python-bind emits library-sugar-binding-entry members, not contract members, so imported itsdangerous proofs do not currently supply bridge-resolvable target contracts; work order #3578.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 18.25,
+      "last_observed_seconds": 5.877,
       "name": "examples/itsdangerous-token-padding/run.sh",
       "work_order_issue": 3578
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 112.508,
+      "last_observed_seconds": 5.378,
       "name": "examples/java-abs-bound/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 25.327,
+      "last_observed_seconds": 4.584,
       "name": "examples/java-abs-flagship/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 java family sweep 0783399e8",
       "grounds": "script exited 0 after derive --from-proof learned to read typed ProofGraph atoms; stale pipefail grep checker repaired in the example script",
       "last_observed_rc": 0,
-      "last_observed_seconds": 18.1,
+      "last_observed_seconds": 7.304,
       "name": "examples/java-abs-model/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 26.245,
+      "last_observed_seconds": 5.981,
       "name": "examples/java-abs-universe/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 30.263,
+      "last_observed_seconds": 5.38,
       "name": "examples/java-assertion-consistency/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 42.218,
+      "last_observed_seconds": 5.079,
       "name": "examples/java-b64-strong/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 29.349,
+      "last_observed_seconds": 5.479,
       "name": "examples/java-b64-tails/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 28.585,
+      "last_observed_seconds": 4.576,
       "name": "examples/java-bound-federation/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 29.005,
+      "last_observed_seconds": 4.527,
       "name": "examples/java-callbind-consistency/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 34.622,
+      "last_observed_seconds": 6.532,
       "name": "examples/java-codec-universe/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 34.667,
+      "last_observed_seconds": 6.782,
       "name": "examples/java-commons-codec-crc32/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 42.145,
+      "last_observed_seconds": 7.483,
       "name": "examples/java-crc32-universe/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 42.968,
+      "last_observed_seconds": 8.56,
       "name": "examples/java-crc32-valuepin/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 68.539,
+      "last_observed_seconds": 17.258,
       "name": "examples/java-forall-loop/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 23.208,
+      "last_observed_seconds": 5.178,
       "name": "examples/java-instance-universe/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 94.044,
+      "last_observed_seconds": 16.403,
       "name": "examples/java-mt-reference/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 0 in the current examples gate sweep",
       "last_observed_rc": 0,
-      "last_observed_seconds": 80.338,
+      "last_observed_seconds": 11.345,
       "name": "examples/java-mt-strong/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 java family sweep 0783399e8",
+      "failure_shape": "prove-refused/panic-callsite-row",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
       "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt after the callsite-line-null layer cleared; work order #3582",
       "last_observed_rc": 1,
-      "last_observed_seconds": 84.1,
+      "last_observed_seconds": 7.657,
       "name": "examples/java-panama-bridge/run.sh",
       "work_order_issue": 3582
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 78.102,
+      "last_observed_seconds": 4.676,
       "name": "examples/java-pattern-regex/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 23.308,
+      "last_observed_seconds": 6.985,
       "name": "examples/java-testng-consistency/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 35.306,
+      "last_observed_seconds": 6.232,
       "name": "examples/java-urlsafe-seam/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 37.076,
+      "last_observed_seconds": 5.007,
       "name": "examples/java-voltron/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-output/empty-json-receipt",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt; work order #3582",
+      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 27.761,
+      "last_observed_seconds": 7.044,
       "name": "examples/java-witness-recompute/run.sh",
-      "work_order_issue": 3582
+      "work_order_issue": 3747
+    },
+    {
+      "expected": "NAMED_RED",
+      "failure_shape": "durable-verify-mismatch/consistency-refused-at-durable",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape durable-verify-mismatch/consistency-refused-at-durable in the recensus4 clean sweep; work order #3749. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 6.467,
+      "name": "examples/num-integer-showcase/run.sh",
+      "work_order_issue": 3749
     },
     {
       "expected": "NAMED_RED",
       "failure_shape": "prove-refused/provenance-kind-required",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 124.009,
-      "name": "examples/num-integer-showcase/run.sh",
-      "work_order_issue": 3587
-    },
-    {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-output/no-json-report",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-output/no-json-report; work order #3583",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 104.457,
+      "last_observed_seconds": 2.322,
       "name": "examples/numpy-attribute-safety-showcase/run.sh",
-      "work_order_issue": 3583
+      "work_order_issue": 3587
     },
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 0 in the current examples gate sweep",
       "last_observed_rc": 0,
-      "last_observed_seconds": 24.016,
+      "last_observed_seconds": 3.051,
       "name": "examples/numpy-consumer-demo/run.sh"
     },
     {
@@ -326,7 +326,7 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 1 with terminal shape durable-row-missing/scientific-python-showcase; work order #3576",
       "last_observed_rc": 1,
-      "last_observed_seconds": 112.257,
+      "last_observed_seconds": 22.136,
       "name": "examples/numpy-showcase/run.sh",
       "work_order_issue": 3576
     },
@@ -334,26 +334,29 @@
       "expected": "NAMED_RED",
       "failure_shape": "prove-refused/provenance-kind-required",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 54.833,
+      "last_observed_seconds": 8.301,
       "name": "examples/numpy-vendor/run.sh",
       "work_order_issue": 3587
     },
     {
-      "expected": "GREEN",
-      "first_seen": "2026-07-06 pandas consumer import demo",
-      "grounds": "script exited 0; truthful pandas Series.sum consumer discharged through the imported vendor proof and the contradictory twin stayed unsatisfied",
-      "last_observed_rc": 0,
-      "last_observed_seconds": 23.166,
-      "name": "examples/pandas-consumer-demo/run.sh"
+      "expected": "NAMED_RED",
+      "failure_shape": "harness-bug/edge-for-stopiteration",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape harness-bug/edge-for-stopiteration in the recensus4 clean sweep; work order #3752. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 1.881,
+      "name": "examples/pandas-consumer-demo/run.sh",
+      "work_order_issue": 3752
     },
     {
-      "expected": "GREEN",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "expected": "NAMED_RED",
+      "failure_shape": "durable-row-missing/scientific-python-showcase",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
       "grounds": "script exited 0 after durable receipt checks were updated to the current structural contradiction and witness-package shape",
-      "last_observed_rc": 0,
-      "last_observed_seconds": 23.0,
+      "last_observed_rc": 1,
+      "last_observed_seconds": 4.299,
       "name": "examples/pandas-showcase/run.sh"
     },
     {
@@ -361,7 +364,7 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 0 after python.package-source accounting was restored through the local report plugin shim; package audit covered 1421 pandas files and 2060219 source loci",
       "last_observed_rc": 0,
-      "last_observed_seconds": 113.0,
+      "last_observed_seconds": 25.228,
       "name": "examples/pandas-source-accounting/run.sh"
     },
     {
@@ -369,7 +372,7 @@
       "first_seen": "2026-07-06 polars bridge CID repair",
       "grounds": "script exited 0 after the call:scalar_sum bridge target resolved to the loaded proof-pool member CID. The good suite verifies the witness dimension with bridge=resolved and witness=discharged while preserving the current singleton consistency/vacuity refusal as a separate semantic row; the bad twin keeps bridge=resolved and witness=unsatisfied.",
       "last_observed_rc": 0,
-      "last_observed_seconds": 74.0,
+      "last_observed_seconds": 70.939,
       "name": "examples/polars-showcase/run.sh"
     },
     {
@@ -377,7 +380,7 @@
       "first_seen": "2026-07-06 fix for #3589",
       "grounds": "script exits 0: the good consumer's #euf# conjoin row discharges (violations=0) and the bad twin's row is unsatisfied. Root cause of the prior verdict-drift/expected-proven-label: the vendor-staged `b64vendor::encodeBase64::callable` contract and the consumer's own re-mint of the identical function hashed to two different member-envelope CIDs (cosmetic authoring metadata -- absolute vs relative source file, differing source span, qualified vs unqualified bridgeSourceSymbol -- folded into the envelope hash) despite sharing a byte-identical canonical header.cid. MementoPool::insert now treats same-header.cid contract collisions as the same logical contract instead of a load error, so a fully discharged good run no longer gets poisoned into a nonzero exit by report_exit_code's load-errors check.",
       "last_observed_rc": 0,
-      "last_observed_seconds": 22.0,
+      "last_observed_seconds": 10.242,
       "name": "examples/python-base64-federation/run.sh"
     },
     {
@@ -385,7 +388,7 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exits 0 after checking the exact bounded_digit precondition bridge row: the good in-range call discharges, the bad out-of-range twin is unsatisfied, and Python/Rust precondition CIDs remain byte-identical. The verifier-wide ambient provenance refusal is unrelated to the bodyguard seam and is allowed only when it names the missing provenance KIND explicitly.",
       "last_observed_rc": 0,
-      "last_observed_seconds": 14.137,
+      "last_observed_seconds": 2.821,
       "name": "examples/python-bodyguard-precondition/run.sh"
     },
     {
@@ -393,200 +396,206 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 0 after prove calls allowed unrelated failed components; witness package still records 8 guarded cases passed and 8 violation cases failed.",
       "last_observed_rc": 0,
-      "last_observed_seconds": 30.366,
+      "last_observed_seconds": 8.94,
       "name": "examples/python-guard-shapes/run.sh"
     },
     {
-      "expected": "GREEN",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exits 0 after #3591: the bad-twin check expected the witness-package row status to equal 'unsatisfied' like the assertion row, but the pipeline correctly emits the distinct terminal status 'refused' for a witness-package row (a solver-unsat assertion is 'unsatisfied'; a witness package that cannot be positively verified is 'refused', matching the convention already used by examples/java-witness-recompute/run.sh). The expectation was stale, not the pipeline; run.sh now asserts witness status == 'refused'.",
-      "last_observed_rc": 0,
-      "name": "examples/python-literal-base20/run.sh"
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 7.543,
+      "name": "examples/python-literal-base20/run.sh",
+      "work_order_issue": 3587
     },
     {
-      "expected": "GREEN",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exits 0 after #3591: the bad-twin check expected the witness-package row status to equal 'unsatisfied' like the assertion row, but the pipeline correctly emits the distinct terminal status 'refused' for a witness-package row (a solver-unsat assertion is 'unsatisfied'; a witness package that cannot be positively verified is 'refused', matching the convention already used by examples/java-witness-recompute/run.sh). The expectation was stale, not the pipeline; run.sh now asserts witness status == 'refused'.",
-      "last_observed_rc": 0,
-      "name": "examples/python-literal-base64/run.sh"
+      "expected": "NAMED_RED",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 9.74,
+      "name": "examples/python-literal-base64/run.sh",
+      "work_order_issue": 3587
     },
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exits 0 after minting the CPython URL-safe translate universe as a bridge-resolvable function contract: the good urlsafe_b64encode twin discharges, and the bad standard-alphabet confusion twin is unsatisfied/refused on the closed '+/' complement universe.",
       "last_observed_rc": 0,
-      "last_observed_seconds": 14.728,
+      "last_observed_seconds": 0.219,
       "name": "examples/python-urlsafe-seam/run.sh"
     },
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "PR #3691 opened the covering-universe exception (lone ground str.in-regex membership genuinely decides via z3 regex-as-language); good/'s membership rows now genuinely discharge (matching subjects, SAT) and bad/'s contradiction row is genuinely unsatisfied, while any plain-EUF lone row stays honestly vacuous-refused named by 'no covering universe joins the left-operand term'. Oracle re-grade (this lane) rewrote the run.sh consistency check to gate GOOD on discharged+named-vacuous rows only and assert BAD carries a genuine unsatisfied row, superseding the pre-#3691 all-discharged/all-refuse oracle that mis-graded prove-refused/expected-discharge-rows. GRADED BY REASONING against merged verifier tests: the script builds the CLI via cargo directly (not bin/sugarbin), so it was not executed in this lane; pending CI confirmation.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 153.159,
+      "last_observed_rc": 0,
+      "last_observed_seconds": 8.337,
       "name": "examples/regex-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "rust-lift-panic/chained-comparison",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape rust-lift-panic/chained-comparison; work order #3588",
+      "failure_shape": "factory-gap/rust-coretests-composite-for-loop",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape factory-gap/rust-coretests-composite-for-loop in the recensus4 clean sweep; work order #3753. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 1757.836,
+      "last_observed_seconds": 450.21,
       "name": "examples/rust-coretests-report/run.sh",
-      "work_order_issue": 3588
+      "work_order_issue": 3753
     },
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "Stale #3608 shape superseded by the live #3590 membership-refutation work order, which PR #3691 closed: the vacuity guard now opens a covering-universe exception for lone ground str.in-regex membership, so good/'s matching-subject rows genuinely discharge (str.in_re SAT) and bad/'s non-matching-subject row is genuinely unsatisfied (str.in_re UNSAT, the membership teeth); the run.sh oracle already gated on exactly these two terminal shapes pre-merge and needed no code change in this lane. GRADED BY REASONING against merged verifier tests (lone_ground_regex_membership_matching_subject_discharges / _nonmatching_subject_is_refuted): the script builds the CLI via cargo directly (not bin/sugarbin), so it was not executed in this lane; pending CI confirmation.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 22.816,
+      "last_observed_rc": 0,
+      "last_observed_seconds": 6.438,
       "name": "examples/rust-regex-membership/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "kit-transform/callsite-line-null",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape kit-transform/callsite-line-null; work order #3607",
+      "failure_shape": "prove-refused/provenance-kind-required",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 26.018,
+      "last_observed_seconds": 2.072,
       "name": "examples/rust-test-assertion-consistency/run.sh",
-      "work_order_issue": 3607
+      "work_order_issue": 3587
     },
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "#3585 residue: this showcase's oracle gates GOOD/BAD on the witness-package row's discharge/refuse status and the durable witness-dimension recompute, never on the consistency rows -- it does not depend on the vacuity-guard covering-universe path PR #3691 opened, so it needed no code change in this lane. Prior live recensus already observed it promoted GREEN independent of the regex-membership fix. GRADED BY REASONING: the script builds the CLI via cargo directly (not bin/sugarbin), so it was not re-executed in this lane; pending CI confirmation.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 103.198,
+      "last_observed_rc": 0,
+      "last_observed_seconds": 5.226,
       "name": "examples/rust-witness-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "failure_shape": "durable-verify-mismatch/consistency-refused-at-durable",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape durable-verify-mismatch/consistency-refused-at-durable in the recensus4 clean sweep; work order #3749. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 66.385,
+      "last_observed_seconds": 4.587,
       "name": "examples/semver-showcase/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3749
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
-      "last_observed_rc": 101,
-      "last_observed_seconds": 4.383,
+      "failure_shape": "verdict-drift/witness-refusal-expected-got-discharged",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape verdict-drift/witness-refusal-expected-got-discharged in the recensus4 clean sweep; work order #3754. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 4.327,
       "name": "examples/serde-json-showcase/run.sh",
-      "work_order_issue": 3606
+      "work_order_issue": 3754
     },
     {
       "expected": "GREEN",
       "first_seen": "2026-07-06 python-seat-showcases sweep 799a9e86a",
       "grounds": "script exited 0 after refreshing the showcase to the current discharge law: singleton sklearn consistency rows remain refused as vacuous, the accuracy_score contradiction is unsatisfied, and the witness package verifies by content address.",
       "last_observed_rc": 0,
-      "last_observed_seconds": 45.5,
+      "last_observed_seconds": 11.578,
       "name": "examples/sklearn-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
-      "last_observed_rc": 101,
-      "last_observed_seconds": 52.386,
+      "failure_shape": "prove-red/bodyguard-claims-failed-or-undecided",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape prove-red/bodyguard-claims-failed-or-undecided in the recensus4 clean sweep; work order #3751. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 131.205,
       "name": "examples/std-core-bodyguard-precondition/run.sh",
-      "work_order_issue": 3606
+      "work_order_issue": 3751
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "failure_shape": "prove-refused/panic-callsite-row",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
       "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
-      "last_observed_rc": 101,
-      "last_observed_seconds": 74.836,
+      "last_observed_rc": 1,
+      "last_observed_seconds": 60.48,
       "name": "examples/std-core-showcase/run.sh",
       "work_order_issue": 3606
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
+      "failure_shape": "prove-refused/panic-callsite-row",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
       "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
       "last_observed_rc": 1,
-      "last_observed_seconds": 73.001,
+      "last_observed_seconds": 14.424,
       "name": "examples/std-core-string-predicates/run.sh",
       "work_order_issue": 3587
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
-      "last_observed_rc": 101,
-      "last_observed_seconds": 53.946,
+      "failure_shape": "toolchain-plan/witness-memento-not-loaded",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape toolchain-plan/witness-memento-not-loaded in the recensus4 clean sweep; work order #3750. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 4.533,
       "name": "examples/tokio-await-implication-edge/run.sh",
-      "work_order_issue": 3606
+      "work_order_issue": 3750
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
-      "last_observed_rc": 101,
-      "last_observed_seconds": 10.914,
+      "failure_shape": "toolchain-plan/witness-memento-not-loaded",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape toolchain-plan/witness-memento-not-loaded in the recensus4 clean sweep; work order #3750. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 4.23,
       "name": "examples/tokio-channel-implication-edge/run.sh",
-      "work_order_issue": 3606
+      "work_order_issue": 3750
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "kit-transform/callsite-line-null",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape kit-transform/callsite-line-null; work order #3607",
+      "failure_shape": "silent-truncation/no-terminal-verdict-after-witness-verify",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape silent-truncation/no-terminal-verdict-after-witness-verify in the recensus4 clean sweep; work order #3755. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 63.726,
+      "last_observed_seconds": 4.273,
       "name": "examples/tokio-effect-consistency/run.sh",
-      "work_order_issue": 3607
+      "work_order_issue": 3755
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
-      "last_observed_rc": 101,
-      "last_observed_seconds": 15.397,
+      "failure_shape": "toolchain-plan/witness-memento-not-loaded",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape toolchain-plan/witness-memento-not-loaded in the recensus4 clean sweep; work order #3750. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 4.478,
       "name": "examples/tokio-mutex-implication-edge/run.sh",
-      "work_order_issue": 3606
+      "work_order_issue": 3750
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "failure_shape": "durable-verify-mismatch/consistency-refused-at-durable",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape durable-verify-mismatch/consistency-refused-at-durable in the recensus4 clean sweep; work order #3749. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 33.175,
+      "last_observed_seconds": 10.292,
       "name": "examples/url-showcase/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3749
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "failure_shape": "durable-verify-mismatch/consistency-refused-at-durable",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "script exited 1 with terminal shape durable-verify-mismatch/consistency-refused-at-durable in the recensus4 clean sweep; work order #3749. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 19.66,
+      "last_observed_seconds": 4.174,
       "name": "examples/uuid-showcase/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3749
     }
   ],
   "policy": "GREEN rows must remain green. NAMED_RED rows must keep the same failure_shape until a deliberate fixture move records promotion to GREEN. New examples, missing examples, new reds, and changed red shapes fail the gate.",
   "suite": "smoke",
   "summary": {
-    "green": 8,
-    "named_red": 53,
-    "total": 61,
+    "green": 15,
+    "named_red": 47,
+    "total": 62,
     "unclassified": 0
   },
   "version": 1

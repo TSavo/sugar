@@ -176,6 +176,69 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
         "claim-rows-missing/std-core-panic-callsite",
         re.compile(r"missing required claimed rows"),
     ),
+    # recensus4 (2026-07-06, #3677/#3686 criterion 10): the Java kit's prove
+    # step never emits a consistency/witness row at all post the sugarbin
+    # conversion (#3696/#3709) -- "MISSING" is not a verdict, it is the
+    # absence of a row the mint step should have produced. Distinct from
+    # prove-refused/*, which requires an actual row with a refused status.
+    FailurePattern(
+        "prove-missing/java-kit-consistency-row-absent",
+        re.compile(
+            r"no consistency rows(?: found)?|missing consistency rows|"
+            r"expected consistency unsatisfied, got: MISSING|"
+            r"expected witness discharge, got MISSING"
+        ),
+    ),
+    # The predicted vacuity family: prove discharges the witness-package but
+    # durable re-verify recomputes at least one consistency row as refused,
+    # so the durable artifact disagrees with the live prove pass.
+    FailurePattern(
+        "durable-verify-mismatch/consistency-refused-at-durable",
+        re.compile(r"FAIL\[good\]: durable consistency statuses \["),
+    ),
+    # tokio-*-implication-edge: the toolchain plan stays "declared" because
+    # no witness-memento was loaded to fulfill it -- a plan/witness pairing
+    # gap, not a consistency-row verdict.
+    FailurePattern(
+        "toolchain-plan/witness-memento-not-loaded",
+        re.compile(r"no matching witness-memento was loaded"),
+    ),
+    # std-core-bodyguard-precondition: the JSON claims report itself carries
+    # nonzero failed/undecided counts; there is no separate FAIL[..] line.
+    FailurePattern(
+        "prove-red/bodyguard-claims-failed-or-undecided",
+        re.compile(r'"totalClaims":\s*\d+,\s*"failed":\s*[1-9]'),
+    ),
+    # pandas-consumer-demo: the harness script itself raises StopIteration in
+    # edge_for(); a harness bug, not a product consistency verdict.
+    FailurePattern(
+        "harness-bug/edge-for-stopiteration",
+        re.compile(r"in edge_for\b[\s\S]{0,120}StopIteration"),
+    ),
+    # rust-coretests-report: the rust factory has no Sugar recognizer for a
+    # for-loop AST shape it met walking coretests, and the lift plugin then
+    # closes stdout before responding -- a factory coverage gap.
+    FailurePattern(
+        "factory-gap/rust-coretests-composite-for-loop",
+        re.compile(
+            r"factory structural gap: no Sugar candidate for role|"
+            r"lift plugin closed stdout before responding"
+        ),
+    ),
+    # serde-json-showcase: the bad-suite witness discharges when the fixture
+    # expects it refused -- inverse of the usual expected-discharge shape.
+    FailurePattern(
+        "verdict-drift/witness-refusal-expected-got-discharged",
+        re.compile(r"expected witness refusal, got discharged"),
+    ),
+    # tokio-effect-consistency: the run dies silently right after printing
+    # the verify-witness header, with no terminal PASS/FAIL line at all --
+    # a crash/timeout with no textual verdict to classify by content, only
+    # by the fact that nothing follows the header.
+    FailurePattern(
+        "silent-truncation/no-terminal-verdict-after-witness-verify",
+        re.compile(r"== verify good witness ==\Z"),
+    ),
 )
 
 
