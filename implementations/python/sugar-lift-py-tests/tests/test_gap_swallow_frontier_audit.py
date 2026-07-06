@@ -62,3 +62,43 @@ def test_sanctioned_recorders_are_not_offenders() -> None:
 
     assert "lift_rpc.py" not in files
     assert "audit_only/collect_construction_gaps.py" not in files
+
+
+def test_runtime_effect_boundary_is_not_gap_swallow(tmp_path: Path) -> None:
+    kit_src = tmp_path / "src" / "sugar_lift_py_tests"
+    kit_src.mkdir(parents=True)
+    (kit_src / "typed_red.py").write_text(
+        "def planted(value):\n"
+        "    try:\n"
+        "        return value.reduce()\n"
+        "    except FactoryGap as exc:\n"
+        "        observed = str(exc)\n"
+        "        return Incomplete(RuntimeEffect(observed))\n",
+        encoding="utf-8",
+    )
+
+    report = collect_gap_swallow_frontier(tmp_path)
+
+    assert report.total == 0
+
+
+def test_plain_gap_default_still_flags_gap_swallow(tmp_path: Path) -> None:
+    kit_src = tmp_path / "src" / "sugar_lift_py_tests"
+    kit_src.mkdir(parents=True)
+    (kit_src / "quiet.py").write_text(
+        "def planted(value):\n"
+        "    try:\n"
+        "        return value.reduce()\n"
+        "    except FactoryGap as exc:\n"
+        "        observed = str(exc)\n"
+        "        return None\n",
+        encoding="utf-8",
+    )
+
+    report = collect_gap_swallow_frontier(tmp_path)
+
+    assert report.total == 1
+    assert report.offenders[0].file == "quiet.py"
+    assert report.offenders[0].line == 4
+    assert report.offenders[0].caught == "FactoryGap"
+    assert report.offenders[0].disposition == "returns-default"

@@ -133,6 +133,12 @@ def _write_fake_sugar(path: Path, build_stamp: str) -> None:
     path.chmod(0o755)
 
 
+def _link_required_tool(bin_dir: Path, name: str) -> None:
+    tool = shutil.which(name)
+    assert tool is not None
+    (bin_dir / name).symlink_to(tool)
+
+
 def _run_sugarbin(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     merged_env = {**os.environ}
     for key in (
@@ -405,18 +411,14 @@ def test_sugarbin_source_stamp_ignores_git_history_for_identical_bytes(
 def test_sugarbin_source_stamp_requires_blake3_tool(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     script = _write_stamp_fixture(root)
-    python = shutil.which("python3")
-    bash = shutil.which("bash")
-    assert python is not None
-    assert bash is not None
     fake_bin = tmp_path / "bin-no-b3sum"
     fake_bin.mkdir()
-    (fake_bin / "python3").symlink_to(python)
-    (fake_bin / "bash").symlink_to(bash)
+    for tool in ("bash", "dirname", "git", "python3"):
+        _link_required_tool(fake_bin, tool)
 
     completed = _run_fixture_sugarbin(
         script,
-        {"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        {"PATH": os.fspath(fake_bin)},
         "--print-source-stamp",
     )
 
@@ -465,6 +467,8 @@ def test_sugarbin_publish_uploads_stamp_named_assets(tmp_path: Path) -> None:
         },
         "--profile",
         "release",
+        "--platform",
+        "darwin-x86_64",
     )
 
     assert completed.returncode == 0, completed.stderr

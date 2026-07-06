@@ -1346,7 +1346,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:2eb81c7df2aea8fa:1",
-      "line": 256,
+      "line": 259,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1356,7 +1356,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:623076923e55ca30:1",
-      "line": 15,
+      "line": 16,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1366,7 +1366,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:78d36af9a7ea0b70:1",
-      "line": 246,
+      "line": 249,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1376,7 +1376,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:b162793a177819dc:1",
-      "line": 247,
+      "line": 250,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",

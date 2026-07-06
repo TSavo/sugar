@@ -292,8 +292,12 @@ def test_comparison_assertion_does_not_steal_callsite_equality_dig() -> None:
     assert [row.selected for row in report.payload.factory_walk] == [
         "ReturnSugar",
         "CallSugar",
-        "CallSugar",
     ]
+    assert report.payload.factory_walk[1].reason == "derived from callsite floor"
+    assert [
+        warrant["kind"]
+        for warrant in report.payload.ir[1].proofir_provenance["warrants"]
+    ] == ["Derived", "Stated"]
     assert all(
         _source_warrant_role(contract) != "python.comparison-assertion-sugar"
         for contract in report.payload.ir
@@ -318,8 +322,12 @@ def test_comparison_assertion_does_not_treat_bound_local_as_vendor_fact() -> Non
     assert [row.selected for row in report.payload.factory_walk] == [
         "ReturnSugar",
         "CallSugar",
-        "CallSugar",
     ]
+    assert report.payload.factory_walk[1].reason == "derived from callsite floor"
+    assert [
+        warrant["kind"]
+        for warrant in report.payload.ir[1].proofir_provenance["warrants"]
+    ] == ["Derived", "Stated"]
     assert all(
         _source_warrant_role(contract) != "python.comparison-assertion-sugar"
         for contract in report.payload.ir
