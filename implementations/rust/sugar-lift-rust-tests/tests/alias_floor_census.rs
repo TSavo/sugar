@@ -76,11 +76,6 @@ const SIDE_TABLE_PATTERNS: &[Pattern] = &[
         why: "write-through replay is remembered by base-name set instead of construction through the alias floor",
     },
     Pattern {
-        needle: "compound_alias_rewrites: BTreeSet<String>",
-        family: "compound-alias-refusal-set",
-        why: "compound alias writes use a refusal side set instead of a typed alias write result",
-    },
-    Pattern {
         needle: "alias: Option<RewritePlace>",
         family: "alias-snapshot-slot",
         why: "rollback snapshots carry alias side-table entries instead of floor-owned identity",
@@ -89,11 +84,6 @@ const SIDE_TABLE_PATTERNS: &[Pattern] = &[
         needle: "rewritten_base: bool",
         family: "alias-replay-snapshot-flag",
         why: "rollback snapshots carry replay flags for side sets instead of floor-owned state",
-    },
-    Pattern {
-        needle: "compound_alias_rewrite: bool",
-        family: "compound-alias-snapshot-flag",
-        why: "rollback snapshots carry compound-refusal flags for side sets instead of floor-owned state",
     },
     Pattern {
         needle: "aliases: BTreeMap<String, String>",
@@ -264,11 +254,6 @@ const BIND_EVENT_PATTERNS: &[Pattern] = &[
         why: "indexed write target branches on alias shape by string lookup",
     },
     Pattern {
-        needle: "self.compound_alias_rewrites.insert(target_base)",
-        family: "write-through",
-        why: "compound alias write records a side-set refusal instead of returning a typed write result",
-    },
-    Pattern {
         needle: "self.rewritten_bases.insert(name.clone())",
         family: "write-through",
         why: "write-through success is remembered by base-name set instead of the alias value",
@@ -416,21 +401,9 @@ const EXPECTED_ALIAS_SIDE_TABLE_SETS: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "struct TemporalBindingSnapshot",
-        "compound-alias-snapshot-flag",
-        "compound_alias_rewrite: bool",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
         "struct TemporalRewriteState",
         "alias-replay-set",
         "rewritten_bases: BTreeSet<String>",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "struct TemporalRewriteState",
-        "compound-alias-refusal-set",
-        "compound_alias_rewrites: BTreeSet<String>",
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
@@ -610,12 +583,6 @@ const EXPECTED_BIND_EVENTS_NOT_FLOOR_DISPATCHED: &[(&str, &str, &str, &str)] = &
     ),
     (
         "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
-        "apply_compound_assign",
-        "write-through",
-        "self.compound_alias_rewrites.insert(target_base)",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/sugar/assign_op.rs",
         "apply_consumption_expr",
         "consume",
         "if let Some(base) = self.mutable_alias_base(&name)",
@@ -782,7 +749,7 @@ fn alias_side_table_collector_detects_planted_source() {
         text: r#"
             struct TemporalRewriteState {
                 aliases: BTreeMap<String, RewritePlace>,
-                compound_alias_rewrites: BTreeSet<String>,
+                rewritten_bases: BTreeSet<String>,
             }
         "#
         .to_string(),
@@ -790,7 +757,7 @@ fn alias_side_table_collector_detects_planted_source() {
     let rows = collect_alias_side_table_sets(&sources).expect("collect planted side tables");
     let needles = row_needles(&rows);
     assert!(needles.contains("aliases: BTreeMap<String, RewritePlace>"));
-    assert!(needles.contains("compound_alias_rewrites: BTreeSet<String>"));
+    assert!(needles.contains("rewritten_bases: BTreeSet<String>"));
 }
 
 #[test]

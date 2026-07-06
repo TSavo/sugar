@@ -176,7 +176,6 @@ pub(crate) struct TemporalRewriteState {
     unknown_mutations: BTreeMap<String, String>,
     exhausted_iterators: BTreeSet<String>,
     rewritten_bases: BTreeSet<String>,
-    compound_alias_rewrites: BTreeSet<String>,
     loop_replayed: BTreeSet<String>,
 }
 
@@ -219,7 +218,6 @@ struct TemporalBindingSnapshot {
     unknown_mutation: Option<String>,
     exhausted_iterator: bool,
     rewritten_base: bool,
-    compound_alias_rewrite: bool,
     loop_replayed: bool,
 }
 
@@ -341,10 +339,6 @@ impl TemporalRewriteState {
         self.rewritten_bases.contains(name)
     }
 
-    pub(crate) fn compound_alias_rewrite_needs_refusal(&self, name: &str) -> bool {
-        self.compound_alias_rewrites.contains(name)
-    }
-
     pub(crate) fn mutable_alias_base(&self, name: &str) -> Option<String> {
         alias_base_identity(self.aliases.get(name)?.consume())
     }
@@ -397,7 +391,6 @@ impl TemporalRewriteState {
     fn clear_value(&mut self, name: &str) {
         self.values.remove(name);
         self.term_values.remove(name);
-        self.compound_alias_rewrites.remove(name);
     }
 
     pub(crate) fn can_apply(&self, expr: &Expr) -> bool {
@@ -713,7 +706,6 @@ impl TemporalRewriteState {
             unknown_mutation: self.unknown_mutations.get(name).cloned(),
             exhausted_iterator: self.exhausted_iterators.contains(name),
             rewritten_base: self.rewritten_bases.contains(name),
-            compound_alias_rewrite: self.compound_alias_rewrites.contains(name),
             loop_replayed: self.loop_replayed.contains(name),
         }
     }
@@ -735,11 +727,6 @@ impl TemporalRewriteState {
             snapshot.exhausted_iterator,
         );
         restore_set_entry(&mut self.rewritten_bases, name, snapshot.rewritten_base);
-        restore_set_entry(
-            &mut self.compound_alias_rewrites,
-            name,
-            snapshot.compound_alias_rewrite,
-        );
         restore_set_entry(&mut self.loop_replayed, name, snapshot.loop_replayed);
     }
 
@@ -986,7 +973,6 @@ impl TemporalRewriteState {
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
-        self.compound_alias_rewrites.remove(name);
         self.loop_replayed.remove(name);
         self.exhausted_iterators.remove(name);
         self.poison_cell(name, reason.clone());
@@ -1215,7 +1201,6 @@ impl TemporalRewriteState {
         self.aliases.remove(name);
         self.cell_values.remove(name);
         self.rewritten_bases.remove(name);
-        self.compound_alias_rewrites.remove(name);
         self.loop_replayed.remove(name);
         self.exhausted_iterators.remove(name);
         self.term_values.remove(name);
@@ -1339,12 +1324,8 @@ impl TemporalRewriteState {
             return self.invalidate_unknown_assignment(&target, lhs, rhs);
         };
         let target_label = target_label(&target);
-        let target_base = target_base(&target);
         let value_label = token_key(&value);
         let applied = self.set_target(target, value);
-        if applied {
-            self.compound_alias_rewrites.remove(&target_base);
-        }
         if applied && emit_trace {
             debug!(
                 target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -1358,6 +1339,20 @@ impl TemporalRewriteState {
         applied
     }
 
+    /// Anchored compound alias rewrites (#3481) replay against the grounded
+    /// base rather than landing as a typed effect: `target_for_lhs` only ever
+    /// produces a `Target` when the AliasFloor (or a direct local) has
+    /// already answered which base/index the write reaches, so `old` below
+    /// is read through that same grounded identity, not stale testimony.
+    /// `set_target`/`set_aggregate_element` apply the update exactly as a
+    /// plain assignment would; there is no second, independent copy of the
+    /// base left to drift out of sync, so there is nothing to refuse. A
+    /// write whose base cannot be grounded this way never reaches this far:
+    /// `target_for_lhs` returns `None` and the whole compound assign is not
+    /// recognized, or the RHS/old-value probes above fail and fall through to
+    /// `invalidate_unknown_assignment`, which still records a typed
+    /// `AliasTypedEffect::UnknownMutation` (or an ambiguous-RHS effect) rather
+    /// than guessing a value.
     fn apply_compound_assign(&mut self, binary: &syn::ExprBinary, emit_trace: bool) -> bool {
         let Some(op) = assignment_op(&binary.op) else {
             return false;
@@ -1378,13 +1373,8 @@ impl TemporalRewriteState {
             return self.invalidate_unknown_assignment(&target, &binary.left, &binary.right);
         };
         let target_label = target_label(&target);
-        let target_base = target_base(&target);
         let updated_label = token_key(&updated);
-        let needs_compound_refusal = target_needs_compound_alias_refusal(&target);
         let applied = self.set_target(target, updated);
-        if applied && needs_compound_refusal {
-            self.compound_alias_rewrites.insert(target_base);
-        }
         if applied && emit_trace {
             debug!(
                 target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -1489,7 +1479,6 @@ impl TemporalRewriteState {
         self.aliases.remove(&base);
         self.unknown_consumed_iterators.remove(&base);
         self.rewritten_bases.remove(&base);
-        self.compound_alias_rewrites.remove(&base);
         self.loop_replayed.remove(&base);
         self.exhausted_iterators.remove(&base);
         self.poison_cell(&base, reason.clone());
@@ -2432,15 +2421,6 @@ fn target_base(target: &Target) -> String {
     }
 }
 
-fn target_needs_compound_alias_refusal(target: &Target) -> bool {
-    match target {
-        Target::Scalar { .. } => false,
-        Target::Element {
-            replayable_alias, ..
-        } => *replayable_alias,
-    }
-}
-
 fn alias_floor_for_target(target: &Target) -> Option<AliasFloor> {
     match target {
         Target::Scalar {
@@ -3069,7 +3049,7 @@ mod tests {
         let compound: Expr = syn::parse_quote!(*p += 1);
         assert!(state.apply_with_trace(&compound, false));
         assert!(
-            !state.compound_alias_rewrite_needs_refusal("r"),
+            state.replayed_mutable_alias_base("r") && state.unknown_mutation_reason("r").is_none(),
             "scalar compound mutation through AliasFloor must reduce the base without leaving \
              a refusal side-set"
         );
@@ -3081,12 +3061,73 @@ mod tests {
         let exact: Expr = syn::parse_quote!(*p = 7);
         assert!(state.apply_with_trace(&exact, false));
         assert!(
-            !state.compound_alias_rewrite_needs_refusal("r"),
+            state.replayed_mutable_alias_base("r") && state.unknown_mutation_reason("r").is_none(),
             "an exact alias assignment establishes a fresh replayable post-state"
         );
         assert_eq!(
             state.expr_for("r").and_then(|expr| const_int(&expr)),
             Some(7)
+        );
+    }
+
+    #[test]
+    fn element_alias_compound_rewrite_reduces_without_refusal_side_set() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("buf", syn::parse_quote!([0i32, 10, 20]));
+        state.aliases.insert(
+            "a".to_string(),
+            alias_bound_result(AliasFloor::element("buf", 1).bind()),
+        );
+
+        let compound: Expr = syn::parse_quote!(*a += 1);
+        assert!(state.apply_with_trace(&compound, false));
+        assert!(
+            state.replayed_mutable_alias_base("buf") && state.unknown_mutation_reason("buf").is_none(),
+            "grounded element compound mutation through AliasFloor must reduce the base \
+             without leaving a refusal side-set"
+        );
+        assert_eq!(
+            state
+                .expr_for_index("buf", 1)
+                .and_then(|expr| const_int(&expr)),
+            Some(11)
+        );
+
+        let exact: Expr = syn::parse_quote!(*a = 99);
+        assert!(state.apply_with_trace(&exact, false));
+        assert!(
+            state.replayed_mutable_alias_base("buf") && state.unknown_mutation_reason("buf").is_none(),
+            "an exact element alias assignment establishes a fresh replayable post-state"
+        );
+        assert_eq!(
+            state
+                .expr_for_index("buf", 1)
+                .and_then(|expr| const_int(&expr)),
+            Some(99)
+        );
+    }
+
+    #[test]
+    fn element_alias_unknown_rhs_records_typed_unknown_mutation_effect() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("buf", syn::parse_quote!([0i32, 10, 20]));
+        state.aliases.insert(
+            "a".to_string(),
+            alias_bound_result(AliasFloor::element("buf", 1).bind()),
+        );
+
+        let compound: Expr = syn::parse_quote!(*a += runtime_value());
+        assert!(state.apply_with_trace(&compound, false));
+        let reason = state
+            .unknown_mutation_reason("buf")
+            .expect("unknown element alias RHS records an AliasFloor effect");
+        assert!(
+            reason.contains("AliasFloor UnknownMutation effect"),
+            "unknown element alias RHS must bridge the typed floor effect, got: {reason}"
+        );
+        assert!(
+            state.expr_for_index("buf", 1).is_none(),
+            "unknown element alias mutation must not leave a stale readable value"
         );
     }
 
