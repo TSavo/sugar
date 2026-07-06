@@ -91,14 +91,12 @@
       "work_order_issue": 3582
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "missing-universe-atom/int32-eq-bv-expr",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape missing-universe-atom/int32-eq-bv-expr; work order #3580",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 24.521,
-      "name": "examples/java-abs-model/run.sh",
-      "work_order_issue": 3580
+      "expected": "GREEN",
+      "first_seen": "2026-07-05 java family sweep 0783399e8",
+      "grounds": "script exited 0 after derive --from-proof learned to read typed ProofGraph atoms; stale pipefail grep checker repaired in the example script",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 18.1,
+      "name": "examples/java-abs-model/run.sh"
     },
     {
       "expected": "NAMED_RED",
@@ -240,13 +238,13 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "kit-transform/callsite-line-null",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape kit-transform/callsite-line-null; work order #3607",
+      "failure_shape": "prove-output/empty-json-receipt",
+      "first_seen": "2026-07-05 java family sweep 0783399e8",
+      "grounds": "script exited 1 with terminal shape prove-output/empty-json-receipt after the callsite-line-null layer cleared; work order #3582",
       "last_observed_rc": 1,
-      "last_observed_seconds": 95.491,
+      "last_observed_seconds": 84.1,
       "name": "examples/java-panama-bridge/run.sh",
-      "work_order_issue": 3607
+      "work_order_issue": 3582
     },
     {
       "expected": "NAMED_RED",
