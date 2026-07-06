@@ -35,7 +35,6 @@ from .witness import (
     build_suite_bundle,
     witness_package_memento,
     runtime_cid,
-    _cid_filename,
 )
 
 KIT_ID = "python-pytest-witness"
@@ -226,7 +225,7 @@ def handle_lift(msg_id: Any, params: dict) -> None:
                 bundle_dir = os.path.join(ws, ".sugar", "witnesses")
                 os.makedirs(bundle_dir, exist_ok=True)
                 with open(
-                    os.path.join(bundle_dir, _cid_filename(bundle_cid, ".witness")),
+                    os.path.join(bundle_dir, cid_filename(bundle_cid, ".witness")),
                     "wb",
                 ) as f:
                     f.write(bundle_bytes)
