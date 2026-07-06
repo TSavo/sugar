@@ -99,6 +99,8 @@ class BinaryOperatorOperation:
 
     def binary_string(self, receiver: StringValue, ctx: object) -> Outcome:
         del ctx
+        if self.operator == "*" and isinstance(self.right, TermValue):
+            return self._repeat_string(receiver, self.right)
         if isinstance(self.right, StringValue) and self.operator in {"==", "!="}:
             equal = receiver.value == self.right.value
             return Complete(BoolValue(equal if self.operator == "==" else not equal))
@@ -203,6 +205,18 @@ class BinaryOperatorOperation:
                 repeat=repeat,
             )
         return Complete(TupleLiteralValue(value.items * repeat))
+
+    def _repeat_string(self, value: StringValue, count: TermValue) -> Outcome:
+        repeat = self._repeat_count(count)
+        if repeat is None:
+            return self._repeat_count_effect(count)
+        if _repeated_item_count(len(value.value), repeat) > _MAX_LITERAL_REPEAT_ITEMS:
+            return self._oversized_repeat_effect(
+                receiver="StringValue",
+                item_count=len(value.value),
+                repeat=repeat,
+            )
+        return Complete(StringValue(value.value * repeat))
 
     def _repeat_count(self, count: TermValue) -> int | None:
         if isinstance(count.value, int):

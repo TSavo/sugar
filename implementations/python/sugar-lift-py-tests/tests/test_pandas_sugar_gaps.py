@@ -17,11 +17,13 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     FloorValue,
     ImportAliasValue,
+    StringValue,
     SymbolicValue,
+    TermValue,
 )
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar.compare_term_sugar import CompareTermSugar
 from sugar_lift_py_tests.sugar.generator_exp_sugar import GeneratorExpSugar
 from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
@@ -279,6 +281,134 @@ def test_pandas_callsite_attribute_production_path_is_typed_red(
     }
     assert "callsite attribute runtime boundary" in row["reason"]
     assert "`constructor.dtype`" in row["reason"]
+
+
+def test_pandas_string_repeat_reduces_to_string_value() -> None:
+    outcome, selected = _term_outcome("'ab' * 3")
+
+    assert "BinOpSugar" in selected
+    assert outcome == Complete(StringValue("ababab"))
+
+
+def test_pandas_string_repeat_discharges_and_refutes(tmp_path: Path) -> None:
+    _assert_production_pair(
+        tmp_path,
+        name="string-repeat",
+        selected=("BinOpSugar",),
+        truthful=(
+            "def A():\n"
+            "    return 'ab' * 3\n\n"
+            "def test_string_repeat():\n"
+            "    assert A() == 'ababab'\n"
+        ),
+        lying=(
+            "def A():\n"
+            "    return 'ab' * 3\n\n"
+            "def test_string_repeat():\n"
+            "    assert A() == 'ab'\n"
+        ),
+    )
+
+
+def test_pandas_string_float_integral_value_reduces_to_number() -> None:
+    outcome, selected = _term_outcome("float('3.0')")
+
+    assert "BuiltinCallSugar" in selected
+    assert outcome == Complete(TermValue(3.0))
+
+
+def test_pandas_string_float_integral_value_discharges_and_refutes(
+    tmp_path: Path,
+) -> None:
+    _assert_production_pair(
+        tmp_path,
+        name="string-float-integral",
+        selected=("BuiltinCallSugar",),
+        truthful=(
+            "def A():\n"
+            "    return float('3.0')\n\n"
+            "def test_string_float_integral():\n"
+            "    assert A() == 3\n"
+        ),
+        lying=(
+            "def A():\n"
+            "    return float('3.0')\n\n"
+            "def test_string_float_integral():\n"
+            "    assert A() == 4\n"
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("expr", "reason_needle"),
+    [
+        ("float('nan')", "parsed a non-finite float"),
+        ("float('1.5')", "parsed a non-integral Real"),
+    ],
+)
+def test_pandas_string_float_unsafe_shapes_are_typed_red_effects(
+    expr: str, reason_needle: str
+) -> None:
+    outcome, selected = _term_outcome(expr)
+
+    assert "BuiltinCallSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "string float conversion runtime boundary" in outcome.effect.reason
+    assert reason_needle in outcome.effect.reason
+    assert "owner=StringValue" in outcome.effect.reason
+    assert "pandas_gap.py:1:" in outcome.effect.reason
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "right_reason", "wrong_reason"),
+    [
+        (
+            "pandas_string_float_nan_runtime_effect",
+            "def A():\n    return float('nan')\n",
+            "parsed a non-finite float",
+            "parsed a non-integral Real",
+        ),
+        (
+            "pandas_string_float_decimal_runtime_effect",
+            "def A():\n    return float('1.5')\n",
+            "parsed a non-integral Real",
+            "parsed a non-finite float",
+        ),
+    ],
+)
+def test_pandas_string_float_typed_red_witnesses_have_bad_twins(
+    tmp_path: Path,
+    name: str,
+    source: str,
+    right_reason: str,
+    wrong_reason: str,
+) -> None:
+    seed = SugarRedEffectWitnessPair(
+        name=name,
+        owner_sugar="BuiltinCallSugar",
+        family="pandas-floor-gap",
+        truthful=EffectWitnessSource(
+            source=source,
+            expectation=TypedRedEffectExpectation(
+                effect_class="RuntimeEffect",
+                reason_needle=right_reason,
+                blame_needle="test_witness.py:2:",
+            ),
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=source,
+            expectation=TypedRedEffectExpectation(
+                effect_class="RuntimeEffect",
+                reason_needle=wrong_reason,
+                blame_needle="test_witness.py:2:",
+            ),
+            expected_match=False,
+        ),
+    )
+
+    _assert_red_effect_seed_has_wrong_effect_twin(seed, tmp_path)
 
 
 @pytest.mark.parametrize(

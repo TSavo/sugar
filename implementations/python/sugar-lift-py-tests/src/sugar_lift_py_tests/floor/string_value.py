@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from .floor_value import FloorValue
 
@@ -25,6 +26,50 @@ class StringValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(int(self.value)))
+        if operation.name == "__float__" and not operation.arguments:
+            from sugar_lift_py_tests.effect import RuntimeEffect
+            from sugar_lift_py_tests.floor.term_value import TermValue
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            try:
+                parsed = float(self.value)
+            except ValueError:
+                return Incomplete(
+                    RuntimeEffect(
+                        "string float conversion runtime boundary: "
+                        "crime=StringValue.__float__ cannot parse a static string; "
+                        "owner=StringValue; "
+                        f"shape=value `{self.value}`; "
+                        "replacement=keep this as typed red because Python raises "
+                        "ValueError at runtime; "
+                        f"blame={operation.blame}"
+                    )
+                )
+            if not math.isfinite(parsed):
+                return Incomplete(
+                    RuntimeEffect(
+                        "string float conversion runtime boundary: "
+                        "crime=StringValue.__float__ parsed a non-finite float; "
+                        "owner=StringValue; "
+                        f"shape=value `{self.value}`; "
+                        "replacement=add a cited non-finite numeric floor before "
+                        "treating NaN/Infinity as proof-bearing; "
+                        f"blame={operation.blame}"
+                    )
+                )
+            if not parsed.is_integer():
+                return Incomplete(
+                    RuntimeEffect(
+                        "string float conversion runtime boundary: "
+                        "crime=StringValue.__float__ parsed a non-integral Real; "
+                        "owner=StringValue; "
+                        f"shape=value `{self.value}`; "
+                        "replacement=add a deterministic Real-return floor before "
+                        "treating this as proof-bearing; "
+                        f"blame={operation.blame}"
+                    )
+                )
+            return Complete(TermValue(parsed))
         if operation.name == "format":
             from sugar_lift_py_tests.effect import RuntimeEffect
             from sugar_lift_py_tests.floor.term_value import TermValue
