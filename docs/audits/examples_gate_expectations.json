@@ -342,6 +342,14 @@
     },
     {
       "expected": "GREEN",
+      "first_seen": "2026-07-06 pandas consumer import demo",
+      "grounds": "script exited 0; truthful pandas Series.sum consumer discharged through the imported vendor proof and the contradictory twin stayed unsatisfied",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 23.166,
+      "name": "examples/pandas-consumer-demo/run.sh"
+    },
+    {
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 0 after durable receipt checks were updated to the current structural contradiction and witness-package shape",
       "last_observed_rc": 0,

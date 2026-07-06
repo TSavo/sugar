@@ -1,0 +1,20 @@
+name = "python-lift"
+version = "0.1.0-draft"
+protocol_version = "pep/1.7.0"
+kind = "lift"
+# Dispatch the Python factory lift RPC. PYTHONPATH points at the lifter source
+# tree so the example stays runnable from the checkout.
+command = [
+    "/usr/bin/env",
+    "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
+    "python3",
+    "-m",
+    "sugar_lift_py_tests.lift_rpc",
+    "--rpc",
+]
+working_dir = "."
+
+[capabilities]
+authoring_surfaces = ["python"]
+ir_version = "v1.1.0"
+emits_signed_mementos = false

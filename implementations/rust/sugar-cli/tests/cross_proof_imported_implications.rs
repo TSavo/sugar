@@ -129,6 +129,21 @@ fn vendor_ir_with_encodings(encodings: &[&str]) -> Vec<Json> {
     ]
 }
 
+fn pandas_sum_vendor_ir() -> Vec<Json> {
+    vec![json!({
+        "kind": "function-contract",
+        "name": "pandas.Series.sum",
+        "bridgeSourceSymbol": "call:sum",
+        "formals": [],
+        "formalSorts": [],
+        "outBinding": "out",
+        "post": eq(
+            var("out"),
+            json!({"kind": "const", "value": 6, "sort": int_sort()}),
+        ),
+    })]
+}
+
 fn write_static_vendor_plugin(path: &Path, ir: &[Json]) {
     let ir = serde_json::to_string(ir).expect("vendor IR serializes");
     write_executable(
@@ -162,7 +177,7 @@ for line in sys.stdin:
     );
 }
 
-fn stage_vendor_proof_with_encodings(encodings: &[&str]) -> (tempfile::TempDir, PathBuf, String) {
+fn stage_static_vendor_proof(ir: Vec<Json>) -> (tempfile::TempDir, PathBuf, String) {
     let dir = tempfile::tempdir().expect("create vendor tempdir");
     let project = dir.path().join("vendor");
     let manifest_dir = project.join(".sugar/lift/static-vendor");
@@ -186,7 +201,6 @@ flags = ["-smt2", "-in"]
     )
     .expect("write vendor config");
     let plugin = project.join("static_vendor.py");
-    let ir = vendor_ir_with_encodings(encodings);
     write_static_vendor_plugin(&plugin, &ir);
     fs::write(
         manifest_dir.join("manifest.toml"),
@@ -229,8 +243,16 @@ flags = ["-smt2", "-in"]
     (dir, proof, cid)
 }
 
+fn stage_vendor_proof_with_encodings(encodings: &[&str]) -> (tempfile::TempDir, PathBuf, String) {
+    stage_static_vendor_proof(vendor_ir_with_encodings(encodings))
+}
+
 fn stage_vendor_proof() -> (tempfile::TempDir, PathBuf, String) {
     stage_vendor_proof_with_encodings(&["ASCII", "latin1", "bytes"])
+}
+
+fn stage_pandas_sum_vendor_proof() -> (tempfile::TempDir, PathBuf, String) {
+    stage_static_vendor_proof(pandas_sum_vendor_ir())
 }
 
 fn build_python_lift_tests() -> PathBuf {
@@ -461,6 +483,30 @@ fn assert_linked_post_targets_imported_proof(row: &Json, proof_cid: &str) {
     assert_eq!(post["call"]["args"][1]["value"].as_i64(), Some(5));
 }
 
+fn assert_linked_sum_post_targets_imported_proof(row: &Json, proof_cid: &str) {
+    let posts = row["verification"]["linkedPosts"]
+        .as_array()
+        .expect("linkedPosts array");
+    let post = posts
+        .iter()
+        .find(|post| post["sourceSymbol"].as_str() == Some("call:sum"))
+        .unwrap_or_else(|| panic!("pandas Series.sum linked post missing: {row:#}"));
+    assert_eq!(post["targetProofCid"].as_str(), Some(proof_cid));
+    assert!(post["targetContractCid"].as_str().is_some());
+    assert_eq!(post["call"]["name"].as_str(), Some("call:sum"));
+    assert_eq!(
+        post["instantiatedPost"],
+        json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "ctor", "name": "call:sum", "args": []},
+                {"kind": "const", "value": 6, "sort": int_sort()},
+            ],
+        })
+    );
+}
+
 #[test]
 fn imported_numpy_load_precondition_discharges_and_refuses_at_consumer_callsite() {
     assert!(
@@ -518,6 +564,67 @@ def test_load():
     assert_eq!(bad_prove["violations"].as_u64(), Some(1));
     let bad_bridge = find_bridge_row(&bad_prove, "call:numpy.load");
     assert_eq!(bad_bridge["status"].as_str(), Some("unsatisfied"));
+}
+
+#[test]
+fn imported_pandas_sum_showcase_universe_links_into_consumer_assertions() {
+    assert!(
+        python_available(),
+        "python3 is required for the Python lift plugin"
+    );
+    assert!(
+        z3_available(),
+        "z3 is required for the production prove verdict"
+    );
+    let (_vendor_dir, proof, proof_cid) = stage_pandas_sum_vendor_proof();
+
+    let good = stage_consumer_project(
+        &proof,
+        r#"import pandas as pd
+
+
+def test_sum():
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    total = df["a"].sum()
+    assert total == 6
+"#,
+        "pandas-sum-good",
+    );
+    let good_report = run_lift_report(&good);
+    assert_report_edge_targets_imported_proof(&good_report, "call:sum", &proof_cid);
+    run_mint(&good);
+    let (good_prove, good_code) = run_prove(&good);
+    assert_eq!(
+        good_code, 0,
+        "pandas Series.sum truthful consumer must prove: {good_prove}"
+    );
+    assert_eq!(good_prove["violations"].as_u64(), Some(0));
+    let good_row = find_consistency_row(&good_prove, "sum#euf#");
+    assert_eq!(good_row["status"].as_str(), Some("discharged"));
+    assert_linked_sum_post_targets_imported_proof(good_row, &proof_cid);
+
+    let bad = stage_consumer_project(
+        &proof,
+        r#"import pandas as pd
+
+
+def test_sum():
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    total = df["a"].sum()
+    assert total == 7
+"#,
+        "pandas-sum-bad",
+    );
+    run_mint(&bad);
+    let (bad_prove, bad_code) = run_prove(&bad);
+    assert_eq!(
+        bad_code, 1,
+        "pandas Series.sum contradictory consumer must stay red: {bad_prove}"
+    );
+    assert_eq!(bad_prove["violations"].as_u64(), Some(1));
+    let bad_row = find_consistency_row(&bad_prove, "sum#euf#");
+    assert_eq!(bad_row["status"].as_str(), Some("unsatisfied"));
+    assert_linked_sum_post_targets_imported_proof(bad_row, &proof_cid);
 }
 
 #[test]
