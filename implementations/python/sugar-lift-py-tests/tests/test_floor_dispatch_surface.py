@@ -156,6 +156,55 @@ def test_planted_binary_operator_wrong_signature_reds_pyright(tmp_path: Path) ->
     assert "BinaryOperatorOperation" in diagnostics
 
 
+def test_planted_next_operation_wrong_signature_reds_pyright(tmp_path: Path) -> None:
+    planted = tmp_path / "planted_next_operation_signature_miss.py"
+    planted.write_text(
+        "\n".join(
+            (
+                "from sugar_lift_py_tests.floor import FloorDispatchSurface, FloorValue",
+                "",
+                "class WrongNextFloor(FloorValue):",
+                "    def next_with(self, operation: object, ctx: object) -> object:",
+                "        return object()",
+                "",
+                "def require_surface(floor: FloorDispatchSurface) -> None:",
+                "    pass",
+                "",
+                "require_surface(WrongNextFloor())",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pyright",
+            "--project",
+            str(ROOT / "pyrightconfig.json"),
+            "--outputjson",
+            str(planted),
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": _with_src_on_pythonpath()},
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    payload = json.loads(proc.stdout)
+    diagnostics = "\n".join(
+        item["message"] for item in payload.get("generalDiagnostics", ())
+    )
+    assert "WrongNextFloor" in diagnostics
+    assert "next_with" in diagnostics
+    assert "NextOperation" in diagnostics
+
+
 def _declared_operation_method_names() -> list[str]:
     names: set[str] = set()
     prefix = operations_package.__name__ + "."

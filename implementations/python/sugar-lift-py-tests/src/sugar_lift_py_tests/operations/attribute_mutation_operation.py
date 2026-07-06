@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from sugar_lift_py_tests.floor import FloorValue, ObjectField, ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -9,6 +9,9 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 from .descriptor_operation import DescriptorOperation
 from .object_method_call import call_object_method_value, raise_object_floor_gap
 from .perform_operation import perform_operation
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
 
 
 @dataclass(frozen=True)
@@ -19,7 +22,9 @@ class AttributeMutationOperation:
     owner: str = "AttributeAssignSugar"
     blame: str = "<unknown>"
 
-    def assign_object(self, receiver: ObjectValue, ctx) -> Outcome:
+    def assign_object(
+        self, receiver: ObjectValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         descriptor = receiver.class_field_value(self.name)
         if isinstance(descriptor, ObjectValue) and descriptor.has_method("__set__"):
             return perform_operation(

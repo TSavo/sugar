@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from typing import TYPE_CHECKING, NoReturn
 
 from .floor_value import FloorValue
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.operations.method_call_operation import (
+        MethodCallOperation,
+    )
+    from sugar_lift_py_tests.outcome import Outcome
 
 
 @dataclass(frozen=True)
@@ -19,7 +27,9 @@ class StringValue(FloorValue):
     def project_callsite_with(self, operation, ctx):
         return operation.project_literal(self, ctx)
 
-    def call_method_with(self, operation, ctx):
+    def call_method_with(
+        self, operation: MethodCallOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         if operation.name == "__int__" and not operation.arguments:
             from sugar_lift_py_tests.floor.term_value import TermValue
@@ -146,7 +156,7 @@ def _call_method_gap(
     observed: str,
     requested: str,
     fix: str,
-):
+) -> NoReturn:
     from sugar_lift_py_tests.factory import (
         FactoryAuditRow,
         FactoryGap,
