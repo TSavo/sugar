@@ -35,6 +35,7 @@ class Occurrence:
     line: int
     text: str
     speaker: str
+    wire_marker: str
     reason: str
     replacement: str
 
@@ -45,6 +46,7 @@ class Occurrence:
             "line": self.line,
             "text": self.text,
             "speaker": self.speaker,
+            "wire_marker": self.wire_marker,
             "reason": self.reason,
             "replacement": self.replacement,
         }
@@ -53,8 +55,43 @@ class Occurrence:
 @dataclass(frozen=True)
 class Classified:
     speaker: str
+    wire_marker: str
     reason: str
     replacement: str
+
+
+def wire_marker_for(path: str, text: str, speaker: str) -> str:
+    if speaker != LIFT_OUTPUT_SPEAKER:
+        return "not-lift-output"
+    protocol_needles = (
+        "dig-refusal",
+        "DigRefusal",
+        "refusal-record",
+        "RefusalRecord",
+        "source_refused",
+    )
+    for needle in protocol_needles:
+        if needle in text:
+            return f"wire-protocol:{needle}"
+    if (
+        "/kit_rpc/" in path
+        or path.endswith("/lift_rpc.py")
+        or path.endswith("/bind_rpc.py")
+    ):
+        return "wire-protocol:rpc-dto"
+    if "/proofir/" in path:
+        return "wire-protocol:proofir-node"
+    if "/effect/" in path:
+        return "wire-protocol:effect-kind"
+    if path.endswith("/literal_call_report.py"):
+        return "wire-protocol:factory-report-diagnostic"
+    if (
+        path.endswith("/lifter.py")
+        or path.endswith("/value_pins.py")
+        or path.endswith("/rpc.py")
+    ):
+        return "wire-protocol:lift-report-payload"
+    return "internal-only"
 
 
 def normalize_text(line: str) -> str:
@@ -85,48 +122,56 @@ def classify(path: str, text: str) -> Classified:
     if path.startswith("implementations/python/sugar-build-witness/src/"):
         return Classified(
             "verifier-verdict-quote",
+            "not-lift-output",
             "witness builder reads or reports prove-side verifier verdicts",
             "keep verifier status vocabulary; do not use as lift output name",
         )
     if path.startswith("implementations/python/sugar-lift-py-pytest-witness/src/"):
         return Classified(
             "verifier-verdict-quote",
+            "not-lift-output",
             "pytest witness kit reads or reports prove-side verifier verdicts",
             "keep verifier status vocabulary; do not use as lift output name",
         )
     if path.endswith("/witness_verify.py") or path.endswith("/verify_rpc.py"):
         return Classified(
             "verifier-verdict-quote",
+            "not-lift-output",
             "witness or verify RPC boundary quotes verifier refusal verdicts",
             "keep verifier status vocabulary; do not use as lift output name",
         )
     if path.endswith("/verify_dialect.py"):
         return Classified(
             "verify-dialect-boundary",
+            "not-lift-output",
             "verify-facing dialect describes what the verifier can discharge",
             "rename only with verify schema compatibility if the field crosses RPC",
         )
     if path.endswith("/witness_oracle.py") or path.endswith("/source_oracle.py"):
         return Classified(
             "provenance-oracle-guard",
+            "not-lift-output",
             "source/witness oracle guards sealed evidence identity, not lifter output",
             "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
         )
     if path.endswith("/grammar_ledger.py"):
         return Classified(
             "grammar-census-prose",
+            "not-lift-output",
             "grammar census documentation and scoring prose, not an emitted lift result",
             "keep as doctrine prose unless future docs sweep narrows it",
         )
     if "/idd/" in path:
         return Classified(
             "instrument-prose",
+            "not-lift-output",
             "IDD instrument code names an existing frontier or vocabulary row",
             "keep until the named frontier row is retired by its owning migration",
         )
     if path.startswith("implementations/python/sugar-emit-python-"):
         return Classified(
             "emitter-provenance-guard",
+            "not-lift-output",
             "python emitter provenance guard or RPC quote, not the lifter's own output",
             "keep only while it quotes external/referee state",
         )
@@ -134,12 +179,14 @@ def classify(path: str, text: str) -> Classified:
     if "verifier" in text.lower() or "prove-side" in text.lower():
         return Classified(
             "verifier-verdict-quote",
+            "not-lift-output",
             "line explicitly talks about verifier/prove-side refusal vocabulary",
             "keep verifier status vocabulary; do not use as lift output name",
         )
 
     return Classified(
         LIFT_OUTPUT_SPEAKER,
+        wire_marker_for(path, text, LIFT_OUTPUT_SPEAKER),
         "lifter-side output/status/effect vocabulary still uses the verifier verb",
         "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
     )
@@ -174,6 +221,7 @@ def collect() -> list[Occurrence]:
                 line=line_no,
                 text=text,
                 speaker=classified.speaker,
+                wire_marker=classified.wire_marker,
                 reason=classified.reason,
                 replacement=classified.replacement,
             )
@@ -190,6 +238,7 @@ def load_expected(path: Path) -> list[Occurrence]:
             line=int(row["line"]),
             text=str(row["text"]),
             speaker=str(row["speaker"]),
+            wire_marker=str(row.get("wire_marker", "unknown")),
             reason=str(row["reason"]),
             replacement=str(row["replacement"]),
         )
@@ -224,11 +273,16 @@ def write_current(path: Path) -> None:
 def print_summary(occurrences: Iterable[Occurrence]) -> None:
     items = list(occurrences)
     speaker_counts = collections.Counter(item.speaker for item in items)
+    wire_counts = collections.Counter(
+        item.wire_marker for item in items if item.speaker == LIFT_OUTPUT_SPEAKER
+    )
     file_count = len({item.path for item in items})
     print(f"R(refus-vocabulary-total)={len(items)} across {file_count} files")
     print(f"R(lift-output-refusal-vocabulary)={speaker_counts[LIFT_OUTPUT_SPEAKER]}")
     for speaker, count in sorted(speaker_counts.items()):
         print(f"  {speaker}: {count}")
+    for marker, count in sorted(wire_counts.items()):
+        print(f"  wire {marker}: {count}")
 
 
 def compare(expected: list[Occurrence], observed: list[Occurrence]) -> int:
@@ -243,11 +297,13 @@ def compare(expected: list[Occurrence], observed: list[Occurrence]) -> int:
         for key in sorted(expected_by_key.keys() & observed_by_key.keys())
         if (
             expected_by_key[key].speaker,
+            expected_by_key[key].wire_marker,
             expected_by_key[key].reason,
             expected_by_key[key].replacement,
         )
         != (
             observed_by_key[key].speaker,
+            observed_by_key[key].wire_marker,
             observed_by_key[key].reason,
             observed_by_key[key].replacement,
         )
@@ -265,7 +321,7 @@ def compare(expected: list[Occurrence], observed: list[Occurrence]) -> int:
         )
         for item in new[:50]:
             print(
-                f"{item.path}:{item.line}: speaker={item.speaker}: {item.text}",
+                f"{item.path}:{item.line}: speaker={item.speaker} wire={item.wire_marker}: {item.text}",
                 file=sys.stderr,
             )
             print(f"  replacement={item.replacement}", file=sys.stderr)
@@ -279,7 +335,7 @@ def compare(expected: list[Occurrence], observed: list[Occurrence]) -> int:
         )
         for item in stale[:50]:
             print(
-                f"{item.path}: pinned-line={item.line}: speaker={item.speaker}: {item.text}",
+                f"{item.path}: pinned-line={item.line}: speaker={item.speaker} wire={item.wire_marker}: {item.text}",
                 file=sys.stderr,
             )
         if len(stale) > 50:
@@ -294,8 +350,14 @@ def compare(expected: list[Occurrence], observed: list[Occurrence]) -> int:
                 f"{observed_item.path}:{observed_item.line}: {observed_item.text}",
                 file=sys.stderr,
             )
-            print(f"  expected={expected_item.speaker}", file=sys.stderr)
-            print(f"  observed={observed_item.speaker}", file=sys.stderr)
+            print(
+                f"  expected={expected_item.speaker}/{expected_item.wire_marker}",
+                file=sys.stderr,
+            )
+            print(
+                f"  observed={observed_item.speaker}/{observed_item.wire_marker}",
+                file=sys.stderr,
+            )
         if len(changed_classification) > 50:
             print(
                 f"  ... {len(changed_classification) - 50} more classification changes",
@@ -311,6 +373,7 @@ def self_test() -> int:
         line=1,
         text='reason = "lifter refused this shape"',
         speaker=LIFT_OUTPUT_SPEAKER,
+        wire_marker="internal-only",
         reason="lifter-side output/status/effect vocabulary still uses the verifier verb",
         replacement="rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
     )

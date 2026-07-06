@@ -16,7 +16,7 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
 
     A raise is Python control flow, not a runtime effect. The block frontier carries it
     as a floor value so `TrySugar` can curry a matching handler over the same guarded
-    path. Residual raises are lowered/refused later as effects.
+    path. Residual raises are lowered later as typed effects.
     """
 
     exception_name: str | None = None

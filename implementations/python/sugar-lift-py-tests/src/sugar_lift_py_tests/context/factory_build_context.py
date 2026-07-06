@@ -27,9 +27,10 @@ class FactoryBuildContext:
     dig_sink: Any = None
     record_operation: Any = None
     # The set of callee names whose body is CURRENTLY being built, up the build stack.
-    # CallSugar.build refuses a callee already in this set: eagerly building a recursive
-    # universe never terminates, and an infinite recursion is not finitely constructible ->
-    # the bridge stays the vendor's axiom rather than hanging the lifter.
+    # CallSugar.build emits a construction-gap effect for a callee already in this
+    # set: eagerly building a recursive universe never terminates, and an infinite
+    # recursion is not finitely constructible -> the bridge stays the vendor's axiom
+    # rather than hanging the lifter.
     building: frozenset = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
