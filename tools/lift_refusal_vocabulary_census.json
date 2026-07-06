@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 287,
+  "lift_output_backlog": 285,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -546,7 +546,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/array_map_report.py:ddab3758efbf0a0a:1",
-      "line": 556,
+      "line": 553,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/array_map_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -556,7 +556,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/array_map_report.py:ddab3758efbf0a0a:2",
-      "line": 605,
+      "line": 602,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/array_map_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -566,7 +566,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/array_map_report.py:ddab3758efbf0a0a:3",
-      "line": 797,
+      "line": 794,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/array_map_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -656,7 +656,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:006236701e2ba730:1",
-      "line": 2519,
+      "line": 2526,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -666,7 +666,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:188408725db431fa:1",
-      "line": 1400,
+      "line": 1407,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -676,7 +676,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:1cae734a072f7154:1",
-      "line": 2515,
+      "line": 2522,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -686,7 +686,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:2662b11aefe8f015:1",
-      "line": 3818,
+      "line": 3825,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -696,7 +696,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:4a416b1c45852e4c:1",
-      "line": 3892,
+      "line": 3899,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -706,7 +706,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:4bb889de02e71d75:1",
-      "line": 3500,
+      "line": 3507,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -716,7 +716,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:4f8bd4119194be8f:1",
-      "line": 319,
+      "line": 323,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -726,7 +726,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:517e5fda0a021ddd:1",
-      "line": 2677,
+      "line": 2684,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -736,7 +736,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:517e5fda0a021ddd:2",
-      "line": 2685,
+      "line": 2692,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -746,7 +746,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:55a7df5ec180ca3a:1",
-      "line": 2741,
+      "line": 2748,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -756,7 +756,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:55a7df5ec180ca3a:2",
-      "line": 2750,
+      "line": 2757,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -766,7 +766,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:55a7df5ec180ca3a:3",
-      "line": 2762,
+      "line": 2769,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -776,7 +776,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:55a7df5ec180ca3a:4",
-      "line": 2787,
+      "line": 2794,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -786,7 +786,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:55a7df5ec180ca3a:5",
-      "line": 2870,
+      "line": 2877,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -796,7 +796,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:57bdb7da098fceab:1",
-      "line": 3521,
+      "line": 3528,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -806,7 +806,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:608c8e8e777a7272:1",
-      "line": 2824,
+      "line": 2831,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -816,7 +816,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:1",
-      "line": 506,
+      "line": 513,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -826,7 +826,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:10",
-      "line": 3878,
+      "line": 3885,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -836,7 +836,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:2",
-      "line": 758,
+      "line": 765,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -846,7 +846,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:3",
-      "line": 893,
+      "line": 900,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -856,7 +856,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:4",
-      "line": 1401,
+      "line": 1408,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -866,7 +866,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:5",
-      "line": 2533,
+      "line": 2540,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -876,7 +876,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:6",
-      "line": 2823,
+      "line": 2830,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -886,7 +886,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:7",
-      "line": 2887,
+      "line": 2894,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -896,7 +896,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:8",
-      "line": 3211,
+      "line": 3218,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -906,7 +906,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:648d2492fe14868f:9",
-      "line": 3501,
+      "line": 3508,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -916,7 +916,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:6ed65f5feaa7def3:1",
-      "line": 2872,
+      "line": 2879,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -926,7 +926,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:76047b23dceab725:1",
-      "line": 2973,
+      "line": 2980,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -936,7 +936,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:76047b23dceab725:2",
-      "line": 3309,
+      "line": 3316,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -946,7 +946,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:7a1b7e1fb4ce7325:1",
-      "line": 3509,
+      "line": 3516,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -956,7 +956,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:1",
-      "line": 1411,
+      "line": 1418,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -966,7 +966,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:10",
-      "line": 3297,
+      "line": 3304,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -976,7 +976,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:11",
-      "line": 3310,
+      "line": 3317,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -986,7 +986,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:12",
-      "line": 3837,
+      "line": 3844,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -996,7 +996,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:13",
-      "line": 3851,
+      "line": 3858,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1006,7 +1006,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:2",
-      "line": 2737,
+      "line": 2744,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1016,7 +1016,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:3",
-      "line": 2746,
+      "line": 2753,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1026,7 +1026,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:4",
-      "line": 2756,
+      "line": 2763,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1036,7 +1036,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:5",
-      "line": 2783,
+      "line": 2790,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1046,7 +1046,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:6",
-      "line": 2866,
+      "line": 2873,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1056,7 +1056,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:7",
-      "line": 2929,
+      "line": 2936,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1066,7 +1066,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:8",
-      "line": 2961,
+      "line": 2968,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1076,7 +1076,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8c0dac6ff2c9ae07:9",
-      "line": 2974,
+      "line": 2981,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1086,7 +1086,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:8e8e54235b2cc0fc:1",
-      "line": 339,
+      "line": 343,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1095,8 +1095,18 @@
       "wire_marker": "wire-protocol:factory-report-diagnostic"
     },
     {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:92a916f89dc857c7:1",
+      "line": 411,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "cast(DiagnosticDto, refusal.to_json()) for refusal in dig_refusals",
+      "wire_marker": "wire-protocol:factory-report-diagnostic"
+    },
+    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:9589a44a21f2cd01:1",
-      "line": 2933,
+      "line": 2940,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1106,7 +1116,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:976ce5bc71576719:1",
-      "line": 359,
+      "line": 363,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1116,7 +1126,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:976ce5bc71576719:2",
-      "line": 537,
+      "line": 544,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1126,7 +1136,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:976ce5bc71576719:3",
-      "line": 644,
+      "line": 651,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1136,7 +1146,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:976ce5bc71576719:4",
-      "line": 873,
+      "line": 880,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1146,7 +1156,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:976ce5bc71576719:5",
-      "line": 915,
+      "line": 922,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1156,7 +1166,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:976ce5bc71576719:6",
-      "line": 937,
+      "line": 944,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1166,7 +1176,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:976ce5bc71576719:7",
-      "line": 960,
+      "line": 967,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1176,7 +1186,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:976ce5bc71576719:8",
-      "line": 2585,
+      "line": 2592,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1186,7 +1196,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:976ce5bc71576719:9",
-      "line": 2673,
+      "line": 2680,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1196,7 +1206,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:aec1c61dc81ad9a0:1",
-      "line": 88,
+      "line": 92,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1206,7 +1216,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:ce3513363f7b07e1:1",
-      "line": 2667,
+      "line": 2674,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1216,7 +1226,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:d442512a67b70cff:1",
-      "line": 3508,
+      "line": 3515,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1226,7 +1236,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:da39e466120788ee:1",
-      "line": 1418,
+      "line": 1425,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1236,7 +1246,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:1",
-      "line": 1410,
+      "line": 1417,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1246,7 +1256,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:10",
-      "line": 3836,
+      "line": 3843,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1256,7 +1266,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:11",
-      "line": 3850,
+      "line": 3857,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1266,7 +1276,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:2",
-      "line": 2736,
+      "line": 2743,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1276,7 +1286,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:3",
-      "line": 2745,
+      "line": 2752,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1286,7 +1296,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:4",
-      "line": 2755,
+      "line": 2762,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1296,7 +1306,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:5",
-      "line": 2782,
+      "line": 2789,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1306,7 +1316,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:6",
-      "line": 2865,
+      "line": 2872,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1316,7 +1326,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:7",
-      "line": 2928,
+      "line": 2935,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1326,7 +1336,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:8",
-      "line": 2960,
+      "line": 2967,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1336,7 +1346,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:dda45fc39c624000:9",
-      "line": 3296,
+      "line": 3303,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1346,7 +1356,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:e5c0e1a403cd548f:1",
-      "line": 2968,
+      "line": 2975,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1356,7 +1366,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:e5c0e1a403cd548f:2",
-      "line": 3304,
+      "line": 3311,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1365,18 +1375,8 @@
       "wire_marker": "wire-protocol:factory-report-diagnostic"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py:eaa840680ce6e6e4:1",
-      "line": 412,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/literal_call_report.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "*[refusal.to_json() for refusal in dig_refusals],",
-      "wire_marker": "wire-protocol:factory-report-diagnostic"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:2eb81c7df2aea8fa:1",
-      "line": 265,
+      "line": 271,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1386,7 +1386,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:623076923e55ca30:1",
-      "line": 16,
+      "line": 18,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1396,7 +1396,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:78d36af9a7ea0b70:1",
-      "line": 254,
+      "line": 260,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1406,7 +1406,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:a5db6b5383083d6f:1",
-      "line": 21,
+      "line": 23,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1416,7 +1416,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:b162793a177819dc:1",
-      "line": 255,
+      "line": 261,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1705,16 +1705,6 @@
       "wire_marker": "not-lift-output"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/proofir_vocab_instruments.py:8fbd52dffc50dc58:1",
-      "line": 10,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/proofir_vocab_instruments.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"RefusalRecord\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/factory_audit_summary_dto.py:4a2a45df0d51b3cf:1",
       "line": 16,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/factory_audit_summary_dto.py",
@@ -1746,7 +1736,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/lift_report_payload_dto.py:623d5681d39b0b05:1",
-      "line": 73,
+      "line": 81,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/lift_report_payload_dto.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1756,7 +1746,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/lift_report_payload_dto.py:96bc4128b90536ac:1",
-      "line": 76,
+      "line": 84,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/lift_report_payload_dto.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1766,13 +1756,23 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/lift_report_payload_dto.py:ac822e4b77085acf:1",
-      "line": 75,
+      "line": 83,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/lift_report_payload_dto.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "# same count as `source_refused`; kept dual-written since the Rust",
       "wire_marker": "wire-protocol:source_refused"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/open_lane_dto.py:f8f0038553d3bff1:1",
+      "line": 51,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/open_lane_dto.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "\"\"\"Ad hoc diagnostic rows (dig refusals, agreement violations, proofir",
+      "wire_marker": "wire-protocol:rpc-dto"
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:275e3195e042e920:1",
@@ -1836,7 +1836,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/__init__.py:401934b77845ad4f:1",
-      "line": 19,
+      "line": 20,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/__init__.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1846,12 +1846,22 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/__init__.py:af1254490840d514:1",
-      "line": 81,
+      "line": 83,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/__init__.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "\"RefusalRecord\",",
+      "wire_marker": "wire-protocol:RefusalRecord"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:1f834fbeb83f2fe4:1",
+      "line": 324,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "from .refusal_record import BoundaryRecord, RefusalRecord # noqa: E402",
       "wire_marker": "wire-protocol:RefusalRecord"
     },
     {
@@ -1875,16 +1885,6 @@
       "wire_marker": "wire-protocol:proofir-node"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:467f7ecbbe4dfc29:1",
-      "line": 324,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "from .refusal_record import RefusalRecord # noqa: E402",
-      "wire_marker": "wire-protocol:RefusalRecord"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:8111817bbaf46949:1",
       "line": 117,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
@@ -1895,18 +1895,8 @@
       "wire_marker": "wire-protocol:proofir-node"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:d066d894a85b2eab:1",
-      "line": 333,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "RefusalRecord,",
-      "wire_marker": "wire-protocol:RefusalRecord"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py:0fa009f648c13dfa:1",
-      "line": 138,
+      "line": 145,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1916,7 +1906,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py:459a945d2d113b09:1",
-      "line": 89,
+      "line": 91,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1926,7 +1916,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py:a095f9ec1f015e70:1",
-      "line": 137,
+      "line": 144,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1936,7 +1926,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/call_edge_decl.py:102eddf21d3bb6e5:1",
-      "line": 141,
+      "line": 145,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/call_edge_decl.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1946,7 +1936,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/call_edge_decl.py:773c472396e607be:1",
-      "line": 142,
+      "line": 146,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/call_edge_decl.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1955,48 +1945,8 @@
       "wire_marker": "wire-protocol:proofir-node"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:003919ee888ccb1e:1",
-      "line": 71,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": ") -> RefusalRecord:",
-      "wire_marker": "wire-protocol:RefusalRecord"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:003919ee888ccb1e:2",
-      "line": 82,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": ") -> RefusalRecord:",
-      "wire_marker": "wire-protocol:RefusalRecord"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:0aa2af73acae7132:1",
-      "line": 103,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"kind\": \"refusal-record\",",
-      "wire_marker": "wire-protocol:refusal-record"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:1461b4eaf1fac90e:1",
-      "line": 52,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "fix=\"preserve the refusal reason when constructing RefusalRecord\",",
-      "wire_marker": "wire-protocol:RefusalRecord"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:14e7d3d074ef576c:1",
-      "line": 163,
+      "line": 177,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2005,13 +1955,43 @@
       "wire_marker": "wire-protocol:proofir-node"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:40302e3c69ae76c1:1",
-      "line": 38,
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:1a1bfed5c9ef5749:1",
+      "line": 113,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
-      "text": "node_class: ClassVar[str] = \"RefusalRecord\"",
+      "text": "# #3632 batch 4: this \"kind\" was previously \"refusal-record\".",
+      "wire_marker": "wire-protocol:refusal-record"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:2b5e175da6665b11:1",
+      "line": 221,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "__all__ = [\"BoundaryRecord\", \"RefusalRecord\"]",
+      "wire_marker": "wire-protocol:RefusalRecord"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:2ba1783b2c6a0908:1",
+      "line": 103,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "raise TypeError(\"BoundaryRecord.from_gap requires FactoryGap or DigRefusal\")",
+      "wire_marker": "wire-protocol:DigRefusal"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:32eb464c4d76853b:1",
+      "line": 40,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "#3632 batch 4: this node was previously named `RefusalRecord`. `refusal",
       "wire_marker": "wire-protocol:RefusalRecord"
     },
     {
@@ -2025,8 +2005,18 @@
       "wire_marker": "wire-protocol:DigRefusal"
     },
     {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:4c1863eb57c971f6:1",
+      "line": 210,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "def _fact_and_refusal_refuses(cls: type[BoundaryRecord]) -> BoundaryRecord:",
+      "wire_marker": "wire-protocol:proofir-node"
+    },
+    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:53b83358d809b611:1",
-      "line": 160,
+      "line": 174,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2035,8 +2025,28 @@
       "wire_marker": "wire-protocol:proofir-node"
     },
     {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:604f489ce00675c7:1",
+      "line": 219,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "RefusalRecord = BoundaryRecord",
+      "wire_marker": "wire-protocol:RefusalRecord"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:7e52a223d47e3406:1",
+      "line": 186,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "name=\"boundary-record-fact-and-refusal-refuses\",",
+      "wire_marker": "wire-protocol:proofir-node"
+    },
+    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:7e97b18997e57480:1",
-      "line": 176,
+      "line": 190,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2046,7 +2056,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:9070d82fd2c341d1:1",
-      "line": 181,
+      "line": 195,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2066,7 +2076,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:a48c7a3584fa6344:1",
-      "line": 110,
+      "line": 124,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2075,18 +2085,8 @@
       "wire_marker": "wire-protocol:DigRefusal"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:aa3a7fbbe35f00ef:1",
-      "line": 172,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "name=\"refusal-record-fact-and-refusal-refuses\",",
-      "wire_marker": "wire-protocol:refusal-record"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:ab3a136bbc24ded3:1",
-      "line": 79,
+      "line": 89,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2096,7 +2096,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:ab630fbb97cbc175:1",
-      "line": 111,
+      "line": 125,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2106,7 +2106,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:af27ef89b3479a11:1",
-      "line": 88,
+      "line": 98,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2116,7 +2116,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:b59b0d326bb8e8e6:1",
-      "line": 90,
+      "line": 100,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2125,38 +2125,8 @@
       "wire_marker": "wire-protocol:DigRefusal"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:bd2d1bd3abbe7e9f:1",
-      "line": 93,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "raise TypeError(\"RefusalRecord.from_gap requires FactoryGap or DigRefusal\")",
-      "wire_marker": "wire-protocol:DigRefusal"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:be464af919119762:1",
-      "line": 196,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "def _fact_and_refusal_refuses(cls: type[RefusalRecord]) -> RefusalRecord:",
-      "wire_marker": "wire-protocol:RefusalRecord"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:bfca1ecfd9917edd:1",
-      "line": 37,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "class RefusalRecord:",
-      "wire_marker": "wire-protocol:RefusalRecord"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:c1e2665cf670a9a7:1",
-      "line": 112,
+      "line": 126,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2165,8 +2135,18 @@
       "wire_marker": "wire-protocol:DigRefusal"
     },
     {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:c5566a3ab8686038:1",
+      "line": 38,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "\"\"\"A typed-effect record with grounds, not a lift-side refusal.",
+      "wire_marker": "wire-protocol:proofir-node"
+    },
+    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:c5bb6ea11825b6d6:1",
-      "line": 113,
+      "line": 127,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2175,8 +2155,18 @@
       "wire_marker": "wire-protocol:DigRefusal"
     },
     {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:d2ec711f6e31b6b2:1",
+      "line": 42,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "that string is now ``\"boundary-record\"``. `RefusalRecord` remains a",
+      "wire_marker": "wire-protocol:RefusalRecord"
+    },
+    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:d6ff6500e5176a65:1",
-      "line": 173,
+      "line": 187,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2185,33 +2175,13 @@
       "wire_marker": "wire-protocol:proofir-node"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:eb8a6da31ca3fc32:1",
-      "line": 204,
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:dbb279dce1e6d35f:1",
+      "line": 218,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
-      "text": "__all__ = [\"RefusalRecord\"]",
-      "wire_marker": "wire-protocol:RefusalRecord"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:ee8264063d109948:1",
-      "line": 156,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "name=\"refusal-record-bridge-only\",",
-      "wire_marker": "wire-protocol:refusal-record"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py:fb9d59df9ea595bb:1",
-      "line": 73,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/refusal_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "raise TypeError(\"RefusalRecord.from_incomplete requires Incomplete\")",
+      "text": "# Compatibility alias: pre-batch-4 code imports `RefusalRecord`.",
       "wire_marker": "wire-protocol:RefusalRecord"
     },
     {
@@ -2616,7 +2586,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_lifter.py:7c764257ec10d848:1",
-      "line": 683,
+      "line": 680,
       "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_lifter.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4249,11 +4219,11 @@
   "speaker_counts": {
     "emitter-provenance-guard": 3,
     "grammar-census-prose": 23,
-    "instrument-prose": 3,
-    "lift-output-backlog": 287,
+    "instrument-prose": 2,
+    "lift-output-backlog": 285,
     "provenance-oracle-guard": 26,
     "verifier-verdict-quote": 42,
     "verify-dialect-boundary": 40
   },
-  "total_occurrences": 424
+  "total_occurrences": 421
 }

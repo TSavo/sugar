@@ -36,12 +36,12 @@ from sugar_lift_py_tests.proofir import (
     EqualityFact,
     FunctionContract,
     BoolSort,
+    BoundaryRecord,
     IntSort,
     PostCondition,
     ProofIRNode,
     Provenance,
     REGISTERED_PROOFIR_NODE_CLASSES,
-    RefusalRecord,
     Stated,
     VarTerm,
     canonical_euf_callsite_name,
@@ -270,7 +270,7 @@ def _run_witness_case(case, tmp_path: Path) -> str:
         return "construction-refusal"
     if case.construct is not None:
         constructed = case.construct()
-        if isinstance(constructed, RefusalRecord):
+        if isinstance(constructed, BoundaryRecord):
             assert constructed.denotation() is None
     assert case.source, f"{case.name} must be driven by a source witness"
     cli_project = tmp_path / case.name / "cli"
@@ -304,7 +304,7 @@ def _assert_lift_doc_contains_node_class(doc: dict, case) -> None:
         # provenance guarantee lives on the construction wrapper before DTO
         # lowering, not as a new serialized field.
         assert _has_function_contract(doc), doc
-    elif case.node_class == "RefusalRecord":
+    elif case.node_class == "BoundaryRecord":
         assert any(d.get("kind") == "dig-boundary" for d in doc.get("diagnostics", []))
         assert not _has_function_contract(doc), doc
     else:
@@ -591,23 +591,23 @@ def test_function_contract_witnesses_and_builder_invariants(tmp_path: Path) -> N
 def test_refusal_record_has_no_formula_and_fact_plus_refusal_is_unconstructible(
     tmp_path: Path,
 ) -> None:
-    pair = RefusalRecord.verdict_witnesses()
+    pair = BoundaryRecord.verdict_witnesses()
     assert _run_witness_case(pair.truthful, tmp_path) == "sat"
     assert pair.lying.expected == "construction-refusal"
 
-    record = RefusalRecord.from_incomplete(
+    record = BoundaryRecord.from_incomplete(
         Incomplete(RuntimeEffect("opaque runtime effect")),
-        provenance=_derived_provenance("RefusalRecord"),
+        provenance=_derived_provenance("BoundaryRecord"),
     )
-    assert RefusalRecord.__module__.endswith(".proofir.nodes.refusal_record")
+    assert BoundaryRecord.__module__.endswith(".proofir.nodes.refusal_record")
     assert not isinstance(record, ProofIRNode)
     assert record.denotation() is None
     assert record.cid().startswith("blake3-512:")
 
     with pytest.raises(TypeError, match="formula"):
-        RefusalRecord.from_incomplete(
+        BoundaryRecord.from_incomplete(
             Incomplete(RuntimeEffect("opaque runtime effect")),
-            provenance=_derived_provenance("RefusalRecord"),
+            provenance=_derived_provenance("BoundaryRecord"),
             formula=eq(make_var("call"), num(0)),
         )
 

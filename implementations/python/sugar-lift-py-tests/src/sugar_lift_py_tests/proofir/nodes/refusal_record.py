@@ -34,8 +34,18 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, init=False)
-class RefusalRecord:
-    node_class: ClassVar[str] = "RefusalRecord"
+class BoundaryRecord:
+    """A typed-effect record with grounds, not a lift-side refusal.
+
+    #3632 batch 4: this node was previously named `RefusalRecord`. `refusal
+    -record` was previously named that in its emitted wire ``"kind"`` and
+    that string is now ``"boundary-record"``. `RefusalRecord` remains a
+    compatibility alias below for existing importers; no in-tree reader
+    matches the wire ``"kind"`` field by value, so there is no dual-read
+    seam required for this rename (unlike the dig-boundary wire kind).
+    """
+
+    node_class: ClassVar[str] = "BoundaryRecord"
 
     effect: Effect = field(init=False)
     _provenance: Provenance = field(init=False, repr=False)
@@ -49,7 +59,7 @@ class RefusalRecord:
                 owner=self.node_class,
                 observed="empty reason",
                 requested="effect reason",
-                fix="preserve the refusal reason when constructing RefusalRecord",
+                fix="preserve the boundary reason when constructing BoundaryRecord",
             )
         object.__setattr__(self, "effect", resolved_effect)
         object.__setattr__(self, "_provenance", provenance)
@@ -68,9 +78,9 @@ class RefusalRecord:
         incomplete: Incomplete,
         *,
         provenance: Provenance,
-    ) -> RefusalRecord:
+    ) -> BoundaryRecord:
         if not isinstance(incomplete, Incomplete):
-            raise TypeError("RefusalRecord.from_incomplete requires Incomplete")
+            raise TypeError("BoundaryRecord.from_incomplete requires Incomplete")
         return cls(effect=incomplete.effect, provenance=provenance)
 
     @classmethod
@@ -79,7 +89,7 @@ class RefusalRecord:
         gap: FactoryGap | DigRefusal,
         *,
         provenance: Provenance,
-    ) -> RefusalRecord:
+    ) -> BoundaryRecord:
         if isinstance(gap, FactoryGap):
             return cls(
                 effect=FactoryGapEffect.from_gap(gap),
@@ -90,7 +100,7 @@ class RefusalRecord:
                 effect=DigRefusalEffect.from_refusal(gap),
                 provenance=provenance,
             )
-        raise TypeError("RefusalRecord.from_gap requires FactoryGap or DigRefusal")
+        raise TypeError("BoundaryRecord.from_gap requires FactoryGap or DigRefusal")
 
     def denotation(self) -> None:
         return None
@@ -100,7 +110,11 @@ class RefusalRecord:
 
     def to_declaration(self) -> dict[str, Any]:
         return {
-            "kind": "refusal-record",
+            # #3632 batch 4: this "kind" was previously "refusal-record".
+            # No in-tree reader matches this field by value; the new CID
+            # this node produces is expected to differ from CIDs minted
+            # before this rename.
+            "kind": "boundary-record",
             "effectKind": self.effect_kind,
             "reason": self.reason,
             "provenance": self.provenance().to_rpc(),
@@ -153,7 +167,7 @@ class RefusalRecord:
     def verdict_witnesses(cls) -> VerdictWitnessPair:
         return VerdictWitnessPair(
             truthful=VerdictWitnessCase(
-                name="refusal-record-bridge-only",
+                name="boundary-record-bridge-only",
                 expected="sat",
                 formulas=(),
                 declarations={},
@@ -169,7 +183,7 @@ class RefusalRecord:
                 ),
             ),
             lying=VerdictWitnessCase(
-                name="refusal-record-fact-and-refusal-refuses",
+                name="boundary-record-fact-and-refusal-refuses",
                 expected="construction-refusal",
                 formulas=(),
                 declarations={},
@@ -193,7 +207,7 @@ def _runtime_effect_incomplete(reason: str) -> Incomplete:
     return Incomplete(RuntimeEffect(reason))
 
 
-def _fact_and_refusal_refuses(cls: type[RefusalRecord]) -> RefusalRecord:
+def _fact_and_refusal_refuses(cls: type[BoundaryRecord]) -> BoundaryRecord:
     return cast(Any, cls.from_incomplete)(
         _runtime_effect_incomplete("opaque runtime effect"),
         provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
@@ -201,4 +215,7 @@ def _fact_and_refusal_refuses(cls: type[RefusalRecord]) -> RefusalRecord:
     )
 
 
-__all__ = ["RefusalRecord"]
+# Compatibility alias: pre-batch-4 code imports `RefusalRecord`.
+RefusalRecord = BoundaryRecord
+
+__all__ = ["BoundaryRecord", "RefusalRecord"]

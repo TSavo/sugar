@@ -7,7 +7,7 @@ from typing import Any, Iterable, Sequence
 PROOFIR_NODE_CLASSES: tuple[str, ...] = (
     "EqualityFact",
     "FunctionContract",
-    "RefusalRecord",
+    "BoundaryRecord",
     "CallEdgeDecl",
     "AuditMemento",
     "UniverseMint",
