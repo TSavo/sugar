@@ -38,6 +38,7 @@ mod state_conformance {
             contract_cid: cid.to_string(),
             pre_json: None,
             post_json: None,
+            ..Default::default()
         }
     }
 

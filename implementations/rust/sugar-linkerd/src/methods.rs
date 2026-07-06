@@ -1076,6 +1076,7 @@ fn parse_declaration_to_contract(decl: &Json, kit_label: &str) -> Option<LinkerC
         contract_cid,
         pre_json,
         post_json,
+        ..Default::default()
     })
 }
 
@@ -1150,6 +1151,7 @@ fn parse_call_edge(edge: &Json) -> Option<LinkerCallEdge> {
         target_symbol,
         call_site_locus_json: locus,
         evidence_term_json: evidence,
+        ..Default::default()
     })
 }
 
@@ -1274,6 +1276,7 @@ async fn lift_rust_source(
                 contract_cid: cid,
                 pre_json,
                 post_json,
+                ..Default::default()
             });
         }
 
@@ -1301,6 +1304,7 @@ async fn lift_rust_source(
                     "name": "call-site-obligation",
                     "args": [],
                 }),
+                ..Default::default()
             });
         }
 
