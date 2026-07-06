@@ -148,12 +148,8 @@ pub fn run(args: ProveArgs) -> u8 {
     // Run the six-stage verifier pipeline.
     let project_root: PathBuf = args.project.unwrap_or_else(|| PathBuf::from("."));
     if !project_root.exists() {
-        eprintln!(
-            "{}: project root does not exist: {}",
-            "error".red().bold(),
-            project_root.display()
-        );
-        return crate::EXIT_USER_ERROR;
+        let error = format!("project root does not exist: {}", project_root.display());
+        return emit_prove_setup_error(&error, args.out.json);
     }
 
     let component_plan_options = ComponentPlanOptions {
@@ -167,8 +163,7 @@ pub fn run(args: ProveArgs) -> u8 {
     ) {
         Ok(artifact) => artifact,
         Err(error) => {
-            eprintln!("{}: {error}", "error".red().bold());
-            return crate::EXIT_USER_ERROR;
+            return emit_prove_setup_error(&error, args.out.json);
         }
     };
     let report = &artifact.report;
@@ -196,8 +191,8 @@ pub fn run(args: ProveArgs) -> u8 {
                 }
             }
             Err(error) => {
-                eprintln!("{}: emit prove witnesses: {error}", "error".red().bold());
-                return crate::EXIT_USER_ERROR;
+                let error = format!("emit prove witnesses: {error}");
+                return emit_prove_setup_error(&error, args.out.json);
             }
         }
     }
@@ -206,8 +201,8 @@ pub fn run(args: ProveArgs) -> u8 {
         match serde_json::to_string_pretty(&report_json) {
             Ok(s) => println!("{s}"),
             Err(e) => {
-                eprintln!("{}: serialize JSON: {e}", "error".red().bold());
-                return crate::EXIT_USER_ERROR;
+                let error = format!("serialize JSON: {e}");
+                return emit_prove_setup_error(&error, true);
             }
         }
     } else {
@@ -215,6 +210,34 @@ pub fn run(args: ProveArgs) -> u8 {
     }
 
     report_fmt::report_exit_code(report)
+}
+
+// `sugar prove --json` promises callers a parseable JSON report on stdout.
+// Before this, setup failures (bad project root, component-plan errors,
+// dependency-proof resolution, witness minting, JSON serialization) only
+// printed a plain "error: ..." line to stderr, so `--json` callers (and the
+// numpy-attribute-safety-showcase examples-gate check) saw NO JSON object at
+// all instead of a red verdict they could parse. Route every prove-time
+// setup error through this so `--json` always yields `{"ok": false, ...}`,
+// matching the contract `--json` implies.
+fn prove_setup_error_json(error: &str) -> Value {
+    json!({
+        "ok": false,
+        "verdict": "error",
+        "reason": error,
+    })
+}
+
+fn emit_prove_setup_error(error: &str, json: bool) -> u8 {
+    if json {
+        let report = prove_setup_error_json(error);
+        match serde_json::to_string_pretty(&report) {
+            Ok(s) => println!("{s}"),
+            Err(_) => println!("{{\"ok\": false, \"verdict\": \"error\"}}"),
+        }
+    }
+    eprintln!("{}: {error}", "error".red().bold());
+    crate::EXIT_USER_ERROR
 }
 
 #[allow(dead_code)] // Kept as the default wrapper for callers without component-plan options.
@@ -961,6 +984,31 @@ fn read_json_value(path: &Path) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Red instrument for the examples-gate shape `prove-output/no-json-report`:
+    // when `sugar prove --json` hits a setup error (bad project root,
+    // component-plan error, dependency-proof resolution failure, witness
+    // minting failure, or JSON serialization failure), the caller must still
+    // get a parseable JSON object on stdout instead of a bare stderr line.
+    #[test]
+    fn prove_setup_error_json_is_a_parseable_report_object() {
+        let report = prove_setup_error_json("dependency proof resolution failed: boom");
+        assert_eq!(report["ok"].as_bool(), Some(false));
+        assert_eq!(report["verdict"].as_str(), Some("error"));
+        assert_eq!(
+            report["reason"].as_str(),
+            Some("dependency proof resolution failed: boom")
+        );
+
+        // Must round-trip through the exact serialize path `emit_prove_setup_error`
+        // uses, and must contain a line starting with `{` so downstream
+        // regex-based JSON extraction (e.g. the numpy-attribute-safety-showcase
+        // examples gate) finds a JSON object at all.
+        let s = serde_json::to_string_pretty(&report).expect("serialize");
+        assert!(s.lines().next().unwrap().starts_with('{'));
+        let round_tripped: Value = serde_json::from_str(&s).expect("parse back");
+        assert_eq!(round_tripped, report);
+    }
 
     #[test]
     fn proof_input_pins_refuse_bad_prefix_proof_filename() {
