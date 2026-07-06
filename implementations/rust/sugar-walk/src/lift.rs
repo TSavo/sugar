@@ -4356,411 +4356,456 @@ fn associated_call_path_leaf_lift(expr: &Expr) -> Option<String> {
     path.path.segments.last().map(|seg| seg.ident.to_string())
 }
 
-fn lift_expr_to_term_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrTerm> {
-    match expr {
-        Expr::Lit(lit) => match &lit.lit {
-            Lit::Int(n) => match n.base10_parse::<i64>() {
-                Ok(v) => Some(crate::wp::const_int(v)),
-                Err(_) => None,
+fn literal_expr_to_term(lit: &Lit) -> Option<IrTerm> {
+    if let Lit::Int(n) = lit {
+        return match n.base10_parse::<i64>() {
+            Ok(v) => Some(crate::wp::const_int(v)),
+            Err(_) => None,
+        };
+    }
+    if let Lit::Bool(b) = lit {
+        return Some(IrTerm::Const {
+            value: serde_json::Value::Bool(b.value),
+            sort: sugar_ir_types::Sort::Primitive {
+                name: "Bool".to_string(),
             },
-            Lit::Bool(b) => Some(IrTerm::Const {
-                value: serde_json::Value::Bool(b.value),
-                sort: sugar_ir_types::Sort::Primitive {
-                    name: "Bool".to_string(),
+        });
+    }
+    // A byte literal `b'0'` is its ASCII codepoint; lift as an int
+    // const so byte-arithmetic tails (`byte - b'0'`) and byte match
+    // arms lift instead of collapsing the whole term to None.
+    if let Lit::Byte(b) = lit {
+        return Some(crate::wp::const_int(b.value() as i64));
+    }
+    // A char literal `'a'` is its Unicode scalar value.
+    if let Lit::Char(c) = lit {
+        return Some(crate::wp::const_int(c.value() as i64));
+    }
+    // A string literal lifts to a String const so string-returning
+    // tails (`"const"`) carry a real term.
+    if let Lit::Str(s) = lit {
+        return Some(IrTerm::Const {
+            value: serde_json::Value::String(s.value()),
+            sort: sugar_ir_types::Sort::Primitive {
+                name: "String".to_string(),
+            },
+        });
+    }
+    if matches!(
+        lit,
+        Lit::Float(_) | Lit::ByteStr(_) | Lit::CStr(_) | Lit::Verbatim(_)
+    ) {
+        // #3017 item 2 owns the broader sort-neutral scalar floor; this
+        // term lifter does not invent a carrier for unmodeled literals.
+        return None;
+    }
+    panic!("sugar-walk term classifier refused unknown syn::Lit variant")
+}
+
+// `Expr::Paren`/`Expr::Reference`/`Expr::Cast`/`Expr::Group` are all
+// transparent wrappers for term-lifting purposes: the wrapped inner
+// expression is the one that matters. Named recognizer so the outer
+// dispatch reads as one `if let` per real construction, not a ladder.
+fn value_transparent_recurse_target(expr: &Expr) -> Option<&Expr> {
+    if let Expr::Paren(p) = expr {
+        return Some(&p.expr);
+    }
+    if let Expr::Reference(r) = expr {
+        return Some(&r.expr);
+    }
+    if let Expr::Cast(c) = expr {
+        return Some(&c.expr);
+    }
+    if let Expr::Group(g) = expr {
+        return Some(&g.expr);
+    }
+    None
+}
+
+fn lift_expr_to_term_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrTerm> {
+    if let Expr::Lit(lit) = expr {
+        return literal_expr_to_term(&lit.lit);
+    }
+    if let Expr::Path(syn::ExprPath { path, .. }) = expr {
+        let seg = path.segments.last()?;
+        // Resolve through the scope stack: bound names map to their
+        // unique forms; free variables keep their surface name.
+        return Some(crate::wp::var(ctx.resolve(&seg.ident.to_string())));
+    }
+    if let Some(inner) = value_transparent_recurse_target(expr) {
+        return lift_expr_to_term_inner(inner, ctx);
+    }
+    if let Expr::Field(f) = expr {
+        let base = lift_expr_to_term_inner(&f.base, ctx)?;
+        let name = match &f.member {
+            syn::Member::Named(id) => id.to_string(),
+            syn::Member::Unnamed(idx) => idx.index.to_string(),
+        };
+        return Some(IrTerm::Ctor {
+            name: "field".to_string(),
+            args: vec![
+                base,
+                IrTerm::Var {
+                    name: format!(".{}", name),
                 },
-            }),
-            // A byte literal `b'0'` is its ASCII codepoint; lift as an int
-            // const so byte-arithmetic tails (`byte - b'0'`) and byte match
-            // arms lift instead of collapsing the whole term to None.
-            Lit::Byte(b) => Some(crate::wp::const_int(b.value() as i64)),
-            // A char literal `'a'` is its Unicode scalar value.
-            Lit::Char(c) => Some(crate::wp::const_int(c.value() as i64)),
-            // A string literal lifts to a String const so string-returning
-            // tails (`"const"`) carry a real term.
-            Lit::Str(s) => Some(IrTerm::Const {
-                value: serde_json::Value::String(s.value()),
-                sort: sugar_ir_types::Sort::Primitive {
-                    name: "String".to_string(),
-                },
-            }),
-            Lit::Float(_) | Lit::ByteStr(_) | Lit::CStr(_) | Lit::Verbatim(_) => {
-                // #3017 item 2 owns the broader sort-neutral scalar floor; this
-                // term lifter does not invent a carrier for unmodeled literals.
-                None
-            }
-            _ => panic!("sugar-walk term classifier refused unknown syn::Lit variant"),
-        },
-        Expr::Path(syn::ExprPath { path, .. }) => {
-            let seg = path.segments.last()?;
-            // Resolve through the scope stack: bound names map to their
-            // unique forms; free variables keep their surface name.
-            Some(crate::wp::var(ctx.resolve(&seg.ident.to_string())))
+            ],
+        });
+    }
+    if let Expr::Index(i) = expr {
+        let arr = lift_expr_to_term_inner(&i.expr, ctx)?;
+        let idx = lift_expr_to_term_inner(&i.index, ctx)?;
+        return Some(IrTerm::Ctor {
+            name: "index".to_string(),
+            args: vec![arr, idx],
+        });
+    }
+    if let Expr::MethodCall(m) = expr {
+        let receiver = lift_expr_to_term_inner(&m.receiver, ctx)?;
+        let mut args = vec![receiver.clone()];
+        for a in &m.args {
+            let lifted = lift_expr_to_term_inner(a, ctx)?;
+            args.push(lifted);
         }
-        Expr::Paren(p) => lift_expr_to_term_inner(&p.expr, ctx),
-        Expr::Reference(r) => lift_expr_to_term_inner(&r.expr, ctx),
-        Expr::Cast(c) => lift_expr_to_term_inner(&c.expr, ctx),
-        Expr::Field(f) => {
-            let base = lift_expr_to_term_inner(&f.base, ctx)?;
-            let name = match &f.member {
+        let method_name = if m.method == "recv" && m.args.is_empty() {
+            expr_root_ident(&m.receiver)
+                .map(|rx| format!("channel:recv:{rx}"))
+                .unwrap_or_else(|| format!("method:{}", m.method))
+        } else if m.method == "lock" && m.args.is_empty() {
+            expr_root_ident(&m.receiver)
+                .map(|mutex| format!("mutex:guard:{mutex}"))
+                .unwrap_or_else(|| format!("method:{}", m.method))
+        } else {
+            format!("method:{}", m.method)
+        };
+        let value = IrTerm::Ctor {
+            name: method_name,
+            args,
+        };
+        if let Some(guard) = assertion_guard_for_partial(&m.method, &m.receiver, &receiver, ctx) {
+            return Some(guarded_value_from_formula(guard, value));
+        }
+        if m.method == "unwrap"
+            && m.args.is_empty()
+            && receiver_as_str_is_known_json_string(&m.receiver, ctx)
+        {
+            return Some(guarded_value_for_known_option_unwrap(receiver, value));
+        }
+        return Some(value);
+    }
+    if let Expr::Range(r) = expr {
+        let start = match &r.start {
+            Some(e) => lift_expr_to_term_inner(e, ctx)?,
+            None => crate::wp::var("_"),
+        };
+        let end = match &r.end {
+            Some(e) => lift_expr_to_term_inner(e, ctx)?,
+            None => crate::wp::var("_"),
+        };
+        let name = match r.limits {
+            syn::RangeLimits::HalfOpen(_) => "range",
+            syn::RangeLimits::Closed(_) => "range_incl",
+        };
+        return Some(IrTerm::Ctor {
+            name: name.to_string(),
+            args: vec![start, end],
+        });
+    }
+    if let Expr::Tuple(t) = expr {
+        let mut args = Vec::with_capacity(t.elems.len());
+        for e in &t.elems {
+            args.push(lift_expr_to_term_inner(e, ctx)?);
+        }
+        return Some(IrTerm::Ctor {
+            name: "tuple".to_string(),
+            args,
+        });
+    }
+    if let Expr::Array(a) = expr {
+        let mut args = Vec::with_capacity(a.elems.len());
+        for e in &a.elems {
+            args.push(lift_expr_to_term_inner(e, ctx)?);
+        }
+        return Some(IrTerm::Ctor {
+            name: "array".to_string(),
+            args,
+        });
+    }
+    if let Expr::Repeat(r) = expr {
+        let elem = lift_expr_to_term_inner(&r.expr, ctx)?;
+        let count = lift_expr_to_term_inner(&r.len, ctx)?;
+        return Some(IrTerm::Ctor {
+            name: "array_repeat".to_string(),
+            args: vec![elem, count],
+        });
+    }
+    if let Expr::Closure(c) = expr {
+        // `|x| body` lifts to IrTerm::Lambda. Multi-arg closures
+        // collapse into nested lambdas (right-associative). Each
+        // closure parameter is bound in a fresh scope frame and
+        // assigned a globally-unique id by the LiftCtx; references
+        // to that name inside the closure body resolve to the
+        // unique form. The shadow AST's structural traversal owns
+        // this name resolution.
+        ctx.push_frame();
+        let mut unique_names: Vec<String> = Vec::with_capacity(c.inputs.len());
+        for (idx, input) in c.inputs.iter().enumerate() {
+            // A closure param's binding NAME. Ident/typed-ident keep
+            // their name. A wildcard `_` or a destructuring pattern
+            // (`|(a, _)| ..`, common in `.map`/`.unwrap_or_else`) binds
+            // a synthetic positional placeholder so the closure lifts
+            // to a lambda instead of collapsing the whole tail to None.
+            // The body references to a destructured name resolve as
+            // free vars (not the placeholder), which is fine under the
+            // reflexive encoding: the lambda term is uninterpreted and
+            // discharges against the body's own identical lambda.
+            let base = if let syn::Pat::Ident(p) = input {
+                p.ident.to_string()
+            } else if let syn::Pat::Type(pt) = input {
+                if let syn::Pat::Ident(p) = &*pt.pat {
+                    p.ident.to_string()
+                } else {
+                    format!("_closure_arg{idx}")
+                }
+            } else {
+                format!("_closure_arg{idx}")
+            };
+            unique_names.push(ctx.bind(&base));
+        }
+        let body_lifted = lift_expr_to_term_inner(&c.body, ctx);
+        ctx.pop_frame();
+        let body = body_lifted?;
+        let mut term = body;
+        for unique in unique_names.into_iter().rev() {
+            term = IrTerm::Lambda {
+                param_name: unique,
+                param_sort: sugar_ir_types::Sort::Primitive {
+                    name: "Int".to_string(),
+                },
+                body: Box::new(term),
+            };
+        }
+        return Some(term);
+    }
+    if let Expr::Await(a) = expr {
+        let base = lift_expr_to_term_inner(&a.base, ctx)?;
+        return Some(IrTerm::Ctor {
+            name: "await".to_string(),
+            args: vec![base],
+        });
+    }
+    if let Expr::Async(a) = expr {
+        // `async { body }` produces a Future. The substrate sees
+        // through to the body's eventual value: lift the trailing
+        // expression of the block.
+        if let Some(syn::Stmt::Expr(e, None)) = a.block.stmts.last() {
+            return lift_expr_to_term_inner(e, ctx);
+        }
+        return None;
+    }
+    if let Expr::Call(call) = expr {
+        // Plain function call `f(args)`. Lift to a ctor named by the
+        // callee's bare symbol (the last path segment) so the call tree
+        // SURVIVES into the contract formula. This is the keystone: the
+        // ctor name matches the callee's auto-minted bridge `sourceSymbol`,
+        // so `enumerate_callsites` finds the seam, `resolve_target` pulls
+        // the callee's precondition, and the runner discharges
+        // `producer_post -> callee_pre`. Without this arm the call tree
+        // vanished and the postcondition collapsed to a vacuous `true` --
+        // the missing edge was invisible to the solver. Mirrors the
+        // `Expr::MethodCall` arm. Language-blind once emitted: the catch
+        // lives in the verifier, below the source language.
+        let Expr::Path(syn::ExprPath { path, .. }) = &*call.func else {
+            // Calls through a non-path callee (closure value, fn pointer
+            // in a local, etc.) have no stable bridge symbol to name.
+            return None;
+        };
+        let callee = path.segments.last()?.ident.to_string();
+        let mut args = Vec::with_capacity(call.args.len());
+        for a in &call.args {
+            args.push(lift_expr_to_term_inner(a, ctx)?);
+        }
+        return Some(IrTerm::Ctor { name: callee, args });
+    }
+    if let Expr::If(if_expr) = expr {
+        // A value-position `if`. Reuse the tail-if synthesis (it folds
+        // `if c { a } else { b }` into `ite(c, a, b)`, and now also
+        // handles if-without-else and stmt-bearing branch blocks).
+        return lift_tail_if_to_ite_term(if_expr, ctx);
+    }
+    if let Expr::Match(match_expr) = expr {
+        // A value-position `match`. Fold it into a right-nested `ite`
+        // chain keyed by each arm's recognized guard predicate. Every
+        // arm value lifts (often to an uninterpreted ctor term), so the
+        // whole match becomes one term that discharges reflexively when
+        // it equals the body's own match. See `lift_match_to_ite_term`.
+        return lift_match_to_ite_term(match_expr, ctx);
+    }
+    if let Expr::Block(block_expr) = expr {
+        // A block expression `{ ...; tail }` lifts to the lift of its
+        // trailing expression (the block's value). For the compiler-forced
+        // pattern `{ let x = value; x }`, substitute the immediately
+        // preceding immutable binding into the tail so the returned value
+        // term survives without broader data-flow analysis.
+        if let Some(term) = lift_immediate_block_result_binding(&block_expr.block.stmts, ctx) {
+            return Some(term);
+        }
+        let tail = block_expr.block.stmts.last()?;
+        if let Stmt::Expr(e, None) = tail {
+            return lift_expr_to_term_inner(e, ctx);
+        }
+        return None;
+    }
+    if let Expr::Try(t) = expr {
+        // The `?` operator: `e?` evaluates `e` and unwraps its `Ok`
+        // (or short-circuits on `Err`). For the returned-value term we
+        // model it as an opaque unary `?` applied to the lifted inner
+        // expression. Encoded as an uninterpreted function symbol by the
+        // verifier, so `?(e) == ?(e)` discharges reflexively. Without
+        // this arm any tail containing `?` collapsed the whole term to
+        // None (mechanism (ii) in the body-discharge diagnostic).
+        let inner = lift_expr_to_term_inner(&t.expr, ctx)?;
+        return Some(IrTerm::Ctor {
+            name: "?".to_string(),
+            args: vec![inner],
+        });
+    }
+    if let Expr::Macro(m) = expr {
+        return Some(lift_macro_to_opaque_term(&m.mac));
+    }
+    if let Expr::Struct(s) = expr {
+        // A struct literal `Name { f: v, g: w, .. }`. Lift to a ctor
+        // named by the struct path with the field VALUES as args. To
+        // make the term canonical (independent of source field order)
+        // the fields are sorted by name; the field names ride along as
+        // opaque `#field:<name>` markers so two literals with the same
+        // names+values produce the same term (reflexive) and differing
+        // ones do not. A `..rest` base, if present, is appended as its
+        // lifted term. Without this arm `Ok(Report { .. })` collapsed
+        // the whole tail to None.
+        let name = s
+            .path
+            .segments
+            .last()
+            .map(|seg| seg.ident.to_string())
+            .unwrap_or_else(|| "struct".to_string());
+        let mut fields: Vec<(&syn::Member, &Expr)> =
+            s.fields.iter().map(|f| (&f.member, &f.expr)).collect();
+        fields.sort_by_key(|(m, _)| match m {
+            syn::Member::Named(id) => id.to_string(),
+            syn::Member::Unnamed(idx) => format!("{}", idx.index),
+        });
+        let mut args = Vec::with_capacity(fields.len() * 2 + 1);
+        for (member, value) in fields {
+            let fname = match member {
                 syn::Member::Named(id) => id.to_string(),
                 syn::Member::Unnamed(idx) => idx.index.to_string(),
             };
-            Some(IrTerm::Ctor {
-                name: "field".to_string(),
-                args: vec![
-                    base,
-                    IrTerm::Var {
-                        name: format!(".{}", name),
-                    },
-                ],
-            })
-        }
-        Expr::Index(i) => {
-            let arr = lift_expr_to_term_inner(&i.expr, ctx)?;
-            let idx = lift_expr_to_term_inner(&i.index, ctx)?;
-            Some(IrTerm::Ctor {
-                name: "index".to_string(),
-                args: vec![arr, idx],
-            })
-        }
-        Expr::MethodCall(m) => {
-            let receiver = lift_expr_to_term_inner(&m.receiver, ctx)?;
-            let mut args = vec![receiver.clone()];
-            for a in &m.args {
-                let lifted = lift_expr_to_term_inner(a, ctx)?;
-                args.push(lifted);
-            }
-            let method_name = if m.method == "recv" && m.args.is_empty() {
-                expr_root_ident(&m.receiver)
-                    .map(|rx| format!("channel:recv:{rx}"))
-                    .unwrap_or_else(|| format!("method:{}", m.method))
-            } else if m.method == "lock" && m.args.is_empty() {
-                expr_root_ident(&m.receiver)
-                    .map(|mutex| format!("mutex:guard:{mutex}"))
-                    .unwrap_or_else(|| format!("method:{}", m.method))
-            } else {
-                format!("method:{}", m.method)
-            };
-            let value = IrTerm::Ctor {
-                name: method_name,
-                args,
-            };
-            if let Some(guard) = assertion_guard_for_partial(&m.method, &m.receiver, &receiver, ctx)
-            {
-                return Some(guarded_value_from_formula(guard, value));
-            }
-            if m.method == "unwrap"
-                && m.args.is_empty()
-                && receiver_as_str_is_known_json_string(&m.receiver, ctx)
-            {
-                return Some(guarded_value_for_known_option_unwrap(receiver, value));
-            }
-            Some(value)
-        }
-        Expr::Range(r) => {
-            let start = match &r.start {
-                Some(e) => lift_expr_to_term_inner(e, ctx)?,
-                None => crate::wp::var("_"),
-            };
-            let end = match &r.end {
-                Some(e) => lift_expr_to_term_inner(e, ctx)?,
-                None => crate::wp::var("_"),
-            };
-            let name = match r.limits {
-                syn::RangeLimits::HalfOpen(_) => "range",
-                syn::RangeLimits::Closed(_) => "range_incl",
-            };
-            Some(IrTerm::Ctor {
-                name: name.to_string(),
-                args: vec![start, end],
-            })
-        }
-        Expr::Tuple(t) => {
-            let mut args = Vec::with_capacity(t.elems.len());
-            for e in &t.elems {
-                args.push(lift_expr_to_term_inner(e, ctx)?);
-            }
-            Some(IrTerm::Ctor {
-                name: "tuple".to_string(),
-                args,
-            })
-        }
-        Expr::Array(a) => {
-            let mut args = Vec::with_capacity(a.elems.len());
-            for e in &a.elems {
-                args.push(lift_expr_to_term_inner(e, ctx)?);
-            }
-            Some(IrTerm::Ctor {
-                name: "array".to_string(),
-                args,
-            })
-        }
-        Expr::Repeat(r) => {
-            let elem = lift_expr_to_term_inner(&r.expr, ctx)?;
-            let count = lift_expr_to_term_inner(&r.len, ctx)?;
-            Some(IrTerm::Ctor {
-                name: "array_repeat".to_string(),
-                args: vec![elem, count],
-            })
-        }
-        Expr::Closure(c) => {
-            // `|x| body` lifts to IrTerm::Lambda. Multi-arg closures
-            // collapse into nested lambdas (right-associative). Each
-            // closure parameter is bound in a fresh scope frame and
-            // assigned a globally-unique id by the LiftCtx; references
-            // to that name inside the closure body resolve to the
-            // unique form. The shadow AST's structural traversal owns
-            // this name resolution.
-            ctx.push_frame();
-            let mut unique_names: Vec<String> = Vec::with_capacity(c.inputs.len());
-            for (idx, input) in c.inputs.iter().enumerate() {
-                // A closure param's binding NAME. Ident/typed-ident keep
-                // their name. A wildcard `_` or a destructuring pattern
-                // (`|(a, _)| ..`, common in `.map`/`.unwrap_or_else`) binds
-                // a synthetic positional placeholder so the closure lifts
-                // to a lambda instead of collapsing the whole tail to None.
-                // The body references to a destructured name resolve as
-                // free vars (not the placeholder), which is fine under the
-                // reflexive encoding: the lambda term is uninterpreted and
-                // discharges against the body's own identical lambda.
-                let base = match input {
-                    syn::Pat::Ident(p) => p.ident.to_string(),
-                    syn::Pat::Type(pt) => match &*pt.pat {
-                        syn::Pat::Ident(p) => p.ident.to_string(),
-                        _ => format!("_closure_arg{idx}"),
-                    },
-                    _ => format!("_closure_arg{idx}"),
-                };
-                unique_names.push(ctx.bind(&base));
-            }
-            let body_lifted = lift_expr_to_term_inner(&c.body, ctx);
-            ctx.pop_frame();
-            let body = body_lifted?;
-            let mut term = body;
-            for unique in unique_names.into_iter().rev() {
-                term = IrTerm::Lambda {
-                    param_name: unique,
-                    param_sort: sugar_ir_types::Sort::Primitive {
-                        name: "Int".to_string(),
-                    },
-                    body: Box::new(term),
-                };
-            }
-            Some(term)
-        }
-        Expr::Await(a) => {
-            let base = lift_expr_to_term_inner(&a.base, ctx)?;
-            Some(IrTerm::Ctor {
-                name: "await".to_string(),
-                args: vec![base],
-            })
-        }
-        Expr::Async(a) => {
-            // `async { body }` produces a Future. The substrate sees
-            // through to the body's eventual value: lift the trailing
-            // expression of the block.
-            if let Some(syn::Stmt::Expr(e, None)) = a.block.stmts.last() {
-                lift_expr_to_term_inner(e, ctx)
-            } else {
-                None
-            }
-        }
-        Expr::Call(call) => {
-            // Plain function call `f(args)`. Lift to a ctor named by the
-            // callee's bare symbol (the last path segment) so the call tree
-            // SURVIVES into the contract formula. This is the keystone: the
-            // ctor name matches the callee's auto-minted bridge `sourceSymbol`,
-            // so `enumerate_callsites` finds the seam, `resolve_target` pulls
-            // the callee's precondition, and the runner discharges
-            // `producer_post -> callee_pre`. Without this arm the call tree
-            // vanished and the postcondition collapsed to a vacuous `true` --
-            // the missing edge was invisible to the solver. Mirrors the
-            // `Expr::MethodCall` arm. Language-blind once emitted: the catch
-            // lives in the verifier, below the source language.
-            let Expr::Path(syn::ExprPath { path, .. }) = &*call.func else {
-                // Calls through a non-path callee (closure value, fn pointer
-                // in a local, etc.) have no stable bridge symbol to name.
-                return None;
-            };
-            let callee = path.segments.last()?.ident.to_string();
-            let mut args = Vec::with_capacity(call.args.len());
-            for a in &call.args {
-                args.push(lift_expr_to_term_inner(a, ctx)?);
-            }
-            Some(IrTerm::Ctor { name: callee, args })
-        }
-        Expr::If(if_expr) => {
-            // A value-position `if`. Reuse the tail-if synthesis (it folds
-            // `if c { a } else { b }` into `ite(c, a, b)`, and now also
-            // handles if-without-else and stmt-bearing branch blocks).
-            lift_tail_if_to_ite_term(if_expr, ctx)
-        }
-        Expr::Match(match_expr) => {
-            // A value-position `match`. Fold it into a right-nested `ite`
-            // chain keyed by each arm's recognized guard predicate. Every
-            // arm value lifts (often to an uninterpreted ctor term), so the
-            // whole match becomes one term that discharges reflexively when
-            // it equals the body's own match. See `lift_match_to_ite_term`.
-            lift_match_to_ite_term(match_expr, ctx)
-        }
-        Expr::Block(block_expr) => {
-            // A block expression `{ ...; tail }` lifts to the lift of its
-            // trailing expression (the block's value). For the compiler-forced
-            // pattern `{ let x = value; x }`, substitute the immediately
-            // preceding immutable binding into the tail so the returned value
-            // term survives without broader data-flow analysis.
-            if let Some(term) = lift_immediate_block_result_binding(&block_expr.block.stmts, ctx) {
-                return Some(term);
-            }
-            let tail = block_expr.block.stmts.last()?;
-            match tail {
-                Stmt::Expr(e, None) => lift_expr_to_term_inner(e, ctx),
-                Stmt::Expr(_, Some(_)) | Stmt::Local(_) | Stmt::Item(_) | Stmt::Macro(_) => None,
-            }
-        }
-        Expr::Try(t) => {
-            // The `?` operator: `e?` evaluates `e` and unwraps its `Ok`
-            // (or short-circuits on `Err`). For the returned-value term we
-            // model it as an opaque unary `?` applied to the lifted inner
-            // expression. Encoded as an uninterpreted function symbol by the
-            // verifier, so `?(e) == ?(e)` discharges reflexively. Without
-            // this arm any tail containing `?` collapsed the whole term to
-            // None (mechanism (ii) in the body-discharge diagnostic).
-            let inner = lift_expr_to_term_inner(&t.expr, ctx)?;
-            Some(IrTerm::Ctor {
-                name: "?".to_string(),
-                args: vec![inner],
-            })
-        }
-        Expr::Macro(m) => Some(lift_macro_to_opaque_term(&m.mac)),
-        Expr::Struct(s) => {
-            // A struct literal `Name { f: v, g: w, .. }`. Lift to a ctor
-            // named by the struct path with the field VALUES as args. To
-            // make the term canonical (independent of source field order)
-            // the fields are sorted by name; the field names ride along as
-            // opaque `#field:<name>` markers so two literals with the same
-            // names+values produce the same term (reflexive) and differing
-            // ones do not. A `..rest` base, if present, is appended as its
-            // lifted term. Without this arm `Ok(Report { .. })` collapsed
-            // the whole tail to None.
-            let name = s
-                .path
-                .segments
-                .last()
-                .map(|seg| seg.ident.to_string())
-                .unwrap_or_else(|| "struct".to_string());
-            let mut fields: Vec<(&syn::Member, &Expr)> =
-                s.fields.iter().map(|f| (&f.member, &f.expr)).collect();
-            fields.sort_by_key(|(m, _)| match m {
-                syn::Member::Named(id) => id.to_string(),
-                syn::Member::Unnamed(idx) => format!("{}", idx.index),
+            args.push(IrTerm::Var {
+                name: format!("#field:{fname}"),
             });
-            let mut args = Vec::with_capacity(fields.len() * 2 + 1);
-            for (member, value) in fields {
-                let fname = match member {
-                    syn::Member::Named(id) => id.to_string(),
-                    syn::Member::Unnamed(idx) => idx.index.to_string(),
-                };
-                args.push(IrTerm::Var {
-                    name: format!("#field:{fname}"),
-                });
-                args.push(lift_expr_to_term_inner(value, ctx)?);
-            }
-            if let Some(rest) = &s.rest {
-                args.push(lift_expr_to_term_inner(rest, ctx)?);
-            }
-            Some(IrTerm::Ctor { name, args })
+            args.push(lift_expr_to_term_inner(value, ctx)?);
         }
-        Expr::Binary(ExprBinary {
-            left, op, right, ..
-        }) => {
-            let op_name = match op {
-                BinOp::Add(_) => "+",
-                BinOp::Sub(_) => "-",
-                BinOp::Mul(_) => "*",
-                BinOp::Div(_) => "/",
-                BinOp::Rem(_) => "%",
-                BinOp::BitAnd(_) => "&",
-                BinOp::BitOr(_) => "|",
-                BinOp::BitXor(_) => "^",
-                BinOp::Shl(_) => "<<",
-                BinOp::Shr(_) => ">>",
-                // Boolean / relational operators in VALUE position (a
-                // function returning `bool`, e.g. `!x.is_absolute() && ..`,
-                // or `a == b`). Lift to a `cf_`-prefixed UNINTERPRETED head
-                // (NOT the SMT builtins `and`/`or`/`=`/`<`): a builtin
-                // demands Bool operands and a Bool result, but these sit
-                // over uninterpreted Int-sorted value terms, so the builtin
-                // raises a sort mismatch and the reflexive discharge fails.
-                // As fresh uninterpreted symbols they discharge by
-                // congruence: `cf_and(a,b) == cf_and(a,b)`. (Builtin
-                // arithmetic comes from a different, substantive path and is
-                // untouched.)
-                BinOp::And(_) => "cf_and",
-                BinOp::Or(_) => "cf_or",
-                BinOp::Eq(_) => "cf_eq",
-                BinOp::Ne(_) => "cf_ne",
-                BinOp::Lt(_) => "cf_lt",
-                BinOp::Le(_) => "cf_le",
-                BinOp::Gt(_) => "cf_gt",
-                BinOp::Ge(_) => "cf_ge",
-                op if binop_is_assignment_lift(op) => return None,
-                _ => panic!("sugar-walk term classifier refused unknown syn::BinOp variant"),
-            };
-            let l = lift_expr_to_term_inner(left, ctx)?;
-            let r = lift_expr_to_term_inner(right, ctx)?;
-            Some(IrTerm::Ctor {
-                name: op_name.to_string(),
-                args: vec![l, r],
-            })
+        if let Some(rest) = &s.rest {
+            args.push(lift_expr_to_term_inner(rest, ctx)?);
         }
-        Expr::Unary(ExprUnary { op, expr, .. }) => {
-            let inner = lift_expr_to_term_inner(expr, ctx)?;
-            let name = match op {
-                UnOp::Neg(_) => {
-                    if let IrTerm::Const { value, sort } = &inner {
-                        if let Some(n) = value.as_i64() {
-                            return Some(IrTerm::Const {
-                                value: serde_json::json!(-n),
-                                sort: sort.clone(),
-                            });
-                        }
-                    }
-                    "neg"
-                }
-                UnOp::Not(_) => "bit-not",
-                UnOp::Deref(_) => return Some(inner), // *x is x for substitution
-                _ => panic!("sugar-walk term classifier refused unknown syn::UnOp variant"),
-            };
-            Some(IrTerm::Ctor {
-                name: name.to_string(),
-                args: vec![inner],
-            })
-        }
-        Expr::Group(group) => lift_expr_to_term_inner(&group.expr, ctx),
-        Expr::Unsafe(unsafe_expr) => {
-            block_tail_expr(&unsafe_expr.block).and_then(|tail| lift_expr_to_term_inner(tail, ctx))
-        }
-        Expr::Const(const_expr) => {
-            block_tail_expr(&const_expr.block).and_then(|tail| lift_expr_to_term_inner(tail, ctx))
-        }
-        Expr::Assign(_)
-        | Expr::Break(_)
-        | Expr::Continue(_)
-        | Expr::ForLoop(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Loop(_)
-        | Expr::RawAddr(_)
-        | Expr::Return(_)
-        | Expr::TryBlock(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        Expr::Verbatim(_) => {
-            panic!("sugar-walk term classifier refused uninterpreted verbatim expression")
-        }
-        _ => panic!("sugar-walk term classifier refused unknown syn::Expr variant"),
+        return Some(IrTerm::Ctor { name, args });
     }
+    if let Expr::Binary(ExprBinary {
+        left, op, right, ..
+    }) = expr
+    {
+        let op_name = match op {
+            BinOp::Add(_) => "+",
+            BinOp::Sub(_) => "-",
+            BinOp::Mul(_) => "*",
+            BinOp::Div(_) => "/",
+            BinOp::Rem(_) => "%",
+            BinOp::BitAnd(_) => "&",
+            BinOp::BitOr(_) => "|",
+            BinOp::BitXor(_) => "^",
+            BinOp::Shl(_) => "<<",
+            BinOp::Shr(_) => ">>",
+            // Boolean / relational operators in VALUE position (a
+            // function returning `bool`, e.g. `!x.is_absolute() && ..`,
+            // or `a == b`). Lift to a `cf_`-prefixed UNINTERPRETED head
+            // (NOT the SMT builtins `and`/`or`/`=`/`<`): a builtin
+            // demands Bool operands and a Bool result, but these sit
+            // over uninterpreted Int-sorted value terms, so the builtin
+            // raises a sort mismatch and the reflexive discharge fails.
+            // As fresh uninterpreted symbols they discharge by
+            // congruence: `cf_and(a,b) == cf_and(a,b)`. (Builtin
+            // arithmetic comes from a different, substantive path and is
+            // untouched.)
+            BinOp::And(_) => "cf_and",
+            BinOp::Or(_) => "cf_or",
+            BinOp::Eq(_) => "cf_eq",
+            BinOp::Ne(_) => "cf_ne",
+            BinOp::Lt(_) => "cf_lt",
+            BinOp::Le(_) => "cf_le",
+            BinOp::Gt(_) => "cf_gt",
+            BinOp::Ge(_) => "cf_ge",
+            op if binop_is_assignment_lift(op) => return None,
+            _ => panic!("sugar-walk term classifier refused unknown syn::BinOp variant"),
+        };
+        let l = lift_expr_to_term_inner(left, ctx)?;
+        let r = lift_expr_to_term_inner(right, ctx)?;
+        return Some(IrTerm::Ctor {
+            name: op_name.to_string(),
+            args: vec![l, r],
+        });
+    }
+    if let Expr::Unary(ExprUnary { op, expr, .. }) = expr {
+        let inner = lift_expr_to_term_inner(expr, ctx)?;
+        let name = match op {
+            UnOp::Neg(_) => {
+                if let IrTerm::Const { value, sort } = &inner {
+                    if let Some(n) = value.as_i64() {
+                        return Some(IrTerm::Const {
+                            value: serde_json::json!(-n),
+                            sort: sort.clone(),
+                        });
+                    }
+                }
+                "neg"
+            }
+            UnOp::Not(_) => "bit-not",
+            UnOp::Deref(_) => return Some(inner), // *x is x for substitution
+            _ => panic!("sugar-walk term classifier refused unknown syn::UnOp variant"),
+        };
+        return Some(IrTerm::Ctor {
+            name: name.to_string(),
+            args: vec![inner],
+        });
+    }
+    if let Expr::Unsafe(unsafe_expr) = expr {
+        return block_tail_expr(&unsafe_expr.block)
+            .and_then(|tail| lift_expr_to_term_inner(tail, ctx));
+    }
+    if let Expr::Const(const_expr) = expr {
+        return block_tail_expr(&const_expr.block)
+            .and_then(|tail| lift_expr_to_term_inner(tail, ctx));
+    }
+    if matches!(
+        expr,
+        Expr::Assign(_)
+            | Expr::Break(_)
+            | Expr::Continue(_)
+            | Expr::ForLoop(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Loop(_)
+            | Expr::RawAddr(_)
+            | Expr::Return(_)
+            | Expr::TryBlock(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    ) {
+        return None;
+    }
+    if let Expr::Verbatim(_) = expr {
+        panic!("sugar-walk term classifier refused uninterpreted verbatim expression")
+    }
+    panic!("sugar-walk term classifier refused unknown syn::Expr variant")
 }
 
 fn lift_immediate_block_result_binding(stmts: &[Stmt], ctx: &mut LiftCtx) -> Option<IrTerm> {
