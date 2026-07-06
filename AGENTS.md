@@ -424,61 +424,6 @@ special sorts, unreduced syntax). Sugar is spelling; floors are meaning;
 emission is the act of reducing every spelling to its meaning before anyone
 downstream is allowed to see it.
 
-### The three hierarchies: recognition, dispatch, meaning
-
-The product is not one class hierarchy; it is three invariant-carrying
-hierarchies joined by typed edges. Each hierarchy owns one kind of authority,
-and no hierarchy may impersonate another.
-
-| Hierarchy | Is | Is not |
-| --- | --- | --- |
-| **Sugar** | recognition: source territory, factory order, tower construction, witness enrollment | semantic oracle, floor algebra, ProofIR meaning |
-| **Floor** | dispatch: completed semantic values answering operations through the floor surface | kind bag, helper namespace, side table, private classifier |
-| **ProofIR** | meaning: claim/node classes, scoped obligations, SAT/UNSAT witness semantics | source interpreter, vendor semantics, transport JSON |
-| **Solver** | referee over emitted testimony | student asked to rediscover language or package behavior |
-| **Auditor** | membrane over an open boundary | substitute for a closeable type/protocol edge |
-
-Sugar classes are recognition owners. A registrable Sugar owns a source shape,
-its position in the factory order, and the witness testimony that proves its
-claim reaches the production path. `owns(fragment)` may inspect source only to
-answer ownership. `build(fragment, ctx)` constructs typed children. Reduction
-then collapses the tower. A Sugar that decides semantic truth, rummages through
-completed floors, or emits ProofIR meaning directly has crossed out of
-recognition and stolen another hierarchy's authority.
-
-Floor classes are dispatch authority. A completed value answers operations by
-method dispatch through the floor surface: `receiver.map_with(...)`,
-`receiver.contains_with(...)`, `receiver.project_callsite_with(...)`, and the
-rest. A missing arm is a floor construction gap with owner, blame, observed
-shape, requested method, and fix. It is not permission for callers to grow a
-kind ladder, `matches!` probe, side registry, or stringly status table. Callers
-are exhaustive over outputs, never over value species.
-
-ProofIR node classes are meaning authority. They own the legal shape of claims,
-scoped pre/post/invariant obligations, warrants, denotation, and truthful/lying
-verdict witnesses. Sugar may route source to the node class; floors may reduce
-values into testimony; but only the ProofIR hierarchy says what the emitted
-claim means. A ProofIR node without witness semantics is syntax pretending to be
-proof.
-
-The edges are law, not plumbing:
-
-| Edge | Legal meaning | Illegal drift |
-| --- | --- | --- |
-| Source -> Sugar | recognition and ownership | scanning, inference, shadow ASTs |
-| Sugar -> Floor | ordered tower collapse | recognizer performing semantics |
-| Floor -> Value/Effect | closed dispatch result | silent swallow, kind ladder, fake incomplete |
-| Floor/Sugar -> ProofIR | emitted testimony with warrants | fabricated facts, unreduced spelling, solver homework |
-| ProofIR -> Solver | verdict over typed obligation | asking the solver to learn vendor semantics |
-| Sugar -> Witness | enrollment evidence | untestified catalog entry |
-
-When a bug appears at one of these boundaries, fix the edge if the edge can
-honestly carry the invariant. Refused-at-lift became a codomain type. The
-dispatch-matrix census became a floor protocol surface. Report header drift
-became structured report-section counts. If the boundary is open, leave a
-content-addressed membrane. If it is closeable, promote it into the hierarchy or
-edge so the illegal state becomes unconstructable.
-
 ### The error-message corollary (2026-07-03)
 
 **"You can't make every agent smart, but you can make every error message

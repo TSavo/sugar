@@ -1,88 +1,12 @@
 # Sugar Invariants
 
-Sugar is the factory layer that turns source syntax into warranted ProofIR
-testimony through lawful floors. These rules are construction law, not style
-preferences.
+Sugar is the factory layer that turns Rust surface syntax into lawful ProofIR
+floors. These rules are construction law, not style preferences.
 
 The law is simple: recognize the source shape, construct typed children, reduce
 recursively, delegate domain work to floors, and then produce exactly one of two
 lawful outcomes: `Complete`, or `Incomplete` because of a real runtime
 `Effect`. Every other scenario is a panic.
-
-## Ontology: Recognition, Dispatch, Meaning
-
-Sugar is not one pile of lifter code. It is three class/protocol hierarchies
-joined by typed edges:
-
-| Hierarchy | Authority | Must not become |
-| --- | --- | --- |
-| Sugar | recognition of source shapes, factory ordering, witness enrollment | semantics, floor inspection, ProofIR meaning |
-| Floor | semantic dispatch over completed values | kind predicates, helper bags, side tables |
-| ProofIR | claim shape, scoped obligations, denotation, verdict witnesses | source interpretation, vendor behavior, transport JSON |
-
-These hierarchies are load-bearing. A violation is not merely bad style; it is a
-false authority claim.
-
-## Sugar Is Recognition
-
-A sugar class recognizes source territory. Its recognizer answers only: "does
-this source fragment belong to this sugar?" Its builder constructs typed child
-bodies and records the ordered tower position. Its witness proves enrollment
-through the production path.
-
-A sugar may not decide semantic truth, duplicate a floor operation, inspect a
-completed floor by species, or emit solver homework. Once source is recognized,
-the sugar composes and collapses; meaning comes from floors and ProofIR.
-
-## Floors Are Dispatch
-
-A floor class is a completed semantic value with a dispatch surface. Operations
-ask the value what the operation means for that value: `receiver.map_with(...)`,
-`receiver.contains_with(...)`, `receiver.project_callsite_with(...)`, and so on.
-The caller supplies operation intent and context; the floor owns the answer.
-
-A missing arm is a floor construction gap with owner, blame, observed shape,
-requested method, and fix. It is not a reason to add a kind ladder, `matches!`
-probe, stringly status, or private side registry. Callers match the closed
-result algebra, never the value species.
-
-## ProofIR Is Meaning
-
-A ProofIR node class owns the legal shape and denotation of a proof claim. It
-owns scoped obligations (`pre`, `post`, invariants), warrants, RPC projection,
-and truthful/lying verdict witnesses. Sugar routes source toward a node; floors
-reduce values into testimony; ProofIR says what the emitted claim means.
-
-No layer upstream of ProofIR gets to fabricate facts or leave unreduced source
-syntax for the solver to interpret. The solver is a referee over typed testimony,
-not a student of Python, Rust, numpy, pandas, or package re-export folklore.
-
-## Edges Are Law
-
-The legal edges are:
-
-| Edge | Legal meaning | Forbidden drift |
-| --- | --- | --- |
-| Source -> Sugar | recognition and ownership | shadow ASTs, semantic inference |
-| Sugar -> Floor | top-down tower collapse | recognizer doing floor semantics |
-| Floor -> Value/Effect | closed dispatch result | silent swallow, fake incomplete, kind ladder |
-| Floor/Sugar -> ProofIR | warranted testimony | fabricated facts, unreduced spelling, solver homework |
-| ProofIR -> Solver | verdict over typed obligation | asking solver to recover vendor semantics |
-| Sugar -> Witness | enrollment evidence | catalog entry with no production testimony |
-
-When a regression appears at a boundary, ask which edge failed. If the edge can
-honestly carry the invariant, promote it into the type/protocol/constructor
-surface so the illegal state is unconstructable. If the boundary is genuinely
-open, keep a content-addressed auditor membrane that names offender classes and
-retirement paths.
-
-## Towers Collapse From The Top Down
-
-Recognition selects the ordered tower; reduction collapses it from the top down
-through floor dispatch. No layer may skip downward, inspect below itself, or
-build a second representation to avoid the tower. `comes_before` is architecture,
-not sorting trivia: it defines which owner gets first lawful bite at a source
-site.
 
 ## Numerous Dumb Sugars
 
