@@ -1,14 +1,12 @@
 {
   "examples": [
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
-      "last_observed_rc": 101,
-      "last_observed_seconds": 137.018,
-      "name": "examples/base64-showcase/run.sh",
-      "work_order_issue": 3606
+      "grounds": "script exited 0 after showcase vacuity pairs and unwrap producer-post pairing landed",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 628.0,
+      "name": "examples/base64-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
@@ -51,14 +49,12 @@
       "work_order_issue": 3579
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 124.892,
-      "name": "examples/itertools-showcase/run.sh",
-      "work_order_issue": 3587
+      "grounds": "script exited 0 after all_equal value and panic-callsite testimony paired",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 24.0,
+      "name": "examples/itertools-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
@@ -606,8 +602,8 @@
   "policy": "GREEN rows must remain green. NAMED_RED rows must keep the same failure_shape until a deliberate fixture move records promotion to GREEN. New examples, missing examples, new reds, and changed red shapes fail the gate.",
   "suite": "smoke",
   "summary": {
-    "green": 3,
-    "named_red": 58,
+    "green": 5,
+    "named_red": 56,
     "total": 61,
     "unclassified": 0
   },
