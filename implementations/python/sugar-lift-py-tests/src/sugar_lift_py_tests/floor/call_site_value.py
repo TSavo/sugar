@@ -25,7 +25,10 @@ class CallSiteValue(FloorValue):
     arg_values: tuple[FloorValue, ...]
     parameters: tuple[str, ...]
     term: Term
-    body: SugarBody | FunctionBodyUniverse | None
+    # Any is the open membrane here, matching FactoryBuildResult.sugar and
+    # ObjectMethodValue.body: a callsite's factory-built body varies in
+    # reduction shape with the SugarRole it was built under.
+    body: SugarBody[Any] | FunctionBodyUniverse | None
 
     def to_term(self, *, owner: str):
         del owner
@@ -191,7 +194,7 @@ def force_floor(
 
 
 def _reduce_callsite_body(
-    body: SugarBody | FunctionBodyUniverse,
+    body: SugarBody[Any] | FunctionBodyUniverse,
     ctx: Any,
     *,
     blame: str,
