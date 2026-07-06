@@ -365,14 +365,12 @@
       "name": "examples/pandas-source-accounting/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "proof-pool/bridge-target-missing",
-      "first_seen": "2026-07-06 python-seat-showcases sweep 799a9e86a",
-      "grounds": "script exited 1 after component discovery was repaired; current terminal shape is resolve-target: bridge target CID for call:scalar_sum not in pool. Diagnosis: the proof pool contains rust-source::scalar_sum, but the implication-lifted callsite bridge targets a different pre-mint/content CID, so this is bridge target derivation rather than a proof file not loading. Retirement: callsite bridges target loaded minted member CIDs, then the good suite can assert consistency discharge; work order #3654.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 251.02,
-      "name": "examples/polars-showcase/run.sh",
-      "work_order_issue": 3654
+      "expected": "GREEN",
+      "first_seen": "2026-07-06 polars bridge CID repair",
+      "grounds": "script exited 0 after the call:scalar_sum bridge target resolved to the loaded proof-pool member CID. The good suite verifies the witness dimension with bridge=resolved and witness=discharged while preserving the current singleton consistency/vacuity refusal as a separate semantic row; the bad twin keeps bridge=resolved and witness=unsatisfied.",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 74.0,
+      "name": "examples/polars-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",

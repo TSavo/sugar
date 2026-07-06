@@ -255,6 +255,13 @@ fn bridge_ir_from_resolved_call_edge(edge: &Value) -> Option<Value> {
         "targetContractCid": target_contract_cid,
         "targetLayer": "kit",
     });
+    if let Some(target_contract) = edge
+        .get("targetContract")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        bridge["targetContract"] = Value::String(target_contract.to_string());
+    }
     if let Some(target_proof_cid) = edge
         .get("targetProofCid")
         .and_then(Value::as_str)
@@ -3740,6 +3747,80 @@ fn mint_ir_document_with_source_and_plan_mementos(
         }
     }
 
+    let bridge_decl_with_local_minted_target =
+        |decl: &Value,
+         contracts_by_cid: &BTreeMap<String, MintedContractRef>,
+         cids_by_name: &BTreeMap<String, Vec<String>>|
+         -> Value {
+            let has_external_target_proof = decl
+                .get("targetProofCid")
+                .or_else(|| decl.get("target_proof_cid"))
+                .and_then(Value::as_str)
+                .is_some_and(|cid| !cid.is_empty());
+            if has_external_target_proof {
+                return decl.clone();
+            }
+
+            let Some(target_name) = decl
+                .get("targetContract")
+                .or_else(|| decl.get("target_contract"))
+                .or_else(|| decl.pointer("/target/name"))
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+            else {
+                return decl.clone();
+            };
+            let Some(candidates) = cids_by_name.get(target_name) else {
+                return decl.clone();
+            };
+            let rank = |contract: &MintedContractRef| -> u8 {
+                let has_pre = contract.has_nontrivial_pre;
+                let has_post = contract.post_hash.is_some();
+                let body_bearing = (has_pre || has_post) && contract.body_discharge_eligible;
+                if has_pre && contract.body_discharge_eligible {
+                    3
+                } else if !contract.body_discharge_eligible {
+                    2
+                } else if body_bearing {
+                    1
+                } else {
+                    0
+                }
+            };
+            let Some(target_cid) = candidates
+                .iter()
+                .filter_map(|cid| {
+                    contracts_by_cid
+                        .get(cid)
+                        .map(|contract| (cid, rank(contract)))
+                })
+                .max_by_key(|(_, rank)| *rank)
+                .map(|(cid, _)| cid.clone())
+            else {
+                return decl.clone();
+            };
+            let current_target_cid = decl
+                .get("targetContractCid")
+                .or_else(|| decl.get("target_contract_cid"))
+                .or_else(|| decl.pointer("/target/cid"))
+                .and_then(Value::as_str);
+            if current_target_cid == Some(target_cid.as_str()) {
+                return decl.clone();
+            }
+
+            let mut rewritten = decl.clone();
+            if let Some(object) = rewritten.as_object_mut() {
+                object.insert(
+                    "targetContractCid".to_string(),
+                    Value::String(target_cid.clone()),
+                );
+                if let Some(target) = object.get_mut("target").and_then(Value::as_object_mut) {
+                    target.insert("cid".to_string(), Value::String(target_cid));
+                }
+            }
+            rewritten
+        };
+
     // #1358 / #1355: stamp the project's platform_profile onto each
     // realization-bearing IR entry so absent annotation axes get filled in
     // from the shim's single declarative profile. Annotation pins always
@@ -3764,8 +3845,13 @@ fn mint_ir_document_with_source_and_plan_mementos(
                     push_graph_memento!(WitnessMemento, push_witness, cid.as_str(), bytes);
                 }
                 Some("bridge") => {
+                    let decl = bridge_decl_with_local_minted_target(
+                        decl,
+                        &contracts_by_cid,
+                        &cids_by_name,
+                    );
                     let (cid, bytes) =
-                        mint_bridge_from_decl(decl, &produced_at, default_signer_seed)?;
+                        mint_bridge_from_decl(&decl, &produced_at, default_signer_seed)?;
                     push_graph_memento!(BridgeMemento, push_bridge, cid.as_str(), bytes);
                 }
                 _ => {}
@@ -3788,8 +3874,13 @@ fn mint_ir_document_with_source_and_plan_mementos(
                     push_graph_memento!(WitnessMemento, push_witness, cid.as_str(), bytes);
                 }
                 Some("bridge") => {
+                    let decl = bridge_decl_with_local_minted_target(
+                        decl,
+                        &contracts_by_cid,
+                        &cids_by_name,
+                    );
                     let (cid, bytes) =
-                        mint_bridge_from_decl(decl, &produced_at, default_signer_seed)?;
+                        mint_bridge_from_decl(&decl, &produced_at, default_signer_seed)?;
                     push_graph_memento!(BridgeMemento, push_bridge, cid.as_str(), bytes);
                 }
                 _ => {}
@@ -6039,6 +6130,96 @@ mod tests {
 
         assert_eq!(contract_count, 1);
         assert_eq!(bridge_count, 1);
+    }
+
+    #[test]
+    fn call_edge_bridge_targets_minted_contract_member_cid() {
+        let root = temp_workspace("call_edge_bridge_target_member_cid");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let stale_row_cid = valid_cid('b');
+        let merged = merge_ir_document_responses(vec![PerPluginDispatch {
+            surface: "rust-test-assertions".to_string(),
+            response: json!({
+                "kind": "ir-document",
+                "ir": [
+                    {
+                        "kind": "function-contract",
+                        "name": "rust-source::scalar_sum",
+                        "bridgeSourceSymbol": "call:scalar_sum",
+                        "outBinding": "out",
+                        "formals": [],
+                        "post": {
+                            "kind": "atomic",
+                            "name": "=",
+                            "args": [
+                                {"kind": "var", "name": "out"},
+                                {"kind": "const", "sort": {"kind": "primitive", "name": "Int"}, "value": 6}
+                            ]
+                        }
+                    },
+                    {
+                        "kind": "contract",
+                        "name": "src/lib.rs::tests::polars_scalar_sum_is_six::scalar_sum#euf#assertion",
+                        "inv": {
+                            "kind": "atomic",
+                            "name": "=",
+                            "args": [
+                                {"kind": "ctor", "name": "call:scalar_sum", "args": []},
+                                {"kind": "const", "sort": {"kind": "primitive", "name": "Int"}, "value": 6}
+                            ]
+                        }
+                    }
+                ],
+                "callEdges": [
+                    {
+                        "kind": "call-edge",
+                        "sourceContract": "src/lib.rs::tests::polars_scalar_sum_is_six::scalar_sum#euf#assertion",
+                        "targetSymbol": "call:scalar_sum",
+                        "targetContract": "rust-source::scalar_sum",
+                        "targetContractCid": stale_row_cid,
+                        "callSiteLocus": {"file": "src/lib.rs", "line": 14, "column": 19}
+                    }
+                ],
+                "diagnostics": []
+            }),
+        }])
+        .expect("merge ir document");
+        let ir = merged["ir"].as_array().expect("merged ir entries").clone();
+
+        let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true).expect("mint");
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let target_member_cid = graph
+            .members_view()
+            .find_map(|view| {
+                let is_target = view.kind() == Some(MemberKind::Contract)
+                    && view.field("name").as_deref() == Some("rust-source::scalar_sum");
+                is_target.then(|| view.cid().as_str().to_string())
+            })
+            .expect("target contract member cid");
+        assert_ne!(
+            target_member_cid, stale_row_cid,
+            "test requires a pre-mint/content CID distinct from the member CID"
+        );
+
+        let bridge_targets = graph
+            .bridges()
+            .filter(|view| view.field("sourceSymbol").as_deref() == Some("call:scalar_sum"))
+            .map(|view| {
+                view.field("targetContractCid")
+                    .expect("bridge carries targetContractCid")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            bridge_targets.len() >= 2,
+            "expected body-discharge and callsite bridges for call:scalar_sum"
+        );
+        assert!(
+            bridge_targets
+                .iter()
+                .all(|target| target == &target_member_cid),
+            "all call:scalar_sum bridges must target the loaded contract member CID {target_member_cid}, got {bridge_targets:?}"
+        );
     }
 
     #[test]
