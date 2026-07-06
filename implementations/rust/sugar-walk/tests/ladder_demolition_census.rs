@@ -77,134 +77,10 @@ struct ExpectedLadderSite {
     max_signals: usize,
 }
 
-const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-lift/src/call_edges.rs",
-        line: 441,
-        enclosing_fn: "callee_name_from_expr",
-        family: "patterns-types-call-edges",
-        max_signals: 40,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-lift/src/call_edges.rs",
-        line: 277,
-        enclosing_fn: "collect_call_sites_in_expr",
-        family: "patterns-types-call-edges",
-        max_signals: 39,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-lift/src/call_edges.rs",
-        line: 248,
-        enclosing_fn: "collect_call_sites_in_stmt",
-        family: "patterns-types-call-edges",
-        max_signals: 4,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-lift/src/call_edges.rs",
-        line: 167,
-        enclosing_fn: "walk_items_for_edges",
-        family: "patterns-types-call-edges",
-        max_signals: 15,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 3277,
-        enclosing_fn: "bind_pat_idents_lift",
-        family: "patterns-types-call-edges",
-        max_signals: 17,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 3225,
-        enclosing_fn: "collect_pat_bound_idents_lift",
-        family: "patterns-types-call-edges",
-        max_signals: 17,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 894,
-        enclosing_fn: "collect_pat_names",
-        family: "patterns-types-call-edges",
-        max_signals: 16,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 2596,
-        enclosing_fn: "local_pat_single_ident",
-        family: "patterns-types-call-edges",
-        max_signals: 17,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 941,
-        enclosing_fn: "pat_contains_mut_ident",
-        family: "patterns-types-call-edges",
-        max_signals: 9,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 2623,
-        enclosing_fn: "pat_single_ident",
-        family: "patterns-types-call-edges",
-        max_signals: 17,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 2676,
-        enclosing_fn: "pat_type_mentions_ident",
-        family: "patterns-types-call-edges",
-        max_signals: 3,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 2650,
-        enclosing_fn: "tuple_first_pat_ident",
-        family: "patterns-types-call-edges",
-        max_signals: 17,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 2685,
-        enclosing_fn: "type_mentions_ident",
-        family: "patterns-types-call-edges",
-        max_signals: 5,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/walk.rs",
-        line: 596,
-        enclosing_fn: "collect_into",
-        family: "patterns-types-call-edges",
-        max_signals: 17,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/walk.rs",
-        line: 568,
-        enclosing_fn: "let_binding",
-        family: "patterns-types-call-edges",
-        max_signals: 4,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/walk.rs",
-        line: 658,
-        enclosing_fn: "pat_kind",
-        family: "patterns-types-call-edges",
-        max_signals: 17,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/walk.rs",
-        line: 280,
-        enclosing_fn: "walk_expr_for_callsites",
-        family: "patterns-types-call-edges",
-        max_signals: 40,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/walk.rs",
-        line: 260,
-        enclosing_fn: "walk_stmt_for_callsites",
-        family: "patterns-types-call-edges",
-        max_signals: 4,
-    },
-];
+// #3027 terminal state: every ladder family is drained. The expectation
+// table is EMPTY — any future match ladder in the scanned surface is a
+// regression this census reds on sight.
+const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[];
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct LadderKey {
@@ -675,7 +551,29 @@ fn panic_loop_effects_family_is_drained() {
 }
 
 #[test]
-#[ignore = "red-by-design: demolition slices delete rows until this reaches zero-or-declared"]
+fn patterns_types_call_edges_family_is_drained() {
+    // #3441 S7: call_edges.rs (walk_items_for_edges, collect_call_sites_in_stmt,
+    // collect_call_sites_in_expr, callee_name_from_expr), walk.rs (let_binding,
+    // collect_into, pat_kind, walk_stmt_for_callsites, walk_expr_for_callsites),
+    // and lift.rs (collect_pat_names, pat_contains_mut_ident, local_pat_single_ident,
+    // pat_single_ident, tuple_first_pat_ident, pat_type_mentions_ident,
+    // type_mentions_ident, collect_pat_bound_idents_lift, bind_pat_idents_lift)
+    // -- the family's eighteen ladder sites.
+    let observed = collect_ladder_sites(&repo_root());
+    let patterns_sites = observed
+        .iter()
+        .filter(|site| site.key.family == "patterns-types-call-edges")
+        .cloned()
+        .collect::<Vec<_>>();
+
+    assert!(
+        patterns_sites.is_empty(),
+        "{}",
+        report_json(&observed, &patterns_sites, &[], &[])
+    );
+}
+
+#[test]
 fn ladder_census_is_zero() {
     let observed = collect_ladder_sites(&repo_root());
     assert!(

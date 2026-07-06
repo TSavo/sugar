@@ -250,6 +250,10 @@ fn find_callsites_with_context(stmt: &Stmt, callee_name: &str) -> Vec<CallsiteHi
     hits
 }
 
+// #3027 S7: was a 4-arm match over `Stmt` (the ladder-demolition census's
+// `patterns-types-call-edges` row). Now a sequential `if let` chain building
+// the same `exprs` vector; `Stmt::Macro`/`Stmt::Item` and a `Stmt::Local` with
+// no initializer keep the exact same empty-vec fail-safe.
 fn walk_stmt_for_callsites(
     stmt: &Stmt,
     callee_name: &str,
@@ -257,19 +261,26 @@ fn walk_stmt_for_callsites(
     inner_stmts: &mut Vec<Stmt>,
     hits: &mut Vec<CallsiteHit>,
 ) {
-    let exprs: Vec<&Expr> = match stmt {
-        Stmt::Local(local) => match &local.init {
-            Some(init) => vec![init.expr.as_ref()],
-            None => vec![],
-        },
-        Stmt::Expr(e, _) => vec![e],
-        Stmt::Macro(_) | Stmt::Item(_) => vec![],
-    };
+    let mut exprs: Vec<&Expr> = Vec::new();
+    if let Stmt::Local(local) = stmt {
+        if let Some(init) = &local.init {
+            exprs.push(init.expr.as_ref());
+        }
+    } else if let Stmt::Expr(e, _) = stmt {
+        exprs.push(e);
+    }
+    // Stmt::Macro(_) | Stmt::Item(_): no expressions to walk.
     for expr in exprs {
         walk_expr_for_callsites(expr, callee_name, conditions, inner_stmts, hits);
     }
 }
 
+// #3027 S7: was a single ~40-arm match over `syn::Expr` (the ladder-demolition
+// census's `patterns-types-call-edges` row). Now a sequential `if let` chain,
+// same relative order as the original arms and same block/loop-body walking
+// helpers. The trailing no-op groups (`Expr::Closure`, then the closed
+// Continue/Infer/Lit/Macro/Path/Verbatim set) and the final unknown-variant
+// panic are unchanged verbatim.
 fn walk_expr_for_callsites(
     expr: &Expr,
     callee_name: &str,
@@ -277,285 +288,324 @@ fn walk_expr_for_callsites(
     inner_stmts: &mut Vec<Stmt>,
     hits: &mut Vec<CallsiteHit>,
 ) {
-    match expr {
-        Expr::Call(ExprCall { func, args, .. }) => {
-            // Direct call check at this expression.
-            if let Expr::Path(ExprPath { path, .. }) = func.as_ref() {
-                if path.segments.last().is_some_and(|s| s.ident == callee_name) {
-                    hits.push(CallsiteHit {
-                        args: args.iter().cloned().collect(),
-                        conditions: conditions.clone(),
-                        preceding_inner_stmts: inner_stmts.clone(),
-                    });
-                }
-            }
-            walk_expr_for_callsites(func, callee_name, conditions, inner_stmts, hits);
-            // Recurse into argument expressions.
-            for a in args {
-                walk_expr_for_callsites(a, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        Expr::MethodCall(m) => {
-            // Method call `recv.foo(args)` is a callsite to `foo` if
-            // foo matches callee_name. The receiver becomes the
-            // implicit first argument (paper 07 normalizes
-            // `Type::method(recv, args)`).
-            if m.method == callee_name {
-                let mut all_args: Vec<Expr> = vec![(*m.receiver).clone()];
-                for a in &m.args {
-                    all_args.push(a.clone());
-                }
+    if let Expr::Call(ExprCall { func, args, .. }) = expr {
+        // Direct call check at this expression.
+        if let Expr::Path(ExprPath { path, .. }) = func.as_ref() {
+            if path.segments.last().is_some_and(|s| s.ident == callee_name) {
                 hits.push(CallsiteHit {
-                    args: all_args,
+                    args: args.iter().cloned().collect(),
                     conditions: conditions.clone(),
                     preceding_inner_stmts: inner_stmts.clone(),
                 });
             }
-            // Recurse into receiver and args for nested callsites.
-            walk_expr_for_callsites(&m.receiver, callee_name, conditions, inner_stmts, hits);
-            for a in &m.args {
-                walk_expr_for_callsites(a, callee_name, conditions, inner_stmts, hits);
-            }
         }
-        Expr::If(ExprIf {
-            cond,
-            then_branch,
-            else_branch,
-            ..
-        }) => {
-            // Lift the condition; if it doesn't lift to an IrFormula we
-            // proceed without adding a context entry (the walker is
-            // best-effort: missing conditions are equivalent to `true`).
-            let lifted = lift_predicate(cond);
-            // Then-branch: condition holds.
+        walk_expr_for_callsites(func, callee_name, conditions, inner_stmts, hits);
+        // Recurse into argument expressions.
+        for a in args {
+            walk_expr_for_callsites(a, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::MethodCall(m) = expr {
+        // Method call `recv.foo(args)` is a callsite to `foo` if
+        // foo matches callee_name. The receiver becomes the
+        // implicit first argument (paper 07 normalizes
+        // `Type::method(recv, args)`).
+        if m.method == callee_name {
+            let mut all_args: Vec<Expr> = vec![(*m.receiver).clone()];
+            for a in &m.args {
+                all_args.push(a.clone());
+            }
+            hits.push(CallsiteHit {
+                args: all_args,
+                conditions: conditions.clone(),
+                preceding_inner_stmts: inner_stmts.clone(),
+            });
+        }
+        // Recurse into receiver and args for nested callsites.
+        walk_expr_for_callsites(&m.receiver, callee_name, conditions, inner_stmts, hits);
+        for a in &m.args {
+            walk_expr_for_callsites(a, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::If(ExprIf {
+        cond,
+        then_branch,
+        else_branch,
+        ..
+    }) = expr
+    {
+        // Lift the condition; if it doesn't lift to an IrFormula we
+        // proceed without adding a context entry (the walker is
+        // best-effort: missing conditions are equivalent to `true`).
+        let lifted = lift_predicate(cond);
+        // Then-branch: condition holds.
+        if let Some(c) = &lifted {
+            conditions.push(c.clone());
+        }
+        // For each statement in the then-branch, the preceding statements
+        // in that branch are in-scope inner let-bindings. We push them
+        // into inner_stmts as we advance through the block.
+        for (branch_idx, s) in then_branch.stmts.iter().enumerate() {
+            // Push preceding stmts from this branch (innermost-first,
+            // reversed so the backward walk applies them in the right order).
+            let mut branch_preceding: Vec<Stmt> = then_branch.stmts[..branch_idx]
+                .iter()
+                .rev()
+                .cloned()
+                .collect();
+            branch_preceding.extend(inner_stmts.iter().cloned());
+            // Save and restore the caller's inner_stmts across the
+            // recursive descent — identical to the Block-arm pattern.
+            let saved = inner_stmts.clone();
+            *inner_stmts = branch_preceding;
+            walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+            *inner_stmts = saved;
+        }
+        if lifted.is_some() {
+            conditions.pop();
+        }
+        // Else-branch: ¬condition holds.
+        if let Some((_, else_expr)) = else_branch {
             if let Some(c) = &lifted {
-                conditions.push(c.clone());
+                let negated = IrFormula::Not {
+                    operands: vec![c.clone()],
+                };
+                conditions.push(negated);
             }
-            // For each statement in the then-branch, the preceding statements
-            // in that branch are in-scope inner let-bindings. We push them
-            // into inner_stmts as we advance through the block.
-            for (branch_idx, s) in then_branch.stmts.iter().enumerate() {
-                // Push preceding stmts from this branch (innermost-first,
-                // reversed so the backward walk applies them in the right order).
-                let mut branch_preceding: Vec<Stmt> = then_branch.stmts[..branch_idx]
-                    .iter()
-                    .rev()
-                    .cloned()
-                    .collect();
-                branch_preceding.extend(inner_stmts.iter().cloned());
-                // Save and restore the caller's inner_stmts across the
-                // recursive descent — identical to the Block-arm pattern.
-                let saved = inner_stmts.clone();
-                *inner_stmts = branch_preceding;
-                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
-                *inner_stmts = saved;
-            }
+            walk_expr_for_callsites(else_expr, callee_name, conditions, inner_stmts, hits);
             if lifted.is_some() {
                 conditions.pop();
             }
-            // Else-branch: ¬condition holds.
-            if let Some((_, else_expr)) = else_branch {
-                if let Some(c) = &lifted {
-                    let negated = IrFormula::Not {
-                        operands: vec![c.clone()],
-                    };
-                    conditions.push(negated);
-                }
-                walk_expr_for_callsites(else_expr, callee_name, conditions, inner_stmts, hits);
-                if lifted.is_some() {
-                    conditions.pop();
-                }
-            }
         }
-        Expr::Block(b) => {
-            for (block_idx, s) in b.block.stmts.iter().enumerate() {
-                let mut block_preceding: Vec<Stmt> =
-                    b.block.stmts[..block_idx].iter().rev().cloned().collect();
-                block_preceding.extend(inner_stmts.iter().cloned());
-                let saved = inner_stmts.clone();
-                *inner_stmts = block_preceding;
-                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
-                *inner_stmts = saved;
-            }
-        }
-        Expr::Async(a) => {
-            for (block_idx, s) in a.block.stmts.iter().enumerate() {
-                let mut block_preceding: Vec<Stmt> =
-                    a.block.stmts[..block_idx].iter().rev().cloned().collect();
-                block_preceding.extend(inner_stmts.iter().cloned());
-                let saved = inner_stmts.clone();
-                *inner_stmts = block_preceding;
-                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
-                *inner_stmts = saved;
-            }
-        }
-        Expr::Const(c) => {
-            for (block_idx, s) in c.block.stmts.iter().enumerate() {
-                let mut block_preceding: Vec<Stmt> =
-                    c.block.stmts[..block_idx].iter().rev().cloned().collect();
-                block_preceding.extend(inner_stmts.iter().cloned());
-                let saved = inner_stmts.clone();
-                *inner_stmts = block_preceding;
-                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
-                *inner_stmts = saved;
-            }
-        }
-        // Loops: recurse into the body. The body's callsites are reachable
-        // from the loop's pre-state; their conditions are unchanged from
-        // outside the loop (we don't yet add loop-iteration invariants
-        // here — that would require lift-side invariant inference; for
-        // the MVP we walk the body once with the surrounding context).
-        Expr::While(w) => {
-            for s in &w.body.stmts {
-                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        Expr::ForLoop(fl) => {
-            for s in &fl.body.stmts {
-                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        Expr::Loop(l) => {
-            for s in &l.body.stmts {
-                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        // Match arms: each arm's body sees its pattern's binding context.
-        // For the MVP we descend into every arm's body without
-        // narrowing the pattern as a predicate; the postcondition split
-        // is captured separately in the lifter (lift_match_postcondition).
-        Expr::Match(m) => {
-            for arm in &m.arms {
-                walk_expr_for_callsites(&arm.body, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        // `?` operator: the success-path continues with the unwrapped
-        // value. The MVP recurses into the wrapped expression to find
-        // any callsites it contains.
-        Expr::Try(t) => {
-            walk_expr_for_callsites(&t.expr, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Await(a) => {
-            walk_expr_for_callsites(&a.base, callee_name, conditions, inner_stmts, hits);
-        }
-        // Return statements: recurse into the returned expression for
-        // callsite discovery.
-        Expr::Return(r) => {
-            if let Some(inner) = &r.expr {
-                walk_expr_for_callsites(inner, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        Expr::Break(b) => {
-            if let Some(inner) = &b.expr {
-                walk_expr_for_callsites(inner, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        Expr::Yield(y) => {
-            if let Some(inner) = &y.expr {
-                walk_expr_for_callsites(inner, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        // Common compound expression forms that can contain callsites. We
-        // recurse into their sub-expressions so a callsite inside
-        // `foo() && callee(x) > 0` or `(callee(x), y)` is not silently
-        // dropped (Bug #2).
-        Expr::Binary(b) => {
-            walk_expr_for_callsites(&b.left, callee_name, conditions, inner_stmts, hits);
-            walk_expr_for_callsites(&b.right, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Unary(u) => {
-            walk_expr_for_callsites(&u.expr, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Cast(c) => {
-            walk_expr_for_callsites(&c.expr, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Paren(p) => {
-            walk_expr_for_callsites(&p.expr, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Group(g) => {
-            walk_expr_for_callsites(&g.expr, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Reference(r) => {
-            walk_expr_for_callsites(&r.expr, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::RawAddr(r) => {
-            walk_expr_for_callsites(&r.expr, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Field(f) => {
-            walk_expr_for_callsites(&f.base, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Index(i) => {
-            walk_expr_for_callsites(&i.expr, callee_name, conditions, inner_stmts, hits);
-            walk_expr_for_callsites(&i.index, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Range(r) => {
-            if let Some(start) = &r.start {
-                walk_expr_for_callsites(start, callee_name, conditions, inner_stmts, hits);
-            }
-            if let Some(end) = &r.end {
-                walk_expr_for_callsites(end, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        Expr::Tuple(t) => {
-            for elem in &t.elems {
-                walk_expr_for_callsites(elem, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        Expr::Array(a) => {
-            for elem in &a.elems {
-                walk_expr_for_callsites(elem, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        Expr::Assign(a) => {
-            walk_expr_for_callsites(&a.left, callee_name, conditions, inner_stmts, hits);
-            walk_expr_for_callsites(&a.right, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::TryBlock(t) => {
-            for (block_idx, s) in t.block.stmts.iter().enumerate() {
-                let mut block_preceding: Vec<Stmt> =
-                    t.block.stmts[..block_idx].iter().rev().cloned().collect();
-                block_preceding.extend(inner_stmts.iter().cloned());
-                let saved = inner_stmts.clone();
-                *inner_stmts = block_preceding;
-                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
-                *inner_stmts = saved;
-            }
-        }
-        Expr::Let(l) => {
-            walk_expr_for_callsites(&l.expr, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Repeat(r) => {
-            walk_expr_for_callsites(&r.expr, callee_name, conditions, inner_stmts, hits);
-            walk_expr_for_callsites(&r.len, callee_name, conditions, inner_stmts, hits);
-        }
-        Expr::Struct(s) => {
-            for field in &s.fields {
-                walk_expr_for_callsites(&field.expr, callee_name, conditions, inner_stmts, hits);
-            }
-            if let Some(rest) = &s.rest {
-                walk_expr_for_callsites(rest, callee_name, conditions, inner_stmts, hits);
-            }
-        }
-        Expr::Unsafe(u) => {
-            for (block_idx, s) in u.block.stmts.iter().enumerate() {
-                let mut block_preceding: Vec<Stmt> =
-                    u.block.stmts[..block_idx].iter().rev().cloned().collect();
-                block_preceding.extend(inner_stmts.iter().cloned());
-                let saved = inner_stmts.clone();
-                *inner_stmts = block_preceding;
-                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
-                *inner_stmts = saved;
-            }
-        }
-        Expr::Closure(_) => {}
-        Expr::Continue(_)
-        | Expr::Infer(_)
-        | Expr::Lit(_)
-        | Expr::Macro(_)
-        | Expr::Path(_)
-        | Expr::Verbatim(_) => {}
-        _ => panic!("sugar-walk WP walker refused unknown syn::Expr variant"),
+        return;
     }
+    if let Expr::Block(b) = expr {
+        for (block_idx, s) in b.block.stmts.iter().enumerate() {
+            let mut block_preceding: Vec<Stmt> =
+                b.block.stmts[..block_idx].iter().rev().cloned().collect();
+            block_preceding.extend(inner_stmts.iter().cloned());
+            let saved = inner_stmts.clone();
+            *inner_stmts = block_preceding;
+            walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+            *inner_stmts = saved;
+        }
+        return;
+    }
+    if let Expr::Async(a) = expr {
+        for (block_idx, s) in a.block.stmts.iter().enumerate() {
+            let mut block_preceding: Vec<Stmt> =
+                a.block.stmts[..block_idx].iter().rev().cloned().collect();
+            block_preceding.extend(inner_stmts.iter().cloned());
+            let saved = inner_stmts.clone();
+            *inner_stmts = block_preceding;
+            walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+            *inner_stmts = saved;
+        }
+        return;
+    }
+    if let Expr::Const(c) = expr {
+        for (block_idx, s) in c.block.stmts.iter().enumerate() {
+            let mut block_preceding: Vec<Stmt> =
+                c.block.stmts[..block_idx].iter().rev().cloned().collect();
+            block_preceding.extend(inner_stmts.iter().cloned());
+            let saved = inner_stmts.clone();
+            *inner_stmts = block_preceding;
+            walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+            *inner_stmts = saved;
+        }
+        return;
+    }
+    // Loops: recurse into the body. The body's callsites are reachable
+    // from the loop's pre-state; their conditions are unchanged from
+    // outside the loop (we don't yet add loop-iteration invariants
+    // here — that would require lift-side invariant inference; for
+    // the MVP we walk the body once with the surrounding context).
+    if let Expr::While(w) = expr {
+        for s in &w.body.stmts {
+            walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::ForLoop(fl) = expr {
+        for s in &fl.body.stmts {
+            walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::Loop(l) = expr {
+        for s in &l.body.stmts {
+            walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    // Match arms: each arm's body sees its pattern's binding context.
+    // For the MVP we descend into every arm's body without
+    // narrowing the pattern as a predicate; the postcondition split
+    // is captured separately in the lifter (lift_match_postcondition).
+    if let Expr::Match(m) = expr {
+        for arm in &m.arms {
+            walk_expr_for_callsites(&arm.body, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    // `?` operator: the success-path continues with the unwrapped
+    // value. The MVP recurses into the wrapped expression to find
+    // any callsites it contains.
+    if let Expr::Try(t) = expr {
+        walk_expr_for_callsites(&t.expr, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Await(a) = expr {
+        walk_expr_for_callsites(&a.base, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    // Return statements: recurse into the returned expression for
+    // callsite discovery.
+    if let Expr::Return(r) = expr {
+        if let Some(inner) = &r.expr {
+            walk_expr_for_callsites(inner, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::Break(b) = expr {
+        if let Some(inner) = &b.expr {
+            walk_expr_for_callsites(inner, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::Yield(y) = expr {
+        if let Some(inner) = &y.expr {
+            walk_expr_for_callsites(inner, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    // Common compound expression forms that can contain callsites. We
+    // recurse into their sub-expressions so a callsite inside
+    // `foo() && callee(x) > 0` or `(callee(x), y)` is not silently
+    // dropped (Bug #2).
+    if let Expr::Binary(b) = expr {
+        walk_expr_for_callsites(&b.left, callee_name, conditions, inner_stmts, hits);
+        walk_expr_for_callsites(&b.right, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Unary(u) = expr {
+        walk_expr_for_callsites(&u.expr, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Cast(c) = expr {
+        walk_expr_for_callsites(&c.expr, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Paren(p) = expr {
+        walk_expr_for_callsites(&p.expr, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Group(g) = expr {
+        walk_expr_for_callsites(&g.expr, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Reference(r) = expr {
+        walk_expr_for_callsites(&r.expr, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::RawAddr(r) = expr {
+        walk_expr_for_callsites(&r.expr, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Field(f) = expr {
+        walk_expr_for_callsites(&f.base, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Index(i) = expr {
+        walk_expr_for_callsites(&i.expr, callee_name, conditions, inner_stmts, hits);
+        walk_expr_for_callsites(&i.index, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Range(r) = expr {
+        if let Some(start) = &r.start {
+            walk_expr_for_callsites(start, callee_name, conditions, inner_stmts, hits);
+        }
+        if let Some(end) = &r.end {
+            walk_expr_for_callsites(end, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::Tuple(t) = expr {
+        for elem in &t.elems {
+            walk_expr_for_callsites(elem, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::Array(a) = expr {
+        for elem in &a.elems {
+            walk_expr_for_callsites(elem, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::Assign(a) = expr {
+        walk_expr_for_callsites(&a.left, callee_name, conditions, inner_stmts, hits);
+        walk_expr_for_callsites(&a.right, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::TryBlock(t) = expr {
+        for (block_idx, s) in t.block.stmts.iter().enumerate() {
+            let mut block_preceding: Vec<Stmt> =
+                t.block.stmts[..block_idx].iter().rev().cloned().collect();
+            block_preceding.extend(inner_stmts.iter().cloned());
+            let saved = inner_stmts.clone();
+            *inner_stmts = block_preceding;
+            walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+            *inner_stmts = saved;
+        }
+        return;
+    }
+    if let Expr::Let(l) = expr {
+        walk_expr_for_callsites(&l.expr, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Repeat(r) = expr {
+        walk_expr_for_callsites(&r.expr, callee_name, conditions, inner_stmts, hits);
+        walk_expr_for_callsites(&r.len, callee_name, conditions, inner_stmts, hits);
+        return;
+    }
+    if let Expr::Struct(s) = expr {
+        for field in &s.fields {
+            walk_expr_for_callsites(&field.expr, callee_name, conditions, inner_stmts, hits);
+        }
+        if let Some(rest) = &s.rest {
+            walk_expr_for_callsites(rest, callee_name, conditions, inner_stmts, hits);
+        }
+        return;
+    }
+    if let Expr::Unsafe(u) = expr {
+        for (block_idx, s) in u.block.stmts.iter().enumerate() {
+            let mut block_preceding: Vec<Stmt> =
+                u.block.stmts[..block_idx].iter().rev().cloned().collect();
+            block_preceding.extend(inner_stmts.iter().cloned());
+            let saved = inner_stmts.clone();
+            *inner_stmts = block_preceding;
+            walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+            *inner_stmts = saved;
+        }
+        return;
+    }
+    if let Expr::Closure(_) = expr {
+        return;
+    }
+    if matches!(
+        expr,
+        Expr::Continue(_)
+            | Expr::Infer(_)
+            | Expr::Lit(_)
+            | Expr::Macro(_)
+            | Expr::Path(_)
+            | Expr::Verbatim(_)
+    ) {
+        return;
+    }
+    panic!("sugar-walk WP walker refused unknown syn::Expr variant")
 }
 
 /// If `stmt` is a `let pat = expr;` binding, return one or more
@@ -564,21 +614,21 @@ fn walk_expr_for_callsites(
 /// `let Point { x, y } = p`, `let [a, b] = arr`) yield one pair per
 /// bound name, with each name's term being a catalog projection of the
 /// RHS routed through the IrTerm boundary.
+// #3027 S7: was a 4-arm match over `Stmt` (the ladder-demolition census's
+// `patterns-types-call-edges` row). Now an `if let`/`else`; every other shape
+// (a `Local` with no initializer, or any non-`Local` statement) keeps the
+// exact same `None` fail-safe.
 fn let_binding(stmt: &Stmt) -> Option<Vec<(String, IrTerm)>> {
-    match stmt {
-        Stmt::Local(Local {
-            pat,
-            init: Some(init),
-            ..
-        }) => {
-            let rhs = lift_expr_to_term(init.expr.as_ref());
-            collect_pat_bindings(pat, rhs)
-        }
-        Stmt::Local(Local { init: None, .. })
-        | Stmt::Expr(_, _)
-        | Stmt::Item(_)
-        | Stmt::Macro(_) => None,
-    }
+    let Stmt::Local(Local {
+        pat,
+        init: Some(init),
+        ..
+    }) = stmt
+    else {
+        return None;
+    };
+    let rhs = lift_expr_to_term(init.expr.as_ref());
+    collect_pat_bindings(pat, rhs)
 }
 
 /// Walk a Pat tree, emitting one (name, projected-term) per bound name.
@@ -592,58 +642,74 @@ fn collect_pat_bindings(pat: &Pat, rhs: IrTerm) -> Option<Vec<(String, IrTerm)>>
     }
 }
 
+// #3027 S7: was a single 17-arm match over `syn::Pat` (the ladder-demolition
+// census's `patterns-types-call-edges` row). Now a sequential `if let` chain,
+// same relative order as the original arms. The closed
+// refuse-unsupported-pattern group and the trailing unknown-variant panic are
+// unchanged verbatim.
 fn collect_into(pat: &Pat, term: IrTerm, out: &mut Vec<(String, IrTerm)>) -> Option<()> {
-    match pat {
-        Pat::Ident(p) => {
-            out.push((p.ident.to_string(), term));
-            Some(())
-        }
-        Pat::Type(pt) => collect_into(&pt.pat, term, out),
-        Pat::Wild(_) => Some(()), // `_` binds nothing
-        Pat::Reference(r) => collect_into(&r.pat, term, out),
-        Pat::Paren(p) => collect_into(&p.pat, term, out),
-        Pat::Tuple(t) => {
-            for (i, sub) in t.elems.iter().enumerate() {
-                let projected = pattern_tuple_projection(&term, i);
-                collect_into(sub, projected, out)?;
-            }
-            Some(())
-        }
-        Pat::TupleStruct(ts) => {
-            for (i, sub) in ts.elems.iter().enumerate() {
-                let projected = pattern_tuple_struct_projection(&term, i);
-                collect_into(sub, projected, out)?;
-            }
-            Some(())
-        }
-        Pat::Struct(s) => {
-            for field in &s.fields {
-                let field_name = match &field.member {
-                    syn::Member::Named(id) => id.to_string(),
-                    syn::Member::Unnamed(idx) => idx.index.to_string(),
-                };
-                let projected = pattern_field_projection(&term, &field_name);
-                collect_into(&field.pat, projected, out)?;
-            }
-            Some(())
-        }
-        Pat::Slice(s) => {
-            for (i, sub) in s.elems.iter().enumerate() {
-                let projected = pattern_index_projection(&term, i);
-                collect_into(sub, projected, out)?;
-            }
-            Some(())
-        }
-        Pat::Const(_)
-        | Pat::Lit(_)
-        | Pat::Macro(_)
-        | Pat::Or(_)
-        | Pat::Path(_)
-        | Pat::Range(_)
-        | Pat::Rest(_)
-        | Pat::Verbatim(_) => refuse_unsupported_pattern(pat),
-        _ => panic!("sugar-walk WP pattern collector refused unknown syn::Pat variant"),
+    if let Pat::Ident(p) = pat {
+        out.push((p.ident.to_string(), term));
+        return Some(());
     }
+    if let Pat::Type(pt) = pat {
+        return collect_into(&pt.pat, term, out);
+    }
+    if let Pat::Wild(_) = pat {
+        return Some(()); // `_` binds nothing
+    }
+    if let Pat::Reference(r) = pat {
+        return collect_into(&r.pat, term, out);
+    }
+    if let Pat::Paren(p) = pat {
+        return collect_into(&p.pat, term, out);
+    }
+    if let Pat::Tuple(t) = pat {
+        for (i, sub) in t.elems.iter().enumerate() {
+            let projected = pattern_tuple_projection(&term, i);
+            collect_into(sub, projected, out)?;
+        }
+        return Some(());
+    }
+    if let Pat::TupleStruct(ts) = pat {
+        for (i, sub) in ts.elems.iter().enumerate() {
+            let projected = pattern_tuple_struct_projection(&term, i);
+            collect_into(sub, projected, out)?;
+        }
+        return Some(());
+    }
+    if let Pat::Struct(s) = pat {
+        for field in &s.fields {
+            let field_name = match &field.member {
+                syn::Member::Named(id) => id.to_string(),
+                syn::Member::Unnamed(idx) => idx.index.to_string(),
+            };
+            let projected = pattern_field_projection(&term, &field_name);
+            collect_into(&field.pat, projected, out)?;
+        }
+        return Some(());
+    }
+    if let Pat::Slice(s) = pat {
+        for (i, sub) in s.elems.iter().enumerate() {
+            let projected = pattern_index_projection(&term, i);
+            collect_into(sub, projected, out)?;
+        }
+        return Some(());
+    }
+    if matches!(
+        pat,
+        Pat::Const(_)
+            | Pat::Lit(_)
+            | Pat::Macro(_)
+            | Pat::Or(_)
+            | Pat::Path(_)
+            | Pat::Range(_)
+            | Pat::Rest(_)
+            | Pat::Verbatim(_)
+    ) {
+        return refuse_unsupported_pattern(pat);
+    }
+    panic!("sugar-walk WP pattern collector refused unknown syn::Pat variant")
 }
 
 fn refuse_unsupported_pattern(pat: &Pat) -> ! {
@@ -654,27 +720,62 @@ fn refuse_unsupported_pattern(pat: &Pat) -> ! {
     )
 }
 
+// #3027 S7: was a single 17-arm match over `syn::Pat` (the ladder-demolition
+// census's `patterns-types-call-edges` row). Now a sequential `if let` chain;
+// the same `"Unknown"` fail-safe for every other shape.
 fn pat_kind(pat: &Pat) -> &'static str {
-    match pat {
-        Pat::Const(_) => "Const",
-        Pat::Ident(_) => "Ident",
-        Pat::Lit(_) => "Lit",
-        Pat::Macro(_) => "Macro",
-        Pat::Or(_) => "Or",
-        Pat::Paren(_) => "Paren",
-        Pat::Path(_) => "Path",
-        Pat::Range(_) => "Range",
-        Pat::Reference(_) => "Reference",
-        Pat::Rest(_) => "Rest",
-        Pat::Slice(_) => "Slice",
-        Pat::Struct(_) => "Struct",
-        Pat::Tuple(_) => "Tuple",
-        Pat::TupleStruct(_) => "TupleStruct",
-        Pat::Type(_) => "Type",
-        Pat::Verbatim(_) => "Verbatim",
-        Pat::Wild(_) => "Wild",
-        _ => "Unknown",
+    if let Pat::Const(_) = pat {
+        return "Const";
     }
+    if let Pat::Ident(_) = pat {
+        return "Ident";
+    }
+    if let Pat::Lit(_) = pat {
+        return "Lit";
+    }
+    if let Pat::Macro(_) = pat {
+        return "Macro";
+    }
+    if let Pat::Or(_) = pat {
+        return "Or";
+    }
+    if let Pat::Paren(_) = pat {
+        return "Paren";
+    }
+    if let Pat::Path(_) = pat {
+        return "Path";
+    }
+    if let Pat::Range(_) = pat {
+        return "Range";
+    }
+    if let Pat::Reference(_) = pat {
+        return "Reference";
+    }
+    if let Pat::Rest(_) = pat {
+        return "Rest";
+    }
+    if let Pat::Slice(_) = pat {
+        return "Slice";
+    }
+    if let Pat::Struct(_) = pat {
+        return "Struct";
+    }
+    if let Pat::Tuple(_) = pat {
+        return "Tuple";
+    }
+    if let Pat::TupleStruct(_) = pat {
+        return "TupleStruct";
+    }
+    if let Pat::Type(_) = pat {
+        return "Type";
+    }
+    if let Pat::Verbatim(_) = pat {
+        return "Verbatim";
+    }
+    if let Pat::Wild(_) = pat {
+        return "Wild";
+    }
+    "Unknown"
 }
 
 /// Lift a Rust `syn::Expr` to a canonical `IrTerm`.

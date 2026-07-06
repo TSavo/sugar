@@ -156,6 +156,10 @@ pub fn extract_call_edges_from_file(
     edges
 }
 
+// #3027 S7: was a single 15-arm match over `syn::Item` (the ladder-demolition
+// census's `patterns-types-call-edges` row). Now a sequential `if let` chain
+// per item, same relative order as the original arms. The closed no-op group
+// and the trailing unknown-variant panic are unchanged verbatim.
 fn walk_items_for_edges(
     items: &[syn::Item],
     source_path: &str,
@@ -164,35 +168,22 @@ fn walk_items_for_edges(
     edges: &mut Vec<CallEdgeMemento>,
 ) {
     for item in items {
-        match item {
-            syn::Item::Fn(f) => {
-                let fn_name = f.sig.ident.to_string();
-                // Only look for edges within contracted functions.
-                if let Some(source_cid) = contract_cids.get(&fn_name) {
-                    let locus = CallSiteLocus {
-                        file: source_path.to_string(),
-                        line: None,
-                        col: None,
-                    };
-                    collect_call_sites_in_block(&f.block, source_cid, &locus, contract_cids, edges);
-                }
-                // Recurse into nested items in function body.
-                for stmt in &f.block.stmts {
-                    if let syn::Stmt::Item(inner) = stmt {
-                        walk_items_for_edges(
-                            std::slice::from_ref(inner),
-                            source_path,
-                            contract_cids,
-                            contracted_fn_names,
-                            edges,
-                        );
-                    }
-                }
+        if let syn::Item::Fn(f) = item {
+            let fn_name = f.sig.ident.to_string();
+            // Only look for edges within contracted functions.
+            if let Some(source_cid) = contract_cids.get(&fn_name) {
+                let locus = CallSiteLocus {
+                    file: source_path.to_string(),
+                    line: None,
+                    col: None,
+                };
+                collect_call_sites_in_block(&f.block, source_cid, &locus, contract_cids, edges);
             }
-            syn::Item::Mod(m) => {
-                if let Some((_, items)) = &m.content {
+            // Recurse into nested items in function body.
+            for stmt in &f.block.stmts {
+                if let syn::Stmt::Item(inner) = stmt {
                     walk_items_for_edges(
-                        items,
+                        std::slice::from_ref(inner),
                         source_path,
                         contract_cids,
                         contracted_fn_names,
@@ -200,28 +191,47 @@ fn walk_items_for_edges(
                     );
                 }
             }
-            syn::Item::ForeignMod(fm) => {
-                // extern "C" blocks: no call sites to extract here,
-                // but we record the symbol names for resolution later.
-                // The actual call-edge emission happens when contracted
-                // functions CALL these extern symbols (handled below via
-                // the call-site walker).
-                let _ = fm;
-            }
-            syn::Item::Const(_)
-            | syn::Item::Enum(_)
-            | syn::Item::ExternCrate(_)
-            | syn::Item::Macro(_)
-            | syn::Item::Static(_)
-            | syn::Item::Struct(_)
-            | syn::Item::Trait(_)
-            | syn::Item::TraitAlias(_)
-            | syn::Item::Type(_)
-            | syn::Item::Union(_)
-            | syn::Item::Use(_)
-            | syn::Item::Verbatim(_) => {}
-            _ => panic!("sugar-lift call_edges refused unknown syn::Item variant"),
+            continue;
         }
+        if let syn::Item::Mod(m) = item {
+            if let Some((_, items)) = &m.content {
+                walk_items_for_edges(
+                    items,
+                    source_path,
+                    contract_cids,
+                    contracted_fn_names,
+                    edges,
+                );
+            }
+            continue;
+        }
+        if let syn::Item::ForeignMod(fm) = item {
+            // extern "C" blocks: no call sites to extract here,
+            // but we record the symbol names for resolution later.
+            // The actual call-edge emission happens when contracted
+            // functions CALL these extern symbols (handled below via
+            // the call-site walker).
+            let _ = fm;
+            continue;
+        }
+        if matches!(
+            item,
+            syn::Item::Const(_)
+                | syn::Item::Enum(_)
+                | syn::Item::ExternCrate(_)
+                | syn::Item::Macro(_)
+                | syn::Item::Static(_)
+                | syn::Item::Struct(_)
+                | syn::Item::Trait(_)
+                | syn::Item::TraitAlias(_)
+                | syn::Item::Type(_)
+                | syn::Item::Union(_)
+                | syn::Item::Use(_)
+                | syn::Item::Verbatim(_)
+        ) {
+            continue;
+        }
+        panic!("sugar-lift call_edges refused unknown syn::Item variant")
     }
 }
 
@@ -238,6 +248,9 @@ fn collect_call_sites_in_block(
     }
 }
 
+// #3027 S7: was a 4-arm match over `syn::Stmt` (the ladder-demolition census's
+// `patterns-types-call-edges` row). Now a sequential `if let` chain; the two
+// no-op arms keep their exact same comments and behavior.
 fn collect_call_sites_in_stmt(
     stmt: &syn::Stmt,
     source_cid: &str,
@@ -245,28 +258,31 @@ fn collect_call_sites_in_stmt(
     contract_cids: &BTreeMap<String, String>,
     edges: &mut Vec<CallEdgeMemento>,
 ) {
-    match stmt {
-        syn::Stmt::Expr(expr, _) => {
-            collect_call_sites_in_expr(expr, source_cid, locus, contract_cids, edges);
-        }
-        syn::Stmt::Local(local) => {
-            if let Some(init) = &local.init {
-                collect_call_sites_in_expr(&init.expr, source_cid, locus, contract_cids, edges);
-                if let Some((_, diverge)) = &init.diverge {
-                    collect_call_sites_in_expr(diverge, source_cid, locus, contract_cids, edges);
-                }
+    if let syn::Stmt::Expr(expr, _) = stmt {
+        collect_call_sites_in_expr(expr, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Stmt::Local(local) = stmt {
+        if let Some(init) = &local.init {
+            collect_call_sites_in_expr(&init.expr, source_cid, locus, contract_cids, edges);
+            if let Some((_, diverge)) = &init.diverge {
+                collect_call_sites_in_expr(diverge, source_cid, locus, contract_cids, edges);
             }
         }
-        syn::Stmt::Item(_) => {
-            // Nested items handled at the items-walking level.
-        }
-        syn::Stmt::Macro(_) => {
-            // Macro statements (e.g. assert!) may contain call sites, but
-            // we cannot reliably parse their token streams here. Skipped.
-        }
+        return;
     }
+    if let syn::Stmt::Item(_) = stmt {
+        // Nested items handled at the items-walking level.
+        return;
+    }
+    // syn::Stmt::Macro(_): macro statements (e.g. assert!) may contain call
+    // sites, but we cannot reliably parse their token streams here. Skipped.
 }
 
+// #3027 S7: was a single 39-arm match over `syn::Expr` (the ladder-demolition
+// census's `patterns-types-call-edges` row). Now a sequential `if let` chain,
+// same relative order as the original arms. The closed no-op group and the
+// trailing unknown-variant panic are unchanged verbatim.
 fn collect_call_sites_in_expr(
     expr: &syn::Expr,
     source_cid: &str,
@@ -274,213 +290,262 @@ fn collect_call_sites_in_expr(
     contract_cids: &BTreeMap<String, String>,
     edges: &mut Vec<CallEdgeMemento>,
 ) {
-    match expr {
-        syn::Expr::Call(c) => {
-            // Emit an edge for this call site.
-            if let Some(callee_name) = callee_name_from_expr(&c.func) {
-                let target_cid = contract_cids.get(&callee_name).map(|s| s.as_str());
-                let edge = mint_call_edge(source_cid, target_cid, locus, &callee_name);
-                edges.push(edge);
-            }
-            collect_call_sites_in_expr(&c.func, source_cid, locus, contract_cids, edges);
-            // Recurse into arguments.
-            for arg in &c.args {
-                collect_call_sites_in_expr(arg, source_cid, locus, contract_cids, edges);
-            }
-        }
-        syn::Expr::MethodCall(mc) => {
-            // Emit an edge for the method call.
-            let callee_name = mc.method.to_string();
-            // Methods don't resolve to contract CIDs by name alone; treat as unresolved.
-            let edge = mint_call_edge(source_cid, None, locus, &callee_name);
+    if let syn::Expr::Call(c) = expr {
+        // Emit an edge for this call site.
+        if let Some(callee_name) = callee_name_from_expr(&c.func) {
+            let target_cid = contract_cids.get(&callee_name).map(|s| s.as_str());
+            let edge = mint_call_edge(source_cid, target_cid, locus, &callee_name);
             edges.push(edge);
-            // Recurse into receiver and arguments.
-            collect_call_sites_in_expr(&mc.receiver, source_cid, locus, contract_cids, edges);
-            for arg in &mc.args {
-                collect_call_sites_in_expr(arg, source_cid, locus, contract_cids, edges);
-            }
         }
-        // Recurse into sub-expressions.
-        syn::Expr::Block(b) => {
-            collect_call_sites_in_block(&b.block, source_cid, locus, contract_cids, edges);
+        collect_call_sites_in_expr(&c.func, source_cid, locus, contract_cids, edges);
+        // Recurse into arguments.
+        for arg in &c.args {
+            collect_call_sites_in_expr(arg, source_cid, locus, contract_cids, edges);
         }
-        syn::Expr::Async(e) => {
-            collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Const(e) => {
-            collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::If(e) => {
-            collect_call_sites_in_expr(&e.cond, source_cid, locus, contract_cids, edges);
-            collect_call_sites_in_block(&e.then_branch, source_cid, locus, contract_cids, edges);
-            if let Some((_, else_b)) = &e.else_branch {
-                collect_call_sites_in_expr(else_b, source_cid, locus, contract_cids, edges);
-            }
-        }
-        syn::Expr::While(e) => {
-            collect_call_sites_in_expr(&e.cond, source_cid, locus, contract_cids, edges);
-            collect_call_sites_in_block(&e.body, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::ForLoop(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-            collect_call_sites_in_block(&e.body, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Loop(e) => {
-            collect_call_sites_in_block(&e.body, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Match(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-            for arm in &e.arms {
-                if let Some((_, guard)) = &arm.guard {
-                    collect_call_sites_in_expr(guard, source_cid, locus, contract_cids, edges);
-                }
-                collect_call_sites_in_expr(&arm.body, source_cid, locus, contract_cids, edges);
-            }
-        }
-        syn::Expr::Binary(e) => {
-            collect_call_sites_in_expr(&e.left, source_cid, locus, contract_cids, edges);
-            collect_call_sites_in_expr(&e.right, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Unary(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Return(e) => {
-            if let Some(v) = &e.expr {
-                collect_call_sites_in_expr(v, source_cid, locus, contract_cids, edges);
-            }
-        }
-        syn::Expr::Break(e) => {
-            if let Some(v) = &e.expr {
-                collect_call_sites_in_expr(v, source_cid, locus, contract_cids, edges);
-            }
-        }
-        syn::Expr::Yield(e) => {
-            if let Some(v) = &e.expr {
-                collect_call_sites_in_expr(v, source_cid, locus, contract_cids, edges);
-            }
-        }
-        syn::Expr::Assign(e) => {
-            collect_call_sites_in_expr(&e.left, source_cid, locus, contract_cids, edges);
-            collect_call_sites_in_expr(&e.right, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Field(e) => {
-            collect_call_sites_in_expr(&e.base, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Index(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-            collect_call_sites_in_expr(&e.index, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Paren(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Group(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Reference(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::RawAddr(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Cast(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Closure(e) => {
-            collect_call_sites_in_expr(&e.body, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Try(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Await(e) => {
-            collect_call_sites_in_expr(&e.base, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Unsafe(e) => {
-            collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::TryBlock(e) => {
-            collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Let(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Tuple(e) => {
-            for elem in &e.elems {
-                collect_call_sites_in_expr(elem, source_cid, locus, contract_cids, edges);
-            }
-        }
-        syn::Expr::Array(e) => {
-            for elem in &e.elems {
-                collect_call_sites_in_expr(elem, source_cid, locus, contract_cids, edges);
-            }
-        }
-        syn::Expr::Struct(e) => {
-            for field in &e.fields {
-                collect_call_sites_in_expr(&field.expr, source_cid, locus, contract_cids, edges);
-            }
-            if let Some(rest) = &e.rest {
-                collect_call_sites_in_expr(rest, source_cid, locus, contract_cids, edges);
-            }
-        }
-        syn::Expr::Repeat(e) => {
-            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
-            collect_call_sites_in_expr(&e.len, source_cid, locus, contract_cids, edges);
-        }
-        syn::Expr::Continue(_)
-        | syn::Expr::Infer(_)
-        | syn::Expr::Lit(_)
-        | syn::Expr::Macro(_)
-        | syn::Expr::Path(_)
-        | syn::Expr::Verbatim(_) => {}
-        _ => panic!("sugar-lift call_edges refused unknown syn::Expr variant"),
+        return;
     }
+    if let syn::Expr::MethodCall(mc) = expr {
+        // Emit an edge for the method call.
+        let callee_name = mc.method.to_string();
+        // Methods don't resolve to contract CIDs by name alone; treat as unresolved.
+        let edge = mint_call_edge(source_cid, None, locus, &callee_name);
+        edges.push(edge);
+        // Recurse into receiver and arguments.
+        collect_call_sites_in_expr(&mc.receiver, source_cid, locus, contract_cids, edges);
+        for arg in &mc.args {
+            collect_call_sites_in_expr(arg, source_cid, locus, contract_cids, edges);
+        }
+        return;
+    }
+    // Recurse into sub-expressions.
+    if let syn::Expr::Block(b) = expr {
+        collect_call_sites_in_block(&b.block, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Async(e) = expr {
+        collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Const(e) = expr {
+        collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::If(e) = expr {
+        collect_call_sites_in_expr(&e.cond, source_cid, locus, contract_cids, edges);
+        collect_call_sites_in_block(&e.then_branch, source_cid, locus, contract_cids, edges);
+        if let Some((_, else_b)) = &e.else_branch {
+            collect_call_sites_in_expr(else_b, source_cid, locus, contract_cids, edges);
+        }
+        return;
+    }
+    if let syn::Expr::While(e) = expr {
+        collect_call_sites_in_expr(&e.cond, source_cid, locus, contract_cids, edges);
+        collect_call_sites_in_block(&e.body, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::ForLoop(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        collect_call_sites_in_block(&e.body, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Loop(e) = expr {
+        collect_call_sites_in_block(&e.body, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Match(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        for arm in &e.arms {
+            if let Some((_, guard)) = &arm.guard {
+                collect_call_sites_in_expr(guard, source_cid, locus, contract_cids, edges);
+            }
+            collect_call_sites_in_expr(&arm.body, source_cid, locus, contract_cids, edges);
+        }
+        return;
+    }
+    if let syn::Expr::Binary(e) = expr {
+        collect_call_sites_in_expr(&e.left, source_cid, locus, contract_cids, edges);
+        collect_call_sites_in_expr(&e.right, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Unary(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Return(e) = expr {
+        if let Some(v) = &e.expr {
+            collect_call_sites_in_expr(v, source_cid, locus, contract_cids, edges);
+        }
+        return;
+    }
+    if let syn::Expr::Break(e) = expr {
+        if let Some(v) = &e.expr {
+            collect_call_sites_in_expr(v, source_cid, locus, contract_cids, edges);
+        }
+        return;
+    }
+    if let syn::Expr::Yield(e) = expr {
+        if let Some(v) = &e.expr {
+            collect_call_sites_in_expr(v, source_cid, locus, contract_cids, edges);
+        }
+        return;
+    }
+    if let syn::Expr::Assign(e) = expr {
+        collect_call_sites_in_expr(&e.left, source_cid, locus, contract_cids, edges);
+        collect_call_sites_in_expr(&e.right, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Field(e) = expr {
+        collect_call_sites_in_expr(&e.base, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Index(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        collect_call_sites_in_expr(&e.index, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Paren(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Group(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Reference(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::RawAddr(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Cast(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Closure(e) = expr {
+        collect_call_sites_in_expr(&e.body, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Try(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Await(e) = expr {
+        collect_call_sites_in_expr(&e.base, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Unsafe(e) = expr {
+        collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::TryBlock(e) = expr {
+        collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Let(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if let syn::Expr::Tuple(e) = expr {
+        for elem in &e.elems {
+            collect_call_sites_in_expr(elem, source_cid, locus, contract_cids, edges);
+        }
+        return;
+    }
+    if let syn::Expr::Array(e) = expr {
+        for elem in &e.elems {
+            collect_call_sites_in_expr(elem, source_cid, locus, contract_cids, edges);
+        }
+        return;
+    }
+    if let syn::Expr::Struct(e) = expr {
+        for field in &e.fields {
+            collect_call_sites_in_expr(&field.expr, source_cid, locus, contract_cids, edges);
+        }
+        if let Some(rest) = &e.rest {
+            collect_call_sites_in_expr(rest, source_cid, locus, contract_cids, edges);
+        }
+        return;
+    }
+    if let syn::Expr::Repeat(e) = expr {
+        collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        collect_call_sites_in_expr(&e.len, source_cid, locus, contract_cids, edges);
+        return;
+    }
+    if matches!(
+        expr,
+        syn::Expr::Continue(_)
+            | syn::Expr::Infer(_)
+            | syn::Expr::Lit(_)
+            | syn::Expr::Macro(_)
+            | syn::Expr::Path(_)
+            | syn::Expr::Verbatim(_)
+    ) {
+        return;
+    }
+    panic!("sugar-lift call_edges refused unknown syn::Expr variant")
 }
 
 /// Extract the callee name from a function-call expression's func field.
 /// Returns None for closures, parenthesised exprs, and other non-path callees.
+// #3027 S7: was a single 40-arm match over `syn::Expr` (the ladder-demolition
+// census's `patterns-types-call-edges` row). Now a sequential `if let` chain;
+// the closed no-op-returning-None group and the trailing unknown-variant
+// panic are unchanged verbatim.
 fn callee_name_from_expr(func: &syn::Expr) -> Option<String> {
-    match func {
-        syn::Expr::Path(p) => Some(path_to_string(&p.path)),
-        syn::Expr::Paren(inner) => callee_name_from_expr(&inner.expr),
-        syn::Expr::Group(inner) => callee_name_from_expr(&inner.expr),
-        syn::Expr::Array(_)
-        | syn::Expr::Assign(_)
-        | syn::Expr::Async(_)
-        | syn::Expr::Await(_)
-        | syn::Expr::Binary(_)
-        | syn::Expr::Block(_)
-        | syn::Expr::Break(_)
-        | syn::Expr::Call(_)
-        | syn::Expr::Cast(_)
-        | syn::Expr::Closure(_)
-        | syn::Expr::Const(_)
-        | syn::Expr::Continue(_)
-        | syn::Expr::Field(_)
-        | syn::Expr::ForLoop(_)
-        | syn::Expr::If(_)
-        | syn::Expr::Index(_)
-        | syn::Expr::Infer(_)
-        | syn::Expr::Let(_)
-        | syn::Expr::Lit(_)
-        | syn::Expr::Loop(_)
-        | syn::Expr::Macro(_)
-        | syn::Expr::Match(_)
-        | syn::Expr::MethodCall(_)
-        | syn::Expr::Range(_)
-        | syn::Expr::RawAddr(_)
-        | syn::Expr::Reference(_)
-        | syn::Expr::Repeat(_)
-        | syn::Expr::Return(_)
-        | syn::Expr::Struct(_)
-        | syn::Expr::Try(_)
-        | syn::Expr::TryBlock(_)
-        | syn::Expr::Tuple(_)
-        | syn::Expr::Unary(_)
-        | syn::Expr::Unsafe(_)
-        | syn::Expr::Verbatim(_)
-        | syn::Expr::While(_)
-        | syn::Expr::Yield(_) => None,
-        _ => panic!("sugar-lift call_edges refused unknown call callee syn::Expr variant"),
+    if let syn::Expr::Path(p) = func {
+        return Some(path_to_string(&p.path));
     }
+    if let syn::Expr::Paren(inner) = func {
+        return callee_name_from_expr(&inner.expr);
+    }
+    if let syn::Expr::Group(inner) = func {
+        return callee_name_from_expr(&inner.expr);
+    }
+    if matches!(
+        func,
+        syn::Expr::Array(_)
+            | syn::Expr::Assign(_)
+            | syn::Expr::Async(_)
+            | syn::Expr::Await(_)
+            | syn::Expr::Binary(_)
+            | syn::Expr::Block(_)
+            | syn::Expr::Break(_)
+            | syn::Expr::Call(_)
+            | syn::Expr::Cast(_)
+            | syn::Expr::Closure(_)
+            | syn::Expr::Const(_)
+            | syn::Expr::Continue(_)
+            | syn::Expr::Field(_)
+            | syn::Expr::ForLoop(_)
+            | syn::Expr::If(_)
+            | syn::Expr::Index(_)
+            | syn::Expr::Infer(_)
+            | syn::Expr::Let(_)
+            | syn::Expr::Lit(_)
+            | syn::Expr::Loop(_)
+            | syn::Expr::Macro(_)
+            | syn::Expr::Match(_)
+            | syn::Expr::MethodCall(_)
+            | syn::Expr::Range(_)
+            | syn::Expr::RawAddr(_)
+            | syn::Expr::Reference(_)
+            | syn::Expr::Repeat(_)
+            | syn::Expr::Return(_)
+            | syn::Expr::Struct(_)
+            | syn::Expr::Try(_)
+            | syn::Expr::TryBlock(_)
+            | syn::Expr::Tuple(_)
+            | syn::Expr::Unary(_)
+            | syn::Expr::Unsafe(_)
+            | syn::Expr::Verbatim(_)
+            | syn::Expr::While(_)
+            | syn::Expr::Yield(_)
+    ) {
+        return None;
+    }
+    panic!("sugar-lift call_edges refused unknown call callee syn::Expr variant")
 }
 
 fn path_to_string(p: &syn::Path) -> String {
