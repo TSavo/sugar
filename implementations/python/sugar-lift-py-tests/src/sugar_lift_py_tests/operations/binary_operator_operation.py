@@ -104,6 +104,8 @@ class BinaryOperatorOperation:
             return Complete(PredicateValue(formula))
         if isinstance(self.right, StringValue) and self.operator == "+":
             return self._symbolic_string_concat_effect()
+        if isinstance(self.right, StringValue) and self.operator == "/":
+            return self._symbolic_truediv_string_effect()
         self._floor_gap(receiver="SymbolicValue")
 
     def binary_string(
@@ -295,6 +297,20 @@ class BinaryOperatorOperation:
                 f"{observed} depends on the {carrier} and the string-concat universe bridge is not "
                 "proof-bearing yet; keep as typed red until a cited String-sorted "
                 f"concat floor owns this shape. blame={self.blame}"
+            )
+        )
+
+    def _symbolic_truediv_string_effect(self) -> Outcome:
+        return Incomplete(
+            RuntimeEffect(
+                "symbolic `/` over a string operand runtime boundary: "
+                "SymbolicValue / StringValue is ambiguous at lift time -- the "
+                "receiver's runtime `__truediv__` could be numeric division (a "
+                "TypeError against a str operand) or `pathlib.Path.__truediv__` "
+                "(a path join); the lift stays sort-silent on the receiver and "
+                "does not commit to either universe here, so this stays a typed "
+                "runtime effect until a cited String- or Path-sorted `/` floor "
+                f"owns this shape. blame={self.blame}"
             )
         )
 

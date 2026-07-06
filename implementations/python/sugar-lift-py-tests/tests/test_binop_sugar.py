@@ -143,6 +143,43 @@ def test_symbolic_binary_with_float_operand_is_typed_floor_effect():
     ]
 
 
+def test_symbolic_truediv_string_is_typed_runtime_effect():
+    # The sklearn wall shape (test_base.py:497:16): `data_home / "example.com"`.
+    # `data_home` is a runtime Path lifted sort-silent as SymbolicValue; `/` against
+    # a StringValue is ambiguous at lift time (numeric division vs Path.__truediv__
+    # join) -- a grounded typed runtime effect, never a bare panic.
+    outcome, operation_log = _reduce_outcome_with_log(
+        'data_home / "example.com"',
+        {"data_home": SymbolicValue(make_var("data_home"))},
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "RuntimeEffect"
+    assert "SymbolicValue / StringValue" in outcome.reason
+    assert "Path.__truediv__" in outcome.reason
+    assert operation_log == [
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
+    ]
+
+
+def test_symbolic_modulo_string_with_no_arm_still_floor_gaps():
+    # Discrimination twin: a different operator over the same operand pair has
+    # no arm and must still panic loudly (the floor gap stays, it does not
+    # silently widen to every SymbolicValue/StringValue shape).
+    import pytest
+
+    from sugar_lift_py_tests.factory import FactoryGap
+
+    with pytest.raises(FactoryGap) as excinfo:
+        reduce_term('x % "s"', {"x": SymbolicValue(make_var("x"))})
+
+    info = excinfo.value.info
+    assert info.observed == "SymbolicValue%StringValue"
+    assert info.requested == "binary operator operand floor"
+    assert info.gap_kind is GapKind.FLOOR
+    assert info.gap_locus is GapLocus.CONSTRUCTION
+
+
 def test_tuple_multiplication_repeats_literal_tuple():
     assert fol(reduce_term("(1,) * 3")) == fol(ctor("tuple", [num(1), num(1), num(1)]))
 
