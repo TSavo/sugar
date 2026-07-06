@@ -807,6 +807,35 @@ def test_pandas_named_expr_term_is_typed_red_effect() -> None:
     assert "pandas_gap.py:1:" in outcome.effect.reason
 
 
+def test_pandas_named_expr_constructor_argument_prior_assignment_emits_effect_row() -> (
+    None
+):
+    report = build_literal_call_report(
+        source=(
+            "class UuidExtensionArray:\n"
+            "    def __init__(self, values):\n"
+            "        self.values = values\n\n"
+            "def test_construct():\n"
+            "    a = UuidExtensionArray([0, u := uuid4()])\n"
+            "    assert a.values[1] == u\n"
+        ),
+        filename="pandas/tests/extension/uuid/test_uuid.py",
+        memento_file="pandas/tests/extension/uuid/test_uuid.py",
+    )
+
+    assert report is not None
+    assert report.payload.ir == []
+    assert len(report.payload.effects) == 1
+    effect = report.payload.effects[0]
+    assert isinstance(effect.effect, RuntimeEffect)
+    assert "named expression runtime boundary" in effect.effect.reason
+    assert "owner=NamedExprSugar" in effect.effect.reason
+    assert "shape=NamedExpr target `u` value `Call`" in effect.effect.reason
+    assert [row.status for row in report.payload.factory_walk] == ["runtime-effect"]
+    assert report.payload.factory_walk[0].selected == "ProjectedEqualityAssertionSugar"
+    assert report.payload.factory_walk[0].line == 7
+
+
 def test_pandas_starred_tuple_unpack_typed_red_witness_accepts_right_red_and_rejects_wrong_red(
     tmp_path: Path,
 ) -> None:
