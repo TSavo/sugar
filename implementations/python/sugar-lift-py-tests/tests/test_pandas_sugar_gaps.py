@@ -13,7 +13,9 @@ from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.floor import (
+    BoolValue,
     CallSiteValue,
     FloorValue,
     ImportAliasValue,
@@ -22,8 +24,8 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
-from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
 from sugar_lift_py_tests.sugar.compare_term_sugar import CompareTermSugar
 from sugar_lift_py_tests.sugar.generator_exp_sugar import GeneratorExpSugar
 from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
@@ -143,6 +145,125 @@ def test_import_alias_attribute_assignment_is_typed_runtime_effect() -> None:
     assert "pandas_gap.py:2:4" in outcome.effect.reason
 
 
+def test_pandas_symbolic_subscript_assignment_is_typed_runtime_effect() -> None:
+    outcome, selected = _block_outcome(
+        "    xs[0] = 1\n",
+        binds={"xs": SymbolicValue(make_var("xs"))},
+    )
+
+    assert "SubscriptAssignSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "subscript assignment runtime boundary" in outcome.effect.reason
+    assert "symbolic receiver" in outcome.effect.reason
+    assert "pandas_gap.py:2:4" in outcome.effect.reason
+
+
+def test_pandas_unary_callsite_without_body_is_typed_runtime_effect() -> None:
+    outcome, selected = _term_outcome(
+        "-delta",
+        binds={
+            "delta": CallSiteValue(
+                target_name="Timedelta",
+                arg_values=(),
+                parameters=(),
+                term=ctor("call:Timedelta", ()),
+                body=None,
+            )
+        },
+    )
+
+    assert "UnaryOpSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "unary operator runtime boundary" in outcome.effect.reason
+    assert "callsite value" in outcome.effect.reason
+    assert "Timedelta" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
+
+
+def test_pandas_unary_callsite_body_reduces_through_existing_floor() -> None:
+    class _ReturnSevenSugar:
+        def desugar(self, ctx):
+            del ctx
+            return Complete(TermValue(7))
+
+    outcome, selected = _term_outcome(
+        "-delta",
+        binds={
+            "delta": CallSiteValue(
+                target_name="constant_delta",
+                arg_values=(),
+                parameters=(),
+                term=ctor("call:constant_delta", ()),
+                body=SugarBody(_ReturnSevenSugar(), SugarRole.TERM),
+            )
+        },
+    )
+
+    assert "UnaryOpSugar" in selected
+    assert complete_value(outcome, owner="unary callsite body") == TermValue(-7)
+
+
+def test_pandas_py_invert_termvalue_uses_python_integer_floor() -> None:
+    outcome, selected = _term_outcome("~x", {"x": TermValue(1)})
+
+    assert "UnaryOpSugar" in selected
+    assert complete_value(outcome, owner="py.invert term") == TermValue(-2)
+
+
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        ("~x", -2),
+        ("-x", -1),
+        ("+x", 1),
+    ],
+)
+def test_pandas_boolvalue_unary_ops_use_python_integer_floor(
+    expr: str, expected: int
+) -> None:
+    outcome, selected = _term_outcome(expr, {"x": BoolValue(True)})
+
+    assert "UnaryOpSugar" in selected
+    assert complete_value(outcome, owner="bool unary term") == TermValue(expected)
+
+
+def test_pandas_function_universe_with_module_global_refuses_before_proofir_scope() -> (
+    None
+):
+    report = build_literal_call_report(
+        source=(
+            "import os\n\n"
+            "def getsize(filename):\n"
+            "    return os.stat(filename).st_size\n\n"
+            "def test_size():\n"
+            "    assert getsize('example.html') == 1\n"
+        ),
+        filename="pandas/tests/io/test_html.py",
+        memento_file="pandas/tests/io/test_html.py",
+    )
+
+    assert report is not None
+    dig_refusals = [
+        row
+        for row in report.payload.diagnostics
+        if isinstance(row, dict) and row.get("kind") == "dig-refusal"
+    ]
+    matching = [
+        row
+        for row in dig_refusals
+        if row.get("callee") == "getsize"
+        and "open non-formal variable(s): os" in str(row.get("reason"))
+    ]
+    assert len(matching) == 1
+    refusal = matching[0]
+    assert refusal["callee"] == "getsize"
+    assert refusal["caught"] == "ValueError"
+    assert "open non-formal variable(s): os" in refusal["reason"]
+    assert "PostCondition" not in refusal["reason"]
+
+
 def test_pandas_array_literal_dict_element_typed_red_witness_has_bad_twin(
     tmp_path: Path,
 ) -> None:
@@ -195,6 +316,15 @@ def test_pandas_array_literal_dict_element_typed_red_witness_has_bad_twin(
     ]
 
 
+def test_pandas_symbolic_subscript_assignment_typed_red_witness_has_bad_twin(
+    tmp_path: Path,
+) -> None:
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        _symbolic_subscript_assignment_witness(),
+        tmp_path,
+    )
+
+
 def test_pandas_dict_literal_subscript_discharges_and_refutes(
     tmp_path: Path,
 ) -> None:
@@ -213,6 +343,46 @@ def test_pandas_dict_literal_subscript_discharges_and_refutes(
             "    return {'a': 1}['a']\n\n"
             "def test_dict_literal_subscript():\n"
             "    assert A() == 2\n"
+        ),
+    )
+
+
+def test_pandas_integer_invert_discharges_and_refutes(tmp_path: Path) -> None:
+    _assert_production_pair(
+        tmp_path,
+        name="integer-invert",
+        selected=("UnaryOpSugar",),
+        truthful=(
+            "def A():\n"
+            "    return ~1\n\n"
+            "def test_integer_invert():\n"
+            "    assert A() == -2\n"
+        ),
+        lying=(
+            "def A():\n"
+            "    return ~1\n\n"
+            "def test_integer_invert():\n"
+            "    assert A() == 1\n"
+        ),
+    )
+
+
+def test_pandas_bool_invert_discharges_and_refutes(tmp_path: Path) -> None:
+    _assert_production_pair(
+        tmp_path,
+        name="bool-invert",
+        selected=("UnaryOpSugar",),
+        truthful=(
+            "def A():\n"
+            "    return ~True\n\n"
+            "def test_bool_invert():\n"
+            "    assert A() == -2\n"
+        ),
+        lying=(
+            "def A():\n"
+            "    return ~True\n\n"
+            "def test_bool_invert():\n"
+            "    assert A() == -1\n"
         ),
     )
 
@@ -599,6 +769,34 @@ def _red_seed_from_tuple_unpack_witnesses() -> SugarRedEffectWitnessPair:
         if isinstance(seed, SugarRedEffectWitnessPair):
             return seed
     raise AssertionError("TupleUnpackAssignSugar must expose a red-effect seed")
+
+
+def _symbolic_subscript_assignment_witness() -> SugarRedEffectWitnessPair:
+    right_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="subscript assignment runtime boundary",
+        blame_needle="test_witness.py:2:4",
+    )
+    wrong_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="attribute assignment runtime boundary",
+        blame_needle="test_witness.py:2:4",
+    )
+    return SugarRedEffectWitnessPair(
+        name="pandas_symbolic_subscript_assignment_runtime_effect",
+        owner_sugar="SubscriptAssignSugar",
+        family="pandas-floor-gap",
+        truthful=EffectWitnessSource(
+            source=("def A(xs):\n" "    xs[0] = 1\n" "    return xs\n"),
+            expectation=right_effect,
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=("def A(xs):\n" "    xs[0] = 1\n" "    return xs\n"),
+            expectation=wrong_effect,
+            expected_match=False,
+        ),
+    )
 
 
 def _callsite_floor(target_name: str) -> CallSiteValue:

@@ -10,7 +10,7 @@ from sugar_lift_py_tests.factory import (
     GapKind,
     GapLocus,
 )
-from sugar_lift_py_tests.floor import SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import BoolValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
@@ -29,7 +29,32 @@ class UnaryOperatorOperation:
             return Complete(TermValue(+receiver.value))
         if self.operator == "py.neg":
             return Complete(TermValue(-receiver.value))
+        if self.operator == "py.invert":
+            if type(receiver.value) is int:
+                return Complete(TermValue(~receiver.value))
+            from sugar_lift_py_tests.effect import RuntimeEffect
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            return Incomplete(
+                RuntimeEffect(
+                    "unary invert runtime boundary: Python defines `~` for "
+                    f"integer operands, but this TermValue is "
+                    f"{type(receiver.value).__name__}. Keep as typed red until "
+                    "a narrower numeric floor owns non-integer inversion. "
+                    f"blame={self.blame}"
+                )
+            )
         self._floor_gap(receiver="TermValue")
+
+    def unary_bool(self, receiver: BoolValue, ctx: object) -> Outcome:
+        del ctx
+        if self.operator == "py.pos":
+            return Complete(TermValue(+receiver.value))
+        if self.operator == "py.neg":
+            return Complete(TermValue(-receiver.value))
+        if self.operator == "py.invert":
+            return Complete(TermValue(~int(receiver.value)))
+        self._floor_gap(receiver="BoolValue")
 
     def unary_symbolic(self, receiver: SymbolicValue, ctx: object) -> Outcome:
         del ctx

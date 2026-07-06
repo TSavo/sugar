@@ -49,6 +49,39 @@ class CallSiteValue(FloorValue):
             )
         )
 
+    def unary_operator_with(self, operation, ctx):
+        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.factory import FactoryGap
+        from sugar_lift_py_tests.operations import perform_operation
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        try:
+            floor = force_floor(
+                self,
+                ctx,
+                owner=f"{operation.owner} callsite unary operand",
+                project_callsite=False,
+            )
+        except FactoryGap as exc:
+            observed = str(exc.info.get("observed", "callsite floor unavailable"))
+            return Incomplete(
+                RuntimeEffect(
+                    "unary operator runtime boundary: callsite value "
+                    f"`{self.target_name}` cannot be reduced before applying "
+                    f"`{operation.operator}`. Python evaluates the call result "
+                    "at runtime before the unary operator; keep as typed red "
+                    "until a narrower callsite floor owns this shape. "
+                    f"force_floor={observed}; blame={operation.blame}"
+                )
+            )
+        return perform_operation(
+            owner=operation.owner,
+            blame=operation.blame,
+            receiver=floor,
+            operation=operation,
+            ctx=ctx,
+        )
+
     def force_floor(
         self,
         ctx: Any,
