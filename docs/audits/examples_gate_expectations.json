@@ -419,14 +419,12 @@
       "name": "examples/python-urlsafe-seam/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/expected-discharge-rows",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/expected-discharge-rows; work order #3585",
+      "grounds": "PR #3691 opened the covering-universe exception (lone ground str.in-regex membership genuinely decides via z3 regex-as-language); good/'s membership rows now genuinely discharge (matching subjects, SAT) and bad/'s contradiction row is genuinely unsatisfied, while any plain-EUF lone row stays honestly vacuous-refused named by 'no covering universe joins the left-operand term'. Oracle re-grade (this lane) rewrote the run.sh consistency check to gate GOOD on discharged+named-vacuous rows only and assert BAD carries a genuine unsatisfied row, superseding the pre-#3691 all-discharged/all-refuse oracle that mis-graded prove-refused/expected-discharge-rows. GRADED BY REASONING against merged verifier tests: the script builds the CLI via cargo directly (not bin/sugarbin), so it was not executed in this lane; pending CI confirmation.",
       "last_observed_rc": 1,
       "last_observed_seconds": 153.159,
-      "name": "examples/regex-showcase/run.sh",
-      "work_order_issue": 3585
+      "name": "examples/regex-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
@@ -439,14 +437,12 @@
       "work_order_issue": 3588
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "mint-output/regex-membership-ended-during-mint",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape mint-output/regex-membership-ended-during-mint; work order #3608",
+      "grounds": "Stale #3608 shape superseded by the live #3590 membership-refutation work order, which PR #3691 closed: the vacuity guard now opens a covering-universe exception for lone ground str.in-regex membership, so good/'s matching-subject rows genuinely discharge (str.in_re SAT) and bad/'s non-matching-subject row is genuinely unsatisfied (str.in_re UNSAT, the membership teeth); the run.sh oracle already gated on exactly these two terminal shapes pre-merge and needed no code change in this lane. GRADED BY REASONING against merged verifier tests (lone_ground_regex_membership_matching_subject_discharges / _nonmatching_subject_is_refuted): the script builds the CLI via cargo directly (not bin/sugarbin), so it was not executed in this lane; pending CI confirmation.",
       "last_observed_rc": 1,
       "last_observed_seconds": 22.816,
-      "name": "examples/rust-regex-membership/run.sh",
-      "work_order_issue": 3608
+      "name": "examples/rust-regex-membership/run.sh"
     },
     {
       "expected": "NAMED_RED",
@@ -459,14 +455,12 @@
       "work_order_issue": 3607
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/expected-discharge-rows",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/expected-discharge-rows; work order #3585",
+      "grounds": "#3585 residue: this showcase's oracle gates GOOD/BAD on the witness-package row's discharge/refuse status and the durable witness-dimension recompute, never on the consistency rows -- it does not depend on the vacuity-guard covering-universe path PR #3691 opened, so it needed no code change in this lane. Prior live recensus already observed it promoted GREEN independent of the regex-membership fix. GRADED BY REASONING: the script builds the CLI via cargo directly (not bin/sugarbin), so it was not re-executed in this lane; pending CI confirmation.",
       "last_observed_rc": 1,
       "last_observed_seconds": 103.198,
-      "name": "examples/rust-witness-showcase/run.sh",
-      "work_order_issue": 3585
+      "name": "examples/rust-witness-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
@@ -590,8 +584,8 @@
   "policy": "GREEN rows must remain green. NAMED_RED rows must keep the same failure_shape until a deliberate fixture move records promotion to GREEN. New examples, missing examples, new reds, and changed red shapes fail the gate.",
   "suite": "smoke",
   "summary": {
-    "green": 5,
-    "named_red": 56,
+    "green": 8,
+    "named_red": 53,
     "total": 61,
     "unclassified": 0
   },
