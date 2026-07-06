@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -31,11 +32,17 @@ from sugar_lift_py_tests.operations import ContainsOperation, perform_operation
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 TRUE_CONST = {
     "kind": "const",
     "sort": {"kind": "primitive", "name": "Bool"},
     "value": True,
+}
+FALSE_CONST = {
+    "kind": "const",
+    "sort": {"kind": "primitive", "name": "Bool"},
+    "value": False,
 }
 
 
@@ -80,7 +87,7 @@ def test_membership_assertion_uses_shared_operation_dispatch_path() -> None:
 
     assert formula == eq(bool_const(True), bool_const(True))
     assert operation_log == [
-        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation"),
     ]
 
 
@@ -205,6 +212,89 @@ def test_membership_assertion_uses_array_floor_contains() -> None:
         "name": "=",
         "args": [TRUE_CONST, TRUE_CONST],
     }
+
+
+def test_membership_assertion_uses_tuple_floor_contains() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert 2 in (1, 2, 3)"
+    )
+
+    assert formula == eq(bool_const(True), bool_const(True))
+    assert operation_log == [
+        (
+            "TupleLiteralSugar",
+            "construct_sequence_with",
+            "SequenceConstructionOperation",
+        ),
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation"),
+    ]
+
+
+def test_membership_assertion_negates_not_in_after_tuple_floor_contains() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert 'missing' not in ('left', 'right')"
+    )
+
+    assert formula == eq(bool_const(True), bool_const(True))
+    assert operation_log == [
+        (
+            "TupleLiteralSugar",
+            "construct_sequence_with",
+            "SequenceConstructionOperation",
+        ),
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation"),
+    ]
+
+
+def test_membership_assertion_emits_symbolic_tuple_contains_predicate() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert result_year in (-19999, 1973)",
+        {"result_year": SymbolicValue(make_var("result_year"))},
+    )
+
+    assert formula == atomic(
+        "contains",
+        [ctor("tuple", [num(-19999), num(1973)]), make_var("result_year")],
+    )
+    assert operation_log == [
+        ("UnaryOpSugar", "unary_operator_with", "UnaryOperatorOperation"),
+        (
+            "TupleLiteralSugar",
+            "construct_sequence_with",
+            "SequenceConstructionOperation",
+        ),
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation"),
+    ]
+
+
+def test_membership_assertion_tuple_floor_reaches_production_cli_with_flipping_twin(
+    tmp_path: Path,
+) -> None:
+    truthful = run_source_through_real_solver(
+        tmp_path / "tuple-membership-truthful",
+        "def test_tuple_membership_truthful():\n" "    assert 2 in (1, 2, 3)\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "tuple-membership-lying",
+        "def test_tuple_membership_lying():\n" "    assert 9 in (1, 2, 3)\n",
+    )
+
+    assert "MembershipAssertionSugar" in truthful.selected_sugars
+    assert "MembershipAssertionSugar" in lying.selected_sugars
+    assert _first_contract_inv(truthful.lift_doc) == {
+        "kind": "atomic",
+        "name": "=",
+        "args": [TRUE_CONST, TRUE_CONST],
+    }
+    assert _first_contract_inv(lying.lift_doc) == {
+        "kind": "atomic",
+        "name": "=",
+        "args": [FALSE_CONST, TRUE_CONST],
+    }
+    assert _prove_statuses(truthful.prove_doc) == ["refused"]
+    assert _prove_statuses(lying.prove_doc) == ["refused"]
+    assert "single constraint has no sibling" in truthful.prove_doc["rows"][0]["reason"]
+    assert "single constraint has no sibling" in lying.prove_doc["rows"][0]["reason"]
 
 
 def test_membership_assertion_uses_set_floor_contains() -> None:
@@ -336,3 +426,13 @@ def test_membership_assertion_panics_when_receiver_floor_cannot_contains() -> No
 
     assert exc.value.info["observed"] == "TermValue"
     assert exc.value.info["requested"] == "contains_with"
+
+
+def _first_contract_inv(lift_doc: dict) -> dict:
+    contracts = [row for row in lift_doc.get("ir", []) if row.get("kind") == "contract"]
+    assert contracts
+    return contracts[0]["inv"]
+
+
+def _prove_statuses(prove_doc: dict) -> list[str]:
+    return [row["status"] for row in prove_doc.get("rows", [])]
