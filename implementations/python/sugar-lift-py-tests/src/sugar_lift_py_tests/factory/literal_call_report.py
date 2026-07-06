@@ -1086,6 +1086,9 @@ def _prior_binding_target_names(site: SourceFragment) -> set[str]:
         name = site.assign_target_name()
         if name is not None:
             return {name}
+        receiver_name = site.assign_target_attribute_receiver_name()
+        if receiver_name is not None:
+            return {receiver_name}
         targets = site.assign_targets()
         if len(targets) == 1 and targets[0].observed == "Tuple":
             return {
