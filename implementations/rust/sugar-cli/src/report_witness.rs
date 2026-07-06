@@ -36,7 +36,7 @@ impl WitnessClaimKind {
         let raw = raw.into();
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            return Err(witness_seam_refusal(
+            return Err(witness_seam_violation(
                 "empty witness claim kind",
                 "claimKind was empty before witness minting",
                 "construct WitnessClaimKind with a non-empty protocol claim kind",
@@ -62,7 +62,7 @@ impl WitnessToolchainScope {
         actual_output_cids: Vec<String>,
     ) -> Result<Self, String> {
         if !actual_output_cids.is_empty() && plan_cid.is_none() {
-            return Err(witness_seam_refusal(
+            return Err(witness_seam_violation(
                 "toolchain output witness without replay plan",
                 "actualOutputCids present with no planCid",
                 "construct WitnessToolchainScope with Some(planCid) or leave actualOutputCids empty",
@@ -122,7 +122,7 @@ impl WitnessRef {
     fn try_new(context: &str, raw: impl Into<String>) -> Result<Self, String> {
         let raw = raw.into();
         if raw.trim().is_empty() {
-            return Err(witness_seam_refusal(
+            return Err(witness_seam_violation(
                 "empty witness replay reference",
                 &format!("{context} was empty before witness minting"),
                 "use builtin:<name> or a blake3-512 CID reference",
@@ -220,7 +220,7 @@ impl WitnessSource {
         evidence: Json,
     ) -> Result<Self, String> {
         if command.is_empty() {
-            return Err(witness_seam_refusal(
+            return Err(witness_seam_violation(
                 "command witness without a command",
                 "WitnessSource::Command carried an empty command vector",
                 "construct WitnessSource::Command with the configured command argv before minting",
@@ -242,7 +242,7 @@ impl WitnessSource {
     ) -> Result<Self, String> {
         let path = path.into();
         if path.trim().is_empty() {
-            return Err(witness_seam_refusal(
+            return Err(witness_seam_violation(
                 "file witness without a path",
                 "WitnessSource::File carried an empty project-relative path",
                 "construct WitnessSource::File with the configured evidence path before minting",
@@ -554,7 +554,7 @@ fn checked_witness_name(name: impl Into<String>) -> Result<String, String> {
     let name = name.into();
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err(witness_seam_refusal(
+        return Err(witness_seam_violation(
             "empty witness name",
             "witness name was empty before witness minting",
             "construct WitnessSource with a non-empty configured witness name",
@@ -563,7 +563,7 @@ fn checked_witness_name(name: impl Into<String>) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-fn witness_seam_refusal(crime: &str, illegal_shape: &str, replacement: &str) -> String {
+fn witness_seam_violation(crime: &str, illegal_shape: &str, replacement: &str) -> String {
     format!(
         "crime: {crime}; owner: sugar-cli::report_witness; illegal shape: {illegal_shape}; replacement: {replacement}"
     )
@@ -571,7 +571,7 @@ fn witness_seam_refusal(crime: &str, illegal_shape: &str, replacement: &str) -> 
 
 fn parse_memento_cid(context: &str, value: &str) -> Result<MementoCid, String> {
     MementoCid::try_parse(value.to_string()).map_err(|raw| {
-        witness_seam_refusal(
+        witness_seam_violation(
             "invalid witness replay CID",
             &format!("{context} must be a blake3-512 CID with 128 hex characters, got `{raw}`"),
             "construct WitnessBundle inputs from valid blake3-512 CID strings before minting",
@@ -804,7 +804,7 @@ mod tests {
                 && err.contains("actualOutputCids")
                 && err.contains("planCid")
                 && err.contains("WitnessToolchainScope"),
-            "refusal must name crime/owner/illegal shape/replacement: {err}"
+            "violation message must name crime/owner/illegal shape/replacement: {err}"
         );
     }
 
