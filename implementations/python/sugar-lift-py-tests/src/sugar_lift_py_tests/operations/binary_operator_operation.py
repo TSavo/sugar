@@ -104,6 +104,8 @@ class BinaryOperatorOperation:
             return Complete(PredicateValue(formula))
         if isinstance(self.right, StringValue) and self.operator == "+":
             return self._symbolic_string_concat_effect()
+        if isinstance(self.right, StringValue):
+            return self._symbolic_string_operator_effect()
         self._floor_gap(receiver="SymbolicValue")
 
     def binary_string(
@@ -295,6 +297,18 @@ class BinaryOperatorOperation:
                 f"{observed} depends on the {carrier} and the string-concat universe bridge is not "
                 "proof-bearing yet; keep as typed red until a cited String-sorted "
                 f"concat floor owns this shape. blame={self.blame}"
+            )
+        )
+
+    def _symbolic_string_operator_effect(self) -> Outcome:
+        return Incomplete(
+            RuntimeEffect(
+                "symbolic arithmetic-operator over string runtime boundary: "
+                f"SymbolicValue {self.operator} StringValue has no Python numeric "
+                "operator overload for str; CPython raises TypeError at runtime "
+                "for every operator here except `==`/`!=`/`+`, which reduce "
+                "elsewhere; keep as typed red until a cited numeric-over-string "
+                f"floor owns this operator shape. blame={self.blame}"
             )
         )
 
