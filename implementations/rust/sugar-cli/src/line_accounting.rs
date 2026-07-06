@@ -136,11 +136,50 @@ pub fn row_line_accounting(rows: &[ReportRow]) -> Vec<LineAccountingEntry> {
     entries
 }
 
+/// A trailer is "inert" if there is nothing left after it but whitespace, or
+/// whatever remains is itself just a `#` comment. Anything else is a
+/// semantic statement riding along on the same physical line (a
+/// semicolon-chained call after an `import`, a one-line `def f(): return x`
+/// body, code stacked after a docstring's closing delimiter) and must NOT be
+/// swallowed as support.
+fn trailer_is_inert(rest: &str) -> bool {
+    let rest = rest.trim();
+    rest.is_empty() || rest.starts_with('#')
+}
+
+/// Bare import line safety check: legitimate `import`/`from` statements never
+/// contain a top-level semicolon. A semicolon on the line means a second,
+/// chained statement (e.g. `import os; os.system(...)`) rides along, so the
+/// whole line must not be claimed as support even though it starts with
+/// `import `/`from `.
+fn import_line_is_pure(trimmed: &str) -> bool {
+    let code = match trimmed.find('#') {
+        Some(idx) => &trimmed[..idx],
+        None => trimmed,
+    };
+    !code.contains(';')
+}
+
+/// Find the block-opening colon of a `def`/`class`/`async def` signature,
+/// skipping any colons that appear inside the parameter list (type
+/// annotations, default dict/slice literals). Returns everything after that
+/// colon, so the caller can check it is either empty or a trailing comment
+/// (a genuine multi-line signature) rather than an inline statement body.
+fn signature_trailer(trimmed: &str) -> Option<&str> {
+    let search_start = trimmed.rfind(')').map(|i| i + 1).unwrap_or(0);
+    let rel = trimmed[search_start..].find(':')?;
+    let colon_idx = search_start + rel;
+    Some(&trimmed[colon_idx + 1..])
+}
+
 /// Classify every physical line of `source_text` not already present in
 /// `claimed_lines` as `support` when it is affirmatively inert: a blank
-/// line, an `import`/`from` line, a line inside or bounding a triple-quoted
-/// docstring, or a bare `def`/`class`/`async def` signature line. Any other
+/// line, a whole-line `#` comment, a pure `import`/`from` line, a line
+/// inside or bounding a triple-quoted docstring, or a bare
+/// `def`/`class`/`async def` signature line with no inline body. Any other
 /// unclaimed line is left alone: genuine residue, never invented support.
+/// Every branch guards against a semantic line disguised inside/adjacent to
+/// the support context (planted twins), never widening to swallow it.
 pub fn support_line_accounting(
     file: &str,
     source_text: &str,
@@ -157,28 +196,49 @@ pub fn support_line_accounting(
         let mut classified: Option<&'static str> = None;
 
         if let Some(delim) = in_docstring {
-            classified = Some("docstring");
-            if trimmed.contains(delim) {
+            if let Some(close_rel) = trimmed.find(delim) {
+                let after_close = &trimmed[close_rel + delim.len()..];
+                if trailer_is_inert(after_close) {
+                    classified = Some("docstring");
+                }
+                // Whether or not the trailer was inert, the docstring state
+                // ends here: the delimiter closed. A twin planted after it
+                // stays unaccounted rather than being invented as support.
                 in_docstring = None;
+            } else {
+                classified = Some("docstring");
             }
         } else if trimmed.is_empty() {
             classified = Some("blank");
-        } else if trimmed.starts_with("import ") || trimmed.starts_with("from ") {
+        } else if trimmed.starts_with('#') {
+            classified = Some("comment");
+        } else if (trimmed.starts_with("import ") || trimmed.starts_with("from "))
+            && import_line_is_pure(trimmed)
+        {
             classified = Some("import");
         } else if trimmed.starts_with("def ")
             || trimmed.starts_with("class ")
             || trimmed.starts_with("async def ")
         {
-            classified = Some("signature");
+            if let Some(trailer) = signature_trailer(trimmed) {
+                if trailer_is_inert(trailer) {
+                    classified = Some("signature");
+                }
+            }
         } else if trimmed.starts_with("\"\"\"") || trimmed.starts_with("'''") {
             let delim = if trimmed.starts_with("\"\"\"") {
                 "\"\"\""
             } else {
                 "'''"
             };
-            classified = Some("docstring");
             let after_open = &trimmed[delim.len()..];
-            if !after_open.contains(delim) {
+            if let Some(close_rel) = after_open.find(delim) {
+                let after_close = &after_open[close_rel + delim.len()..];
+                if trailer_is_inert(after_close) {
+                    classified = Some("docstring");
+                }
+            } else {
+                classified = Some("docstring");
                 in_docstring = Some(delim);
             }
         }
@@ -299,6 +359,170 @@ mod tests {
         assert!(
             entries.is_empty(),
             "ordinary statement lines must stay unaccounted, not be invented as support: {entries:?}"
+        );
+    }
+
+    /// One line number -> its class label, if any support entry claims it.
+    fn class_of(entries: &[LineAccountingEntry], line: usize) -> Option<&str> {
+        entries
+            .iter()
+            .find(|e| e.line == line)
+            .and_then(|e| e.grounds.as_deref())
+    }
+
+    // -- Discrimination suite: one test per support class proving the
+    // -- positive case, one adversarial planted-twin test per class proving
+    // -- a semantic line disguised in/adjacent to that context is never
+    // -- swallowed as support (#3733, part of #3707/#3686/#3503).
+
+    #[test]
+    fn class_blank_positive() {
+        let source = "x = 1\n\ny = 2\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(class_of(&entries, 2), Some("blank"));
+    }
+
+    #[test]
+    fn class_blank_twin_whitespace_only_never_hides_adjacent_code() {
+        // A line that is genuinely whitespace-only is inert by construction
+        // (there is no way to plant a semantic statement inside true
+        // emptiness); the twin here proves the adjacent code lines around
+        // the blank line are never absorbed into its support classification.
+        let source = "result = dangerous_call()\n   \nother = mutate(result)\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(class_of(&entries, 2), Some("blank"));
+        assert_eq!(
+            class_of(&entries, 1),
+            None,
+            "call on line 1 must not be swallowed as support"
+        );
+        assert_eq!(
+            class_of(&entries, 3),
+            None,
+            "mutation on line 3 must not be swallowed as support"
+        );
+    }
+
+    #[test]
+    fn class_comment_positive() {
+        let source = "# a whole-line comment\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(class_of(&entries, 1), Some("comment"));
+    }
+
+    #[test]
+    fn class_comment_twin_trailing_comment_does_not_hide_code() {
+        // Code with a trailing comment on the same physical line is a
+        // semantic statement, not a comment line, and must stay unaccounted.
+        let source = "assert user.is_admin()  # TODO revisit this check\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(
+            class_of(&entries, 1),
+            None,
+            "assertion sharing a line with a trailing comment must not classify as support: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn class_import_positive() {
+        let source = "import base64\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(class_of(&entries, 1), Some("import"));
+    }
+
+    #[test]
+    fn class_import_twin_semicolon_chained_side_effect_does_not_hide() {
+        // A side-effecting call chained onto an import line via `;` is a
+        // second statement riding the same physical line and must not be
+        // swallowed by the import heuristic.
+        let source = "import os; os.system(\"rm -rf /\")\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(
+            class_of(&entries, 1),
+            None,
+            "semicolon-chained side effect after import must not classify as support: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn class_docstring_positive() {
+        let source = "\"\"\"A short module docstring.\"\"\"\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(class_of(&entries, 1), Some("docstring"));
+    }
+
+    #[test]
+    fn class_docstring_twin_value_expression_is_not_a_docstring() {
+        // A triple-quoted string used as an ordinary value (assigned to a
+        // name, not a bare statement in docstring position) must not be
+        // classified as support: the assignment target makes this line
+        // semantic regardless of the string's contents.
+        let source = "payload = \"\"\"assert compromised()\"\"\"\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(
+            class_of(&entries, 1),
+            None,
+            "assigned triple-quoted value must not classify as docstring support: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn class_docstring_twin_code_after_closing_delimiter_does_not_hide() {
+        // A statement stacked after a docstring's closing delimiter on the
+        // same physical line (single-line or multi-line-closing) must not
+        // be absorbed into the docstring's support classification.
+        let source = "\"\"\"short\"\"\"; os.system(\"rm -rf /\")\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(
+            class_of(&entries, 1),
+            None,
+            "code stacked after closing triple-quote must not classify as support: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn class_docstring_twin_code_after_multiline_close_does_not_hide() {
+        let source = "\"\"\"\ndoc body\n\"\"\"; os.system(\"rm -rf /\")\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(class_of(&entries, 1), Some("docstring"));
+        assert_eq!(class_of(&entries, 2), Some("docstring"));
+        assert_eq!(
+            class_of(&entries, 3),
+            None,
+            "code stacked after the closing delimiter of a multi-line docstring must not classify as support: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn class_signature_positive() {
+        let source = "def f(x):\n    return x\n";
+        let claimed: HashSet<usize> = [2].into_iter().collect();
+        let entries = support_line_accounting("f.py", source, &claimed);
+        assert_eq!(class_of(&entries, 1), Some("signature"));
+    }
+
+    #[test]
+    fn class_signature_twin_one_line_body_does_not_hide() {
+        // A one-line function body riding on the same physical line as the
+        // `def` signature is a semantic return, not a bare signature, and
+        // must not classify as support.
+        let source = "def f(): return dangerous()\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(
+            class_of(&entries, 1),
+            None,
+            "inline def body must not classify as signature support: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn class_signature_twin_class_one_line_body_does_not_hide() {
+        let source = "class Foo: mutate_global_state()\n";
+        let entries = support_line_accounting("f.py", source, &HashSet::new());
+        assert_eq!(
+            class_of(&entries, 1),
+            None,
+            "inline class body must not classify as signature support: {entries:?}"
         );
     }
 }
