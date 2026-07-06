@@ -15,12 +15,16 @@ use sugar_ir_compiler_lean::{LeanCompiler, DIALECT};
 // legitimate red-pinned vocabulary, not leaks. `call:A` comes from the verifier
 // ambient-testimony fixtures in 728d61877; the serde_json/panic/ref rows come
 // from checked-in serde showcase re-mint artifacts in 98b8c34d5.
+// #3620-#3625 added pandas/callsite corpus terms; they remain red-pinned
+// uninterpreted vocabulary until a backend-specific encoding is reviewed.
 const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("atom", "<predicate>", 1),
     ("atom", "CategoryTheory.Functor.map_id", 0),
     ("atom", "bvadd", 0),
     ("atom", "bvadd", 2),
     ("atom", "call-site-obligation", 1),
+    ("atom", "callee_post", 0),
+    ("atom", "callee_pre", 0),
     ("atom", "caller_post", 0),
     ("atom", "checked_add_u8.postcondition", 0),
     ("atom", "concept:eq", 2),
@@ -45,6 +49,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("atom", "producer", 0),
     ("atom", "producer_post", 0),
     ("atom", "producer_pre", 0),
+    ("atom", "py.truthy", 1),
     ("atom", "q", 0),
     ("atom", "qualified_post", 0),
     ("atom", "ready", 0),
@@ -97,9 +102,11 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "call:abs", 1),
     ("ctor", "call:answer", 0),
     ("ctor", "call:async_value", 0),
+    ("ctor", "call:callable", 1),
     ("ctor", "call:callee", 1),
     ("ctor", "call:enc", 1),
     ("ctor", "call:encode", 1),
+    ("ctor", "call:encode64", 0),
     ("ctor", "call:encodeBase64String", 1),
     ("ctor", "call:encode_len", 1),
     ("ctor", "call:encoded_len", 2),
@@ -109,6 +116,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "call:g", 0),
     ("ctor", "call:make_value", 0),
     ("ctor", "call:new", 2),
+    ("ctor", "call:numpy.load", 1),
     ("ctor", "call:serde_json::to_string", 1),
     ("ctor", "call:serde_json::to_string#panic_callsite", 1),
     ("ctor", "call:update", 0),
@@ -141,6 +149,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "produce_zero", 0),
     ("ctor", "producer", 0),
     ("ctor", "python:attribute", 2),
+    ("ctor", "python:dict", 0),
     ("ctor", "python:floordiv", 2),
     ("ctor", "python:subscript", 2),
     ("ctor", "ref", 1),

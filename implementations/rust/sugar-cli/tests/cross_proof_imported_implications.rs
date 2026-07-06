@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{json, Value as Json};
+use sugar_proof_envelope::cid_from_proof_stem;
 
 fn sugar_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_sugar"))
@@ -224,10 +225,7 @@ flags = ["-smt2", "-in"]
         .file_stem()
         .and_then(|s| s.to_str())
         .expect("proof stem");
-    let cid = stem
-        .strip_prefix("blake3-512_")
-        .map(|hex| format!("blake3-512:{hex}"))
-        .expect("proof filename is CID-addressed");
+    let cid = cid_from_proof_stem(stem).expect("proof filename is CID-addressed");
     (dir, proof, cid)
 }
 

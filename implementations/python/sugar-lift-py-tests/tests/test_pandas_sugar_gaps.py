@@ -11,7 +11,7 @@ from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.floor import FloorValue, SymbolicValue
+from sugar_lift_py_tests.floor import FloorValue, ImportAliasValue, SymbolicValue
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Incomplete
@@ -20,7 +20,9 @@ from sugar_lift_py_tests.sugar.generator_exp_sugar import GeneratorExpSugar
 from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
 from sugar_lift_py_tests.sugar.tuple_unpack_assign_sugar import TupleUnpackAssignSugar
 from sugar_lift_py_tests.sugar.witnesses import (
+    EffectWitnessSource,
     SugarRedEffectWitnessPair,
+    TypedRedEffectExpectation,
 )
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import TemporalContext
@@ -100,6 +102,35 @@ def test_pandas_array_literal_dict_element_is_typed_red_effect() -> None:
     assert "array literal non-FOL element runtime boundary" in outcome.effect.reason
     assert "DictLiteralValue is a support carrier" in outcome.effect.reason
     assert "pandas_gap.py:1:1" in outcome.effect.reason
+
+
+def test_symbolic_attribute_assignment_is_typed_runtime_effect() -> None:
+    outcome, selected = _block_outcome(
+        "    x.flags = 1\n",
+        binds={"x": SymbolicValue(make_var("x"))},
+    )
+
+    assert "AttributeAssignSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "attribute assignment runtime boundary" in outcome.effect.reason
+    assert "symbolic receiver" in outcome.effect.reason
+    assert "pandas_gap.py:2:4" in outcome.effect.reason
+
+
+def test_import_alias_attribute_assignment_is_typed_runtime_effect() -> None:
+    outcome, selected = _block_outcome(
+        "    np.foo = 1\n",
+        binds={"np": ImportAliasValue(name="numpy", bound_name="np")},
+    )
+
+    assert "AttributeAssignSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "import alias runtime boundary" in outcome.effect.reason
+    assert "`np.foo = ...`" in outcome.effect.reason
+    assert "replacement=ImportedModuleAttributeAssignEffect" in outcome.effect.reason
+    assert "pandas_gap.py:2:4" in outcome.effect.reason
 
 
 def test_pandas_array_literal_dict_element_typed_red_witness_has_bad_twin(

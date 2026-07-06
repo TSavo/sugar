@@ -1141,8 +1141,8 @@ const EXPECTED_PRODUCTION_COVERAGE_GAPS: usize = 238;
 const EXPECTED_PRODUCTION_DISCHARGED_TRUTHS: &[&str] = &["map_truthful", "return_sugar_truthful"];
 const EXPECTED_WITNESS_SMOKE_PRODUCTION_DIRECTIONAL_AGREEMENTS: usize = 2;
 const EXPECTED_WITNESS_SMOKE_PRODUCTION_DISAGREEMENTS: usize = 0;
-const EXPECTED_WITNESS_PRODUCTION_DIRECTION_UNAVAILABLE: usize = 238;
-const EXPECTED_WITNESS_SMOKE_UNAVAILABLE: usize = 2;
+const EXPECTED_WITNESS_PRODUCTION_DIRECTION_UNAVAILABLE: usize = 236;
+const EXPECTED_WITNESS_SMOKE_UNAVAILABLE: usize = 4;
 
 fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
     [
@@ -1450,6 +1450,16 @@ fn seed_witnesses_compare_fast_smt_smoke_to_production_cli() {
             // authority, so this row is explicitly smoke-unavailable.
             smoke_unavailable.push("return_sugar_truthful: value-contract route".to_string());
             smoke_unavailable.push("return_sugar_lying: value-contract route".to_string());
+            continue;
+        }
+        if witness.claim == "macro_assertion_surface" {
+            // The wrapper macro route is source-to-source dispatch. Production owns
+            // the verdict through the expanded assertion relation, so the in-process
+            // smoke owner check must not require the wrapper claim itself.
+            smoke_unavailable
+                .push("macro_assertion_surface_truthful: expanded assertion route".to_string());
+            smoke_unavailable
+                .push("macro_assertion_surface_lying: expanded assertion route".to_string());
             continue;
         }
         for (kind, src) in [("truthful", witness.truthful), ("lying", witness.lying)] {

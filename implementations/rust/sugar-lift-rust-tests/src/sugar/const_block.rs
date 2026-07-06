@@ -33,7 +33,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     );
 
 /// TERM recognizer for `Expr::Const`.
-pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_raw(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::Const(const_block) = expr else {
         return None;
@@ -42,6 +42,10 @@ pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<B
         block: const_block.block.clone(),
         site: token_key(expr),
     }))
+}
+
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_raw(frag, fcx)
 }
 
 struct ConstBlockSugar {

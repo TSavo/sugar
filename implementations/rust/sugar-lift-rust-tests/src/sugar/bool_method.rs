@@ -258,9 +258,13 @@ mod from_src_tests {
             panic!("runtime bool method must not fabricate an Option value");
         };
         assert!(
-            effect.reason().contains("runtime bool method"),
-            "effect should name the bool-method boundary: {}",
-            effect.reason()
+            matches!(
+                &effect,
+                Effect::RuntimeBoolMethod { method, boundary }
+                    if method == "then_some" && boundary == "flag"
+            ),
+            "effect should be the bool-method boundary: {:?}",
+            effect
         );
     }
 }

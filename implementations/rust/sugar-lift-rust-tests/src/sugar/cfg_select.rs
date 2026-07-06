@@ -185,6 +185,16 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     Some(Box::new(CfgSelectSugar { body, site }))
 }
 
+pub(crate) fn macro_tokens_have_assertion_surface(tokens: TokenStream) -> bool {
+    syn::parse2::<CfgSelectArms>(tokens)
+        .ok()
+        .is_some_and(|arms| {
+            arms.arms
+                .iter()
+                .any(|arm| syntactic_assert_count_in_stmts(&arm.block.stmts) > 0)
+        })
+}
+
 impl Sugar for CfgSelectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let CfgSelectBody::Arms(arms) = &self.body else {

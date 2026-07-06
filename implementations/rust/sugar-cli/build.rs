@@ -9,7 +9,7 @@ fn main() {
     let git_head = std::env::var("SUGAR_BUILD_GIT_HEAD")
         .ok()
         .or_else(|| git_output(&["rev-parse", "HEAD"]))
-        .unwrap_or_default();
+        .unwrap_or_else(|| "unknown".to_string());
     let build_stamp = std::env::var("SUGAR_BUILD_STAMP")
         .ok()
         .filter(|value| !value.is_empty())

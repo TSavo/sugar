@@ -1296,13 +1296,13 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             "assert_eq" | "debug_assert_eq" | "assert_eq_const_safe" if args.exprs.len() >= 2 => {
                 let lhs = &args.exprs[0];
                 let rhs = &args.exprs[1];
-                let relation: Expr = syn::parse_quote!(#lhs == #rhs);
+                let relation: Expr = syn::parse_quote!((#lhs) == (#rhs));
                 self.emit_constraint_expr(&relation)
             }
             "assert_ne" | "debug_assert_ne" if args.exprs.len() >= 2 => {
                 let lhs = &args.exprs[0];
                 let rhs = &args.exprs[1];
-                let relation: Expr = syn::parse_quote!(#lhs != #rhs);
+                let relation: Expr = syn::parse_quote!((#lhs) != (#rhs));
                 self.emit_constraint_expr(&relation)
             }
             _ => None,

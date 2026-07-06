@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use quote::ToTokens;
 use serde_json::{json, Value};
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, Value as CValue};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
 use sugar_ir_symbolic::{eq, make_var, ContractDecl, Term};
 use sugar_lift_rust_tests::cargo_cfg::{
@@ -1712,8 +1712,7 @@ fn binding_post_contract(
     stable_key: &str,
 ) -> Value {
     let hash = blake3_512_of(stable_key.as_bytes());
-    let suffix = hash
-        .strip_prefix("blake3-512:")
+    let suffix = cid_hex(&hash)
         .unwrap_or(hash.as_str())
         .chars()
         .take(24)
@@ -1944,8 +1943,7 @@ fn ground_std_partial_method_contract(
     stable_key: &str,
 ) -> Value {
     let hash = blake3_512_of(stable_key.as_bytes());
-    let suffix = hash
-        .strip_prefix("blake3-512:")
+    let suffix = cid_hex(&hash)
         .unwrap_or(hash.as_str())
         .chars()
         .take(24)
@@ -2000,8 +1998,7 @@ fn literal_method_post_contract(
     stable_key: &str,
 ) -> Value {
     let hash = blake3_512_of(stable_key.as_bytes());
-    let suffix = hash
-        .strip_prefix("blake3-512:")
+    let suffix = cid_hex(&hash)
         .unwrap_or(hash.as_str())
         .chars()
         .take(24)
@@ -2055,8 +2052,7 @@ fn literal_method_panic_post_contract(
     stable_key: &str,
 ) -> Value {
     let hash = blake3_512_of(stable_key.as_bytes());
-    let suffix = hash
-        .strip_prefix("blake3-512:")
+    let suffix = cid_hex(&hash)
         .unwrap_or(hash.as_str())
         .chars()
         .take(24)

@@ -101,18 +101,14 @@ impl VerifyEffect {
     pub fn to_legacy_boundary(&self) -> VerifyEffectBoundary {
         let verdict = match self {
             VerifyEffect::UnwitnessedDischarge { .. } => ObligationVerdict::Unsatisfied,
+            VerifyEffect::SolverTimeout { .. } => ObligationVerdict::SolverTimeout,
             VerifyEffect::MissingProvenanceKind { .. }
             | VerifyEffect::NoSiblingToContradict { .. }
             | VerifyEffect::MissingIndependentKindWitness { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
-            | VerifyEffect::SolverTimeout { .. }
             | VerifyEffect::SolverNoSoundDischarger { .. }
             | VerifyEffect::WitnessOracleResolution { .. }
             | VerifyEffect::WitnessVerification { .. } => ObligationVerdict::Refused,
-        };
-        let verdict = match self {
-            VerifyEffect::SolverTimeout { .. } => ObligationVerdict::SolverTimeout,
-            _ => verdict,
         };
         let reason = self.to_string();
         let verification = match self {

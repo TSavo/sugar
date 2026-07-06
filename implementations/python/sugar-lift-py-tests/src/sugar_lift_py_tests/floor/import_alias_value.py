@@ -53,6 +53,15 @@ class ImportAliasValue(FloorValue):
             replacement="ImportedModuleContainsEffect",
         )
 
+    def attribute_assign_with(self, operation: Any, ctx: object):
+        del ctx
+        return _runtime_alias_effect(
+            self,
+            operation=operation,
+            shape=f"{self.bound_name}.{operation.name} = ...",
+            replacement="ImportedModuleAttributeAssignEffect",
+        )
+
     def binary_operator_with(self, operation: Any, ctx: object):
         del ctx
         return _runtime_alias_effect(

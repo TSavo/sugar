@@ -578,27 +578,31 @@ fn collect_universe_bv_trees(node: &Json, out: &mut Vec<Json>) {
 mod tests {
     use super::*;
 
+    fn universe_formula(subj_val: i64, bv_tree: Json) -> Json {
+        serde_json::json!({
+            "kind": "and",
+            "operands": [
+                {"kind": "atomic", "name": "=", "args": []},
+                {
+                    "kind": "atomic",
+                    "name": "int32.eq-bv-expr",
+                    "args": [
+                        {"kind": "ctor", "name": "call:abs", "args": [
+                            {"kind": "const", "value": subj_val}
+                        ]},
+                        bv_tree
+                    ]
+                }
+            ]
+        })
+    }
+
     // Build a member-body-shaped node carrying an int32.eq-bv-expr atom whose
     // subject is call:abs(<subj_val>) and whose bv_tree is the given ite.
     fn member_with_universe(subj_val: i64, bv_tree: Json) -> Json {
         serde_json::json!({
             "header": {
-                "inv": {
-                    "kind": "and",
-                    "operands": [
-                        {"kind": "atomic", "name": "=", "args": []},
-                        {
-                            "kind": "atomic",
-                            "name": "int32.eq-bv-expr",
-                            "args": [
-                                {"kind": "ctor", "name": "call:abs", "args": [
-                                    {"kind": "const", "value": subj_val}
-                                ]},
-                                bv_tree
-                            ]
-                        }
-                    ]
-                }
+                "inv": universe_formula(subj_val, bv_tree)
             }
         })
     }
@@ -737,12 +741,9 @@ mod tests {
         // Current minted proofs store the invariant formula as a FlatAtom reached
         // through a ContractBody; the member itself only points at the body CID.
         // derive --from-proof must read that graph layer, not just inline members.
-        let member = member_with_universe(i32::MIN.into(), abs_tree());
-        let inv = member
-            .pointer("/header/inv")
-            .expect("test member contains header.inv");
+        let inv = universe_formula(i32::MIN.into(), abs_tree());
         let mut graph = ProofGraph::new();
-        let inv_atom = FlatAtom::new(json_to_cvalue(inv));
+        let inv_atom = FlatAtom::new(json_to_cvalue(&inv));
         let inv_memento = graph.register_atom(inv_atom);
         let metadata = graph.register_atom(FlatAtom::empty_metadata());
         let body = graph.register_body(ContractBody::new_inv(&inv_memento));

@@ -19,7 +19,7 @@ use crate::{
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "char_literal_method",
-    &["to_string", "method"],
+    &["to_string", "method", "transparent_term"],
     crate::sugar::claim::SugarWitnesses::pair(
         r#"
                 #[test]

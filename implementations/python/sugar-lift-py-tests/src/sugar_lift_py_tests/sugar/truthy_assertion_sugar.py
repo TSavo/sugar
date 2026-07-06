@@ -143,12 +143,31 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
 
 def _projectable_truth_body(site, ctx) -> TruthProjection:
+    test = site.assert_test()
+    if _contains_nested_compare(test):
+        return Degraded(_truthy_symbolic_reason(test))
     try:
-        return Projected(ctx.build_body(site.assert_test(), SugarRole.TERM))
+        return Projected(ctx.build_body(test, SugarRole.TERM))
     except FactoryGap as gap:
         return Degraded(_truthy_degraded_reason(gap))
     except TypeError as exc:
         return Degraded(_truthy_type_degraded_reason(exc))
+
+
+def _contains_nested_compare(site) -> bool:
+    if site.observed == "Compare":
+        return True
+    return any(_contains_nested_compare(child) for child in site.terms())
+
+
+def _truthy_symbolic_reason(site) -> TruthProjectionDegradation:
+    return TruthProjectionDegradation(
+        crime="truthy projection stays symbolic for nested value-position comparison",
+        owner="TruthyAssertionSugar",
+        shape=f"symbolic-term({site.observed})",
+        replacement="emit the canonical py.truthy symbolic assertion fact",
+        audit_reason="symbolic truthy assertion over nested comparison",
+    )
 
 
 def _truthy_degraded_reason(gap: FactoryGap) -> TruthProjectionDegradation:

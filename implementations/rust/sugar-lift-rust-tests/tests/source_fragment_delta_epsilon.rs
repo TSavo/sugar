@@ -98,10 +98,16 @@ fn expected_frontier_counts() -> BTreeMap<&'static str, (usize, usize)> {
         // signature / variant-pattern lines below; the migration owner remains
         // #2927, and this pin keeps the floor legible while that drain is still
         // outstanding.
-        ("raw_ast_signature", (141, 1112)),
-        ("raw_ast_variant_pattern", (114, 1941)),
+        //
+        // Main-tip reconciliation after #3620-#3625: current sugar sources carry
+        // additional memchr/typed-runtime frontier footprint while the narrower
+        // raw-AST recognizer ratchet is back at its R=21 ceiling. This broader
+        // SourceFragment migration register remains red until #2927 drains the
+        // underlying raw helper/signature surface.
+        ("raw_ast_signature", (142, 1119)),
+        ("raw_ast_variant_pattern", (116, 1969)),
         ("raw_syn_import", (120, 120)),
-        ("source_fragment_escape_accessor", (95, 154)),
+        ("source_fragment_escape_accessor", (99, 160)),
     ])
 }
 
