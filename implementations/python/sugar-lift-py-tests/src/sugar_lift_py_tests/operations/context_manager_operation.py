@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from sugar_lift_py_tests.floor import ObjectValue, SymbolicValue
 from sugar_lift_py_tests.ir import ctor
@@ -11,6 +11,9 @@ from sugar_lift_py_tests.temporal import bind_temporal
 
 from .dunder_force import force_dunder_floor_or_runtime_effect
 from .object_method_call import call_object_method_value
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
 
 
 @dataclass(frozen=True)
@@ -25,7 +28,9 @@ class ContextManagerOperation:
         if not isinstance(self.body, SugarBody):
             raise TypeError("ContextManagerOperation body must be factory-built")
 
-    def context_object(self, receiver: ObjectValue, ctx) -> Outcome:
+    def context_object(
+        self, receiver: ObjectValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         entered = _force_dunder(
             receiver,
             "__enter__",

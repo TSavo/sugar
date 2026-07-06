@@ -9,8 +9,56 @@ from .object_method_value import ObjectMethodValue
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.operations.attribute_delete_operation import (
+        AttributeDeleteOperation,
+    )
+    from sugar_lift_py_tests.operations.attribute_lookup_operation import (
+        AttributeLookupOperation,
+    )
+    from sugar_lift_py_tests.operations.attribute_mutation_operation import (
+        AttributeMutationOperation,
+    )
+    from sugar_lift_py_tests.operations.async_context_manager_operation import (
+        AsyncContextManagerOperation,
+    )
+    from sugar_lift_py_tests.operations.async_iterator_operation import (
+        AsyncIteratorOperation,
+        AsyncNextOperation,
+    )
+    from sugar_lift_py_tests.operations.await_operation import AwaitOperation
     from sugar_lift_py_tests.operations.binary_operator_operation import (
         BinaryOperatorOperation,
+    )
+    from sugar_lift_py_tests.operations.bitwise_operation import BitwiseOperation
+    from sugar_lift_py_tests.operations.context_manager_operation import (
+        ContextManagerOperation,
+    )
+    from sugar_lift_py_tests.operations.contains_operation import ContainsOperation
+    from sugar_lift_py_tests.operations.delitem_operation import DelItemOperation
+    from sugar_lift_py_tests.operations.descriptor_operation import DescriptorOperation
+    from sugar_lift_py_tests.operations.dict_missing_operation import (
+        DictMissingOperation,
+    )
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        InplaceBinaryOperatorOperation,
+    )
+    from sugar_lift_py_tests.operations.method_call_operation import (
+        MethodCallOperation,
+    )
+    from sugar_lift_py_tests.operations.next_operation import NextOperation
+    from sugar_lift_py_tests.operations.reflected_binary_operator_operation import (
+        ReflectedBinaryOperatorOperation,
+    )
+    from sugar_lift_py_tests.operations.sequence_projection_operation import (
+        SequenceProjectionOperation,
+    )
+    from sugar_lift_py_tests.operations.setitem_operation import SetItemOperation
+    from sugar_lift_py_tests.operations.str_coercion_operation import (
+        StrCoercionOperation,
+    )
+    from sugar_lift_py_tests.operations.subscript_operation import SubscriptOperation
+    from sugar_lift_py_tests.operations.unary_operator_operation import (
+        UnaryOperatorOperation,
     )
     from sugar_lift_py_tests.outcome import Outcome
 
@@ -23,7 +71,9 @@ class ObjectValue(FloorValue):
     class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
 
-    def attribute_with(self, operation, ctx):
+    def attribute_with(
+        self, operation: AttributeLookupOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.attribute_object(self, ctx)
 
     def to_term(self, *, owner: str):
@@ -35,13 +85,19 @@ class ObjectValue(FloorValue):
             [str_const(self.class_name), str_const(self.identity)],
         )
 
-    def attribute_assign_with(self, operation, ctx):
+    def attribute_assign_with(
+        self, operation: AttributeMutationOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.assign_object(self, ctx)
 
-    def attribute_delete_with(self, operation, ctx):
+    def attribute_delete_with(
+        self, operation: AttributeDeleteOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.delete_object(self, ctx)
 
-    def call_method_with(self, operation, ctx):
+    def call_method_with(
+        self, operation: MethodCallOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return self.call_method_value(
             operation.name,
             operation.arguments,
@@ -50,10 +106,14 @@ class ObjectValue(FloorValue):
             ctx=ctx,
         )
 
-    def descriptor_with(self, operation, ctx):
+    def descriptor_with(
+        self, operation: DescriptorOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.descriptor_object(self, ctx)
 
-    def contains_with(self, operation, ctx):
+    def contains_with(
+        self, operation: ContainsOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         return self.call_method_value(
             "__contains__",
@@ -62,22 +122,36 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
-    def context_manager_with(self, operation, ctx):
+    def context_manager_with(
+        self, operation: ContextManagerOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.context_object(self, ctx)
 
-    def async_context_manager_with(self, operation, ctx):
+    def async_context_manager_with(
+        self,
+        operation: AsyncContextManagerOperation,
+        ctx: FactoryBuildContext | None,
+    ) -> Outcome:
         return operation.async_context_object(self, ctx)
 
-    def await_with(self, operation, ctx):
+    def await_with(
+        self, operation: AwaitOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.await_object(self, ctx)
 
-    def async_iter_with(self, operation, ctx):
+    def async_iter_with(
+        self, operation: AsyncIteratorOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.async_iter_object(self, ctx)
 
-    def async_next_with(self, operation, ctx):
+    def async_next_with(
+        self, operation: AsyncNextOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.async_next_object(self, ctx)
 
-    def next_with(self, operation, ctx):
+    def next_with(
+        self, operation: NextOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         return self.call_method_value(
             "__next__",
@@ -86,22 +160,34 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
-    def subscript_with(self, operation, ctx):
+    def subscript_with(
+        self, operation: SubscriptOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.subscript_object(self, ctx)
 
-    def setitem_with(self, operation, ctx):
+    def setitem_with(
+        self, operation: SetItemOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.setitem_object(self, ctx)
 
-    def delitem_with(self, operation, ctx):
+    def delitem_with(
+        self, operation: DelItemOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.delitem_object(self, ctx)
 
-    def missing_with(self, operation, ctx):
+    def missing_with(
+        self, operation: DictMissingOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.missing_object(self, ctx)
 
-    def str_with(self, operation, ctx):
+    def str_with(
+        self, operation: StrCoercionOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.str_object(self, ctx)
 
-    def bitwise_with(self, operation, ctx):
+    def bitwise_with(
+        self, operation: BitwiseOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         method_name = _BITWISE_DUNDER_METHODS.get(operation.operator)
         if method_name is None:
@@ -122,7 +208,9 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
-    def project_sequence_with(self, operation, ctx):
+    def project_sequence_with(
+        self, operation: SequenceProjectionOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         return operation.project_object(self, ctx)
 
     def binary_operator_with(
@@ -175,7 +263,11 @@ class ObjectValue(FloorValue):
             ctx=ctx,
         )
 
-    def reflected_binary_operator_with(self, operation, ctx):
+    def reflected_binary_operator_with(
+        self,
+        operation: ReflectedBinaryOperatorOperation,
+        ctx: FactoryBuildContext | None,
+    ) -> Outcome:
         del ctx
         method_name = _REFLECTED_BINARY_DUNDER_METHODS.get(operation.operator)
         if method_name is None:
@@ -196,7 +288,11 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
-    def inplace_binary_operator_with(self, operation, ctx):
+    def inplace_binary_operator_with(
+        self,
+        operation: InplaceBinaryOperatorOperation,
+        ctx: FactoryBuildContext | None,
+    ) -> Outcome:
         del ctx
         method_name = _INPLACE_BINARY_DUNDER_METHODS.get(operation.operator)
         if method_name is None:
@@ -217,7 +313,9 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
-    def unary_operator_with(self, operation, ctx):
+    def unary_operator_with(
+        self, operation: UnaryOperatorOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         method_name = _UNARY_DUNDER_METHODS.get(operation.operator)
         if method_name is None:

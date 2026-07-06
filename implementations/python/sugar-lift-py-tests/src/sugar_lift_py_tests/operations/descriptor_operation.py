@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from sugar_lift_py_tests.floor import FloorValue, ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Outcome
 
 from .object_method_call import call_object_method_value, raise_object_floor_gap
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
 
 
 @dataclass(frozen=True)
@@ -20,7 +23,9 @@ class DescriptorOperation:
     owner: str = "DescriptorOperation"
     blame: str = "<unknown>"
 
-    def descriptor_object(self, descriptor: ObjectValue, ctx) -> Outcome:
+    def descriptor_object(
+        self, descriptor: ObjectValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         if self.slot == "__get__":
             return call_object_method_value(
