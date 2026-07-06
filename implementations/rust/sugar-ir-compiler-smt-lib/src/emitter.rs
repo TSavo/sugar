@@ -2875,6 +2875,147 @@ fn is_float_refinement_atomic_predicate(name: &str) -> bool {
     )
 }
 
+/// Family (e) float floor axioms (#3415; T's 2026-07-03 ruling: "Float specials:
+/// as floored, fully reduced axioms, or refused. They CANNOT be computed, so they
+/// leverage identity only.")
+///
+/// A float special value enters the universe as a FLOOR value: the ground ctor
+/// `float:fW(<const bits>)`, where the IEEE bit pattern IS the identity. Whenever a
+/// float-refinement predicate (`float.fW.is_X`) is applied to such a ground floor
+/// term, the floor OWNS the predicate's value: we classify the bit pattern (pure
+/// bit inspection -- NO float arithmetic) and emit the value as a ground axiom
+/// `(assert (float.fW.is_X (float:fW bits)))` or its negation. This anchors the
+/// otherwise-uninterpreted refinement predicate, so a semantic lie
+/// (`f32::NAN.is_finite()`, `f32::INFINITY == f32::NEG_INFINITY`) is refuted instead
+/// of passing under an unconstrained interpretation.
+///
+/// The axiom is a Python-TRUE ground fact (quantifier-free, no free vars), so it is
+/// sound on BOTH the asserted and negated paths: like the identity-distinctness and
+/// literal-constant preambles, it only removes spurious models, never adds one.
+fn float_floor_axiom_preamble(formula: &Formula) -> String {
+    let mut atoms: Vec<(&str, &Term)> = Vec::new();
+    collect_float_floor_atoms(formula, &mut atoms);
+    let mut seen = BTreeSet::new();
+    let mut out = String::new();
+    for (name, arg) in atoms {
+        let Some(value) = classify_float_floor_predicate(name, arg) else {
+            continue;
+        };
+        let atom = Formula::Atomic {
+            name: name.to_string(),
+            args: vec![arg.clone()],
+        };
+        let axiom = if value {
+            atom
+        } else {
+            Formula::Not {
+                operands: vec![atom],
+            }
+        };
+        let Ok(rendered) = emit_formula(&axiom) else {
+            continue;
+        };
+        if seen.insert(rendered.clone()) {
+            out.push_str(&format!("(assert {})\n", rendered));
+        }
+    }
+    out
+}
+
+fn collect_float_floor_atoms<'a>(formula: &'a Formula, out: &mut Vec<(&'a str, &'a Term)>) {
+    match formula {
+        Formula::Atomic { name, args } => {
+            if is_float_refinement_atomic_predicate(name)
+                && args.len() == 1
+                && ground_float_ctor_bits(&args[0]).is_some()
+            {
+                out.push((name.as_str(), &args[0]));
+            }
+        }
+        Formula::And { operands } | Formula::Or { operands } | Formula::Implies { operands } => {
+            for o in operands {
+                collect_float_floor_atoms(o, out);
+            }
+        }
+        Formula::Not { operands } => {
+            for o in operands {
+                collect_float_floor_atoms(o, out);
+            }
+        }
+        Formula::Forall { body, .. }
+        | Formula::Exists { body, .. }
+        | Formula::Choice { body, .. } => collect_float_floor_atoms(body, out),
+        Formula::Substitute { .. } | Formula::Apply { .. } => {}
+        Formula::DivergenceBetween { source, target } => {
+            collect_float_floor_atoms(source, out);
+            collect_float_floor_atoms(target, out);
+        }
+    }
+}
+
+/// `(width, bits)` if `term` is a ground `float:fW(<int const>)` floor ctor;
+/// `None` for symbolic bits or any other shape.
+fn ground_float_ctor_bits(term: &Term) -> Option<(&'static str, u64)> {
+    let Term::Ctor { name, args } = term else {
+        return None;
+    };
+    let width = match name.as_str() {
+        "float:f32" => "f32",
+        "float:f64" => "f64",
+        _ => return None,
+    };
+    if args.len() != 1 {
+        return None;
+    }
+    let Term::Const { value, .. } = &args[0] else {
+        return None;
+    };
+    let bits = value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|v| u64::try_from(v).ok()))?;
+    Some((width, bits))
+}
+
+/// Classify a ground float floor term against a refinement predicate by pure IEEE
+/// bit inspection. Returns the predicate's boolean value, or `None` when the
+/// predicate/floor widths disagree or the method is unrecognized.
+fn classify_float_floor_predicate(name: &str, arg: &Term) -> Option<bool> {
+    let (ctor_width, bits) = ground_float_ctor_bits(arg)?;
+    let (pred_width, method) = name.strip_prefix("float.")?.split_once('.')?;
+    if pred_width != ctor_width {
+        return None;
+    }
+    // Classify at the NATIVE width -- widening f32 -> f64 would misreport
+    // `is_normal` for f32 subnormals (which become normal f64 values).
+    match pred_width {
+        "f32" => {
+            let v = f32::from_bits(bits as u32);
+            Some(match method {
+                "is_nan" => v.is_nan(),
+                "is_infinite" => v.is_infinite(),
+                "is_finite" => v.is_finite(),
+                "is_normal" => v.is_normal(),
+                "is_sign_positive" => v.is_sign_positive(),
+                "is_sign_negative" => v.is_sign_negative(),
+                _ => return None,
+            })
+        }
+        "f64" => {
+            let v = f64::from_bits(bits);
+            Some(match method {
+                "is_nan" => v.is_nan(),
+                "is_infinite" => v.is_infinite(),
+                "is_finite" => v.is_finite(),
+                "is_normal" => v.is_normal(),
+                "is_sign_positive" => v.is_sign_positive(),
+                "is_sign_negative" => v.is_sign_negative(),
+                _ => return None,
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Collect every NON-BUILTIN atomic predicate that appears in boolean
 /// position, mapped to its declared signature (`(argSorts) Bool`).
 ///
@@ -3293,6 +3434,9 @@ pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileErro
     // pairs that appear with the same subject in the formula. These are
     // Python-TRUE facts (ground, quantifier-free). See `isinstance_encoding`.
     preamble.push_str(&IsinstanceClauses::from_formula(formula).preamble());
+    // Family (e) float floor axioms (#3415): anchor `float.fW.is_X` refinement
+    // predicates over ground `float:fW(bits)` floor terms to their classified value.
+    preamble.push_str(&float_floor_axiom_preamble(formula));
     let body = format!("(assert (not {}))\n(check-sat)\n", body_formula);
     let free_vars_vec = free_vars
         .into_iter()
@@ -3409,6 +3553,8 @@ pub fn compile_asserted_formula(formula: &Formula) -> Result<CompiledFormula, Co
     preamble.push_str(&LiteralConstants::from_formula_for_legacy_literals(formula).preamble());
     // Emit isinstance disjointness clauses (see `isinstance_encoding`).
     preamble.push_str(&IsinstanceClauses::from_formula(formula).preamble());
+    // Family (e) float floor axioms (#3415): see `float_floor_axiom_preamble`.
+    preamble.push_str(&float_floor_axiom_preamble(formula));
 
     let body = format!("(assert {})\n(check-sat)\n", body_formula);
     let free_vars_vec = free_vars

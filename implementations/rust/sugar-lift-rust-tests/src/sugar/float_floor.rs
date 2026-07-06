@@ -287,6 +287,28 @@ fn primitive_float_nan_assoc_const(path: &ExprPath, site: &str) -> bool {
 const FLOAT_F32_CTOR: &str = "float:f32";
 const FLOAT_F64_CTOR: &str = "float:f64";
 
+/// A float SPECIAL associated const (`f32::NAN`, `f64::INFINITY`,
+/// `f32::NEG_INFINITY`, ...) enters the universe as a FLOOR value: the canonical
+/// ground `float:fW(<bits>)` ctor whose IEEE bit pattern IS the identity. This is
+/// T's 2026-07-03 ruling ("Float specials: as floored, fully reduced axioms, or
+/// refused. They CANNOT be computed, so they leverage identity only."): the floor
+/// carries the value, and the SMT emitter classifies the bit pattern into the
+/// refinement axioms (`is_finite`/`is_nan`/`is_infinite`/`is_sign_*`). Without
+/// this the special reduces to a bare EUF var, so a refinement lie
+/// (`f32::NAN.is_finite()`, `INFINITY == NEG_INFINITY`) stays unconstrained.
+pub(crate) fn float_special_const_term(ty: &str, konst: &str) -> Option<Rc<Term>> {
+    let value = match (ty, konst) {
+        ("f32", "NAN") => IeeeFloatValue::F32(f32::NAN),
+        ("f32", "INFINITY") => IeeeFloatValue::F32(f32::INFINITY),
+        ("f32", "NEG_INFINITY") => IeeeFloatValue::F32(f32::NEG_INFINITY),
+        ("f64", "NAN") => IeeeFloatValue::F64(f64::NAN),
+        ("f64", "INFINITY") => IeeeFloatValue::F64(f64::INFINITY),
+        ("f64", "NEG_INFINITY") => IeeeFloatValue::F64(f64::NEG_INFINITY),
+        _ => return None,
+    };
+    Some(value.term())
+}
+
 enum IeeeFloatSource {
     Value(IeeeFloatValue),
     Neg(SugarBody<crate::sugar::factory::IeeeFloatFloor>),

@@ -1078,7 +1078,14 @@ const S9_BATCH2_PAIR_CLAIMS: &[&str] = &[
     "const_composite",
     "primitive_int_tuple_producer",
     "slice_search_assertion_surface",
+    // Family (d) float semantics DRAINED (#3415): floor-value refinement axioms.
+    "constraint_float_refinement",
+    "assertion_surface_infinity_eq",
 ];
+
+// #3415 family e S10 straggler (catch #34): `INFINITY`/`NEG_INFINITY` distinct-floor
+// identity refutes the equality lie via the SMT `float_floor_axiom_preamble`.
+const S10_FAMILY_E_PAIR_CLAIMS: &[&str] = &["constraint_infinity_eq"];
 
 const S9_BATCH3_PAIR_CLAIMS: &[&str] = &[
     "cfg_select_assertion_surface",
@@ -1133,15 +1140,20 @@ const S6_OPTION_RESULT_PAIR_CLAIMS: &[&str] = &[
     "result_err",
 ];
 
-const EXPECTED_PRODUCTION_TRUTHFUL_RESIDUALS: usize = 119;
+// +3 (#3415 family e enrollment): the three float-floor truthful witnesses join the
+// production truthful-residual frontier (like most rows, they don't cleanly discharge
+// through the CLI's multi-row support universe); their lying twins stay non-green.
+const EXPECTED_PRODUCTION_TRUTHFUL_RESIDUALS: usize = 122;
 const EXPECTED_PRODUCTION_HIDDEN_LIES: usize = 0;
 const EXPECTED_PRODUCTION_LYING_NO_ROW_RESIDUALS: usize = 3;
 const EXPECTED_PRODUCTION_ACTIVE_DISAGREEMENTS: usize = 0;
-const EXPECTED_PRODUCTION_COVERAGE_GAPS: usize = 238;
+// +6 (#3415 family e enrollment): 3 truthful residuals + 3 non-green lying coverage rows.
+const EXPECTED_PRODUCTION_COVERAGE_GAPS: usize = 244;
 const EXPECTED_PRODUCTION_DISCHARGED_TRUTHS: &[&str] = &["map_truthful", "return_sugar_truthful"];
 const EXPECTED_WITNESS_SMOKE_PRODUCTION_DIRECTIONAL_AGREEMENTS: usize = 2;
 const EXPECTED_WITNESS_SMOKE_PRODUCTION_DISAGREEMENTS: usize = 0;
-const EXPECTED_WITNESS_PRODUCTION_DIRECTION_UNAVAILABLE: usize = 236;
+// +6 (#3415 family e enrollment): the three new float-floor pairs' six directions.
+const EXPECTED_WITNESS_PRODUCTION_DIRECTION_UNAVAILABLE: usize = 242;
 const EXPECTED_WITNESS_SMOKE_UNAVAILABLE: usize = 4;
 
 fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
@@ -1153,6 +1165,7 @@ fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
         S9_BATCH3_PAIR_CLAIMS,
         S9_BATCH4_PAIR_CLAIMS,
         S9_BATCH5_PAIR_CLAIMS,
+        S10_FAMILY_E_PAIR_CLAIMS,
         S5_ADAPTER_PAIR_CLAIMS,
         S6_OPTION_RESULT_PAIR_CLAIMS,
     ]
@@ -1551,6 +1564,11 @@ fn s9_batch4_pairs_match_real_rust_semantics() {
 #[test]
 fn s9_batch5_pairs_match_real_rust_semantics() {
     assert_pairs_match_real_rust_semantics(S9_BATCH5_PAIR_CLAIMS);
+}
+
+#[test]
+fn s10_family_e_pairs_match_real_rust_semantics() {
+    assert_pairs_match_real_rust_semantics(S10_FAMILY_E_PAIR_CLAIMS);
 }
 
 #[test]
