@@ -80,8 +80,6 @@ def wire_marker_for(path: str, text: str, speaker: str) -> str:
         "refusal-record",
         "RefusalRecord",
         "source_refused",
-        "sugar-refused",
-        "RefusalMemento",
     )
     for needle in protocol_needles:
         if needle in text:
@@ -213,6 +211,14 @@ def classify(path: str, text: str) -> Classified:
             "not-lift-output",
             "report formatter matches the prove-side ObligationVerdict enum",
             "keep verifier status vocabulary; do not use as lift output name",
+        )
+    if path.endswith(("/report_fmt.rs", "/report_witness.rs")) and '"refused":' in text:
+        return Classified(
+            "verifier-verdict-quote",
+            "not-lift-output",
+            "serializes or mirrors sugar_verifier::Report.refused, a verifier-side "
+            "obligation count, not a lifter-owned status",
+            "keep verifier count field; do not use as lift output name",
         )
     if path.endswith("/sugar-walk/src/source_oracle.rs"):
         return Classified(

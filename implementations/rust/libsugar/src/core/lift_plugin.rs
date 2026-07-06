@@ -155,7 +155,7 @@ impl LiftPluginKit {
             {
                 Term::Const {
                     value: serde_json::json!({
-                        "sugar-refused": "response-term-exceeds-byte-bound",
+                        "sugar-bound-exceeded": "response-term-exceeds-byte-bound",
                         "reason": format!(
                             "lift response term exceeds serialized byte bound ({RESPONSE_TERM_SERIALIZED_BYTE_BOUND}) -- unbounded, refused before clone/address (finite-or-refuse)"
                         ),

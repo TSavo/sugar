@@ -59,7 +59,7 @@ use libsugar::compose::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use sugar_canonicalizer::Value;
-use sugar_ir_types::{composition_refusal_header_cid, CompositionRefusalMemento, IrFormula, Sort};
+use sugar_ir_types::{composition_refusal_header_cid, CompositionBoundaryMemento, IrFormula, Sort};
 
 use crate::ComposeArgs;
 
@@ -255,7 +255,7 @@ impl RpcError {
         }
     }
 
-    fn composition_refused(refusal: CompositionRefusalMemento) -> Self {
+    fn composition_refused(refusal: CompositionBoundaryMemento) -> Self {
         let cid = composition_refusal_header_cid(&refusal.header);
         let refusal_value = serde_json::to_value(&refusal).unwrap_or_else(|e| {
             json!({

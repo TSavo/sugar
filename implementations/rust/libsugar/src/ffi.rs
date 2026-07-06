@@ -44,7 +44,7 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use sugar_canonicalizer::Value;
-use sugar_ir_types::{composition_refusal_header_cid, CompositionRefusalMemento, IrFormula, Sort};
+use sugar_ir_types::{composition_refusal_header_cid, CompositionBoundaryMemento, IrFormula, Sort};
 
 use crate::compose::{
     build_value, cid_of_value, compose_chain_contracts, jcs_bytes_of_value, AliasingMemento,
@@ -248,7 +248,7 @@ enum FfiError {
     EffectsMismatch(usize),
     LengthMismatch { atoms: usize, effects: usize },
     ChainTooShort(usize),
-    ComposeRefused(CompositionRefusalMemento),
+    ComposeRefused(CompositionBoundaryMemento),
 }
 
 impl FfiError {
