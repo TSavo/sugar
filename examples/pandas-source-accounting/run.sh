@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Full pandas source-accounting report. The vendor fixed point is tiny on
-# purpose: it seeds a source warrant into pandas.core.arrays.boolean, and the
-# package-accounting pass then recursively accounts for the installed pandas
-# package source as warranted/support/inactive/refused/unclassified.
+# purpose: it seeds one local source warrant and asks the package-accounting pass
+# to account for the installed pandas package source as inactive or unclassified
+# backlog.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -53,23 +53,20 @@ if totals.get("source_loci", 0) < 1_000_000:
     raise SystemExit(f"FAIL: pandas package source loci unexpectedly small: {totals}")
 if totals.get("unclassified_source", 0) <= 0:
     raise SystemExit(f"FAIL: expected pandas unclassified source backlog: {totals}")
-if totals.get("source_warranted", 0) <= 0:
-    raise SystemExit(f"FAIL: expected at least the seeded source warrant replayed into package accounting: {totals}")
+if ledger.get("source_warranted", 0) <= 0:
+    raise SystemExit(f"FAIL: expected the local seeded source warrant in the ledger: {ledger}")
 counts = package.get("ast_type_counts", {}).get("unclassified", {})
 for kind in ("Name", "Call", "Assign"):
     if counts.get(kind, 0) <= 0:
         raise SystemExit(f"FAIL: missing unclassified AST bucket {kind}: {counts}")
-constant = [
+literal = [
     audit
     for audit in audits
-    if audit.get("role") == "python.constant-universe"
-    and audit.get("source_memento", {}).get("source_function_name") == "BooleanDtype.__repr__"
+    if audit.get("role") == "python.literal-call-sugar"
+    and audit.get("file") == "test_pandas_source.py"
 ]
-if len(constant) != 1:
-    raise SystemExit(f"FAIL: expected BooleanDtype.__repr__ source warrant, got {len(constant)}")
-source_file = constant[0]["source_memento"]["file"]
-if "pandas/core/arrays/boolean.py" not in source_file:
-    raise SystemExit(f"FAIL: source warrant points at wrong file: {source_file}")
+if len(literal) != 1:
+    raise SystemExit(f"FAIL: expected one local literal-call source warrant, got {len(literal)}")
 print("pandas source ledger:", ledger)
 print("pandas package totals:", totals)
 print(

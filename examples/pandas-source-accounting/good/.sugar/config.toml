@@ -5,6 +5,7 @@
 name = "python-tests-lift"
 kind = "lift"
 surface = "python-tests"
+emit = "ir-document"
 
 [solvers]
 default = "z3"

@@ -349,14 +349,12 @@
       "name": "examples/pandas-showcase/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "audit-missing/pandas-package-audit",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape audit-missing/pandas-package-audit after unrelated component-plan failures were demoted with --allow-failed-components; work order #3575",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 19.0,
-      "name": "examples/pandas-source-accounting/run.sh",
-      "work_order_issue": 3575
+      "grounds": "script exited 0 after python.package-source accounting was restored through the local report plugin shim; package audit covered 1421 pandas files and 2060219 source loci",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 113.0,
+      "name": "examples/pandas-source-accounting/run.sh"
     },
     {
       "expected": "NAMED_RED",

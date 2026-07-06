@@ -9,7 +9,6 @@ from typing import Any, Callable, NoReturn, TypeVar
 from sugar_lift_py_tests.factory.array_map_report import (
     _callsite_string,
     _function_source_memento,
-    _source_ledger,
     _statement_source_memento,
 )
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
@@ -87,6 +86,10 @@ from .floor_contract_agreement import (
     floor_contract_agreement_violations_for_fact,
 )
 from .factory_gap import FactoryGap
+from .package_source_accounting import (
+    package_source_audits_for_source,
+    source_ledger_for_source_audits,
+)
 from .proofir_provenance_diagnostic import proofir_formula_provenance_diagnostic
 from .factory_build_context import FactoryBuildContext
 from .source_fragment import SourceFragment
@@ -371,6 +374,10 @@ def build_literal_call_report(
         _body_universe_key,
     )
     source_mementos = _dedupe_rpc_rows(source_mementos, _source_memento_key)
+    source_audits.extend(
+        package_source_audits_for_source(source=source, filename=filename)
+    )
+    source_audits = _dedupe_rpc_rows(source_audits, _small_rpc_row_key)
     factory_walk = _dedupe_rpc_rows(factory_walk, _factory_walk_key)
     call_edges = _dedupe_rpc_rows(call_edges, _small_rpc_row_key)
     effects = _dedupe_rpc_rows(effects, _small_rpc_row_key)
@@ -387,7 +394,7 @@ def build_literal_call_report(
         LiftReportPayloadDto(
             ir=ir_payload,
             source_mementos=memento_payload,
-            source_ledger=_source_ledger(len(source_audits)),
+            source_ledger=source_ledger_for_source_audits(source_audits),
             source_audits=source_audits,
             factory_audits=factory_audits,
             factory_walk=walk_payload,
