@@ -156,6 +156,9 @@ fn primitive_assoc_const_known(ty: &str, konst: &str) -> bool {
                 | "usize",
             "MIN" | "MAX" | "BITS"
         ) | ("char", "MAX")
+            // Float SPECIAL associated consts reduce to their floor value (the
+            // ground `float:fW(bits)` ctor). See `float_floor::float_special_const_term`.
+            | ("f32" | "f64", "NAN" | "INFINITY" | "NEG_INFINITY")
     )
 }
 
@@ -167,6 +170,9 @@ fn primitive_assoc_const_term(expr: &Expr) -> Option<Rc<Term>> {
 fn primitive_assoc_const_parts_term(ty: &str, konst: &str) -> Option<Rc<Term>> {
     match (ty, konst) {
         ("char", "MAX") => Some(str_const(char::MAX.to_string())),
+        ("f32" | "f64", "NAN" | "INFINITY" | "NEG_INFINITY") => {
+            crate::sugar::float_floor::float_special_const_term(ty, konst)
+        }
         (_, "BITS") => primitive_assoc_bits_term(ty),
         (_, "MIN" | "MAX") => primitive_assoc_int_limit_term(ty, konst),
         _ => None,

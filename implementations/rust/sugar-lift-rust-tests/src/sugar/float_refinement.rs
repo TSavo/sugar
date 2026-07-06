@@ -25,8 +25,24 @@ use syn::{Expr, ExprLit, ExprMethodCall, Lit};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_float_refinement",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family e: float refinement semantic lie remains SAT",
+    // #3415 family e DRAINED: float specials enter as floor values carrying their
+    // fully-reduced refinement axioms (T's 2026-07-03 ruling). `NAN.is_finite()` is
+    // refuted by the floor's `is_finite = false` axiom; the truthful `!NAN.is_finite()`
+    // discharges. See `float_floor::float_special_const_term` and the SMT emitter's
+    // `float_floor_axiom_preamble`.
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_float_refinement_good() {
+                assert!(!f32::NAN.is_finite());
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_float_refinement_bad() {
+                assert!(f32::NAN.is_finite());
+            }
+        "#,
     ),
     recognize,
 );

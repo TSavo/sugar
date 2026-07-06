@@ -25,8 +25,23 @@ use syn::{BinOp, Expr, ExprBinary, ExprMacro};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_infinity_eq",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family e catch #34: infinity equality semantic lie remains SAT",
+    // #3415 family e catch #34 DRAINED: `INFINITY` and `NEG_INFINITY` are distinct
+    // floor values (distinct bit patterns), so `is_sign_positive(NEG_INFINITY)` is
+    // refuted by the floor axiom and the equality lie contradicts. See the SMT
+    // emitter's `float_floor_axiom_preamble`.
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_infinity_eq_good() {
+                assert!(f32::INFINITY == f32::INFINITY);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_infinity_eq_bad() {
+                assert!(f32::INFINITY == f32::NEG_INFINITY);
+            }
+        "#,
     ),
     recognize,
 );
@@ -34,8 +49,21 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "assertion_surface_infinity_eq",
     SugarRole::AssertionSurface,
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family e: float/infinity semantics lie remains SAT",
+    // #3415 family e DRAINED (see `CONSTRAINT_EXPR_SUGAR`): the assert_eq! surface
+    // form is refuted by the same distinct-floor-identity axioms.
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_assertion_surface_infinity_eq_good() {
+                assert_eq!(f32::INFINITY, f32::INFINITY);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_assertion_surface_infinity_eq_bad() {
+                assert_eq!(f32::INFINITY, f32::NEG_INFINITY);
+            }
+        "#,
     ),
     recognize,
 );
