@@ -875,6 +875,20 @@ impl MementoPool {
                             // first name index for symbol lookup, keep both
                             // mementos in the pool, and let
                             // consistency::verify_consistency conjoin them.
+                        } else if same_canonical_contract_cid(existing_member, new_member) {
+                            // Same behavior, different member envelope. A
+                            // vendor's staged .proof and a consumer's own
+                            // re-mint of the identical source (e.g. the same
+                            // function imported under a different call
+                            // surface, at a different absolute path, or with
+                            // a different source span offset) hash to two
+                            // distinct member-envelope CIDs even though the
+                            // contract's own canonical `header.cid` -- the
+                            // name-stripped behavior identity -- is
+                            // byte-identical. That is cosmetic drift (file
+                            // path, source span, bridge-source phrasing), not
+                            // a genuine collision: don't poison the run with a
+                            // LoadError over it.
                         } else {
                             // Same tier (both pre-bearing or both post-only): genuine collision.
                             self.load_errors.push(LoadError {
@@ -1215,6 +1229,33 @@ fn is_euf_inv_only_conjoin_duplicate(
     name.contains("#euf#")
         && existing_member.is_some_and(is_inv_only_consistency_contract)
         && new_member.is_some_and(is_inv_only_consistency_contract)
+}
+
+/// True when two contract members carry the same canonical, name-stripped
+/// behavior CID (`header.cid`) despite hashing to different member-envelope
+/// CIDs. The member-envelope CID also folds in cosmetic authoring metadata
+/// (source file path, source span, bridge-source call-surface phrasing) that
+/// legitimately differs between a vendor's staged `.proof` and a consumer's
+/// own re-mint of the identical function -- so two mementos can disagree on
+/// envelope CID while agreeing, byte for byte, on behavior. Comparing
+/// `header.cid` is the doctrine-correct check: same behavior, same CID.
+fn same_canonical_contract_cid(
+    existing_member: Option<&StoredMember>,
+    new_member: Option<&StoredMember>,
+) -> bool {
+    let is_contract = |m: &StoredMember| m.kind() == MemberKind::Contract;
+    let canonical_cid = |m: &StoredMember| -> Option<String> {
+        m.field("cid").and_then(Json::as_str).map(str::to_string)
+    };
+    match (existing_member, new_member) {
+        (Some(existing), Some(new)) => {
+            is_contract(existing)
+                && is_contract(new)
+                && canonical_cid(existing).is_some()
+                && canonical_cid(existing) == canonical_cid(new)
+        }
+        _ => false,
+    }
 }
 
 fn is_inv_only_consistency_contract(member: &StoredMember) -> bool {
@@ -1730,6 +1771,64 @@ mod tests {
                 }
             }
         })
+    }
+
+    /// A `callable` contract shaped like the base64-federation showcase's
+    /// vendor/consumer duplicate (issue #3589): same `contractName`, same
+    /// canonical `header.cid` (name-stripped behavior identity), but cosmetic
+    /// authoring metadata (file path, source span) differs by envelope.
+    fn make_callable_contract_with_canonical_cid(
+        name: &str,
+        canonical_cid: &str,
+        file: &str,
+    ) -> Json {
+        json!({
+            "envelope": {
+                "signer": "ed25519:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "declaredAt": "2026-05-05T00:00:00Z",
+                "signature": "ed25519:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "header": {
+                "schemaVersion": "2",
+                "kind": "contract",
+                "contractName": name,
+                "cid": canonical_cid,
+                "sourceWarrants": [
+                    {"file": file}
+                ]
+            }
+        })
+    }
+
+    #[test]
+    fn same_canonical_cid_duplicate_names_are_not_load_errors() {
+        let name = "b64vendor::encodeBase64::callable";
+        let canonical = "blake3-512:b56e68d5de72c6ad524640cae95f2806c945f0dcf2038d93f3ab69f3a47c57fdab3dc91f33d6ad385edbbac8ceb8a8b3cbdd0f39a2ceb20752c7137e5af436dd";
+        let mut pool = MementoPool::default();
+        let vendor_cid = cid("vendor-envelope");
+        let consumer_cid = cid("consumer-envelope");
+
+        pool.insert_unanchored_for_tests(
+            vendor_cid.clone(),
+            make_callable_contract_with_canonical_cid(name, canonical, "b64vendor.py"),
+        );
+        pool.insert_unanchored_for_tests(
+            consumer_cid.clone(),
+            make_callable_contract_with_canonical_cid(
+                name,
+                canonical,
+                "/abs/path/vendor/b64vendor.py",
+            ),
+        );
+
+        assert!(
+            pool.load_errors.is_empty(),
+            "same canonical header.cid across two member envelopes must not be a load error: {:#?}",
+            pool.load_errors
+        );
+        assert_eq!(pool.name_to_cid.get(name), Some(&vendor_cid));
+        assert!(pool.mementos.contains_key(vendor_cid.as_str()));
+        assert!(pool.mementos.contains_key(consumer_cid.as_str()));
     }
 
     #[test]

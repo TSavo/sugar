@@ -373,14 +373,12 @@
       "name": "examples/polars-showcase/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "verdict-drift/expected-proven-label",
-      "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape verdict-drift/expected-proven-label; work order #3589",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 43.635,
-      "name": "examples/python-base64-federation/run.sh",
-      "work_order_issue": 3589
+      "expected": "GREEN",
+      "first_seen": "2026-07-06 fix for #3589",
+      "grounds": "script exits 0: the good consumer's #euf# conjoin row discharges (violations=0) and the bad twin's row is unsatisfied. Root cause of the prior verdict-drift/expected-proven-label: the vendor-staged `b64vendor::encodeBase64::callable` contract and the consumer's own re-mint of the identical function hashed to two different member-envelope CIDs (cosmetic authoring metadata -- absolute vs relative source file, differing source span, qualified vs unqualified bridgeSourceSymbol -- folded into the envelope hash) despite sharing a byte-identical canonical header.cid. MementoPool::insert now treats same-header.cid contract collisions as the same logical contract instead of a load error, so a fully discharged good run no longer gets poisoned into a nonzero exit by report_exit_code's load-errors check.",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 22.0,
+      "name": "examples/python-base64-federation/run.sh"
     },
     {
       "expected": "GREEN",
