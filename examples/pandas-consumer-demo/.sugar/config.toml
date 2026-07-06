@@ -1,0 +1,19 @@
+# A pandas USER, under contract by a pandas vendor .proof staged in
+# .sugar/imports/.
+#
+# The runnable demo builds the vendor proof in a temporary project, then stages
+# it here. This checked-in config documents the consumer shape for humans and
+# for tools that inspect examples directly.
+[[plugins]]
+name = "python-lift"
+kind = "lift"
+surface = "python"
+
+[solvers]
+default = "z3"
+[solvers.dispatch]
+linear_arithmetic = "z3"
+default = "z3"
+[solvers.z3]
+binary = "z3"
+flags = ["-smt2", "-in"]
