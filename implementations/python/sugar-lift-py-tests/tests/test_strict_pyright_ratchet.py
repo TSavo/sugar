@@ -8,13 +8,14 @@ FactoryGapEffect, the SugarBody/FactoryBuildResult edge, and the two DTOs that
 close their dict[str, Any] fallback lanes). Whole-repo strict is not the ask;
 these six-plus-two files ARE PR1-4's fixes, so R starts at 0 for all of them.
 
-object_value.py is the one exception: #3680 named a SugarBody-generic-dispatch
-debt there. Measured on top of main post-#3684 (which strengthened
-FactoryBuildResult.sugar's generic binding as a side effect of unrelated wire-
-seam work), the residual is a single reportUnknownVariableType on a
-SugarBody[Unknown] local. It is pinned at its measured baseline, 1, rather
-than faked to zero or silently excluded — the debt has a name and a count,
-and this tooth stops it from growing.
+object_value.py used to be the one exception: #3680 named a
+SugarBody-generic-dispatch debt there, a reportUnknownVariableType on a
+SugarBody[Unknown] local at the ObjectMethodValue.body seam, pinned at its
+measured baseline of 1. #3657 item 6 closed that debt by parametrizing
+ObjectMethodValue.body and CallSiteValue.body as SugarBody[Any] (matching
+FactoryBuildContext.build_body's declared SugarBody[Any] return and
+FactoryBuildResult.sugar's Any membrane), so the pin ratchets to 0 with the
+rest of the frontier.
 """
 
 from __future__ import annotations
@@ -56,7 +57,7 @@ EXPECTED_STRICT_ERRORS: dict[str, int] = {
     "floor/floor_dispatch_surface.py": 0,
     "kit_rpc/lift_report_payload_dto.py": 0,
     "kit_rpc/source_memento_dto.py": 0,
-    "floor/object_value.py": 1,
+    "floor/object_value.py": 0,
 }
 
 
