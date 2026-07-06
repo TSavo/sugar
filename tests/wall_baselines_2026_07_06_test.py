@@ -9,6 +9,11 @@ itsdangerous 2.2.0, scikit-learn 1.9.0), then distilled to their
 failure) -- see docs/audits/2026-07-06-criterion14-baselines.md for the
 full mechanism writeup and receipts.
 
+`test_polars_ledger_baseline` adds a fifth row, measured on 2026-07-06
+against installed polars 1.42.1 via the same `tools/vendor_source_ledger.py`
+driver (issue #3741, package-wall matrix #3731); see
+docs/audits/walls/polars/README.md for that mechanism writeup.
+
 This test NEVER re-lifts: it reads the committed distilled JSON only. Full
 re-lift is a battleaxe operation (bin/brun), not a CI operation -- CI reads
 the pinned artifact and asserts the numbers have not silently drifted.
@@ -25,10 +30,15 @@ FIXTURE_DIR = (
     Path(__file__).resolve().parent
     / "fixtures/criterion14/wall-baselines-2026-07-06"
 )
+POLARS_FIXTURE_DIR = Path(__file__).resolve().parent.parent / "docs/audits/walls/polars"
 
 
 def _load(name: str) -> dict:
     return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
+
+
+def _load_polars(name: str) -> dict:
+    return json.loads((POLARS_FIXTURE_DIR / name).read_text(encoding="utf-8"))
 
 
 def test_numpy_ledger_baseline() -> None:
@@ -108,3 +118,30 @@ def test_sklearn_lift_side_failure_baseline() -> None:
     assert data["diagnostic"]["info"]["owner"] == "BinOpSugar"
     assert data["diagnostic"]["info"]["gap_kind"] == "Floor"
     assert "test_base.py:497:16" in data["diagnostic"]["info"]["blame"]
+
+
+def test_polars_ledger_baseline() -> None:
+    """polars 1.42.1's whole-package lift completes (exit 0) but the ledger
+    stays almost entirely zero: 5 warranted loci out of 205 copied source
+    files, despite 2839 real, named diagnostics (value-pin-refused,
+    decorator-refused, verify-dialect refusal, etc.). This is the
+    itsdangerous-full shape (completes but near-empty ledger), not the
+    numpy/pandas shape (fully warranted) -- see
+    docs/audits/walls/polars/README.md for the full mechanism writeup and
+    the relationship to #3654's bridge-target-missing row.
+    """
+    data = _load_polars("polars.ledger-summary.json")
+    ledger = data["sourceLedger"]
+    assert ledger == {
+        "source_loci": 5,
+        "source_warranted": 5,
+        "source_support": 0,
+        "source_boundary": 0,
+        "source_inactive": 0,
+        "unclassified_source": 0,
+        "source_unresolved": 0,
+    }
+    assert data["hasLineAccounting"] is False
+    assert data["contracts"] == 9
+    assert data["sourceAuditsCount"] == 5
+    assert data["diagnosticsCount"] == 2839

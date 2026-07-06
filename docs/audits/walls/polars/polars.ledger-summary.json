@@ -1,0 +1,43 @@
+{
+  "contracts": 9,
+  "diagnosticsCount": 2839,
+  "diagnosticsSample": [
+    {
+      "function": null,
+      "message": "{\"kind\": \"value-pin-refused\", \"function\": null, \"line\": 276, \"name\": \"__all__\", \"reason\": \"mutable value (list) cannot pin\"}",
+      "path": "__init__.py"
+    },
+    {
+      "function": "__main__.__getattr__",
+      "message": "verify-dialect refusal: body does not reduce to supported precondition guard(s) followed by a single `return <expr>`; refusing",
+      "path": "__init__.py"
+    },
+    {
+      "function": null,
+      "message": "{\"kind\": \"value-pin-refused\", \"function\": null, \"line\": 85, \"name\": \"_POSIX_64_OPC\", \"reason\": \"mutable value (list) cannot pin\"}",
+      "path": "_cpu_check.py"
+    },
+    {
+      "function": null,
+      "message": "{\"kind\": \"value-pin-refused\", \"function\": null, \"line\": 98, \"name\": \"_WINDOWS_64_OPC\", \"reason\": \"mutable value (list) cannot pin\"}",
+      "path": "_cpu_check.py"
+    },
+    {
+      "function": null,
+      "message": "{\"kind\": \"value-pin-refused\", \"function\": null, \"line\": 112, \"name\": \"_CDECL_32_OPC\", \"reason\": \"mutable value (list) cannot pin\"}",
+      "path": "_cpu_check.py"
+    }
+  ],
+  "hasLineAccounting": false,
+  "package": "polars",
+  "sourceAuditsCount": 5,
+  "sourceLedger": {
+    "source_boundary": 0,
+    "source_inactive": 0,
+    "source_loci": 5,
+    "source_support": 0,
+    "source_unresolved": 0,
+    "source_warranted": 5,
+    "unclassified_source": 0
+  }
+}
