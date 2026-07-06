@@ -9,7 +9,7 @@ from .rpc_value import to_rpc_value
 
 @dataclass(frozen=True)
 class FactoryAuditSummaryDto:
-    rows: list[FactoryWalkRowDto | dict[str, Any]] = field(default_factory=list)
+    rows: list[FactoryWalkRowDto] = field(default_factory=list)
 
     def to_rpc(self) -> dict[str, Any]:
         walk = [to_rpc_value(row) for row in self.rows]

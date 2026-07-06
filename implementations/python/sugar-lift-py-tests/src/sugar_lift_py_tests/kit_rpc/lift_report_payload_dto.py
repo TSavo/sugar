@@ -10,31 +10,39 @@ from .effect_dto import EffectDto
 from .factory_audit_summary_dto import FactoryAuditSummaryDto
 from .factory_walk_row_dto import FactoryWalkRowDto
 from .implication_dto import ImplicationDto
+from .open_lane_dto import (
+    CallEdgeDto,
+    DiagnosticDto,
+    FactoryAuditDto,
+    SourceAuditDto,
+    VendorConjoinDto,
+)
 from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
 
 
 @dataclass(frozen=True)
 class LiftReportPayloadDto:
-    ir: list[BodyUniverseDto | dict[str, Any]] = field(default_factory=list)
-    source_mementos: list[SourceMementoDto | dict[str, Any]] = field(
-        default_factory=list
-    )
+    # Closed lanes: a DTO already exists for every row, so no raw-dict side
+    # door is left for callers to bypass construction law (#3661).
+    ir: list[BodyUniverseDto] = field(default_factory=list)
+    source_mementos: list[SourceMementoDto] = field(default_factory=list)
     source_ledger: dict[str, int] | None = None
-    source_audits: list[dict[str, Any]] = field(default_factory=list)
-    assertion_surface_audits: list[AssertionSurfaceAuditDto | dict[str, Any]] = field(
+    assertion_surface_audits: list[AssertionSurfaceAuditDto] = field(
         default_factory=list
     )
-    factory_walk: list[FactoryWalkRowDto | dict[str, Any]] = field(default_factory=list)
-    factory_audits: list[dict[str, Any]] = field(default_factory=list)
-    plan_mementos: list[ComponentPlanMementoDto | dict[str, Any]] = field(
-        default_factory=list
-    )
-    implications: list[ImplicationDto | dict[str, Any]] = field(default_factory=list)
-    effects: list[EffectDto | dict[str, Any]] = field(default_factory=list)
-    call_edges: list[dict[str, Any]] = field(default_factory=list)
-    vendor_conjoins: list[dict[str, Any]] = field(default_factory=list)
-    diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    factory_walk: list[FactoryWalkRowDto] = field(default_factory=list)
+    plan_mementos: list[ComponentPlanMementoDto] = field(default_factory=list)
+    implications: list[ImplicationDto] = field(default_factory=list)
+    effects: list[EffectDto] = field(default_factory=list)
+    # Genuinely-open lanes: no closed recognizer hierarchy backs these yet,
+    # so they get an explicit TypedDict membrane instead of an accidental
+    # dict[str, Any] (see kit_rpc/open_lane_dto.py for the per-lane reason).
+    source_audits: list[SourceAuditDto] = field(default_factory=list)
+    factory_audits: list[FactoryAuditDto] = field(default_factory=list)
+    call_edges: list[CallEdgeDto] = field(default_factory=list)
+    vendor_conjoins: list[VendorConjoinDto] = field(default_factory=list)
+    diagnostics: list[DiagnosticDto] = field(default_factory=list)
 
     def to_rpc(self) -> dict[str, Any]:
         factory_summary = FactoryAuditSummaryDto(rows=self.factory_walk)

@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Literal, Optional, get_args
+from typing import TYPE_CHECKING, List, Literal, Optional, get_args
+
+if TYPE_CHECKING:
+    # kit_rpc's own import chain runs back through factory (effect_dto ->
+    # effect -> factory_gap_effect -> factory.factory_gap ->
+    # factory_audit_row), so this stays type-checking-only to avoid a
+    # runtime circular import; `from __future__ import annotations` above
+    # makes the FactoryAuditDto annotation below lazy.
+    from sugar_lift_py_tests.kit_rpc import FactoryAuditDto
 
 FactoryAuditStatus = Literal[
     "selected",
@@ -36,7 +44,7 @@ class FactoryAuditRow:
                 f"allowed={allowed}"
             )
 
-    def to_json(self):
+    def to_json(self) -> FactoryAuditDto:
         return {
             "kind": "factory-audit-row",
             "role": self.role,
