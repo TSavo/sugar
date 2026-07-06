@@ -2623,6 +2623,29 @@ fn is_monadic_ctor(name: &str) -> bool {
     matches!(name, OPT_SOME | OPT_NONE | RES_OK | RES_ERR)
 }
 
+/// True iff `name` is a monadic ADT FIELD SELECTOR (`opt:some#0`, `res:ok#0`,
+/// `res:err#0`, and the `#option`-wrapped variants). Each `declare-datatypes`
+/// constructor declares its payload accessor (`(opt:some (opt:some#0 Int))`, see
+/// `monadic_adt_preamble`), so the selector is ALREADY a native datatype
+/// projection in the ADT theory. A symbolic-variant guard region reads a
+/// payload out of a symbolic operand with this selector (the some-arm of
+/// `cf_ite(adt.is_some(r), cf_guarded(is_some, opt:some#0(r)), ...)`, #3445
+/// Part 1 slice 2). Like the testers (`is_monadic_adt_tester`) and the ctors
+/// (`is_monadic_ctor`), it must NEVER be re-declared as an uninterpreted
+/// function -- a second `(declare-fun opt:some#0 ...)` shadows the datatype
+/// selector and strips its projection law, so `opt:some#0(opt:some(v)) = v` no
+/// longer holds and the payload floats free (the selector twin of the tester's
+/// EUF-collapse). It renders as the native application `(|opt:some#0| r)`.
+fn is_monadic_field_accessor(name: &str) -> bool {
+    let Some(ctor) = name.strip_suffix("#0") else {
+        return false;
+    };
+    matches!(
+        ctor,
+        OPT_SOME | RES_OK | RES_ERR | OPT_SOME_OPTION | RES_OK_OPTION | RES_ERR_OPTION
+    )
+}
+
 // ── Monadic ADT discriminant testers (Part 1 carrier, #3445) ────────────────
 //
 // The reserved atomic family `adt.is_some`/`adt.is_none`/`adt.is_ok`/`adt.is_err`
@@ -2784,6 +2807,19 @@ fn collect_monadic_adts_term(term: &Term, used: &mut MonadicAdtsUsed) {
         Term::Ctor { name, args } => {
             if let Some(sort) = known_term_sort(term) {
                 mark_monadic_sort(&sort, used);
+            } else if is_monadic_field_accessor(name) {
+                // A payload selector (`opt:some#0(r)`) reads out of an ADT even
+                // when no bare constructor appears in the term; its datatype
+                // must still be declared or the selector is unsorted.
+                match name.as_str() {
+                    "opt:some#0" => mark_monadic_sort("SugarOption", used),
+                    "res:ok#0" | "res:err#0" => mark_monadic_sort("SugarResult", used),
+                    "opt:some#option#0" => mark_monadic_sort("SugarOptionOption", used),
+                    "res:ok#option#0" | "res:err#option#0" => {
+                        mark_monadic_sort("SugarResultOption", used)
+                    }
+                    _ => {}
+                }
             } else {
                 match name.as_str() {
                     OPT_SOME | OPT_NONE => used.option = true,
@@ -2904,7 +2940,8 @@ fn collect_ctor_decls_term(
             // declared.
             let is_interpreted_builtin = is_builtin_term_operator(name)
                 || (is_bv32_ctor_name(name) && term_renders_as_bv32(term));
-            if !is_interpreted_builtin && !is_monadic_ctor(name) {
+            if !is_interpreted_builtin && !is_monadic_ctor(name) && !is_monadic_field_accessor(name)
+            {
                 let decl_key = ctor_decl_key_for_signature(name, args.len(), &arg_sorts);
                 out.entry(decl_key).or_insert_with(|| CtorSignature {
                     args: arg_sorts.clone(),
@@ -4863,6 +4900,80 @@ mod monadic_adt_tester_tests {
             assert!(
                 is_builtin_atomic_predicate(name),
                 "{name} must be treated as builtin/interpreted"
+            );
+        }
+    }
+
+    // SELECTOR EXCLUSION (#3445 Part 1 slice 2, discovered sub-requirement of
+    // #3727): a payload selector `opt:some#0(r)` reads out of the ADT as a NATIVE
+    // datatype projection (the some-arm value of the symbolic-variant guarded
+    // split `cf_ite(adt.is_some(r), cf_guarded(is_some, opt:some#0(r)), ...)`).
+    // It must render as the application `(|opt:some#0| r)` and NEVER be
+    // re-declared as an uninterpreted function -- a second `(declare-fun
+    // opt:some#0 ...)` shadows the datatype selector and strips its projection
+    // law (`opt:some#0(opt:some v) = v`), so the payload floats free. This is the
+    // SELECTOR twin of the tester's EUF-collapse regression. The co-located
+    // tester establishes `r: SugarOption`, so the selector is well-sorted.
+    #[test]
+    fn payload_selector_renders_native_projection_not_euf() {
+        let f = Formula::And {
+            operands: vec![
+                tester(ADT_IS_SOME, var("r")),
+                Formula::Atomic {
+                    name: "=".into(),
+                    args: vec![ctor("opt:some#0", vec![var("r")]), int_const(5)],
+                },
+            ],
+        };
+        let script = full_script(&f);
+        // Native selector projection application over the ADT operand.
+        assert!(
+            script.contains("(|opt:some#0| r)"),
+            "payload selector must render as a native datatype projection; got:\n{script}"
+        );
+        // EUF-collapse twin regression: the selector is NEVER an uninterpreted fn.
+        assert!(
+            !script.contains("declare-fun |opt:some#0|")
+                && !script.contains("declare-fun opt:some#0"),
+            "opt:some#0 must NOT be declared as an uninterpreted function; got:\n{script}"
+        );
+        // The datatype (whose declaration carries the selector) is emitted, and
+        // the symbolic operand is declared with the ADT sort.
+        assert!(
+            script.contains("(declare-datatypes ((SugarOption 0))"),
+            "SugarOption datatype (carrying the selector) must be declared; got:\n{script}"
+        );
+        assert!(
+            script.contains("(declare-const r SugarOption)"),
+            "operand must be declared SugarOption; got:\n{script}"
+        );
+    }
+
+    // The selector family is recognized as a datatype projection (excluded from
+    // the uninterpreted-fn decl pass); the nullary `opt:none` has no field, and a
+    // generic ctor accessor is NOT a monadic selector.
+    #[test]
+    fn monadic_field_accessor_recognizer_is_exact() {
+        for name in [
+            "opt:some#0",
+            "res:ok#0",
+            "res:err#0",
+            "opt:some#option#0",
+            "res:ok#option#0",
+            "res:err#option#0",
+        ] {
+            assert!(is_monadic_field_accessor(name), "{name} must be a selector");
+        }
+        for name in [
+            "opt:none#0",
+            "opt:some",
+            "call:foo#0",
+            "opt:some#1",
+            "res:ok",
+        ] {
+            assert!(
+                !is_monadic_field_accessor(name),
+                "{name} must NOT be a selector"
             );
         }
     }
