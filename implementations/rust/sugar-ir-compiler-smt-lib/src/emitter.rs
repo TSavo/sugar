@@ -291,6 +291,14 @@ pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
             if let Some(rendered) = emit_bv32_theory_atomic(name, args)? {
                 return Ok(rendered);
             }
+            // Monadic ADT discriminant testers (`adt.is_some`/.../`adt.is_err`):
+            // rendered as NATIVE datatype testers `((_ is |opt:some|) x)` routed
+            // by operand ADT sort. NEVER a generic (EUF) atomic application -- an
+            // uninterpreted tester collapses the sum. A branch BEFORE generic
+            // atomic rendering (T's Part-1 ruling, #3445).
+            if let Some(rendered) = emit_monadic_adt_tester_atomic(name, args)? {
+                return Ok(rendered);
+            }
             let smt_name = smt_atomic_name(name);
             if args.is_empty() {
                 return Ok(smt_name.to_string());
@@ -2023,7 +2031,12 @@ pub fn collect_free_vars_formula(
             let adt_ctx = if name == "=" {
                 args.iter().find_map(monadic_operand_sort)
             } else {
-                None
+                // A monadic ADT tester establishes its symbolic operand's ADT
+                // sort (`adt.is_some(r)` -> `r: SugarOption`), so the free-var
+                // pass declares `r` with that datatype sort and the native tester
+                // `((_ is |opt:some|) r)` is well-sorted. Absent a tester this is
+                // `None`, so all pre-existing formulas are byte-for-byte identical.
+                monadic_adt_tester_operand_sort(name, args)
             };
             for a in args {
                 collect_free_vars_term_ctx_adt(a, out, bound, real_ctx, adt_ctx);
@@ -2431,6 +2444,11 @@ fn expected_atomic_arg_sort(name: &str, args: &[Term]) -> Option<String> {
     if is_float_refinement_atomic_predicate(name) {
         return Some("Real".to_string());
     }
+    // Monadic ADT tester: its single operand carries the established ADT sort so
+    // the operand renders / declares against the datatype, never `Int`.
+    if let Some(sort) = monadic_adt_tester_operand_sort(name, args) {
+        return Some(sort.to_string());
+    }
     // String-theory atoms (and string-routed `=`) render their operands via
     // `emit_string_term`, so a ctor operand (`callresult_*`) must be DECLARED
     // with a `String` return sort or the script is ill-sorted.
@@ -2603,6 +2621,120 @@ const RES_ERR_OPTION: &str = "res:err#option";
 /// ADT constructor, NOT as an uninterpreted function.
 fn is_monadic_ctor(name: &str) -> bool {
     matches!(name, OPT_SOME | OPT_NONE | RES_OK | RES_ERR)
+}
+
+// ── Monadic ADT discriminant testers (Part 1 carrier, #3445) ────────────────
+//
+// The reserved atomic family `adt.is_some`/`adt.is_none`/`adt.is_ok`/`adt.is_err`
+// is EMITTER-INTERPRETED as a NATIVE datatype tester over the already-declared
+// SugarOption/SugarResult ADTs -- `((_ is |opt:some|) x)` etc. The discriminant
+// laws (`is_some(Some _) = true`, `is_some(None) = false`, mutual exclusion, and
+// `is_some xor is_none`) come FREE from z3's datatype theory. The names are
+// NAMESPACED (`adt.` prefix) so they cannot collide with the legacy syntactic
+// `is_some` guards, which remain uninterpreted predicates until retired.
+//
+// SOUNDNESS: these testers must live in the SAME ADT theory as the constructors,
+// NEVER as an EUF (uninterpreted) predicate. An uninterpreted `adt.is_some` would
+// be a fresh Bool function z3 assigns freely -- collapsing the sum and turning a
+// lie SAT (fake-dig). So `is_builtin_atomic_predicate` claims them (no
+// `declare-fun`), and this renderer is the only place they take a value.
+const ADT_IS_SOME: &str = "adt.is_some";
+const ADT_IS_NONE: &str = "adt.is_none";
+const ADT_IS_OK: &str = "adt.is_ok";
+const ADT_IS_ERR: &str = "adt.is_err";
+
+/// True iff `name` is one of the reserved monadic ADT discriminant testers.
+fn is_monadic_adt_tester(name: &str) -> bool {
+    matches!(name, ADT_IS_SOME | ADT_IS_NONE | ADT_IS_OK | ADT_IS_ERR)
+}
+
+/// Resolve the `(adt_sort, constructor)` a tester discriminates over its single
+/// operand, or a LOUD refusal when the operand sort cannot be established.
+///
+/// The tester family fixes the sum (`is_some`/`is_none` -> Option family,
+/// `is_ok`/`is_err` -> Result family). The operand's `known_term_sort` then
+/// selects the wrap depth: a concrete monadic value carries its exact ADT sort;
+/// a bare symbolic operand (`known_term_sort` -> the `Int` default) is ESTABLISHED
+/// at the family's base ADT sort (this is the symbolic-variant guard lane -- the
+/// operand is declared with that ADT sort by the free-var pass, so the tester is
+/// well-sorted; it is NOT a silent Int-predicate fallback). Any operand whose
+/// established sort belongs to the OTHER family, or is a non-ADT theory sort
+/// (`String`/`Real`/BitVec/opaque), is UNESTABLISHABLE -> RED.
+fn monadic_adt_tester_ctor(
+    name: &str,
+    arg: &Term,
+) -> Result<(&'static str, &'static str), CompileError> {
+    let option_family = matches!(name, ADT_IS_SOME | ADT_IS_NONE);
+    let operand = known_term_sort(arg);
+    let sort: &'static str = match (option_family, operand.as_deref()) {
+        // `Int` is `known_term_sort`'s default for a bare symbolic operand: the
+        // tester family establishes it at the base ADT sort.
+        (true, Some("SugarOption")) | (true, Some("Int")) => "SugarOption",
+        (true, Some("SugarOptionOption")) => "SugarOptionOption",
+        (false, Some("SugarResult")) | (false, Some("Int")) => "SugarResult",
+        (false, Some("SugarResultOption")) => "SugarResultOption",
+        (_, other) => {
+            return Err(strong_tier_refusal(
+                name,
+                format!(
+                    "monadic ADT tester operand sort unestablishable (got {other:?}); \
+                     the symbolic-variant guard lane refuses rather than falling back \
+                     to a silent Int predicate"
+                ),
+            ));
+        }
+    };
+    let ctor = match (name, sort) {
+        (ADT_IS_SOME, "SugarOption") => OPT_SOME,
+        (ADT_IS_SOME, "SugarOptionOption") => OPT_SOME_OPTION,
+        (ADT_IS_NONE, "SugarOption") => OPT_NONE,
+        (ADT_IS_NONE, "SugarOptionOption") => OPT_NONE_OPTION,
+        (ADT_IS_OK, "SugarResult") => RES_OK,
+        (ADT_IS_OK, "SugarResultOption") => RES_OK_OPTION,
+        (ADT_IS_ERR, "SugarResult") => RES_ERR,
+        (ADT_IS_ERR, "SugarResultOption") => RES_ERR_OPTION,
+        // The (family, sort) pairs above are exhaustive for the resolved sorts.
+        _ => unreachable!("tester/sort pairing already constrained by family"),
+    };
+    Ok((sort, ctor))
+}
+
+/// The operand ADT sort a tester establishes for its single operand, or `None`
+/// for a non-tester name / unresolvable operand. Used by the free-var and
+/// arg-sort passes so a symbolic operand is DECLARED with the matching ADT sort.
+fn monadic_adt_tester_operand_sort(name: &str, args: &[Term]) -> Option<&'static str> {
+    if !is_monadic_adt_tester(name) {
+        return None;
+    }
+    let arg = args.first()?;
+    monadic_adt_tester_ctor(name, arg).ok().map(|(sort, _)| sort)
+}
+
+/// Render a reserved monadic ADT tester as a native datatype discriminant, or
+/// `Ok(None)` if `name` is not a tester. A wrong arity or unestablishable operand
+/// sort is a LOUD refusal, never a silent generic atomic.
+fn emit_monadic_adt_tester_atomic(
+    name: &str,
+    args: &[Term],
+) -> Result<Option<String>, CompileError> {
+    if !is_monadic_adt_tester(name) {
+        return Ok(None);
+    }
+    if args.len() != 1 {
+        return Err(strong_tier_refusal(
+            name,
+            format!(
+                "monadic ADT tester expects exactly one operand, got {}",
+                args.len()
+            ),
+        ));
+    }
+    let (sort, ctor) = monadic_adt_tester_ctor(name, &args[0])?;
+    let operand = emit_term_with_expected(&args[0], Some(sort));
+    // `((_ is |opt:some|) x)`: the tester lives in the ADT theory, so the
+    // discriminant laws are z3-native. The ctor name is `smt_quote`d to match
+    // the `declare-datatypes` constructor symbol.
+    Ok(Some(format!("((_ is {}) {})", smt_quote(ctor), operand)))
 }
 
 /// Which monadic ADTs a formula references, so the preamble declares ONLY the
@@ -2844,6 +2976,14 @@ fn collect_identity_decls_term(term: &Term, out: &mut BTreeMap<String, CtorSigna
 /// is generic and language-blind.
 fn is_builtin_atomic_predicate(name: &str) -> bool {
     if is_string_theory_atomic_predicate(name) {
+        return true;
+    }
+    // Monadic ADT discriminant testers are EMITTER-INTERPRETED as native
+    // datatype testers (`((_ is |opt:some|) x)`); they must NEVER be declared as
+    // uninterpreted `(declare-fun adt.is_some (...) Bool)` predicates -- an EUF
+    // tester collapses the sum. Claiming them here keeps the predicate-decl pass
+    // from emitting a declaration.
+    if is_monadic_adt_tester(name) {
         return true;
     }
     matches!(
@@ -4584,5 +4724,142 @@ mod str_table_select_tests {
             run_str_formula("AAAA", &rhs).starts_with("unsat"),
             "BAD twin (different wrong value): encode(foo)==AAAA must be UNSAT"
         );
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Monadic ADT discriminant tester emission (Part 1 carrier, #3445).
+//
+// Teeth for T's Part-1 ruling: the reserved atomic family `adt.is_*` renders as
+// NATIVE datatype testers `((_ is |opt:some|) x)` routed by operand ADT sort,
+// NEVER as an EUF `(declare-fun adt.is_* (...) Bool)` predicate (which would
+// collapse the sum and turn a lie SAT). Unestablishable operand sort = RED.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod monadic_adt_tester_tests {
+    use super::*;
+    use sugar_ir_types::IrTerm as Term;
+
+    fn var(name: &str) -> Term {
+        Term::Var { name: name.into() }
+    }
+
+    fn int_const(value: i64) -> Term {
+        Term::Const {
+            value: serde_json::json!(value),
+            sort: Sort::Primitive { name: "Int".into() },
+        }
+    }
+
+    fn ctor(name: &str, args: Vec<Term>) -> Term {
+        Term::Ctor {
+            name: name.into(),
+            args,
+        }
+    }
+
+    fn tester(name: &str, arg: Term) -> Formula {
+        Formula::Atomic {
+            name: name.into(),
+            args: vec![arg],
+        }
+    }
+
+    fn full_script(f: &Formula) -> String {
+        let compiled = compile_formula(f).expect("compile_formula");
+        format!("{}{}", compiled.preamble, compiled.body)
+    }
+
+    // TOOTH 1 (truthful render + EUF-collapse regression): a tester over a
+    // symbolic option operand renders the NATIVE datatype tester, declares the
+    // operand with the ADT sort, and NEVER declares `adt.is_*` as an
+    // uninterpreted predicate.
+    #[test]
+    fn adt_is_some_over_symbolic_operand_renders_native_tester_not_euf() {
+        let script = full_script(&tester(ADT_IS_SOME, var("r")));
+        assert!(
+            script.contains("((_ is |opt:some|) r)"),
+            "must render the native datatype tester; got:\n{script}"
+        );
+        // The symbolic operand is declared with the ADT sort (well-sorted).
+        assert!(
+            script.contains("(declare-const r SugarOption)"),
+            "operand must be declared SugarOption; got:\n{script}"
+        );
+        // EUF-collapse regression: the tester is NEVER an uninterpreted predicate.
+        assert!(
+            !script.contains("declare-fun |adt.is") && !script.contains("declare-fun adt.is"),
+            "adt.is_* must NOT be declared as an uninterpreted predicate; got:\n{script}"
+        );
+        // The reserved atomic name never leaks into the script verbatim -- it is
+        // fully interpreted into the datatype tester.
+        assert!(
+            !script.contains("adt.is_some"),
+            "reserved tester name must be fully interpreted away; got:\n{script}"
+        );
+    }
+
+    // TOOTH 2 (per-family routing): each tester routes to its ADT constructor
+    // discriminant over the correct declared datatype.
+    #[test]
+    fn each_family_routes_to_its_constructor_discriminant() {
+        let none = full_script(&tester(ADT_IS_NONE, var("r")));
+        assert!(none.contains("((_ is |opt:none|) r)"), "{none}");
+        assert!(none.contains("(declare-const r SugarOption)"), "{none}");
+
+        let ok = full_script(&tester(ADT_IS_OK, var("r")));
+        assert!(ok.contains("((_ is |res:ok|) r)"), "{ok}");
+        assert!(ok.contains("(declare-const r SugarResult)"), "{ok}");
+        assert!(ok.contains("(declare-datatypes ((SugarResult 0))"), "{ok}");
+
+        let err = full_script(&tester(ADT_IS_ERR, var("r")));
+        assert!(err.contains("((_ is |res:err|) r)"), "{err}");
+        assert!(err.contains("(declare-const r SugarResult)"), "{err}");
+    }
+
+    // TOOTH 3 (wrap-depth from operand): a tester over a NESTED concrete monadic
+    // value routes to the Option-wrapped constructor (`opt:some#option`).
+    #[test]
+    fn tester_over_nested_value_routes_to_wrapped_constructor() {
+        let nested = ctor(OPT_SOME, vec![ctor(OPT_SOME, vec![int_const(5)])]);
+        let script = full_script(&tester(ADT_IS_SOME, nested));
+        assert!(
+            script.contains("((_ is |opt:some#option|)"),
+            "nested value must route to the wrapped constructor; got:\n{script}"
+        );
+    }
+
+    // TOOTH 4 (unestablishable / mismatched operand = RED, loudly): a tester
+    // whose operand sort belongs to the OTHER family, or a wrong arity, refuses
+    // rather than falling back to a silent Int predicate.
+    #[test]
+    fn tester_over_wrong_family_operand_is_red() {
+        // adt.is_some over a concrete Result value: family mismatch -> RED.
+        let mismatched = tester(ADT_IS_SOME, ctor(RES_OK, vec![int_const(1)]));
+        assert!(
+            compile_formula(&mismatched).is_err(),
+            "adt.is_some over a SugarResult operand must refuse"
+        );
+        // Direct renderer refusal (loud CompileError), not Ok(None).
+        assert!(emit_monadic_adt_tester_atomic(ADT_IS_SOME, &[ctor(RES_ERR, vec![int_const(1)])])
+            .is_err());
+    }
+
+    #[test]
+    fn tester_with_wrong_arity_is_red() {
+        assert!(emit_monadic_adt_tester_atomic(ADT_IS_SOME, &[var("a"), var("b")]).is_err());
+        assert!(emit_monadic_adt_tester_atomic(ADT_IS_OK, &[]).is_err());
+    }
+
+    // The tester family is claimed as builtin/interpreted so no decl pass emits
+    // a `(declare-fun adt.is_* ...)`.
+    #[test]
+    fn tester_family_is_builtin_interpreted() {
+        for name in [ADT_IS_SOME, ADT_IS_NONE, ADT_IS_OK, ADT_IS_ERR] {
+            assert!(
+                is_builtin_atomic_predicate(name),
+                "{name} must be treated as builtin/interpreted"
+            );
+        }
     }
 }
