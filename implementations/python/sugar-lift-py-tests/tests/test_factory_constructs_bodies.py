@@ -11,7 +11,6 @@ from sugar_lift_py_tests.sugar.bitwise_op_sugar import BitwiseOpSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.builder_ctor_sugar import BuilderCtorSugar
 from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
-from sugar_lift_py_tests.sugar.list_literal_sugar import ListLiteralSugar
 from sugar_lift_py_tests.sugar.map_sugar import MapSugar
 from sugar_lift_py_tests.sugar.to_list_sugar import ToListSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -84,7 +83,6 @@ def test_sugar_constructors_take_factory_built_bodies() -> None:
     )
     assert BuilderCtorSugar(items=body, blame="x.py:1:0").items is body
     assert LambdaSugar(parameter="x", body=body, blame="x.py:1:0").body is body
-    assert ListLiteralSugar(elements=(body,)).elements == (body,)
     assert MapSugar(blame="x.py:1:0", receiver=body, mapper=body).mapper is body
     assert ToListSugar(receiver=body, blame="x.py:1:0").receiver is body
 

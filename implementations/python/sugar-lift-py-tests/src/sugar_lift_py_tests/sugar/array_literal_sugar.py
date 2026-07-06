@@ -13,6 +13,7 @@ from sugar_lift_py_tests.factory import (
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     BoolValue,
+    ImportAliasValue,
     ObjectValue,
     StringValue,
     SymbolicValue,
@@ -26,9 +27,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSugar",)):
-    # When both own a `[...]` fragment, ArrayLiteralSugar wins in any catalog that has
-    # both; a catalog with only ListLiteralSugar still selects it (no competitor).
+class ArrayLiteralSugar(Sugar, role=SugarRole.TERM):
+    # The single list-literal owner: `[...]` is verdict-bearing here, not split
+    # across a shadow support recognizer.
     elements: tuple[SugarBody, ...]
 
     def __post_init__(self) -> None:
@@ -90,6 +91,7 @@ def _array_element(value, *, element: SugarBody):
             ObjectValue,
             StringValue,
             SymbolicValue,
+            ImportAliasValue,
             ArrayLiteral,
             TupleLiteralValue,
         ),

@@ -46,7 +46,7 @@ from sugar_lift_py_tests.kit_rpc import (
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
 from sugar_lift_py_tests.effect import FactoryGapEffect, RuntimeEffect
 from sugar_lift_py_tests.effect import effect_status
-from sugar_lift_py_tests.floor import PredicateValue
+from sugar_lift_py_tests.floor import DictLiteralValue, ImportAliasValue, PredicateValue
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.proofir import (
@@ -424,7 +424,7 @@ def _non_call_equality_lhs_gap(
     if lhs.observed == "Name":
         name = lhs.name_id()
         for prior in _prior_assignment_sites([], fn, stmt):
-            if name in _assignment_target_names(prior):
+            if name in _prior_binding_target_names(prior):
                 return (
                     f"assert-eq-lhs:bound-name:{name}",
                     "BoundNameEquality",
@@ -1005,6 +1005,12 @@ def _ctx_with_prior_assignments(
         return ctx
     folded_ctx = ctx
     for prior in priors:
+        if prior.observed in {"Import", "ImportFrom"}:
+            imported = _ctx_with_prior_import_bindings(prior, folded_ctx)
+            if isinstance(imported, _PriorAssignmentEffect):
+                return imported
+            folded_ctx = imported
+            continue
         block = BlockSugar(
             statements=(folded_ctx.build_body(prior, SugarRole.STATEMENT),),
             blame=prior.blame,
@@ -1020,6 +1026,39 @@ def _ctx_with_prior_assignments(
     return folded_ctx
 
 
+def _ctx_with_prior_import_bindings(
+    prior: SourceFragment,
+    ctx: FactoryBuildContext,
+) -> FactoryBuildContext | _PriorAssignmentEffect:
+    from sugar_lift_py_tests.temporal import bind_temporal
+
+    folded_ctx = ctx
+    for alias in prior.fragments():
+        if alias.observed != "alias":
+            continue
+        body = folded_ctx.build_body(alias, SugarRole.TERM)
+        outcome = body.reduce(folded_ctx)
+        if isinstance(outcome, Incomplete):
+            return _PriorAssignmentEffect(site=alias, incomplete=outcome)
+        value = complete_value(
+            outcome,
+            owner="literal_call_report.prior_import_alias",
+        )
+        if not isinstance(value, ImportAliasValue):
+            raise TypeError(
+                "AliasSugar built non-import alias binding "
+                f"{type(value).__name__} at {alias.blame}"
+            )
+        folded_ctx = bind_temporal(
+            folded_ctx,
+            value.bound_name,
+            value,
+            owner="AliasSugar",
+            blame=alias.blame,
+        )
+    return folded_ctx
+
+
 def _needed_prior_assignment_sites(
     module_statements: list[SourceFragment],
     fn: SourceFragment,
@@ -1028,31 +1067,35 @@ def _needed_prior_assignment_sites(
     needed_names = set(_names_including_self(stmt))
     selected: list[SourceFragment] = []
     for prior in reversed(_prior_assignment_sites(module_statements, fn, stmt)):
-        names = _assignment_target_names(prior)
+        names = _prior_binding_target_names(prior)
         if not names or needed_names.isdisjoint(names):
             continue
         selected.append(prior)
-        needed_names.update(_assignment_value_names(prior))
+        needed_names.update(_prior_binding_value_names(prior))
     return list(reversed(selected))
 
 
-def _assignment_value_names(site: SourceFragment) -> set[str]:
+def _prior_binding_value_names(site: SourceFragment) -> set[str]:
     if site.observed != "Assign":
         return set()
     return set(_names_including_self(site.assign_value()))
 
 
-def _assignment_target_names(site: SourceFragment) -> set[str]:
-    if site.observed != "Assign":
+def _prior_binding_target_names(site: SourceFragment) -> set[str]:
+    if site.observed == "Assign":
+        name = site.assign_target_name()
+        if name is not None:
+            return {name}
+        targets = site.assign_targets()
+        if len(targets) == 1 and targets[0].observed == "Tuple":
+            return {
+                item.name_id() for item in targets[0].terms() if item.observed == "Name"
+            }
         return set()
-    name = site.assign_target_name()
-    if name is not None:
-        return {name}
-    targets = site.assign_targets()
-    if len(targets) == 1 and targets[0].observed == "Tuple":
-        return {
-            item.name_id() for item in targets[0].terms() if item.observed == "Name"
-        }
+    if site.observed == "Import":
+        return {asname or name for name, asname in site.import_names()}
+    if site.observed == "ImportFrom" and site.importfrom_level() == 0:
+        return {asname or name for name, asname in site.importfrom_names()}
     return set()
 
 
@@ -1063,7 +1106,7 @@ def _prior_assignment_names(
 ) -> set[str]:
     names: set[str] = set()
     for prior in _prior_assignment_sites(module_statements, fn, stmt):
-        names.update(_assignment_target_names(prior))
+        names.update(_prior_binding_target_names(prior))
     return names
 
 
@@ -1630,6 +1673,23 @@ def _lift_callsite_assertion(
                     f"lists): {exc}"
                 ),
             )
+    if isinstance(expected_value, DictLiteralValue):
+        return _emit_dict_literal_callsite_facts(
+            stmt,
+            fn,
+            callee_name,
+            arg_terms,
+            expected_value,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            warrant=Stated(locus=_proofir_construction_site(stmt, memento_file)),
+            callsite=callsite,
+            emit_call_edge=emit_call_edge,
+            call_return_sort=call_return_sort,
+            contract_bindings=contract_bindings or [],
+            include_whole_call_fact=True,
+        )
     return _emit_euf_fact(
         stmt,
         fn,
@@ -1644,6 +1704,93 @@ def _lift_callsite_assertion(
         emit_call_edge=emit_call_edge,
         call_return_sort=call_return_sort,
         contract_bindings=contract_bindings or [],
+    )
+
+
+def _emit_dict_literal_callsite_facts(
+    stmt: SourceFragment,
+    fn: SourceFragment,
+    callee_name: str,
+    arg_terms: list[Term],
+    value: DictLiteralValue,
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    warrant: Stated | Derived,
+    callsite: SourceFragment | None = None,
+    emit_call_edge: bool = False,
+    call_return_sort: ProofSort | None = None,
+    contract_bindings: list | None = None,
+    include_whole_call_fact: bool,
+) -> LiftResult:
+    from sugar_lift_py_tests.floor import TermValue
+
+    lifts: list[LiftResult] = []
+    if include_whole_call_fact:
+        lifts.append(
+            _emit_euf_fact(
+                stmt,
+                fn,
+                callee_name,
+                arg_terms,
+                value.to_term(owner="literal_call_report.dict_literal"),
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+                warrant=warrant,
+                callsite=callsite,
+                emit_call_edge=emit_call_edge,
+                call_return_sort=call_return_sort,
+                contract_bindings=contract_bindings or [],
+            )
+        )
+    entries = _canonical_dict_entries(value)
+    lifts.append(
+        _emit_euf_fact(
+            stmt,
+            fn,
+            f"{callee_name}.__dict_len__",
+            arg_terms,
+            floor_to_term(
+                TermValue(len(entries)),
+                owner="literal_call_report.dict_literal_len",
+            ),
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            warrant=warrant,
+            call_return_sort=IntSort(),
+        )
+    )
+    for key_term, value_term in entries:
+        lifts.append(
+            _emit_euf_fact(
+                stmt,
+                fn,
+                f"{callee_name}.__dict_getitem__",
+                [*arg_terms, key_term],
+                value_term,
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+                warrant=warrant,
+                call_return_sort=_dict_read_sort(value_term, callee_name=callee_name),
+            )
+        )
+    return _merge_many(lifts)
+
+
+def _canonical_dict_entries(value: DictLiteralValue) -> tuple[tuple[Term, Term], ...]:
+    by_key: dict[str, tuple[Term, Term]] = {}
+    for key_term, value_term in value.entries:
+        by_key[_canonical_term_sig(key_term)] = (key_term, value_term)
+    return tuple(pair for _sig, pair in sorted(by_key.items()))
+
+
+def _dict_read_sort(term: Term, *, callee_name: str) -> ProofSort:
+    return _known_term_sort(term) or UnknownSort(
+        reason=f"no declared dict read return sort available for call:{callee_name}"
     )
 
 
@@ -2338,6 +2485,32 @@ def _construct_callsite_from_factory_term(
                 owner="literal_call_report.callsite_floor",
                 project_callsite=False,
             )
+            callable_contract = callable_contracts.get(f"call:{call_value.target_name}")
+            call_return_sort = (
+                callable_contract.out_sort if callable_contract is not None else None
+            )
+            if isinstance(floor, DictLiteralValue):
+                facts.append(
+                    _emit_dict_literal_callsite_facts(
+                        stmt,
+                        caller_fn,
+                        call_value.target_name,
+                        arg_terms,
+                        floor,
+                        filename=filename,
+                        memento_file=memento_file,
+                        source_lines=source_lines,
+                        warrant=Derived(
+                            floor_chain=(
+                                "literal_call_report.callsite_dict_floor",
+                                call_value.target_name,
+                            )
+                        ),
+                        call_return_sort=call_return_sort,
+                        include_whole_call_fact=not immediate_emitted,
+                    )
+                )
+                return
             projection = _formula_or_none(
                 perform_operation(
                     owner="literal_call_report.callsite_floor",

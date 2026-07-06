@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.floor import BoundVar, SymbolicValue
+from sugar_lift_py_tests.floor import BoundVar, ImportAliasValue, SymbolicValue
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.operations import AttributeLookupOperation, perform_operation
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
@@ -137,6 +137,8 @@ def _temporal_binding_value(ctx, name: str):
 
 def _temporal_binding_is_external_bridge(ctx, name: str) -> bool:
     value = _temporal_binding_value(ctx, name)
+    if isinstance(value, ImportAliasValue):
+        return True
     if not isinstance(value, BoundVar):
         return False
     sugar = getattr(value.source, "sugar", None)

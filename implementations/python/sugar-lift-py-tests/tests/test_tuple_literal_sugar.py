@@ -16,7 +16,7 @@ from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.outcome import complete_value
-from sugar_lift_py_tests.sugar.list_literal_sugar import LIST_LITERAL_CLAIM
+from sugar_lift_py_tests.sugar.array_literal_sugar import ARRAY_LITERAL_CLAIM
 from sugar_lift_py_tests.sugar.primitive_literal_sugar import PRIMITIVE_LITERAL_CLAIM
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
@@ -27,6 +27,7 @@ from sugar_lift_py_tests.temporal import TemporalContext
 
 
 def _claim(name: str):
+    default_catalog()
     return next(claim for claim in registered_claims() if claim.name == name)
 
 
@@ -69,23 +70,21 @@ def test_tuple_literal_constructs_through_floor_operation_log() -> None:
     ]
 
 
-def test_list_literal_constructs_through_floor_operation_when_selected() -> None:
+def test_list_literal_constructs_through_single_array_owner() -> None:
     value, operation_log = _reduce_with_catalog_and_log(
         "[1, 2]",
-        SugarCatalog([LIST_LITERAL_CLAIM, PRIMITIVE_LITERAL_CLAIM]),
+        SugarCatalog([ARRAY_LITERAL_CLAIM, PRIMITIVE_LITERAL_CLAIM]),
     )
 
     assert value == ArrayLiteral((TermValue(1), TermValue(2)))
-    assert operation_log == [
-        ("ListLiteralSugar", "construct_sequence_with", "SequenceConstructionOperation")
-    ]
+    assert operation_log == []
 
 
-def test_list_literal_accepts_tuple_elements_through_floor_operation() -> None:
+def test_list_literal_accepts_tuple_elements_through_array_owner() -> None:
     value, operation_log = _reduce_with_catalog_and_log(
         "[(1, 2)]",
         SugarCatalog(
-            [LIST_LITERAL_CLAIM, _claim("TupleLiteralSugar"), PRIMITIVE_LITERAL_CLAIM]
+            [ARRAY_LITERAL_CLAIM, _claim("TupleLiteralSugar"), PRIMITIVE_LITERAL_CLAIM]
         ),
     )
 
@@ -96,27 +95,24 @@ def test_list_literal_accepts_tuple_elements_through_floor_operation() -> None:
             "construct_sequence_with",
             "SequenceConstructionOperation",
         ),
-        (
-            "ListLiteralSugar",
-            "construct_sequence_with",
-            "SequenceConstructionOperation",
-        ),
     ]
 
 
-def test_list_literal_bad_element_floor_is_named_by_sequence_operation() -> None:
+def test_list_literal_bad_element_floor_is_named_by_array_owner() -> None:
     with pytest.raises(FactoryGap) as raised:
         _reduce_with_catalog_and_log(
-            "[1, 'x']",
-            SugarCatalog([LIST_LITERAL_CLAIM, PRIMITIVE_LITERAL_CLAIM]),
+            "[{1}]",
+            SugarCatalog(
+                [ARRAY_LITERAL_CLAIM, _claim("SetSugar"), PRIMITIVE_LITERAL_CLAIM]
+            ),
         )
 
     assert raised.value.info == {
-        "owner": "ListLiteralSugar",
-        "blame": "t.py:1:0",
-        "observed": "ListLiteralSugar element StringValue",
-        "requested": "list element floor",
-        "fix": "add ListLiteralSugar construction support for StringValue",
+        "owner": "ArrayLiteralSugar",
+        "blame": "t.py:1:1",
+        "observed": "SetLiteralValue",
+        "requested": "array element floor",
+        "fix": "add ArrayLiteral element floor for SetLiteralValue",
         "gap_kind": "Floor",
         "gap_locus": "Construction",
     }
