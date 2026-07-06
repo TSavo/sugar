@@ -707,7 +707,7 @@ impl<'ast> Visit<'ast> for LadderVisitor<'_> {
         if signals.len() >= 2 {
             let line = node.match_token.span.start().line;
             let enclosing_fn = self.current_fn();
-            let family = classify_family(self.file, line, &enclosing_fn, &signals);
+            let family = classify_family(self.file, &enclosing_fn, &signals);
             self.sites.push(LadderSite {
                 key: LadderKey {
                     file: self.file.to_string(),
@@ -781,12 +781,7 @@ fn collect_variants_with_prefix(
     }
 }
 
-fn classify_family(
-    file: &str,
-    line: usize,
-    enclosing_fn: &str,
-    signals: &[String],
-) -> &'static Family {
+fn classify_family(file: &str, enclosing_fn: &str, signals: &[String]) -> &'static Family {
     if file.ends_with("call_edges.rs") {
         return family("patterns-types-call-edges");
     }
@@ -826,13 +821,12 @@ fn classify_family(
         {
             return family("tail-expr-ite");
         }
-        if enclosing_fn.contains("predicate") || (3400..=3610).contains(&line) {
+        if enclosing_fn.contains("predicate") {
             return family("predicates");
         }
         if enclosing_fn.contains("macro")
             || enclosing_fn.contains("value_kind")
             || enclosing_fn.contains("expr_to_term")
-            || (1550..=1810).contains(&line)
         {
             return family("value-kind-macros");
         }
@@ -841,22 +835,26 @@ fn classify_family(
             || enclosing_fn.contains("contract")
             || enclosing_fn.contains("seed")
             || enclosing_fn.contains("return_kind")
-            || (218..=477).contains(&line)
-            || (1011..=1049).contains(&line)
         {
             return family("wp-contract-seeds");
         }
+        // Named exceptions to the guard/panic name heuristics below: these
+        // enclosing functions read as guard/assertion helpers by name but are
+        // wired into the panic/loop effect family. Anchored by enclosing_fn,
+        // not by a line coordinate, so unrelated line shifts in lift.rs never
+        // reclassify them.
+        const PANIC_LOOP_EFFECTS_NAME_EXCEPTIONS: &[&str] =
+            &["collect_statement_pure_free_guard_facts"];
         if enclosing_fn.contains("panic")
             || enclosing_fn.contains("effect")
             || enclosing_fn.contains("partial")
-            || (1867..=2451).contains(&line)
+            || PANIC_LOOP_EFFECTS_NAME_EXCEPTIONS.contains(&enclosing_fn)
         {
             return family("panic-loop-effects");
         }
         if enclosing_fn.contains("guard")
             || enclosing_fn.contains("assert")
             || enclosing_fn.contains("len_")
-            || (1049..=1330).contains(&line)
         {
             return family("guard-assertion-facts");
         }
@@ -1037,4 +1035,45 @@ fn collector_names_planted_ladder_site() {
         }),
         "planted un-routed ladder must be named with owner/replacement; observed={observed:#?}"
     );
+}
+
+#[test]
+fn classify_family_survives_innocuous_line_shift() {
+    // #3492: classify_family must anchor lift.rs family assignment by
+    // enclosing_fn/signal content, never by the match arm's line number.
+    // Prepend an unrelated comment block above the function so the match's
+    // line number moves, and confirm the observed family is unchanged.
+    let unshifted = r#"
+        fn collect_statement_pure_free_guard_facts(stmt: &syn::Stmt) {
+            match stmt {
+                syn::Stmt::Local(_) => {}
+                syn::Stmt::Expr(_, _) => {}
+                _ => {}
+            }
+        }
+    "#;
+    let shifted = &format!(
+        "{}\n{unshifted}",
+        "// innocuous comment line\n".repeat(64)
+    );
+
+    let family_at = |source: &str| {
+        collect_ladder_sites_from_source("implementations/rust/sugar-walk/src/lift.rs", source)
+            .into_iter()
+            .find(|site| site.key.enclosing_fn == "collect_statement_pure_free_guard_facts")
+            .unwrap_or_else(|| panic!("planted ladder site not observed in source:\n{source}"))
+    };
+
+    let before = family_at(unshifted);
+    let after = family_at(shifted);
+
+    assert_ne!(
+        before.line, after.line,
+        "the planted comment block must actually move the match's line number for this to be a real test"
+    );
+    assert_eq!(
+        before.key.family, after.key.family,
+        "family classification must not depend on line coordinates: before={before:#?} after={after:#?}"
+    );
+    assert_eq!(before.key.family, "panic-loop-effects");
 }
