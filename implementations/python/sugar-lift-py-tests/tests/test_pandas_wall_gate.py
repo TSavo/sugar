@@ -148,8 +148,18 @@ def test_completed_wall_mode_uses_numpy_style_floors() -> None:
     # `lineAccounting`, never a scrape of `--visual` ANSI text.
     report = {
         "lineAccounting": [
-            {"file": "pkg.py", "line": 1, "class": "warrant", "grounds": "cid:blake3-512:x"},
-            {"file": "pkg.py", "line": 2, "class": "effect", "grounds": "runtime-effect owner=await"},
+            {
+                "file": "pkg.py",
+                "line": 1,
+                "class": "warrant",
+                "grounds": "cid:blake3-512:x",
+            },
+            {
+                "file": "pkg.py",
+                "line": 2,
+                "class": "effect",
+                "grounds": "runtime-effect owner=await",
+            },
             {"file": "pkg.py", "line": 3, "class": "effect", "grounds": ""},
         ],
         "contracts": [{"pre": {"kind": "atomic"}}, {"post": {"kind": "atomic"}}],
