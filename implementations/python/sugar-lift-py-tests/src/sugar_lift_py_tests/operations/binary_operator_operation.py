@@ -108,6 +108,8 @@ class BinaryOperatorOperation:
 
     def binary_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
         del ctx
+        if self.operator == "+" and isinstance(self.right, ArrayLiteral):
+            return Complete(ArrayLiteral(receiver.items + self.right.items))
         if self.operator == "*" and isinstance(self.right, TermValue):
             return self._repeat_array(receiver, self.right)
         if self.operator == "*" and isinstance(self.right, SymbolicValue):
