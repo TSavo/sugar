@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "sugar-emit-python-unittest"
 version = "0.1.0"
 description = "PEP 1.7.0 Python unittest emitter kit: materializes neutral predicates as native unittest assertions"
+license = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.11"
 dependencies = ["blake3>=1.0.0"]
 

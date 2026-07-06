@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sugar-build-witness"
 version = "0.1.0"
 description = "build script witness lifter for reproducible build executions"
+license = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = ["sugar-lift-py-tests"]
 
