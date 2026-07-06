@@ -43,14 +43,12 @@ static RUN_PLUGIN_REGISTRIES: OnceLock<Mutex<BTreeMap<PathBuf, RunPluginRegistry
     OnceLock::new();
 static KIT_DISPATCH_DIAGNOSTICS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SealedPluginRegistry {
     pub memento: PluginRegistryMemento,
     pub path: PathBuf,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct RunPluginRegistry {
     sealed: SealedPluginRegistry,
@@ -66,14 +64,6 @@ struct ManifestPluginRegistration {
     memento: PluginMemento,
 }
 
-#[allow(dead_code)]
-pub fn ensure_sealed_plugin_registry_for_project(
-    workspace_root: &Path,
-) -> Result<SealedPluginRegistry, String> {
-    run_plugin_registry_for_project(workspace_root).map(|registry| registry.sealed)
-}
-
-#[allow(dead_code)]
 pub fn reset_kit_dispatch_registry_cache_for_tests() {
     if let Some(cache) = RUN_PLUGIN_REGISTRIES.get() {
         cache.lock().expect("registry cache lock").clear();
@@ -81,7 +71,6 @@ pub fn reset_kit_dispatch_registry_cache_for_tests() {
     let _ = drain_kit_dispatch_diagnostics();
 }
 
-#[allow(dead_code)]
 pub fn drain_kit_dispatch_diagnostics() -> Vec<String> {
     let diagnostics = KIT_DISPATCH_DIAGNOSTICS.get_or_init(|| Mutex::new(Vec::new()));
     let mut diagnostics = diagnostics.lock().expect("diagnostics lock");
@@ -603,7 +592,6 @@ pub(crate) struct ResolvedCommand {
 
 #[derive(Debug, Clone)]
 struct ParsedManifest {
-    #[allow(dead_code)]
     name: String,
     command: Vec<String>,
     working_dir: Option<PathBuf>,

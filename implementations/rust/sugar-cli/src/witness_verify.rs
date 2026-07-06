@@ -81,17 +81,6 @@ impl WitnessVerifyResult {
     }
 }
 
-/// Verify every `witness-memento` in the pool. Returns one result per witness
-/// (empty when the `.proof` carries no witnesses).
-#[allow(dead_code)] // Kept as the default wrapper for callers without component-plan options.
-pub fn verify_witnesses(project_root: &Path, pool: &MementoPool) -> Vec<WitnessVerifyResult> {
-    verify_witnesses_with_options(
-        project_root,
-        pool,
-        crate::component_plan::ComponentPlanOptions::default(),
-    )
-}
-
 pub fn verify_witnesses_with_options(
     project_root: &Path,
     pool: &MementoPool,

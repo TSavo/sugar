@@ -35,14 +35,6 @@ use crate::ProveArgs;
 // `<project>/.sugar/lift/<surface>/manifest.toml` to read its
 // `discharge_command` + `witness_tool`. No hardcoded `sugar-lift-<kit>`.
 
-#[allow(dead_code)] // Kept as the default wrapper for callers without a classified plan.
-fn find_manifest(
-    project_root: &std::path::Path,
-    surface: &str,
-) -> Result<PlannedLiftManifest, String> {
-    find_manifest_with_plan(project_root, surface, None)
-}
-
 fn find_manifest_with_plan(
     project_root: &std::path::Path,
     surface: &str,
@@ -238,15 +230,6 @@ fn emit_prove_setup_error(error: &str, json: bool) -> u8 {
     }
     eprintln!("{}: {error}", "error".red().bold());
     crate::EXIT_USER_ERROR
-}
-
-#[allow(dead_code)] // Kept as the default wrapper for callers without component-plan options.
-pub(crate) fn build_prove_report(
-    project_root: &Path,
-    z3: &str,
-    with: &[String],
-) -> Result<sugar_verifier::Report, String> {
-    build_prove_report_with_options(project_root, z3, with, ComponentPlanOptions::default())
 }
 
 pub(crate) fn build_prove_report_with_options(
@@ -748,14 +731,6 @@ fn read_file_witness(project_root: &Path, witness: &WitnessEntry) -> Result<Valu
 // WITHOUT the caller exporting env vars. The discharge command is declared in
 // the KIT'S MANIFEST (alongside its lift `command`) and resolved here through
 // the SAME `find_manifest` dispatch lift uses -- no bespoke config.
-#[allow(dead_code)] // Kept as the default wrapper for callers without a classified plan.
-pub(crate) fn configure_witness_discharge_env(
-    project_root: &Path,
-    cfg_doc: &crate::project_config::ProjectConfig,
-) {
-    configure_witness_discharge_env_with_plan(project_root, cfg_doc, None);
-}
-
 pub(crate) fn configure_witness_discharge_env_with_plan(
     project_root: &Path,
     cfg_doc: &crate::project_config::ProjectConfig,

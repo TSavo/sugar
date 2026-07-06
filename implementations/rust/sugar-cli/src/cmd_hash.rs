@@ -3,7 +3,6 @@
 // `sugar hash [FILE]`: print blake3-512:<hex> of file or stdin.
 
 use std::io::Read;
-use std::path::PathBuf;
 
 use owo_colors::OwoColorize;
 use serde_json::json;
@@ -40,10 +39,6 @@ fn read_input(path: Option<&std::path::Path>) -> std::io::Result<Vec<u8>> {
         }
     }
 }
-
-// Allow `read_input(Some(&PathBuf))` shape via deref coercion.
-#[allow(dead_code)]
-fn _typecheck(_: PathBuf) {}
 
 #[cfg(test)]
 mod tests {
