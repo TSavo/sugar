@@ -2,6 +2,16 @@
 
 Part of #3503. This is the shared pandas wall payload for sibling drain lanes; it is a census and work-list, not a recognizer change.
 
+## Gate Handoff
+
+The pandas wall gate landed after this historical census and now owns the live
+measurement. Treat `tools/pandas-wall-floors.json` as the authoritative ceiling
+fixture for current counts; this document remains the original work-list and
+example map. The historical payload below recorded
+`ArrayLiteral.contains(SymbolicValue)` as 10 rows, while the live gate fixture
+on the `codex/pandas-membership-symbolic` branch pinned the same template at
+11 rows. This branch drains that live fixture row without a new hand-render.
+
 ## Render Receipt
 
 | item | value |

@@ -21,7 +21,15 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     TupleLiteralValue,
 )
-from sugar_lift_py_tests.ir import _ConstBool, _ConstInt, _ConstReal, _ConstStr, atomic
+from sugar_lift_py_tests.ir import (
+    _ConstBool,
+    _ConstInt,
+    _ConstReal,
+    _ConstStr,
+    atomic,
+    eq,
+    or_,
+)
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
@@ -53,9 +61,25 @@ class ContainsOperation:
 
     def contains_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
         del ctx
-        if not isinstance(self.item, TermValue):
-            self._floor_gap(receiver="ArrayLiteral")
-        return Complete(BoolValue(any(item == self.item for item in receiver.items)))
+        item_term = floor_to_term(self.item, owner=f"{self.owner} item")
+        if any(item == self.item for item in receiver.items):
+            return Complete(BoolValue(True))
+
+        item_terms = tuple(
+            floor_to_term(item, owner=f"{self.owner} container")
+            for item in receiver.items
+        )
+        if not item_terms:
+            return Complete(BoolValue(False))
+        if _is_ground_literal(item_term) and all(
+            _is_ground_literal(option) for option in item_terms
+        ):
+            return Complete(BoolValue(False))
+        if len(item_terms) == 1:
+            return Complete(PredicateValue(eq(item_term, item_terms[0])))
+        return Complete(
+            PredicateValue(or_([eq(item_term, option) for option in item_terms]))
+        )
 
     def contains_tuple(self, receiver: TupleLiteralValue, ctx: object) -> Outcome:
         del ctx
