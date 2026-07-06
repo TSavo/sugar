@@ -1039,31 +1039,52 @@ fn seed_param_value_kinds(item_fn: &ItemFn, ctx: &mut LiftCtx) {
 /// this slice does not model aliasing or mutation.
 fn collect_assertion_guard_facts(stmts: &[Stmt], ctx: &mut LiftCtx) {
     for stmt in stmts {
-        match stmt {
-            Stmt::Local(local) => {
-                let mut names = HashSet::new();
-                collect_pat_names(&local.pat, &mut names);
-                let local_mutable = match local_binding_ident(local) {
-                    Some((_, mutable)) => mutable,
-                    None => pat_contains_mut_ident(&local.pat),
-                };
-                for name in names {
-                    ctx.invalidate_root(&name);
-                    if local_mutable {
-                        ctx.mutable_roots.insert(name);
-                    }
-                }
-            }
-            Stmt::Macro(StmtMacro { mac, .. }) => {
-                collect_assert_macro_guard_fact(mac, ctx);
-            }
-            Stmt::Expr(Expr::Macro(ExprMacro { mac, .. }), _) => {
-                collect_assert_macro_guard_fact(mac, ctx);
-            }
-            Stmt::Expr(expr, _) => invalidate_assignment_targets(expr, ctx),
-            Stmt::Item(_) => {}
+        if apply_local_stmt_guard_invalidation(stmt, ctx) {
+            continue;
+        }
+        if let Some(mac) = assert_guard_macro_in_stmt(stmt) {
+            collect_assert_macro_guard_fact(mac, ctx);
+            continue;
+        }
+        if let Stmt::Expr(expr, _) = stmt {
+            invalidate_assignment_targets(expr, ctx);
         }
     }
+}
+
+/// Claims `Stmt::Local`: invalidates every name it (re)binds and, for a
+/// mutable binding, marks the root as mutable going forward. Declines all
+/// other statement shapes.
+fn apply_local_stmt_guard_invalidation(stmt: &Stmt, ctx: &mut LiftCtx) -> bool {
+    let Stmt::Local(local) = stmt else {
+        return false;
+    };
+    let mut names = HashSet::new();
+    collect_pat_names(&local.pat, &mut names);
+    let local_mutable = match local_binding_ident(local) {
+        Some((_, mutable)) => mutable,
+        None => pat_contains_mut_ident(&local.pat),
+    };
+    for name in names {
+        ctx.invalidate_root(&name);
+        if local_mutable {
+            ctx.mutable_roots.insert(name);
+        }
+    }
+    true
+}
+
+/// Claims a top-level `assert!(...)` statement, whether written as a bare
+/// macro statement (`Stmt::Macro`) or as an expression statement wrapping the
+/// macro call (`Stmt::Expr(Expr::Macro(..), _)`). Declines everything else.
+fn assert_guard_macro_in_stmt(stmt: &Stmt) -> Option<&Macro> {
+    if let Stmt::Macro(StmtMacro { mac, .. }) = stmt {
+        return Some(mac);
+    }
+    if let Stmt::Expr(Expr::Macro(ExprMacro { mac, .. }), _) = stmt {
+        return Some(mac);
+    }
+    None
 }
 
 fn collect_assert_macro_guard_fact(mac: &Macro, ctx: &mut LiftCtx) {
@@ -1193,113 +1214,156 @@ fn len_receiver_root_from_eq_expr(expr: &Expr) -> Option<String> {
     len_receiver_root_expr(&binary.left).or_else(|| len_receiver_root_expr(&binary.right))
 }
 
+/// Claims `receiver.len()` (empty-arg `len` method call) and recurses through
+/// `Paren`/`Group` wrappers to find it. A `MethodCall` whose method is not a
+/// zero-arg `len` panics, matching the original ladder's fallthrough: no
+/// grouped "known non-len" arm ever listed `MethodCall`, so any non-`len`
+/// method call fell to the same refusal as a wholly unrecognized shape.
 fn len_receiver_root_expr(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::MethodCall(method_call)
-            if method_call.method == "len" && method_call.args.is_empty() =>
-        {
-            expr_root_ident(&method_call.receiver)
+    if let Expr::MethodCall(method_call) = expr {
+        if method_call.method == "len" && method_call.args.is_empty() {
+            return expr_root_ident(&method_call.receiver);
         }
-        Expr::Paren(paren) => len_receiver_root_expr(&paren.expr),
-        Expr::Group(group) => len_receiver_root_expr(&group.expr),
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::Field(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::MethodCall(_)
-        | Expr::Path(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Reference(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        Expr::Verbatim(_) => {
-            panic!("sugar-walk len receiver classifier refused uninterpreted verbatim expression")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk len receiver classifier refused unknown syn::Expr variant")
-        }
+        panic!("sugar-walk len receiver classifier refused unknown syn::Expr variant");
     }
+    if let Expr::Paren(paren) = expr {
+        return len_receiver_root_expr(&paren.expr);
+    }
+    if let Expr::Group(group) = expr {
+        return len_receiver_root_expr(&group.expr);
+    }
+    if known_non_len_receiver_root_expr(expr) {
+        return None;
+    }
+    if matches!(expr, Expr::Verbatim(_)) {
+        panic!("sugar-walk len receiver classifier refused uninterpreted verbatim expression");
+    }
+    panic!("sugar-walk len receiver classifier refused unknown syn::Expr variant")
 }
 
-fn expr_root_ident(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Path(path) => path.path.segments.last().map(|seg| seg.ident.to_string()),
-        Expr::Reference(reference) => expr_root_ident(&reference.expr),
-        Expr::Paren(paren) => expr_root_ident(&paren.expr),
-        Expr::Cast(cast) => expr_root_ident(&cast.expr),
-        Expr::Field(field) => expr_root_ident(&field.base),
-        Expr::Group(group) => expr_root_ident(&group.expr),
-        Expr::Index(index) => expr_root_ident(&index.expr),
+/// Shapes that can never resolve to a `len()` receiver root: neither the
+/// `.len()` call itself nor a transparent `Paren`/`Group` wrapper around one.
+fn known_non_len_receiver_root_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
         Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::MethodCall(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        Expr::Verbatim(_) => {
-            panic!(
-                "sugar-walk root identifier classifier refused uninterpreted verbatim expression"
-            )
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk root identifier classifier refused unknown syn::Expr variant")
-        }
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::Field(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::Path(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Reference(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
+}
+
+/// Claims a `Path` (the root identifier) and recurses through the
+/// transparent wrapper shapes (`Reference`, `Paren`, `Cast`, `Field`,
+/// `Group`, `Index`) that carry a root without changing it.
+fn expr_root_ident(expr: &Expr) -> Option<String> {
+    if let Expr::Path(path) = expr {
+        return path.path.segments.last().map(|seg| seg.ident.to_string());
     }
+    if let Some(inner) = transparent_root_ident_wrapper_expr(expr) {
+        return expr_root_ident(inner);
+    }
+    if known_non_root_ident_expr(expr) {
+        return None;
+    }
+    if matches!(expr, Expr::Verbatim(_)) {
+        panic!("sugar-walk root identifier classifier refused uninterpreted verbatim expression");
+    }
+    panic!("sugar-walk root identifier classifier refused unknown syn::Expr variant")
+}
+
+fn transparent_root_ident_wrapper_expr(expr: &Expr) -> Option<&Expr> {
+    if let Expr::Reference(reference) = expr {
+        return Some(&reference.expr);
+    }
+    if let Expr::Paren(paren) = expr {
+        return Some(&paren.expr);
+    }
+    if let Expr::Cast(cast) = expr {
+        return Some(&cast.expr);
+    }
+    if let Expr::Field(field) = expr {
+        return Some(&field.base);
+    }
+    if let Expr::Group(group) = expr {
+        return Some(&group.expr);
+    }
+    if let Expr::Index(index) = expr {
+        return Some(&index.expr);
+    }
+    None
+}
+
+/// Shapes that never carry a root identifier at all (no `Path` reachable
+/// through any transparent wrapper).
+fn known_non_root_ident_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::MethodCall(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn term_key(term: &IrTerm) -> Option<String> {
@@ -1320,10 +1384,12 @@ fn term_key(term: &IrTerm) -> Option<String> {
 /// tracked.
 fn collect_local_value_facts(stmts: &[Stmt], ctx: &mut LiftCtx) {
     for stmt in stmts {
-        match stmt {
-            Stmt::Local(local) => collect_local_binding_value_fact(local, ctx),
-            Stmt::Expr(expr, _) => invalidate_assignment_targets(expr, ctx),
-            Stmt::Macro(_) | Stmt::Item(_) => {}
+        if let Stmt::Local(local) = stmt {
+            collect_local_binding_value_fact(local, ctx);
+            continue;
+        }
+        if let Stmt::Expr(expr, _) = stmt {
+            invalidate_assignment_targets(expr, ctx);
         }
     }
 }
@@ -1356,33 +1422,68 @@ fn local_binding_ident(local: &Local) -> Option<(String, bool)> {
     local_binding_ident_for_pat(&local.pat)
 }
 
+/// Claims a bare `Pat::Ident` with no subpattern (a simple local binding) and
+/// recurses through the transparent wrapper shapes (`Paren`, `Reference`,
+/// `Type`) that carry a binding without changing it. `Pat::Ident` WITH a
+/// subpattern (e.g. `x @ Some(_)`) is not a simple binding and declines,
+/// falling to the known-non-binding check below like any other non-binding
+/// shape.
 fn local_binding_ident_for_pat(pat: &Pat) -> Option<(String, bool)> {
-    match pat {
-        Pat::Ident(ident) if ident.subpat.is_none() => {
-            Some((ident.ident.to_string(), ident.mutability.is_some()))
-        }
-        Pat::Ident(_) => None,
-        Pat::Paren(paren) => local_binding_ident_for_pat(&paren.pat),
-        Pat::Reference(reference) => local_binding_ident_for_pat(&reference.pat),
-        Pat::Type(typed) => local_binding_ident_for_pat(&typed.pat),
-        Pat::Const(_)
-        | Pat::Lit(_)
-        | Pat::Macro(_)
-        | Pat::Or(_)
-        | Pat::Path(_)
-        | Pat::Range(_)
-        | Pat::Rest(_)
-        | Pat::Slice(_)
-        | Pat::Struct(_)
-        | Pat::Tuple(_)
-        | Pat::TupleStruct(_)
-        | Pat::Verbatim(_)
-        | Pat::Wild(_) => None,
-        other => {
-            let _ = other;
-            panic!("sugar-walk local binding classifier refused unknown syn::Pat variant")
-        }
+    if let Some(binding) = recognize_simple_ident_pat_binding(pat) {
+        return Some(binding);
     }
+    if let Some(inner) = transparent_binding_pat_wrapper(pat) {
+        return local_binding_ident_for_pat(inner);
+    }
+    if known_non_binding_pat(pat) {
+        return None;
+    }
+    panic!("sugar-walk local binding classifier refused unknown syn::Pat variant")
+}
+
+fn recognize_simple_ident_pat_binding(pat: &Pat) -> Option<(String, bool)> {
+    let Pat::Ident(ident) = pat else {
+        return None;
+    };
+    if ident.subpat.is_some() {
+        return None;
+    }
+    Some((ident.ident.to_string(), ident.mutability.is_some()))
+}
+
+fn transparent_binding_pat_wrapper(pat: &Pat) -> Option<&Pat> {
+    if let Pat::Paren(paren) = pat {
+        return Some(&paren.pat);
+    }
+    if let Pat::Reference(reference) = pat {
+        return Some(&reference.pat);
+    }
+    if let Pat::Type(typed) = pat {
+        return Some(&typed.pat);
+    }
+    None
+}
+
+/// Shapes that never carry a local binding: includes `Pat::Ident(_)` to
+/// cover the has-subpattern case declined above.
+fn known_non_binding_pat(pat: &Pat) -> bool {
+    matches!(
+        pat,
+        Pat::Const(_)
+            | Pat::Ident(_)
+            | Pat::Lit(_)
+            | Pat::Macro(_)
+            | Pat::Or(_)
+            | Pat::Path(_)
+            | Pat::Range(_)
+            | Pat::Rest(_)
+            | Pat::Slice(_)
+            | Pat::Struct(_)
+            | Pat::Tuple(_)
+            | Pat::TupleStruct(_)
+            | Pat::Verbatim(_)
+            | Pat::Wild(_)
+    )
 }
 
 fn invalidate_assignment_targets(expr: &Expr, ctx: &mut LiftCtx) {
@@ -2963,31 +3064,92 @@ pub fn pure_free_guard_expr_effect_roots(expr: &Expr) -> BTreeSet<String> {
     expr_effect_mutation_roots(expr)
 }
 
+/// No refuse-floor here: an unrecognized shape falls to the permissive
+/// default `false` (not-pure), the same fail-safe the original wildcard arm
+/// used. There is no loud panic to preserve in this classifier.
 fn pure_free_guard_expr_is_pure_read(expr: &Expr) -> bool {
-    match expr {
-        Expr::Array(array) => array.elems.iter().all(pure_free_guard_expr_is_pure_read),
-        Expr::Binary(binary) => {
-            !binop_is_assignment_lift(&binary.op)
-                && pure_free_guard_expr_is_pure_read(&binary.left)
-                && pure_free_guard_expr_is_pure_read(&binary.right)
-        }
-        Expr::Cast(cast) => pure_free_guard_expr_is_pure_read(&cast.expr),
-        Expr::Field(field) => pure_free_guard_expr_is_pure_read(&field.base),
-        Expr::Group(group) => pure_free_guard_expr_is_pure_read(&group.expr),
-        Expr::Index(index) => {
-            pure_free_guard_expr_is_pure_read(&index.expr)
-                && pure_free_guard_expr_is_pure_read(&index.index)
-        }
-        Expr::Lit(_) | Expr::Path(_) => true,
-        Expr::MethodCall(method) => pure_free_guard_method_is_pure_read(method),
-        Expr::Paren(paren) => pure_free_guard_expr_is_pure_read(&paren.expr),
-        Expr::Reference(reference) => {
-            reference.mutability.is_none() && pure_free_guard_expr_is_pure_read(&reference.expr)
-        }
-        Expr::Tuple(tuple) => tuple.elems.iter().all(pure_free_guard_expr_is_pure_read),
-        Expr::Unary(unary) => pure_free_guard_expr_is_pure_read(&unary.expr),
-        _ => false,
+    if recognize_atomic_pure_read_expr(expr) {
+        return true;
     }
+    if let Some(inner) = transparent_pure_read_wrapper_expr(expr) {
+        return pure_free_guard_expr_is_pure_read(inner);
+    }
+    if let Some(inner) = pure_read_reference_operand(expr) {
+        return pure_free_guard_expr_is_pure_read(inner);
+    }
+    if let Some((left, right)) = pure_read_binary_operands(expr) {
+        return pure_free_guard_expr_is_pure_read(left) && pure_free_guard_expr_is_pure_read(right);
+    }
+    if let Some((base, index)) = pure_read_index_operands(expr) {
+        return pure_free_guard_expr_is_pure_read(base) && pure_free_guard_expr_is_pure_read(index);
+    }
+    if let Some(elems) = pure_read_all_elems_expr(expr) {
+        return elems.into_iter().all(pure_free_guard_expr_is_pure_read);
+    }
+    if let Expr::MethodCall(method) = expr {
+        return pure_free_guard_method_is_pure_read(method);
+    }
+    false
+}
+
+fn recognize_atomic_pure_read_expr(expr: &Expr) -> bool {
+    matches!(expr, Expr::Lit(_) | Expr::Path(_))
+}
+
+fn transparent_pure_read_wrapper_expr(expr: &Expr) -> Option<&Expr> {
+    if let Expr::Cast(cast) = expr {
+        return Some(&cast.expr);
+    }
+    if let Expr::Field(field) = expr {
+        return Some(&field.base);
+    }
+    if let Expr::Group(group) = expr {
+        return Some(&group.expr);
+    }
+    if let Expr::Paren(paren) = expr {
+        return Some(&paren.expr);
+    }
+    if let Expr::Unary(unary) = expr {
+        return Some(&unary.expr);
+    }
+    None
+}
+
+fn pure_read_reference_operand(expr: &Expr) -> Option<&Expr> {
+    let Expr::Reference(reference) = expr else {
+        return None;
+    };
+    if reference.mutability.is_some() {
+        return None;
+    }
+    Some(&reference.expr)
+}
+
+fn pure_read_binary_operands(expr: &Expr) -> Option<(&Expr, &Expr)> {
+    let Expr::Binary(binary) = expr else {
+        return None;
+    };
+    if binop_is_assignment_lift(&binary.op) {
+        return None;
+    }
+    Some((&binary.left, &binary.right))
+}
+
+fn pure_read_index_operands(expr: &Expr) -> Option<(&Expr, &Expr)> {
+    let Expr::Index(index) = expr else {
+        return None;
+    };
+    Some((&index.expr, &index.index))
+}
+
+fn pure_read_all_elems_expr(expr: &Expr) -> Option<Vec<&Expr>> {
+    if let Expr::Array(array) = expr {
+        return Some(array.elems.iter().collect());
+    }
+    if let Expr::Tuple(tuple) = expr {
+        return Some(tuple.elems.iter().collect());
+    }
+    None
 }
 
 fn pure_free_guard_method_is_pure_read(method: &syn::ExprMethodCall) -> bool {

@@ -262,13 +262,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 998,
-        enclosing_fn: "collect_assertion_guard_facts",
-        family: "guard-assertion-facts",
-        max_signals: 5,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
         line: 3140,
         enclosing_fn: "collect_assignment_roots_lift",
         family: "value-kind-macros",
@@ -307,13 +300,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
         line: 1901,
         enclosing_fn: "collect_guarded_panic_effects_in_stmt",
         family: "panic-loop-effects",
-        max_signals: 4,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 1279,
-        enclosing_fn: "collect_local_value_facts",
-        family: "guard-assertion-facts",
         max_signals: 4,
     },
     ExpectedLadderSite {
@@ -360,13 +346,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 1209,
-        enclosing_fn: "expr_root_ident",
-        family: "guard-assertion-facts",
-        max_signals: 40,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
         line: 1529,
         enclosing_fn: "infer_value_kind",
         family: "value-kind-macros",
@@ -391,13 +370,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
         line: 2524,
         enclosing_fn: "keyset_source_from_borrowed_map_expr",
         family: "value-kind-macros",
-        max_signals: 40,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 1153,
-        enclosing_fn: "len_receiver_root_expr",
-        family: "guard-assertion-facts",
         max_signals: 40,
     },
     ExpectedLadderSite {
@@ -437,13 +409,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 1316,
-        enclosing_fn: "local_binding_ident_for_pat",
-        family: "guard-assertion-facts",
-        max_signals: 17,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
         line: 2596,
         enclosing_fn: "local_pat_single_ident",
         family: "patterns-types-call-edges",
@@ -476,13 +441,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
         enclosing_fn: "pat_type_mentions_ident",
         family: "patterns-types-call-edges",
         max_signals: 3,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 2886,
-        enclosing_fn: "pure_free_guard_expr_is_pure_read",
-        family: "guard-assertion-facts",
-        max_signals: 13,
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
