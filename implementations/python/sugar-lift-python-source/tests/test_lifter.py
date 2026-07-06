@@ -4363,10 +4363,48 @@ def test_imported_cached_property_decorator_lifts_with_cached_property_marker() 
 
 
 @pytest.mark.parametrize(
+    ("decorator", "kind", "path"),
+    [
+        (
+            "@functools.lru_cache(maxsize=None)",
+            "cached",
+            "lru_cache_promoted.py",
+        ),
+        ("@functools.cache", "cached", "functools_cache_promoted.py"),
+        ("@lru_cache", "cached", "bare_lru_cache_promoted.py"),
+        ("@cache", "cached", "bare_cache_promoted.py"),
+    ],
+)
+def test_cache_family_decorators_are_semantics_preserving_and_lift(
+    decorator: str, kind: str, path: str
+) -> None:
+    # decorator-40 (issue #3262): functools.lru_cache / functools.cache (and
+    # their bare-imported spellings) wrap a call in a memoization table keyed
+    # on arguments. For lift purposes the underlying function body is still
+    # the same body: a cache hit returns a previously computed value for the
+    # same body, a cache miss runs the body. This is the cache-family
+    # promotion out of decorator-refused; the "cached" decoratorKinds marker
+    # notes the cached identity rather than silently dropping it.
+    source = (
+        "import functools\n"
+        "from functools import lru_cache, cache\n"
+        "\n"
+        f"{decorator}\n"
+        "def f(a):\n"
+        "    return a.name\n"
+    )
+
+    result = lift_source(source, path)
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _return(_attr(_var("a"), "name"))
+    assert contract["decoratorKinds"] == [kind]
+
+
+@pytest.mark.parametrize(
     ("decorator", "reason_name", "path"),
     [
-        ("@functools.lru_cache(maxsize=None)", "lru_cache", "lru_cache_refusal.py"),
-        ("@functools.cache", "functools.cache", "cache_refusal.py"),
         (
             "@contextlib.contextmanager",
             "contextlib.contextmanager",
@@ -4374,6 +4412,19 @@ def test_imported_cached_property_decorator_lifts_with_cached_property_marker() 
         ),
         ("@dataclasses.dataclass", "dataclass", "dataclass_refusal.py"),
         ("@unknown_lib.thing", "unknown_lib.thing", "unknown_refusal.py"),
+        # np.errstate: a numpy-namespaced decorator that wraps the call in a
+        # floating-point error-state context, mutating numpy's global error
+        # handling around the call for its duration. That is runtime-computed
+        # side-effecting behavior, not a no-op wrapper, so it stays refused
+        # per the decorator-40 stop-line (issue #3262) -- same stop-line as
+        # contextmanager, which rebinds the function into a different
+        # calling protocol entirely (a generator becomes a context-manager
+        # factory).
+        (
+            '@np.errstate(all="ignore")',
+            "np.errstate",
+            "np_errstate_refusal.py",
+        ),
     ],
 )
 def test_semantics_changing_or_unknown_decorators_refuse_typed(
@@ -4384,6 +4435,7 @@ def test_semantics_changing_or_unknown_decorators_refuse_typed(
         "import dataclasses\n"
         "import functools\n"
         "import unknown_lib\n"
+        "import numpy as np\n"
         "\n"
         f"{decorator}\n"
         "def f(a):\n"
@@ -4396,7 +4448,7 @@ def test_semantics_changing_or_unknown_decorators_refuse_typed(
         {
             "kind": "decorator-refused",
             "function": f"{path.removesuffix('.py')}.f",
-            "line": 7,
+            "line": 8,
             "reason": f"decorator {reason_name!r} is not transparent",
         }
     ]
@@ -4462,11 +4514,11 @@ def test_stacked_decorators_record_tier2_and_refuse_strictest_tier() -> None:
     assert contract["decoratorKinds"] == ["staticmethod"]
 
     refused = lift_source(
-        "import functools\n"
+        "import contextlib\n"
         "\n"
         "class Box:\n"
         "    @staticmethod\n"
-        "    @functools.lru_cache(maxsize=None)\n"
+        "    @contextlib.contextmanager\n"
         "    def f(x):\n"
         "        return x\n",
         "stacked_refused_decorator.py",
@@ -4477,7 +4529,7 @@ def test_stacked_decorators_record_tier2_and_refuse_strictest_tier() -> None:
             "kind": "decorator-refused",
             "function": "stacked_refused_decorator.Box.f",
             "line": 6,
-            "reason": "decorator 'lru_cache' is not transparent",
+            "reason": "decorator 'contextlib.contextmanager' is not transparent",
         }
     ]
 

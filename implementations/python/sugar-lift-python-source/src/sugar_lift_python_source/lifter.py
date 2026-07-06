@@ -2711,6 +2711,18 @@ def _decorator_kind(decorator: ast.expr) -> str | None:
         return "classmethod"
     if name in {"staticmethod", "builtins.staticmethod"}:
         return "staticmethod"
+    if name in {"lru_cache", "functools.lru_cache", "cache", "functools.cache"}:
+        # functools.lru_cache / functools.cache wrap the call in a
+        # memoization table keyed on arguments but do not change the
+        # function body's semantics for a pure callee: calling the wrapped
+        # name still runs the same body (on a cache miss) and returns the
+        # same value (on a cache hit) as calling the body directly. This is
+        # the cache-family recognizer from the decorator-40 recensus
+        # (issue #3262): liftable with the cached-identity noted via this
+        # "cached" decoratorKinds marker, distinct from decorators like
+        # @contextlib.contextmanager or numpy.errstate that rebind the call
+        # into different runtime-computed behavior and stay refused.
+        return "cached"
     return None
 
 
