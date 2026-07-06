@@ -125,21 +125,14 @@ EXPECTED_MIGRATED_SEED_NAMES = {
 }
 EXPECTED_PINNED_FAILURE_SEED_NAMES: set[str] = set()
 EXPECTED_OPT_OUT_SUGARS = {
-    "AliasSugar",
     "CommentSugar",
     "DictCompSugar",
-    "DictSugar",
     "ExprSugar",
-    "ListLiteralSugar",
     "PassSugar",
     "SetCompSugar",
     "SetSugar",
 }
-EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
-    "AliasSugar",
-    "DictSugar",
-    "ListLiteralSugar",
-}
+EXPECTED_TEMPORAL_OPT_OUT_SUGARS: set[str] = set()
 
 
 @pytest.fixture(scope="module")
@@ -204,11 +197,10 @@ def test_catalog_witnesses_migrate_s1_seed_surface() -> None:
 
 def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
     assert SupportValue.non_fol_support is True
-    assert ImportAliasValue.non_fol_support is True
+    assert ImportAliasValue.non_fol_support is False
     assert DictLiteralValue.non_fol_support is True
     assert current_non_fol_support_floor_names() == {
         "SupportValue",
-        "ImportAliasValue",
         "DictLiteralValue",
         "SetLiteralValue",
     }
@@ -289,55 +281,21 @@ def test_no_temporal_opt_out_deferrals() -> None:
     # documented its retirement condition — is an unmet gap. Red until zero
     # sugars defer. Pinning "there are exactly 5 retirable deferrals" was the
     # green badge on that debt.
-    assert temporal_opt_outs() == []
+    assert temporal_opt_outs() == ()
 
 
 def test_temporal_opt_out_register_names_current_blockers() -> None:
     rows = temporal_opt_outs()
 
     assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 3
-    assert all(row.retirement_condition for row in rows)
-    by_name = {row.sugar_name: row for row in rows}
-    expected_needles = {
-        "AliasSugar": "factory/literal_call_report.py:304",
-        "DictSugar": "structural dict equality / entry decomposition",
-        "ListLiteralSugar": "sugar/array_literal_sugar.py:29",
-    }
-    for sugar_name, needle in expected_needles.items():
-        assert needle in by_name[sugar_name].retirement_condition
+    assert len(rows) == 0
 
 
-def test_owner_selection_gap_rows_cite_excluding_code() -> None:
-    rows = {row.sugar_name: row for row in temporal_opt_outs()}
-
-    alias_condition = rows["AliasSugar"].retirement_condition
-    assert alias_condition is not None
-    assert "factory/build.py:87" in alias_condition
-    assert "factory/literal_call_report.py:304" in alias_condition
-    assert "sugar/alias_sugar.py:18" in alias_condition
-
-    list_condition = rows["ListLiteralSugar"].retirement_condition
-    assert list_condition is not None
-    assert "claim/sugar_catalog.py:15" in list_condition
-    assert "factory/build.py:174" in list_condition
-    assert "sugar/array_literal_sugar.py:29" in list_condition
-    assert "sugar/list_literal_sugar.py:28" in list_condition
-
-    dict_condition = rows["DictSugar"].retirement_condition
-    assert dict_condition is not None
-    assert (
-        "docs.python.org/3/library/stdtypes.html#mapping-types-dict" in dict_condition
-    )
-    assert "literal_call_report.py:2197/2219" in dict_condition
-    assert "callsite_projection_operation.py:61" in dict_condition
-    assert "still discharges the lie" in dict_condition
-
-
-def test_owner_selection_gap_is_not_missing_enrollment() -> None:
+def test_register_to_zero_dispatch_surfaces_are_not_missing_enrollment() -> None:
     catalog = default_catalog()
     claim_names = {claim.name for claim in catalog.claims}
-    assert {"AliasSugar", "ArrayLiteralSugar", "ListLiteralSugar"} <= claim_names
+    assert {"AliasSugar", "ArrayLiteralSugar", "DictSugar"} <= claim_names
+    assert "ListLiteralSugar" not in claim_names
 
     alias_site = next(
         site
@@ -363,8 +321,7 @@ def test_owner_selection_gap_is_not_missing_enrollment() -> None:
         candidate.name
         for candidate in catalog.candidates_for(SugarRole.TERM, list_site)
     ]
-    assert "ArrayLiteralSugar" in list_candidates
-    assert "ListLiteralSugar" in list_candidates
+    assert list_candidates == ["ArrayLiteralSugar"]
     list_result = build_node(
         list_site,
         filename="probe.py",
@@ -392,11 +349,11 @@ def test_alias_temporal_opt_out_reproduces_resolver_metadata_owner_blocker(
     assert lying_result.verdict == "unsat"
     assert "CallSugar" in truthful_result.selected_sugars
     assert "PrimitiveLiteralSugar" in truthful_result.selected_sugars
-    assert "AliasSugar" not in truthful_result.selected_sugars
-    assert "AliasSugar" not in lying_result.selected_sugars
+    assert "AliasSugar" in truthful_result.selected_sugars
+    assert "AliasSugar" in lying_result.selected_sugars
 
 
-def test_list_literal_temporal_opt_out_reproduces_shadowed_owner_blocker(
+def test_list_literal_shape_has_one_verdict_bearing_owner(
     tmp_path: Path,
 ) -> None:
     truthful = (
@@ -417,6 +374,25 @@ def test_list_literal_temporal_opt_out_reproduces_shadowed_owner_blocker(
     assert "BuiltinCallSugar" in truthful_result.selected_sugars
     assert "ListLiteralSugar" not in truthful_result.selected_sugars
     assert "ListLiteralSugar" not in lying_result.selected_sugars
+
+
+def test_dict_literal_entry_equality_discharges_and_refutes(tmp_path: Path) -> None:
+    truthful = (
+        "def A():\n"
+        "    return {1: 2}\n"
+        "\n"
+        "def test_dict_literal():\n"
+        "    assert A() == {1: 2}\n"
+    )
+    lying = truthful.replace("assert A() == {1: 2}", "assert A() == {1: 3}")
+
+    truthful_result = run_source_through_real_solver(tmp_path / "dict-truth", truthful)
+    lying_result = run_source_through_real_solver(tmp_path / "dict-lie", lying)
+
+    assert truthful_result.verdict == "sat"
+    assert lying_result.verdict == "unsat"
+    assert "DictSugar" in truthful_result.selected_sugars
+    assert "DictSugar" in lying_result.selected_sugars
 
 
 def test_bitwise_literal_fold_witness_discharges_and_refutes(tmp_path: Path) -> None:
@@ -1420,14 +1396,14 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "witness_triples_failing": EXPECTED_TRIPLE_FAILURES,
         "witnesses_not_dispatching_to_owner": 0,
         "non_fol_opt_out_drift": 0,
-        "temporal_opt_outs": 3,
-        "total": 3,
+        "temporal_opt_outs": 0,
+        "total": 0,
     }
     assert "R(unenrolled-sugars): 0" in text
     assert "R(witness-triples-failing): 0" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
-    assert "R(temporal-opt-outs): 3" in text
+    assert "R(temporal-opt-outs): 0" in text
     assert "unenrolled sugars:" not in text
 
 
@@ -1442,14 +1418,12 @@ def test_sugar_witness_cli_exits_clean_only_when_residue_is_zero(
     status = cli.main(["--root", str(ROOT), "--sugar-witness-frontier"])
 
     # IDD invariant: the frontier exits clean only when every residue is zero.
-    # Red until the temporal-opt-out debt is actually retired -- not pinned at
-    # an old count.
     stdout = capsys.readouterr().out
     assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
-    assert "R(temporal-opt-outs): 3" in stdout
-    assert status == 1
+    assert "R(temporal-opt-outs): 0" in stdout
+    assert status == 0
 
 
 def test_witness_pipeline_solver_absence_is_loud() -> None:

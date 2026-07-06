@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.ir import Term, ctor
+from sugar_lift_py_tests.ir import Term, ctor, eq
 
 from .floor_value import FloorValue
 from .term_value import TermValue
@@ -41,6 +41,10 @@ class DictLiteralValue(FloorValue):
             blame=operation.blame,
             observed=f"DictLiteralValue.{operation.name}",
         )
+
+    def project_callsite_with(self, operation: Any, ctx: object):
+        del ctx
+        return eq(operation.call_term(), self.to_term(owner=operation.owner))
 
 
 def _call_method_effect(

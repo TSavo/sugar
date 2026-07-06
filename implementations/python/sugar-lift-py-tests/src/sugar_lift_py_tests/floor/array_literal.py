@@ -5,6 +5,7 @@ from typing import Any
 
 from .bool_value import BoolValue
 from .floor_value import FloorValue
+from .import_alias_value import ImportAliasValue
 from .object_value import ObjectValue
 from .string_value import StringValue
 from .symbolic_value import SymbolicValue
@@ -16,7 +17,7 @@ from .tuple_literal_value import TupleLiteralValue
 class ArrayLiteral(FloorValue):
     # Each item is a scalar, object, symbolic parameter, nested array, or tuple literal.
     items: tuple[
-        "TermValue | BoolValue | ObjectValue | StringValue | SymbolicValue | ArrayLiteral | TupleLiteralValue",
+        "TermValue | BoolValue | ObjectValue | StringValue | SymbolicValue | ImportAliasValue | ArrayLiteral | TupleLiteralValue",
         ...,
     ]
 

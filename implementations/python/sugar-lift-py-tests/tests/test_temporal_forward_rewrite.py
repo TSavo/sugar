@@ -17,16 +17,16 @@ from sugar_lift_py_tests.operations import (
 )
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.add_sugar import ADD_CLAIM, AddSugar
+from sugar_lift_py_tests.sugar.array_literal_sugar import (
+    ARRAY_LITERAL_CLAIM,
+    ArrayLiteralSugar,
+)
 from sugar_lift_py_tests.sugar.binop_sugar import BINOP_CLAIM, BinOpSugar
 from sugar_lift_py_tests.sugar.builder_ctor_sugar import (
     BUILDER_CTOR_CLAIM,
     BuilderCtorSugar,
 )
 from sugar_lift_py_tests.sugar.lambda_sugar import LAMBDA_CLAIM, LambdaSugar
-from sugar_lift_py_tests.sugar.list_literal_sugar import (
-    LIST_LITERAL_CLAIM,
-    ListLiteralSugar,
-)
 from sugar_lift_py_tests.sugar.map_sugar import MAP_CLAIM, MapSugar
 from sugar_lift_py_tests.sugar.name_sugar import NAME_CLAIM, NameSugar
 from sugar_lift_py_tests.sugar.primitive_literal_sugar import PRIMITIVE_LITERAL_CLAIM
@@ -61,7 +61,7 @@ def _temporal_catalog() -> SugarCatalog:
             LAMBDA_CLAIM,
             BINOP_CLAIM,
             NAME_CLAIM,
-            LIST_LITERAL_CLAIM,
+            ARRAY_LITERAL_CLAIM,
             PRIMITIVE_LITERAL_CLAIM,
         ]
     )
@@ -122,7 +122,7 @@ def test_fluent_builder_constructs_bodies_then_rewrites_forward():
     builder = mapped.receiver.sugar
     assert isinstance(builder, BuilderCtorSugar)
     assert isinstance(builder.items, SugarBody)
-    assert isinstance(builder.items.sugar, ListLiteralSugar)
+    assert isinstance(builder.items.sugar, ArrayLiteralSugar)
 
     mapper = mapped.mapper.sugar
     assert isinstance(mapper, LambdaSugar)
@@ -141,11 +141,6 @@ def test_fluent_builder_constructs_bodies_then_rewrites_forward():
     assert len(value.items) == 3
     assert [item.value for item in value.items] == [14, 15, 16]
     assert reduce_ctx.operation_log == [
-        (
-            "ListLiteralSugar",
-            "construct_sequence_with",
-            "SequenceConstructionOperation",
-        ),
         ("MapSugar", "map_with", "MapOperation"),
         ("LambdaCallable", "bind_with", "BindValueOperation"),
         ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),

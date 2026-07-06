@@ -8,8 +8,7 @@ from sugar_lift_py_tests.ir import Term, ctor
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import inert_statement_return_witness
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -36,20 +35,28 @@ class DictSugar(Sugar, role=SugarRole.TERM):
         return site.observed == "Dict"
 
     @classmethod
-    def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
-        return (
-            NotVerdictBearing(
-                sugar_name=cls.__name__,
-                floor_name="DictLiteralValue",
-                reason=(
-                    "dict literals are structural term support; the production "
-                    "solver path lacks dictionary key/value-pair equality"
+    def witnesses(cls) -> SugarWitnessPair:
+        return SugarWitnessPair(
+            name="dict_literal_entry_equality",
+            owner_sugar=cls.__name__,
+            family="dict-literal",
+            truthful=WitnessSource(
+                source=(
+                    "def A():\n"
+                    "    return {1: 2}\n\n"
+                    "def test_dict_literal_entry_equality():\n"
+                    "    assert A() == {1: 2}\n"
                 ),
+                expected="sat",
             ),
-            inert_statement_return_witness(
-                name="dict_support_return",
-                owner_sugar=cls.__name__,
-                statement="{1: z}",
+            lying=WitnessSource(
+                source=(
+                    "def A():\n"
+                    "    return {1: 2}\n\n"
+                    "def test_dict_literal_entry_equality():\n"
+                    "    assert A() == {1: 3}\n"
+                ),
+                expected="unsat",
             ),
         )
 

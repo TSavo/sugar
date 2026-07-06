@@ -43,9 +43,12 @@ class SequenceConstructionOperation:
         if isinstance(item, (TermValue, ObjectValue, ArrayLiteral, TupleLiteralValue)):
             return item
         self._floor_gap(
-            observed=f"ListLiteralSugar element {type(item).__name__}",
+            observed=f"{self.owner} list element {type(item).__name__}",
             requested="list element floor",
-            fix=f"add ListLiteralSugar construction support for {type(item).__name__}",
+            fix=(
+                "add SequenceConstructionOperation list support for "
+                f"{type(item).__name__}"
+            ),
         )
 
     def _floor_gap(self, *, observed: str, requested: str, fix: str) -> NoReturn:

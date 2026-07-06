@@ -211,47 +211,9 @@ class SugarWitnessFrontierReport:
 
 EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
     NonFolOptOut(
-        sugar_name="AliasSugar",
-        floor_name="ImportAliasValue",
-        reason="import aliases record name-binding support, not a FOL claim",
-        retirement_condition=(
-            "retire when module import alias support is emitted as a "
-            "factory-walk owner row and a consuming alias-backed assertion can "
-            "witness that owner; current default proof path calls "
-            "factory/build.py:87 _build_source_report before SourceFragmentStack "
-            "dispatch, then factory/literal_call_report.py:304 reads imports as "
-            "_import_bindings resolver metadata, while sugar/alias_sugar.py:18 "
-            "can own only an observed alias fragment, so alias-backed proof probes "
-            "select CallSugar/PrimitiveLiteralSugar and no AliasSugar owner"
-        ),
-    ),
-    NonFolOptOut(
         sugar_name="CommentSugar",
         floor_name="SupportValue",
         reason="comments are inert source support",
-    ),
-    NonFolOptOut(
-        sugar_name="DictSugar",
-        floor_name="DictLiteralValue",
-        reason=(
-            "dict literals are structural term support; the production "
-            "solver path lacks dictionary key/value-pair equality"
-        ),
-        retirement_condition=(
-            "retire when dict-constructor equality is represented as "
-            "key/value-pair structural testimony, matching Python's mapping "
-            "rule that dictionaries compare equal iff they have the same "
-            "(key, value) pairs regardless of order "
-            "(docs.python.org/3/library/stdtypes.html#mapping-types-dict). "
-            "Current path: literal_call_report.py:2197/2219 demands the "
-            "callee floor and operations/callsite_projection_operation.py:61 falls "
-            "through to a Projection gap for DictLiteralValue. A probe that "
-            "adds only DictLiteralValue.project_callsite_with emits a Derived "
-            "python:dict sibling, but the production solver still discharges "
-            "the lie `A()->{1:2}; assert A()=={1:3}`; the missing owner is "
-            "structural dict equality / entry decomposition, not a safe "
-            "projection arm alone."
-        ),
     ),
     NonFolOptOut(
         sugar_name="DictCompSugar",
@@ -265,25 +227,6 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         sugar_name="ExprSugar",
         floor_name="SupportValue",
         reason="expression statements evaluate for effects and leave no FOL claim",
-    ),
-    NonFolOptOut(
-        sugar_name="ListLiteralSugar",
-        floor_name="SupportValue",
-        reason=(
-            "default-catalog list literals are verdict-bearing through "
-            "ArrayLiteralSugar; this fallback constructor is shadowed support"
-        ),
-        retirement_condition=(
-            "retire when shadowed fallback sugars have a typed delegated-owner "
-            "witness seat, or the default catalog can select ListLiteralSugar "
-            "without stealing ArrayLiteralSugar's verdict-bearing claim; "
-            "claim/sugar_catalog.py:15 admits both List owners, factory/build.py:174 "
-            "selects the candidate that dominates by comes_before, and "
-            "sugar/array_literal_sugar.py:29 declares "
-            "comes_before=('ListLiteralSugar',) over the same observed List shape "
-            "that sugar/list_literal_sugar.py:28 owns, so production probes "
-            "select ArrayLiteralSugar instead of ListLiteralSugar"
-        ),
     ),
     NonFolOptOut(
         sugar_name="PassSugar",
