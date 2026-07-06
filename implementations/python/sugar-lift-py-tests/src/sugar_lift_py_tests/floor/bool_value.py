@@ -17,3 +17,6 @@ class BoolValue(FloorValue):
 
     def project_callsite_with(self, operation, ctx):
         return operation.project_literal(self, ctx)
+
+    def unary_operator_with(self, operation, ctx):
+        return operation.unary_bool(self, ctx)

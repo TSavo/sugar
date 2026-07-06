@@ -115,3 +115,18 @@ class SymbolicValue(FloorValue):
                 f"blame={operation.blame}"
             )
         )
+
+    def setitem_with(self, operation, ctx):
+        del ctx
+        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            RuntimeEffect(
+                "subscript assignment runtime boundary: symbolic receiver "
+                f"`{self.term}` cannot be mutated as source object state. "
+                "Python subscript assignment can invoke __setitem__ and mutate "
+                "runtime state; keep as typed red until a narrower mutation "
+                f"floor owns this shape. blame={operation.blame}"
+            )
+        )

@@ -1376,6 +1376,31 @@ def _is_open_byte_support_universe(formulas: list[Formula], bound: set[str]) -> 
     return bool(open_vars) and all(name.startswith("byte_") for name in open_vars)
 
 
+def _record_open_universe_refusal(
+    dig_refusals: list[DigRefusal],
+    *,
+    callee: SourceFragment,
+    formulas: list[Formula],
+    bound: set[str],
+) -> bool:
+    open_vars = _open_universe_vars(formulas, bound)
+    if not open_vars:
+        return False
+    _record_dig_refusal(
+        dig_refusals,
+        callee=callee.function_name(),
+        blame=callee.blame,
+        caught=ValueError(
+            f"open non-formal variable(s): {', '.join(sorted(open_vars))}"
+        ),
+        reason=(
+            "function universe body walker refused open non-formal variables; "
+            "declare globals as formals or leave the callsite axiomatic"
+        ),
+    )
+    return True
+
+
 def _open_equality_fact_vars(arg_terms: list[Term], value_term: Term) -> frozenset[str]:
     return frozenset().union(
         _free_vars_in_ir_term(value_term),
@@ -2770,6 +2795,13 @@ def _function_universe(
             ),
         )
         return None
+    if _record_open_universe_refusal(
+        dig_refusals,
+        callee=callee,
+        formulas=_universe_formulas,
+        bound=_universe_bound,
+    ):
+        return None
     if not _universe_formulas:
         return None
     function_post = _post_condition_from_ir(
@@ -2969,6 +3001,13 @@ def _dig_universe(
                 "concrete callsite projection may still derive the byte value"
             ),
         )
+        return None
+    if _record_open_universe_refusal(
+        dig_refusals,
+        callee=target_fn,
+        formulas=_universe_formulas,
+        bound=_universe_bound,
+    ):
         return None
     function_post = _post_condition_from_ir(
         (
