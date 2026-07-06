@@ -22,6 +22,7 @@ from sugar_lift_py_tests.sugar.witnesses import (
 )
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _term_outcome(expr: str, binds: dict[str, FloorValue] | None = None):
@@ -64,6 +65,112 @@ def _block_outcome(body_source: str, binds: dict[str, FloorValue] | None = None)
     ).reduce(ctx)
     return outcome, tuple(
         row["selected"] for row in audit_sink if isinstance(row.get("selected"), str)
+    )
+
+
+def _assert_production_pair(
+    tmp_path: Path,
+    *,
+    name: str,
+    truthful: str,
+    lying: str,
+    selected: tuple[str, ...],
+) -> None:
+    truthful_result = run_source_through_real_solver(
+        tmp_path / f"{name}-truth", truthful
+    )
+    lying_result = run_source_through_real_solver(tmp_path / f"{name}-lie", lying)
+
+    assert truthful_result.verdict == "sat"
+    assert lying_result.verdict == "unsat"
+    for sugar in selected:
+        assert sugar in truthful_result.selected_sugars
+        assert sugar in lying_result.selected_sugars
+
+
+def test_pandas_array_literal_dict_element_is_typed_red_effect() -> None:
+    outcome, selected = _term_outcome("[{'a': 1}]")
+
+    assert "ArrayLiteralSugar" in selected
+    assert "DictSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "array literal non-FOL element runtime boundary" in outcome.effect.reason
+    assert "DictLiteralValue is a support carrier" in outcome.effect.reason
+    assert "pandas_gap.py:1:1" in outcome.effect.reason
+
+
+def test_pandas_array_literal_dict_element_typed_red_witness_has_bad_twin(
+    tmp_path: Path,
+) -> None:
+    right_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="array literal non-FOL element runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    wrong_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="dict subscript runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    seed = SugarRedEffectWitnessPair(
+        name="pandas_array_literal_dict_element_runtime_effect",
+        owner_sugar="ArrayLiteralSugar",
+        family="pandas-floor-gap",
+        truthful=EffectWitnessSource(
+            source=("def A():\n" "    return [{'a': 1}]\n"),
+            expectation=right_effect,
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=("def A():\n" "    return [{'a': 1}]\n"),
+            expectation=wrong_effect,
+            expected_match=False,
+        ),
+    )
+
+    report = evaluate_seed_witnesses((seed,), tmp_path / "right-red")
+
+    assert report.is_zero
+
+    wrong_truth = replace(
+        seed,
+        truthful=replace(seed.truthful, expectation=wrong_effect, expected_match=True),
+    )
+    bad_report = evaluate_seed_witnesses((wrong_truth,), tmp_path / "wrong-red")
+
+    assert bad_report.witness_triples_failing == 1
+    assert [
+        (failure.seed, failure.variant, failure.axis)
+        for failure in bad_report.triple_failures
+    ] == [
+        (
+            "pandas_array_literal_dict_element_runtime_effect",
+            "truthful",
+            "typed-red-effect",
+        )
+    ]
+
+
+def test_pandas_dict_literal_subscript_discharges_and_refutes(
+    tmp_path: Path,
+) -> None:
+    _assert_production_pair(
+        tmp_path,
+        name="dict-literal-subscript",
+        selected=("StringSubscriptSugar", "DictSugar"),
+        truthful=(
+            "def A():\n"
+            "    return {'a': 1}['a']\n\n"
+            "def test_dict_literal_subscript():\n"
+            "    assert A() == 1\n"
+        ),
+        lying=(
+            "def A():\n"
+            "    return {'a': 1}['a']\n\n"
+            "def test_dict_literal_subscript():\n"
+            "    assert A() == 2\n"
+        ),
     )
 
 
