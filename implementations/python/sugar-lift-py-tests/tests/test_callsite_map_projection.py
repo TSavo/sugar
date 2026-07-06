@@ -96,5 +96,5 @@ def test_map_operation_non_array_receiver_still_refuses() -> None:
             ctx=ReduceContext.root(owner="projection-test"),
         )
 
-    assert exc.value.info["observed"] == "TermValue"
-    assert exc.value.info["requested"] == "map_with"
+    assert exc.value.info.to_json()["observed"] == "TermValue"
+    assert exc.value.info.to_json()["requested"] == "map_with"

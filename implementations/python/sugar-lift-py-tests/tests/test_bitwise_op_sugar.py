@@ -73,7 +73,7 @@ def test_bitwise_missing_receiver_capability_is_a_named_floor_gap():
     with pytest.raises(FactoryGap) as raised:
         _reduce_value_with_log("'bad' & 1")
 
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "BitwiseOpSugar",
         "blame": "t.py:1:0",
         "observed": "StringValue",

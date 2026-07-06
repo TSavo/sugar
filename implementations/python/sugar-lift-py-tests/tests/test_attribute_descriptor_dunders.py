@@ -240,5 +240,8 @@ class Box:
     with pytest.raises(FactoryGap) as raised:
         _reduce_expr(source, "Box().value")
 
-    assert raised.value.info["requested"] == "class descriptor __set_name__ effect"
-    assert raised.value.info["observed"] == "Box.value"
+    assert (
+        raised.value.info.to_json()["requested"]
+        == "class descriptor __set_name__ effect"
+    )
+    assert raised.value.info.to_json()["observed"] == "Box.value"

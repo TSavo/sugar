@@ -206,7 +206,7 @@ def test_temporal_add_assign_bad_operand_names_the_floor_gap():
             blame="builder.py:3:0",
         )
 
-        assert gap.value.info == {
+        assert gap.value.info.to_json() == {
             "owner": "TemporalContext",
             "blame": "builder.py:3:0",
             "observed": "TermValue+ArrayLiteral",

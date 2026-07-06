@@ -92,8 +92,8 @@ class Box:
     with pytest.raises(FactoryGap) as raised:
         _reduce_expr(source, "Box().known")
 
-    assert raised.value.info["requested"] == "bound method attribute floor"
-    assert "Box.known" in raised.value.info["observed"]
+    assert raised.value.info.to_json()["requested"] == "bound method attribute floor"
+    assert "Box.known" in raised.value.info.to_json()["observed"]
 
 
 def test_getattr_dunder_can_drive_array_index_value_demand() -> None:

@@ -168,8 +168,8 @@ class BinaryOperatorOperation:
                         "add a Real-sorted binary term boundary before emitting "
                         "symbolic operations over non-int concrete operands"
                     ),
-                    gap_kind="Floor",
-                    gap_locus="Construction",
+                    gap_kind=GapKind.FLOOR,
+                    gap_locus=GapLocus.CONSTRUCTION,
                 )
             )
         return Complete(SymbolicValue(ctor(self.operator, [left_term, right_term])))

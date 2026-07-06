@@ -505,8 +505,8 @@ def test_membership_assertion_panics_when_receiver_floor_cannot_contains() -> No
             memento_file="test_contains.py",
         )
 
-    assert exc.value.info["observed"] == "TermValue"
-    assert exc.value.info["requested"] == "contains_with"
+    assert exc.value.info.to_json()["observed"] == "TermValue"
+    assert exc.value.info.to_json()["requested"] == "contains_with"
 
 
 def _first_contract_inv(lift_doc: dict) -> dict:

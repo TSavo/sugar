@@ -264,7 +264,7 @@ def test_map_operation_missing_floor_names_floor_gap() -> None:
         )
 
     assert str(raised.value).startswith("write more Floor for this Construction: ")
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "MapSugar",
         "blame": "x.py:1:0",
         "observed": "TermValue",

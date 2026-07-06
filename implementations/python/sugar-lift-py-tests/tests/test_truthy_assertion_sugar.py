@@ -466,7 +466,7 @@ def test_truthy_assertion_without_bool_or_len_is_a_named_floor_gap() -> None:
             memento_file="test_truthy_missing_dunders.py",
         )
 
-    assert raised.value.info == {
+    assert raised.value.info.to_json() == {
         "owner": "TruthyAssertionSugar",
         "blame": "test_truthy_missing_dunders.py:6:4",
         "observed": "Empty.__len__",

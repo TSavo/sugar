@@ -11,6 +11,7 @@ from factory_reduce import fol, reduce_term
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
+from sugar_lift_py_tests.factory import GapKind, GapLocus
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
@@ -135,8 +136,8 @@ def test_symbolic_binary_with_float_operand_is_typed_floor_effect():
     assert type(outcome.effect).__name__ == "FactoryGapEffect"
     assert outcome.effect.observed == "TermValue+symbolic operand"
     assert outcome.effect.requested == "integer ProofIR term operand"
-    assert outcome.effect.gap_kind == "Floor"
-    assert outcome.effect.gap_locus == "Construction"
+    assert outcome.effect.gap_kind is GapKind.FLOOR
+    assert outcome.effect.gap_locus is GapLocus.CONSTRUCTION
     assert operation_log == [
         ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
     ]

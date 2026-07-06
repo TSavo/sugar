@@ -138,10 +138,10 @@ def test_sequence_projection_refuses_when_any_element_cannot_project() -> None:
     with pytest.raises(FactoryGap) as exc:
         _project(receiver)
 
-    assert exc.value.info["gap_kind"] == "Floor"
-    assert exc.value.info["gap_locus"] == "Projection"
-    assert exc.value.info["observed"] == "UnprojectableFloor"
-    assert exc.value.info["requested"] == "project this floor value to a term"
+    assert exc.value.info.to_json()["gap_kind"] == "Floor"
+    assert exc.value.info.to_json()["gap_locus"] == "Projection"
+    assert exc.value.info.to_json()["observed"] == "UnprojectableFloor"
+    assert exc.value.info.to_json()["requested"] == "project this floor value to a term"
 
 
 def test_unprojectable_floor_refuses_with_projection_gap() -> None:
@@ -150,7 +150,7 @@ def test_unprojectable_floor_refuses_with_projection_gap() -> None:
     with pytest.raises(FactoryGap) as exc:
         _project(receiver)
 
-    assert exc.value.info["gap_kind"] == "Floor"
-    assert exc.value.info["gap_locus"] == "Projection"
-    assert exc.value.info["observed"] == "ObjectValue"
-    assert exc.value.info["requested"] == "project callsite floor"
+    assert exc.value.info.to_json()["gap_kind"] == "Floor"
+    assert exc.value.info.to_json()["gap_locus"] == "Projection"
+    assert exc.value.info.to_json()["observed"] == "ObjectValue"
+    assert exc.value.info.to_json()["requested"] == "project callsite floor"

@@ -281,9 +281,9 @@ def t():
     with pytest.raises(FactoryGap) as raised:
         _reduce_function_body(source, "t")
 
-    assert raised.value.info["owner"] == "SubscriptDeleteSugar"
-    assert raised.value.info["observed"] == "Box.__delitem__"
-    assert raised.value.info["requested"] == "constructor-bound method"
+    assert raised.value.info.to_json()["owner"] == "SubscriptDeleteSugar"
+    assert raised.value.info.to_json()["observed"] == "Box.__delitem__"
+    assert raised.value.info.to_json()["requested"] == "constructor-bound method"
 
 
 def test_missing_operation_projects_to_dict_key_miss_dunder_and_value_demand() -> None:
@@ -343,10 +343,10 @@ def test_missing_operation_on_unsupported_receiver_is_a_loud_floor_gap() -> None
             ctx=reduce_ctx,
         )
 
-    assert raised.value.info["owner"] == "DictMissingOperation"
-    assert raised.value.info["observed"] == "TermValue"
-    assert raised.value.info["requested"] == "missing_with"
+    assert raised.value.info.to_json()["owner"] == "DictMissingOperation"
+    assert raised.value.info.to_json()["observed"] == "TermValue"
+    assert raised.value.info.to_json()["requested"] == "missing_with"
     assert (
-        raised.value.info["fix"]
+        raised.value.info.to_json()["fix"]
         == "add missing_with to TermValue or emit a real effect"
     )

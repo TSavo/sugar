@@ -171,10 +171,10 @@ def _truthy_symbolic_reason(site) -> TruthProjectionDegradation:
 
 
 def _truthy_degraded_reason(gap: FactoryGap) -> TruthProjectionDegradation:
-    owner = str(gap.info.get("owner", "unknown"))
-    observed = str(gap.info.get("observed", "unknown"))
-    requested = str(gap.info.get("requested", "truthy term body"))
-    replacement = str(gap.info.get("fix", str(gap)))
+    owner = gap.info.owner
+    observed = gap.info.observed
+    requested = gap.info.requested
+    replacement = gap.info.fix
     return TruthProjectionDegradation(
         crime="truthy projection degraded before term-body construction",
         owner="TruthyAssertionSugar",
