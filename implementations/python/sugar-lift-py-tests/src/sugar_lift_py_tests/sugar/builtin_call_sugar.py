@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.build import FactoryCandidateDeclined
-from sugar_lift_py_tests.floor import StringValue, SymbolicValue
+from sugar_lift_py_tests.floor import ObjectValue, StringValue, SymbolicValue
 from sugar_lift_py_tests.operations import (
     AttributeLookupOperation,
     BinaryOperatorOperation,
@@ -89,6 +89,8 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 ),
                 ctx=ctx,
             )
+        if self.name == "dir":
+            return _build_dir_builtin(argument, self.blame, ctx)
         method_name = _BUILTIN_DUNDER_METHODS.get(self.name)
         if method_name is not None:
             return perform_operation(
@@ -221,6 +223,67 @@ def _runtime_getattr_effect(blame: str, detail: str) -> Incomplete:
             f"{detail}. Python evaluates dynamic attribute access at runtime; keep "
             "this as a typed red effect until a narrower vendor-cited reduction "
             f"owns the shape. blame={blame}"
+        )
+    )
+
+
+def _build_dir_builtin(argument, blame: str, ctx) -> Outcome:
+    if isinstance(argument, ObjectValue):
+        if argument.has_method("__dir__"):
+            return perform_operation(
+                owner="BuiltinCallSugar",
+                blame=blame,
+                receiver=argument,
+                operation=MethodCallOperation(
+                    name="__dir__",
+                    arguments=(),
+                    owner="BuiltinCallSugar",
+                    blame=blame,
+                ),
+                ctx=ctx,
+            )
+        return _runtime_dir_effect(
+            blame=blame,
+            shape=f"{argument.class_name}.__dir__",
+            detail=(
+                "constructor-bound __dir__ is absent; Python falls back through "
+                "object.__dir__ and runtime attribute inventory"
+            ),
+        )
+    if isinstance(argument, SymbolicValue):
+        return _runtime_dir_effect(
+            blame=blame,
+            shape="SymbolicValue.__dir__",
+            detail=(
+                "symbolic receiver has no static attribute inventory; Python "
+                "computes dir() from runtime object state"
+            ),
+        )
+    return perform_operation(
+        owner="BuiltinCallSugar",
+        blame=blame,
+        receiver=argument,
+        operation=MethodCallOperation(
+            name="__dir__",
+            arguments=(),
+            owner="BuiltinCallSugar",
+            blame=blame,
+        ),
+        ctx=ctx,
+    )
+
+
+def _runtime_dir_effect(*, blame: str, shape: str, detail: str) -> Incomplete:
+    return Incomplete(
+        RuntimeEffect(
+            "dir builtin runtime boundary: "
+            "crime=dir() requested a runtime attribute inventory; "
+            "owner=BuiltinCallSugar; "
+            f"shape={shape}; "
+            f"detail={detail}; "
+            "replacement=add a cited dir/object attribute-inventory floor before "
+            "treating this as proof-bearing; "
+            f"blame={blame}"
         )
     )
 

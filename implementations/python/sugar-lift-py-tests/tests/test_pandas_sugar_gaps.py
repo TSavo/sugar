@@ -59,6 +59,26 @@ def _term_outcome(expr: str, binds: dict[str, FloorValue] | None = None):
     )
 
 
+def _term_outcome_with_source(source: str, expr: str):
+    audit_sink: list[dict[str, object]] = []
+    module = ast.parse(source)
+    resolver = {
+        stmt.name: stmt
+        for stmt in module.body
+        if isinstance(stmt, (ast.FunctionDef, ast.ClassDef))
+    }
+    ctx = FactoryBuildContext(
+        filename="pandas_gap.py",
+        catalog=default_catalog(),
+        audit_sink=audit_sink,
+        name_resolver=resolver,
+    )
+    body = ctx.build_body(ast.parse(expr, mode="eval").body, SugarRole.TERM)
+    return body.reduce(ctx), tuple(
+        row["selected"] for row in audit_sink if isinstance(row.get("selected"), str)
+    )
+
+
 def _block_outcome(body_source: str, binds: dict[str, FloorValue] | None = None):
     audit_sink: list[dict[str, object]] = []
     ctx = FactoryBuildContext(
@@ -600,6 +620,33 @@ def test_pandas_string_repeat_discharges_and_refutes(tmp_path: Path) -> None:
     )
 
 
+def test_pandas_static_string_concat_reduces_to_string_value() -> None:
+    outcome, selected = _term_outcome("'core' + 'index'")
+
+    assert "BinOpSugar" in selected
+    assert outcome == Complete(StringValue("coreindex"))
+
+
+def test_pandas_static_string_concat_discharges_and_refutes(tmp_path: Path) -> None:
+    _assert_production_pair(
+        tmp_path,
+        name="static-string-concat",
+        selected=("BinOpSugar",),
+        truthful=(
+            "def A():\n"
+            "    return 'core' + 'index'\n\n"
+            "def test_static_string_concat():\n"
+            "    assert A() == 'coreindex'\n"
+        ),
+        lying=(
+            "def A():\n"
+            "    return 'core' + 'index'\n\n"
+            "def test_static_string_concat():\n"
+            "    assert A() == 'core'\n"
+        ),
+    )
+
+
 def test_pandas_string_float_integral_value_reduces_to_number() -> None:
     outcome, selected = _term_outcome("float('3.0')")
 
@@ -692,6 +739,51 @@ def test_pandas_string_float_typed_red_witnesses_have_bad_twins(
             expectation=TypedRedEffectExpectation(
                 effect_class="RuntimeEffect",
                 reason_needle=wrong_reason,
+                blame_needle="test_witness.py:2:",
+            ),
+            expected_match=False,
+        ),
+    )
+
+    _assert_red_effect_seed_has_wrong_effect_twin(seed, tmp_path)
+
+
+def test_pandas_dir_builtin_missing_dunder_is_typed_runtime_effect() -> None:
+    outcome, selected = _term_outcome_with_source(
+        "class T:\n" "    pass\n",
+        "dir(T())",
+    )
+
+    assert "BuiltinCallSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "dir builtin runtime boundary" in outcome.effect.reason
+    assert "T.__dir__" in outcome.effect.reason
+    assert "owner=BuiltinCallSugar" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
+
+
+def test_pandas_dir_builtin_missing_dunder_typed_red_witness_has_bad_twin(
+    tmp_path: Path,
+) -> None:
+    seed = SugarRedEffectWitnessPair(
+        name="pandas_dir_missing_dunder_runtime_effect",
+        owner_sugar="BuiltinCallSugar",
+        family="pandas-constructor-gap",
+        truthful=EffectWitnessSource(
+            source=("def A(x):\n" "    return dir(x)\n"),
+            expectation=TypedRedEffectExpectation(
+                effect_class="RuntimeEffect",
+                reason_needle="dir builtin runtime boundary",
+                blame_needle="test_witness.py:2:",
+            ),
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=("def A(x):\n" "    return dir(x)\n"),
+            expectation=TypedRedEffectExpectation(
+                effect_class="RuntimeEffect",
+                reason_needle="string float conversion runtime boundary",
                 blame_needle="test_witness.py:2:",
             ),
             expected_match=False,
@@ -877,6 +969,50 @@ def test_pandas_typed_red_templates_flip_when_blocking_construct_is_removed() ->
     )
     assert not _has_runtime_effect(named_outcome, "named expression")
     assert "TupleUnpackAssignSugar" in starred_selected
+
+
+def test_pandas_assert_statement_is_typed_runtime_effect() -> None:
+    outcome, selected = _block_outcome(
+        "    assert x\n",
+        {"x": SymbolicValue(make_var("x"))},
+    )
+
+    assert "AssertStatementSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "assert statement runtime boundary" in outcome.effect.reason
+    assert "owner=AssertStatementSugar" in outcome.effect.reason
+    assert "pandas_gap.py:2:4" in outcome.effect.reason
+
+
+def test_pandas_assert_statement_typed_red_witness_has_bad_twin(
+    tmp_path: Path,
+) -> None:
+    seed = SugarRedEffectWitnessPair(
+        name="pandas_assert_statement_runtime_effect",
+        owner_sugar="AssertStatementSugar",
+        family="pandas-sugar-gap",
+        truthful=EffectWitnessSource(
+            source=("def A(x):\n" "    assert x\n" "    return x\n"),
+            expectation=TypedRedEffectExpectation(
+                effect_class="RuntimeEffect",
+                reason_needle="assert statement runtime boundary",
+                blame_needle="test_witness.py:2:4",
+            ),
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=("def A(x):\n" "    assert x\n" "    return x\n"),
+            expectation=TypedRedEffectExpectation(
+                effect_class="RuntimeEffect",
+                reason_needle="named expression runtime boundary",
+                blame_needle="test_witness.py:2:4",
+            ),
+            expected_match=False,
+        ),
+    )
+
+    _assert_red_effect_seed_has_wrong_effect_twin(seed, tmp_path)
 
 
 def _assert_red_effect_seed_has_wrong_effect_twin(
