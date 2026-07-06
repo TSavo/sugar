@@ -1299,6 +1299,16 @@ class _Emitter:
                     # pin's premise rather than a per-access AttributeError
                     # site.
                     return pin.term
+            pin_key = _chained_attribute_pin_key(node, self.locals)
+            if pin_key is not None:
+                pin = self.value_pins.get(pin_key)
+                if pin is not None:
+                    # A pinned enum member's `.value` attribute (any Enum
+                    # flavor, not just IntEnum/StrEnum): `.value` always
+                    # extracts the underlying literal by definition, so the
+                    # dispatch ambiguity that forces plain-Enum members to
+                    # refuse at the bare member does not apply here.
+                    return pin.term
             term = ctor("python:attribute", self.expr(node.value), str_const(node.attr))
             self.effects.add_panics()
             self.panic_loci.append(
@@ -3204,6 +3214,19 @@ def _dotted_name(node: ast.expr) -> str | None:
         base = _dotted_name(node.value)
         return f"{base}.{node.attr}" if base else node.attr
     return None
+
+
+def _chained_attribute_pin_key(node: ast.Attribute, locals_: set[str]) -> str | None:
+    """Dotted key for a `Root.attr.attr2[...]` chain, or None if the root
+    is a local (shadowed) name or the chain contains a non-Name/Attribute
+    node anywhere along the way. Used only as a value-pins dict lookup key:
+    a miss is a silent no-op, never a fabricated row."""
+    cursor: ast.expr = node
+    while isinstance(cursor, ast.Attribute):
+        cursor = cursor.value
+    if not isinstance(cursor, ast.Name) or cursor.id in locals_:
+        return None
+    return _dotted_name(node)
 
 
 def _type_parameterized_callee_base(node: ast.Subscript) -> str | None:

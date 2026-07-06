@@ -1,16 +1,11 @@
 {
-  "package_versions": {
-    "numpy": "2.5.1",
-    "pandas": "3.0.3"
-  },
-  "total_files": 1828,
   "counts_by_kind": {
     "async-refused": 3,
     "callee-binop-refused": 97,
     "callee-boolop-refused": 2,
     "callee-call-refused": 7,
     "callee-compare-refused": 162,
-    "callee-constant-refused": 296,
+    "callee-constant-refused": 297,
     "callee-dict-refused": 23,
     "callee-ifexp-refused": 2,
     "callee-joinedstr-refused": 33,
@@ -24,7 +19,12 @@
     "global-nonlocal-refused": 37,
     "match-refused": 14,
     "multi-target-assign-refused": 73,
-    "non-literal-default": 245,
+    "non-literal-default": 243,
     "value-pin-refused": 499
-  }
+  },
+  "package_versions": {
+    "numpy": "2.5.1",
+    "pandas": "3.0.3"
+  },
+  "total_files": 1828
 }
