@@ -684,6 +684,8 @@ fn manifests_carry_different_versions(
 fn component_roots(project_root: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     roots.extend(system_component_roots());
+    roots.extend(sugar_home_component_roots());
+    roots.extend(exe_relative_component_roots());
     if let Some(home) = std::env::var_os("HOME") {
         roots.push(
             PathBuf::from(home)
@@ -705,6 +707,57 @@ fn system_component_roots() -> Vec<PathBuf> {
         PathBuf::from("/usr/local/share/sugar/components"),
         PathBuf::from("/usr/share/sugar/components"),
     ]
+}
+
+/// `SUGAR_HOME` names an install root that carries a `components/` directory
+/// alongside the binary (e.g. a shelf-published bundle). This is the escape
+/// hatch for installs that are not the sugar source checkout itself.
+fn sugar_home_component_roots() -> Vec<PathBuf> {
+    match std::env::var_os("SUGAR_HOME") {
+        Some(home) => vec![PathBuf::from(home).join("components")],
+        None => Vec::new(),
+    }
+}
+
+/// THE ONE DOOR TEST fix: a raw `git clone <vendor>; cd <vendor>; sugar lift`
+/// has no `.sugar/components` of its own and no ancestor that does either. The
+/// kit components sugar ships (`.sugar/components/*` in this repo's own tree)
+/// still exist; they were only ever discoverable relative to the WORKSPACE
+/// being lifted, not relative to the running binary. A `sugar` binary built
+/// from a checkout at `<repo>/implementations/rust/target/<profile>/sugar`
+/// (the shape every sugarbin-published binary has) carries its own kit
+/// components five directories up, at `<repo>/.sugar/components`. Walk that
+/// path from `current_exe()` so any vendor tree gets the same kit discovery
+/// a `sugar` run from inside this repo gets, with zero ceremony from the user.
+fn exe_relative_component_roots() -> Vec<PathBuf> {
+    let Ok(exe) = std::env::current_exe() else {
+        return Vec::new();
+    };
+    // Canonicalize so symlinked binaries (e.g. a PATH shim into the shelf)
+    // still resolve back to the real checkout that owns the components.
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    let mut roots = Vec::new();
+    // <repo>/implementations/rust/target/<profile>/sugar -> <repo>
+    if let Some(repo_root) = exe
+        .parent() // <profile>/
+        .and_then(Path::parent) // target/
+        .and_then(Path::parent) // rust/
+        .and_then(Path::parent) // implementations/
+        .and_then(Path::parent) // <repo>
+    {
+        roots.push(repo_root.join(".sugar").join("components"));
+    }
+    // A relocatable install layout: components/ shipped next to the binary
+    // (<install>/bin/sugar -> <install>/share/sugar/components).
+    if let Some(install_root) = exe.parent().and_then(Path::parent) {
+        roots.push(
+            install_root
+                .join("share")
+                .join("sugar")
+                .join("components"),
+        );
+    }
+    roots
 }
 
 fn ancestor_component_roots(project_root: &Path) -> Vec<PathBuf> {
