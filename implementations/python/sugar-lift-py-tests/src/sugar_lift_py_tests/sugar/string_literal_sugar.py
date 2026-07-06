@@ -19,5 +19,6 @@ class StringLiteralSugar:
             return None
         return cls(value)
 
-    def desugar(self) -> Outcome:
+    def desugar(self, ctx=None) -> Outcome:
+        del ctx
         return Complete(StringValue(self.value))

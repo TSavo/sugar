@@ -31,15 +31,17 @@ class FunctionBodyUniverse(ABC):
         """The body's universe formula(s)."""
 
     def factory_steps(self, function) -> list[tuple[str, str, object, str]]:
-        return [
-            (
-                line.audit_row.selected,
-                line.audit_row.observed,
-                function.body[index],
-                "—",
-            )
-            for index, line in enumerate(self.statements)
-        ]
+        steps: list[tuple[str, str, object, str]] = []
+        for index, line in enumerate(self.statements):
+            row = line.audit_row
+            if row is None or row.selected is None:
+                raise TypeError(
+                    "FunctionBodyUniverse factory step missing selected audit row: "
+                    f"owner={type(self).__name__} index={index} "
+                    "replacement=factory-built SugarBody with FactoryAuditRow"
+                )
+            steps.append((row.selected, row.observed, function.body[index], "—"))
+        return steps
 
     def constraint_formula_steps(self) -> list[Formula | None]:
         count = len(self.statements)

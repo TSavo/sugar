@@ -223,6 +223,10 @@ def test_factory_matches_registered_sugar_for_last_popped_source_fragment() -> N
     class NameSugar:
         identifier: str
 
+        def desugar(self, ctx=None):
+            del ctx
+            raise AssertionError("NameSugar test double is not reduced")
+
     def owns_name(site) -> bool:
         return isinstance(site.node, ast.Name)
 
@@ -265,6 +269,10 @@ def test_factory_panics_when_multiple_claims_own_the_same_ast_without_ordering()
     @dataclass(frozen=True)
     class OwnedSugar:
         owner: str
+
+        def desugar(self, ctx=None):
+            del ctx
+            raise AssertionError("OwnedSugar test double is not reduced")
 
     def owns_literal(site) -> bool:
         return isinstance(site.node, ast.Constant)
@@ -318,6 +326,10 @@ def test_factory_uses_comes_before_to_resolve_multiple_claims() -> None:
     class OwnedSugar:
         owner: str
 
+        def desugar(self, ctx=None):
+            del ctx
+            raise AssertionError("OwnedSugar test double is not reduced")
+
     def owns_literal(site) -> bool:
         return isinstance(site.node, ast.Constant)
 
@@ -362,6 +374,10 @@ def test_factory_reselects_when_context_sensitive_claim_declines() -> None:
     @dataclass(frozen=True)
     class OwnedSugar:
         owner: str
+
+        def desugar(self, ctx=None):
+            del ctx
+            raise AssertionError("OwnedSugar test double is not reduced")
 
     def owns_literal(site) -> bool:
         return isinstance(site.node, ast.Constant)

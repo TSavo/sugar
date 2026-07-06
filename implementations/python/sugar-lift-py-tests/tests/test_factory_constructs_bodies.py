@@ -14,6 +14,7 @@ from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
 from sugar_lift_py_tests.sugar.map_sugar import MapSugar
 from sugar_lift_py_tests.sugar.to_list_sugar import ToListSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.outcome import Complete
 
 SUGAR_DIR = (
     Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests" / "sugar"
@@ -25,6 +26,12 @@ FACTORY_CONSTRUCTORS = (
     / "factory"
     / "sugar_constructors.py"
 )
+
+
+class _CompleteDummySugar:
+    def desugar(self, ctx=None):
+        del ctx
+        return Complete(object())
 
 
 def _non_build_class_nodes(class_node: ast.ClassDef):
@@ -74,7 +81,7 @@ def test_factory_constructors_do_not_delegate_method_shape_to_sugar() -> None:
 
 
 def test_sugar_constructors_take_factory_built_bodies() -> None:
-    body = SugarBody(sugar=object(), role=SugarRole.TERM)
+    body = SugarBody(sugar=_CompleteDummySugar(), role=SugarRole.TERM)
     assert AddSugar(receiver=body, operand=body, blame="x.py:1:0").receiver is body
     assert ArrayLiteralSugar(elements=(body,)).elements == (body,)
     assert BitwiseOpSugar(operator="&", left=body, right=body).left is body

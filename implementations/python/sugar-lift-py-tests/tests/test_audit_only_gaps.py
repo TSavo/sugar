@@ -15,7 +15,8 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 class _ObjectValueSugar:
-    def desugar(self):
+    def desugar(self, ctx=None):
+        del ctx
         return Complete(ObjectValue(class_name="object", fields=()))
 
 

@@ -42,7 +42,7 @@ class NotSugar(Sugar, role=SugarRole.ASSERTION):
 
     source_role = "python.not-sugar"
 
-    body: SugarBody | None = None
+    body: SugarBody[Formula | Incomplete] | None = None
     formula: Formula | None = None
     runtime_reason: str | None = None
     blame: str = "<unknown>"

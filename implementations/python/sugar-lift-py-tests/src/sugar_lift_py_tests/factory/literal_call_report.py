@@ -2300,7 +2300,7 @@ def _factory_walk_key(row: FactoryWalkRowDto) -> object:
     )
 
 
-def _small_rpc_row_key(row: _T) -> object:
+def _small_rpc_row_key(row: object) -> object:
     return _stable_json(to_rpc_value(row))
 
 

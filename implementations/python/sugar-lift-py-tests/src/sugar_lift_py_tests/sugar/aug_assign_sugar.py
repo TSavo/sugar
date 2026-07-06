@@ -103,7 +103,7 @@ class _AugAssignValue:
         if not isinstance(self.right, SugarBody):
             raise TypeError("AugAssignSugar right must be a factory-built body")
 
-    def desugar(self, ctx) -> Outcome:
+    def desugar(self, ctx=None) -> Outcome:
         left_outcome = self.left.reduce(ctx)
         if isinstance(left_outcome, Incomplete):
             return left_outcome

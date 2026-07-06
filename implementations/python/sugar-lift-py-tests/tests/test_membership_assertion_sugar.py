@@ -30,7 +30,7 @@ from sugar_lift_py_tests.ir import (
     str_const,
 )
 from sugar_lift_py_tests.operations import ContainsOperation, perform_operation
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.outcome import Complete, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -40,6 +40,14 @@ TRUE_CONST = {
     "sort": {"kind": "primitive", "name": "Bool"},
     "value": True,
 }
+
+
+class _CompleteMethodBodySugar:
+    def desugar(self, ctx=None):
+        del ctx
+        return Complete(TermValue(0))
+
+
 FALSE_CONST = {
     "kind": "const",
     "sort": {"kind": "primitive", "name": "Bool"},
@@ -101,7 +109,7 @@ def test_membership_assertion_uses_shared_operation_dispatch_path() -> None:
 
 
 def test_membership_contains_operation_dispatches_object_contains_method() -> None:
-    method_body = SugarBody(sugar=object(), role=SugarRole.TERM)
+    method_body = SugarBody(sugar=_CompleteMethodBodySugar(), role=SugarRole.TERM)
     item = TermValue(42)
     bag = ObjectValue(
         class_name="Bag",

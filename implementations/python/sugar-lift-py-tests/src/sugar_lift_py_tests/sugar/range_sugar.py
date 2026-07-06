@@ -15,7 +15,8 @@ class RangeSugar:
     def from_site(cls, site, _ctx=None) -> "RangeSugar | None":
         return _from_site(site)
 
-    def desugar(self) -> Outcome:
+    def desugar(self, ctx=None) -> Outcome:
+        del ctx
         return Complete(
             ArrayLiteral(
                 tuple(TermValue(value) for value in range(self.start, self.stop))

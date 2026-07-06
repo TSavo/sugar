@@ -45,8 +45,8 @@ class ListSugar:
             return cls(body=body)
         return list_sugar(site, functions_by_name or {}, blame=blame or "")
 
-    def desugar(self) -> Outcome:
-        return self.body.desugar()
+    def desugar(self, ctx=None) -> Outcome:
+        return self.body.desugar(ctx)
 
 
 def list_sugar(

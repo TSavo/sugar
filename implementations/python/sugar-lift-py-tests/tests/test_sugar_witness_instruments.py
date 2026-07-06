@@ -174,7 +174,7 @@ def test_role_gate_rejects_unenrolled_sugar_at_class_definition() -> None:
             def build(cls, fragment, ctx):
                 raise AssertionError("synthetic sugar must not build")
 
-            def desugar(self, ctx):
+            def desugar(self, ctx=None):
                 raise AssertionError("synthetic sugar must not desugar")
 
 

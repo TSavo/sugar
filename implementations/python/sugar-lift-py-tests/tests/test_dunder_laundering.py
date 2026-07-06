@@ -31,17 +31,23 @@ class DunderCase:
 
 
 class MissingDesugarSugar:
-    pass
+    def desugar(self, ctx=None):
+        del ctx
+        raise TypeError(
+            "write more Floor for this Construction: owner=SugarBody "
+            "observed=MissingDesugarSugar requested=desugar "
+            "replacement=implement ReducibleSugar.desugar"
+        )
 
 
 class OpaqueRuntimeSugar:
-    def desugar(self, ctx):
+    def desugar(self, ctx=None):
         del ctx
         raise TypeError("opaque runtime callsite")
 
 
 class CompleteZeroSugar:
-    def desugar(self, ctx):
+    def desugar(self, ctx=None):
         del ctx
         return Complete(TermValue(0))
 

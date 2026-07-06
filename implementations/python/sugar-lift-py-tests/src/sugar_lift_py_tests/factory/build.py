@@ -11,6 +11,7 @@ from .factory_gap import FactoryGap
 from .factory_gap_info import FactoryGapInfo, GapKind, GapLocus
 from .source_fragment import SourceFragment
 from .source_fragment_stack import SourceFragmentStack
+from sugar_lift_py_tests.sugar_body import ReducibleSugar
 
 
 class FactoryCandidateDeclined(RuntimeError):
@@ -168,6 +169,12 @@ def _build_site(
     )
     if ctx.audit_sink is not None:
         ctx.audit_sink.append(audit_row.to_json())
+    if not isinstance(sugar, ReducibleSugar):
+        raise TypeError(
+            "Factory selected a non-reducible Sugar product: "
+            f"owner=factory.build illegal={type(sugar).__name__} "
+            "replacement=Sugar or ReducibleSugar"
+        )
     return FactoryBuildResult(sugar=sugar, audit_row=audit_row)
 
 

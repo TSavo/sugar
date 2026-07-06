@@ -49,7 +49,8 @@ class FunctionRefSugar:
     def from_site(cls, site, *, functions_by_name):
         return _from_site_impl(site, functions_by_name)
 
-    def desugar(self):
+    def desugar(self, ctx=None) -> Outcome:
+        del ctx
         return Complete(
             FunctionCallable(
                 name=self.name,

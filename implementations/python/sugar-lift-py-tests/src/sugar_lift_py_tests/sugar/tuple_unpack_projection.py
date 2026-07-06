@@ -20,7 +20,7 @@ class TupleUnpackProjection:
         if not isinstance(self.receiver, SugarBody):
             raise TypeError("TupleUnpackProjection receiver must be factory-built")
 
-    def desugar(self, ctx):
+    def desugar(self, ctx=None):
         receiver_outcome = self.receiver.reduce(ctx)
         if isinstance(receiver_outcome, Incomplete):
             return receiver_outcome

@@ -75,7 +75,9 @@ class _BodyBuildContext:
 
 
 class _DummySugar:
-    pass
+    def desugar(self, ctx=None):
+        del ctx
+        raise AssertionError("_DummySugar is only carried, never reduced")
 
 
 def _truthy_assert_site() -> SourceFragment:
