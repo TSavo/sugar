@@ -28,12 +28,12 @@ class MapBuiltinSugar:
     ) -> "MapBuiltinSugar | None":
         return map_builtin_sugar(site, functions_by_name, blame=blame)
 
-    def desugar(self) -> Outcome:
+    def desugar(self, ctx=None) -> Outcome:
         receiver = complete_value(
-            self.sequence.desugar(), owner="MapBuiltinSugar receiver"
+            self.sequence.desugar(ctx), owner="MapBuiltinSugar receiver"
         )
         callable_value = complete_value(
-            self.callable.desugar(),
+            self.callable.desugar(ctx),
             owner="MapBuiltinSugar callable",
         )
         if not isinstance(callable_value, FunctionCallable):
@@ -43,7 +43,7 @@ class MapBuiltinSugar:
             blame=self.blame,
             receiver=receiver,
             operation=CallableMapOperation(callable_value),
-            ctx=None,
+            ctx=ctx,
         )
 
 

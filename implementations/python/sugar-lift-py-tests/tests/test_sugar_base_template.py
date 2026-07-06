@@ -43,7 +43,7 @@ MANUAL_COMPLETE_VALUE_FORCES: dict[str, tuple[str, ...]] = {
 class _IncompleteChild:
     effect: RuntimeEffect
 
-    def desugar(self, ctx) -> Outcome:
+    def desugar(self, ctx=None) -> Outcome:
         del ctx
         return Incomplete(self.effect)
 
@@ -52,7 +52,7 @@ class _IncompleteChild:
 class _CompleteChild:
     value: object
 
-    def desugar(self, ctx) -> Outcome:
+    def desugar(self, ctx=None) -> Outcome:
         del ctx
         return Complete(self.value)
 

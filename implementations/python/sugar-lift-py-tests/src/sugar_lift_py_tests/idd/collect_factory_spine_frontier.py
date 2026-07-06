@@ -10,6 +10,7 @@ from .factory_spine_report import FactorySpineReport
 _LITERAL_CALL_REPORT = "factory/literal_call_report.py"
 _CALL_SUGAR = "sugar/call_sugar.py"
 _FACTORY_BUILD = "factory/build.py"
+_SUGAR_BODY = "sugar_body/sugar_body.py"
 
 
 def collect_factory_spine_frontier(root: Path) -> FactorySpineReport:
@@ -227,6 +228,8 @@ def _xsugar_build_bypass_offenders(kit_src: Path) -> list[FactorySpineOffender]:
 
 def _xsugar_bypass_path_is_exempt(rel: str) -> bool:
     if rel == _FACTORY_BUILD:
+        return True
+    if rel == _SUGAR_BODY:
         return True
     return False
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.ir import Formula, and_, or_
-from sugar_lift_py_tests.outcome import Incomplete, Outcome
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import boolop_assertion_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -16,7 +16,7 @@ class BoolOpAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     source_role = "python.boolop-assertion-sugar"
 
     operator: str
-    values: tuple[SugarBody, ...]
+    values: tuple[SugarBody[Formula | Incomplete], ...]
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -57,7 +57,7 @@ class BoolOpAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         )
 
 
-def _assertion_child(site, ctx) -> SugarBody:
+def _assertion_child(site, ctx) -> SugarBody[Formula | Incomplete]:
     if not ctx.catalog.candidates_for(SugarRole.ASSERTION, site):
         return SugarBody(
             _RuntimeAssertionEffect(
@@ -80,7 +80,7 @@ class _RuntimeAssertionEffect:
     replacement: str
     blame: str
 
-    def desugar(self, ctx) -> Outcome:
+    def desugar(self, ctx=None) -> Incomplete:
         del ctx
         return Incomplete(
             RuntimeEffect(

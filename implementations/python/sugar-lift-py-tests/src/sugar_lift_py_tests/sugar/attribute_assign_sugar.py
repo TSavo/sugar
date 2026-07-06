@@ -15,7 +15,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class _CompletedFloorBody:
     value: FloorValue
 
-    def desugar(self, ctx) -> Outcome:
+    def desugar(self, ctx=None) -> Outcome:
         del ctx
         return Complete(self.value)
 

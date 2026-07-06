@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.floor import BoundVar
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -53,7 +54,14 @@ class NameSugar(Sugar, role=SugarRole.TERM):
             # terminates instead of recomposing against itself.
             if not isinstance(value.source, SugarBody):
                 raise TypeError("BoundVar source must be a composed SugarBody")
-            return value.source.reduce(value.scope if value.scope is not None else ctx)
+            scope = value.scope if value.scope is not None else ctx
+            if not isinstance(scope, FactoryBuildContext | ReduceContext):
+                raise TypeError(
+                    "BoundVar source scope must be a reduction context: "
+                    f"owner=NameSugar illegal={type(scope).__name__} "
+                    "replacement=FactoryBuildContext or ReduceContext"
+                )
+            return value.source.reduce(scope)
         return Complete(value)
 
 

@@ -134,7 +134,7 @@ def test_pandas_array_literal_dict_element_is_typed_red_effect() -> None:
     assert isinstance(outcome.effect, RuntimeEffect)
     assert "array literal non-FOL element runtime boundary" in outcome.effect.reason
     assert "DictLiteralValue is a support carrier" in outcome.effect.reason
-    assert "pandas_gap.py:1:0" in outcome.effect.reason
+    assert "pandas_gap.py:1:1" in outcome.effect.reason
 
 
 def test_symbolic_attribute_assignment_is_typed_runtime_effect() -> None:
@@ -216,7 +216,7 @@ def test_pandas_unary_callsite_without_body_is_typed_runtime_effect() -> None:
 
 def test_pandas_unary_callsite_body_reduces_through_existing_floor() -> None:
     class _ReturnSevenSugar:
-        def desugar(self, ctx):
+        def desugar(self, ctx=None):
             del ctx
             return Complete(TermValue(7))
 

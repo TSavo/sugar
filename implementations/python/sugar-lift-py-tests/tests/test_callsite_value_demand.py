@@ -126,7 +126,7 @@ def test_mutual_recursion_refuses_floor_honestly_without_false_literal() -> None
         def __init__(self, target: str) -> None:
             self.target = target
 
-        def desugar(self, ctx):
+        def desugar(self, ctx=None):
             del ctx
             return Complete(values[self.target])
 
@@ -161,7 +161,7 @@ def test_callsite_force_floor_budget_refuses_deep_unique_chain() -> None:
         def __init__(self, target: str) -> None:
             self.target = target
 
-        def desugar(self, ctx):
+        def desugar(self, ctx=None):
             del ctx
             return Complete(values[self.target])
 

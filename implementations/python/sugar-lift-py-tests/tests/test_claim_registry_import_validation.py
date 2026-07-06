@@ -36,7 +36,7 @@ class {name}(Sugar, role=SugarRole.TERM, comes_before={comes_before!r}):
             reason="registry import validation planted control",
         )
 
-    def desugar(self, ctx):
+    def desugar(self, ctx=None):
         raise AssertionError("registry validation planted sugar must not desugar")
 """
 
