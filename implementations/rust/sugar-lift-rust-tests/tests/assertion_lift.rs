@@ -16012,6 +16012,34 @@ fn fast_smt_smoke_check(inv: &serde_json::Value, label: &str) -> bool {
     stdout.contains("sat") && !stdout.contains("unsat")
 }
 
+/// Convergeable-cohort soundness verdict via the PRODUCTION CLI (#3448).
+///
+/// Stages the assertion source as a real `.sugar` project, runs the shipping
+/// `sugar mint` + `sugar prove` (which drives the shipping ir compiler, solver
+/// plan, and consistency/discharge machinery), and reports whether the
+/// production verdict DISCHARGED. This is the drop-in replacement for the
+/// demoted `fast_smt_smoke_check` shadow: `true` == discharged (GOOD twin),
+/// `false` == any non-discharged production status (BAD twin caught, or a
+/// disagreement to surface). Missing z3 / missing production row is a hard
+/// harness error, never a silent pass.
+fn production_cli_discharged(src: &str, label: &str) -> bool {
+    let z3 = z3_path_or_panic();
+    let project = assertion_cli_project(label);
+    write_assertion_cli_project(&project, &[(label.to_string(), src.to_string())]);
+    let rows = assertion_cli_mint_and_prove(&project, &z3).unwrap_or_else(|err| {
+        panic!(
+            "{label}: production sugar mint/prove must produce a verdict\nproject={}\n{err}",
+            project.display()
+        )
+    });
+    let statuses = assertion_cli_statuses_for_label(&rows, label);
+    assert!(
+        !statuses.is_empty(),
+        "{label}: production prove emitted no row for tests/{label}.rs; rows={rows:?}"
+    );
+    statuses.iter().all(|status| status == "discharged")
+}
+
 fn assert_warranted_decls_not_refuted(out: &AdapterOutput, label: &str) {
     for (idx, decl) in warranted_decls(out).into_iter().enumerate() {
         let sat = fast_smt_smoke_check(&inv_json(decl), &format!("{label}_{idx}"));
@@ -16040,7 +16068,7 @@ fn inv_json_without_fold_recurrences(decl: &sugar_ir_symbolic::ContractDecl) -> 
 fn single_assertion_verdict(src: &str, label: &str) -> bool {
     let out = lift_file(&parse(src), "tests/char_method_teeth.rs");
     assert_warranted_decl_count(&out, 1);
-    fast_smt_smoke_check(&inv_json(single_warranted_decl(&out)), label)
+    production_cli_discharged(src, label)
 }
 
 fn char_method_eq_verdict(lhs: &str, rhs: &str, label: &str) -> bool {
@@ -16052,7 +16080,7 @@ fn midpoint_eq_verdict(lhs: &str, rhs: &str, label: &str) -> bool {
     let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
     let out = lift_file(&parse(&src), "tests/num/midpoint.rs");
     assert_warranted_decl_count(&out, 1);
-    fast_smt_smoke_check(&inv_json(single_warranted_decl(&out)), label)
+    production_cli_discharged(&src, label)
 }
 
 #[test]
@@ -22938,7 +22966,7 @@ fn format_eq_verdict(lhs: &str, rhs: &str, label: &str) -> bool {
     let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
     let out = lift_file(&parse(&src), "tests/fmt_teeth.rs");
     assert_warranted_decl_count(&out, 1);
-    fast_smt_smoke_check(&inv_json(single_warranted_decl(&out)), label)
+    production_cli_discharged(&src, label)
 }
 
 #[test]
@@ -23978,7 +24006,7 @@ fn assert_numeric_method_decl_verdict(src: &str, want_sat: bool, label: &str) {
         "{label}: numeric literal method should lower to concrete scalar terms: {doc}"
     );
     {
-        let sat = fast_smt_smoke_check(&inv_json(single_warranted_decl(&out)), label);
+        let sat = production_cli_discharged(&full, label);
         assert_eq!(
             sat, want_sat,
             "{label}: expected sat={want_sat} for `{src}`"
@@ -29962,7 +29990,7 @@ fn assert_decl_verdict(src: &str, want_sat: bool, label: &str) {
         out.skip_reasons
     );
     {
-        let sat = fast_smt_smoke_check(&inv_json(&out.decls[0]), label);
+        let sat = production_cli_discharged(&full, label);
         assert_eq!(
             sat, want_sat,
             "{label}: expected sat={want_sat} for `{src}`"
@@ -35188,7 +35216,7 @@ fn assert_singleton_decl_verdict(src: &str, want_sat: bool, label: &str) {
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
     {
-        let sat = fast_smt_smoke_check(&inv_json(decl), label);
+        let sat = production_cli_discharged(&full, label);
         assert_eq!(
             sat, want_sat,
             "{label}: expected sat={want_sat} for `{src}`; decl={decl:?}"
