@@ -1,0 +1,3 @@
+name = "python-lift"
+command = ["/bin/bash", ".sugar/lift/python/lift-wrapper.sh", "--rpc"]
+working_dir = "."

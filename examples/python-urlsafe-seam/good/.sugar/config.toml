@@ -1,11 +1,12 @@
-# python-urlsafe-seam twin: pytest-lift surface + z3 seat. The universe row
-# (str.chars-not-in-set, walked from Lib/base64.py's maketrans) conjoins
-# with the sworn equality under the same #euf# base at verify.
+# python-urlsafe-seam twin: current python-lift surface + z3 seat. The
+# literal-call equality mints; the URL-safe alphabet universe row is the
+# remaining named proof gap tracked by the examples gate.
 
 [[plugins]]
-name = "python-tests-lift"
+name = "python-lift"
 kind = "lift"
-surface = "python-tests"
+surface = "python"
+emit = "ir-document"
 
 [solvers]
 default = "z3"

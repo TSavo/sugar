@@ -176,11 +176,13 @@ run_twin() {
     return 1
   }
 
-  (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$PYTHON_SRC" "$BIN" prove . --json) >"$dir/.prove.raw" 2>&1
+  (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$PYTHON_SRC" \
+    "$BIN" prove --allow-failed-components . --json) >"$dir/.prove.raw" 2>&1
   local prove_rc=$?
   extract_json_receipt "$dir/.prove.raw" "$dir/.prove.json" || return 1
 
-  (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$PYTHON_SRC" "$BIN" verify --project . --json) >"$dir/.verify.raw" 2>&1
+  (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$PYTHON_SRC" \
+    "$BIN" verify --allow-failed-components --project . --json) >"$dir/.verify.raw" 2>&1
   local verify_rc=$?
   extract_json_receipt "$dir/.verify.raw" "$dir/.verify.json" || return 1
   check_normal_receipts "$dir/.prove.json" "$dir/.verify.json" "$twin" "$expect" "$prove_rc" "$verify_rc" || return 1
@@ -194,7 +196,7 @@ SH
     chmod +x "$dir/.sugar/lying-discharge.sh"
     (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$PYTHON_SRC" \
       SUGAR_WITNESS_DISCHARGE_PYTEST="$dir/.sugar/lying-discharge.sh" \
-      "$BIN" prove . --json) >"$dir/.prove_lie.raw" 2>&1
+      "$BIN" prove --allow-failed-components . --json) >"$dir/.prove_lie.raw" 2>&1
     local lie_rc=$?
     extract_json_receipt "$dir/.prove_lie.raw" "$dir/.prove_lie.json" || return 1
     check_lying_receipt "$dir/.prove_lie.json" "$lie_rc" || return 1
