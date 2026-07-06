@@ -157,13 +157,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 441,
-        enclosing_fn: "is_pure_value_term",
-        family: "wp-contract-seeds",
-        max_signals: 5,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
         line: 2596,
         enclosing_fn: "local_pat_single_ident",
         family: "patterns-types-call-edges",
@@ -696,6 +689,23 @@ fn tail_expr_ite_family_is_drained() {
         tail_sites.is_empty(),
         "{}",
         report_json(&observed, &tail_sites, &[], &[])
+    );
+}
+
+#[test]
+fn wp_contract_seeds_family_is_drained() {
+    // #3440 S6: `is_pure_value_term` was the family's only ladder site.
+    let observed = collect_ladder_sites(&repo_root());
+    let wp_sites = observed
+        .iter()
+        .filter(|site| site.key.family == "wp-contract-seeds")
+        .cloned()
+        .collect::<Vec<_>>();
+
+    assert!(
+        wp_sites.is_empty(),
+        "{}",
+        report_json(&observed, &wp_sites, &[], &[])
     );
 }
 
