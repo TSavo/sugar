@@ -160,12 +160,16 @@ PY
 # ── 3b. Also exercise --from-proof: the CLI reads the proof itself ──────────
 echo
 echo "== 3b. --from-proof: CLI reads the universe atom out of the minted .proof itself =="
-"$SUGAR" derive \
+FROM_PROOF_OUT="$("$SUGAR" derive \
   --from-proof "$PROOF" \
   --input=-2147483648 \
-  --quiet 2>/dev/null | grep -q -- '-2147483648' \
-  && echo "   PASS[from-proof]: derived -2147483648 reading directly from the minted .proof." \
-  || { echo "FAIL[from-proof]: --from-proof did not derive -2147483648"; exit 1; }
+  --quiet 2>/dev/null)"
+if grep -q -- '-2147483648' <<<"$FROM_PROOF_OUT"; then
+  echo "   PASS[from-proof]: derived -2147483648 reading directly from the minted .proof."
+else
+  echo "FAIL[from-proof]: --from-proof did not derive -2147483648"
+  exit 1
+fi
 
 # ── 4. BAD twin: the industry belief, refuted by the true computed value ────
 echo
