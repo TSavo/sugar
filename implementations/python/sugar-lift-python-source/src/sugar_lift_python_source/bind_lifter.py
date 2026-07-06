@@ -294,8 +294,97 @@ def _relative_import_target(current_module: str, node: ast.ImportFrom) -> str | 
     return f"{current_module}.{node.module}" if current_module else node.module
 
 
+def _package_import_target(
+    package: str, current_module: str, node: ast.ImportFrom
+) -> str | None:
+    if node.level:
+        current_parts = [p for p in current_module.split(".") if p]
+        parent_parts = current_parts[: max(0, len(current_parts) - node.level + 1)]
+        if node.module:
+            parent_parts.append(node.module)
+        return ".".join(part for part in parent_parts if part)
+    module = node.module or ""
+    if module == package:
+        return ""
+    prefix = f"{package}."
+    if module.startswith(prefix):
+        return module[len(prefix) :]
+    return None
+
+
 def _join_symbol(prefix: str, name: str) -> str:
     return f"{prefix}.{name}" if prefix else name
+
+
+def _module_name_for_package_file(root: Path, path: Path) -> str | None:
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return None
+    rel_text = rel.as_posix()
+    if rel_text == "__init__.py":
+        return ""
+    if rel_text.endswith("/__init__.py"):
+        return rel_text[: -len("/__init__.py")].replace("/", ".")
+    if rel_text.endswith(".py"):
+        return rel_text[:-3].replace("/", ".")
+    return None
+
+
+def _is_private_public_symbol(symbol: str) -> bool:
+    return any(part.startswith("_") for part in symbol.split(".") if part)
+
+
+def _public_symbol_score(public_symbol: str, package: str) -> tuple[int, int, str]:
+    suffix = (
+        public_symbol[len(package) + 1 :]
+        if public_symbol.startswith(f"{package}.")
+        else public_symbol
+    )
+    parts = [part for part in suffix.split(".") if part]
+    if any(part.startswith("_") for part in parts):
+        family = 100
+    elif len(parts) == 1:
+        family = 0
+    elif parts and parts[0] == "api":
+        family = 1
+    elif parts and parts[0] in {"arrays", "io", "tseries"}:
+        family = 2
+    elif parts and parts[0] == "core":
+        family = 20
+    else:
+        family = 10
+    return (family, len(parts), public_symbol)
+
+
+def _record_public_mapping(
+    mapping: dict[str, tuple[str, str]],
+    source_symbol: str,
+    package: str,
+    public_symbol: str,
+) -> None:
+    existing = mapping.get(source_symbol)
+    candidate = (package, public_symbol)
+    if existing is None or _public_symbol_score(
+        public_symbol, package
+    ) < _public_symbol_score(existing[1], package):
+        mapping[source_symbol] = candidate
+
+
+def _alias_chain(
+    aliases: dict[str, str],
+    source_symbol: str,
+) -> list[str]:
+    chain = [source_symbol]
+    seen = {source_symbol}
+    cursor = source_symbol
+    while cursor in aliases:
+        cursor = aliases[cursor]
+        if cursor in seen:
+            break
+        chain.append(cursor)
+        seen.add(cursor)
+    return chain
 
 
 def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | None:
@@ -317,12 +406,15 @@ def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | N
       `lib._function_base_impl.rot90` -> (`numpy`, `numpy.rot90`)
 
     Nothing is hard-coded: the package name is the root directory's name, and every
-    name is DERIVED from package-authored imports. The top-level public name comes
-    from the root `__init__.py`; package-internal re-export hops are followed only
-    when they are declared by another `__init__.py` import, including star imports
-    whose target module has a literal string-list `__all__`. Returns None when the
-    root is not a package (no `__init__.py`), leaving the source-path symbol
-    untouched (the existing in-project behavior).
+    name is DERIVED from package-authored imports. Public names come from package
+    `__init__.py` files (`pandas`, `pandas.api.indexers`, ...). Their targets may
+    pass through package-authored aggregator modules (`pandas.core.api`) before
+    reaching the source definition. Both relative imports and absolute
+    same-package imports are accepted; imports from other packages are ignored.
+    Star imports are followed only when the target module has a literal
+    string-list `__all__`. Returns None when the root is not a package (no
+    `__init__.py`), leaving the source-path symbol untouched (the existing
+    in-project behavior).
     """
     root = workspace_root
     init_path = root / "__init__.py"
@@ -331,36 +423,22 @@ def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | N
     package = root.name
     if not package:
         return None
-    try:
-        init_src = init_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    try:
-        tree = ast.parse(init_src, filename=str(init_path))
-    except SyntaxError:
-        return None
     mapping: dict[str, tuple[str, str]] = {}
     aliases: dict[str, str] = {}
-    for current_init in sorted(root.rglob("__init__.py")):
-        try:
-            current_rel = current_init.parent.relative_to(root)
-        except ValueError:
+    public_aliases: set[str] = set()
+    for current_file in sorted(root.rglob("*.py")):
+        current_module = _module_name_for_package_file(root, current_file)
+        if current_module is None:
             continue
-        current_module = ".".join(
-            part for part in current_rel.parts if part and part != "."
-        )
         try:
-            current_src = current_init.read_text(encoding="utf-8")
-            current_tree = ast.parse(current_src, filename=str(current_init))
+            current_src = current_file.read_text(encoding="utf-8")
+            current_tree = ast.parse(current_src, filename=str(current_file))
         except (OSError, SyntaxError):
             continue
         for node in ast.walk(current_tree):
-            # Only same-package, level-1 (`from .x.y import name`) declarations
-            # establish identity. Absolute imports and deeper relative levels are
-            # different evidence and are intentionally left unmatched here.
             if not isinstance(node, ast.ImportFrom):
                 continue
-            target_module = _relative_import_target(current_module, node)
+            target_module = _package_import_target(package, current_module, node)
             if target_module is None:
                 continue
             for alias in node.names:
@@ -373,24 +451,19 @@ def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | N
                     public_name = (
                         source_name if alias.name == "*" else alias.asname or alias.name
                     )
-                    source_symbol = f"{target_module}.{source_name}"
+                    source_symbol = _join_symbol(target_module, source_name)
                     alias_symbol = _join_symbol(current_module, public_name)
-                    if current_module:
-                        aliases.setdefault(source_symbol, alias_symbol)
-                    else:
-                        mapping.setdefault(
-                            source_symbol,
-                            (package, f"{package}.{public_name}"),
-                        )
+                    aliases.setdefault(alias_symbol, source_symbol)
+                    if (
+                        current_file.name == "__init__.py"
+                        and not _is_private_public_symbol(alias_symbol)
+                    ):
+                        public_aliases.add(alias_symbol)
 
-    for source_symbol, alias_symbol in sorted(aliases.items()):
-        seen = {source_symbol}
-        cursor = alias_symbol
-        while cursor in aliases and cursor not in seen and cursor not in mapping:
-            seen.add(cursor)
-            cursor = aliases[cursor]
-        if cursor in mapping:
-            mapping.setdefault(source_symbol, mapping[cursor])
+    for public_alias in sorted(public_aliases):
+        public_symbol = f"{package}.{public_alias}" if public_alias else package
+        for source_symbol in _alias_chain(aliases, public_alias):
+            _record_public_mapping(mapping, source_symbol, package, public_symbol)
     return mapping or None
 
 

@@ -1,0 +1,2293 @@
+{
+  "idiomCounts": {
+    "pandas.api package namespace": 8,
+    "subpackage __init__ namespace": 17,
+    "top-level __init__ aggregator chain": 16,
+    "unmapped": 27
+  },
+  "kind": "pandas-reexport-idioms",
+  "measuredAt": "2026-07-06T13:55:10+00:00",
+  "pandas": {
+    "version": "3.0.3",
+    "workspace": "/Users/tsavo/.cache/sugar/python-panic-audit-workspaces/2d2b1bc3aa2ab1effb2ea6358d3ec88ed0d18f06f6d248654db7f0d15d0c07ae/pandas",
+    "workspaceCacheKey": "2d2b1bc3aa2ab1effb2ea6358d3ec88ed0d18f06f6d248654db7f0d15d0c07ae"
+  },
+  "partOf": "#3503",
+  "repo": {
+    "branch": "codex/pandas-reexport-idioms",
+    "head": "799a9e86ae5f148e40ea7269ba8d7c3908b60080"
+  },
+  "rows": [
+    {
+      "after": "pandas.api.extensions.ExtensionArray._rank",
+      "before": "core.arrays.base.ExtensionArray._rank",
+      "contract": "core.arrays.base.ExtensionArray._rank",
+      "declarationTrace": {
+        "chain": [
+          "api.extensions.ExtensionArray",
+          "core.arrays.ExtensionArray",
+          "core.arrays.base.ExtensionArray"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "api.extensions.ExtensionArray",
+            "aliased": false,
+            "declaringFile": "api/extensions/__init__.py",
+            "declaringModule": "api.extensions",
+            "importModule": "core.arrays",
+            "importedName": "ExtensionArray",
+            "packageInit": true,
+            "publicName": "ExtensionArray",
+            "sourceSymbol": "core.arrays.ExtensionArray",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.ExtensionArray",
+            "aliased": false,
+            "declaringFile": "core/arrays/__init__.py",
+            "declaringModule": "core.arrays",
+            "importModule": "core.arrays.base",
+            "importedName": "ExtensionArray",
+            "packageInit": true,
+            "publicName": "ExtensionArray",
+            "sourceSymbol": "core.arrays.base.ExtensionArray",
+            "star": false
+          }
+        ],
+        "public": "pandas.api.extensions.ExtensionArray"
+      },
+      "idiom": "pandas.api package namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/base.py",
+        "line": 2610
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.arrays.base.ExtensionArray"
+    },
+    {
+      "after": "pandas.api.extensions.ExtensionArray.view",
+      "before": "core.arrays.base.ExtensionArray.view",
+      "contract": "core.arrays.base.ExtensionArray.view",
+      "declarationTrace": {
+        "chain": [
+          "api.extensions.ExtensionArray",
+          "core.arrays.ExtensionArray",
+          "core.arrays.base.ExtensionArray"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "api.extensions.ExtensionArray",
+            "aliased": false,
+            "declaringFile": "api/extensions/__init__.py",
+            "declaringModule": "api.extensions",
+            "importModule": "core.arrays",
+            "importedName": "ExtensionArray",
+            "packageInit": true,
+            "publicName": "ExtensionArray",
+            "sourceSymbol": "core.arrays.ExtensionArray",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.ExtensionArray",
+            "aliased": false,
+            "declaringFile": "core/arrays/__init__.py",
+            "declaringModule": "core.arrays",
+            "importModule": "core.arrays.base",
+            "importedName": "ExtensionArray",
+            "packageInit": true,
+            "publicName": "ExtensionArray",
+            "sourceSymbol": "core.arrays.base.ExtensionArray",
+            "star": false
+          }
+        ],
+        "public": "pandas.api.extensions.ExtensionArray"
+      },
+      "idiom": "pandas.api package namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/base.py",
+        "line": 2018
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.arrays.base.ExtensionArray"
+    },
+    {
+      "after": "pandas.api.typing.DataFrameGroupBy._aggregate_frame",
+      "before": "core.groupby.generic.DataFrameGroupBy._aggregate_frame",
+      "contract": "core.groupby.generic.DataFrameGroupBy._aggregate_frame",
+      "declarationTrace": {
+        "chain": [
+          "api.typing.DataFrameGroupBy",
+          "core.groupby.DataFrameGroupBy",
+          "core.groupby.generic.DataFrameGroupBy"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "api.typing.DataFrameGroupBy",
+            "aliased": false,
+            "declaringFile": "api/typing/__init__.py",
+            "declaringModule": "api.typing",
+            "importModule": "core.groupby",
+            "importedName": "DataFrameGroupBy",
+            "packageInit": true,
+            "publicName": "DataFrameGroupBy",
+            "sourceSymbol": "core.groupby.DataFrameGroupBy",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.groupby.DataFrameGroupBy",
+            "aliased": false,
+            "declaringFile": "core/groupby/__init__.py",
+            "declaringModule": "core.groupby",
+            "importModule": "core.groupby.generic",
+            "importedName": "DataFrameGroupBy",
+            "packageInit": true,
+            "publicName": "DataFrameGroupBy",
+            "sourceSymbol": "core.groupby.generic.DataFrameGroupBy",
+            "star": false
+          }
+        ],
+        "public": "pandas.api.typing.DataFrameGroupBy"
+      },
+      "idiom": "pandas.api package namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/groupby/generic.py",
+        "line": 2385
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.groupby.generic.DataFrameGroupBy"
+    },
+    {
+      "after": "pandas.api.indexers.VariableOffsetWindowIndexer.get_window_bounds",
+      "before": "core.indexers.objects.VariableOffsetWindowIndexer.get_window_bounds",
+      "contract": "core.indexers.objects.VariableOffsetWindowIndexer.get_window_bounds",
+      "declarationTrace": {
+        "chain": [
+          "api.indexers.VariableOffsetWindowIndexer",
+          "core.indexers.objects.VariableOffsetWindowIndexer"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "api.indexers.VariableOffsetWindowIndexer",
+            "aliased": false,
+            "declaringFile": "api/indexers/__init__.py",
+            "declaringModule": "api.indexers",
+            "importModule": "core.indexers.objects",
+            "importedName": "VariableOffsetWindowIndexer",
+            "packageInit": true,
+            "publicName": "VariableOffsetWindowIndexer",
+            "sourceSymbol": "core.indexers.objects.VariableOffsetWindowIndexer",
+            "star": false
+          }
+        ],
+        "public": "pandas.api.indexers.VariableOffsetWindowIndexer"
+      },
+      "idiom": "pandas.api package namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/indexers/objects.py",
+        "line": 296
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexers.objects.VariableOffsetWindowIndexer"
+    },
+    {
+      "after": "pandas.api.typing.TimeGrouper",
+      "before": "core.resample.TimeGrouper.__init__",
+      "contract": "core.resample.TimeGrouper.__init__",
+      "declarationTrace": {
+        "chain": [
+          "api.typing.TimeGrouper",
+          "core.resample.TimeGrouper"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "api.typing.TimeGrouper",
+            "aliased": false,
+            "declaringFile": "api/typing/__init__.py",
+            "declaringModule": "api.typing",
+            "importModule": "core.resample",
+            "importedName": "TimeGrouper",
+            "packageInit": true,
+            "publicName": "TimeGrouper",
+            "sourceSymbol": "core.resample.TimeGrouper",
+            "star": false
+          }
+        ],
+        "public": "pandas.api.typing.TimeGrouper"
+      },
+      "idiom": "pandas.api package namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/resample.py",
+        "line": 2385
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.resample.TimeGrouper"
+    },
+    {
+      "after": "pandas.api.typing.ExponentialMovingWindow.corr",
+      "before": "core.window.ewm.ExponentialMovingWindow.corr",
+      "contract": "core.window.ewm.ExponentialMovingWindow.corr",
+      "declarationTrace": {
+        "chain": [
+          "api.typing.ExponentialMovingWindow",
+          "core.window.ExponentialMovingWindow",
+          "core.window.ewm.ExponentialMovingWindow"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "api.typing.ExponentialMovingWindow",
+            "aliased": false,
+            "declaringFile": "api/typing/__init__.py",
+            "declaringModule": "api.typing",
+            "importModule": "core.window",
+            "importedName": "ExponentialMovingWindow",
+            "packageInit": true,
+            "publicName": "ExponentialMovingWindow",
+            "sourceSymbol": "core.window.ExponentialMovingWindow",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.window.ExponentialMovingWindow",
+            "aliased": false,
+            "declaringFile": "core/window/__init__.py",
+            "declaringModule": "core.window",
+            "importModule": "core.window.ewm",
+            "importedName": "ExponentialMovingWindow",
+            "packageInit": true,
+            "publicName": "ExponentialMovingWindow",
+            "sourceSymbol": "core.window.ewm.ExponentialMovingWindow",
+            "star": false
+          }
+        ],
+        "public": "pandas.api.typing.ExponentialMovingWindow"
+      },
+      "idiom": "pandas.api package namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/window/ewm.py",
+        "line": 887
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.window.ewm.ExponentialMovingWindow"
+    },
+    {
+      "after": "pandas.api.typing.ExponentialMovingWindow.cov",
+      "before": "core.window.ewm.ExponentialMovingWindow.cov",
+      "contract": "core.window.ewm.ExponentialMovingWindow.cov",
+      "declarationTrace": {
+        "chain": [
+          "api.typing.ExponentialMovingWindow",
+          "core.window.ExponentialMovingWindow",
+          "core.window.ewm.ExponentialMovingWindow"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "api.typing.ExponentialMovingWindow",
+            "aliased": false,
+            "declaringFile": "api/typing/__init__.py",
+            "declaringModule": "api.typing",
+            "importModule": "core.window",
+            "importedName": "ExponentialMovingWindow",
+            "packageInit": true,
+            "publicName": "ExponentialMovingWindow",
+            "sourceSymbol": "core.window.ExponentialMovingWindow",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.window.ExponentialMovingWindow",
+            "aliased": false,
+            "declaringFile": "core/window/__init__.py",
+            "declaringModule": "core.window",
+            "importModule": "core.window.ewm",
+            "importedName": "ExponentialMovingWindow",
+            "packageInit": true,
+            "publicName": "ExponentialMovingWindow",
+            "sourceSymbol": "core.window.ewm.ExponentialMovingWindow",
+            "star": false
+          }
+        ],
+        "public": "pandas.api.typing.ExponentialMovingWindow"
+      },
+      "idiom": "pandas.api package namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/window/ewm.py",
+        "line": 795
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.window.ewm.ExponentialMovingWindow"
+    },
+    {
+      "after": "pandas.api.typing.ExponentialMovingWindow.var",
+      "before": "core.window.ewm.ExponentialMovingWindow.var",
+      "contract": "core.window.ewm.ExponentialMovingWindow.var",
+      "declarationTrace": {
+        "chain": [
+          "api.typing.ExponentialMovingWindow",
+          "core.window.ExponentialMovingWindow",
+          "core.window.ewm.ExponentialMovingWindow"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "api.typing.ExponentialMovingWindow",
+            "aliased": false,
+            "declaringFile": "api/typing/__init__.py",
+            "declaringModule": "api.typing",
+            "importModule": "core.window",
+            "importedName": "ExponentialMovingWindow",
+            "packageInit": true,
+            "publicName": "ExponentialMovingWindow",
+            "sourceSymbol": "core.window.ExponentialMovingWindow",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.window.ExponentialMovingWindow",
+            "aliased": false,
+            "declaringFile": "core/window/__init__.py",
+            "declaringModule": "core.window",
+            "importModule": "core.window.ewm",
+            "importedName": "ExponentialMovingWindow",
+            "packageInit": true,
+            "publicName": "ExponentialMovingWindow",
+            "sourceSymbol": "core.window.ewm.ExponentialMovingWindow",
+            "star": false
+          }
+        ],
+        "public": "pandas.api.typing.ExponentialMovingWindow"
+      },
+      "idiom": "pandas.api package namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/window/ewm.py",
+        "line": 746
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.window.ewm.ExponentialMovingWindow"
+    },
+    {
+      "after": "pandas.arrays.ArrowExtensionArray._dt_tz_convert",
+      "before": "core.arrays.arrow.array.ArrowExtensionArray._dt_tz_convert",
+      "contract": "core.arrays.arrow.array.ArrowExtensionArray._dt_tz_convert",
+      "declarationTrace": {
+        "chain": [
+          "arrays.ArrowExtensionArray",
+          "core.arrays.ArrowExtensionArray",
+          "core.arrays.arrow.ArrowExtensionArray",
+          "core.arrays.arrow.array.ArrowExtensionArray"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "arrays.ArrowExtensionArray",
+            "aliased": false,
+            "declaringFile": "arrays/__init__.py",
+            "declaringModule": "arrays",
+            "importModule": "core.arrays",
+            "importedName": "ArrowExtensionArray",
+            "packageInit": true,
+            "publicName": "ArrowExtensionArray",
+            "sourceSymbol": "core.arrays.ArrowExtensionArray",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.ArrowExtensionArray",
+            "aliased": false,
+            "declaringFile": "core/arrays/__init__.py",
+            "declaringModule": "core.arrays",
+            "importModule": "core.arrays.arrow",
+            "importedName": "ArrowExtensionArray",
+            "packageInit": true,
+            "publicName": "ArrowExtensionArray",
+            "sourceSymbol": "core.arrays.arrow.ArrowExtensionArray",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.arrow.ArrowExtensionArray",
+            "aliased": false,
+            "declaringFile": "core/arrays/arrow/__init__.py",
+            "declaringModule": "core.arrays.arrow",
+            "importModule": "core.arrays.arrow.array",
+            "importedName": "ArrowExtensionArray",
+            "packageInit": true,
+            "publicName": "ArrowExtensionArray",
+            "sourceSymbol": "core.arrays.arrow.array.ArrowExtensionArray",
+            "star": false
+          }
+        ],
+        "public": "pandas.arrays.ArrowExtensionArray"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/arrow/array.py",
+        "line": 3263
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.arrays.arrow.array.ArrowExtensionArray"
+    },
+    {
+      "after": "pandas.arrays.ArrowExtensionArray._round_temporally",
+      "before": "core.arrays.arrow.array.ArrowExtensionArray._round_temporally",
+      "contract": "core.arrays.arrow.array.ArrowExtensionArray._round_temporally",
+      "declarationTrace": {
+        "chain": [
+          "arrays.ArrowExtensionArray",
+          "core.arrays.ArrowExtensionArray",
+          "core.arrays.arrow.ArrowExtensionArray",
+          "core.arrays.arrow.array.ArrowExtensionArray"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "arrays.ArrowExtensionArray",
+            "aliased": false,
+            "declaringFile": "arrays/__init__.py",
+            "declaringModule": "arrays",
+            "importModule": "core.arrays",
+            "importedName": "ArrowExtensionArray",
+            "packageInit": true,
+            "publicName": "ArrowExtensionArray",
+            "sourceSymbol": "core.arrays.ArrowExtensionArray",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.ArrowExtensionArray",
+            "aliased": false,
+            "declaringFile": "core/arrays/__init__.py",
+            "declaringModule": "core.arrays",
+            "importModule": "core.arrays.arrow",
+            "importedName": "ArrowExtensionArray",
+            "packageInit": true,
+            "publicName": "ArrowExtensionArray",
+            "sourceSymbol": "core.arrays.arrow.ArrowExtensionArray",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.arrow.ArrowExtensionArray",
+            "aliased": false,
+            "declaringFile": "core/arrays/arrow/__init__.py",
+            "declaringModule": "core.arrays.arrow",
+            "importModule": "core.arrays.arrow.array",
+            "importedName": "ArrowExtensionArray",
+            "packageInit": true,
+            "publicName": "ArrowExtensionArray",
+            "sourceSymbol": "core.arrays.arrow.array.ArrowExtensionArray",
+            "star": false
+          }
+        ],
+        "public": "pandas.arrays.ArrowExtensionArray"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/arrow/array.py",
+        "line": 3150
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.arrays.arrow.array.ArrowExtensionArray"
+    },
+    {
+      "after": "pandas.core.arrays.BaseMaskedArray._rank",
+      "before": "core.arrays.masked.BaseMaskedArray._rank",
+      "contract": "core.arrays.masked.BaseMaskedArray._rank",
+      "declarationTrace": {
+        "chain": [
+          "core.arrays.BaseMaskedArray",
+          "core.arrays.masked.BaseMaskedArray"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.BaseMaskedArray",
+            "aliased": false,
+            "declaringFile": "core/arrays/__init__.py",
+            "declaringModule": "core.arrays",
+            "importModule": "core.arrays.masked",
+            "importedName": "BaseMaskedArray",
+            "packageInit": true,
+            "publicName": "BaseMaskedArray",
+            "sourceSymbol": "core.arrays.masked.BaseMaskedArray",
+            "star": false
+          }
+        ],
+        "public": "pandas.core.arrays.BaseMaskedArray"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/masked.py",
+        "line": 1124
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.arrays.masked.BaseMaskedArray"
+    },
+    {
+      "after": "pandas.arrays.SparseArray.fillna",
+      "before": "core.arrays.sparse.array.SparseArray.fillna",
+      "contract": "core.arrays.sparse.array.SparseArray.fillna",
+      "declarationTrace": {
+        "chain": [
+          "arrays.SparseArray",
+          "core.arrays.SparseArray",
+          "core.arrays.sparse.SparseArray",
+          "core.arrays.sparse.array.SparseArray"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "arrays.SparseArray",
+            "aliased": false,
+            "declaringFile": "arrays/__init__.py",
+            "declaringModule": "arrays",
+            "importModule": "core.arrays",
+            "importedName": "SparseArray",
+            "packageInit": true,
+            "publicName": "SparseArray",
+            "sourceSymbol": "core.arrays.SparseArray",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.SparseArray",
+            "aliased": false,
+            "declaringFile": "core/arrays/__init__.py",
+            "declaringModule": "core.arrays",
+            "importModule": "core.arrays.sparse",
+            "importedName": "SparseArray",
+            "packageInit": true,
+            "publicName": "SparseArray",
+            "sourceSymbol": "core.arrays.sparse.SparseArray",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.sparse.SparseArray",
+            "aliased": false,
+            "declaringFile": "core/arrays/sparse/__init__.py",
+            "declaringModule": "core.arrays.sparse",
+            "importModule": "core.arrays.sparse.array",
+            "importedName": "SparseArray",
+            "packageInit": true,
+            "publicName": "SparseArray",
+            "sourceSymbol": "core.arrays.sparse.array.SparseArray",
+            "star": false
+          }
+        ],
+        "public": "pandas.arrays.SparseArray"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/sparse/array.py",
+        "line": 796
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.arrays.sparse.array.SparseArray"
+    },
+    {
+      "after": "pandas.core.groupby.GroupBy.pct_change",
+      "before": "core.groupby.groupby.GroupBy.pct_change",
+      "contract": "core.groupby.groupby.GroupBy.pct_change",
+      "declarationTrace": {
+        "chain": [
+          "core.groupby.GroupBy",
+          "core.groupby.groupby.GroupBy"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "core.groupby.GroupBy",
+            "aliased": false,
+            "declaringFile": "core/groupby/__init__.py",
+            "declaringModule": "core.groupby",
+            "importModule": "core.groupby.groupby",
+            "importedName": "GroupBy",
+            "packageInit": true,
+            "publicName": "GroupBy",
+            "sourceSymbol": "core.groupby.groupby.GroupBy",
+            "star": false
+          }
+        ],
+        "public": "pandas.core.groupby.GroupBy"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/groupby/groupby.py",
+        "line": 5741
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.groupby.groupby.GroupBy"
+    },
+    {
+      "after": "pandas.core.internals.SingleBlockManager.get_slice",
+      "before": "core.internals.managers.SingleBlockManager.get_slice",
+      "contract": "core.internals.managers.SingleBlockManager.get_slice",
+      "declarationTrace": {
+        "chain": [
+          "core.internals.SingleBlockManager",
+          "core.internals.managers.SingleBlockManager"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "core.internals.SingleBlockManager",
+            "aliased": false,
+            "declaringFile": "core/internals/__init__.py",
+            "declaringModule": "core.internals",
+            "importModule": "core.internals.managers",
+            "importedName": "SingleBlockManager",
+            "packageInit": true,
+            "publicName": "SingleBlockManager",
+            "sourceSymbol": "core.internals.managers.SingleBlockManager",
+            "star": false
+          }
+        ],
+        "public": "pandas.core.internals.SingleBlockManager"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "core/internals/managers.py",
+        "line": 2161
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.internals.managers.SingleBlockManager"
+    },
+    {
+      "after": "pandas.io.formats.excel.ExcelFormatter._num2excel",
+      "before": "io.formats.excel.ExcelFormatter._num2excel",
+      "contract": "io.formats.excel.ExcelFormatter._num2excel",
+      "declarationTrace": {
+        "chain": [
+          "io.formats"
+        ],
+        "meta": [],
+        "public": "pandas.io.formats"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "io/formats/excel.py",
+        "line": 878
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "io.formats"
+    },
+    {
+      "after": "pandas.io.formats.info.SeriesInfo.render",
+      "before": "io.formats.info.SeriesInfo.render",
+      "contract": "io.formats.info.SeriesInfo.render",
+      "declarationTrace": {
+        "chain": [
+          "io.formats"
+        ],
+        "meta": [],
+        "public": "pandas.io.formats"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "io/formats/info.py",
+        "line": 365
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "io.formats"
+    },
+    {
+      "after": "pandas.io.parsers.python_parser.PythonParser._alert_malformed",
+      "before": "io.parsers.python_parser.PythonParser._alert_malformed",
+      "contract": "io.parsers.python_parser.PythonParser._alert_malformed",
+      "declarationTrace": {
+        "chain": [
+          "io"
+        ],
+        "meta": [],
+        "public": "pandas.io"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "io/parsers/python_parser.py",
+        "line": 946
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "io"
+    },
+    {
+      "after": "pandas.io.pytables.GenericFixed.validate_read",
+      "before": "io.pytables.GenericFixed.validate_read",
+      "contract": "io.pytables.GenericFixed.validate_read",
+      "declarationTrace": {
+        "chain": [
+          "io"
+        ],
+        "meta": [],
+        "public": "pandas.io"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "io/pytables.py",
+        "line": 3033
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "io"
+    },
+    {
+      "after": "pandas.io.sql.to_sql",
+      "before": "io.sql.to_sql",
+      "contract": "io.sql.to_sql",
+      "declarationTrace": {
+        "chain": [
+          "io"
+        ],
+        "meta": [],
+        "public": "pandas.io"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "io/sql.py",
+        "line": 742
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "io"
+    },
+    {
+      "after": "pandas.io.stata.StataNonCatValueLabel.__init__",
+      "before": "io.stata.StataNonCatValueLabel.__init__",
+      "contract": "io.stata.StataNonCatValueLabel.__init__",
+      "declarationTrace": {
+        "chain": [
+          "io.stata"
+        ],
+        "meta": [],
+        "public": "pandas.io.stata"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "io/stata.py",
+        "line": 698
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "io.stata"
+    },
+    {
+      "after": "pandas.io.stata.StataStrLWriter.__init__",
+      "before": "io.stata.StataStrLWriter.__init__",
+      "contract": "io.stata.StataStrLWriter.__init__",
+      "declarationTrace": {
+        "chain": [
+          "io.stata"
+        ],
+        "meta": [],
+        "public": "pandas.io.stata"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "io/stata.py",
+        "line": 3203
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "io.stata"
+    },
+    {
+      "after": "pandas.io.stata.StataValueLabel.__init__",
+      "before": "io.stata.StataValueLabel.__init__",
+      "contract": "io.stata.StataValueLabel.__init__",
+      "declarationTrace": {
+        "chain": [
+          "io.stata"
+        ],
+        "meta": [],
+        "public": "pandas.io.stata"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "io/stata.py",
+        "line": 581
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "io.stata"
+    },
+    {
+      "after": "pandas.plotting._matplotlib.hist._grouped_plot",
+      "before": "plotting._matplotlib.hist._grouped_plot",
+      "contract": "plotting._matplotlib.hist._grouped_plot",
+      "declarationTrace": {
+        "chain": [
+          "plotting"
+        ],
+        "meta": [],
+        "public": "pandas.plotting"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "plotting/_matplotlib/hist.py",
+        "line": 294
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "plotting"
+    },
+    {
+      "after": "pandas.plotting._matplotlib.style._get_colors_from_color",
+      "before": "plotting._matplotlib.style._get_colors_from_color",
+      "contract": "plotting._matplotlib.style._get_colors_from_color",
+      "declarationTrace": {
+        "chain": [
+          "plotting"
+        ],
+        "meta": [],
+        "public": "pandas.plotting"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "plotting/_matplotlib/style.py",
+        "line": 192
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "plotting"
+    },
+    {
+      "after": "pandas.tseries.holiday.AbstractHolidayCalendar.holidays",
+      "before": "tseries.holiday.AbstractHolidayCalendar.holidays",
+      "contract": "tseries.holiday.AbstractHolidayCalendar.holidays",
+      "declarationTrace": {
+        "chain": [
+          "tseries"
+        ],
+        "meta": [],
+        "public": "pandas.tseries"
+      },
+      "idiom": "subpackage __init__ namespace",
+      "locus": {
+        "col": 1,
+        "file": "tseries/holiday.py",
+        "line": 496
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "tseries"
+    },
+    {
+      "after": "pandas.Categorical._rank",
+      "before": "core.arrays.categorical.Categorical._rank",
+      "contract": "core.arrays.categorical.Categorical._rank",
+      "declarationTrace": {
+        "chain": [
+          "Categorical",
+          "core.api.Categorical",
+          "core.arrays.Categorical",
+          "core.arrays.categorical.Categorical"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "Categorical",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "Categorical",
+            "packageInit": true,
+            "publicName": "Categorical",
+            "sourceSymbol": "core.api.Categorical",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.Categorical",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.arrays",
+            "importedName": "Categorical",
+            "packageInit": false,
+            "publicName": "Categorical",
+            "sourceSymbol": "core.arrays.Categorical",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.arrays.Categorical",
+            "aliased": false,
+            "declaringFile": "core/arrays/__init__.py",
+            "declaringModule": "core.arrays",
+            "importModule": "core.arrays.categorical",
+            "importedName": "Categorical",
+            "packageInit": true,
+            "publicName": "Categorical",
+            "sourceSymbol": "core.arrays.categorical.Categorical",
+            "star": false
+          }
+        ],
+        "public": "pandas.Categorical"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/categorical.py",
+        "line": 2123
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.arrays.categorical.Categorical"
+    },
+    {
+      "after": "pandas.DataFrame.map",
+      "before": "core.frame.DataFrame.map",
+      "contract": "core.frame.DataFrame.map",
+      "declarationTrace": {
+        "chain": [
+          "DataFrame",
+          "core.api.DataFrame",
+          "core.frame.DataFrame"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "DataFrame",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "DataFrame",
+            "packageInit": true,
+            "publicName": "DataFrame",
+            "sourceSymbol": "core.api.DataFrame",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.DataFrame",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.frame",
+            "importedName": "DataFrame",
+            "packageInit": false,
+            "publicName": "DataFrame",
+            "sourceSymbol": "core.frame.DataFrame",
+            "star": false
+          }
+        ],
+        "public": "pandas.DataFrame"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/frame.py",
+        "line": 12494
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.frame.DataFrame"
+    },
+    {
+      "after": "pandas.DataFrame.to_stata",
+      "before": "core.frame.DataFrame.to_stata",
+      "contract": "core.frame.DataFrame.to_stata",
+      "declarationTrace": {
+        "chain": [
+          "DataFrame",
+          "core.api.DataFrame",
+          "core.frame.DataFrame"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "DataFrame",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "DataFrame",
+            "packageInit": true,
+            "publicName": "DataFrame",
+            "sourceSymbol": "core.api.DataFrame",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.DataFrame",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.frame",
+            "importedName": "DataFrame",
+            "packageInit": false,
+            "publicName": "DataFrame",
+            "sourceSymbol": "core.frame.DataFrame",
+            "star": false
+          }
+        ],
+        "public": "pandas.DataFrame"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/frame.py",
+        "line": 2665
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.frame.DataFrame"
+    },
+    {
+      "after": "pandas.Index._check_indexing_method",
+      "before": "core.indexes.base.Index._check_indexing_method",
+      "contract": "core.indexes.base.Index._check_indexing_method",
+      "declarationTrace": {
+        "chain": [
+          "Index",
+          "core.api.Index",
+          "core.indexes.api.Index",
+          "core.indexes.base.Index"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "Index",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "Index",
+            "packageInit": true,
+            "publicName": "Index",
+            "sourceSymbol": "core.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.Index",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.indexes.api",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.indexes.api.Index",
+            "aliased": false,
+            "declaringFile": "core/indexes/api.py",
+            "declaringModule": "core.indexes.api",
+            "importModule": "core.indexes.base",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.base.Index",
+            "star": false
+          }
+        ],
+        "public": "pandas.Index"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/base.py",
+        "line": 3840
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexes.base.Index"
+    },
+    {
+      "after": "pandas.Index._get_fill_indexer_searchsorted",
+      "before": "core.indexes.base.Index._get_fill_indexer_searchsorted",
+      "contract": "core.indexes.base.Index._get_fill_indexer_searchsorted",
+      "declarationTrace": {
+        "chain": [
+          "Index",
+          "core.api.Index",
+          "core.indexes.api.Index",
+          "core.indexes.base.Index"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "Index",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "Index",
+            "packageInit": true,
+            "publicName": "Index",
+            "sourceSymbol": "core.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.Index",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.indexes.api",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.indexes.api.Index",
+            "aliased": false,
+            "declaringFile": "core/indexes/api.py",
+            "declaringModule": "core.indexes.api",
+            "importModule": "core.indexes.base",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.base.Index",
+            "star": false
+          }
+        ],
+        "public": "pandas.Index"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/base.py",
+        "line": 3937
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexes.base.Index"
+    },
+    {
+      "after": "pandas.Index._validate_sort_keyword",
+      "before": "core.indexes.base.Index._validate_sort_keyword",
+      "contract": "core.indexes.base.Index._validate_sort_keyword",
+      "declarationTrace": {
+        "chain": [
+          "Index",
+          "core.api.Index",
+          "core.indexes.api.Index",
+          "core.indexes.base.Index"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "Index",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "Index",
+            "packageInit": true,
+            "publicName": "Index",
+            "sourceSymbol": "core.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.Index",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.indexes.api",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.indexes.api.Index",
+            "aliased": false,
+            "declaringFile": "core/indexes/api.py",
+            "declaringModule": "core.indexes.api",
+            "importModule": "core.indexes.base",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.base.Index",
+            "star": false
+          }
+        ],
+        "public": "pandas.Index"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/base.py",
+        "line": 2994
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexes.base.Index"
+    },
+    {
+      "after": "pandas.Index.dropna",
+      "before": "core.indexes.base.Index.dropna",
+      "contract": "core.indexes.base.Index.dropna",
+      "declarationTrace": {
+        "chain": [
+          "Index",
+          "core.api.Index",
+          "core.indexes.api.Index",
+          "core.indexes.base.Index"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "Index",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "Index",
+            "packageInit": true,
+            "publicName": "Index",
+            "sourceSymbol": "core.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.Index",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.indexes.api",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.indexes.api.Index",
+            "aliased": false,
+            "declaringFile": "core/indexes/api.py",
+            "declaringModule": "core.indexes.api",
+            "importModule": "core.indexes.base",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.base.Index",
+            "star": false
+          }
+        ],
+        "public": "pandas.Index"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/base.py",
+        "line": 2780
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexes.base.Index"
+    },
+    {
+      "after": "pandas.Index.get_slice_bound",
+      "before": "core.indexes.base.Index.get_slice_bound",
+      "contract": "core.indexes.base.Index.get_slice_bound",
+      "declarationTrace": {
+        "chain": [
+          "Index",
+          "core.api.Index",
+          "core.indexes.api.Index",
+          "core.indexes.base.Index"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "Index",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "Index",
+            "packageInit": true,
+            "publicName": "Index",
+            "sourceSymbol": "core.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.Index",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.indexes.api",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.api.Index",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.indexes.api.Index",
+            "aliased": false,
+            "declaringFile": "core/indexes/api.py",
+            "declaringModule": "core.indexes.api",
+            "importModule": "core.indexes.base",
+            "importedName": "Index",
+            "packageInit": false,
+            "publicName": "Index",
+            "sourceSymbol": "core.indexes.base.Index",
+            "star": false
+          }
+        ],
+        "public": "pandas.Index"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/base.py",
+        "line": 6912
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexes.base.Index"
+    },
+    {
+      "after": "pandas.CategoricalIndex.reindex",
+      "before": "core.indexes.category.CategoricalIndex.reindex",
+      "contract": "core.indexes.category.CategoricalIndex.reindex",
+      "declarationTrace": {
+        "chain": [
+          "CategoricalIndex",
+          "core.api.CategoricalIndex",
+          "core.indexes.api.CategoricalIndex",
+          "core.indexes.category.CategoricalIndex"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "CategoricalIndex",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "CategoricalIndex",
+            "packageInit": true,
+            "publicName": "CategoricalIndex",
+            "sourceSymbol": "core.api.CategoricalIndex",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.CategoricalIndex",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.indexes.api",
+            "importedName": "CategoricalIndex",
+            "packageInit": false,
+            "publicName": "CategoricalIndex",
+            "sourceSymbol": "core.indexes.api.CategoricalIndex",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.indexes.api.CategoricalIndex",
+            "aliased": false,
+            "declaringFile": "core/indexes/api.py",
+            "declaringModule": "core.indexes.api",
+            "importModule": "core.indexes.category",
+            "importedName": "CategoricalIndex",
+            "packageInit": false,
+            "publicName": "CategoricalIndex",
+            "sourceSymbol": "core.indexes.category.CategoricalIndex",
+            "star": false
+          }
+        ],
+        "public": "pandas.CategoricalIndex"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/category.py",
+        "line": 420
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexes.category.CategoricalIndex"
+    },
+    {
+      "after": "pandas.MultiIndex._partial_tup_index",
+      "before": "core.indexes.multi.MultiIndex._partial_tup_index",
+      "contract": "core.indexes.multi.MultiIndex._partial_tup_index",
+      "declarationTrace": {
+        "chain": [
+          "MultiIndex",
+          "core.api.MultiIndex",
+          "core.indexes.api.MultiIndex",
+          "core.indexes.multi.MultiIndex"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "MultiIndex",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "MultiIndex",
+            "packageInit": true,
+            "publicName": "MultiIndex",
+            "sourceSymbol": "core.api.MultiIndex",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.MultiIndex",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.indexes.api",
+            "importedName": "MultiIndex",
+            "packageInit": false,
+            "publicName": "MultiIndex",
+            "sourceSymbol": "core.indexes.api.MultiIndex",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.indexes.api.MultiIndex",
+            "aliased": false,
+            "declaringFile": "core/indexes/api.py",
+            "declaringModule": "core.indexes.api",
+            "importModule": "core.indexes.multi",
+            "importedName": "MultiIndex",
+            "packageInit": false,
+            "publicName": "MultiIndex",
+            "sourceSymbol": "core.indexes.multi.MultiIndex",
+            "star": false
+          }
+        ],
+        "public": "pandas.MultiIndex"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/multi.py",
+        "line": 3384
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexes.multi.MultiIndex"
+    },
+    {
+      "after": "pandas.MultiIndex._reorder_ilevels",
+      "before": "core.indexes.multi.MultiIndex._reorder_ilevels",
+      "contract": "core.indexes.multi.MultiIndex._reorder_ilevels",
+      "declarationTrace": {
+        "chain": [
+          "MultiIndex",
+          "core.api.MultiIndex",
+          "core.indexes.api.MultiIndex",
+          "core.indexes.multi.MultiIndex"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "MultiIndex",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "MultiIndex",
+            "packageInit": true,
+            "publicName": "MultiIndex",
+            "sourceSymbol": "core.api.MultiIndex",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.MultiIndex",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.indexes.api",
+            "importedName": "MultiIndex",
+            "packageInit": false,
+            "publicName": "MultiIndex",
+            "sourceSymbol": "core.indexes.api.MultiIndex",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.indexes.api.MultiIndex",
+            "aliased": false,
+            "declaringFile": "core/indexes/api.py",
+            "declaringModule": "core.indexes.api",
+            "importModule": "core.indexes.multi",
+            "importedName": "MultiIndex",
+            "packageInit": false,
+            "publicName": "MultiIndex",
+            "sourceSymbol": "core.indexes.multi.MultiIndex",
+            "star": false
+          }
+        ],
+        "public": "pandas.MultiIndex"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/multi.py",
+        "line": 3020
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexes.multi.MultiIndex"
+    },
+    {
+      "after": "pandas.PeriodIndex._disallow_mismatched_indexing",
+      "before": "core.indexes.period.PeriodIndex._disallow_mismatched_indexing",
+      "contract": "core.indexes.period.PeriodIndex._disallow_mismatched_indexing",
+      "declarationTrace": {
+        "chain": [
+          "PeriodIndex",
+          "core.api.PeriodIndex",
+          "core.indexes.api.PeriodIndex",
+          "core.indexes.period.PeriodIndex"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "PeriodIndex",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.api",
+            "importedName": "PeriodIndex",
+            "packageInit": true,
+            "publicName": "PeriodIndex",
+            "sourceSymbol": "core.api.PeriodIndex",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.api.PeriodIndex",
+            "aliased": false,
+            "declaringFile": "core/api.py",
+            "declaringModule": "core.api",
+            "importModule": "core.indexes.api",
+            "importedName": "PeriodIndex",
+            "packageInit": false,
+            "publicName": "PeriodIndex",
+            "sourceSymbol": "core.indexes.api.PeriodIndex",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.indexes.api.PeriodIndex",
+            "aliased": false,
+            "declaringFile": "core/indexes/api.py",
+            "declaringModule": "core.indexes.api",
+            "importModule": "core.indexes.period",
+            "importedName": "PeriodIndex",
+            "packageInit": false,
+            "publicName": "PeriodIndex",
+            "sourceSymbol": "core.indexes.period.PeriodIndex",
+            "star": false
+          }
+        ],
+        "public": "pandas.PeriodIndex"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/period.py",
+        "line": 516
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "core.indexes.period.PeriodIndex"
+    },
+    {
+      "after": "pandas.crosstab",
+      "before": "core.reshape.pivot.crosstab",
+      "contract": "core.reshape.pivot.crosstab",
+      "declarationTrace": {
+        "chain": [
+          "crosstab",
+          "core.reshape.api.crosstab",
+          "core.reshape.pivot.crosstab"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "crosstab",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "core.reshape.api",
+            "importedName": "crosstab",
+            "packageInit": true,
+            "publicName": "crosstab",
+            "sourceSymbol": "core.reshape.api.crosstab",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "core.reshape.api.crosstab",
+            "aliased": false,
+            "declaringFile": "core/reshape/api.py",
+            "declaringModule": "core.reshape.api",
+            "importModule": "core.reshape.pivot",
+            "importedName": "crosstab",
+            "packageInit": false,
+            "publicName": "crosstab",
+            "sourceSymbol": "core.reshape.pivot.crosstab",
+            "star": false
+          }
+        ],
+        "public": "pandas.crosstab"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "core/reshape/pivot.py",
+        "line": 919
+      },
+      "mapped": true,
+      "mappingKind": "direct",
+      "sourceBasis": "core.reshape.pivot.crosstab"
+    },
+    {
+      "after": "pandas.read_fwf",
+      "before": "io.parsers.readers.read_fwf",
+      "contract": "io.parsers.readers.read_fwf",
+      "declarationTrace": {
+        "chain": [
+          "read_fwf",
+          "io.api.read_fwf",
+          "io.parsers.read_fwf",
+          "io.parsers.readers.read_fwf"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "read_fwf",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "io.api",
+            "importedName": "read_fwf",
+            "packageInit": true,
+            "publicName": "read_fwf",
+            "sourceSymbol": "io.api.read_fwf",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "io.api.read_fwf",
+            "aliased": false,
+            "declaringFile": "io/api.py",
+            "declaringModule": "io.api",
+            "importModule": "io.parsers",
+            "importedName": "read_fwf",
+            "packageInit": false,
+            "publicName": "read_fwf",
+            "sourceSymbol": "io.parsers.read_fwf",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "io.parsers.read_fwf",
+            "aliased": false,
+            "declaringFile": "io/parsers/__init__.py",
+            "declaringModule": "io.parsers",
+            "importModule": "io.parsers.readers",
+            "importedName": "read_fwf",
+            "packageInit": true,
+            "publicName": "read_fwf",
+            "sourceSymbol": "io.parsers.readers.read_fwf",
+            "star": false
+          }
+        ],
+        "public": "pandas.read_fwf"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "io/parsers/readers.py",
+        "line": 1479
+      },
+      "mapped": true,
+      "mappingKind": "direct",
+      "sourceBasis": "io.parsers.readers.read_fwf"
+    },
+    {
+      "after": "pandas.HDFStore.append",
+      "before": "io.pytables.HDFStore.append",
+      "contract": "io.pytables.HDFStore.append",
+      "declarationTrace": {
+        "chain": [
+          "HDFStore",
+          "io.api.HDFStore",
+          "io.pytables.HDFStore"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "HDFStore",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "io.api",
+            "importedName": "HDFStore",
+            "packageInit": true,
+            "publicName": "HDFStore",
+            "sourceSymbol": "io.api.HDFStore",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "io.api.HDFStore",
+            "aliased": false,
+            "declaringFile": "io/api.py",
+            "declaringModule": "io.api",
+            "importModule": "io.pytables",
+            "importedName": "HDFStore",
+            "packageInit": false,
+            "publicName": "HDFStore",
+            "sourceSymbol": "io.pytables.HDFStore",
+            "star": false
+          }
+        ],
+        "public": "pandas.HDFStore"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "io/pytables.py",
+        "line": 1290
+      },
+      "mapped": true,
+      "mappingKind": "member",
+      "sourceBasis": "io.pytables.HDFStore"
+    },
+    {
+      "after": "pandas.read_hdf",
+      "before": "io.pytables.read_hdf",
+      "contract": "io.pytables.read_hdf",
+      "declarationTrace": {
+        "chain": [
+          "read_hdf",
+          "io.api.read_hdf",
+          "io.pytables.read_hdf"
+        ],
+        "meta": [
+          {
+            "absolute": true,
+            "aliasSymbol": "read_hdf",
+            "aliased": false,
+            "declaringFile": "__init__.py",
+            "declaringModule": "pandas",
+            "importModule": "io.api",
+            "importedName": "read_hdf",
+            "packageInit": true,
+            "publicName": "read_hdf",
+            "sourceSymbol": "io.api.read_hdf",
+            "star": false
+          },
+          {
+            "absolute": true,
+            "aliasSymbol": "io.api.read_hdf",
+            "aliased": false,
+            "declaringFile": "io/api.py",
+            "declaringModule": "io.api",
+            "importModule": "io.pytables",
+            "importedName": "read_hdf",
+            "packageInit": false,
+            "publicName": "read_hdf",
+            "sourceSymbol": "io.pytables.read_hdf",
+            "star": false
+          }
+        ],
+        "public": "pandas.read_hdf"
+      },
+      "idiom": "top-level __init__ aggregator chain",
+      "locus": {
+        "col": 1,
+        "file": "io/pytables.py",
+        "line": 320
+      },
+      "mapped": true,
+      "mappingKind": "direct",
+      "sourceBasis": "io.pytables.read_hdf"
+    },
+    {
+      "after": "core.apply.Apply.apply_list_or_dict_like",
+      "before": "core.apply.Apply.apply_list_or_dict_like",
+      "contract": "core.apply.Apply.apply_list_or_dict_like",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/apply.py",
+        "line": 703
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.arrays._mixins.NDArrayBackedExtensionArray.value_counts",
+      "before": "core.arrays._mixins.NDArrayBackedExtensionArray.value_counts",
+      "contract": "core.arrays._mixins.NDArrayBackedExtensionArray.value_counts",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/_mixins.py",
+        "line": 468
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.arrays.datetimelike.DatetimeLikeArrayMixin._accumulate",
+      "before": "core.arrays.datetimelike.DatetimeLikeArrayMixin._accumulate",
+      "contract": "core.arrays.datetimelike.DatetimeLikeArrayMixin._accumulate",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/datetimelike.py",
+        "line": 1387
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.arrays.datetimelike.DatetimeLikeArrayMixin._add_timedelta_arraylike",
+      "before": "core.arrays.datetimelike.DatetimeLikeArrayMixin._add_timedelta_arraylike",
+      "contract": "core.arrays.datetimelike.DatetimeLikeArrayMixin._add_timedelta_arraylike",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/datetimelike.py",
+        "line": 1250
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetime_arraylike",
+      "before": "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetime_arraylike",
+      "contract": "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetime_arraylike",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/datetimelike.py",
+        "line": 1182
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetimelike_scalar",
+      "before": "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetimelike_scalar",
+      "contract": "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetimelike_scalar",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/datetimelike.py",
+        "line": 1163
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.arrays.datetimelike.TimelikeOps.as_unit",
+      "before": "core.arrays.datetimelike.TimelikeOps.as_unit",
+      "contract": "core.arrays.datetimelike.TimelikeOps.as_unit",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/datetimelike.py",
+        "line": 2010
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.arrays.datetimelike.TimelikeOps.interpolate",
+      "before": "core.arrays.datetimelike.TimelikeOps.interpolate",
+      "contract": "core.arrays.datetimelike.TimelikeOps.interpolate",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/datetimelike.py",
+        "line": 2538
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.arrays.string_.BaseStringArray.view",
+      "before": "core.arrays.string_.BaseStringArray.view",
+      "contract": "core.arrays.string_.BaseStringArray.view",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/arrays/string_.py",
+        "line": 602
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.base.SelectionMixin.__getitem__",
+      "before": "core.base.SelectionMixin.__getitem__",
+      "contract": "core.base.SelectionMixin.__getitem__",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/base.py",
+        "line": 216
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.common.require_length_match",
+      "before": "core.common.require_length_match",
+      "contract": "core.common.require_length_match",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/common.py",
+        "line": 596
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.computation.expr.BaseExprVisitor.visit_Module",
+      "before": "core.computation.expr.BaseExprVisitor.visit_Module",
+      "contract": "core.computation.expr.BaseExprVisitor.visit_Module",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/computation/expr.py",
+        "line": 422
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.computation.pytables.UnaryOp.prune",
+      "before": "core.computation.pytables.UnaryOp.prune",
+      "contract": "core.computation.pytables.UnaryOp.prune",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/computation/pytables.py",
+        "line": 418
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.dtypes.common._get_dtype",
+      "before": "core.dtypes.common._get_dtype",
+      "contract": "core.dtypes.common._get_dtype",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/dtypes/common.py",
+        "line": 1624
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.generic.NDFrame._rename",
+      "before": "core.generic.NDFrame._rename",
+      "contract": "core.generic.NDFrame._rename",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/generic.py",
+        "line": 1002
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.generic.NDFrame.pct_change",
+      "before": "core.generic.NDFrame.pct_change",
+      "contract": "core.generic.NDFrame.pct_change",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/generic.py",
+        "line": 11434
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.groupby.ops.WrappedCythonOp._validate_axis",
+      "before": "core.groupby.ops.WrappedCythonOp._validate_axis",
+      "contract": "core.groupby.ops.WrappedCythonOp._validate_axis",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/groupby/ops.py",
+        "line": 525
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.indexes.api.union_indexes",
+      "before": "core.indexes.api.union_indexes",
+      "contract": "core.indexes.api.union_indexes",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/api.py",
+        "line": 185
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.indexes.base._validate_join_method",
+      "before": "core.indexes.base._validate_join_method",
+      "contract": "core.indexes.base._validate_join_method",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/indexes/base.py",
+        "line": 7998
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.internals.blocks.check_ndim",
+      "before": "core.internals.blocks.check_ndim",
+      "contract": "core.internals.blocks.check_ndim",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/internals/blocks.py",
+        "line": 2273
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.resample._asfreq_compat",
+      "before": "core.resample._asfreq_compat",
+      "contract": "core.resample._asfreq_compat",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/resample.py",
+        "line": 3124
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.tools.times.to_time",
+      "before": "core.tools.times.to_time",
+      "contract": "core.tools.times.to_time",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/tools/times.py",
+        "line": 23
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.window.ewm.OnlineExponentialMovingWindow.__init__",
+      "before": "core.window.ewm.OnlineExponentialMovingWindow.__init__",
+      "contract": "core.window.ewm.OnlineExponentialMovingWindow.__init__",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/window/ewm.py",
+        "line": 1018
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.window.rolling.BaseWindow._apply_tablewise",
+      "before": "core.window.rolling.BaseWindow._apply_tablewise",
+      "contract": "core.window.rolling.BaseWindow._apply_tablewise",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/window/rolling.py",
+        "line": 491
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.window.rolling.RollingAndExpandingMixin.corr",
+      "before": "core.window.rolling.RollingAndExpandingMixin.corr",
+      "contract": "core.window.rolling.RollingAndExpandingMixin.corr",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/window/rolling.py",
+        "line": 1904
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "core.window.rolling.RollingAndExpandingMixin.cov",
+      "before": "core.window.rolling.RollingAndExpandingMixin.cov",
+      "contract": "core.window.rolling.RollingAndExpandingMixin.cov",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "core/window/rolling.py",
+        "line": 1857
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    },
+    {
+      "after": "util._validators._check_arg_length",
+      "before": "util._validators._check_arg_length",
+      "contract": "util._validators._check_arg_length",
+      "declarationTrace": null,
+      "idiom": "unmapped",
+      "locus": {
+        "col": 1,
+        "file": "util/_validators.py",
+        "line": 31
+      },
+      "mapped": false,
+      "mappingKind": null,
+      "sourceBasis": null
+    }
+  ],
+  "schemaVersion": 1,
+  "summary": {
+    "afterRemapped": 41,
+    "beforeRemapped": 0,
+    "directMappings": 3,
+    "memberMappings": 38,
+    "preBearingContracts": 68,
+    "unmapped": 27
+  }
+}
