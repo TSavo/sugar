@@ -5,6 +5,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
+from sugar_lift_py_tests.context.sink_protocols import (
+    AuditSink,
+    ExternalBridgeSink,
+    OperationRecorder,
+    ProofSink,
+)
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -26,16 +32,16 @@ class FactoryBuildContext:
         default_factory=dict[str, tuple[str, str]]
     )
     contract_bindings: list[Any] = field(default_factory=list[Any])
-    external_bridge_sink: Any = None
-    audit_sink: Any = None
-    factory_audit_sink: Any = None
-    proof_sink: Any = None
+    external_bridge_sink: ExternalBridgeSink | None = None
+    audit_sink: AuditSink | None = None
+    factory_audit_sink: AuditSink | None = None
+    proof_sink: ProofSink | None = None
     report_sink: Any = None
     operation_log: list[tuple[str, str, str]] = field(
         default_factory=list[tuple[str, str, str]]
     )
     dig_sink: Any = None
-    record_operation: Any = None
+    record_operation: OperationRecorder | None = None
     # The set of callee names whose body is CURRENTLY being built, up the build stack.
     # CallSugar.build emits a construction-gap effect for a callee already in this
     # set: eagerly building a recursive universe never terminates, and an infinite
