@@ -779,10 +779,7 @@ fn classify_family_survives_innocuous_line_shift() {
             }
         }
     "#;
-    let shifted = &format!(
-        "{}\n{unshifted}",
-        "// innocuous comment line\n".repeat(64)
-    );
+    let shifted = &format!("{}\n{unshifted}", "// innocuous comment line\n".repeat(64));
 
     let family_at = |source: &str| {
         collect_ladder_sites_from_source("implementations/rust/sugar-walk/src/lift.rs", source)

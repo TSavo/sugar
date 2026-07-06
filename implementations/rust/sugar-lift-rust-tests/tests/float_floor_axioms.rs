@@ -54,7 +54,11 @@ fn check(label: &str, src: &str, expect_sat: bool) {
             })
         })
         .collect();
-    assert_eq!(warranted.len(), 1, "{label}: expected one claim-bearing decl");
+    assert_eq!(
+        warranted.len(),
+        1,
+        "{label}: expected one claim-bearing decl"
+    );
     let inv = {
         let doc =
             sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(warranted[0]));
