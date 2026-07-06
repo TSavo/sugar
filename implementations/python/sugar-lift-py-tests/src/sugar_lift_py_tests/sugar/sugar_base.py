@@ -22,18 +22,18 @@ def registered_claims() -> List[SugarClaim]:
 
 
 def validate_registry() -> None:
-    """Refuse invalid registry topology before factory dispatch can see it."""
+    """Reject invalid registry topology before factory dispatch can see it."""
 
-    _refuse_duplicate_claims()
-    _refuse_dangling_comes_before()
-    _refuse_comes_before_cycles()
+    _reject_duplicate_claims()
+    _reject_dangling_comes_before()
+    _reject_comes_before_cycles()
 
 
 def _claimant(cls: type) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
-def _refuse_duplicate_claim(cls: type) -> None:
+def _reject_duplicate_claim(cls: type) -> None:
     existing = _REGISTRATION_SITES.get(cls.__name__)
     if existing is None:
         return
@@ -46,7 +46,7 @@ def _refuse_duplicate_claim(cls: type) -> None:
     )
 
 
-def _refuse_duplicate_claims() -> None:
+def _reject_duplicate_claims() -> None:
     seen: dict[str, str] = {}
     for claim in _REGISTRY:
         site = _REGISTRATION_SITES.get(claim.name, claim.name)
@@ -61,7 +61,7 @@ def _refuse_duplicate_claims() -> None:
         seen[claim.name] = site
 
 
-def _refuse_dangling_comes_before() -> None:
+def _reject_dangling_comes_before() -> None:
     names = {claim.name for claim in _REGISTRY}
     for claim in _REGISTRY:
         for target in claim.comes_before:
@@ -75,7 +75,7 @@ def _refuse_dangling_comes_before() -> None:
                 )
 
 
-def _refuse_comes_before_cycles() -> None:
+def _reject_comes_before_cycles() -> None:
     names = {claim.name for claim in _REGISTRY}
     graph = {
         claim.name: tuple(target for target in claim.comes_before if target in names)
@@ -145,7 +145,7 @@ class Sugar(ABC):
                 f"{cls.__name__} is a registrable sugar but does not define "
                 "witnesses(); enrollment is existence"
             )
-        _refuse_duplicate_claim(cls)
+        _reject_duplicate_claim(cls)
         cls.role = role
         claim = SugarClaim(
             name=cls.__name__,
@@ -157,7 +157,7 @@ class Sugar(ABC):
         )
         _REGISTRY.append(claim)
         _REGISTRATION_SITES[claim.name] = _claimant(cls)
-        _refuse_comes_before_cycles()
+        _reject_comes_before_cycles()
 
     @classmethod
     def owns(cls, fragment) -> bool:

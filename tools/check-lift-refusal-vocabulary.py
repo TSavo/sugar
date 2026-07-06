@@ -73,6 +73,24 @@ def wire_marker_for(path: str, text: str, speaker: str) -> str:
     for needle in protocol_needles:
         if needle in text:
             return f"wire-protocol:{needle}"
+    if "/constraint_flow/" in path:
+        return "wire-protocol:DigRefusal"
+    if path.endswith("/factory/package_source_accounting.py"):
+        return "wire-protocol:source_refused"
+    if path.endswith("/bind_effects.py"):
+        return "wire-protocol:materialize-rpc"
+    if path.endswith("/bind_lifter.py") and any(
+        needle in text
+        for needle in (
+            "refusal-memento",
+            "@refuse",
+            "_is_refuse_func",
+            "_refusal_memento_for_class",
+            'func.id == "refuse"',
+            'func.attr == "refuse"',
+        )
+    ):
+        return "wire-protocol:refusal-memento"
     if (
         "/kit_rpc/" in path
         or path.endswith("/lift_rpc.py")
