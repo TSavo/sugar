@@ -1,0 +1,52 @@
+{
+  "name": "vscode-sugar",
+  "displayName": "Sugar (inline wall)",
+  "description": "Live warrant / unsat diagnostics in the editor via sugar-linkerd. Slice A of #3774: one red squiggle, end to end.",
+  "version": "0.0.1",
+  "publisher": "sugar",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:rust",
+    "onLanguage:python"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Sugar",
+      "properties": {
+        "sugar.linkerd.socketPath": {
+          "type": "string",
+          "default": "",
+          "description": "Unix socket path for a sugar-linkerd daemon. If empty, one is derived under the OS temp dir per workspace."
+        },
+        "sugar.linkerd.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the sugar-linkerd binary. If set and the socket is not already live, the extension spawns the daemon. Resolve it with `bin/sugarbin --bin sugar-linkerd`."
+        },
+        "sugar.debounceMs": {
+          "type": "number",
+          "default": 250,
+          "description": "Debounce window for re-linking on keystrokes."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "e2e": "node ./test/e2e.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
+  }
+}

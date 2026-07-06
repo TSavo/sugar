@@ -1203,6 +1203,13 @@ async fn lift_rust_source(
 
     // Write source to a temp dir (blocking I/O, run in spawn_blocking).
     let source_owned = source.to_string();
+    // The editor knows this document by the exact `file` path it sent in the
+    // `parseFile` request (an absolute path in a real LSP session). The
+    // call-site locus (and thus `LinkerError.file`) MUST carry that same path
+    // so the daemon's per-file diagnostic filter matches and the editor pane
+    // receives the squiggle. Emitting the basename here made every absolute-path
+    // editor session silently receive zero diagnostics.
+    let file_for_locus = file.to_string();
     let file_name = PathBuf::from(file)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -1295,7 +1302,7 @@ async fn lift_rust_source(
                 target_contract_cid: target_cid,
                 target_symbol: edge.target_symbol.clone(),
                 call_site_locus_json: serde_json::json!({
-                    "file": file_name,
+                    "file": file_for_locus,
                     "line": edge.call_site_locus.line,
                     "column": edge.call_site_locus.col,
                 }),
