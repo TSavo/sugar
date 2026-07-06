@@ -33,14 +33,6 @@ const EXPECTED_RED_COMMON: &[(&str, &str)] = &[
         "floor-gap:iterator-temporal-state",
     ),
     (
-        "let_initializer_assertion_macro_lifts_and_binds_success_payload",
-        "floor-gap:macro-visible-source",
-    ),
-    (
-        "let_initializer_learns_assertion_shape_after_dropping_macro_name",
-        "floor-gap:macro-visible-source",
-    ),
-    (
         "literal_empty_domain_named_refused_with_twin",
         "floor-gap:literal-domain-edge",
     ),
@@ -77,23 +69,11 @@ const EXPECTED_RED_COMMON: &[(&str, &str)] = &[
         "floor-gap:macro-visible-source",
     ),
     (
-        "nested_macro_terminal_effect_is_not_swallowed_as_inert",
-        "floor-gap:macro-visible-source",
-    ),
-    (
-        "opaque_mut_borrow_call_read_refuses_not_false_refutation",
-        "floor-gap:mutable-alias-state",
-    ),
-    (
         "peekable_runtime_nth_after_peek_is_named_refused_not_work",
         "floor-gap:iterator-temporal-state",
     ),
     (
         "peekable_runtime_slice_source_is_named_refused_not_work",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "reversed_literal_range_terminals_and_step_collect_have_teeth",
         "floor-gap:iterator-temporal-state",
     ),
     (

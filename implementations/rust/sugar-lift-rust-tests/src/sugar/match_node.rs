@@ -573,9 +573,13 @@ mod residue_tests {
             panic!("runtime term match must not fabricate a term");
         };
         assert!(
-            effect.reason().contains("match term runtime interior"),
-            "effect should name the match boundary: {}",
-            effect.reason()
+            matches!(
+                &effect,
+                Effect::RuntimeMatchTerm { boundary }
+                    if boundary.contains("match theory")
+            ),
+            "effect should be the match boundary: {:?}",
+            effect
         );
     }
 
@@ -604,9 +608,13 @@ mod residue_tests {
             panic!("runtime composite match must not fabricate a composite");
         };
         assert!(
-            effect.reason().contains("match term runtime interior"),
-            "effect should name the match boundary: {}",
-            effect.reason()
+            matches!(
+                &effect,
+                Effect::RuntimeMatchTerm { boundary }
+                    if boundary.contains("match error")
+            ),
+            "effect should be the match boundary: {:?}",
+            effect
         );
     }
 }

@@ -99,3 +99,19 @@ class SymbolicValue(FloorValue):
 
     def contains_with(self, operation, ctx):
         return operation.contains_symbolic(self, ctx)
+
+    def attribute_assign_with(self, operation, ctx):
+        del ctx
+        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            RuntimeEffect(
+                "attribute assignment runtime boundary: symbolic receiver "
+                f"`{self.term}` cannot be mutated as source object state. "
+                "Python attribute assignment can invoke descriptors and "
+                "__setattr__ at runtime; keep as typed red until a narrower "
+                "attribute mutation floor owns this shape. "
+                f"blame={operation.blame}"
+            )
+        )

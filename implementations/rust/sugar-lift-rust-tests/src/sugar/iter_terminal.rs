@@ -1118,10 +1118,21 @@ impl IterTerminalReceiver {
         Self { source_expr }
     }
 
-    fn body(&self, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
-        let source_expr = simple_path_name(&self.source_expr)
+    fn resolved_source_expr(&self, fcx: &SugarBuildCtx) -> Expr {
+        simple_path_name(&self.source_expr)
             .and_then(|name| fcx.scope().temporal_rewrite_expr_for(&name))
-            .unwrap_or_else(|| self.source_expr.clone());
+            .unwrap_or_else(|| self.source_expr.clone())
+    }
+
+    fn static_sequence_body(&self, fcx: &SugarBuildCtx) -> Option<SugarBody<CompositeFloor>> {
+        let source_expr = self.resolved_source_expr(fcx);
+        crate::sugar::scan::try_build_scan_inner(&source_expr, fcx)
+            .or_else(|| method_family::build_literal_sequence_composite(&source_expr, fcx))
+            .map(SugarBody::from_node)
+    }
+
+    fn body(&self, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
+        let source_expr = self.resolved_source_expr(fcx);
         SugarBody::from_node(
             crate::sugar::scan::try_build_scan_inner(&source_expr, fcx)
                 .or_else(|| method_family::build_literal_sequence_composite(&source_expr, fcx))
@@ -1208,6 +1219,28 @@ impl IterTerminalSugar {
             }
             Terminal::Product => false,
         }
+    }
+
+    fn accepts_literal_empty_sequence_result(&self) -> bool {
+        matches!(
+            self.terminal,
+            Terminal::Count
+                | Terminal::Next
+                | Terminal::NextBack
+                | Terminal::Nth(_)
+                | Terminal::NthBack(_)
+                | Terminal::Last
+                | Terminal::Min
+                | Terminal::Max
+                | Terminal::Any(_)
+                | Terminal::All(_)
+                | Terminal::Find(_)
+                | Terminal::Position(_)
+                | Terminal::Reduce(_)
+                | Terminal::Fold(_, _)
+                | Terminal::TryFold { .. }
+                | Terminal::AdvanceBy(_)
+        )
     }
 
     fn can_try_literal_sequence_family(&self) -> bool {
@@ -1347,9 +1380,6 @@ impl IterTerminalSugar {
     /// at desugar time: named `Incomplete`s propagate, while a generic structural bail takes the
     /// factory gap path. Never a guessed value: every `Complete` carries the EXACT reduction.
     fn reduce(&self, ctx: &SugarCtx) -> Outcome {
-        if let Some(term) = self.same_statement_consuming_occurrence_term(ctx) {
-            return Outcome::Complete(Desugared::Term(term));
-        }
         let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
         let let_inits: BTreeMap<String, &Expr> = stable
             .iter()
@@ -1410,14 +1440,15 @@ impl IterTerminalSugar {
                 });
             }
         }
+        let resolved_source_expr = self.receiver.resolved_source_expr(&fcx);
         let static_empty_sequence = method_family::literal_sequence_static_len_in_scope(
-            &self.receiver.source_expr,
+            &resolved_source_expr,
             &let_inits,
             ctx.scope,
         ) == Some(0)
             || (matches!(self.terminal, Terminal::Count)
                 && method_family::literal_collection_adapter_static_len_in_scope(
-                    &self.receiver.source_expr,
+                    &resolved_source_expr,
                     &let_inits,
                     ctx.scope,
                 )
@@ -1427,7 +1458,15 @@ impl IterTerminalSugar {
         let seq = if allow_empty_sequence {
             Vec::new()
         } else {
-            let receiver_body = self.receiver.body(&fcx);
+            let receiver_body = match self.receiver.static_sequence_body(&fcx) {
+                Some(body) => body,
+                None => {
+                    if let Some(term) = self.same_statement_consuming_occurrence_term(ctx) {
+                        return Outcome::Complete(Desugared::Term(term));
+                    }
+                    self.receiver.body(&fcx)
+                }
+            };
             match receiver_body.reduce(ctx) {
                 Outcome::Complete(Desugared::TermSeq(terms)) => {
                     return self.reduce_term_seq_terminal(terms, ctx, &let_inits);
@@ -1438,7 +1477,8 @@ impl IterTerminalSugar {
                 },
                 Outcome::Incomplete(effect)
                     if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON)
-                        && allow_empty_sequence =>
+                        && (allow_empty_sequence
+                            || self.accepts_literal_empty_sequence_result()) =>
                 {
                     Vec::new()
                 }

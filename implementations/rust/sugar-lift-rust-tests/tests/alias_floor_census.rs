@@ -380,18 +380,6 @@ struct ObservedRow {
 const EXPECTED_ALIAS_SIDE_TABLE_SETS: &[(&str, &str, &str, &str)] = &[
     (
         "implementations/rust/sugar-lift-rust-tests/src/lib.rs",
-        "mut_ref_local_target",
-        "alias-collector-local-map",
-        "let mut aliases: BTreeMap<String, String>",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/lib.rs",
-        "mut_ref_local_target",
-        "dormant-alias-map",
-        "aliases: BTreeMap<String, String>",
-    ),
-    (
-        "implementations/rust/sugar-lift-rust-tests/src/lib.rs",
         "new",
         "dormant-alias-side-state",
         "dormant_mut_ref: sugar::dormant_mut_ref::DormantMutRefState",

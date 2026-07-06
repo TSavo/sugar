@@ -205,6 +205,11 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[ExpectedCompositionPath] = &[
         r#"if map_call.method != "map" || map_call.args.len() != 1 {"#
     ),
     expected_composition!(
+        "filter_map.rs",
+        61,
+        r#"if call.method != "filter_map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
         "flat_map.rs",
         46,
         r#"if call.method != "flat_map" || call.args.len() != 1 {"#
@@ -322,11 +327,6 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[ExpectedCompositionPath] = &[
         r#"if call.method != "scan" || call.args.len() != 2 {"#
     ),
     expected_composition!(
-        "let_stmt.rs",
-        65,
-        r#"matches!(selected, "fold" | "for_each")"#
-    ),
-    expected_composition!(
         "map.rs",
         77,
         r#"if call.method != "map" || call.args.len() != 1 {"#
@@ -335,6 +335,11 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[ExpectedCompositionPath] = &[
         "map.rs",
         104,
         r#"if call.method != "map" || call.args.len() != 1 {"#
+    ),
+    expected_composition!(
+        "method.rs",
+        56,
+        r#"if matches!(expr, syn::Expr::MethodCall(call) if call.method == "for_each") {"#
     ),
     expected_composition!(
         "method_family.rs",

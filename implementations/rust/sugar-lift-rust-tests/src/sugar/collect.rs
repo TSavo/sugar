@@ -34,7 +34,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize,
     );
 
-pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_raw(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
@@ -64,6 +64,10 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         "recognized collect"
     );
     Some(Box::new(CollectSugar { plan }))
+}
+
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_raw(frag, fcx)
 }
 
 struct CollectSugar {

@@ -39,7 +39,7 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     recognize,
 );
 
-pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_raw(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     if has_literal_cstr_floor(expr, fcx) {
         debug!(
@@ -95,6 +95,10 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         }
         _ => None,
     }
+}
+
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_raw(frag, fcx)
 }
 
 pub(crate) fn has_literal_cstr_floor(expr: &Expr, fcx: &SugarBuildCtx) -> bool {

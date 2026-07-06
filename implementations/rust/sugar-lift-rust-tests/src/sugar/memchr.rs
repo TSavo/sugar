@@ -20,7 +20,7 @@ use crate::{
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "memchr",
-    &["call"],
+    &["call", "transparent_term"],
     crate::sugar::claim::SugarWitnesses::pair(
         r#"
             fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
@@ -46,7 +46,7 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     recognize,
 );
 
-pub(crate) fn recognize(
+fn recognize_raw(
     frag: &SourceFragment,
     fcx: &crate::sugar::factory::SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
@@ -68,6 +68,13 @@ pub(crate) fn recognize(
         haystack: call.args[1].clone(),
         reverse,
     }))
+}
+
+pub(crate) fn recognize(
+    frag: &SourceFragment,
+    fcx: &crate::sugar::factory::SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
+    recognize_raw(frag, fcx)
 }
 
 struct MemchrSugar {

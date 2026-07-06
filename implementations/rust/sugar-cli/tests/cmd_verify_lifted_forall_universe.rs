@@ -350,14 +350,17 @@ fn lifted_universe_refutes_false_unnamed_input_without_self_discharge() {
     // was never materialized; z3 instantiated the conjoined quantifier at 3.
     // The matching true claim is not discharged by the same ambient Stated source:
     // current verifier law requires an independent-KIND witness.
+    // Prove row order follows bridge-member traversal; the semantic floor here is
+    // the statuses: the lying EUF is unsatisfied, and no panic/true/vendor row
+    // self-discharges.
     assert_rows(
         &rows,
         &[
             (USER_FALSE_EUF, "unsatisfied"),
-            (USER_TRUE_EUF, "refused"),
-            (VENDOR_LOOP, "refused"),
-            (USER_TRUE_PANIC, "refused"),
             (USER_FALSE_PANIC, "refused"),
+            (USER_TRUE_EUF, "refused"),
+            (USER_TRUE_PANIC, "refused"),
+            (VENDOR_LOOP, "refused"),
         ],
     );
     let _ = fs::remove_dir_all(&dir);
@@ -379,13 +382,15 @@ fn unnamed_input_is_refused_without_the_lifted_universe() {
     // therefore came from the lifted universe (real work), not a pattern -- and
     // could only come from z3 instantiating the `forall` at x=3, which nothing
     // materialized.
+    // The twin keeps the same row-order law while proving the lying EUF is still
+    // refused when the universe is absent.
     assert_rows(
         &rows,
         &[
             (USER_FALSE_EUF, "refused"),
+            (USER_FALSE_PANIC, "refused"),
             (USER_TRUE_EUF, "refused"),
             (USER_TRUE_PANIC, "refused"),
-            (USER_FALSE_PANIC, "refused"),
         ],
     );
     let _ = fs::remove_dir_all(&dir);

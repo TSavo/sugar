@@ -2257,10 +2257,11 @@ mod consistency_owned_callsite_tests {
         json!({"kind":"atomic","name":"=","args":[a,b]})
     }
 
-    fn linked_pool_and_callsite() -> (MementoPool, CallSite) {
+    fn linked_pool_and_callsite() -> (MementoPool, CallSite, MementoCid) {
         let source_symbol = "call:enc";
         let vendor_cid = cid_string("vendor-enc");
         let assertion_cid = cid_string("consumer-assertion");
+        let bridge_cid = generated_cid("linked-post-bridge");
         let call = json!({"kind":"ctor","name":source_symbol,"args":[string_const("def")]});
         let assertion = json!({
             "evidence": {
@@ -2300,26 +2301,27 @@ mod consistency_owned_callsite_tests {
         let mut pool = MementoPool::default();
         pool.insert_unanchored_for_tests(memento_cid(&assertion_cid), assertion);
         pool.insert_unanchored_for_tests(memento_cid(&vendor_cid), vendor);
-        pool.insert_bridge_by_symbol(source_symbol, generated_cid("linked-post-bridge"), bridge);
+        pool.insert_bridge_by_symbol(source_symbol, bridge_cid.clone(), bridge);
         let cs = CallSite {
             bridge_ir_name: source_symbol.to_string(),
             property_name: "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion".to_string(),
             property_cid: Some(memento_cid(&assertion_cid)),
             ..CallSite::default()
         };
-        (pool, cs)
+        (pool, cs, bridge_cid)
     }
 
     #[test]
     fn linked_assertion_callsite_row_is_owned_by_consistency() {
-        let (pool, cs) = linked_pool_and_callsite();
+        let (pool, cs, _) = linked_pool_and_callsite();
         assert!(callsite_row_is_owned_by_consistency(&cs, &pool));
     }
 
     #[test]
     fn unlinked_assertion_callsite_row_stays_visible() {
-        let (mut pool, cs) = linked_pool_and_callsite();
+        let (mut pool, cs, bridge_cid) = linked_pool_and_callsite();
         pool.bridges_by_symbol.clear();
+        pool.mementos.remove(&bridge_cid);
         assert!(!callsite_row_is_owned_by_consistency(&cs, &pool));
     }
 
