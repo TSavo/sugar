@@ -399,24 +399,18 @@
       "name": "examples/python-guard-shapes/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "verdict-drift/refused-row-expectation",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape verdict-drift/refused-row-expectation; work order #3591",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 33.046,
-      "name": "examples/python-literal-base20/run.sh",
-      "work_order_issue": 3591
+      "grounds": "script exits 0 after #3591: the bad-twin check expected the witness-package row status to equal 'unsatisfied' like the assertion row, but the pipeline correctly emits the distinct terminal status 'refused' for a witness-package row (a solver-unsat assertion is 'unsatisfied'; a witness package that cannot be positively verified is 'refused', matching the convention already used by examples/java-witness-recompute/run.sh). The expectation was stale, not the pipeline; run.sh now asserts witness status == 'refused'.",
+      "last_observed_rc": 0,
+      "name": "examples/python-literal-base20/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "verdict-drift/refused-row-expectation",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape verdict-drift/refused-row-expectation; work order #3591",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 35.587,
-      "name": "examples/python-literal-base64/run.sh",
-      "work_order_issue": 3591
+      "grounds": "script exits 0 after #3591: the bad-twin check expected the witness-package row status to equal 'unsatisfied' like the assertion row, but the pipeline correctly emits the distinct terminal status 'refused' for a witness-package row (a solver-unsat assertion is 'unsatisfied'; a witness package that cannot be positively verified is 'refused', matching the convention already used by examples/java-witness-recompute/run.sh). The expectation was stale, not the pipeline; run.sh now asserts witness status == 'refused'.",
+      "last_observed_rc": 0,
+      "name": "examples/python-literal-base64/run.sh"
     },
     {
       "expected": "GREEN",
