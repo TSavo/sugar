@@ -40,7 +40,13 @@ class SugarBody(Generic[ReductionT_co]):
     audit_row: FactoryAuditRow | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.sugar, ReducibleSugar):
+        # Static typing says self.sugar is always a ReducibleSugar; the runtime
+        # guard stays because SugarBody is still constructed from untyped call
+        # sites (factory build results assembled from Any-typed edges) where
+        # the static type is a promise, not a proof. Boundary law, not dead code.
+        if not isinstance(
+            self.sugar, ReducibleSugar
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise TypeError(
                 "SugarBody.sugar must implement desugar(ctx=None): "
                 f"owner=SugarBody illegal={type(self.sugar).__name__} "
