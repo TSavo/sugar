@@ -2710,7 +2710,16 @@ fn parse_bridge_callsite(
         })?,
         None => false,
     };
-    let file = match object.get("file") {
+    // A producer that does not know a callsite axis emits an explicit JSON
+    // `null` for it (see `bridge_ir_from_resolved_call_edge`'s callsite
+    // sanitization a few hundred lines up, which strips exactly these three
+    // keys when null before building its own bridge). `mint_bridge_from_decl`
+    // hands raw producer IR straight to this parser without going through
+    // that sanitizer, so an explicit `null` must be treated as "axis absent"
+    // here too, not as a malformed value: the axis is genuinely unknown, not
+    // wrong-typed. Filtering `Value::Null` out before validating type keeps
+    // both call paths agreeing on what "absent" means.
+    let file = match object.get("file").filter(|value| !value.is_null()) {
         Some(value) => {
             let file = value.as_str().filter(|s| !s.is_empty()).ok_or_else(|| {
                 format!(
@@ -2722,7 +2731,11 @@ fn parse_bridge_callsite(
         }
         None => None,
     };
-    let line = match object.get("start_line").or_else(|| object.get("line")) {
+    let line = match object
+        .get("start_line")
+        .filter(|value| !value.is_null())
+        .or_else(|| object.get("line").filter(|value| !value.is_null()))
+    {
         Some(value) => Some(value.as_i64().ok_or_else(|| {
             format!(
                 "bridge `{source_symbol}`: callsite.line must be an integer, got {}",
@@ -5711,6 +5724,72 @@ mod tests {
         assert_malformed_bridge_callsite_fails_closed(
             json!({"panicSite": true, "file": "src/lib.rs", "line": "25"}),
             "callsite.line must be an integer",
+        );
+    }
+
+    #[test]
+    fn mint_ir_document_accepts_null_bridge_line_as_absent() {
+        // Regression for #3607: a producer that does not know the callsite
+        // line emits an explicit JSON `null` (not an omitted key). That must
+        // be treated as "axis absent", the same way an omitted key is,
+        // rather than failing closed with "callsite.line must be an
+        // integer, got null" -- the axis is unknown, not malformed.
+        let (bytes, _, _) = mint_from_ir_document(
+            &explicit_bridge_ir_with_callsite(Some(json!({
+                "panicSite": true,
+                "file": "src/lib.rs",
+                "line": Value::Null,
+            }))),
+            None,
+            None,
+            None,
+            Path::new("."),
+            Path::new("."),
+            true,
+        )
+        .expect("null bridge callsite line must be treated as absent, not malformed");
+        let graph = ProofGraph::read(&bytes).expect("decode proof");
+        let header = bridge_header(&graph);
+        assert!(
+            header
+                .get("callsite")
+                .and_then(|callsite| callsite.get("start_line"))
+                .is_none(),
+            "null line must not surface as a start_line axis: {header:#}"
+        );
+    }
+
+    #[test]
+    fn mint_ir_document_accepts_null_bridge_file_as_absent() {
+        let (bytes, _, _) = mint_from_ir_document(
+            &explicit_bridge_ir_with_callsite(Some(json!({
+                "panicSite": true,
+                "file": Value::Null,
+                "line": 25,
+            }))),
+            None,
+            None,
+            None,
+            Path::new("."),
+            Path::new("."),
+            true,
+        )
+        .expect("null bridge callsite file must be treated as absent, not malformed");
+        let graph = ProofGraph::read(&bytes).expect("decode proof");
+        let header = bridge_header(&graph);
+        assert!(
+            header
+                .get("callsite")
+                .and_then(|callsite| callsite.get("file"))
+                .is_none(),
+            "null file must not surface as a file axis: {header:#}"
+        );
+        assert_eq!(
+            header
+                .get("callsite")
+                .and_then(|callsite| callsite.get("start_line")),
+            Some(&json!(25)),
+            "line must still thread through when file is null: {header:#}"
         );
     }
 
