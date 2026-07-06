@@ -3103,7 +3103,7 @@ fn render_report_json(
 ) -> Result<String, serde_json::Error> {
     let value = if let Some(prove_report) = prove_report {
         let mut prove_json = report_fmt::report_to_json(prove_report);
-        layer_support_line_accounting(
+        render_source_partition(
             &mut prove_json,
             prove_report,
             report.project_root.as_deref(),
@@ -3122,13 +3122,15 @@ fn render_report_json(
     })
 }
 
-/// Layer `support` line-accounting entries on top of `report_fmt`'s
-/// warrant/effect entries, for every distinct file the prove report's rows
-/// touch. `report_fmt` cannot do this itself: it has no source-file access.
-/// This is the ONLY place `support` is ever computed (see
-/// `line_accounting` module docs) -- warrant/effect stay owned by
-/// `report_fmt::report_to_json`, never recomputed here.
-fn layer_support_line_accounting(
+/// Render `lineAccounting` and `lineAccountingPartition` from per-file
+/// `SourcePartition`s (see `source_partition` module docs). The partition is
+/// the single source of truth: `lineAccounting` entries and the partition
+/// totals both project from it, and a file whose tiling is not total surfaces
+/// its residue as a LOUD, named construction failure -- never a silent skip.
+/// `report_fmt` cannot do this itself: it has no source-file access, so it
+/// emits only the row-derived warrant/effect claims, which this overwrites
+/// with the tiled result once source is in hand.
+fn render_source_partition(
     prove_json: &mut Value,
     prove_report: &sugar_verifier::Report,
     project_root: Option<&Path>,
@@ -3136,48 +3138,10 @@ fn layer_support_line_accounting(
     let Some(project_root) = project_root else {
         return;
     };
-    let Some(accounting) = prove_json.get_mut("lineAccounting") else {
-        return;
-    };
-    let Some(entries) = accounting.as_array_mut() else {
-        return;
-    };
-
-    let mut claimed_by_file: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
-    for entry in entries.iter() {
-        let (Some(file), Some(line)) = (
-            entry.get("file").and_then(Value::as_str),
-            entry.get("line").and_then(Value::as_u64),
-        ) else {
-            continue;
-        };
-        claimed_by_file
-            .entry(file.to_string())
-            .or_default()
-            .insert(line as usize);
-    }
-
-    let mut files: BTreeSet<String> = BTreeSet::new();
-    for row in &prove_report.rows {
-        if let Some(file) = &row.callsite.file {
-            files.insert(file.clone());
-        }
-    }
-
-    for file in files {
-        let Ok(source_text) = std::fs::read_to_string(project_root.join(&file)) else {
-            continue;
-        };
-        let claimed: std::collections::HashSet<usize> = claimed_by_file
-            .get(&file)
-            .map(|set| set.iter().copied().collect())
-            .unwrap_or_default();
-        let support =
-            crate::line_accounting::support_line_accounting(&file, &source_text, &claimed);
-        for entry in support {
-            entries.push(entry.to_json());
-        }
-    }
+    let (entries, partitions) =
+        crate::source_partition::build_line_accounting(prove_report, project_root);
+    prove_json["lineAccounting"] = Value::Array(entries);
+    prove_json["lineAccountingPartition"] = Value::Array(partitions);
 }
 
 fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, serde_json::Error> {

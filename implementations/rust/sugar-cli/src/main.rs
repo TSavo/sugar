@@ -49,11 +49,11 @@ mod doctor_oracle;
 pub mod floor_runtime_check;
 mod kit_dispatch;
 mod lift_plugin;
-mod line_accounting;
 pub mod panic_annotations_runtime;
 mod project_config;
 mod report_fmt;
 mod report_witness;
+mod source_partition;
 mod witness_verify;
 
 /// Exit codes used across subcommands.
