@@ -321,7 +321,7 @@ from .function_contract import (  # noqa: E402
     FunctionContract,
     FunctionContractBuilder,
 )
-from .refusal_record import RefusalRecord  # noqa: E402
+from .refusal_record import BoundaryRecord, RefusalRecord  # noqa: E402
 from .audit_memento import AuditLocus, AuditMemento  # noqa: E402
 from .call_edge_decl import BridgeAtom, CallEdgeDecl  # noqa: E402
 from .universe_mint import BodyUniverse, UniverseMint  # noqa: E402
@@ -330,7 +330,7 @@ from .vendor_conjoin import FactAtom, UniverseAtom, VendorConjoin  # noqa: E402
 REGISTERED_PROOFIR_NODE_CLASSES: tuple[type[Any], ...] = (
     EqualityFact,
     FunctionContract,
-    RefusalRecord,
+    BoundaryRecord,
 )
 
 _ADDITIONAL_PROOFIR_WITNESS_CLASSES: tuple[type[Any], ...] = (
