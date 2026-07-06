@@ -368,6 +368,14 @@ def _source_contract_bridge_symbol(
         public_class = public_reexports.get(class_symbol)
         if public_class is not None:
             return public_class[1]
+    parts = fn_name.split(".")
+    for index in range(len(parts) - 1, 0, -1):
+        owner_symbol = ".".join(parts[:index])
+        public_owner = public_reexports.get(owner_symbol)
+        if public_owner is None:
+            continue
+        member_suffix = ".".join(parts[index:])
+        return f"{public_owner[1]}.{member_suffix}"
     return fn_name
 
 

@@ -1608,3 +1608,133 @@ def test_public_reexport_map_follows_declared_internal_star_hops(
     assert reexports is not None
     assert reexports["_core.finfo"] == ("project", "project.finfo")
     assert reexports["_core.getlimits.finfo"] == ("project", "project.finfo")
+
+
+def test_public_reexport_map_follows_absolute_package_aggregator_chain(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "project"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from project.core.api import DataFrame\n",
+        encoding="utf-8",
+    )
+    core = package / "core"
+    core.mkdir()
+    (core / "__init__.py").write_text("", encoding="utf-8")
+    (core / "api.py").write_text(
+        "from project.core.frame import DataFrame\n",
+        encoding="utf-8",
+    )
+    (core / "frame.py").write_text("class DataFrame:\n    pass\n", encoding="utf-8")
+
+    reexports = _public_reexport_map(package)
+
+    assert reexports is not None
+    assert reexports["core.api.DataFrame"] == ("project", "project.DataFrame")
+    assert reexports["core.frame.DataFrame"] == ("project", "project.DataFrame")
+
+
+def test_public_reexport_map_follows_nested_api_namespace_and_aliases(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "project"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    api = package / "api" / "indexers"
+    api.mkdir(parents=True)
+    (package / "api" / "__init__.py").write_text(
+        "from project.api import indexers\n",
+        encoding="utf-8",
+    )
+    (api / "__init__.py").write_text(
+        "from project.core.indexers.objects import (\n"
+        "    VariableOffsetWindowIndexer,\n"
+        "    BaseIndexer as PublicBaseIndexer,\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    objects = package / "core" / "indexers"
+    objects.mkdir(parents=True)
+    (package / "core" / "__init__.py").write_text("", encoding="utf-8")
+    (package / "core" / "indexers" / "__init__.py").write_text("", encoding="utf-8")
+    (objects / "objects.py").write_text(
+        "class BaseIndexer:\n    pass\n"
+        "class VariableOffsetWindowIndexer:\n    pass\n",
+        encoding="utf-8",
+    )
+
+    reexports = _public_reexport_map(package)
+
+    assert reexports is not None
+    assert reexports["core.indexers.objects.VariableOffsetWindowIndexer"] == (
+        "project",
+        "project.api.indexers.VariableOffsetWindowIndexer",
+    )
+    assert reexports["core.indexers.objects.BaseIndexer"] == (
+        "project",
+        "project.api.indexers.PublicBaseIndexer",
+    )
+
+
+def test_public_reexport_map_follows_absolute_star_exports(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "project"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    api = package / "api" / "types"
+    api.mkdir(parents=True)
+    (package / "api" / "__init__.py").write_text("", encoding="utf-8")
+    (api / "__init__.py").write_text(
+        "from project.core.dtypes.api import *\n",
+        encoding="utf-8",
+    )
+    dtypes = package / "core" / "dtypes"
+    dtypes.mkdir(parents=True)
+    (package / "core" / "__init__.py").write_text("", encoding="utf-8")
+    (dtypes / "__init__.py").write_text("", encoding="utf-8")
+    (dtypes / "api.py").write_text(
+        "__all__ = ['is_integer_dtype']\n"
+        "def is_integer_dtype(value):\n"
+        "    return True\n",
+        encoding="utf-8",
+    )
+
+    reexports = _public_reexport_map(package)
+
+    assert reexports is not None
+    assert reexports["core.dtypes.api.is_integer_dtype"] == (
+        "project",
+        "project.api.types.is_integer_dtype",
+    )
+
+
+def test_public_reexport_map_prefers_top_level_public_spelling(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "project"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from project.io.parsers.readers import read_fwf\n",
+        encoding="utf-8",
+    )
+    parsers = package / "io" / "parsers"
+    parsers.mkdir(parents=True)
+    (package / "io" / "__init__.py").write_text("", encoding="utf-8")
+    (parsers / "__init__.py").write_text(
+        "from project.io.parsers.readers import read_fwf\n",
+        encoding="utf-8",
+    )
+    (parsers / "readers.py").write_text(
+        "def read_fwf():\n" "    pass\n",
+        encoding="utf-8",
+    )
+
+    reexports = _public_reexport_map(package)
+
+    assert reexports is not None
+    assert reexports["io.parsers.readers.read_fwf"] == (
+        "project",
+        "project.read_fwf",
+    )
