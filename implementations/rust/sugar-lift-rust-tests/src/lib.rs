@@ -5682,11 +5682,14 @@ impl TemporalScope {
     }
 
     /// Whether `name` was mutated through a `&mut` alias without an independent exact
-    /// replay. A direct literal alias assignment like `*p = 1` is an exact replay and
-    /// remains a valid post-state witness. An unreplayed alias mutation has only the
-    /// stale pre-state, while a compound alias mutation like `*p += 1` reuses that prior
-    /// tracked value as part of its own testimony. Both cases must REFUSE rather than
-    /// lift a stale or self-corroborating value (the no-false-refutation gate).
+    /// replay (#3481/#3482). A direct literal alias assignment like `*p = 1` and an
+    /// anchored compound alias rewrite like `*p += 1` both replay through the grounded
+    /// AliasFloor identity and remain valid post-state witnesses; `set_target` applied
+    /// the update through that same base, so there is no second, independent copy of the
+    /// value left to go stale. What must still REFUSE is an alias mutation the tracker
+    /// could not replay at all (untrackable RHS, unroutable alias shape, unresolved
+    /// severance): those never reach a replayed base and instead carry a typed
+    /// `unknown_mutation_reason`, per the no-false-refutation gate.
     pub(crate) fn is_alias_deref_mutated(&self, name: &str) -> bool {
         self.alias_deref_mutation_needs_refusal(name)
     }
@@ -5697,8 +5700,7 @@ impl TemporalScope {
         }
         let temporal_rewrite = self.temporal_rewrite.borrow();
         temporal_rewrite.unknown_mutation_reason(name).is_none()
-            && (!temporal_rewrite.replayed_mutable_alias_base(name)
-                || temporal_rewrite.compound_alias_rewrite_needs_refusal(name))
+            && !temporal_rewrite.replayed_mutable_alias_base(name)
     }
 
     /// Whether `name` is a TEMPORALLY-UNSTABLE loop counter (mutated in a loop the tracker
