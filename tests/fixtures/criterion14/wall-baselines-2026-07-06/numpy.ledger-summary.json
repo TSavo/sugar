@@ -1,0 +1,16 @@
+{
+  "contracts": 1526,
+  "diagnosticsCount": 46240,
+  "hasLineAccounting": false,
+  "package": "numpy",
+  "sourceAuditsCount": 1511,
+  "sourceLedger": {
+    "source_boundary": 0,
+    "source_inactive": 0,
+    "source_loci": 1511,
+    "source_support": 0,
+    "source_unresolved": 0,
+    "source_warranted": 1511,
+    "unclassified_source": 0
+  }
+}

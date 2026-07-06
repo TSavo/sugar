@@ -1,0 +1,21 @@
+{
+  "package": "sklearn",
+  "measured": false,
+  "failureShape": "lift-plugin-transport-error",
+  "exitCode": 2,
+  "sugarBinPath": "target/release/sugar (built from #3730-era main, source stamp 9e31823685f0270437e77f49b60529a3252030407a9bad730ba804e61d4e7f4f40771e560537225357022da5b2ea2f2cdacab95b06771ea63fd962ca04ebb431)",
+  "diagnostic": {
+    "code": -32603,
+    "message": "write more Floor for this Construction: owner=BinOpSugar blame=sklearn/datasets/tests/test_base.py:497:16 observed=SymbolicValue/StringValue requested=binary operator operand floor fix=add BinaryOperatorOperation support for SymbolicValue / StringValue",
+    "info": {
+      "owner": "BinOpSugar",
+      "blame": "sklearn/datasets/tests/test_base.py:497:16",
+      "observed": "SymbolicValue/StringValue",
+      "requested": "binary operator operand floor",
+      "fix": "add BinaryOperatorOperation support for SymbolicValue / StringValue",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction"
+    }
+  },
+  "note": "The whole-package lift dies loudly on this floor gap (a named, LiftPluginDiagnosticPayload error, not a bare string and not a silent skip) before any sourceLedger is emitted. R for sklearn is unmeasured until BinaryOperatorOperation support for a String rhs of `/` is added -- see #3731 retirement path column."
+}
