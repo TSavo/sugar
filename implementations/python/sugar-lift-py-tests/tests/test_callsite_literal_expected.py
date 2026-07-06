@@ -81,7 +81,7 @@ def test_numeric_expected_and_nested_array_arg_record_downstream_refusal():
         "numpy.rot90#euf#c:call:numpy.rot90(c:array(c:array(i:1,i:2),c:array(i:3,i:4)))::assertion"
     ]
     refusals = [
-        row for row in rep.payload.diagnostics if row.get("kind") == "dig-refusal"
+        row for row in rep.payload.diagnostics if row.get("kind") == "dig-boundary"
     ]
     observed = " ".join(row.get("reason", "") for row in refusals)
     assert "callsite-expected:Constant" not in observed

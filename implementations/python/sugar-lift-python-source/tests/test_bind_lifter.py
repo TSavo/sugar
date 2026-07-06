@@ -894,7 +894,7 @@ def test_bind_effects_lower_to_legacy_materialize_results_once() -> None:
         "file": "app.py",
         "function": "my_add",
         "symbol": "numpy.missing",
-        "outcome": "refused",
+        "outcome": "boundary",
         "reason": "no sugar binding for symbol `numpy.missing` in scope",
     }
 
@@ -907,7 +907,7 @@ def test_bind_effects_lower_to_legacy_materialize_results_once() -> None:
         "file": "app.py",
         "function": "my_add",
         "symbol": "numpy.add",
-        "outcome": "refused",
+        "outcome": "boundary",
         "reason": "boundary body must be on its own line(s)",
     }
 
@@ -1114,7 +1114,7 @@ def test_refuse_decorator_emits_refusal_memento() -> None:
     assert result.diagnostics == []
     assert len(result.ir) == 1
     entry = result.ir[0]
-    assert entry["kind"] == "refusal-memento"
+    assert entry["kind"] == "concept-gap-memento"
     assert entry["target_language"] == "python"
     assert entry["surface"] == "sqlite3.Connection.backup"
     assert entry["concept"] == "concept:sql-physical-backup"
@@ -1142,7 +1142,7 @@ def test_refuse_decorator_sugar_namespace_also_recognized() -> None:
     assert result.diagnostics == []
     assert len(result.ir) == 1
     entry = result.ir[0]
-    assert entry["kind"] == "refusal-memento"
+    assert entry["kind"] == "concept-gap-memento"
     assert entry["surface"] == "sqlite3.Connection.backup"
 
 
@@ -1160,7 +1160,7 @@ def test_refuse_missing_field_produces_diagnostic_not_ir() -> None:
     )
     result = lift_source(source, "shim.py", layer="library-bindings")
     assert len(result.ir) == 0
-    assert any(d["kind"] == "refusal-memento-invalid" for d in result.diagnostics)
+    assert any(d["kind"] == "concept-gap-memento-invalid" for d in result.diagnostics)
 
 
 def test_sugar_and_refuse_coexist_in_same_file() -> None:
@@ -1189,7 +1189,28 @@ def test_sugar_and_refuse_coexist_in_same_file() -> None:
     assert result.diagnostics == []
     kinds = [e["kind"] for e in result.ir]
     assert kinds.count("library-sugar-binding-entry") == 1
-    assert kinds.count("refusal-memento") == 1
+    assert kinds.count("concept-gap-memento") == 1
+
+
+def test_concept_gap_decorator_new_spelling_emits_concept_gap_memento() -> None:
+    source = (
+        "from sugar import concept_gap\n"
+        "\n"
+        "@concept_gap(\n"
+        '    surface="sqlite3.Connection.backup",\n'
+        '    concept="concept:sql-physical-backup",\n'
+        '    reason="SQLite-binary-specific physical backup. N=1 across connection-level APIs.",\n'
+        '    would_close_with_cluster="Connection-level physical-backup method on >=2 SQL drivers",\n'
+        ")\n"
+        "class BackupConceptGap:\n"
+        "    pass\n"
+    )
+    result = lift_source(source, "shim.py", layer="library-bindings")
+    assert result.diagnostics == []
+    assert len(result.ir) == 1
+    entry = result.ir[0]
+    assert entry["kind"] == "concept-gap-memento"
+    assert entry["surface"] == "sqlite3.Connection.backup"
 
 
 def test_layer_all_emits_both_bind_entry_and_language_neutral_entry() -> None:

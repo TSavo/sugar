@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal, Never, NoReturn
 
 from .coverage_gap_effect import CoverageGapEffect
-from .dig_refusal_effect import DigRefusalEffect
+from .dig_refusal_effect import DigBoundaryEffect
 from .factory_gap_effect import FactoryGapEffect
 from .raise_effect import RaiseEffect
 from .runtime_effect import RuntimeEffect
@@ -14,7 +14,7 @@ Effect = (
     | RuntimeEffect
     | CoverageGapEffect
     | FactoryGapEffect
-    | DigRefusalEffect
+    | DigBoundaryEffect
     | SourceOracleEffect
 )
 
@@ -23,6 +23,10 @@ EffectStatus = Literal[
     "runtime-effect",
     "coverage-gap",
     "factory-gap",
+    "dig-boundary",
+    # #3632 legacy: DigBoundaryEffect (né DigRefusalEffect) used to report
+    # this status as "dig-refusal". Kept in the type for read compatibility
+    # with any status value produced by an older kit build.
     "dig-refusal",
     "absent",
     "drifted",
@@ -37,7 +41,7 @@ def require_effect(effect: object) -> Effect:
             RuntimeEffect,
             CoverageGapEffect,
             FactoryGapEffect,
-            DigRefusalEffect,
+            DigBoundaryEffect,
             SourceOracleEffect,
         ),
     ):
@@ -45,7 +49,7 @@ def require_effect(effect: object) -> Effect:
     raise TypeError(
         "Incomplete.effect must be a typed Effect "
         "(RaiseEffect | RuntimeEffect | CoverageGapEffect | FactoryGapEffect | "
-        "DigRefusalEffect | SourceOracleEffect)"
+        "DigBoundaryEffect | SourceOracleEffect)"
     )
 
 
@@ -58,8 +62,8 @@ def effect_kind(effect: Effect) -> str:
         return "CoverageGap"
     if isinstance(effect, FactoryGapEffect):
         return "FactoryGap"
-    if isinstance(effect, DigRefusalEffect):
-        return "DigRefusal"
+    if isinstance(effect, DigBoundaryEffect):
+        return "DigBoundary"
     if isinstance(effect, SourceOracleEffect):
         return "SourceOracleEffect"
     return _unhandled_effect(effect)
@@ -74,7 +78,7 @@ def effect_reason(effect: Effect) -> str:
         return effect.reason
     if isinstance(effect, FactoryGapEffect):
         return effect.reason
-    if isinstance(effect, DigRefusalEffect):
+    if isinstance(effect, DigBoundaryEffect):
         return effect.reason
     if isinstance(effect, SourceOracleEffect):
         return effect.reason
@@ -90,8 +94,8 @@ def effect_status(effect: Effect) -> EffectStatus:
         return "coverage-gap"
     if isinstance(effect, FactoryGapEffect):
         return "factory-gap"
-    if isinstance(effect, DigRefusalEffect):
-        return "dig-refusal"
+    if isinstance(effect, DigBoundaryEffect):
+        return "dig-boundary"
     if isinstance(effect, SourceOracleEffect):
         return effect.status
     return _unhandled_effect(effect)
@@ -99,3 +103,7 @@ def effect_status(effect: Effect) -> EffectStatus:
 
 def _unhandled_effect(effect: Never) -> NoReturn:
     raise TypeError(f"unhandled Effect arm: {type(effect).__name__}")
+
+
+# Compatibility alias: pre-#3632 code imports `DigRefusalEffect`.
+DigRefusalEffect = DigBoundaryEffect

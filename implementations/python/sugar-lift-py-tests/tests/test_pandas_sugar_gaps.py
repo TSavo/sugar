@@ -280,7 +280,7 @@ def test_pandas_function_universe_with_module_global_refuses_before_proofir_scop
     dig_refusals = [
         row
         for row in report.payload.diagnostics
-        if isinstance(row, dict) and row.get("kind") == "dig-refusal"
+        if isinstance(row, dict) and row.get("kind") == "dig-boundary"
     ]
     matching = [
         row

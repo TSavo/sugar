@@ -5,8 +5,13 @@ from typing import Any
 
 
 @dataclass(frozen=True)
-class DigRefusal:
-    """A tower the digger declined to climb, recorded instead of hidden."""
+class DigBoundary:
+    """A tower the digger declined to climb, recorded instead of hidden.
+
+    #3632: this is a typed effect with grounds, not a refusal -- the class
+    was previously named `DigRefusal`. `DigRefusal` remains a compatibility
+    alias below for existing importers.
+    """
 
     callee: str
     blame: str
@@ -20,3 +25,7 @@ class DigRefusal:
 
     def to_rpc(self) -> dict[str, Any]:
         return self.to_json()
+
+
+# Compatibility alias: pre-#3632 code imports `DigRefusal`.
+DigRefusal = DigBoundary

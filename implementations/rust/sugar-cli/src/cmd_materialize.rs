@@ -175,10 +175,16 @@ pub fn run(args: MaterializeArgs) -> u8 {
         }
     };
 
-    let refused = results
-        .iter()
-        .filter(|r| r.get("outcome").and_then(Value::as_str) == Some("refused"))
-        .count();
+    // #3632: the kit's materialize outcome for an unbound/malshaped symbol is
+    // named "boundary" (typed effect, not a verifier refusal). Accept the
+    // legacy "refused" spelling forever for old kit builds / persisted runs.
+    let is_boundary_outcome = |r: &&Value| {
+        matches!(
+            r.get("outcome").and_then(Value::as_str),
+            Some("refused") | Some("boundary")
+        )
+    };
+    let refused = results.iter().filter(is_boundary_outcome).count();
     let materialized = results
         .iter()
         .filter(|r| r.get("outcome").and_then(Value::as_str) == Some("materialized"))
@@ -214,7 +220,7 @@ pub fn run(args: MaterializeArgs) -> u8 {
                         syms.join(", ")
                     );
                 }
-                "refused" => {
+                "refused" | "boundary" => {
                     let reason = r.get("reason").and_then(Value::as_str).unwrap_or("");
                     println!("  {} {}: {}", "REFUSED".red().bold(), file, reason);
                 }

@@ -554,6 +554,7 @@ def _callable_source_audit(
         "source_inactive": 0,
         "source_support": 0,
         "source_refused": 0,
+        "source_boundary": 0,
         "source_unresolved": 0,
         "unclassified_source": 0,
     }
@@ -602,6 +603,7 @@ def _source_audit(
         "source_inactive": 0,
         "source_support": 0,
         "source_refused": 0,
+        "source_boundary": 0,
         "source_unresolved": 0,
         "unclassified_source": 0,
     }
@@ -793,6 +795,7 @@ def _source_ledger(source_loci: int) -> dict[str, int]:
         "source_inactive": 0,
         "source_support": 0,
         "source_refused": 0,
+        "source_boundary": 0,
         "source_unresolved": 0,
         "unclassified_source": 0,
     }

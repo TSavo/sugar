@@ -305,7 +305,7 @@ def _assert_lift_doc_contains_node_class(doc: dict, case) -> None:
         # lowering, not as a new serialized field.
         assert _has_function_contract(doc), doc
     elif case.node_class == "RefusalRecord":
-        assert any(d.get("kind") == "dig-refusal" for d in doc.get("diagnostics", []))
+        assert any(d.get("kind") == "dig-boundary" for d in doc.get("diagnostics", []))
         assert not _has_function_contract(doc), doc
     else:
         raise AssertionError(f"unknown witness node class: {case.node_class!r}")

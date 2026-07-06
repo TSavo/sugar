@@ -391,7 +391,7 @@ def test_refusal_record_gap_effects_are_typed_before_legacy_lowering() -> None:
     dig_record = RefusalRecord.from_gap(dig, provenance=_refusal_provenance())
 
     assert isinstance(dig_record.effect, DigRefusalEffect)
-    assert dig_record.effect_kind == "DigRefusal"
+    assert dig_record.effect_kind == "DigBoundary"
     assert dig_record.reason == "cannot climb"
     assert dig_record.to_declaration()["reason"] == "cannot climb"
 
