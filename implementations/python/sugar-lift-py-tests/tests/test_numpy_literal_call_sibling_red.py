@@ -197,6 +197,108 @@ def test_numpy_maximum_and_minimum_reduce_to_sibling_fact(
     }
 
 
+@pytest.mark.parametrize(
+    ("left", "right", "truth", "lie"),
+    [
+        (7, 2, "3.5", "3"),
+        (-7, 2, "-3.5", "3.5"),
+        (1, 4, "0.25", "0.5"),
+        (6, 3, "2", "2.5"),
+    ],
+)
+def test_numpy_divide_reduces_to_sibling_fact(
+    tmp_path: Path,
+    left: int,
+    right: int,
+    truth: str,
+    lie: str,
+) -> None:
+    """np.divide over literal numeric operands is IEEE-754 true division; the
+    kit computes it with Python's own ``/`` and never imports or executes
+    numpy.
+
+    Boundary: division by zero is a permanent stop-line (see
+    ``test_numpy_divide_by_zero_stays_opaque``), not a floored inf/nan value.
+    """
+
+    truthful = _run_numpy_divide_case(
+        tmp_path / f"divide-{left}-{right}-truthful", left, right, truth
+    )
+    lying = _run_numpy_divide_case(
+        tmp_path / f"divide-{left}-{right}-lying", left, right, lie
+    )
+    observed = {"truthful": truthful.to_json(), "lying": lying.to_json()}
+    print(json.dumps(observed, indent=2, sort_keys=True))
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+    truthful_rows = _numpy_euf_rows(truthful.result, "numpy.divide")
+    assert _real_rhs_values(truthful_rows) == [truth]
+    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+
+    lying_rows = _numpy_euf_rows(lying.result, "numpy.divide")
+    assert set(_real_rhs_values(lying_rows)) == {truth, lie}
+    assert {_real_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
+        truth: {"Derived"},
+        lie: {"Stated"},
+    }
+
+
+def test_numpy_divide_by_zero_stays_opaque(tmp_path: Path) -> None:
+    """Division by zero is a permanent stop-line: numpy's IEEE inf/nan/warning
+    behavior is not reproduced, so no Derived sibling fact is fabricated."""
+
+    observed = _run_case(
+        tmp_path / "divide-by-zero",
+        "import numpy as np\n"
+        "\n"
+        "def test_np_divide_by_zero():\n"
+        "    assert np.divide(1, 0) == 1\n",
+    )
+    print(json.dumps(observed.to_json(), indent=2, sort_keys=True))
+
+    assert observed.verdict.startswith("error:")
+    assert not any(
+        "Derived" in _warrant_kinds(row)
+        for row in _numpy_euf_rows(observed.result, "numpy.divide")
+    )
+
+
+def _run_numpy_divide_case(
+    project: Path,
+    left: int,
+    right: int,
+    expected: str,
+) -> CaseResult:
+    return _run_case(
+        project,
+        "import numpy as np\n"
+        "\n"
+        f"def test_np_divide_{abs(left)}_{abs(right)}_"
+        f"{abs(hash(expected)) % 100000}():\n"
+        f"    assert np.divide({left}, {right}) == {expected}\n",
+    )
+
+
+def _real_rhs_values(rows: list[dict]) -> list[str]:
+    return sorted(_real_rhs_value(row) for row in rows)
+
+
+def _real_rhs_value(row: dict) -> str:
+    # Int embeds in Real losslessly: an INTEGRAL divide result (e.g. 6/3 == 2)
+    # projects through the Int ctor to agree with a plain-int sibling, while a
+    # genuinely fractional result (e.g. 7/2 == 3.5) needs the Real ctor. Both
+    # are the numeric RHS this helper compares against the source's decimal
+    # literal text, so normalize to the same canonical string either way.
+    rhs = row["inv"]["args"][1]
+    assert rhs["kind"] == "const"
+    assert rhs["sort"]["name"] in {"Int", "Real"}
+    if rhs["sort"]["name"] == "Int":
+        return str(rhs["value"])
+    return rhs["value"]
+
+
 def test_numpy_power_reduces_only_when_integer_result_is_int64_exact(
     tmp_path: Path,
 ) -> None:
@@ -240,13 +342,6 @@ def test_numpy_power_reduces_only_when_integer_result_is_int64_exact(
 @pytest.mark.parametrize(
     ("label", "source"),
     [
-        (
-            "divide",
-            "import numpy as np\n"
-            "\n"
-            "def test_np_divide_opaque():\n"
-            "    assert np.divide(4, 2) == 2\n",
-        ),
         (
             "sin",
             "import numpy as np\n"
