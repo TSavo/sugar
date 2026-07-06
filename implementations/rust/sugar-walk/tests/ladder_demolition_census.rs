@@ -115,27 +115,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 4227,
-        enclosing_fn: "block_only_panics",
-        family: "panic-loop-effects",
-        max_signals: 3,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 2002,
-        enclosing_fn: "collect_guarded_panic_effects_in_expr",
-        family: "panic-loop-effects",
-        max_signals: 40,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 1901,
-        enclosing_fn: "collect_guarded_panic_effects_in_stmt",
-        family: "panic-loop-effects",
-        max_signals: 4,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
         line: 3225,
         enclosing_fn: "collect_pat_bound_idents_lift",
         family: "patterns-types-call-edges",
@@ -147,13 +126,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
         enclosing_fn: "collect_pat_names",
         family: "patterns-types-call-edges",
         max_signals: 16,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 2162,
-        enclosing_fn: "collect_statement_pure_free_guard_facts",
-        family: "panic-loop-effects",
-        max_signals: 40,
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
@@ -196,34 +168,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
         enclosing_fn: "type_mentions_ident",
         family: "patterns-types-call-edges",
         max_signals: 5,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/loops_and_exceptions.rs",
-        line: 357,
-        enclosing_fn: "collect_assigned_root",
-        family: "panic-loop-effects",
-        max_signals: 40,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/loops_and_exceptions.rs",
-        line: 204,
-        enclosing_fn: "collect_mutated_in_expr",
-        family: "panic-loop-effects",
-        max_signals: 40,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/loops_and_exceptions.rs",
-        line: 458,
-        enclosing_fn: "lift_match_arm_postconditions",
-        family: "panic-loop-effects",
-        max_signals: 2,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/loops_and_exceptions.rs",
-        line: 110,
-        enclosing_fn: "visit_stmt_for_loops",
-        family: "panic-loop-effects",
-        max_signals: 4,
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/walk.rs",
@@ -706,6 +650,27 @@ fn wp_contract_seeds_family_is_drained() {
         wp_sites.is_empty(),
         "{}",
         report_json(&observed, &wp_sites, &[], &[])
+    );
+}
+
+#[test]
+fn panic_loop_effects_family_is_drained() {
+    // #3441 S7: block_only_panics, collect_guarded_panic_effects_in_expr/stmt,
+    // collect_statement_pure_free_guard_facts, collect_assigned_root,
+    // collect_mutated_in_expr, lift_match_arm_postconditions,
+    // visit_stmt_for_loops -- the family's eight ladder sites, all demolished
+    // to sequential if-let chains.
+    let observed = collect_ladder_sites(&repo_root());
+    let panic_loop_sites = observed
+        .iter()
+        .filter(|site| site.key.family == "panic-loop-effects")
+        .cloned()
+        .collect::<Vec<_>>();
+
+    assert!(
+        panic_loop_sites.is_empty(),
+        "{}",
+        report_json(&observed, &panic_loop_sites, &[], &[])
     );
 }
 

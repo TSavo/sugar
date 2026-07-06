@@ -100,6 +100,10 @@ pub fn extract_loop_mementos(item_fn: &ItemFn, pre_loop_default: &Wp) -> Vec<Loo
     out
 }
 
+// #3027 S7: was a 3-arm match over `Stmt` (the ladder-demolition census's
+// `panic-loop-effects` row). Now a sequential `if let` chain; `Stmt::Macro`
+// and `Stmt::Item` keep the exact same no-op fail-safe the original combined
+// wildcard arm had.
 fn visit_stmt_for_loops(
     stmt: &Stmt,
     fn_name: &str,
@@ -107,17 +111,17 @@ fn visit_stmt_for_loops(
     pre_loop: &Wp,
     out: &mut Vec<LoopMemento>,
 ) {
-    match stmt {
-        Stmt::Local(local) => {
-            if let Some(init) = &local.init {
-                visit_expr_for_loops(&init.expr, fn_name, source_index, pre_loop, out);
-            }
+    if let Stmt::Local(local) = stmt {
+        if let Some(init) = &local.init {
+            visit_expr_for_loops(&init.expr, fn_name, source_index, pre_loop, out);
         }
-        Stmt::Expr(expr, _) => {
-            visit_expr_for_loops(expr, fn_name, source_index, pre_loop, out);
-        }
-        Stmt::Macro(_) | Stmt::Item(_) => {}
+        return;
     }
+    if let Stmt::Expr(expr, _) = stmt {
+        visit_expr_for_loops(expr, fn_name, source_index, pre_loop, out);
+        return;
+    }
+    // Stmt::Macro(_) | Stmt::Item(_): no-op, same as the original wildcard arm.
 }
 
 fn visit_expr_for_loops(
@@ -200,207 +204,293 @@ fn collect_mutated_in_stmt(stmt: &Stmt, names: &mut Vec<String>) {
     }
 }
 
+// #3027 S7: was a single ~40-arm match over `syn::Expr` (the ladder-demolition
+// census's `panic-loop-effects` row). Now a sequential `if let` chain, same
+// relative order as the original arms. The trailing no-op groups
+// (`Expr::Closure`, then the closed Continue/Infer/Lit/Macro/Path/Verbatim
+// set) and the final unknown-variant panic are unchanged verbatim.
 fn collect_mutated_in_expr(expr: &Expr, names: &mut Vec<String>) {
-    match expr {
-        Expr::Assign(a) => {
-            collect_assigned_root(&a.left, names);
-            collect_mutated_in_expr(&a.left, names);
-            collect_mutated_in_expr(&a.right, names);
-        }
-        Expr::Call(call) => {
-            collect_mutated_in_expr(&call.func, names);
-            for arg in &call.args {
-                collect_mutated_in_expr(arg, names);
-            }
-        }
-        Expr::MethodCall(method) => {
-            collect_mutated_in_expr(&method.receiver, names);
-            for arg in &method.args {
-                collect_mutated_in_expr(arg, names);
-            }
-        }
-        Expr::Binary(b) => {
-            collect_mutated_in_expr(&b.left, names);
-            collect_mutated_in_expr(&b.right, names);
-        }
-        Expr::Block(b) => {
-            for s in &b.block.stmts {
-                collect_mutated_in_stmt(s, names);
-            }
-        }
-        Expr::If(i) => {
-            collect_mutated_in_expr(&i.cond, names);
-            for s in &i.then_branch.stmts {
-                collect_mutated_in_stmt(s, names);
-            }
-            if let Some((_, else_e)) = &i.else_branch {
-                collect_mutated_in_expr(else_e, names);
-            }
-        }
-        Expr::Match(m) => {
-            collect_mutated_in_expr(&m.expr, names);
-            for arm in &m.arms {
-                if let Some((_, guard)) = &arm.guard {
-                    collect_mutated_in_expr(guard, names);
-                }
-                collect_mutated_in_expr(&arm.body, names);
-            }
-        }
-        Expr::While(w) => {
-            collect_mutated_in_expr(&w.cond, names);
-            for s in &w.body.stmts {
-                collect_mutated_in_stmt(s, names);
-            }
-        }
-        Expr::ForLoop(f) => {
-            collect_mutated_in_expr(&f.expr, names);
-            for s in &f.body.stmts {
-                collect_mutated_in_stmt(s, names);
-            }
-        }
-        Expr::Loop(l) => {
-            for s in &l.body.stmts {
-                collect_mutated_in_stmt(s, names);
-            }
-        }
-        Expr::Async(a) => {
-            for s in &a.block.stmts {
-                collect_mutated_in_stmt(s, names);
-            }
-        }
-        Expr::Const(c) => {
-            for s in &c.block.stmts {
-                collect_mutated_in_stmt(s, names);
-            }
-        }
-        Expr::TryBlock(t) => {
-            for s in &t.block.stmts {
-                collect_mutated_in_stmt(s, names);
-            }
-        }
-        Expr::Unsafe(u) => {
-            for s in &u.block.stmts {
-                collect_mutated_in_stmt(s, names);
-            }
-        }
-        Expr::Unary(u) => collect_mutated_in_expr(&u.expr, names),
-        Expr::Cast(c) => collect_mutated_in_expr(&c.expr, names),
-        Expr::Paren(p) => collect_mutated_in_expr(&p.expr, names),
-        Expr::Group(g) => collect_mutated_in_expr(&g.expr, names),
-        Expr::Reference(r) => collect_mutated_in_expr(&r.expr, names),
-        Expr::RawAddr(r) => collect_mutated_in_expr(&r.expr, names),
-        Expr::Field(f) => collect_mutated_in_expr(&f.base, names),
-        Expr::Index(i) => {
-            collect_mutated_in_expr(&i.expr, names);
-            collect_mutated_in_expr(&i.index, names);
-        }
-        Expr::Range(r) => {
-            if let Some(start) = &r.start {
-                collect_mutated_in_expr(start, names);
-            }
-            if let Some(end) = &r.end {
-                collect_mutated_in_expr(end, names);
-            }
-        }
-        Expr::Tuple(t) => {
-            for e in &t.elems {
-                collect_mutated_in_expr(e, names);
-            }
-        }
-        Expr::Array(a) => {
-            for e in &a.elems {
-                collect_mutated_in_expr(e, names);
-            }
-        }
-        Expr::Repeat(r) => {
-            collect_mutated_in_expr(&r.expr, names);
-            collect_mutated_in_expr(&r.len, names);
-        }
-        Expr::Struct(s) => {
-            for field in &s.fields {
-                collect_mutated_in_expr(&field.expr, names);
-            }
-            if let Some(rest) = &s.rest {
-                collect_mutated_in_expr(rest, names);
-            }
-        }
-        Expr::Return(r) => {
-            if let Some(inner) = &r.expr {
-                collect_mutated_in_expr(inner, names);
-            }
-        }
-        Expr::Break(b) => {
-            if let Some(inner) = &b.expr {
-                collect_mutated_in_expr(inner, names);
-            }
-        }
-        Expr::Yield(y) => {
-            if let Some(inner) = &y.expr {
-                collect_mutated_in_expr(inner, names);
-            }
-        }
-        Expr::Try(t) => collect_mutated_in_expr(&t.expr, names),
-        Expr::Await(a) => collect_mutated_in_expr(&a.base, names),
-        Expr::Let(l) => collect_mutated_in_expr(&l.expr, names),
-        Expr::Closure(_) => {}
-        Expr::Continue(_)
-        | Expr::Infer(_)
-        | Expr::Lit(_)
-        | Expr::Macro(_)
-        | Expr::Path(_)
-        | Expr::Verbatim(_) => {}
-        _ => panic!("sugar-walk loop mutation collector refused unknown syn::Expr variant"),
+    if let Expr::Assign(a) = expr {
+        collect_assigned_root(&a.left, names);
+        collect_mutated_in_expr(&a.left, names);
+        collect_mutated_in_expr(&a.right, names);
+        return;
     }
+    if let Expr::Call(call) = expr {
+        collect_mutated_in_expr(&call.func, names);
+        for arg in &call.args {
+            collect_mutated_in_expr(arg, names);
+        }
+        return;
+    }
+    if let Expr::MethodCall(method) = expr {
+        collect_mutated_in_expr(&method.receiver, names);
+        for arg in &method.args {
+            collect_mutated_in_expr(arg, names);
+        }
+        return;
+    }
+    if let Expr::Binary(b) = expr {
+        collect_mutated_in_expr(&b.left, names);
+        collect_mutated_in_expr(&b.right, names);
+        return;
+    }
+    if let Expr::Block(b) = expr {
+        for s in &b.block.stmts {
+            collect_mutated_in_stmt(s, names);
+        }
+        return;
+    }
+    if let Expr::If(i) = expr {
+        collect_mutated_in_expr(&i.cond, names);
+        for s in &i.then_branch.stmts {
+            collect_mutated_in_stmt(s, names);
+        }
+        if let Some((_, else_e)) = &i.else_branch {
+            collect_mutated_in_expr(else_e, names);
+        }
+        return;
+    }
+    if let Expr::Match(m) = expr {
+        collect_mutated_in_expr(&m.expr, names);
+        for arm in &m.arms {
+            if let Some((_, guard)) = &arm.guard {
+                collect_mutated_in_expr(guard, names);
+            }
+            collect_mutated_in_expr(&arm.body, names);
+        }
+        return;
+    }
+    if let Expr::While(w) = expr {
+        collect_mutated_in_expr(&w.cond, names);
+        for s in &w.body.stmts {
+            collect_mutated_in_stmt(s, names);
+        }
+        return;
+    }
+    if let Expr::ForLoop(f) = expr {
+        collect_mutated_in_expr(&f.expr, names);
+        for s in &f.body.stmts {
+            collect_mutated_in_stmt(s, names);
+        }
+        return;
+    }
+    if let Expr::Loop(l) = expr {
+        for s in &l.body.stmts {
+            collect_mutated_in_stmt(s, names);
+        }
+        return;
+    }
+    if let Expr::Async(a) = expr {
+        for s in &a.block.stmts {
+            collect_mutated_in_stmt(s, names);
+        }
+        return;
+    }
+    if let Expr::Const(c) = expr {
+        for s in &c.block.stmts {
+            collect_mutated_in_stmt(s, names);
+        }
+        return;
+    }
+    if let Expr::TryBlock(t) = expr {
+        for s in &t.block.stmts {
+            collect_mutated_in_stmt(s, names);
+        }
+        return;
+    }
+    if let Expr::Unsafe(u) = expr {
+        for s in &u.block.stmts {
+            collect_mutated_in_stmt(s, names);
+        }
+        return;
+    }
+    if let Expr::Unary(u) = expr {
+        collect_mutated_in_expr(&u.expr, names);
+        return;
+    }
+    if let Expr::Cast(c) = expr {
+        collect_mutated_in_expr(&c.expr, names);
+        return;
+    }
+    if let Expr::Paren(p) = expr {
+        collect_mutated_in_expr(&p.expr, names);
+        return;
+    }
+    if let Expr::Group(g) = expr {
+        collect_mutated_in_expr(&g.expr, names);
+        return;
+    }
+    if let Expr::Reference(r) = expr {
+        collect_mutated_in_expr(&r.expr, names);
+        return;
+    }
+    if let Expr::RawAddr(r) = expr {
+        collect_mutated_in_expr(&r.expr, names);
+        return;
+    }
+    if let Expr::Field(f) = expr {
+        collect_mutated_in_expr(&f.base, names);
+        return;
+    }
+    if let Expr::Index(i) = expr {
+        collect_mutated_in_expr(&i.expr, names);
+        collect_mutated_in_expr(&i.index, names);
+        return;
+    }
+    if let Expr::Range(r) = expr {
+        if let Some(start) = &r.start {
+            collect_mutated_in_expr(start, names);
+        }
+        if let Some(end) = &r.end {
+            collect_mutated_in_expr(end, names);
+        }
+        return;
+    }
+    if let Expr::Tuple(t) = expr {
+        for e in &t.elems {
+            collect_mutated_in_expr(e, names);
+        }
+        return;
+    }
+    if let Expr::Array(a) = expr {
+        for e in &a.elems {
+            collect_mutated_in_expr(e, names);
+        }
+        return;
+    }
+    if let Expr::Repeat(r) = expr {
+        collect_mutated_in_expr(&r.expr, names);
+        collect_mutated_in_expr(&r.len, names);
+        return;
+    }
+    if let Expr::Struct(s) = expr {
+        for field in &s.fields {
+            collect_mutated_in_expr(&field.expr, names);
+        }
+        if let Some(rest) = &s.rest {
+            collect_mutated_in_expr(rest, names);
+        }
+        return;
+    }
+    if let Expr::Return(r) = expr {
+        if let Some(inner) = &r.expr {
+            collect_mutated_in_expr(inner, names);
+        }
+        return;
+    }
+    if let Expr::Break(b) = expr {
+        if let Some(inner) = &b.expr {
+            collect_mutated_in_expr(inner, names);
+        }
+        return;
+    }
+    if let Expr::Yield(y) = expr {
+        if let Some(inner) = &y.expr {
+            collect_mutated_in_expr(inner, names);
+        }
+        return;
+    }
+    if let Expr::Try(t) = expr {
+        collect_mutated_in_expr(&t.expr, names);
+        return;
+    }
+    if let Expr::Await(a) = expr {
+        collect_mutated_in_expr(&a.base, names);
+        return;
+    }
+    if let Expr::Let(l) = expr {
+        collect_mutated_in_expr(&l.expr, names);
+        return;
+    }
+    if let Expr::Closure(_) = expr {
+        return;
+    }
+    if matches!(
+        expr,
+        Expr::Continue(_)
+            | Expr::Infer(_)
+            | Expr::Lit(_)
+            | Expr::Macro(_)
+            | Expr::Path(_)
+            | Expr::Verbatim(_)
+    ) {
+        return;
+    }
+    panic!("sugar-walk loop mutation collector refused unknown syn::Expr variant")
 }
 
+// #3027 S7: was a single ~40-arm match over `syn::Expr` (the ladder-demolition
+// census's `panic-loop-effects` row). Now a sequential `if let` chain; the
+// closed no-op group and the trailing unknown-variant panic are unchanged
+// verbatim.
 fn collect_assigned_root(expr: &Expr, names: &mut Vec<String>) {
-    match expr {
-        Expr::Path(p) => {
-            if let Some(seg) = p.path.segments.last() {
-                names.push(seg.ident.to_string());
-            }
+    if let Expr::Path(p) = expr {
+        if let Some(seg) = p.path.segments.last() {
+            names.push(seg.ident.to_string());
         }
-        Expr::Field(f) => collect_assigned_root(&f.base, names),
-        Expr::Index(i) => collect_assigned_root(&i.expr, names),
-        Expr::Paren(p) => collect_assigned_root(&p.expr, names),
-        Expr::Group(g) => collect_assigned_root(&g.expr, names),
-        Expr::Reference(r) => collect_assigned_root(&r.expr, names),
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::MethodCall(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::Verbatim(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => {}
-        _ => panic!("sugar-walk loop assignment collector refused unknown syn::Expr variant"),
+        return;
     }
+    if let Expr::Field(f) = expr {
+        collect_assigned_root(&f.base, names);
+        return;
+    }
+    if let Expr::Index(i) = expr {
+        collect_assigned_root(&i.expr, names);
+        return;
+    }
+    if let Expr::Paren(p) = expr {
+        collect_assigned_root(&p.expr, names);
+        return;
+    }
+    if let Expr::Group(g) = expr {
+        collect_assigned_root(&g.expr, names);
+        return;
+    }
+    if let Expr::Reference(r) = expr {
+        collect_assigned_root(&r.expr, names);
+        return;
+    }
+    if matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::MethodCall(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::Verbatim(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    ) {
+        return;
+    }
+    panic!("sugar-walk loop assignment collector refused unknown syn::Expr variant")
 }
 
 fn mint_loop_memento(
@@ -454,10 +544,12 @@ pub struct ArmPost {
 /// expression. Returns one ArmPost per arm. If the body does not end
 /// in a match (or the match shape isn't recognized), returns an empty
 /// vector.
+// #3027 S7: was a 2-arm match with a wildcard fallthrough (the
+// ladder-demolition census's `panic-loop-effects` row). Now an `if let`/`else`
+// check; the same `Vec::new()` fail-safe for every other tail-statement shape.
 pub fn lift_match_arm_postconditions(item_fn: &ItemFn) -> Vec<ArmPost> {
-    let last = match item_fn.block.stmts.last() {
-        Some(Stmt::Expr(Expr::Match(m), _)) => m,
-        _ => return Vec::new(),
+    let Some(Stmt::Expr(Expr::Match(last), _)) = item_fn.block.stmts.last() else {
+        return Vec::new();
     };
     let mut out = Vec::with_capacity(last.arms.len());
     for arm in &last.arms {

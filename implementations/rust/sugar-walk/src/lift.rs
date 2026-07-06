@@ -2180,261 +2180,290 @@ fn collect_guarded_panic_effects_in_stmts(
     }
 }
 
+// #3027 S7: was a 3-arm match over `Stmt` (the ladder-demolition census's
+// `panic-loop-effects` row). Now a sequential `if let` chain; `Stmt::Macro`
+// and `Stmt::Item` keep the exact same no-op fail-safe the original combined
+// wildcard arm had.
 fn collect_guarded_panic_effects_in_stmt(
     stmt: &Stmt,
     ctx: &mut LiftCtx,
     guard_facts: &mut StatementGuardFacts,
     out: &mut Vec<IrFormula>,
 ) {
-    match stmt {
-        Stmt::Local(local) => {
-            if let Some(init) = &local.init {
-                collect_guarded_panic_effects_in_expr(&init.expr, ctx, guard_facts, out);
-                invalidate_statement_guard_facts_for_expr_effects(&init.expr, guard_facts);
-            }
-            invalidate_statement_guard_facts_for_pat(&local.pat, guard_facts);
-            if let Some((root, source)) = keyset_snapshot_for_local(local, ctx) {
-                guard_facts.keyset_snapshots.insert(root, source);
-            }
+    if let Stmt::Local(local) = stmt {
+        if let Some(init) = &local.init {
+            collect_guarded_panic_effects_in_expr(&init.expr, ctx, guard_facts, out);
+            invalidate_statement_guard_facts_for_expr_effects(&init.expr, guard_facts);
         }
-        Stmt::Expr(expr, _) => {
-            collect_guarded_panic_effects_in_expr(expr, ctx, guard_facts, out);
-            invalidate_statement_guard_facts_for_expr_effects(expr, guard_facts);
+        invalidate_statement_guard_facts_for_pat(&local.pat, guard_facts);
+        if let Some((root, source)) = keyset_snapshot_for_local(local, ctx) {
+            guard_facts.keyset_snapshots.insert(root, source);
         }
-        Stmt::Macro(_) | Stmt::Item(_) => {}
+        return;
     }
+    if let Stmt::Expr(expr, _) = stmt {
+        collect_guarded_panic_effects_in_expr(expr, ctx, guard_facts, out);
+        invalidate_statement_guard_facts_for_expr_effects(expr, guard_facts);
+        return;
+    }
+    // Stmt::Macro(_) | Stmt::Item(_): no-op, same as the original wildcard arm.
 }
 
+// #3027 S7: was a single ~40-arm match over `syn::Expr` (the ladder-demolition
+// census's `panic-loop-effects` row). Now a sequential `if let` chain, same
+// relative order as the original arms (order is inert; variants are mutually
+// exclusive). The trailing no-op group and the two trailing panics (uninterpreted
+// verbatim, unknown variant) are unchanged verbatim.
 fn collect_guarded_panic_effects_in_expr(
     expr: &Expr,
     ctx: &mut LiftCtx,
     guard_facts: &mut StatementGuardFacts,
     out: &mut Vec<IrFormula>,
 ) {
-    match expr {
-        Expr::If(if_expr) => {
-            collect_guarded_panic_effects_in_expr(&if_expr.cond, ctx, guard_facts, out);
-            invalidate_statement_guard_facts_for_expr_effects(&if_expr.cond, guard_facts);
-            let saved_guard_facts = guard_facts.clone();
-            let mut branch_guard_facts = Vec::new();
-            if expr_effect_mutation_roots(&if_expr.cond).is_empty() {
-                collect_statement_pure_free_guard_facts(
-                    &if_expr.cond,
-                    ctx,
-                    &mut branch_guard_facts,
-                );
-            } else {
-                debug!(
-                    "lift_function_postcondition: refusing pure-free statement guard facts from mutating if condition"
-                );
+    if let Expr::If(if_expr) = expr {
+        collect_guarded_panic_effects_in_expr(&if_expr.cond, ctx, guard_facts, out);
+        invalidate_statement_guard_facts_for_expr_effects(&if_expr.cond, guard_facts);
+        let saved_guard_facts = guard_facts.clone();
+        let mut branch_guard_facts = Vec::new();
+        if expr_effect_mutation_roots(&if_expr.cond).is_empty() {
+            collect_statement_pure_free_guard_facts(&if_expr.cond, ctx, &mut branch_guard_facts);
+        } else {
+            debug!(
+                "lift_function_postcondition: refusing pure-free statement guard facts from mutating if condition"
+            );
+        }
+        guard_facts.pure_free.extend(branch_guard_facts);
+        collect_guarded_panic_effects_in_stmts(&if_expr.then_branch.stmts, ctx, guard_facts, out);
+        *guard_facts = saved_guard_facts;
+        if let Some((_, else_expr)) = &if_expr.else_branch {
+            collect_guarded_panic_effects_in_expr(else_expr, ctx, guard_facts, out);
+        }
+        return;
+    }
+    if let Expr::While(while_expr) = expr {
+        collect_guarded_panic_effects_in_expr(&while_expr.cond, ctx, guard_facts, out);
+        invalidate_statement_guard_facts_for_expr_effects(&while_expr.cond, guard_facts);
+        let saved_guard_facts = guard_facts.clone();
+        collect_guarded_panic_effects_in_stmts(&while_expr.body.stmts, ctx, guard_facts, out);
+        *guard_facts = saved_guard_facts;
+        return;
+    }
+    if let Expr::Loop(loop_expr) = expr {
+        let saved_guard_facts = guard_facts.clone();
+        collect_guarded_panic_effects_in_stmts(&loop_expr.body.stmts, ctx, guard_facts, out);
+        *guard_facts = saved_guard_facts;
+        return;
+    }
+    if let Expr::ForLoop(for_loop) = expr {
+        collect_guarded_panic_effects_in_expr(&for_loop.expr, ctx, guard_facts, out);
+        invalidate_statement_guard_facts_for_expr_effects(&for_loop.expr, guard_facts);
+        let saved_guard_facts = guard_facts.clone();
+        ctx.push_frame();
+        bind_pat_idents_lift(&for_loop.pat, ctx);
+        guard_facts.resolved.extend(keyset_guard_facts_for_for_loop(
+            for_loop,
+            ctx,
+            &saved_guard_facts.keyset_snapshots,
+        ));
+        collect_guarded_panic_effects_in_stmts(&for_loop.body.stmts, ctx, guard_facts, out);
+        ctx.pop_frame();
+        *guard_facts = saved_guard_facts;
+        return;
+    }
+    if let Expr::Block(block) = expr {
+        collect_guarded_panic_effects_in_stmts(&block.block.stmts, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Unsafe(unsafe_expr) = expr {
+        collect_guarded_panic_effects_in_stmts(&unsafe_expr.block.stmts, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::TryBlock(try_block) = expr {
+        collect_guarded_panic_effects_in_stmts(&try_block.block.stmts, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Assign(assign) = expr {
+        collect_guarded_panic_effects_in_child_expr(&assign.left, ctx, guard_facts, out);
+        collect_guarded_panic_effects_in_child_expr(&assign.right, ctx, guard_facts, out);
+        let roots = statement_expr_assignment_roots(&assign.left);
+        invalidate_statement_guard_facts_for_roots(&roots, guard_facts);
+        return;
+    }
+    if let Expr::Binary(binary) = expr {
+        collect_guarded_panic_effects_in_child_expr(&binary.left, ctx, guard_facts, out);
+        collect_guarded_panic_effects_in_child_expr(&binary.right, ctx, guard_facts, out);
+        if binop_is_assignment_lift(&binary.op) {
+            let roots = statement_expr_assignment_roots(&binary.left);
+            invalidate_statement_guard_facts_for_roots(&roots, guard_facts);
+        }
+        return;
+    }
+    if let Expr::Call(call) = expr {
+        collect_guarded_panic_effects_in_child_expr(&call.func, ctx, guard_facts, out);
+        for arg in &call.args {
+            collect_guarded_panic_effects_in_child_expr(arg, ctx, guard_facts, out);
+        }
+        return;
+    }
+    if let Expr::Match(match_expr) = expr {
+        collect_guarded_panic_effects_in_child_expr(&match_expr.expr, ctx, guard_facts, out);
+        let saved_guard_facts = guard_facts.clone();
+        for arm in &match_expr.arms {
+            let mut arm_guard_facts = saved_guard_facts.clone();
+            ctx.push_frame();
+            bind_pat_idents_lift(&arm.pat, ctx);
+            invalidate_statement_guard_facts_for_pat(&arm.pat, &mut arm_guard_facts);
+            if let Some((_, guard)) = &arm.guard {
+                collect_guarded_panic_effects_in_child_expr(guard, ctx, &mut arm_guard_facts, out);
             }
-            guard_facts.pure_free.extend(branch_guard_facts);
-            collect_guarded_panic_effects_in_stmts(
-                &if_expr.then_branch.stmts,
+            collect_guarded_panic_effects_in_expr(&arm.body, ctx, &mut arm_guard_facts, out);
+            ctx.pop_frame();
+        }
+        *guard_facts = saved_guard_facts;
+        return;
+    }
+    if let Expr::MethodCall(method) = expr {
+        if let Some(formula) = statement_guarded_panic_effect_for_method(method, ctx, guard_facts) {
+            out.push(formula);
+        }
+        collect_guarded_panic_effects_in_child_expr(&method.receiver, ctx, guard_facts, out);
+        for arg in &method.args {
+            collect_guarded_panic_effects_in_child_expr(arg, ctx, guard_facts, out);
+        }
+        return;
+    }
+    if let Expr::Paren(paren) = expr {
+        collect_guarded_panic_effects_in_expr(&paren.expr, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Group(group) = expr {
+        collect_guarded_panic_effects_in_expr(&group.expr, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Reference(reference) = expr {
+        collect_guarded_panic_effects_in_expr(&reference.expr, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Tuple(tuple) = expr {
+        for elem in &tuple.elems {
+            collect_guarded_panic_effects_in_child_expr(elem, ctx, guard_facts, out);
+        }
+        return;
+    }
+    if let Expr::Array(array) = expr {
+        for elem in &array.elems {
+            collect_guarded_panic_effects_in_child_expr(elem, ctx, guard_facts, out);
+        }
+        return;
+    }
+    if let Expr::Repeat(repeat) = expr {
+        collect_guarded_panic_effects_in_child_expr(&repeat.expr, ctx, guard_facts, out);
+        collect_guarded_panic_effects_in_child_expr(&repeat.len, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Range(range) = expr {
+        if let Some(start) = &range.start {
+            collect_guarded_panic_effects_in_child_expr(start, ctx, guard_facts, out);
+        }
+        if let Some(end) = &range.end {
+            collect_guarded_panic_effects_in_child_expr(end, ctx, guard_facts, out);
+        }
+        return;
+    }
+    if let Expr::Cast(cast) = expr {
+        collect_guarded_panic_effects_in_expr(&cast.expr, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Field(field) = expr {
+        collect_guarded_panic_effects_in_expr(&field.base, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Index(index) = expr {
+        collect_guarded_panic_effects_in_child_expr(&index.expr, ctx, guard_facts, out);
+        collect_guarded_panic_effects_in_child_expr(&index.index, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Await(await_expr) = expr {
+        if let Expr::Async(async_expr) = await_expr.base.as_ref() {
+            collect_guarded_panic_effects_in_stmts(&async_expr.block.stmts, ctx, guard_facts, out);
+        } else {
+            collect_guarded_panic_effects_in_child_expr(
+                await_expr.base.as_ref(),
                 ctx,
                 guard_facts,
                 out,
             );
-            *guard_facts = saved_guard_facts;
-            if let Some((_, else_expr)) = &if_expr.else_branch {
-                collect_guarded_panic_effects_in_expr(else_expr, ctx, guard_facts, out);
-            }
         }
-        Expr::While(while_expr) => {
-            collect_guarded_panic_effects_in_expr(&while_expr.cond, ctx, guard_facts, out);
-            invalidate_statement_guard_facts_for_expr_effects(&while_expr.cond, guard_facts);
-            let saved_guard_facts = guard_facts.clone();
-            collect_guarded_panic_effects_in_stmts(&while_expr.body.stmts, ctx, guard_facts, out);
-            *guard_facts = saved_guard_facts;
-        }
-        Expr::Loop(loop_expr) => {
-            let saved_guard_facts = guard_facts.clone();
-            collect_guarded_panic_effects_in_stmts(&loop_expr.body.stmts, ctx, guard_facts, out);
-            *guard_facts = saved_guard_facts;
-        }
-        Expr::ForLoop(for_loop) => {
-            collect_guarded_panic_effects_in_expr(&for_loop.expr, ctx, guard_facts, out);
-            invalidate_statement_guard_facts_for_expr_effects(&for_loop.expr, guard_facts);
-            let saved_guard_facts = guard_facts.clone();
-            ctx.push_frame();
-            bind_pat_idents_lift(&for_loop.pat, ctx);
-            guard_facts.resolved.extend(keyset_guard_facts_for_for_loop(
-                for_loop,
-                ctx,
-                &saved_guard_facts.keyset_snapshots,
-            ));
-            collect_guarded_panic_effects_in_stmts(&for_loop.body.stmts, ctx, guard_facts, out);
-            ctx.pop_frame();
-            *guard_facts = saved_guard_facts;
-        }
-        Expr::Block(block) => {
-            collect_guarded_panic_effects_in_stmts(&block.block.stmts, ctx, guard_facts, out);
-        }
-        Expr::Unsafe(unsafe_expr) => {
-            collect_guarded_panic_effects_in_stmts(&unsafe_expr.block.stmts, ctx, guard_facts, out);
-        }
-        Expr::TryBlock(try_block) => {
-            collect_guarded_panic_effects_in_stmts(&try_block.block.stmts, ctx, guard_facts, out);
-        }
-        Expr::Assign(assign) => {
-            collect_guarded_panic_effects_in_child_expr(&assign.left, ctx, guard_facts, out);
-            collect_guarded_panic_effects_in_child_expr(&assign.right, ctx, guard_facts, out);
-            let roots = statement_expr_assignment_roots(&assign.left);
-            invalidate_statement_guard_facts_for_roots(&roots, guard_facts);
-        }
-        Expr::Binary(binary) => {
-            collect_guarded_panic_effects_in_child_expr(&binary.left, ctx, guard_facts, out);
-            collect_guarded_panic_effects_in_child_expr(&binary.right, ctx, guard_facts, out);
-            if binop_is_assignment_lift(&binary.op) {
-                let roots = statement_expr_assignment_roots(&binary.left);
-                invalidate_statement_guard_facts_for_roots(&roots, guard_facts);
-            }
-        }
-        Expr::Call(call) => {
-            collect_guarded_panic_effects_in_child_expr(&call.func, ctx, guard_facts, out);
-            for arg in &call.args {
-                collect_guarded_panic_effects_in_child_expr(arg, ctx, guard_facts, out);
-            }
-        }
-        Expr::Match(match_expr) => {
-            collect_guarded_panic_effects_in_child_expr(&match_expr.expr, ctx, guard_facts, out);
-            let saved_guard_facts = guard_facts.clone();
-            for arm in &match_expr.arms {
-                let mut arm_guard_facts = saved_guard_facts.clone();
-                ctx.push_frame();
-                bind_pat_idents_lift(&arm.pat, ctx);
-                invalidate_statement_guard_facts_for_pat(&arm.pat, &mut arm_guard_facts);
-                if let Some((_, guard)) = &arm.guard {
-                    collect_guarded_panic_effects_in_child_expr(
-                        guard,
-                        ctx,
-                        &mut arm_guard_facts,
-                        out,
-                    );
-                }
-                collect_guarded_panic_effects_in_expr(&arm.body, ctx, &mut arm_guard_facts, out);
-                ctx.pop_frame();
-            }
-            *guard_facts = saved_guard_facts;
-        }
-        Expr::MethodCall(method) => {
-            if let Some(formula) =
-                statement_guarded_panic_effect_for_method(method, ctx, guard_facts)
-            {
-                out.push(formula);
-            }
-            collect_guarded_panic_effects_in_child_expr(&method.receiver, ctx, guard_facts, out);
-            for arg in &method.args {
-                collect_guarded_panic_effects_in_child_expr(arg, ctx, guard_facts, out);
-            }
-        }
-        Expr::Paren(paren) => {
-            collect_guarded_panic_effects_in_expr(&paren.expr, ctx, guard_facts, out)
-        }
-        Expr::Group(group) => {
-            collect_guarded_panic_effects_in_expr(&group.expr, ctx, guard_facts, out)
-        }
-        Expr::Reference(reference) => {
-            collect_guarded_panic_effects_in_expr(&reference.expr, ctx, guard_facts, out)
-        }
-        Expr::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                collect_guarded_panic_effects_in_child_expr(elem, ctx, guard_facts, out);
-            }
-        }
-        Expr::Array(array) => {
-            for elem in &array.elems {
-                collect_guarded_panic_effects_in_child_expr(elem, ctx, guard_facts, out);
-            }
-        }
-        Expr::Repeat(repeat) => {
-            collect_guarded_panic_effects_in_child_expr(&repeat.expr, ctx, guard_facts, out);
-            collect_guarded_panic_effects_in_child_expr(&repeat.len, ctx, guard_facts, out);
-        }
-        Expr::Range(range) => {
-            if let Some(start) = &range.start {
-                collect_guarded_panic_effects_in_child_expr(start, ctx, guard_facts, out);
-            }
-            if let Some(end) = &range.end {
-                collect_guarded_panic_effects_in_child_expr(end, ctx, guard_facts, out);
-            }
-        }
-        Expr::Cast(cast) => {
-            collect_guarded_panic_effects_in_expr(&cast.expr, ctx, guard_facts, out)
-        }
-        Expr::Field(field) => {
-            collect_guarded_panic_effects_in_expr(&field.base, ctx, guard_facts, out)
-        }
-        Expr::Index(index) => {
-            collect_guarded_panic_effects_in_child_expr(&index.expr, ctx, guard_facts, out);
-            collect_guarded_panic_effects_in_child_expr(&index.index, ctx, guard_facts, out);
-        }
-        Expr::Await(await_expr) => match await_expr.base.as_ref() {
-            Expr::Async(async_expr) => {
-                collect_guarded_panic_effects_in_stmts(
-                    &async_expr.block.stmts,
-                    ctx,
-                    guard_facts,
-                    out,
-                );
-            }
-            base => collect_guarded_panic_effects_in_child_expr(base, ctx, guard_facts, out),
-        },
-        Expr::Break(break_expr) => {
-            if let Some(expr) = &break_expr.expr {
-                collect_guarded_panic_effects_in_child_expr(expr, ctx, guard_facts, out);
-            }
-        }
-        Expr::Const(const_expr) => {
-            collect_guarded_panic_effects_in_stmts(&const_expr.block.stmts, ctx, guard_facts, out);
-        }
-        Expr::Let(let_expr) => {
-            collect_guarded_panic_effects_in_child_expr(&let_expr.expr, ctx, guard_facts, out);
-            invalidate_statement_guard_facts_for_pat(&let_expr.pat, guard_facts);
-        }
-        Expr::RawAddr(raw_addr) => {
-            collect_guarded_panic_effects_in_expr(&raw_addr.expr, ctx, guard_facts, out)
-        }
-        Expr::Return(return_expr) => {
-            if let Some(expr) = &return_expr.expr {
-                collect_guarded_panic_effects_in_child_expr(expr, ctx, guard_facts, out);
-            }
-        }
-        Expr::Struct(struct_expr) => {
-            for field in &struct_expr.fields {
-                collect_guarded_panic_effects_in_child_expr(&field.expr, ctx, guard_facts, out);
-            }
-            if let Some(rest) = &struct_expr.rest {
-                collect_guarded_panic_effects_in_child_expr(rest, ctx, guard_facts, out);
-            }
-        }
-        Expr::Try(try_expr) => {
-            collect_guarded_panic_effects_in_child_expr(&try_expr.expr, ctx, guard_facts, out);
-        }
-        Expr::Unary(unary) => {
-            collect_guarded_panic_effects_in_expr(&unary.expr, ctx, guard_facts, out)
-        }
-        Expr::Yield(yield_expr) => {
-            if let Some(expr) = &yield_expr.expr {
-                collect_guarded_panic_effects_in_child_expr(expr, ctx, guard_facts, out);
-            }
-        }
-        // Closure and async block bodies are delayed work, not immediate effects
-        // of evaluating the expression that creates them. Expression macros are
-        // opaque to this unwrap/expect guard collector; if they expand to
-        // panics, the precondition panic collector owns those explicit patterns.
-        Expr::Async(_)
-        | Expr::Closure(_)
-        | Expr::Continue(_)
-        | Expr::Infer(_)
-        | Expr::Lit(_)
-        | Expr::Macro(_)
-        | Expr::Path(_) => {}
-        Expr::Verbatim(_) => {
-            panic!("sugar-walk guarded panic collector refused uninterpreted verbatim expression")
-        }
-        _ => panic!("sugar-walk guarded panic collector refused unknown syn::Expr variant"),
+        return;
     }
+    if let Expr::Break(break_expr) = expr {
+        if let Some(expr) = &break_expr.expr {
+            collect_guarded_panic_effects_in_child_expr(expr, ctx, guard_facts, out);
+        }
+        return;
+    }
+    if let Expr::Const(const_expr) = expr {
+        collect_guarded_panic_effects_in_stmts(&const_expr.block.stmts, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Let(let_expr) = expr {
+        collect_guarded_panic_effects_in_child_expr(&let_expr.expr, ctx, guard_facts, out);
+        invalidate_statement_guard_facts_for_pat(&let_expr.pat, guard_facts);
+        return;
+    }
+    if let Expr::RawAddr(raw_addr) = expr {
+        collect_guarded_panic_effects_in_expr(&raw_addr.expr, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Return(return_expr) = expr {
+        if let Some(expr) = &return_expr.expr {
+            collect_guarded_panic_effects_in_child_expr(expr, ctx, guard_facts, out);
+        }
+        return;
+    }
+    if let Expr::Struct(struct_expr) = expr {
+        for field in &struct_expr.fields {
+            collect_guarded_panic_effects_in_child_expr(&field.expr, ctx, guard_facts, out);
+        }
+        if let Some(rest) = &struct_expr.rest {
+            collect_guarded_panic_effects_in_child_expr(rest, ctx, guard_facts, out);
+        }
+        return;
+    }
+    if let Expr::Try(try_expr) = expr {
+        collect_guarded_panic_effects_in_child_expr(&try_expr.expr, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Unary(unary) = expr {
+        collect_guarded_panic_effects_in_expr(&unary.expr, ctx, guard_facts, out);
+        return;
+    }
+    if let Expr::Yield(yield_expr) = expr {
+        if let Some(expr) = &yield_expr.expr {
+            collect_guarded_panic_effects_in_child_expr(expr, ctx, guard_facts, out);
+        }
+        return;
+    }
+    // Closure and async block bodies are delayed work, not immediate effects
+    // of evaluating the expression that creates them. Expression macros are
+    // opaque to this unwrap/expect guard collector; if they expand to
+    // panics, the precondition panic collector owns those explicit patterns.
+    if matches!(
+        expr,
+        Expr::Async(_)
+            | Expr::Closure(_)
+            | Expr::Continue(_)
+            | Expr::Infer(_)
+            | Expr::Lit(_)
+            | Expr::Macro(_)
+            | Expr::Path(_)
+    ) {
+        return;
+    }
+    if let Expr::Verbatim(_) = expr {
+        panic!("sugar-walk guarded panic collector refused uninterpreted verbatim expression")
+    }
+    panic!("sugar-walk guarded panic collector refused unknown syn::Expr variant")
 }
 
 fn collect_guarded_panic_effects_in_child_expr(
@@ -2447,67 +2476,85 @@ fn collect_guarded_panic_effects_in_child_expr(
     invalidate_statement_guard_facts_for_expr_effects(expr, guard_facts);
 }
 
+// #3027 S7: was a single ~40-arm match over `syn::Expr` (the ladder-demolition
+// census's `panic-loop-effects` row). Now a sequential `if let` chain. The
+// original's guard-fails-still-falls-through behavior is preserved explicitly:
+// an `Expr::Binary` whose op is not `BinOp::And` does NOT return early, so
+// control falls through the `MethodCall`/`Paren`/`Group` recognizers (none of
+// which match a `Binary`) down to the closed no-op group below, which still
+// lists `Expr::Binary(_)` -- exactly the fallthrough the original arm order
+// produced.
 fn collect_statement_pure_free_guard_facts(
     expr: &Expr,
     ctx: &mut LiftCtx,
     facts: &mut Vec<StatementPureFreeGuardFact>,
 ) {
-    match expr {
-        Expr::Binary(binary) if matches!(binary.op, BinOp::And(_)) => {
+    if let Expr::Binary(binary) = expr {
+        if matches!(binary.op, BinOp::And(_)) {
             collect_statement_pure_free_guard_facts(&binary.left, ctx, facts);
             collect_statement_pure_free_guard_facts(&binary.right, ctx, facts);
-        }
-        Expr::MethodCall(method) => {
-            if let Some(fact) = statement_pure_free_guard_fact_for_is_some(method, ctx) {
-                facts.push(fact);
-            }
-        }
-        Expr::Paren(paren) => collect_statement_pure_free_guard_facts(&paren.expr, ctx, facts),
-        Expr::Group(group) => collect_statement_pure_free_guard_facts(&group.expr, ctx, facts),
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::Field(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::Path(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Reference(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => {}
-        Expr::Verbatim(_) => {
-            panic!("sugar-walk pure-free guard collector refused uninterpreted verbatim expression")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk pure-free guard collector refused unknown syn::Expr variant")
+            return;
         }
     }
+    if let Expr::MethodCall(method) = expr {
+        if let Some(fact) = statement_pure_free_guard_fact_for_is_some(method, ctx) {
+            facts.push(fact);
+        }
+        return;
+    }
+    if let Expr::Paren(paren) = expr {
+        collect_statement_pure_free_guard_facts(&paren.expr, ctx, facts);
+        return;
+    }
+    if let Expr::Group(group) = expr {
+        collect_statement_pure_free_guard_facts(&group.expr, ctx, facts);
+        return;
+    }
+    if matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::Field(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::Path(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Reference(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    ) {
+        return;
+    }
+    if let Expr::Verbatim(_) = expr {
+        panic!("sugar-walk pure-free guard collector refused uninterpreted verbatim expression")
+    }
+    panic!("sugar-walk pure-free guard collector refused unknown syn::Expr variant")
 }
 
 fn statement_pure_free_guard_fact_for_is_some(
@@ -4867,15 +4914,21 @@ fn bin_op_to_predicate_name(op: &BinOp) -> Option<&'static str> {
     }
 }
 
+// #3027 S7: was a 2-arm match over `Stmt` with a wildcard fallthrough (the
+// ladder-demolition census's `panic-loop-effects` row). Now a sequential
+// `if let`/`else` chain claiming the same two macro-bearing statement shapes,
+// same `return false` fail-safe for everything else.
 fn block_only_panics(block: &syn::Block) -> bool {
     if block.stmts.len() != 1 {
         return false;
     }
     let stmt = &block.stmts[0];
-    let mac: &Macro = match stmt {
-        Stmt::Expr(Expr::Macro(ExprMacro { mac, .. }), _) => mac,
-        Stmt::Macro(StmtMacro { mac, .. }) => mac,
-        _ => return false,
+    let mac: &Macro = if let Stmt::Expr(Expr::Macro(ExprMacro { mac, .. }), _) = stmt {
+        mac
+    } else if let Stmt::Macro(StmtMacro { mac, .. }) = stmt {
+        mac
+    } else {
+        return false;
     };
     let Some(segment) = mac.path.segments.last() else {
         return false;
