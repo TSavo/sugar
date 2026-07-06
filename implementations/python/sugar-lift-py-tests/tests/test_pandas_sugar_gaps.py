@@ -15,6 +15,7 @@ from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.floor import (
+    ArrayLiteral,
     BoolValue,
     CallSiteValue,
     FloorValue,
@@ -451,6 +452,36 @@ def test_pandas_callsite_attribute_production_path_is_typed_red(
     }
     assert "callsite attribute runtime boundary" in row["reason"]
     assert "`constructor.dtype`" in row["reason"]
+
+
+def test_pandas_array_literal_concat_preserves_order_and_items() -> None:
+    outcome, selected = _term_outcome("[1] * 2 + [3]")
+
+    value = complete_value(outcome, owner="pandas array concat")
+    assert value == ArrayLiteral((TermValue(1), TermValue(1), TermValue(3)))
+    assert value != ArrayLiteral((TermValue(1), TermValue(3), TermValue(1)))
+    assert "ArrayLiteralSugar" in selected
+    assert "BinOpSugar" in selected
+
+
+def test_pandas_array_literal_concat_discharges_and_refutes(tmp_path: Path) -> None:
+    _assert_production_pair(
+        tmp_path,
+        name="array-literal-concat",
+        selected=("BinOpSugar", "StringSubscriptSugar"),
+        truthful=(
+            "def A(x):\n"
+            "    return ([1] * x + [3])[2]\n\n"
+            "def test_array_literal_concat():\n"
+            "    assert A(2) == 3\n"
+        ),
+        lying=(
+            "def A(x):\n"
+            "    return ([1] * x + [3])[2]\n\n"
+            "def test_array_literal_concat():\n"
+            "    assert A(2) == 4\n"
+        ),
+    )
 
 
 def test_pandas_string_repeat_reduces_to_string_value() -> None:
