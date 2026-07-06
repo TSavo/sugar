@@ -177,9 +177,8 @@ pub fn run(args: MaterializeArgs) -> u8 {
 
     // #3632: the kit's materialize outcome for an unbound/malshaped symbol is
     // named "boundary" (typed effect, not a verifier refusal).
-    let is_boundary_outcome = |r: &&Value| {
-        matches!(r.get("outcome").and_then(Value::as_str), Some("boundary"))
-    };
+    let is_boundary_outcome =
+        |r: &&Value| matches!(r.get("outcome").and_then(Value::as_str), Some("boundary"));
     let refused = results.iter().filter(is_boundary_outcome).count();
     let materialized = results
         .iter()
