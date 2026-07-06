@@ -46,7 +46,7 @@ class SourceFragment:
     @classmethod
     def from_node(cls, node: object, filename: str) -> "SourceFragment":
         # A container node (Module) has no position; it is never a site itself, only a
-        # source of fragments, so default its position rather than refuse to wrap it.
+        # source of fragments, so default its position rather than fail to wrap it.
         # Block is the factory's synthetic suite node; SourceFragment is the sole
         # gateway allowed to carry it beside real ast nodes.
         if not isinstance(node, (ast.AST, Block)):
@@ -618,7 +618,7 @@ class SourceFragment:
         """Return key/value fragments for a Dict expression.
 
         A ``None`` key is Python's ``**mapping`` spread form; callers decide whether
-        that shape belongs in their term vocabulary or should refuse.
+        that shape belongs in their term vocabulary or should emit a typed effect.
         """
         self._require(ast.Dict)
         return [

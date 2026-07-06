@@ -15,8 +15,8 @@ class CommentSugar(Sugar, role=SugarRole.STATEMENT):
     """A comment: a docstring / bare-string statement. It is inert metadata -- present
     in the source and doing nothing: no first-order logic, no scope, no effect. The
     factory composes a CommentSugar, which classifies the node as Support in the source
-    audit: it always completes and never constrains. Neither refused nor silently
-    dropped. A comment is a STATEMENT (a member of a block); its OUTCOME is Support --
+    audit: it always completes and never constrains. Neither a typed effect nor
+    silently dropped. A comment is a STATEMENT (a member of a block); its OUTCOME is Support --
     the role is the dispatch key, not the category."""
 
     @classmethod

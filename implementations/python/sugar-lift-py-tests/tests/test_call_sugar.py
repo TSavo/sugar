@@ -1,8 +1,9 @@
 """CallSugar -- the dumb call shell + its strategies (CALLSUGAR_REFACTOR_GOAL.md).
 
-Step 2 scope: the dumb shell (owns=shape, build=router, desugar=delegate) and the real
-RefuseStrategy. BridgeStrategy / AssertionFactStrategy (the in-body EUF bridge + dig, and
-the sworn fact) land in Steps 3-4 with their own tests. No NotImplementedError stubs here.
+Step 2 scope: the dumb shell (owns=shape, build=router, desugar=delegate) and the
+real FactoryGapStrategy. BridgeStrategy / AssertionFactStrategy (the in-body EUF
+bridge + dig, and the sworn fact) land in Steps 3-4 with their own tests. No
+NotImplementedError stubs here.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.call_sugar import (
     CallSugar,
     ExternalBridgeStrategy,
-    RefuseStrategy,
+    FactoryGapStrategy,
 )
 
 
@@ -67,10 +68,10 @@ def test_build_is_a_single_delegation_no_context_branch():
 @pytest.mark.parametrize(
     "expr", ["np.divide(6, 2)", "np.add(2, 3)", "numpy_testing.assert_equal(a, b)"]
 )
-def test_unresolved_call_builds_a_callsugar_with_refusestrategy_not_a_crash(expr):
+def test_unresolved_call_builds_a_callsugar_with_factory_gap_strategy_not_a_crash(expr):
     body, _ = _build(expr)
     assert isinstance(body.sugar, CallSugar)
-    assert isinstance(body.sugar.strategy, RefuseStrategy)
+    assert isinstance(body.sugar.strategy, FactoryGapStrategy)
 
 
 def test_addsugar_no_longer_claims_np_add():
@@ -93,17 +94,17 @@ def test_import_bound_external_call_builds_bridge_strategy():
     assert body.sugar.strategy.target_name == "math.sqrt"
 
 
-# --- RefuseStrategy emits a LOUD typed effect, never a silent lift ------------------------
+# --- FactoryGapStrategy emits a LOUD typed effect, never a silent lift --------------------
 
 
-def test_refuse_strategy_emits_a_named_factory_gap_effect_on_reduce():
+def test_factory_gap_strategy_emits_a_named_factory_gap_effect_on_reduce():
     body, ctx = _build("np.divide(6, 2)")
     effect = _reduce_gap_effect(body, ctx)
     assert effect.observed == "call-method:divide"
     assert "divide" in effect.fix
 
 
-def test_refuse_strategy_classifies_builtin_call_frontier():
+def test_factory_gap_strategy_classifies_builtin_call_frontier():
     body, ctx = _build("sum(value)")
 
     effect = _reduce_gap_effect(body, ctx)
@@ -115,7 +116,7 @@ def test_refuse_strategy_classifies_builtin_call_frontier():
     )
 
 
-def test_refuse_strategy_classifies_method_call_frontier():
+def test_factory_gap_strategy_classifies_method_call_frontier():
     body, ctx = _build("buffer.decode()")
 
     effect = _reduce_gap_effect(body, ctx)
@@ -127,7 +128,7 @@ def test_refuse_strategy_classifies_method_call_frontier():
     )
 
 
-def test_refuse_strategy_classifies_unresolved_local_call_frontier():
+def test_factory_gap_strategy_classifies_unresolved_local_call_frontier():
     body, ctx = _build("my_int16(3)")
 
     effect = _reduce_gap_effect(body, ctx)
@@ -151,7 +152,7 @@ def test_zero_arg_local_call_with_unlifted_body_emits_named_effect_not_raw_typee
 
     body = ctx.build_body(call, SugarRole.TERM)
     assert isinstance(body.sugar, CallSugar)
-    assert isinstance(body.sugar.strategy, RefuseStrategy)
+    assert isinstance(body.sugar.strategy, FactoryGapStrategy)
 
     effect = _reduce_gap_effect(body, ctx)
 

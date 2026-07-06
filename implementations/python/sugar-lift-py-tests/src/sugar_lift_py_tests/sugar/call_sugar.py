@@ -43,10 +43,10 @@ class TypedEffectStrategy:
 
 
 @dataclass(frozen=True)
-class RefuseStrategy:
+class FactoryGapStrategy:
     """Nothing resolves this call. The missing construction is a typed red effect:
     it says exactly what is missing (a body, an imported `.proof`, or a sugar),
-    never a silent lift, never a side door, and never a lift-time refusal.
+    never a silent lift, never a side door, and never a lift-time verifier verb.
     """
 
     info: FactoryGapInfo
@@ -348,7 +348,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     """A call -- DUMB. `owns` is shape only; `build` is the ONLY place context decides (it
     picks the strategy by resolution); `desugar` is one line, delegating. Every Call-owning
     sugar declares `comes_before=("CallSugar",)`, so CallSugar is the fallback catching every
-    call no specific sugar claimed -- resolved (BridgeStrategy) or not (RefuseStrategy).
+    call no specific sugar claimed -- resolved (BridgeStrategy) or effect (FactoryGapStrategy).
     """
 
     strategy: CallStrategy
@@ -559,7 +559,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         # RESOLVED + unary + NOT already on the build stack -> the bridge carries its universe.
         # The build-stack check is the recursion guard: eagerly building a callee already being
         # built loops forever, and an infinite recursion is not finitely constructible. So a
-        # cycle refuses (clean, named) instead of hanging -- the bridge stays the vendor's axiom.
+        # cycle emits a named typed effect instead of hanging -- the bridge stays the vendor's axiom.
         if (
             function_node is not None
             and target is not None
@@ -571,7 +571,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             parameters = tuple(function.function_params())
             if len(parameters) != fragment.call_arg_count():
                 return cls(
-                    strategy=RefuseStrategy(
+                    strategy=FactoryGapStrategy(
                         FactoryGapInfo(
                             owner="python.factory",
                             blame=fragment.blame,
@@ -592,7 +592,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 return cls(strategy=TypedEffectStrategy(exc.incomplete))
             except TypeError as exc:
                 return cls(
-                    strategy=RefuseStrategy(
+                    strategy=FactoryGapStrategy(
                         FactoryGapInfo(
                             owner="python.factory",
                             blame=function.blame,
@@ -653,8 +653,8 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     blame=fragment.blame,
                 )
             )
-        # Otherwise (unresolved, non-unary, or a recursion cycle): a clean, NAMED refusal --
-        # never a silent lift, never a hang.
+        # Otherwise (unresolved, non-unary, or a recursion cycle): a clean, named
+        # construction-gap effect -- never a silent lift, never a hang.
         observed = _call_frontier_observed(
             fragment, import_target=import_target, target=target
         )
@@ -667,7 +667,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 fragment, import_target=import_target, target=target
             ),
         )
-        return cls(strategy=RefuseStrategy(info))
+        return cls(strategy=FactoryGapStrategy(info))
 
     def _build(self, ctx) -> Outcome:
         return self.strategy.emit(self, ctx)
@@ -687,7 +687,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
     from sugar_lift_py_tests.sugar.constructor_strategy import ConstructorStrategy
 
     if fragment.call_has_keywords():
-        return RefuseStrategy(
+        return FactoryGapStrategy(
             FactoryGapInfo(
                 owner="python.factory",
                 blame=fragment.blame,
@@ -718,7 +718,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                         )
                     )
                 )
-            return RefuseStrategy(
+            return FactoryGapStrategy(
                 FactoryGapInfo(
                     owner="python.factory",
                     blame=fragment.blame,
@@ -737,7 +737,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
         )
     params = init.function_params()
     if len(params) < 1:
-        return RefuseStrategy(
+        return FactoryGapStrategy(
             FactoryGapInfo(
                 owner="python.factory",
                 blame=init.blame,
@@ -749,7 +749,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
         )
     constructor_params = tuple(params[1:])
     if len(constructor_params) != fragment.call_arg_count():
-        return RefuseStrategy(
+        return FactoryGapStrategy(
             FactoryGapInfo(
                 owner="python.factory",
                 blame=fragment.blame,
@@ -776,7 +776,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                 )
             )
             continue
-        return RefuseStrategy(
+        return FactoryGapStrategy(
             FactoryGapInfo(
                 owner="python.factory",
                 blame=stmt.blame,
@@ -898,7 +898,7 @@ def _build_external_bridge_strategy(
                     "add **kwargs bridge sugar"
                 ),
             )
-            return RefuseStrategy(info)
+            return FactoryGapStrategy(info)
         keywords.append((name, ctx.build_body(keyword.keyword_value(), SugarRole.TERM)))
     return ExternalBridgeStrategy(
         target_name=import_target,
