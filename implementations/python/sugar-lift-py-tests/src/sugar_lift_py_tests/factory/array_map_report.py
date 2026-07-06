@@ -15,10 +15,13 @@ from sugar_lift_py_tests.floor import ArrayLiteral, FloorValue, TermValue
 from sugar_lift_py_tests.ir import and_, eq, formula_to_value, make_var, num
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
+    CallEdgeDto,
     CallsiteFactDto,
+    FactoryAuditDto,
     FactoryWalkCompleteRowDto,
     FactoryWalkRowDto,
     LiftReportPayloadDto,
+    SourceAuditDto,
     SourceMementoDto,
     SourceSpanDto,
 )
@@ -56,10 +59,10 @@ def build_array_map_report(
     lines = source.splitlines(keepends=True)
     contracts: list[BodyUniverseDto] = []
     source_mementos: list[SourceMementoDto] = []
-    source_audits: list[dict[str, Any]] = []
-    factory_audits: list[Any] = []
+    source_audits: list[SourceAuditDto] = []
+    factory_audits: list[FactoryAuditDto] = []
     factory_walk: list[FactoryWalkRowDto] = []
-    call_edges: list[dict[str, Any]] = []
+    call_edges: list[CallEdgeDto] = []
     functions_by_name = {
         frag.function_name(): frag
         for frag in root.walk()
@@ -88,20 +91,14 @@ def build_array_map_report(
             call_edges.extend(edges)
     if not contracts:
         return None
-    ir_payload: list[BodyUniverseDto | dict[str, Any]] = []
-    ir_payload.extend(contracts)
-    memento_payload: list[SourceMementoDto | dict[str, Any]] = []
-    memento_payload.extend(source_mementos)
-    walk_payload: list[FactoryWalkRowDto | dict[str, Any]] = []
-    walk_payload.extend(factory_walk)
     return SourceReportBuild(
         LiftReportPayloadDto(
-            ir=ir_payload,
-            source_mementos=memento_payload,
+            ir=contracts,
+            source_mementos=source_mementos,
             source_ledger=_source_ledger(len(source_audits)),
             source_audits=source_audits,
             factory_audits=factory_audits,
-            factory_walk=walk_payload,
+            factory_walk=factory_walk,
             call_edges=call_edges,
         )
     )
@@ -115,14 +112,14 @@ def _lift_assert(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
-    factory_audits: list[Any],
+    factory_audits: list[FactoryAuditDto],
 ) -> (
     tuple[
         list[BodyUniverseDto],
         list[SourceMementoDto],
-        list[dict[str, Any]],
+        list[SourceAuditDto],
         list[FactoryWalkRowDto],
-        list[dict[str, Any]],
+        list[CallEdgeDto],
     ]
     | None
 ):
@@ -165,14 +162,14 @@ def _lift_fluent_array_map_assert(
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    factory_audits: list[Any],
+    factory_audits: list[FactoryAuditDto],
 ) -> (
     tuple[
         list[BodyUniverseDto],
         list[SourceMementoDto],
-        list[dict[str, Any]],
+        list[SourceAuditDto],
         list[FactoryWalkRowDto],
-        list[dict[str, Any]],
+        list[CallEdgeDto],
     ]
     | None
 ):
@@ -283,14 +280,14 @@ def _lift_native_list_map_assert(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
-    factory_audits: list[Any],
+    factory_audits: list[FactoryAuditDto],
 ) -> (
     tuple[
         list[BodyUniverseDto],
         list[SourceMementoDto],
-        list[dict[str, Any]],
+        list[SourceAuditDto],
         list[FactoryWalkRowDto],
-        list[dict[str, Any]],
+        list[CallEdgeDto],
     ]
     | None
 ):
@@ -547,7 +544,7 @@ def _callable_source_audit(
     memento_file: str,
     contract_name: str,
     memento: SourceMementoDto,
-) -> dict[str, Any]:
+) -> SourceAuditDto:
     totals = {
         "source_loci": 1,
         "source_warranted": 1,
@@ -595,7 +592,7 @@ def _source_audit(
     memento_file: str,
     contract_name: str,
     memento: SourceMementoDto,
-) -> dict[str, Any]:
+) -> SourceAuditDto:
     totals = {
         "source_loci": 1,
         "source_warranted": 1,

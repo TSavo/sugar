@@ -13,6 +13,13 @@ from .factory_walk_row_dto import (
 )
 from .implication_dto import ImplicationDto
 from .lift_report_payload_dto import LiftReportPayloadDto
+from .open_lane_dto import (
+    CallEdgeDto,
+    DiagnosticDto,
+    FactoryAuditDto,
+    SourceAuditDto,
+    VendorConjoinDto,
+)
 from .plan_atom_dto import PlanAtomDto
 from .source_memento_dto import SourceMementoDto
 from .source_span_dto import SourceSpanDto
@@ -21,10 +28,13 @@ __all__ = [
     "AssertionFactDto",
     "AssertionSurfaceAuditDto",
     "BodyUniverseDto",
+    "CallEdgeDto",
     "CallsiteFactDto",
     "CompilerSelectionDto",
     "ComponentPlanMementoDto",
+    "DiagnosticDto",
     "EffectDto",
+    "FactoryAuditDto",
     "FactoryAuditSummaryDto",
     "FactoryWalkCompleteRowDto",
     "FactoryWalkRedRowDto",
@@ -32,6 +42,8 @@ __all__ = [
     "ImplicationDto",
     "LiftReportPayloadDto",
     "PlanAtomDto",
+    "SourceAuditDto",
     "SourceMementoDto",
     "SourceSpanDto",
+    "VendorConjoinDto",
 ]

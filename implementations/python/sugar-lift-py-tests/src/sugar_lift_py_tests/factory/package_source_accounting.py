@@ -4,7 +4,9 @@ import importlib.util
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+from sugar_lift_py_tests.kit_rpc import SourceAuditDto
 
 from .source_fragment import SourceFragment
 
@@ -21,14 +23,14 @@ _LEDGER_KEYS = (
 
 def package_source_audits_for_source(
     *, source: str, filename: str
-) -> list[dict[str, Any]]:
+) -> list[SourceAuditDto]:
     if _package_accounting_mode() != "structural":
         return []
     try:
         root_fragment = SourceFragment.from_source(source, filename)
     except SyntaxError:
         return []
-    audits: list[dict[str, Any]] = []
+    audits: list[SourceAuditDto] = []
     for package in _imported_top_level_packages(root_fragment):
         root = _package_root(package)
         if root is None:
@@ -37,7 +39,11 @@ def package_source_audits_for_source(
         totals = accounting["totals"]
         if totals["source_loci"] <= 0:
             continue
-        audit = {
+        # Structural package-accounting membrane (see kit_rpc/open_lane_dto.py
+        # SourceAuditDto docstring): the accounting spread is a dynamically
+        # shaped recursive report, so the cast documents the boundary rather
+        # than pretending pyright verified every spread key.
+        audit: dict[str, Any] = {
             "kind": "source-audit",
             "language": "python",
             "contract": {"name": f"{package}#source-accounting"},
@@ -51,7 +57,7 @@ def package_source_audits_for_source(
         }
         if _package_accounting_elide_loci():
             audit["loci_elided"] = True
-        audits.append(audit)
+        audits.append(cast(SourceAuditDto, audit))
     return audits
 
 

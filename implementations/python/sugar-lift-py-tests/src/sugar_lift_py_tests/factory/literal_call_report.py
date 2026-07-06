@@ -36,12 +36,16 @@ from sugar_lift_py_tests.ir import (
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
+    CallEdgeDto,
+    DiagnosticDto,
     EffectDto,
+    FactoryAuditDto,
     FactoryWalkCompleteRowDto,
     FactoryWalkRedRowDto,
     FactoryWalkRowDto,
     ImplicationDto,
     LiftReportPayloadDto,
+    SourceAuditDto,
     SourceMementoDto,
     SourceSpanDto,
 )
@@ -161,9 +165,9 @@ def euf_callsite_name(callee_name: str, euf_term, *, suffix: str) -> str:
 LiftResult = tuple[
     list[Any],
     list[SourceMementoDto],
-    list[dict[str, Any]],
+    list[SourceAuditDto],
     list[FactoryWalkRowDto],
-    list[dict[str, Any]],
+    list[CallEdgeDto],
     list[EffectDto],
 ]
 _T = TypeVar("_T")
@@ -310,11 +314,11 @@ def build_literal_call_report(
     rel_file = memento_file or filename
     contracts: list[Any] = []
     source_mementos: list[SourceMementoDto] = []
-    source_audits: list[dict[str, Any]] = []
-    factory_audits: list[Any] = []
+    source_audits: list[SourceAuditDto] = []
+    factory_audits: list[FactoryAuditDto] = []
     factory_walk: list[FactoryWalkRowDto] = []
-    call_edges: list[dict[str, Any]] = []
-    implications: list[ImplicationDto | dict[str, Any]] = []
+    call_edges: list[CallEdgeDto] = []
+    implications: list[ImplicationDto] = []
     effects: list[EffectDto] = []
     dig_refusals: list[DigRefusal] = []
     agreement_violations: list[FloorContractAgreementViolation] = []
@@ -389,30 +393,33 @@ def build_literal_call_report(
     call_edges = _dedupe_rpc_rows(call_edges, _small_rpc_row_key)
     effects = _dedupe_rpc_rows(effects, _small_rpc_row_key)
     enforce_floor_contract_agreement_gate(agreement_violations)
-    ir_payload: list[BodyUniverseDto | dict[str, Any]] = []
-    ir_payload.extend(materialized_contracts)
-    memento_payload: list[SourceMementoDto | dict[str, Any]] = []
-    memento_payload.extend(source_mementos)
-    walk_payload: list[FactoryWalkRowDto | dict[str, Any]] = []
-    walk_payload.extend(factory_walk)
-    effect_payload: list[EffectDto | dict[str, Any]] = []
-    effect_payload.extend(effects)
     return SourceReportBuild(
         LiftReportPayloadDto(
-            ir=ir_payload,
-            source_mementos=memento_payload,
+            ir=materialized_contracts,
+            source_mementos=source_mementos,
             source_ledger=source_ledger_for_source_audits(source_audits),
             source_audits=source_audits,
             factory_audits=factory_audits,
-            factory_walk=walk_payload,
-            effects=effect_payload,
+            factory_walk=factory_walk,
+            effects=effects,
             call_edges=call_edges,
             implications=implications,
+            # Each diagnostic producer stamps its own ad hoc dict shape (see
+            # DiagnosticDto docstring); cast documents the open membrane
+            # rather than pretending pyright verified per-producer fields.
             diagnostics=[
-                *[refusal.to_json() for refusal in dig_refusals],
-                floor_contract_agreement_diagnostic(agreement_violations),
-                proofir_formula_provenance_diagnostic(
-                    materialized_contracts, factory_walk
+                cast(DiagnosticDto, refusal.to_json()) for refusal in dig_refusals
+            ]
+            + [
+                cast(
+                    DiagnosticDto,
+                    floor_contract_agreement_diagnostic(agreement_violations),
+                ),
+                cast(
+                    DiagnosticDto,
+                    proofir_formula_provenance_diagnostic(
+                        materialized_contracts, factory_walk
+                    ),
                 ),
             ],
         )
@@ -505,7 +512,7 @@ def _lift_assert(
     module_statements: list[SourceFragment],
     dig_refusals: list[DigRefusal],
     agreement_violations: list[FloorContractAgreementViolation],
-    factory_audits: list[Any],
+    factory_audits: list[FactoryAuditDto],
 ) -> LiftResult:
     """One mechanism. An assertion `callee(args) == expected` is a fact -- a debt on
     `callee` -- and it WARRANTS a dig for `callee`'s contract.
@@ -627,7 +634,7 @@ def _lift_assert(
         )
 
     universe: LiftResult | None = None
-    universe_factory_audits: list[Any] = []
+    universe_factory_audits: list[FactoryAuditDto] = []
     if callee_name in functions_by_name:
         # Build the callsite through the factory and then ask the factory term for the floor.
         # The consumer reads the CallSiteValue/force_floor/project_callsite_with spine directly.
@@ -754,7 +761,7 @@ def _lift_assertion_via_factory(
     from_imports: dict[str, tuple[str, str]],
     contract_bindings: list,
     module_statements: list[SourceFragment],
-    factory_audits: list[Any],
+    factory_audits: list[FactoryAuditDto],
     dig_refusals: list[DigRefusal],
     agreement_violations: list[FloorContractAgreementViolation],
 ) -> LiftResult | None:
@@ -892,7 +899,7 @@ def _factory_assertion_derived_context(
     from_imports: dict[str, tuple[str, str]],
     dig_refusals: list[DigRefusal],
     agreement_violations: list[FloorContractAgreementViolation],
-    factory_audits: list[Any],
+    factory_audits: list[FactoryAuditDto],
 ) -> LiftResult | None:
     if stmt.observed != "Assert":
         return None
@@ -975,7 +982,7 @@ def _assertion_factory_ctx(
     contract_bindings: list,
     module_statements: list[SourceFragment],
     external_bridge_sink: list[dict[str, Any]] | None = None,
-    factory_audits: list[Any] | None = None,
+    factory_audits: list[FactoryAuditDto] | None = None,
 ) -> FactoryBuildContext | _PriorAssignmentEffect:
     from .build import default_catalog
 
@@ -2051,7 +2058,7 @@ def _emit_euf_fact(
         role="python.literal-call-sugar",
         ast_kind="Assert",
     )
-    edges: list[dict[str, Any]] = []
+    edges: list[CallEdgeDto] = []
     if emit_call_edge:
         if callsite is None:
             raise TypeError("emit_call_edge requires callsite")
@@ -2532,7 +2539,7 @@ def _construct_callsite_from_factory_term(
     source_lines: list[str],
     dig_refusals: list[DigRefusal],
     agreement_violations: list[FloorContractAgreementViolation],
-    factory_audits: list[Any],
+    factory_audits: list[FactoryAuditDto],
 ) -> LiftResult:
     """Construct floor facts by reading the factory's CallSiteValue term.
 
@@ -2885,7 +2892,7 @@ def _function_universe(
     memento_file: str,
     source_lines: list[str],
     dig_refusals: list[DigRefusal],
-    factory_audits: list[Any],
+    factory_audits: list[FactoryAuditDto],
 ) -> LiftResult | None:
     """The `::callable` universe for ONE resolved function, walked from its DEFINITION.
 
@@ -3554,8 +3561,8 @@ def _external_bridge_edges(
     source_contract: str,
     memento_file: str,
     contract_bindings: list,
-) -> list[dict[str, Any]]:
-    edges: list[dict[str, Any]] = []
+) -> list[CallEdgeDto]:
+    edges: list[CallEdgeDto] = []
     seen: set[tuple[str, int, int]] = set()
     for item in sink:
         target_symbol = item["targetSymbol"]
@@ -3737,7 +3744,7 @@ def _binding_proof_cid(binding: dict[str, Any] | None) -> str | None:
 
 
 def _precondition_implications_from_call_edges(
-    edges: list[dict[str, Any]], contract_bindings: list
+    edges: list[CallEdgeDto], contract_bindings: list
 ) -> list[ImplicationDto]:
     implications: list[ImplicationDto] = []
     seen: set[tuple[str, str, str]] = set()
@@ -3925,7 +3932,7 @@ def _source_audit(
     *,
     role: str,
     ast_kind: str,
-) -> dict[str, Any]:
+) -> SourceAuditDto:
     return AuditMemento(
         role=role,
         contract=contract_name,

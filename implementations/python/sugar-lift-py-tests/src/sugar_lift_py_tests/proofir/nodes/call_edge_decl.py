@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from sugar_lift_py_tests.ir import Locus
+from sugar_lift_py_tests.kit_rpc import CallEdgeDto
 from sugar_lift_py_tests.proofir.scope import ClaimFormula
 
 from . import (
@@ -88,7 +89,7 @@ class CallEdgeDecl(ProofIRNode):
     def provenance(self) -> Provenance:
         return self._provenance
 
-    def to_declaration(self) -> dict[str, Any]:
+    def to_declaration(self) -> CallEdgeDto:
         edge: dict[str, Any] = {"kind": "call-edge"}
         if self.bridge.call_site_locus is not None:
             edge["schemaVersion"] = "1"
@@ -113,7 +114,10 @@ class CallEdgeDecl(ProofIRNode):
             edge["callsite"] = self.bridge.callsite
         if self.bridge.target_proof_cid is not None:
             edge["targetProofCid"] = self.bridge.target_proof_cid
-        return edge
+        # Constructed field-by-field above against CallEdgeDto's declared keys;
+        # the cast documents that boundary instead of leaving to_declaration
+        # typed as an accidental dict[str, Any].
+        return cast(CallEdgeDto, edge)
 
     @classmethod
     def verdict_witnesses(cls) -> VerdictWitnessPair:

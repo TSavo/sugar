@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
+
+from sugar_lift_py_tests.kit_rpc import SourceAuditDto
 
 from . import (
     Provenance,
@@ -79,7 +81,7 @@ class AuditMemento(ProofIRNode):
     def provenance(self) -> Provenance:
         return self._provenance
 
-    def to_declaration(self) -> dict[str, Any]:
+    def to_declaration(self) -> SourceAuditDto:
         source_warranted = sum(1 for locus in self.loci if locus.status == "warranted")
         totals = {
             "source_loci": len(self.loci),
@@ -90,14 +92,19 @@ class AuditMemento(ProofIRNode):
             "source_unresolved": 0,
             "unclassified_source": 0,
         }
-        return {
-            "role": self.role,
-            "contract": self.contract,
-            "file": self.file,
-            "sourceFunctionName": self.source_function_name,
-            "totals": totals,
-            "loci": [locus.to_rpc() for locus in self.loci],
-        }
+        # Second SourceAuditDto producer (see kit_rpc/open_lane_dto.py
+        # docstring); cast documents the shared-membrane boundary.
+        return cast(
+            SourceAuditDto,
+            {
+                "role": self.role,
+                "contract": self.contract,
+                "file": self.file,
+                "sourceFunctionName": self.source_function_name,
+                "totals": totals,
+                "loci": [locus.to_rpc() for locus in self.loci],
+            },
+        )
 
     @classmethod
     def verdict_witnesses(cls) -> VerdictWitnessPair:
