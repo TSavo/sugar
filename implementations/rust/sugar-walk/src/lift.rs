@@ -481,14 +481,20 @@ fn is_impure_ctor_head(name: &str) -> bool {
 /// referentially-transparent function of its free variables? Vars and consts are
 /// pure; a ctor is pure iff its head is not opaque/effectful and all its args are
 /// pure. Lambdas and nested lets are conservatively treated as not-inlinable.
+// #3027 S6: was a single hand-rolled match over `IrTerm` (the ladder-demolition
+// census's `wp-contract-seeds` row, `is_pure_value_term`). Now a sequential
+// `if let`/`matches!` chain: Var/Const claim `true`, Ctor claims and recurses,
+// and the closed Lambda/Let group keeps the exact same conservative `false`
+// fail-safe the original wildcard-style arm returned. No behavior change.
 fn is_pure_value_term(t: &IrTerm) -> bool {
-    match t {
-        IrTerm::Var { .. } | IrTerm::Const { .. } => true,
-        IrTerm::Ctor { name, args } => {
-            !is_impure_ctor_head(name) && args.iter().all(is_pure_value_term)
-        }
-        IrTerm::Lambda { .. } | IrTerm::Let { .. } => false,
+    if matches!(t, IrTerm::Var { .. } | IrTerm::Const { .. }) {
+        return true;
     }
+    if let IrTerm::Ctor { name, args } = t {
+        return !is_impure_ctor_head(name) && args.iter().all(is_pure_value_term);
+    }
+    // IrTerm::Lambda { .. } | IrTerm::Let { .. }: conservatively not inlinable.
+    false
 }
 
 /// Re-attach the function's leading immutable `let` bindings to the derived
