@@ -50,10 +50,7 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: no python3 on PATH"; exit 0;
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 KIT_JAVA="$(which java)"
 
 echo "SCOPE: java-urlsafe-seam -- marquee of paper 26."
@@ -76,11 +73,9 @@ echo "   no vendor test ever touched 'provekit~seam'"
 echo "   the refutation is the universe's, not a point's"
 
 echo
-echo "== build the sugar CLI =="
-if [ "${JAVA_ASSERT_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar >/dev/null
-fi
+echo "== resolve the sugar CLI via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not at $SUGAR"; exit 1; }
 
 echo

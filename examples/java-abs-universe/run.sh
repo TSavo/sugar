@@ -37,10 +37,7 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: no python3 on PATH"; exit 0;
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 KIT_JAVA="$(which java)"
 
 echo "SCOPE: G2 numeric-universe-walk — int32.eq-bv-expr contracts walked from JDK Math.abs body."
@@ -49,11 +46,9 @@ echo "SCOPE: GOOD: abs(MIN_VALUE)==MIN_VALUE — the industry-confounding truth;
 echo "SCOPE: BAD:  abs(MIN_VALUE)==MAX_VALUE — the industry belief; unsatisfied by z3 BV theory."
 
 echo
-echo "== build the sugar CLI =="
-if [ "${JAVA_ASSERT_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar >/dev/null
-fi
+echo "== resolve the sugar CLI via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not at $SUGAR"; exit 1; }
 
 echo
