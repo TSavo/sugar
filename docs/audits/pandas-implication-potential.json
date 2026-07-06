@@ -482,7 +482,9 @@
       "publicSpellings": [
         "core.apply.Apply.apply_list_or_dict_like"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal class method; `Apply` is defined in `core.apply` with no exact or owner public import declaration."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -529,7 +531,9 @@
       "publicSpellings": [
         "core.arrays._mixins.NDArrayBackedExtensionArray.value_counts"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal mixin method; owner imports are `_testing` or internal `core.*` consumers only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -583,9 +587,11 @@
         ]
       },
       "publicSpellings": [
-        "core.arrays.arrow.array.ArrowExtensionArray._round_temporally"
+        "pandas.arrays.ArrowExtensionArray._round_temporally"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.arrays.ArrowExtensionArray._round_temporally` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -658,9 +664,11 @@
         "name": "\u2260"
       },
       "publicSpellings": [
-        "core.arrays.arrow.array.ArrowExtensionArray._dt_tz_convert"
+        "pandas.arrays.ArrowExtensionArray._dt_tz_convert"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.arrays.ArrowExtensionArray._dt_tz_convert` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -691,9 +699,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.arrays.base.ExtensionArray.view"
+        "pandas.api.extensions.ExtensionArray.view"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.api.extensions.ExtensionArray.view` via pandas.api package namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -724,9 +734,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.arrays.base.ExtensionArray._rank"
+        "pandas.api.extensions.ExtensionArray._rank"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.api.extensions.ExtensionArray._rank` via pandas.api package namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -757,9 +769,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.arrays.categorical.Categorical._rank"
+        "pandas.Categorical._rank"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.Categorical._rank` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -820,7 +834,9 @@
       "publicSpellings": [
         "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetimelike_scalar"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal mixin method; owner imports are `_testing.asserters` and internal `tseries.frequencies` only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -912,7 +928,9 @@
       "publicSpellings": [
         "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetime_arraylike"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal mixin method; owner imports are `_testing.asserters` and internal `tseries.frequencies` only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -953,7 +971,9 @@
       "publicSpellings": [
         "core.arrays.datetimelike.DatetimeLikeArrayMixin._add_timedelta_arraylike"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal mixin method; owner imports are `_testing.asserters` and internal `tseries.frequencies` only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1009,7 +1029,9 @@
       "publicSpellings": [
         "core.arrays.datetimelike.DatetimeLikeArrayMixin._accumulate"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal mixin method; owner imports are `_testing.asserters` and internal `tseries.frequencies` only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1101,7 +1123,9 @@
       "publicSpellings": [
         "core.arrays.datetimelike.TimelikeOps.as_unit"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal subclass method; `TimelikeOps` has no public import declaration."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1134,7 +1158,9 @@
       "publicSpellings": [
         "core.arrays.datetimelike.TimelikeOps.interpolate"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal subclass method; `TimelikeOps` has no public import declaration."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1202,9 +1228,11 @@
         ]
       },
       "publicSpellings": [
-        "core.arrays.masked.BaseMaskedArray._rank"
+        "pandas.core.arrays.BaseMaskedArray._rank"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.core.arrays.BaseMaskedArray._rank` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1235,9 +1263,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.arrays.sparse.array.SparseArray.fillna"
+        "pandas.arrays.SparseArray.fillna"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.arrays.SparseArray.fillna` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1270,7 +1300,9 @@
       "publicSpellings": [
         "core.arrays.string_.BaseStringArray.view"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal base-class method; owner imports are internal string/pytables consumers only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1317,7 +1349,9 @@
       "publicSpellings": [
         "core.base.SelectionMixin.__getitem__"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal mixin method; owner imports are internal groupby/resample/window consumers only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1358,7 +1392,9 @@
       "publicSpellings": [
         "core.common.require_length_match"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal utility; module is imported as internal `com` helper, not as a public function spelling."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1411,7 +1447,9 @@
       "publicSpellings": [
         "core.computation.expr.BaseExprVisitor.visit_Module"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal visitor method; owner imports are computation internals and tests only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1458,7 +1496,9 @@
       "publicSpellings": [
         "core.computation.pytables.UnaryOp.prune"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal computation method; no exact or owner public import declaration."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1491,7 +1531,9 @@
       "publicSpellings": [
         "core.dtypes.common._get_dtype"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "private helper by name; no public import declaration."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1599,9 +1641,11 @@
         ]
       },
       "publicSpellings": [
-        "core.frame.DataFrame.to_stata"
+        "pandas.DataFrame.to_stata"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.DataFrame.to_stata` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1655,9 +1699,11 @@
         ]
       },
       "publicSpellings": [
-        "core.frame.DataFrame.map"
+        "pandas.DataFrame.map"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.DataFrame.map` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1731,7 +1777,9 @@
       "publicSpellings": [
         "core.generic.NDFrame._rename"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal base-class method; `NDFrame` is imported by internal/type modules, but pandas does not declare `NDFrame` as a public owner spelling."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1764,7 +1812,9 @@
       "publicSpellings": [
         "core.generic.NDFrame.pct_change"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal base-class method; `NDFrame` is imported by internal/type modules, but pandas does not declare `NDFrame` as a public owner spelling."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1823,9 +1873,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.groupby.generic.DataFrameGroupBy._aggregate_frame"
+        "pandas.api.typing.DataFrameGroupBy._aggregate_frame"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.api.typing.DataFrameGroupBy._aggregate_frame` via pandas.api package namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1856,9 +1908,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.groupby.groupby.GroupBy.pct_change"
+        "pandas.core.groupby.GroupBy.pct_change"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.core.groupby.GroupBy.pct_change` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1905,7 +1959,9 @@
       "publicSpellings": [
         "core.groupby.ops.WrappedCythonOp._validate_axis"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal operation helper; owner imports are internal array/groupby consumers only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1936,9 +1992,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.indexers.objects.VariableOffsetWindowIndexer.get_window_bounds"
+        "pandas.api.indexers.VariableOffsetWindowIndexer.get_window_bounds"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.api.indexers.VariableOffsetWindowIndexer.get_window_bounds` via pandas.api package namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -1977,7 +2035,9 @@
       "publicSpellings": [
         "core.indexes.api.union_indexes"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal API helper; exact imports are internal construction/concat consumers, not a package public alias."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2031,9 +2091,11 @@
         ]
       },
       "publicSpellings": [
-        "core.indexes.base.Index.dropna"
+        "pandas.Index.dropna"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.Index.dropna` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2105,9 +2167,11 @@
         ]
       },
       "publicSpellings": [
-        "core.indexes.base.Index._validate_sort_keyword"
+        "pandas.Index._validate_sort_keyword"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.Index._validate_sort_keyword` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2233,9 +2297,11 @@
         ]
       },
       "publicSpellings": [
-        "core.indexes.base.Index._check_indexing_method"
+        "pandas.Index._check_indexing_method"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.Index._check_indexing_method` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2266,9 +2332,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.indexes.base.Index._get_fill_indexer_searchsorted"
+        "pandas.Index._get_fill_indexer_searchsorted"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.Index._get_fill_indexer_searchsorted` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2322,9 +2390,11 @@
         ]
       },
       "publicSpellings": [
-        "core.indexes.base.Index.get_slice_bound"
+        "pandas.Index.get_slice_bound"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.Index.get_slice_bound` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2416,7 +2486,9 @@
       "publicSpellings": [
         "core.indexes.base._validate_join_method"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "private helper by name; no public import declaration."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2488,9 +2560,11 @@
         ]
       },
       "publicSpellings": [
-        "core.indexes.category.CategoricalIndex.reindex"
+        "pandas.CategoricalIndex.reindex"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.CategoricalIndex.reindex` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2537,9 +2611,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.indexes.multi.MultiIndex._reorder_ilevels"
+        "pandas.MultiIndex._reorder_ilevels"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.MultiIndex._reorder_ilevels` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2586,9 +2662,11 @@
         "name": "\u2264"
       },
       "publicSpellings": [
-        "core.indexes.multi.MultiIndex._partial_tup_index"
+        "pandas.MultiIndex._partial_tup_index"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.MultiIndex._partial_tup_index` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2643,9 +2721,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.indexes.period.PeriodIndex._disallow_mismatched_indexing"
+        "pandas.PeriodIndex._disallow_mismatched_indexing"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.PeriodIndex._disallow_mismatched_indexing` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2688,7 +2768,9 @@
       "publicSpellings": [
         "core.internals.blocks.check_ndim"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal blocks validator; imported by `core.internals.api`, but not exported by a public package alias."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2729,9 +2811,11 @@
         "name": "<"
       },
       "publicSpellings": [
-        "core.internals.managers.SingleBlockManager.get_slice"
+        "pandas.core.internals.SingleBlockManager.get_slice"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.core.internals.SingleBlockManager.get_slice` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -2962,9 +3046,11 @@
         ]
       },
       "publicSpellings": [
-        "core.resample.TimeGrouper.__init__"
+        "pandas.api.typing.TimeGrouper"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.api.typing.TimeGrouper` via pandas.api package namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3003,7 +3089,9 @@
       "publicSpellings": [
         "core.resample._asfreq_compat"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "private helper by name; imported only by tests outside its defining module."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3103,9 +3191,11 @@
         ]
       },
       "publicSpellings": [
-        "core.reshape.pivot.crosstab"
+        "pandas.crosstab"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.crosstab` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3161,7 +3251,9 @@
       "publicSpellings": [
         "core.tools.times.to_time"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal conversion helper; imported by internal arrays/indexes modules and tests, with no top-level `pandas.to_time` declaration."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3206,9 +3298,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.window.ewm.ExponentialMovingWindow.var"
+        "pandas.api.typing.ExponentialMovingWindow.var"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.api.typing.ExponentialMovingWindow.var` via pandas.api package namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3253,9 +3347,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.window.ewm.ExponentialMovingWindow.cov"
+        "pandas.api.typing.ExponentialMovingWindow.cov"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.api.typing.ExponentialMovingWindow.cov` via pandas.api package namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3300,9 +3396,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "core.window.ewm.ExponentialMovingWindow.corr"
+        "pandas.api.typing.ExponentialMovingWindow.corr"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.api.typing.ExponentialMovingWindow.corr` via pandas.api package namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3335,7 +3433,9 @@
       "publicSpellings": [
         "core.window.ewm.OnlineExponentialMovingWindow.__init__"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal EWM subclass constructor; no public owner import declaration."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3396,7 +3496,9 @@
       "publicSpellings": [
         "core.window.rolling.BaseWindow._apply_tablewise"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal base-window method; owner imports are internal typing/apply/EWM consumers only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3443,7 +3545,9 @@
       "publicSpellings": [
         "core.window.rolling.RollingAndExpandingMixin.cov"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal mixin method; owner imports are internal expanding-window consumers only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3490,7 +3594,9 @@
       "publicSpellings": [
         "core.window.rolling.RollingAndExpandingMixin.corr"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "internal mixin method; owner imports are internal expanding-window consumers only."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3521,9 +3627,11 @@
         "name": "\u2265"
       },
       "publicSpellings": [
-        "io.formats.excel.ExcelFormatter._num2excel"
+        "pandas.io.formats.excel.ExcelFormatter._num2excel"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.io.formats.excel.ExcelFormatter._num2excel` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3554,9 +3662,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "io.formats.info.SeriesInfo.render"
+        "pandas.io.formats.info.SeriesInfo.render"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.io.formats.info.SeriesInfo.render` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3625,9 +3735,11 @@
         "name": "\u2260"
       },
       "publicSpellings": [
-        "io.parsers.python_parser.PythonParser._alert_malformed"
+        "pandas.io.parsers.python_parser.PythonParser._alert_malformed"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.io.parsers.python_parser.PythonParser._alert_malformed` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3750,9 +3862,11 @@
         ]
       },
       "publicSpellings": [
-        "io.parsers.readers.read_fwf"
+        "pandas.read_fwf"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.read_fwf` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3824,9 +3938,11 @@
         ]
       },
       "publicSpellings": [
-        "io.pytables.read_hdf"
+        "pandas.read_hdf"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.read_hdf` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3857,9 +3973,11 @@
         "name": "="
       },
       "publicSpellings": [
-        "io.pytables.HDFStore.append"
+        "pandas.HDFStore.append"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.HDFStore.append` via top-level __init__ aggregator chain."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -3913,9 +4031,11 @@
         ]
       },
       "publicSpellings": [
-        "io.pytables.GenericFixed.validate_read"
+        "pandas.io.pytables.GenericFixed.validate_read"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.io.pytables.GenericFixed.validate_read` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -4005,9 +4125,11 @@
         ]
       },
       "publicSpellings": [
-        "io.sql.to_sql"
+        "pandas.io.sql.to_sql"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.io.sql.to_sql` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -4061,9 +4183,11 @@
         ]
       },
       "publicSpellings": [
-        "io.stata.StataValueLabel.__init__"
+        "pandas.io.stata.StataValueLabel.__init__"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.io.stata.StataValueLabel.__init__` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -4117,9 +4241,11 @@
         ]
       },
       "publicSpellings": [
-        "io.stata.StataNonCatValueLabel.__init__"
+        "pandas.io.stata.StataNonCatValueLabel.__init__"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.io.stata.StataNonCatValueLabel.__init__` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -4191,9 +4317,11 @@
         ]
       },
       "publicSpellings": [
-        "io.stata.StataStrLWriter.__init__"
+        "pandas.io.stata.StataStrLWriter.__init__"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.io.stata.StataStrLWriter.__init__` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -4224,9 +4352,11 @@
         "name": "\u2260"
       },
       "publicSpellings": [
-        "plotting._matplotlib.hist._grouped_plot"
+        "pandas.plotting._matplotlib.hist._grouped_plot"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.plotting._matplotlib.hist._grouped_plot` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -4263,9 +4393,11 @@
         "name": "\u2260"
       },
       "publicSpellings": [
-        "plotting._matplotlib.style._get_colors_from_color"
+        "pandas.plotting._matplotlib.style._get_colors_from_color"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.plotting._matplotlib.style._get_colors_from_color` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -4310,9 +4442,11 @@
         "name": "\u2260"
       },
       "publicSpellings": [
-        "tseries.holiday.AbstractHolidayCalendar.holidays"
+        "pandas.tseries.holiday.AbstractHolidayCalendar.holidays"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "public-remapped",
+      "sourceReexportReason": "declared pandas source re-export maps to `pandas.tseries.holiday.AbstractHolidayCalendar.holidays` via subpackage __init__ namespace."
     },
     {
       "callEdgeStatus": "report-json-unavailable",
@@ -4345,7 +4479,9 @@
       "publicSpellings": [
         "util._validators._check_arg_length"
       ],
-      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain"
+      "reason": "production report JSON exits before emitting call edges because audit-only construction gaps remain",
+      "sourceReexportDisposition": "internal-only",
+      "sourceReexportReason": "private utility by name; no public import declaration."
     }
   ],
   "repo": {
@@ -4372,16 +4508,163 @@
     "diagnostics": 11385,
     "preBearingContracts": 68
   },
+  "sourceReexportTail": {
+    "additionalRemaps": 0,
+    "basis": "cached pandas 3.0.3 source declarations; exact same-package import graph rooted at non-private package __init__.py public aliases",
+    "internalOnly": 27,
+    "remapped": 41,
+    "rows": [
+      {
+        "contract": "core.apply.Apply.apply_list_or_dict_like",
+        "disposition": "internal-only",
+        "reason": "internal class method; `Apply` is defined in `core.apply` with no exact or owner public import declaration."
+      },
+      {
+        "contract": "core.arrays._mixins.NDArrayBackedExtensionArray.value_counts",
+        "disposition": "internal-only",
+        "reason": "internal mixin method; owner imports are `_testing` or internal `core.*` consumers only."
+      },
+      {
+        "contract": "core.arrays.datetimelike.DatetimeLikeArrayMixin._accumulate",
+        "disposition": "internal-only",
+        "reason": "internal mixin method; owner imports are `_testing.asserters` and internal `tseries.frequencies` only."
+      },
+      {
+        "contract": "core.arrays.datetimelike.DatetimeLikeArrayMixin._add_timedelta_arraylike",
+        "disposition": "internal-only",
+        "reason": "internal mixin method; owner imports are `_testing.asserters` and internal `tseries.frequencies` only."
+      },
+      {
+        "contract": "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetime_arraylike",
+        "disposition": "internal-only",
+        "reason": "internal mixin method; owner imports are `_testing.asserters` and internal `tseries.frequencies` only."
+      },
+      {
+        "contract": "core.arrays.datetimelike.DatetimeLikeArrayMixin._sub_datetimelike_scalar",
+        "disposition": "internal-only",
+        "reason": "internal mixin method; owner imports are `_testing.asserters` and internal `tseries.frequencies` only."
+      },
+      {
+        "contract": "core.arrays.datetimelike.TimelikeOps.as_unit",
+        "disposition": "internal-only",
+        "reason": "internal subclass method; `TimelikeOps` has no public import declaration."
+      },
+      {
+        "contract": "core.arrays.datetimelike.TimelikeOps.interpolate",
+        "disposition": "internal-only",
+        "reason": "internal subclass method; `TimelikeOps` has no public import declaration."
+      },
+      {
+        "contract": "core.arrays.string_.BaseStringArray.view",
+        "disposition": "internal-only",
+        "reason": "internal base-class method; owner imports are internal string/pytables consumers only."
+      },
+      {
+        "contract": "core.base.SelectionMixin.__getitem__",
+        "disposition": "internal-only",
+        "reason": "internal mixin method; owner imports are internal groupby/resample/window consumers only."
+      },
+      {
+        "contract": "core.common.require_length_match",
+        "disposition": "internal-only",
+        "reason": "internal utility; module is imported as internal `com` helper, not as a public function spelling."
+      },
+      {
+        "contract": "core.computation.expr.BaseExprVisitor.visit_Module",
+        "disposition": "internal-only",
+        "reason": "internal visitor method; owner imports are computation internals and tests only."
+      },
+      {
+        "contract": "core.computation.pytables.UnaryOp.prune",
+        "disposition": "internal-only",
+        "reason": "internal computation method; no exact or owner public import declaration."
+      },
+      {
+        "contract": "core.dtypes.common._get_dtype",
+        "disposition": "internal-only",
+        "reason": "private helper by name; no public import declaration."
+      },
+      {
+        "contract": "core.generic.NDFrame._rename",
+        "disposition": "internal-only",
+        "reason": "internal base-class method; `NDFrame` is imported by internal/type modules, but pandas does not declare `NDFrame` as a public owner spelling."
+      },
+      {
+        "contract": "core.generic.NDFrame.pct_change",
+        "disposition": "internal-only",
+        "reason": "internal base-class method; `NDFrame` is imported by internal/type modules, but pandas does not declare `NDFrame` as a public owner spelling."
+      },
+      {
+        "contract": "core.groupby.ops.WrappedCythonOp._validate_axis",
+        "disposition": "internal-only",
+        "reason": "internal operation helper; owner imports are internal array/groupby consumers only."
+      },
+      {
+        "contract": "core.indexes.api.union_indexes",
+        "disposition": "internal-only",
+        "reason": "internal API helper; exact imports are internal construction/concat consumers, not a package public alias."
+      },
+      {
+        "contract": "core.indexes.base._validate_join_method",
+        "disposition": "internal-only",
+        "reason": "private helper by name; no public import declaration."
+      },
+      {
+        "contract": "core.internals.blocks.check_ndim",
+        "disposition": "internal-only",
+        "reason": "internal blocks validator; imported by `core.internals.api`, but not exported by a public package alias."
+      },
+      {
+        "contract": "core.resample._asfreq_compat",
+        "disposition": "internal-only",
+        "reason": "private helper by name; imported only by tests outside its defining module."
+      },
+      {
+        "contract": "core.tools.times.to_time",
+        "disposition": "internal-only",
+        "reason": "internal conversion helper; imported by internal arrays/indexes modules and tests, with no top-level `pandas.to_time` declaration."
+      },
+      {
+        "contract": "core.window.ewm.OnlineExponentialMovingWindow.__init__",
+        "disposition": "internal-only",
+        "reason": "internal EWM subclass constructor; no public owner import declaration."
+      },
+      {
+        "contract": "core.window.rolling.BaseWindow._apply_tablewise",
+        "disposition": "internal-only",
+        "reason": "internal base-window method; owner imports are internal typing/apply/EWM consumers only."
+      },
+      {
+        "contract": "core.window.rolling.RollingAndExpandingMixin.corr",
+        "disposition": "internal-only",
+        "reason": "internal mixin method; owner imports are internal expanding-window consumers only."
+      },
+      {
+        "contract": "core.window.rolling.RollingAndExpandingMixin.cov",
+        "disposition": "internal-only",
+        "reason": "internal mixin method; owner imports are internal expanding-window consumers only."
+      },
+      {
+        "contract": "util._validators._check_arg_length",
+        "disposition": "internal-only",
+        "reason": "private utility by name; no public import declaration."
+      }
+    ]
+  },
   "summary": {
     "blockingConstructionGapRows": 15,
     "blockingConstructionGapTemplates": 5,
     "callEdgesDangling": null,
     "callEdgesResolved": null,
     "firstPandasImplicationLine": null,
-    "identityFinding": "not measurable yet; report call-edge graph is unavailable before construction gaps are lowered",
+    "identityFinding": "source-side public re-export enrichment remaps 41/68 pre-bearing contracts; the remaining 27 are classified internal-only with no vendor-declared public spelling",
     "implicationsMinted": null,
     "preBearingContracts": 68,
-    "publicReexportRemaps": 0,
+    "publicReexportAdditionalRemapsAfterTail": 0,
+    "publicReexportRemaps": 41,
+    "publicReexportTailClassified": 27,
+    "publicReexportTailInternalOnly": 27,
+    "publicReexportUnmapped": 27,
     "reportJsonAvailable": false
   }
 }
