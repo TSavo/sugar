@@ -15,8 +15,12 @@ use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT};
 // legitimate red-pinned vocabulary, not leaks. `call:A` comes from the verifier
 // ambient-testimony fixtures in 728d61877; the serde_json/panic/ref rows come
 // from checked-in serde showcase re-mint artifacts in 98b8c34d5.
-// #3620-#3625 added pandas/callsite corpus terms; they remain red-pinned
-// uninterpreted vocabulary until a backend-specific encoding is reviewed.
+// #3620-#3625 added pandas/callsite corpus terms. The current corpus carries
+// `call:__repr__` and `call:sum`; the older `call:BooleanDtype` and
+// `callval___repr___a1` rows have retired from the scanned artifacts. These
+// callsite constructors hit the backend's generic ctor lowering arm and remain
+// red-pinned uninterpreted vocabulary until a backend-specific encoding is
+// reviewed.
 const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("atom", "<predicate>", 1),
     ("atom", "CategoryTheory.Functor.map_id", 0),
@@ -85,7 +89,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "c", 0),
     ("ctor", "c:callresult_enc_a1", 1),
     ("ctor", "call:A", 0),
-    ("ctor", "call:BooleanDtype", 0),
+    ("ctor", "call:__repr__", 0),
     ("ctor", "call:abs", 1),
     ("ctor", "call:answer", 0),
     ("ctor", "call:async_value", 0),
@@ -106,8 +110,8 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "call:numpy.load", 1),
     ("ctor", "call:serde_json::to_string", 1),
     ("ctor", "call:serde_json::to_string#panic_callsite", 1),
+    ("ctor", "call:sum", 0),
     ("ctor", "call:update", 0),
-    ("ctor", "callval___repr___a1", 1),
     ("ctor", "cf_gt", 2),
     ("ctor", "cf_ite", 3),
     ("ctor", "channel:recv:rx", 1),
