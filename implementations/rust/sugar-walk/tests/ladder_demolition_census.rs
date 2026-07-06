@@ -430,13 +430,6 @@ const EXPECTED_LADDER_SITES: &[ExpectedLadderSite] = &[
     },
     ExpectedLadderSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
-        line: 3450,
-        enclosing_fn: "lift_predicate_value_inner",
-        family: "predicates",
-        max_signals: 41,
-    },
-    ExpectedLadderSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
         line: 3363,
         enclosing_fn: "lift_stmt_contribution",
         family: "value-kind-macros",
