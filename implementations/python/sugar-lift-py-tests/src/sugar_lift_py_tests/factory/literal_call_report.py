@@ -26,8 +26,11 @@ from sugar_lift_py_tests.ir import (
     _Quantifier,
     _Var,
     and_,
+    atomic,
     ctor,
     eq,
+    make_var,
+    str_const,
     term_to_value,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
@@ -76,7 +79,11 @@ from sugar_lift_py_tests.proofir import (
 from sugar_lift_py_tests.proofir.formulas import (
     formula_to_rpc as proofir_formula_to_rpc,
 )
-from sugar_lift_py_tests.proofir.sorts import Sort as ProofSort, sort_from_ir
+from sugar_lift_py_tests.proofir.sorts import (
+    Sort as ProofSort,
+    StringSort,
+    sort_from_ir,
+)
 
 from .dig_refusal import DigRefusal
 from .floor_contract_agreement import (
@@ -2804,6 +2811,15 @@ def _function_universe(
         body_formulas = universe_sugar.constraint_formulas()
         body_step_formulas = universe_sugar.constraint_formula_steps()
     except (TypeError, ValueError, FactoryGap, IncompleteFunctionBody) as exc:
+        fallback = _urlsafe_translate_function_universe(
+            callee,
+            callee_name,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+        )
+        if fallback is not None:
+            return fallback
         _record_dig_refusal(
             dig_refusals,
             callee=callee.function_name(),
@@ -2947,6 +2963,135 @@ def _function_universe(
         walk_rows,
         [],
         [],
+    )
+
+
+def _urlsafe_translate_function_universe(
+    callee: SourceFragment,
+    callee_name: str,
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> LiftResult | None:
+    """Closed CPython URL-safe base64 alphabet universe.
+
+    CPython defines ``urlsafe_b64encode`` as ``b64encode(s).translate(table)``
+    where ``table`` maps ``+`` to ``-`` and ``/`` to ``_``. The body walker cannot
+    reduce that method call yet, but the closed translate table is already a
+    verifier vocabulary row: the output contains none of the source-side chars.
+    """
+
+    if not _is_cpython_urlsafe_b64encode_translate(callee, callee_name):
+        return None
+
+    imported_source = getattr(callee.node, "_sugar_source", None)
+    if imported_source is not None:
+        source_lines = imported_source.splitlines(keepends=True)
+        memento_file = getattr(callee.node, "_sugar_file", memento_file)
+
+    return_stmt = next(
+        (stmt for stmt in callee.function_body() if stmt.observed == "Return"),
+        None,
+    )
+    if return_stmt is None:
+        return None
+
+    formal_names = tuple(callee.function_params())
+    scope_sorts: dict[str, ProofSort] = {
+        name: UnknownSort(reason=f"no declared sort for formal {name!r}")
+        for name in formal_names
+    }
+    scope_sorts["out"] = StringSort()
+    formula = atomic("str.chars-not-in-set", [make_var("out"), str_const("+/")])
+    function_post = _post_condition_from_ir(
+        formula,
+        scope_sorts=scope_sorts,
+        formal_names=formal_names,
+    )
+    function_contract_name = (
+        f"{Path(memento_file).stem}::{callee.function_name()}::callable"
+    )
+    function_memento = _function_source_memento(
+        callee,
+        memento_file,
+        source_lines,
+        role="python.urlsafe-translate-universe",
+        contract_name=function_contract_name,
+    )
+    return_memento = _statement_source_memento(
+        return_stmt,
+        callee,
+        memento_file,
+        source_lines,
+        contract_name=function_contract_name,
+        role="python.urlsafe-translate-universe",
+    )
+    provenance = Provenance(
+        node_class=FunctionContract.node_class,
+        construction_site=_proofir_construction_site(return_stmt, memento_file),
+        warrant=Stated(locus=_proofir_construction_site(return_stmt, memento_file)),
+    )
+    function_contract = FunctionContract(
+        symbol=function_contract_name,
+        formals=tuple(
+            FunctionContract.formal(name, scope_sorts[name]) for name in formal_names
+        ),
+        post=function_post,
+        warrants=(provenance,),
+        out_binding="out",
+        out_sort=StringSort(),
+        source_warrants=[function_memento],
+        bridge_source_symbol=f"call:{callee_name}",
+    )
+    audit = _source_audit(
+        callee,
+        return_stmt,
+        memento_file,
+        function_contract_name,
+        return_memento,
+        role="python.urlsafe-translate-universe",
+        ast_kind="Return",
+    )
+    walk = _walk_row(
+        "UrlsafeTranslateUniverseSugar",
+        "Return",
+        return_stmt,
+        filename,
+        return_memento,
+        "predicate",
+        requested_role="FunctionBodyConstraint",
+        emitted_formula=_typed_formula_to_rpc(formula, scope_sorts),
+        reason=(
+            "CPython base64 urlsafe_b64encode translates '+' and '/' away via "
+            "_urlsafe_encode_translation"
+        ),
+    )
+    return (
+        [function_contract],
+        [function_memento, return_memento],
+        [audit],
+        [walk],
+        [],
+        [],
+    )
+
+
+def _is_cpython_urlsafe_b64encode_translate(
+    callee: SourceFragment, callee_name: str
+) -> bool:
+    if callee_name != "base64.urlsafe_b64encode":
+        return False
+    source = getattr(callee.node, "_sugar_source", "") or ""
+    normalized = " ".join(source.split())
+    if "b64encode(s).translate(_urlsafe_encode_translation)" not in normalized:
+        return False
+    try:
+        import base64
+    except ImportError:
+        return False
+    return getattr(base64, "_urlsafe_encode_translation", None) == bytes.maketrans(
+        b"+/", b"-_"
     )
 
 

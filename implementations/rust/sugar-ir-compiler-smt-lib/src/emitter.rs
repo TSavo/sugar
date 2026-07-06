@@ -1414,16 +1414,38 @@ fn emit_string_term(term: &Term) -> String {
                 emit_string_term(&args[1])
             )
         }
-        // The Python kit's ASCII-gated bytes literal: unwrap to the raw
-        // String content so bytes equalities meet charset universes in one
-        // theory. Kind distinctness (b"a" != "a") is enforced kit-side by
-        // refusing literal-vs-literal cross-kind rows before emission.
-        Term::Ctor { name, args } if name == "python:bytes" && args.len() == 1 => {
-            emit_string_term(&args[0])
-        }
+        // The Python kit carries bytes literals as hex in ProofIR. When a
+        // charset universe string-taints the term, unwrap to byte content so
+        // bytes equalities meet charset universes in one theory. Kind
+        // distinctness (b"a" != "a") is enforced kit-side by refusing
+        // literal-vs-literal cross-kind rows before emission.
+        Term::Ctor { name, args } if name == "python:bytes" && args.len() == 1 => match &args[0] {
+            Term::Const { value, sort } if matches!(sort, Sort::Primitive { name } if name == "String") =>
+            {
+                if let serde_json::Value::String(hex) = value {
+                    if let Some(decoded) = python_bytes_hex_to_string(hex) {
+                        return smt_string_literal(&decoded);
+                    }
+                }
+                emit_string_term(&args[0])
+            }
+            _ => emit_string_term(&args[0]),
+        },
         Term::Let { body, .. } => emit_string_term(body),
         _ => emit_term(term),
     }
+}
+
+fn python_bytes_hex_to_string(hex: &str) -> Option<String> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut out = String::with_capacity(hex.len() / 2);
+    for index in (0..hex.len()).step_by(2) {
+        let byte = u8::from_str_radix(&hex[index..index + 2], 16).ok()?;
+        out.push(char::from(byte));
+    }
+    Some(out)
 }
 
 // One SMT-LIB 2.6 string-character escape, shared by every string emitter.
