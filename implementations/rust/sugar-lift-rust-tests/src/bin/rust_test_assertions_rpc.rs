@@ -49,7 +49,7 @@ impl SourceLedgerStatus {
     fn as_wire(self) -> &'static str {
         match self {
             SourceLedgerStatus::Warranted => "warranted",
-            SourceLedgerStatus::Effect => "refused",
+            SourceLedgerStatus::Effect => "boundary",
             SourceLedgerStatus::Inactive => "inactive",
             SourceLedgerStatus::Unresolved => "unresolved",
         }
@@ -59,7 +59,7 @@ impl SourceLedgerStatus {
 fn source_ledger_status_from_wire(status: &str) -> SourceLedgerStatus {
     match status {
         "warranted" => SourceLedgerStatus::Warranted,
-        "refused" => SourceLedgerStatus::Effect,
+        "boundary" => SourceLedgerStatus::Effect,
         "inactive" => SourceLedgerStatus::Inactive,
         "unresolved" => SourceLedgerStatus::Unresolved,
         other => panic!("unknown source ledger status `{other}`"),
@@ -2739,7 +2739,7 @@ fn fn_has_test_attr(attrs: &[syn::Attribute]) -> bool {
 }
 
 fn source_status_is_dark(status: &str) -> bool {
-    !matches!(status, "warranted" | "refused" | "support" | "inactive")
+    !matches!(status, "warranted" | "boundary" | "support" | "inactive")
 }
 
 fn dark_source_locus_line(locus: &Value) -> Option<String> {
@@ -2791,8 +2791,9 @@ fn panic_on_dark_source_loci(loci: &[Value]) {
         message.push_str(line);
         message.push('\n');
     }
-    message
-        .push_str("Classify every locus as warranted, refused, support, or inactive; R must be 0.");
+    message.push_str(
+        "Classify every locus as warranted, boundary, support, or inactive; R must be 0.",
+    );
     panic!("{}", message);
 }
 
@@ -4772,7 +4773,7 @@ fn source_ledger(loci: &[Value]) -> Value {
         "source_loci": loci.len(),
         "source_warranted": count("warranted"),
         "source_support": count("support"),
-        "source_boundary": count("refused"),
+        "source_boundary": count("boundary"),
         "source_unresolved": unresolved,
         "source_inactive": count("inactive"),
         // Compatibility alias for current CLI source-ledger plumbing.
@@ -5449,14 +5450,15 @@ impl FactoryAuditSummaryAccumulator {
     fn observe_status(&mut self, status: &str) {
         match status {
             "warranted" => self.warranted += 1,
-            // `status` here still carries the pre-#3632 verifier-verb string as
-            // produced by the rust-test-assertions factory walk rows; the
-            // per-row rename is a separate, larger migration. This bucket is
-            // display-layer only: it aggregates that row status into the
-            // typed-effect "incomplete" bucket the CLI report now expects.
-            "refused" => self.incomplete += 1,
             "support" => self.support += 1,
             "unresolved" | "unclassified" => self.unresolved += 1,
+            // The rust-test-assertions factory walk row's own typed-effect
+            // status ("boundary") plus the python factory-walk kit's finer
+            // typed-effect family (#3632 batch 6): each is a named lift-side
+            // boundary, aggregated into the "incomplete" bucket the CLI
+            // report expects.
+            "boundary" | "raise-effect" | "runtime-effect" | "coverage-gap" | "factory-gap"
+            | "dig-boundary" | "absent" | "drifted" => self.incomplete += 1,
             _ => {}
         }
     }
@@ -5514,8 +5516,9 @@ fn factory_walk_row(row: &Value) -> Value {
     let status = factory_row_status(row);
     let verdict = match status {
         "warranted" | "support" => "complete",
-        "refused" => "incomplete",
         "unresolved" => "gap",
+        // "boundary" and the python factory-walk kit's typed-effect family
+        // all fall to "incomplete" via the catch-all below.
         _ => "incomplete",
     };
     let output = if status == "unresolved" {
@@ -5588,9 +5591,19 @@ fn factory_summary_site_row(row: &Value) -> Value {
 fn factory_row_status(row: &Value) -> &'static str {
     match row.get("status").and_then(Value::as_str).unwrap_or("") {
         "warranted" => "warranted",
-        "refused" => "refused",
         "support" => "support",
         "unresolved" | "unclassified" => "unresolved",
+        "boundary" => "boundary",
+        // The python factory-walk kit's typed-effect family (#3632 batch 6):
+        // each names a distinct lift-side boundary and is preserved verbatim,
+        // not collapsed to "unresolved".
+        "raise-effect" => "raise-effect",
+        "runtime-effect" => "runtime-effect",
+        "coverage-gap" => "coverage-gap",
+        "factory-gap" => "factory-gap",
+        "dig-boundary" => "dig-boundary",
+        "absent" => "absent",
+        "drifted" => "drifted",
         _ => "unresolved",
     }
 }
@@ -5615,12 +5628,14 @@ fn factory_audit_status_counts(rows: &[Value]) -> Value {
     for row in rows {
         match row.get("status").and_then(Value::as_str).unwrap_or("") {
             "warranted" => warranted += 1,
-            // See FactoryAuditSummaryAccumulator::observe_status: display-layer
-            // aggregation of the still-legacy-named row status into the
-            // typed-effect "incomplete" bucket.
-            "refused" => incomplete += 1,
             "support" => support += 1,
             "unresolved" | "unclassified" => unresolved += 1,
+            // See FactoryAuditSummaryAccumulator::observe_status: display-layer
+            // aggregation of every named lift-side boundary status (rust's own
+            // "boundary" plus the python factory-walk kit's typed-effect
+            // family) into the "incomplete" bucket.
+            "boundary" | "raise-effect" | "runtime-effect" | "coverage-gap" | "factory-gap"
+            | "dig-boundary" | "absent" | "drifted" => incomplete += 1,
             _ => {}
         }
     }
@@ -6514,8 +6529,8 @@ mod tests {
         assert_ne!(locus["status"], "unresolved", "{locus}");
     }
 
-    fn assert_source_locus_refused(response: &Value, ast_path: &str, category: &str) {
-        assert_source_locus_status(response, ast_path, "refused", category);
+    fn assert_source_locus_boundary(response: &Value, ast_path: &str, category: &str) {
+        assert_source_locus_status(response, ast_path, "boundary", category);
     }
 
     fn assert_source_locus_inactive(response: &Value, ast_path: &str, category: &str) {
@@ -6834,21 +6849,21 @@ fn literal_empty_callsite_twin_warrants() {
             &root,
             &response,
             "CountDrop :: new (& count)",
-            "refused",
+            "boundary",
             Some("side-effecting closure body"),
         );
         assert_factory_audit_status(
             &root,
             &response,
             "cell . set (Some (& value))",
-            "refused",
+            "boundary",
             Some("temporally unstable"),
         );
         assert_factory_audit_status(
             &root,
             &response,
             "xs . iter_mut () . map",
-            "refused",
+            "boundary",
             Some("side-effecting closure body"),
         );
         assert_factory_audit_status(&root, &response, "it . next_back ()", "warranted", None);
@@ -6856,7 +6871,7 @@ fn literal_empty_callsite_twin_warrants() {
             &root,
             &response,
             "functions . iter_mut () . map",
-            "refused",
+            "boundary",
             Some("runtime call through closure body parameter"),
         );
         assert_factory_audit_status(
@@ -6980,7 +6995,7 @@ fn literal_empty_callsite_twin_warrants() {
             "#,
         );
 
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "opaque_should_panic",
             "should_panic terminal panic not text-determined (opaque body)",
@@ -7159,7 +7174,7 @@ mod tests {
             classify_nontest_fn("inert", &f.sig, &f.block, false, &source_memento);
         assert!(decl.is_none(), "a refused runtime body mints no contract");
         assert_eq!(
-            status, "refused",
+            status, "boundary",
             "a runtime unit body is a named no-value-pin boundary (reason: {reason:?})"
         );
         assert!(
@@ -7187,7 +7202,7 @@ fn mut_ref_pointer_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "mut_ref_pointer_refused",
             "mutable reference/pointer effect",
@@ -7216,7 +7231,7 @@ fn mutation_side_effect_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "mutation_side_effect_refused",
             "mutation/side effect",
@@ -7239,7 +7254,7 @@ fn layout_fact_literal_twin() -> usize {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "layout_fact_refused",
             "compiler layout fact not in text",
@@ -7264,7 +7279,7 @@ fn signed_zero_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "signed_zero_refused",
             "IEEE signed-zero refinement boundary",
@@ -7289,7 +7304,7 @@ fn unstable_float_width_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "unstable_float_width_refused",
             "unknown/unstable float refinement width",
@@ -7336,7 +7351,7 @@ fn opaque_runtime_receiver_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "opaque_runtime_receiver_refused",
             "opaque runtime receiver",
@@ -7365,7 +7380,7 @@ fn atomic_rmw_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "atomic_rmw_refused",
             "atomic read-modify-write runtime state",
@@ -7395,7 +7410,7 @@ fn atomic_load_store_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "atomic_load_store_refused",
             "atomic load/store ordering",
@@ -7422,7 +7437,7 @@ fn size_hint_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "size_hint_runtime_bound_refused",
             "iterator size_hint runtime bound",
@@ -7452,7 +7467,7 @@ fn mutating_method_temporal_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "mutating_method_temporal_refused",
             "mutating method temporal state",
@@ -7481,7 +7496,7 @@ fn mutable_view_temporal_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "mutable_view_temporal_refused",
             "mutable view temporal state",
@@ -7517,7 +7532,7 @@ fn option_raw_pointer_payload_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "option_raw_pointer_payload_refused",
             "Option payload is a raw pointer, runtime address not literal-determined",
@@ -7548,7 +7563,7 @@ fn as_mut_ptr_mutable_view_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "as_mut_ptr_mutable_view_refused",
             "mutable view via as_mut_ptr, temporally unstable, no timeless value",
@@ -7579,7 +7594,7 @@ fn atomic_ptr_arithmetic_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "atomic_ptr_arithmetic_refused",
             "atomic ptr arithmetic, runtime operand",
@@ -7606,7 +7621,7 @@ fn pointer_alignment_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "pointer_alignment_refused",
             "pointer alignment, runtime address",
@@ -7633,7 +7648,7 @@ fn duration_time_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "duration_time_runtime_refused",
             "Duration/time runtime operand",
@@ -7669,7 +7684,7 @@ fn runtime_for_domain_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "runtime_for_domain_refused",
             "runtime for-loop domain",
@@ -7701,7 +7716,7 @@ fn literal_for_loop_runtime_body_read_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "literal_for_loop_runtime_body_read_refused",
             "literal for-loop body runtime read",
@@ -7726,7 +7741,7 @@ fn array_repeat_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "array_repeat_non_literal_refused",
             "array repeat non-literal length",
@@ -7762,7 +7777,7 @@ fn runtime_regex_pattern_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "runtime_regex_pattern_refused",
             "runtime regex pattern",
@@ -7789,7 +7804,7 @@ fn runtime_impl_method_literal_twin() -> i32 {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "Counter::observe",
             "runtime impl-method boundary",
@@ -7996,7 +8011,7 @@ fn test_iterator_flatten_fold_bad_twin() {
                 "ast_kind": "test-fn",
                 "ast_path": "runtime_boundary",
                 "line": 3,
-                "status": "refused",
+                "status": "boundary",
             }),
             json!({
                 "file": "tests/warranted.rs",
@@ -8028,7 +8043,7 @@ fn runtime_array_element_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "runtime_array_element_refused",
             "literal array element boundary",
@@ -8072,12 +8087,12 @@ fn runtime_chunk_source_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "runtime_slice_source_boundary",
             "runtime slice source, not literal",
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "runtime_chunk_source_boundary",
             "array repeat non-literal length",
@@ -8140,7 +8155,7 @@ fn range_bounds_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "range_bounds_runtime_value_refused",
             "RangeBounds over runtime value r",
@@ -8187,7 +8202,7 @@ fn runtime_print() {
         let (status, reason, entry) =
             classify_nontest_fn("runtime_print", &f.sig, &f.block, false, &source_memento);
 
-        assert_eq!(status, "refused", "reason: {reason:?}");
+        assert_eq!(status, "boundary", "reason: {reason:?}");
         assert!(
             reason
                 .as_deref()
@@ -8225,31 +8240,31 @@ fn runtime_print() {
             Case {
                 relative: "tests/future.rs",
                 name: "test_join_function_like_value_arg_semantics::_join_does_not_unnecessarily_move_mentioned_bindings",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/future.rs",
                 name: "_pending_impl_all_auto_traits",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/hash/mod.rs",
                 name: "_build_hasher_default_impl_all_auto_traits",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/iter/adapters/map_windows.rs",
                 name: "drop_checks::check",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/iter/adapters/map_windows.rs",
                 name: "drop_checks::check_drops",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
@@ -8261,79 +8276,79 @@ fn runtime_print() {
             Case {
                 relative: "tests/iter/traits/iterator.rs",
                 name: "_empty_impl_all_auto_traits",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/macros.rs",
                 name: "_allows_stmt_expr_attributes",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/macros.rs",
                 name: "_expression",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/num/flt2dec/mod.rs",
                 name: "check_exact_one",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/num/flt2dec/mod.rs",
                 name: "f16_shortest_sanity_test",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/num/flt2dec/mod.rs",
                 name: "f16_exact_sanity_test",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/num/flt2dec/mod.rs",
                 name: "f32_shortest_sanity_test",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/num/flt2dec/mod.rs",
                 name: "f32_exact_sanity_test",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/num/flt2dec/mod.rs",
                 name: "f64_shortest_sanity_test",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/num/flt2dec/mod.rs",
                 name: "f64_exact_sanity_test",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/num/flt2dec/mod.rs",
                 name: "more_shortest_sanity_test",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
                 relative: "tests/num/mod.rs",
                 name: "ldexp_f64",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime FFI boundary"),
             },
             Case {
                 relative: "tests/num/mod.rs",
                 name: "test_num",
-                status: "refused",
+                status: "boundary",
                 reason: Some("runtime unit body value boundary"),
             },
             Case {
@@ -8371,7 +8386,7 @@ fn runtime_print() {
                         case.name
                     );
                 }
-                "refused" => {
+                "boundary" => {
                     let reason = reason.unwrap_or_else(|| {
                         panic!(
                             "{}::{} must carry a named refusal",
@@ -8418,7 +8433,7 @@ fn post_loop_read_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "post_loop_read_refused",
             "temporally unstable post-loop read",
@@ -8445,7 +8460,7 @@ fn mutating_method_read_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "mutating_method_read_refused",
             "temporally unstable mutating method read",
@@ -8476,7 +8491,7 @@ fn ambiguous_temporal_identity_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "ambiguous_temporal_identity_refused",
             "ambiguous temporal identity",
@@ -8524,7 +8539,7 @@ fn consumed_iterator_local_literal_twin() {
             "warranted",
             None,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "consumed_iterator_partial_drain_refused",
             "consumed-iterator local",
@@ -8535,7 +8550,7 @@ fn consumed_iterator_local_literal_twin() {
             "len",
             Some("consumed_iterator_partial_drain_refused"),
             "it.len()",
-            "refused",
+            "boundary",
             Some("consumed-iterator local"),
         );
         assert_source_locus_warranted(&response, "consumed_iterator_local_literal_twin");
@@ -8564,7 +8579,7 @@ fn consumed_iterator_mutable_container_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_refused(
+        assert_source_locus_boundary(
             &response,
             "consumed_iterator_mutable_container_refused",
             "mutable container temporal state",

@@ -26,7 +26,7 @@
     },
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/witness.py:387495c1a847b274:1",
-      "line": 306,
+      "line": 303,
       "path": "implementations/python/sugar-build-witness/src/sugar_build_witness/witness.py",
       "reason": "witness builder reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -36,7 +36,7 @@
     },
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/witness.py:c00e8507b151e816:1",
-      "line": 317,
+      "line": 314,
       "path": "implementations/python/sugar-build-witness/src/sugar_build_witness/witness.py",
       "reason": "witness builder reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -46,7 +46,7 @@
     },
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/witness.py:df6fb2c960db5d05:1",
-      "line": 302,
+      "line": 299,
       "path": "implementations/python/sugar-build-witness/src/sugar_build_witness/witness.py",
       "reason": "witness builder reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -126,7 +126,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/lift_lsp.py:c6148629b10bd3d9:1",
-      "line": 382,
+      "line": 383,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/lift_lsp.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -136,7 +136,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/lift_lsp.py:cbbc07efb9f468e8:1",
-      "line": 313,
+      "line": 314,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/lift_lsp.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -146,7 +146,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:2e7370b6a94114eb:1",
-      "line": 463,
+      "line": 458,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -156,7 +156,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:4ddf97dc5f51f64a:1",
-      "line": 467,
+      "line": 462,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -166,7 +166,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:5ca27d62fcfbf413:1",
-      "line": 475,
+      "line": 470,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -176,7 +176,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:96e1d4c264baf7cd:1",
-      "line": 171,
+      "line": 172,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -186,7 +186,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:a15f5015da3f6c9b:1",
-      "line": 96,
+      "line": 97,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -196,7 +196,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:ced0ecb444e8b6c0:1",
-      "line": 149,
+      "line": 150,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -206,7 +206,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:e17df1cf3c9a7efc:1",
-      "line": 415,
+      "line": 410,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -216,7 +216,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:e17df1cf3c9a7efc:2",
-      "line": 424,
+      "line": 419,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -226,7 +226,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:e17df1cf3c9a7efc:3",
-      "line": 471,
+      "line": 466,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -236,7 +236,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:e3a1b003ba14db0b:1",
-      "line": 298,
+      "line": 293,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -246,7 +246,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py:edeedac006c9fcb9:1",
-      "line": 409,
+      "line": 404,
       "path": "implementations/python/sugar-lift-py-pytest-witness/src/sugar_pytest_witness/witness.py",
       "reason": "pytest witness kit reads or reports prove-side verifier verdicts",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -1326,7 +1326,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:275e3195e042e920:1",
-      "line": 498,
+      "line": 499,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1336,7 +1336,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:516a86ab996c4da5:1",
-      "line": 238,
+      "line": 239,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1346,7 +1346,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:678aa91dc0fc33bb:1",
-      "line": 343,
+      "line": 344,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1356,7 +1356,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b13ac16af47d1f4d:1",
-      "line": 501,
+      "line": 502,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1366,7 +1366,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b85f2cb26012bf60:1",
-      "line": 225,
+      "line": 226,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1376,7 +1376,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b85f2cb26012bf60:2",
-      "line": 235,
+      "line": 236,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",

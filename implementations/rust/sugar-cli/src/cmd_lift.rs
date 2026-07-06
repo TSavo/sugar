@@ -6000,7 +6000,7 @@ fn format_ast_kind_counts(counts: &BTreeMap<String, i64>) -> String {
 fn source_status_order(status: &str) -> usize {
     match status {
         "warranted" => 0,
-        "refused" => 1,
+        "boundary" => 1,
         "support" => 2,
         "inactive" => 3,
         "unresolved" => 4,
@@ -6013,7 +6013,17 @@ fn normalized_source_status(status: Option<&str>) -> &str {
         Some("warranted") => "warranted",
         Some("inactive") => "inactive",
         Some("support") => "support",
-        Some("refused") => "refused",
+        // Generic rust-lifter boundary, plus the python factory-walk kit's
+        // typed-effect family (#3632 batch 6): all are a named lift-side
+        // boundary, not a verifier refusal. Collapsed to one display bucket.
+        Some("boundary")
+        | Some("raise-effect")
+        | Some("runtime-effect")
+        | Some("coverage-gap")
+        | Some("factory-gap")
+        | Some("dig-boundary")
+        | Some("absent")
+        | Some("drifted") => "boundary",
         Some("unresolved") | Some("unclassified") | Some("silent") => "unresolved",
         _ => "unresolved",
     }
@@ -6436,7 +6446,7 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
         "factory accounting: sites={} warranted={} incomplete={} support={} unresolved={}\n",
         factory_audits.len(),
         counts.get("warranted").copied().unwrap_or(0),
-        counts.get("refused").copied().unwrap_or(0),
+        counts.get("boundary").copied().unwrap_or(0),
         counts.get("support").copied().unwrap_or(0),
         counts.get("unresolved").copied().unwrap_or(0),
     );
@@ -6462,7 +6472,7 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
         )
     });
 
-    for status in ["unresolved", "refused", "support", "warranted"] {
+    for status in ["unresolved", "boundary", "support", "warranted"] {
         let status_rows = rows
             .iter()
             .copied()
@@ -6473,8 +6483,8 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
         if status_rows.is_empty() {
             continue;
         }
-        let heading = if status == "refused" {
-            "factory boundaries (refused)"
+        let heading = if status == "boundary" {
+            "factory boundaries"
         } else {
             match status {
                 "unresolved" => "factory gaps (unresolved)",
@@ -6501,7 +6511,7 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
 fn factory_status_order(status: &str) -> usize {
     match status {
         "unresolved" => 0,
-        "refused" => 1,
+        "boundary" => 1,
         "support" => 2,
         "warranted" => 3,
         _ => 4,
@@ -6542,7 +6552,7 @@ fn format_factory_audit_row(audit: &Value) -> String {
     if let Some(reason) = audit.get("reason").and_then(Value::as_str) {
         if !reason.is_empty() {
             let label = if normalized_source_status(audit.get("status").and_then(Value::as_str))
-                == "refused"
+                == "boundary"
             {
                 "boundary"
             } else {
@@ -10142,7 +10152,7 @@ mod tests {
             "requested_role": "Term",
             "ast_kind": "Call",
             "selected": "CallSugar",
-            "status": "refused",
+            "status": "boundary",
             "verdict": "incomplete",
             "output": "effect",
             "sourceMemento": {
@@ -10539,7 +10549,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
                         "requested_role": "Term",
                         "ast_kind": "expr",
                         "selected": "address_cast",
-                        "status": "refused",
+                        "status": "boundary",
                         "verdict": "incomplete",
                         "output": "effect",
                         "reason": "runtime boundary: pointer identity"
@@ -10550,7 +10560,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
                         "requested_role": "Term",
                         "ast_kind": "expr",
                         "selected": "literal_int",
-                        "status": "refused",
+                        "status": "boundary",
                         "verdict": "incomplete",
                         "output": "effect",
                         "reason": "runtime boundary already reached"
@@ -10608,7 +10618,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
                     "requested_role": "Term",
                     "ast_kind": "expr",
                     "selected": "address_cast",
-                    "status": "refused",
+                    "status": "boundary",
                     "verdict": "incomplete",
                     "output": "effect",
                     "reason": "runtime boundary: pointer identity",
@@ -10620,7 +10630,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
                     "requested_role": "Term",
                     "ast_kind": "expr",
                     "selected": "let_binding",
-                    "status": "refused",
+                    "status": "boundary",
                     "verdict": "incomplete",
                     "output": "effect",
                     "reason": "runtime boundary: pointer identity",
@@ -10730,7 +10740,7 @@ fn sample() {
                         "requested_role": "Term",
                         "ast_kind": "expr",
                         "selected": "address_cast",
-                        "status": "refused",
+                        "status": "boundary",
                         "verdict": "incomplete",
                         "output": "effect",
                         "reason": "runtime boundary: pointer identity",
@@ -11054,7 +11064,7 @@ fn encode_with_padding(input: &[u8], output: &mut [u8], engine: &Engine) {
                         "requested_role": "FunctionBodyConstraint",
                         "ast_kind": "stmt",
                         "selected": "function_body_runtime_call",
-                        "status": "refused",
+                        "status": "boundary",
                         "verdict": "incomplete",
                         "output": "effect",
                         "reason": "runtime boundary: internal_encode writes output",
