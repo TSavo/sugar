@@ -1415,6 +1415,35 @@ mod tests {
     }
 
     #[test]
+    fn chars_not_in_set_with_python_bytes_forbidden_payload_is_unsat() {
+        // DISCRIMINATION: Python bytes literals travel as hex in ProofIR. When
+        // the URL-safe translate universe string-taints the call result, the
+        // compiler must compare decoded byte content, not the hex transport
+        // spelling. b"YmFy+x=" contains '+', so this is UNSAT.
+        let z3 = which_z3().expect("z3 required for python:bytes charset check");
+        let call = callresult("c:callresult_urlsafe_b64encode_a1", "bar");
+        let python_bytes = ctor("python:bytes", vec![string_const("596d46792b783d")]);
+        let inv = serde_json::json!({
+            "kind": "and",
+            "operands": [
+                string_theory_atom(
+                    "str.chars-not-in-set",
+                    vec![call.clone(), string_const("+/")],
+                ),
+                eq(call, python_bytes),
+            ]
+        });
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        let out = run_z3(&z3, &script);
+        assert_eq!(
+            out.trim(),
+            "unsat",
+            "complement universe + decoded python:bytes literal must be UNSAT, got: {out}\nscript:\n{script}"
+        );
+    }
+
+    #[test]
     fn chars_not_in_set_round_trips_through_emit_asserted() {
         // STRUCTURAL: conjunction of negated str.contains, sorted+deduped,
         // quote escaped, no opaque strlit_ laundering, no uninterpreted

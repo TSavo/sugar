@@ -421,14 +421,12 @@
       "work_order_issue": 3591
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "proof-gap/urlsafe-universe-missing",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 after the stale python-tests-lift/LSP manifest was removed; current terminal shape is the good URL-safe twin refusing as vacuous because no URL-safe universe/sibling row is minted (`consistency check vacuous: single constraint has no sibling to contradict`). Retirement: the current Python lifter emits or imports a bridge-resolvable URL-safe alphabet universe row so the good twin discharges and the bad twin stays refused; work order #3653.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 14.996,
-      "name": "examples/python-urlsafe-seam/run.sh",
-      "work_order_issue": 3653
+      "grounds": "script exits 0 after minting the CPython URL-safe translate universe as a bridge-resolvable function contract: the good urlsafe_b64encode twin discharges, and the bad standard-alphabet confusion twin is unsatisfied/refused on the closed '+/' complement universe.",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 14.728,
+      "name": "examples/python-urlsafe-seam/run.sh"
     },
     {
       "expected": "NAMED_RED",
