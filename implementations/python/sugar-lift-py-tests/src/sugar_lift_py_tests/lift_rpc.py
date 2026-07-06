@@ -13,6 +13,7 @@ if __package__ in (None, ""):
 from sugar_lift_py_tests.audit_only import collect_construction_gaps
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
 from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.filename import cid_from_proof_stem
 from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
 from sugar_lift_py_tests.lib import lift_source
 
@@ -710,11 +711,7 @@ def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> No
             # apples-to-apples.  The filename uses underscore for Windows
             # path-safety; the in-memory CID always uses colon.
             stem = path.name[: -len(".proof")]
-            cid = (
-                stem.replace("blake3-512_", "blake3-512:", 1)
-                if stem.startswith("blake3-512_")
-                else stem
-            )
+            cid = cid_from_proof_stem(stem) or stem
             proofs.append(
                 {
                     "cid": cid,

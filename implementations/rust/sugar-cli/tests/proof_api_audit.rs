@@ -172,7 +172,11 @@ fn hand_rolled_cid_parser_axis(line: &str) -> Option<&'static str> {
     if t.starts_with("//") || t.starts_with('*') || t.starts_with("//!") {
         return None;
     }
-    if t.contains(".strip_prefix(\"blake3-512") || t.contains(".strip_prefix(BLAKE3_512_PREFIX") {
+    if t.contains(".strip_prefix(\"blake3-512")
+        || t.contains(".strip_prefix(BLAKE3_512_PREFIX")
+        || t.contains(".trim_start_matches(\"blake3-512")
+        || t.contains(".trim_start_matches(BLAKE3_512_PREFIX")
+    {
         return Some("colon-prefix-strip");
     }
     if (t.contains(".starts_with(\"blake3-512_")
@@ -185,6 +189,9 @@ fn hand_rolled_cid_parser_axis(line: &str) -> Option<&'static str> {
     if (t.contains("len() == 128") || t.contains("len() != 128")) && t.contains("is_ascii_hexdigit")
     {
         return Some("cid-hex-validation");
+    }
+    if t.contains(".replace(':', \"_\")") || t.contains(".replace(\":\", \"_\")") {
+        return Some("colon-to-underscore-filename-transform");
     }
     None
 }
@@ -614,9 +621,11 @@ fn hand_rolled_cid_parsers_are_zero_or_pinned() {
             "\nR(hand-rolled-cid-parsers) = {} measured offenders; pinned R = {}.\n\
              CID format knowledge has two owners only: \
              sugar_canonicalizer::cid_hex for in-memory colon-form CIDs, \
-             sugar_proof_envelope::cid_from_proof_stem for proof filename stems.\n\
+             sugar_proof_envelope::{{cid_from_proof_stem,cid_filename_stem,proof_filename}} \
+             for on-disk filename stems.\n\
              Replacement: colon-prefix-strip/cid-hex-validation -> cid_hex; \
-             filename-stem-prefix -> cid_from_proof_stem.\n\n",
+             filename-stem-prefix -> cid_from_proof_stem; \
+             colon-to-underscore-filename-transform -> cid_filename_stem/proof_filename.\n\n",
             actual.len(),
             EXPECTED_HAND_ROLLED_CID_PARSERS.len()
         ));

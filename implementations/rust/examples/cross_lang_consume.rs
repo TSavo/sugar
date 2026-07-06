@@ -340,8 +340,8 @@ fn tempdir_unique(prefix: &str) -> Result<PathBuf, String> {
         )
         .as_bytes(),
     );
-    let suffix: String = nonce
-        .trim_start_matches("blake3-512:")
+    let suffix: String = sugar_canonicalizer::cid_hex(&nonce)
+        .unwrap_or(&nonce)
         .chars()
         .take(12)
         .collect();

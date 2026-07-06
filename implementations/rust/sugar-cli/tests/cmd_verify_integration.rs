@@ -267,7 +267,7 @@ fn verify_lia_claim_routes_to_smt_and_mints_witness() {
         assert!(witness_cid.starts_with("blake3-512:"));
 
         // The minted witness file exists, re-parses, and cites the solver.
-        let hex = witness_cid.trim_start_matches("blake3-512:");
+        let hex = cid_hex(witness_cid).unwrap_or(witness_cid);
         let wpath = witnesses.join(format!("witness-{hex}.json"));
         let bytes = fs::read_to_string(&wpath).expect("witness file written");
         let witness: sugar_ir_types::WitnessMemento =
