@@ -3567,7 +3567,11 @@ mod tests {
         insert_contract(&mut pool, "blake3-512:enclt", name, lt10);
         insert_contract(&mut pool, "blake3-512:encgt", name, gt20);
         let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
-        assert_eq!(res.len(), 1, "same-named facts conjoin to one obligation: {res:?}");
+        assert_eq!(
+            res.len(),
+            1,
+            "same-named facts conjoin to one obligation: {res:?}"
+        );
         assert_eq!(
             res[0].verdict,
             ObligationVerdict::Unsatisfied,
@@ -3590,7 +3594,11 @@ mod tests {
         insert_contract(&mut pool, "blake3-512:enclt10", name, lt10);
         insert_contract(&mut pool, "blake3-512:enclt15", name, lt15);
         let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
-        assert_eq!(res.len(), 1, "same-named facts conjoin to one obligation: {res:?}");
+        assert_eq!(
+            res.len(),
+            1,
+            "same-named facts conjoin to one obligation: {res:?}"
+        );
         assert_eq!(
             res[0].verdict,
             ObligationVerdict::Discharged,
