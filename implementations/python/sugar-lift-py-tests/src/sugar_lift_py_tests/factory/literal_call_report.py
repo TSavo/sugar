@@ -46,7 +46,12 @@ from sugar_lift_py_tests.kit_rpc import (
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
 from sugar_lift_py_tests.effect import FactoryGapEffect, RuntimeEffect
 from sugar_lift_py_tests.effect import effect_status
-from sugar_lift_py_tests.floor import DictLiteralValue, ImportAliasValue, PredicateValue
+from sugar_lift_py_tests.floor import (
+    DictLiteralValue,
+    ImportAliasValue,
+    LambdaCallable,
+    PredicateValue,
+)
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.proofir import (
@@ -1679,6 +1684,7 @@ def _lift_callsite_assertion(
                 memento_file=memento_file,
                 source_lines=source_lines,
             )
+        keyword_value = None
         try:
             keyword_value = _literal_floor_via_factory(keyword_frag, filename, ctx=ctx)
             if isinstance(keyword_value, Incomplete):
@@ -1688,6 +1694,29 @@ def _lift_callsite_assertion(
                     keyword_value,
                     stmt=stmt,
                     selected="TypedEffect",
+                    requested_role="CallsiteKeywordActual",
+                    filename=filename,
+                    memento_file=memento_file,
+                    source_lines=source_lines,
+                )
+            if isinstance(keyword_value, LambdaCallable):
+                return _effect_lift(
+                    keyword_frag,
+                    fn,
+                    Incomplete(
+                        RuntimeEffect(
+                            "callsite keyword runtime boundary: "
+                            "crime=callsite keyword could not be projected to a "
+                            "ProofIR term; "
+                            "owner=literal_call_report; "
+                            f"shape=kw:{name}:LambdaCallable-unliftable; "
+                            "replacement=add a cited callable identity floor for "
+                            "keyword values or keep the assertion as typed red; "
+                            f"blame={memento_file}:{keyword_frag.line}:{keyword_frag.col}"
+                        )
+                    ),
+                    stmt=stmt,
+                    selected="CallsiteKeywordRuntimeEffect",
                     requested_role="CallsiteKeywordActual",
                     filename=filename,
                     memento_file=memento_file,
@@ -1704,15 +1733,33 @@ def _lift_callsite_assertion(
                 )
             )
         except TypeError as exc:
-            _panic_no_sugar(
+            keyword_shape = (
+                type(keyword_value).__name__
+                if keyword_value is not None
+                else keyword_frag.observed
+            )
+            return _effect_lift(
                 keyword_frag,
-                memento_file,
-                observed=f"callsite-keyword:{keyword_frag.observed}-unliftable",
-                requested="LiftableCallKeywordArg",
-                fix=(
-                    "lift this keyword-arg shape (e.g. nested arrays, mixed-type "
-                    f"lists): {exc}"
+                fn,
+                Incomplete(
+                    RuntimeEffect(
+                        "callsite keyword runtime boundary: "
+                        "crime=callsite keyword could not be projected to a "
+                        "ProofIR term; "
+                        "owner=literal_call_report; "
+                        f"shape=kw:{name}:{keyword_shape}-unliftable; "
+                        "replacement=add a cited floor projection for this "
+                        "keyword value or keep the assertion as typed red; "
+                        f"{exc}; "
+                        f"blame={memento_file}:{keyword_frag.line}:{keyword_frag.col}"
+                    )
                 ),
+                stmt=stmt,
+                selected="CallsiteKeywordRuntimeEffect",
+                requested_role="CallsiteKeywordActual",
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
             )
     if isinstance(expected_value, DictLiteralValue):
         return _emit_dict_literal_callsite_facts(

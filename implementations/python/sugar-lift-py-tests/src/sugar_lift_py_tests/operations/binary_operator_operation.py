@@ -95,6 +95,8 @@ class BinaryOperatorOperation:
                 else ne(receiver.term, str_const(self.right.value))
             )
             return Complete(PredicateValue(formula))
+        if isinstance(self.right, StringValue) and self.operator == "+":
+            return self._symbolic_string_concat_effect()
         self._floor_gap(receiver="SymbolicValue")
 
     def binary_string(self, receiver: StringValue, ctx: object) -> Outcome:
@@ -253,6 +255,17 @@ class BinaryOperatorOperation:
                 f"{receiver} * SymbolicValue depends on runtime __index__/length "
                 "semantics; keep as typed red until a compact symbolic repeated-"
                 f"sequence floor owns this shape. blame={self.blame}"
+            )
+        )
+
+    def _symbolic_string_concat_effect(self) -> Outcome:
+        return Incomplete(
+            RuntimeEffect(
+                "symbolic string concatenation runtime boundary: "
+                "SymbolicValue + StringValue depends on the receiver's runtime "
+                "__add__ carrier and the string-concat universe bridge is not "
+                "proof-bearing yet; keep as typed red until a cited String-sorted "
+                f"concat floor owns this shape. blame={self.blame}"
             )
         )
 
