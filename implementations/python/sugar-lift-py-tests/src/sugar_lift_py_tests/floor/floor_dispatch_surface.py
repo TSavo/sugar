@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.operations.binary_operator_operation import (
+        BinaryOperatorOperation,
+    )
+    from sugar_lift_py_tests.outcome import Outcome
 
 FLOOR_OPERATION_METHOD_NAMES = (
     "add_with",
@@ -38,8 +45,16 @@ FLOOR_OPERATION_METHOD_NAMES = (
 )
 
 
+class BinaryOperatorFloor(Protocol):
+    def binary_operator_with(
+        self,
+        operation: BinaryOperatorOperation,
+        ctx: FactoryBuildContext | None,
+    ) -> Outcome: ...
+
+
 @runtime_checkable
-class FloorDispatchSurface(Protocol):
+class FloorDispatchSurface(BinaryOperatorFloor, Protocol):
     """Every registered floor must answer every declared operation method.
 
     The runtime law stays explicit dispatch through ``perform_operation``. This
@@ -62,8 +77,6 @@ class FloorDispatchSurface(Protocol):
     def attribute_with(self, operation: Any, ctx: Any) -> Any: ...
 
     def await_with(self, operation: Any, ctx: Any) -> Any: ...
-
-    def binary_operator_with(self, operation: Any, ctx: Any) -> Any: ...
 
     def bitwise_with(self, operation: Any, ctx: Any) -> Any: ...
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Outcome
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
 
 _BITWISE_OPERATORS = frozenset({"&", "|", "^", "<<", ">>"})
 
@@ -17,7 +20,9 @@ class InplaceBinaryOperatorOperation:
     owner: str = "AugAssignSugar"
     blame: str = "<unknown>"
 
-    def inplace_default(self, receiver: FloorValue, ctx: object) -> Outcome:
+    def inplace_default(
+        self, receiver: FloorValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         from sugar_lift_py_tests.operations.binary_operator_operation import (
             BinaryOperatorOperation,
         )

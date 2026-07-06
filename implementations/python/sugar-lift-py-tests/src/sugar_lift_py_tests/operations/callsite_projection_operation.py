@@ -58,7 +58,7 @@ class CallsiteProjectionOperation:
         )
         return cast(Formula | None, projected)
 
-    def project_unknown(self, receiver: FloorValue, ctx: Any) -> None:
+    def project_unknown(self, receiver: FloorValue, ctx: Any) -> NoReturn:
         del ctx
         self._floor_gap(type(receiver).__name__)
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, ClassVar, NoReturn
+from typing import TYPE_CHECKING, Callable, ClassVar, NoReturn
 
 from sugar_lift_py_tests.effect import FactoryGapEffect, RuntimeEffect
 from sugar_lift_py_tests.factory import (
@@ -26,6 +26,9 @@ from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.ir import ctor, eq, ne, num, str_const
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context import FactoryBuildContext
+
 _FOLD: dict[str, Callable[[int | float, int | float], int | float]] = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
@@ -49,7 +52,9 @@ class BinaryOperatorOperation:
     owner: str = "BinOpSugar"
     blame: str = "<unknown>"
 
-    def binary_term(self, receiver: TermValue, ctx: object) -> Outcome:
+    def binary_term(
+        self, receiver: TermValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         if self.operator == "*" and isinstance(self.right, ArrayLiteral):
             return self._repeat_array(self.right, receiver)
         if self.operator == "*" and isinstance(self.right, TupleLiteralValue):
@@ -84,7 +89,9 @@ class BinaryOperatorOperation:
             return self._reflect_binary(receiver, self.right, ctx)
         self._floor_gap(receiver="TermValue")
 
-    def binary_symbolic(self, receiver: SymbolicValue, ctx: object) -> Outcome:
+    def binary_symbolic(
+        self, receiver: SymbolicValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         if isinstance(self.right, (TermValue, SymbolicValue)):
             return self._emit_symbolic(receiver, self.right)
@@ -99,7 +106,9 @@ class BinaryOperatorOperation:
             return self._symbolic_string_concat_effect()
         self._floor_gap(receiver="SymbolicValue")
 
-    def binary_string(self, receiver: StringValue, ctx: object) -> Outcome:
+    def binary_string(
+        self, receiver: StringValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         if self.operator == "+" and isinstance(self.right, StringValue):
             return Complete(StringValue(receiver.value + self.right.value))
@@ -117,7 +126,9 @@ class BinaryOperatorOperation:
             return Complete(BoolValue(equal if self.operator == "==" else not equal))
         self._floor_gap(receiver="StringValue")
 
-    def binary_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
+    def binary_array(
+        self, receiver: ArrayLiteral, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         if self.operator == "+" and isinstance(self.right, ArrayLiteral):
             return Complete(ArrayLiteral(receiver.items + self.right.items))
@@ -127,7 +138,9 @@ class BinaryOperatorOperation:
             return self._symbolic_sequence_repeat_effect(receiver="ArrayLiteral")
         self._floor_gap(receiver="ArrayLiteral")
 
-    def binary_tuple(self, receiver: TupleLiteralValue, ctx: object) -> Outcome:
+    def binary_tuple(
+        self, receiver: TupleLiteralValue, ctx: FactoryBuildContext | None
+    ) -> Outcome:
         del ctx
         if self.operator == "*" and isinstance(self.right, TermValue):
             return self._repeat_tuple(receiver, self.right)
@@ -136,7 +149,7 @@ class BinaryOperatorOperation:
         self._floor_gap(receiver="TupleLiteralValue")
 
     def binary_encoded_string(
-        self, receiver: EncodedStringValue, ctx: object
+        self, receiver: EncodedStringValue, ctx: FactoryBuildContext | None
     ) -> Outcome:
         del ctx
         if not isinstance(self.right, EncodedStringValue):
@@ -175,7 +188,10 @@ class BinaryOperatorOperation:
         return Complete(SymbolicValue(ctor(self.operator, [left_term, right_term])))
 
     def _reflect_binary(
-        self, left: FloorValue, right: FloorValue, ctx: object
+        self,
+        left: FloorValue,
+        right: FloorValue,
+        ctx: FactoryBuildContext | None,
     ) -> Outcome:
         from sugar_lift_py_tests.operations.perform_operation import perform_operation
         from sugar_lift_py_tests.operations.reflected_binary_operator_operation import (
