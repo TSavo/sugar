@@ -144,13 +144,14 @@ def test_named_frontier_is_pinned_by_owner_shape_and_needle() -> None:
 
 
 def test_completed_wall_mode_uses_numpy_style_floors() -> None:
-    visual = """
-universe visual:
-    pkg.py:1  GREEN
-    pkg.py:2  RED HERE effect: runtime-effect owner=await
-    pkg.py:3  RED
-"""
+    # Criterion 14 (#3706): the summary is built entirely from
+    # `lineAccounting`, never a scrape of `--visual` ANSI text.
     report = {
+        "lineAccounting": [
+            {"file": "pkg.py", "line": 1, "class": "warrant", "grounds": "cid:blake3-512:x"},
+            {"file": "pkg.py", "line": 2, "class": "effect", "grounds": "runtime-effect owner=await"},
+            {"file": "pkg.py", "line": 3, "class": "effect", "grounds": ""},
+        ],
         "contracts": [{"pre": {"kind": "atomic"}}, {"post": {"kind": "atomic"}}],
         "callEdges": [
             {"kind": "call-edge", "targetContractCid": "blake3-512:" + ("a" * 128)},
@@ -158,7 +159,7 @@ universe visual:
         ],
     }
 
-    summary = summarize_pandas_completed_wall(visual, report)
+    summary = summarize_pandas_completed_wall(report)
 
     assert summary == PandasWallSummary(
         mode="complete",
@@ -293,6 +294,14 @@ def test_build_complete_mode_runs_json_report_and_checks_full_floors(
                 0,
                 json.dumps(
                     {
+                        "lineAccounting": [
+                            {
+                                "file": "pkg.py",
+                                "line": 1,
+                                "class": "warrant",
+                                "grounds": "cid:blake3-512:x",
+                            }
+                        ],
                         "contracts": [{"pre": {"kind": "atomic"}}],
                         "callEdges": [{"kind": "implication"}],
                     }

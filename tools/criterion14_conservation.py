@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Criterion 14 conservation checker: total line accounting, the conservation law.
 
-Part of #3686. Spec (T, 2026-07-06, "Criterion 14 -- total line accounting,
-the conservation law"): for every vendor corpus file, every physical line must
-be accounted by `sugar lift --report --json` as exactly one of:
+Part of #3686 / #3706. Spec (T, 2026-07-06, "Criterion 14 -- total line
+accounting, the conservation law"): for every vendor corpus file, every
+physical line must be accounted by `sugar lift --report --json` as exactly
+one of:
 
     warrant  -- the line carries proofir (a followable CID chain to contracts)
     support  -- an inert line affirmatively classified as support (an
@@ -16,29 +17,25 @@ consumes the machine-readable JSON report emitted by `sugar lift --report
 and is not eligible evidence for this ratchet (scraping ANSI/text for a
 GREEN/RED count is exactly the practice this criterion supersedes).
 
-Today's report schema (implementations/rust/sugar-cli/src/report_fmt.rs)
-only emits `rows` (one row per callsite carrying a contract, each with a
-`file`/`line`/`status`) and `callEdges`/`toolchainPlans`/`superposition`
-side-channels. It has no `support` or `effect` field at all. That is not a
-bug this module papers over: it is measured as a finding. Concretely, this
-checker classifies:
+As of #3706, `report_to_json` (implementations/rust/sugar-cli/src/
+report_fmt.rs) grew a `lineAccounting` array: one entry per physical line
+claimed as `warrant` (a discharged row with a followable
+targetCid/propertyCid/callsiteBundleCid), `support` (an affirmatively inert
+line: blank, import, docstring, or a bare def/class signature -- computed by
+`cmd_lift::render_report_json` from source-file access `report_fmt` does not
+have), or `effect` (a refused row: the row's callee names the effect, its
+`reason` is the grounds). This checker reads that field directly rather than
+re-deriving classification from `rows` -- the JSON `lineAccounting` array
+is the single source of truth, and this module must never grow a second,
+parallel classifier of the same lines.
 
-    warrant -- physical lines that are the `line` of some row whose
-               `status` == "discharged" (the row carries a followable CID:
-               `targetCid`/`propertyCid`/`callsiteBundleCid`).
-    support -- NOT YET EXPRESSIBLE. The current report has no field an
-               affirmative "this line is inert, on purpose" claim could
-               live in. Zero lines are ever classified support today.
-    effect  -- NOT YET EXPRESSIBLE. The current report has no typed-effect
-               field with grounds. Zero lines are ever classified effect
-               today.
-
-Every physical line of the source file that is not a warrant line is
-therefore unaccounted, and is reported as a residue with file:line. That
-residue count IS the campaign meter for Criterion 14: R(unaccounted-lines-
-over-<vendor>) should be read off this tool file-by-file, and driven to zero
-only by the report schema growing real `support`/`effect` classification
-(never by this checker inventing a lie to make the count look smaller).
+Every physical line of the source file not present in `lineAccounting` is
+unaccounted, and is reported as a residue with file:line. That residue count
+IS the campaign meter for Criterion 14: R(unaccounted-lines-over-<vendor>)
+should be read off this tool file-by-file, and driven to zero only by the
+report schema (or the lift pipeline feeding it) growing real classification
+coverage -- never by this checker inventing a lie to make the count look
+smaller.
 """
 
 from __future__ import annotations
@@ -105,69 +102,76 @@ class ConservationResult:
         }
 
 
-def _rows_for_file(report_json: Mapping[str, Any], source_file: str) -> list[Mapping[str, Any]]:
-    rows = report_json.get("rows")
-    if rows is None:
+def _matches_file(entry_file: str, source_file: str) -> bool:
+    # `lineAccounting` entries (like `rows`) carry whatever path the lift
+    # workspace saw them at; match on suffix so callers can pass either the
+    # workspace-relative path or an absolute source path without having to
+    # reconstruct the workspace.
+    return (
+        entry_file == source_file
+        or entry_file.endswith(source_file)
+        or source_file.endswith(entry_file)
+    )
+
+
+def _line_accounting_for_file(
+    report_json: Mapping[str, Any], source_file: str
+) -> list[Mapping[str, Any]]:
+    entries = report_json.get("lineAccounting")
+    if entries is None:
         return []
-    if not isinstance(rows, list):
-        raise TypeError("report field `rows` must be a JSON array")
+    if not isinstance(entries, list):
+        raise TypeError("report field `lineAccounting` must be a JSON array")
     matched: list[Mapping[str, Any]] = []
-    for index, row in enumerate(rows):
-        if not isinstance(row, Mapping):
-            raise TypeError(f"report `rows` entry {index} must be a JSON object")
-        row_file = row.get("file")
-        if not isinstance(row_file, str):
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, Mapping):
+            raise TypeError(f"report `lineAccounting` entry {index} must be a JSON object")
+        entry_file = entry.get("file")
+        if not isinstance(entry_file, str):
             continue
-        # Rows carry whatever path the lift workspace saw them at; match on
-        # suffix so callers can pass either the workspace-relative path or an
-        # absolute source path without having to reconstruct the workspace.
-        if row_file == source_file or row_file.endswith(source_file) or source_file.endswith(row_file):
-            matched.append(row)
+        if _matches_file(entry_file, source_file):
+            matched.append(entry)
     return matched
 
 
-def _warrant_line_numbers(rows: Sequence[Mapping[str, Any]]) -> frozenset[int]:
-    """A row is a warrant only if it is discharged AND carries a followable CID.
-
-    "Carries proofir" is not satisfied by a bare status string: the spec
-    requires a *followable CID chain to contracts*. A discharged row with no
-    targetCid/propertyCid/callsiteBundleCid is not a warrant -- it is a
-    schema gap, and its line stays unaccounted rather than being waved
-    through on status alone.
-    """
+def _lines_of_class(entries: Sequence[Mapping[str, Any]], class_name: str) -> frozenset[int]:
     lines: set[int] = set()
-    for row in rows:
-        if row.get("status") != "discharged":
+    for entry in entries:
+        if entry.get("class") != class_name:
             continue
-        has_cid = any(
-            isinstance(row.get(field_name), str) and row.get(field_name).strip()
-            for field_name in ("targetCid", "propertyCid", "callsiteBundleCid")
-        )
-        if not has_cid:
-            continue
-        line = row.get("line")
+        line = entry.get("line")
         if isinstance(line, int) and line > 0:
             lines.add(line)
     return frozenset(lines)
 
 
-def _support_line_numbers(rows: Sequence[Mapping[str, Any]]) -> frozenset[int]:
-    """No field in today's report schema can express "affirmatively inert".
-
-    Kept as its own function (rather than inlined as `frozenset()`) so the
-    day the report grows a real support classification, only this function
-    needs to change -- the conservation law and its test do not.
+def _warrant_line_numbers(entries: Sequence[Mapping[str, Any]]) -> frozenset[int]:
+    """`lineAccounting` entries of class `warrant`: a discharged row with a
+    followable CID chain, emitted by `report_fmt::row_line_accounting`
+    (implementations/rust/sugar-cli/src/line_accounting.rs). This checker
+    trusts the report's own classification rather than re-deriving it from
+    `rows` -- re-deriving here would be exactly the second, parallel
+    classifier the ONE WAY LAW (#3706) forbids.
     """
-    return frozenset()
+    return _lines_of_class(entries, "warrant")
 
 
-def _effect_line_numbers(rows: Sequence[Mapping[str, Any]]) -> frozenset[int]:
-    """No field in today's report schema can express a named typed effect.
-
-    See `_support_line_numbers`: kept separate so growing the schema is a
-    one-function change, not a rewrite of the checker.
+def _support_line_numbers(entries: Sequence[Mapping[str, Any]]) -> frozenset[int]:
+    """`lineAccounting` entries of class `support`: affirmatively-classified-
+    inert lines (blank, import, docstring, bare def/class signature),
+    emitted by `cmd_lift::render_report_json`'s
+    `layer_support_line_accounting` using the same source-file access
+    `report_fmt` does not have.
     """
-    return frozenset()
+    return _lines_of_class(entries, "support")
+
+
+def _effect_line_numbers(entries: Sequence[Mapping[str, Any]]) -> frozenset[int]:
+    """`lineAccounting` entries of class `effect`: a refused row whose callee
+    names the effect and whose `reason` is the grounds, emitted by
+    `report_fmt::row_line_accounting`.
+    """
+    return _lines_of_class(entries, "effect")
 
 
 def check_conservation(
@@ -183,10 +187,10 @@ def check_conservation(
     total_lines = len(text.splitlines())
     file_key = report_file_key or source_path.name
 
-    rows = _rows_for_file(report_json, file_key)
-    warrant_lines = _warrant_line_numbers(rows)
-    support_lines = _support_line_numbers(rows)
-    effect_lines = _effect_line_numbers(rows)
+    entries = _line_accounting_for_file(report_json, file_key)
+    warrant_lines = _warrant_line_numbers(entries)
+    support_lines = _support_line_numbers(entries)
+    effect_lines = _effect_line_numbers(entries)
 
     claimed = warrant_lines | support_lines | effect_lines
     unaccounted = tuple(

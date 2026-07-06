@@ -3102,10 +3102,16 @@ fn render_report_json(
     prove_report: Option<&sugar_verifier::Report>,
 ) -> Result<String, serde_json::Error> {
     let value = if let Some(prove_report) = prove_report {
+        let mut prove_json = report_fmt::report_to_json(prove_report);
+        layer_support_line_accounting(
+            &mut prove_json,
+            prove_report,
+            report.project_root.as_deref(),
+        );
         serde_json::json!({
             "kind": "lift-prove-report",
             "lift": source_report_json_value(report),
-            "prove": report_fmt::report_to_json(prove_report),
+            "prove": prove_json,
         })
     } else {
         source_report_json_value(report)
@@ -3114,6 +3120,64 @@ fn render_report_json(
         rendered.push('\n');
         rendered
     })
+}
+
+/// Layer `support` line-accounting entries on top of `report_fmt`'s
+/// warrant/effect entries, for every distinct file the prove report's rows
+/// touch. `report_fmt` cannot do this itself: it has no source-file access.
+/// This is the ONLY place `support` is ever computed (see
+/// `line_accounting` module docs) -- warrant/effect stay owned by
+/// `report_fmt::report_to_json`, never recomputed here.
+fn layer_support_line_accounting(
+    prove_json: &mut Value,
+    prove_report: &sugar_verifier::Report,
+    project_root: Option<&Path>,
+) {
+    let Some(project_root) = project_root else {
+        return;
+    };
+    let Some(accounting) = prove_json.get_mut("lineAccounting") else {
+        return;
+    };
+    let Some(entries) = accounting.as_array_mut() else {
+        return;
+    };
+
+    let mut claimed_by_file: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+    for entry in entries.iter() {
+        let (Some(file), Some(line)) = (
+            entry.get("file").and_then(Value::as_str),
+            entry.get("line").and_then(Value::as_u64),
+        ) else {
+            continue;
+        };
+        claimed_by_file
+            .entry(file.to_string())
+            .or_default()
+            .insert(line as usize);
+    }
+
+    let mut files: BTreeSet<String> = BTreeSet::new();
+    for row in &prove_report.rows {
+        if let Some(file) = &row.callsite.file {
+            files.insert(file.clone());
+        }
+    }
+
+    for file in files {
+        let Ok(source_text) = std::fs::read_to_string(project_root.join(&file)) else {
+            continue;
+        };
+        let claimed: std::collections::HashSet<usize> = claimed_by_file
+            .get(&file)
+            .map(|set| set.iter().copied().collect())
+            .unwrap_or_default();
+        let support =
+            crate::line_accounting::support_line_accounting(&file, &source_text, &claimed);
+        for entry in support {
+            entries.push(entry.to_json());
+        }
+    }
 }
 
 fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, serde_json::Error> {

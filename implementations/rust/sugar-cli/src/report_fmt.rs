@@ -2,6 +2,7 @@
 //
 // Pretty + JSON formatting for the verifier `Report`.
 
+use crate::line_accounting::{entries_to_json, row_line_accounting};
 use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
 use std::fmt::Write as _;
@@ -37,6 +38,13 @@ pub fn report_to_json(r: &Report) -> Json {
             })
         })
         .collect();
+    // Criterion 14 (#3706, part of #3686) total-line accounting: warrant
+    // and effect entries derivable from rows alone (no source text needed).
+    // `support` entries require source-file access this crate does not have
+    // and are layered on top by callers with source access (see
+    // `cmd_lift::render_report_json`) using the SAME `line_accounting`
+    // module -- never a second, parallel classifier.
+    let line_accounting = entries_to_json(&row_line_accounting(&r.rows));
     json!({
         "totalCallsites": r.total_callsites,
         "discharged": r.discharged,
@@ -44,6 +52,7 @@ pub fn report_to_json(r: &Report) -> Json {
         "refused": r.refused,
         "dischargeSplit": discharge_split_to_json(r),
         "rows": rows,
+        "lineAccounting": line_accounting,
         "loadErrors": load_errors,
         "callEdges": call_edges,
         "toolchainPlans": toolchain_plans,
