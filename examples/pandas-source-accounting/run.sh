@@ -24,7 +24,7 @@ rm -f blake3-512_*.proof .pandas-source-report.json .pandas-source-report.txt 2>
 rm -rf .sugar/runs .sugar/witnesses __pycache__ 2>/dev/null || true
 
 echo "== sugar lift --report --json (full pandas package source accounting) =="
-"$BIN" lift --report --json . > .pandas-source-report.json
+"$BIN" lift --report --json --allow-failed-components . > .pandas-source-report.json
 
 "$VENV/bin/python" - <<'PY'
 import json

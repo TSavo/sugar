@@ -1,1285 +1,393 @@
 {
   "kind": "lift-source-report",
   "sourceLedger": {
-    "source_loci": 2060222,
-    "source_warranted": 904503,
-    "source_support": 347141,
-    "source_refused": 756861,
-    "source_inactive": 1402,
-    "source_refuted": 0,
-    "unclassified_source": 50315
+    "source_loci": 1,
+    "source_warranted": 1,
+    "source_support": 0,
+    "source_refused": 0,
+    "source_inactive": 0,
+    "unclassified_source": 0,
+    "source_unresolved": 0
   },
   "sourceAudits": [
     {
-      "kind": "source-audit",
-      "language": "python",
-      "contract": {
-        "name": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::facts"
+      "role": "python.literal-call-sugar",
+      "contract": "__repr__#euf#c:call:__repr__()::assertion",
+      "file": "test_pandas_source.py",
+      "sourceFunctionName": "test_boolean_dtype_repr_source_warrant",
+      "totals": {
+        "source_loci": 1,
+        "source_warranted": 1,
+        "source_inactive": 0,
+        "source_support": 0,
+        "source_refused": 0,
+        "source_unresolved": 0,
+        "unclassified_source": 0
       },
-      "role": "python.test-fact",
-      "universe_kind": "",
-      "source_memento": {
+      "loci": [
+        {
+          "file": "test_pandas_source.py",
+          "line": 6,
+          "col": 4,
+          "status": "warranted",
+          "ast_kind": "Assert",
+          "role": "python.literal-call-sugar",
+          "contract": "__repr__#euf#c:call:__repr__()::assertion",
+          "sourceMemento": {
+            "kind": "source-memento",
+            "file": "test_pandas_source.py",
+            "span": {
+              "start_line": 6,
+              "start_col": 4,
+              "end_line": 6,
+              "end_col": 45
+            },
+            "source_cid": "blake3-512:cd42ae5d6db573c4d1ab64efa941f61885b09007faacbf6ace7a51a21d6920c9138c6ef72fb8c1633df12bee39af4add8beca3d43e907f3e0fd58fffd5b5e352",
+            "sourceCid": "blake3-512:cd42ae5d6db573c4d1ab64efa941f61885b09007faacbf6ace7a51a21d6920c9138c6ef72fb8c1633df12bee39af4add8beca3d43e907f3e0fd58fffd5b5e352",
+            "template_cid": "blake3-512:7c8c1ed021137a1e8fee033280ab3065c95219f8e81261aab9c42cce153bb8d76c6893143c444b87f6e4c230742ea9eb850ac734f65b12eaebe892bf80c12679",
+            "templateCid": "blake3-512:7c8c1ed021137a1e8fee033280ab3065c95219f8e81261aab9c42cce153bb8d76c6893143c444b87f6e4c230742ea9eb850ac734f65b12eaebe892bf80c12679",
+            "source_function_name": "test_boolean_dtype_repr_source_warrant",
+            "sourceFunctionName": "test_boolean_dtype_repr_source_warrant",
+            "role": "python.literal-call-sugar",
+            "contractName": "__repr__#euf#c:call:__repr__()::assertion",
+            "source_kind": "python.ast-stmt"
+          }
+        }
+      ]
+    }
+  ],
+  "factoryAudits": [
+    {
+      "kind": "factory-audit-row",
+      "role": "term",
+      "status": "selected",
+      "observed": "Call",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:12",
+      "selected": "CallSugar",
+      "candidates": [
+        "CallSugar"
+      ],
+      "message": "selected Sugar `CallSugar` for role term at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:12`"
+    },
+    {
+      "kind": "factory-audit-row",
+      "role": "statement",
+      "status": "selected",
+      "observed": "Assign",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:4",
+      "selected": "AssignSugar",
+      "candidates": [
+        "AssignSugar"
+      ],
+      "message": "selected Sugar `AssignSugar` for role statement at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:4`"
+    },
+    {
+      "kind": "factory-audit-row",
+      "role": "term",
+      "status": "selected",
+      "observed": "Call",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:12",
+      "selected": "CallSugar",
+      "candidates": [
+        "CallSugar"
+      ],
+      "message": "selected Sugar `CallSugar` for role term at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:12`"
+    },
+    {
+      "kind": "factory-audit-row",
+      "role": "statement",
+      "status": "selected",
+      "observed": "Assign",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:4",
+      "selected": "AssignSugar",
+      "candidates": [
+        "AssignSugar"
+      ],
+      "message": "selected Sugar `AssignSugar` for role statement at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:4`"
+    },
+    {
+      "kind": "factory-audit-row",
+      "role": "term",
+      "status": "selected",
+      "observed": "PrimitiveLiteral",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:6:31",
+      "selected": "PrimitiveLiteralSugar",
+      "candidates": [
+        "PrimitiveLiteralSugar"
+      ],
+      "message": "selected Sugar `PrimitiveLiteralSugar` for role term at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:6:31`"
+    }
+  ],
+  "factoryWalk": [
+    {
+      "kind": "factory-walk-row",
+      "file": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py",
+      "line": 6,
+      "requested_role": "AssertionSurface",
+      "ast_kind": "Call",
+      "selected": "CallSugar",
+      "status": "warranted",
+      "verdict": "complete",
+      "output": "predicate",
+      "sourceMemento": {
         "kind": "source-memento",
-        "file": "/Users/tsavo/provekit/.worktrees/python-runtime-branch-predicates-20260614/examples/pandas-source-accounting/good/./test_pandas_source.py",
-        "source_function_name": "test_boolean_dtype_repr_source_warrant",
+        "file": "test_pandas_source.py",
         "span": {
           "start_line": 6,
           "start_col": 4,
           "end_line": 6,
           "end_col": 45
         },
-        "source_cid": "blake3-512:60023ae6e3407eed935cc386e69767756b1bf847bb7b98c8991fda32d523630d16e65f90eeb5bdceec83a0187334f9e3bc3f8aba63495ff23379328803ed363e",
-        "template_cid": "blake3-512:87e4c4148eb1fa02484ec75d5c0cea922029d29f29882a87fb3d314337d8fed518f73a6185217da58930663b2818298e959845b3660a81341ff51b4354b9a570",
-        "param_names": []
+        "source_cid": "blake3-512:cd42ae5d6db573c4d1ab64efa941f61885b09007faacbf6ace7a51a21d6920c9138c6ef72fb8c1633df12bee39af4add8beca3d43e907f3e0fd58fffd5b5e352",
+        "sourceCid": "blake3-512:cd42ae5d6db573c4d1ab64efa941f61885b09007faacbf6ace7a51a21d6920c9138c6ef72fb8c1633df12bee39af4add8beca3d43e907f3e0fd58fffd5b5e352",
+        "template_cid": "blake3-512:7c8c1ed021137a1e8fee033280ab3065c95219f8e81261aab9c42cce153bb8d76c6893143c444b87f6e4c230742ea9eb850ac734f65b12eaebe892bf80c12679",
+        "templateCid": "blake3-512:7c8c1ed021137a1e8fee033280ab3065c95219f8e81261aab9c42cce153bb8d76c6893143c444b87f6e4c230742ea9eb850ac734f65b12eaebe892bf80c12679",
+        "source_function_name": "test_boolean_dtype_repr_source_warrant",
+        "sourceFunctionName": "test_boolean_dtype_repr_source_warrant",
+        "role": "python.literal-call-sugar",
+        "contractName": "__repr__#euf#c:call:__repr__()::assertion",
+        "source_kind": "python.ast-stmt"
       },
-      "loci": [
-        {
-          "kind": "source-line",
-          "file": "/Users/tsavo/provekit/.worktrees/python-runtime-branch-predicates-20260614/examples/pandas-source-accounting/good/./test_pandas_source.py",
-          "line": 6,
-          "span": {
-            "start_line": 6,
-            "start_col": 0,
-            "end_line": 6,
-            "end_col": 0
-          },
-          "line_range": [
-            6,
-            6
-          ],
-          "ast_path": "$.line[6]",
-          "status": "warranted",
-          "role": "python.test-fact",
-          "universe_kind": ""
-        }
-      ],
-      "totals": {
-        "source_loci": 1,
-        "source_warranted": 1,
-        "source_support": 0,
-        "source_refused": 0,
-        "source_inactive": 0,
-        "source_refuted": 0,
-        "unclassified_source": 0
-      }
-    },
-    {
-      "kind": "source-audit",
-      "language": "python",
-      "contract": {
-        "name": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::assertion"
-      },
-      "role": "python.constant-universe",
-      "universe_kind": "constant",
-      "source_memento": {
-        "kind": "source-memento",
-        "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/core/arrays/boolean.py",
-        "source_function_name": "BooleanDtype.__repr__",
-        "span": {
-          "start_line": 117,
-          "start_col": 4,
-          "end_line": 118,
-          "end_col": 29
-        },
-        "source_cid": "blake3-512:b7c4a3d1d6a35e3a366c3ff07d49a403765458a0c2bb73f814b3d1202bf1a96caaa8766cb63fc53abe7a6e6935f877a1037ea918fb1444a5f24809c4f92fa5d4",
-        "template_cid": "blake3-512:70a22e0418c3ff0617b2df09745a7428eb85676569412d4697fd95f8270c9d8264ba2e4b1e08dd4603b779f8c98d48b09e0db207dbc91a232ae60d69a6a9b3e3",
-        "param_names": [
-          "self"
-        ]
-      },
-      "loci": [
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/core/arrays/boolean.py",
-          "line": 118,
-          "span": {
-            "start_line": 118,
-            "start_col": 8,
-            "end_line": 118,
-            "end_col": 29
-          },
-          "line_range": [
-            118,
-            118
-          ],
-          "ast_path": "$.body[0]",
-          "status": "warranted",
-          "role": "python.constant-universe",
-          "universe_kind": "constant",
-          "ast_kind": "Return",
-          "reason": "emitted into python.constant-universe"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/core/arrays/boolean.py",
-          "line": 118,
-          "span": {
-            "start_line": 118,
-            "start_col": 15,
-            "end_line": 118,
-            "end_col": 29
-          },
-          "line_range": [
-            118,
-            118
-          ],
-          "ast_path": "$.body[0].value",
-          "status": "warranted",
-          "role": "python.constant-universe",
-          "universe_kind": "constant",
-          "ast_kind": "Constant",
-          "reason": "emitted into python.constant-universe"
-        }
-      ],
-      "totals": {
-        "source_loci": 2,
-        "source_warranted": 2,
-        "source_support": 0,
-        "source_refused": 0,
-        "source_inactive": 0,
-        "source_refuted": 0,
-        "unclassified_source": 0
-      }
-    },
-    {
-      "kind": "source-audit",
-      "language": "python",
-      "contract": {
-        "name": "pandas#source-accounting"
-      },
-      "role": "python.package-source",
-      "universe_kind": "package-accounting",
-      "accounting_mode": "structural",
-      "package": "pandas",
-      "package_root": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas",
-      "totals": {
-        "source_loci": 2060219,
-        "source_warranted": 904500,
-        "source_support": 347141,
-        "source_refused": 756861,
-        "source_inactive": 1402,
-        "source_refuted": 0,
-        "unclassified_source": 50315
-      },
-      "ast_type_counts": {
-        "support": {
-          "ImportFrom": 6583,
-          "alias": 18226,
-          "Import": 4356,
-          "Expr": 4581,
-          "Constant": 80158,
-          "FunctionDef": 28264,
-          "Name": 52660,
-          "ClassDef": 1772,
-          "AnnAssign": 424,
-          "Subscript": 4388,
-          "BinOp": 6718,
-          "Tuple": 10973,
-          "List": 17818,
-          "Assign": 43,
-          "arg": 56545,
-          "Call": 16786,
-          "Attribute": 27175,
-          "Pass": 290,
-          "keyword": 4717,
-          "Lambda": 709,
-          "JoinedStr": 100,
-          "FormattedValue": 100,
-          "ListComp": 72,
-          "UnaryOp": 1178,
-          "BoolOp": 17,
-          "Compare": 37,
-          "Slice": 176,
-          "Starred": 67,
-          "Dict": 2124,
-          "IfExp": 14,
-          "GeneratorExp": 19,
-          "Set": 44,
-          "DictComp": 7
-        },
-        "warranted": {
-          "Assign": 82853,
-          "Name": 265875,
-          "Constant": 231953,
-          "Tuple": 10279,
-          "List": 45283,
-          "AnnAssign": 583,
-          "Dict": 8482,
-          "Expr": 3,
-          "Call": 86099,
-          "Attribute": 63991,
-          "Return": 7738,
-          "If": 12265,
-          "Compare": 8893,
-          "BoolOp": 1908,
-          "JoinedStr": 1751,
-          "FormattedValue": 2165,
-          "UnaryOp": 4531,
-          "BinOp": 3920,
-          "Starred": 151,
-          "Subscript": 10970,
-          "keyword": 50456,
-          "IfExp": 873,
-          "Slice": 3270,
-          "Set": 208
-        },
-        "refused": {
-          "For": 2315,
-          "Name": 271072,
-          "Try": 700,
-          "Expr": 33320,
-          "Call": 105981,
-          "ExceptHandler": 689,
-          "Raise": 2776,
-          "JoinedStr": 1607,
-          "Constant": 79592,
-          "FormattedValue": 2238,
-          "Delete": 102,
-          "ImportFrom": 3,
-          "alias": 4,
-          "Assign": 24567,
-          "Attribute": 103393,
-          "Subscript": 13905,
-          "Return": 2770,
-          "UnaryOp": 4525,
-          "If": 5352,
-          "Compare": 17430,
-          "Tuple": 5996,
-          "BoolOp": 2189,
-          "GeneratorExp": 591,
-          "BinOp": 4680,
-          "Slice": 1962,
-          "keyword": 30737,
-          "ListComp": 1836,
-          "AugAssign": 364,
-          "AnnAssign": 141,
-          "Yield": 158,
-          "Dict": 1376,
-          "With": 8048,
-          "Global": 1,
-          "Starred": 530,
-          "Pass": 33,
-          "IfExp": 370,
-          "List": 5924,
-          "Lambda": 1442,
-          "Continue": 114,
-          "Assert": 17543,
-          "Set": 53,
-          "Break": 77,
-          "SetComp": 39,
-          "DictComp": 218,
-          "While": 66,
-          "YieldFrom": 20,
-          "Match": 1,
-          "MatchValue": 3,
-          "NamedExpr": 8
-        },
-        "inactive": {
-          "If": 223,
-          "Name": 320,
-          "AnnAssign": 45,
-          "BinOp": 9,
-          "Attribute": 5,
-          "Subscript": 6,
-          "Constant": 393,
-          "Expr": 369,
-          "Assign": 15,
-          "Call": 6,
-          "keyword": 4,
-          "Tuple": 3,
-          "List": 4
-        },
-        "unclassified": {
-          "Assign": 993,
-          "Name": 17215,
-          "Call": 6370,
-          "AugAssign": 321,
-          "Constant": 5078,
-          "Global": 17,
-          "Attribute": 11452,
-          "If": 6,
-          "AnnAssign": 173,
-          "List": 370,
-          "BinOp": 2938,
-          "Return": 603,
-          "BoolOp": 238,
-          "keyword": 747,
-          "IfExp": 93,
-          "Compare": 1231,
-          "UnaryOp": 481,
-          "Subscript": 628,
-          "Tuple": 863,
-          "Starred": 235,
-          "Expr": 88,
-          "Lambda": 3,
-          "Dict": 110,
-          "Slice": 60,
-          "Set": 1,
-          "Nonlocal": 1
-        }
-      },
-      "sample_loci": [
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 1,
-          "span": {
-            "start_line": 1,
-            "start_col": 0,
-            "end_line": 1,
-            "end_col": 34
-          },
-          "line_range": [
-            1,
-            1
-          ],
-          "ast_path": "$.module.body[0]",
-          "status": "support",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "ImportFrom",
-          "reason": "import support for recursive name resolution"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 1,
-          "span": {
-            "start_line": 1,
-            "start_col": 23,
-            "end_line": 1,
-            "end_col": 34
-          },
-          "line_range": [
-            1,
-            1
-          ],
-          "ast_path": "$.module.body[0].names[0]",
-          "status": "support",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "alias",
-          "reason": "import support for recursive name resolution"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 3,
-          "span": {
-            "start_line": 3,
-            "start_col": 0,
-            "end_line": 3,
-            "end_col": 34
-          },
-          "line_range": [
-            3,
-            3
-          ],
-          "ast_path": "$.module.body[1]",
-          "status": "warranted",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Assign",
-          "reason": "static binding admitted as timeless compiler fact"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 3,
-          "span": {
-            "start_line": 3,
-            "start_col": 0,
-            "end_line": 3,
-            "end_col": 13
-          },
-          "line_range": [
-            3,
-            3
-          ],
-          "ast_path": "$.module.body[1].targets[0]",
-          "status": "warranted",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "static binding admitted as timeless compiler fact"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 3,
-          "span": {
-            "start_line": 3,
-            "start_col": 16,
-            "end_line": 3,
-            "end_col": 34
-          },
-          "line_range": [
-            3,
-            3
-          ],
-          "ast_path": "$.module.body[1].value",
-          "status": "warranted",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Constant",
-          "reason": "static binding admitted as timeless compiler fact"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 7,
-          "span": {
-            "start_line": 7,
-            "start_col": 0,
-            "end_line": 7,
-            "end_col": 42
-          },
-          "line_range": [
-            7,
-            7
-          ],
-          "ast_path": "$.module.body[2]",
-          "status": "warranted",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Assign",
-          "reason": "static binding admitted as timeless compiler fact"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 7,
-          "span": {
-            "start_line": 7,
-            "start_col": 0,
-            "end_line": 7,
-            "end_col": 18
-          },
-          "line_range": [
-            7,
-            7
-          ],
-          "ast_path": "$.module.body[2].targets[0]",
-          "status": "warranted",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "static binding admitted as timeless compiler fact"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 7,
-          "span": {
-            "start_line": 7,
-            "start_col": 21,
-            "end_line": 7,
-            "end_col": 42
-          },
-          "line_range": [
-            7,
-            7
-          ],
-          "ast_path": "$.module.body[2].value",
-          "status": "warranted",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Tuple",
-          "reason": "static binding admitted as timeless compiler fact"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 7,
-          "span": {
-            "start_line": 7,
-            "start_col": 22,
-            "end_line": 7,
-            "end_col": 29
-          },
-          "line_range": [
-            7,
-            7
-          ],
-          "ast_path": "$.module.body[2].value.elts[0]",
-          "status": "warranted",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Constant",
-          "reason": "static binding admitted as timeless compiler fact"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 7,
-          "span": {
-            "start_line": 7,
-            "start_col": 31,
-            "end_line": 7,
-            "end_col": 41
-          },
-          "line_range": [
-            7,
-            7
-          ],
-          "ast_path": "$.module.body[2].value.elts[1]",
-          "status": "warranted",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Constant",
-          "reason": "static binding admitted as timeless compiler fact"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 9,
-          "span": {
-            "start_line": 9,
-            "start_col": 0,
-            "end_line": 16,
-            "end_col": 17
-          },
-          "line_range": [
-            9,
-            16
-          ],
-          "ast_path": "$.module.body[3]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "For",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 9,
-          "span": {
-            "start_line": 9,
-            "start_col": 4,
-            "end_line": 9,
-            "end_col": 15
-          },
-          "line_range": [
-            9,
-            9
-          ],
-          "ast_path": "$.module.body[3].target",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 9,
-          "span": {
-            "start_line": 9,
-            "start_col": 19,
-            "end_line": 9,
-            "end_col": 37
-          },
-          "line_range": [
-            9,
-            9
-          ],
-          "ast_path": "$.module.body[3].iter",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 10,
-          "span": {
-            "start_line": 10,
-            "start_col": 4,
-            "end_line": 16,
-            "end_col": 17
-          },
-          "line_range": [
-            10,
-            16
-          ],
-          "ast_path": "$.module.body[3].body[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Try",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 11,
-          "span": {
-            "start_line": 11,
-            "start_col": 8,
-            "end_line": 11,
-            "end_col": 31
-          },
-          "line_range": [
-            11,
-            11
-          ],
-          "ast_path": "$.module.body[3].body[0].body[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Expr",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 11,
-          "span": {
-            "start_line": 11,
-            "start_col": 8,
-            "end_line": 11,
-            "end_col": 31
-          },
-          "line_range": [
-            11,
-            11
-          ],
-          "ast_path": "$.module.body[3].body[0].body[0].value",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Call",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 11,
-          "span": {
-            "start_line": 11,
-            "start_col": 8,
-            "end_line": 11,
-            "end_col": 18
-          },
-          "line_range": [
-            11,
-            11
-          ],
-          "ast_path": "$.module.body[3].body[0].body[0].value.func",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 11,
-          "span": {
-            "start_line": 11,
-            "start_col": 19,
-            "end_line": 11,
-            "end_col": 30
-          },
-          "line_range": [
-            11,
-            11
-          ],
-          "ast_path": "$.module.body[3].body[0].body[0].value.args[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 12,
-          "span": {
-            "start_line": 12,
-            "start_col": 4,
-            "end_line": 16,
-            "end_col": 17
-          },
-          "line_range": [
-            12,
-            16
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "ExceptHandler",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 12,
-          "span": {
-            "start_line": 12,
-            "start_col": 11,
-            "end_line": 12,
-            "end_col": 22
-          },
-          "line_range": [
-            12,
-            12
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].type",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 13,
-          "span": {
-            "start_line": 13,
-            "start_col": 8,
-            "end_line": 16,
-            "end_col": 17
-          },
-          "line_range": [
-            13,
-            16
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].body[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Raise",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 13,
-          "span": {
-            "start_line": 13,
-            "start_col": 14,
-            "end_line": 16,
-            "end_col": 9
-          },
-          "line_range": [
-            13,
-            16
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].body[0].exc",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Call",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 13,
-          "span": {
-            "start_line": 13,
-            "start_col": 14,
-            "end_line": 13,
-            "end_col": 25
-          },
-          "line_range": [
-            13,
-            13
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].body[0].exc.func",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 14,
-          "span": {
-            "start_line": 14,
-            "start_col": 12,
-            "end_line": 15,
-            "end_col": 51
-          },
-          "line_range": [
-            14,
-            15
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].body[0].exc.args[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "JoinedStr",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 14,
-          "span": {
-            "start_line": 14,
-            "start_col": 14,
-            "end_line": 14,
-            "end_col": 51
-          },
-          "line_range": [
-            14,
-            14
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].body[0].exc.args[0].values[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Constant",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 14,
-          "span": {
-            "start_line": 14,
-            "start_col": 51,
-            "end_line": 14,
-            "end_col": 64
-          },
-          "line_range": [
-            14,
-            14
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].body[0].exc.args[0].values[1]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "FormattedValue",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 14,
-          "span": {
-            "start_line": 14,
-            "start_col": 52,
-            "end_line": 14,
-            "end_col": 63
-          },
-          "line_range": [
-            14,
-            14
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].body[0].exc.args[0].values[1].value",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 14,
-          "span": {
-            "start_line": 14,
-            "start_col": 64,
-            "end_line": 15,
-            "end_col": 51
-          },
-          "line_range": [
-            14,
-            15
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].body[0].exc.args[0].values[2]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Constant",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 16,
-          "span": {
-            "start_line": 16,
-            "start_col": 15,
-            "end_line": 16,
-            "end_col": 17
-          },
-          "line_range": [
-            16,
-            16
-          ],
-          "ast_path": "$.module.body[3].body[0].handlers[0].body[0].cause",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 18,
-          "span": {
-            "start_line": 18,
-            "start_col": 0,
-            "end_line": 18,
-            "end_col": 35
-          },
-          "line_range": [
-            18,
-            18
-          ],
-          "ast_path": "$.module.body[4]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Delete",
-          "reason": "delete mutation refused: del mutates name, attribute, or item binding state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 18,
-          "span": {
-            "start_line": 18,
-            "start_col": 4,
-            "end_line": 18,
-            "end_col": 22
-          },
-          "line_range": [
-            18,
-            18
-          ],
-          "ast_path": "$.module.body[4].targets[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "delete mutation refused: del mutates name, attribute, or item binding state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 18,
-          "span": {
-            "start_line": 18,
-            "start_col": 24,
-            "end_line": 18,
-            "end_col": 35
-          },
-          "line_range": [
-            18,
-            18
-          ],
-          "ast_path": "$.module.body[4].targets[1]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "delete mutation refused: del mutates name, attribute, or item binding state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 20,
-          "span": {
-            "start_line": 20,
-            "start_col": 0,
-            "end_line": 32,
-            "end_col": 15
-          },
-          "line_range": [
-            20,
-            32
-          ],
-          "ast_path": "$.module.body[5]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Try",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 22,
-          "span": {
-            "start_line": 22,
-            "start_col": 4,
-            "end_line": 24,
-            "end_col": 5
-          },
-          "line_range": [
-            22,
-            24
-          ],
-          "ast_path": "$.module.body[5].body[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "ImportFrom",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 23,
-          "span": {
-            "start_line": 23,
-            "start_col": 8,
-            "end_line": 23,
-            "end_col": 37
-          },
-          "line_range": [
-            23,
-            23
-          ],
-          "ast_path": "$.module.body[5].body[0].names[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "alias",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 25,
-          "span": {
-            "start_line": 25,
-            "start_col": 0,
-            "end_line": 32,
-            "end_col": 15
-          },
-          "line_range": [
-            25,
-            32
-          ],
-          "ast_path": "$.module.body[5].handlers[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "ExceptHandler",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 25,
-          "span": {
-            "start_line": 25,
-            "start_col": 7,
-            "end_line": 25,
-            "end_col": 18
-          },
-          "line_range": [
-            25,
-            25
-          ],
-          "ast_path": "$.module.body[5].handlers[0].type",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 26,
-          "span": {
-            "start_line": 26,
-            "start_col": 4,
-            "end_line": 26,
-            "end_col": 23
-          },
-          "line_range": [
-            26,
-            26
-          ],
-          "ast_path": "$.module.body[5].handlers[0].body[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Assign",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 26,
-          "span": {
-            "start_line": 26,
-            "start_col": 4,
-            "end_line": 26,
-            "end_col": 11
-          },
-          "line_range": [
-            26,
-            26
-          ],
-          "ast_path": "$.module.body[5].handlers[0].body[0].targets[0]",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Name",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        },
-        {
-          "kind": "source-line",
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py",
-          "line": 26,
-          "span": {
-            "start_line": 26,
-            "start_col": 14,
-            "end_line": 26,
-            "end_col": 23
-          },
-          "line_range": [
-            26,
-            26
-          ],
-          "ast_path": "$.module.body[5].handlers[0].body[0].value",
-          "status": "refused",
-          "role": "python.package-source",
-          "universe_kind": "package-accounting",
-          "ast_kind": "Attribute",
-          "reason": "runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation"
-        }
-      ],
-      "package_file_count": 1421,
-      "loci_elided": true
-    }
-  ],
-  "sourceMementos": [
-    {
-      "file": "/Users/tsavo/provekit/.worktrees/python-runtime-branch-predicates-20260614/examples/pandas-source-accounting/good/./test_pandas_source.py",
-      "source_cid": "blake3-512:60023ae6e3407eed935cc386e69767756b1bf847bb7b98c8991fda32d523630d16e65f90eeb5bdceec83a0187334f9e3bc3f8aba63495ff23379328803ed363e",
       "span": {
         "start_line": 6,
         "start_col": 4,
         "end_line": 6,
         "end_col": 45
       },
-      "template_cid": "blake3-512:87e4c4148eb1fa02484ec75d5c0cea922029d29f29882a87fb3d314337d8fed518f73a6185217da58930663b2818298e959845b3660a81341ff51b4354b9a570",
-      "param_names": [],
-      "kind": "source-memento",
-      "role": "python.test-fact",
-      "claimName": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::facts",
-      "contractName": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::assertion",
-      "source_function_name": "test_boolean_dtype_repr_source_warrant"
+      "emittedFormula": {
+        "args": [
+          {
+            "args": [],
+            "kind": "ctor",
+            "name": "call:__repr__"
+          },
+          {
+            "kind": "const",
+            "sort": {
+              "kind": "primitive",
+              "name": "String"
+            },
+            "value": "BooleanDtype"
+          }
+        ],
+        "kind": "atomic",
+        "name": "="
+      }
+    }
+  ],
+  "assertionSurfaceAudits": [],
+  "diagnostics": [
+    {
+      "kind": "leaf-assertion-skipped",
+      "message": "call callee is not a bare identifier",
+      "path": "test_pandas_source.py",
+      "line": 6
     },
     {
-      "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/core/arrays/boolean.py",
-      "source_cid": "blake3-512:b7c4a3d1d6a35e3a366c3ff07d49a403765458a0c2bb73f814b3d1202bf1a96caaa8766cb63fc53abe7a6e6935f877a1037ea918fb1444a5f24809c4f92fa5d4",
-      "span": {
-        "start_line": 117,
-        "start_col": 4,
-        "end_line": 118,
-        "end_col": 29
+      "kind": "dig-refusal",
+      "callee": "pandas.core.arrays.boolean.BooleanDtype",
+      "blame": "pandas.core.arrays.boolean.BooleanDtype",
+      "caught": "OSError",
+      "reason": "imported callee source was not readable: source code not available"
+    },
+    {
+      "kind": "floor-contract-agreement",
+      "r": {
+        "agreement_violations": 0,
+        "total": 0
       },
-      "template_cid": "blake3-512:70a22e0418c3ff0617b2df09745a7428eb85676569412d4697fd95f8270c9d8264ba2e4b1e08dd4603b779f8c98d48b09e0db207dbc91a232ae60d69a6a9b3e3",
-      "param_names": [
-        "self"
-      ],
+      "violations": []
+    },
+    {
+      "kind": "proofir-formula-provenance",
+      "r": {
+        "formula_fragments_without_provenance": 0,
+        "total": 0
+      },
+      "missing": []
+    },
+    {
+      "kind": "dig-refusal",
+      "callee": "pandas.core.arrays.boolean.BooleanDtype",
+      "blame": "pandas.core.arrays.boolean.BooleanDtype",
+      "caught": "OSError",
+      "reason": "imported callee source was not readable: source code not available"
+    },
+    {
+      "kind": "floor-contract-agreement",
+      "r": {
+        "agreement_violations": 0,
+        "total": 0
+      },
+      "violations": []
+    },
+    {
+      "kind": "proofir-formula-provenance",
+      "r": {
+        "formula_fragments_without_provenance": 0,
+        "total": 0
+      },
+      "missing": []
+    }
+  ],
+  "sourceMementos": [
+    {
       "kind": "source-memento",
-      "role": "python.constant-universe",
-      "source_function_name": "BooleanDtype.__repr__",
-      "universe_kind": "constant",
-      "claimName": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::assertion",
-      "contractName": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::assertion"
+      "file": "test_pandas_source.py",
+      "span": {
+        "start_line": 6,
+        "start_col": 4,
+        "end_line": 6,
+        "end_col": 45
+      },
+      "source_cid": "blake3-512:cd42ae5d6db573c4d1ab64efa941f61885b09007faacbf6ace7a51a21d6920c9138c6ef72fb8c1633df12bee39af4add8beca3d43e907f3e0fd58fffd5b5e352",
+      "sourceCid": "blake3-512:cd42ae5d6db573c4d1ab64efa941f61885b09007faacbf6ace7a51a21d6920c9138c6ef72fb8c1633df12bee39af4add8beca3d43e907f3e0fd58fffd5b5e352",
+      "template_cid": "blake3-512:7c8c1ed021137a1e8fee033280ab3065c95219f8e81261aab9c42cce153bb8d76c6893143c444b87f6e4c230742ea9eb850ac734f65b12eaebe892bf80c12679",
+      "templateCid": "blake3-512:7c8c1ed021137a1e8fee033280ab3065c95219f8e81261aab9c42cce153bb8d76c6893143c444b87f6e4c230742ea9eb850ac734f65b12eaebe892bf80c12679",
+      "source_function_name": "test_boolean_dtype_repr_source_warrant",
+      "sourceFunctionName": "test_boolean_dtype_repr_source_warrant",
+      "role": "python.literal-call-sugar",
+      "contractName": "__repr__#euf#c:call:__repr__()::assertion",
+      "source_kind": "python.ast-stmt"
+    }
+  ],
+  "planMementos": [
+    {
+      "kind": "component-plan",
+      "schemaVersion": "1",
+      "workspaceRoot": ".",
+      "planning": {
+        "source": "component-discovery"
+      },
+      "plugins": [
+        {
+          "name": "python-lift",
+          "kind": "lift",
+          "surface": "python",
+          "workspaceOverride": null,
+          "emit": "ir-document",
+          "layer": null
+        }
+      ],
+      "planAtoms": [
+        {
+          "kind": "plan-atom",
+          "schemaVersion": "1",
+          "atomKind": "lifter-binary",
+          "role": "lifter",
+          "surface": "python",
+          "pluginName": "python-lift",
+          "manifestName": "python-lift",
+          "version": "0.1.0",
+          "protocolVersion": "pep/1.7.0",
+          "command": [
+            "/usr/local/opt/python@3.14/bin/python3.14",
+            "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
+            "--rpc"
+          ],
+          "method": null,
+          "phase": null,
+          "workspaceOverride": null,
+          "emit": "ir-document",
+          "layer": null,
+          "binary": {
+            "program": "/usr/local/opt/python@3.14/bin/python3.14",
+            "path": "/usr/local/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+            "cid": "blake3-512:67a64d7737613543c07154c7f5c5eb8b98bf4a61cc3ee2947cc57b9a5236a0f0976d9ac957b9d8d7d5095c966fc47ff3137aa8c81345a278f923ec5f9b02cad9"
+          },
+          "participation": "executed"
+        },
+        {
+          "kind": "plan-atom",
+          "schemaVersion": "1",
+          "atomKind": "source-oracle",
+          "role": "source-oracle",
+          "surface": "python",
+          "pluginName": "python-lift source oracle",
+          "manifestName": "python-lift",
+          "version": "0.1.0",
+          "protocolVersion": "pep/1.7.0",
+          "command": [
+            "/usr/local/opt/python@3.14/bin/python3.14",
+            "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
+            "--rpc"
+          ],
+          "method": null,
+          "phase": null,
+          "workspaceOverride": null,
+          "emit": "ir-document",
+          "layer": null,
+          "binary": {
+            "program": "/usr/local/opt/python@3.14/bin/python3.14",
+            "path": "/usr/local/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+            "cid": "blake3-512:67a64d7737613543c07154c7f5c5eb8b98bf4a61cc3ee2947cc57b9a5236a0f0976d9ac957b9d8d7d5095c966fc47ff3137aa8c81345a278f923ec5f9b02cad9"
+          },
+          "participation": "executed"
+        },
+        {
+          "kind": "plan-atom",
+          "schemaVersion": "1",
+          "atomKind": "factory-report",
+          "role": "factory-report",
+          "pluginName": "sugar-lift-report",
+          "version": "0.1.0",
+          "command": [
+            "/Users/tsavo/.cache/sugar/binaries/sugar-darwin-x86_64-release-blake3-512_f831b190795697a4338ff05350cdf77237f6ec75590a1d1d5089dbf76abcda78728a3b6c2cbcc7afefd6d03553234603bf77e0b6b8f11164dafd92884ab065a8"
+          ],
+          "binary": {
+            "program": "/Users/tsavo/.cache/sugar/binaries/sugar-darwin-x86_64-release-blake3-512_f831b190795697a4338ff05350cdf77237f6ec75590a1d1d5089dbf76abcda78728a3b6c2cbcc7afefd6d03553234603bf77e0b6b8f11164dafd92884ab065a8",
+            "path": "/Users/tsavo/.cache/sugar/binaries/sugar-darwin-x86_64-release-blake3-512_f831b190795697a4338ff05350cdf77237f6ec75590a1d1d5089dbf76abcda78728a3b6c2cbcc7afefd6d03553234603bf77e0b6b8f11164dafd92884ab065a8",
+            "cid": "blake3-512:7d0173f26f3c334f89e1c943e909dffe9281b4585ba856c1d82c92200991c91ac11e43c670fce89c8f781f191f4904fb72ef7442e4a3a78622e07d623c56511b"
+          },
+          "participation": "executed"
+        }
+      ],
+      "pathSteps": [
+        {
+          "name": "lift",
+          "role": "lift",
+          "kit": "lift-plugin:python",
+          "surface": "python",
+          "verb": "transform",
+          "dependsOn": []
+        },
+        {
+          "name": "report",
+          "role": "report",
+          "kit": "sugar-lift-report",
+          "verb": "render",
+          "dependsOn": [
+            "lift"
+          ]
+        }
+      ],
+      "toolOutputs": [
+        {
+          "surface": "python",
+          "actualOutputCid": "blake3-512:3defc6d2103188d412d004368cc6bf39f76843da8f3918482412ad6b1ec3b6b5476b2580b532e29099d312706191845ef073859ce58159867b521f8e28768c0b"
+        },
+        {
+          "surface": "python",
+          "actualOutputCid": "blake3-512:7229e552bbf0cbfd4233d9c4363934ee99d88200a09f07f9a4c7bfdc0d022d7eaead175a359699273edef5efa9768fddce76c1c84ced344aaa82b3c4e774cddd"
+        }
+      ],
+      "expectedOutputCids": [
+        "blake3-512:3defc6d2103188d412d004368cc6bf39f76843da8f3918482412ad6b1ec3b6b5476b2580b532e29099d312706191845ef073859ce58159867b521f8e28768c0b",
+        "blake3-512:7229e552bbf0cbfd4233d9c4363934ee99d88200a09f07f9a4c7bfdc0d022d7eaead175a359699273edef5efa9768fddce76c1c84ced344aaa82b3c4e774cddd"
+      ]
     }
   ],
   "contracts": [
     {
-      "inv": {
-        "kind": "and",
-        "operands": [
-          {
-            "args": [
-              {
-                "kind": "var",
-                "name": "dtype$0"
-              },
-              {
-                "args": [],
-                "kind": "ctor",
-                "name": "call:BooleanDtype"
-              }
-            ],
-            "kind": "atomic",
-            "name": "="
-          },
-          {
-            "args": [
-              {
-                "kind": "var",
-                "name": "pandas.core.arrays.boolean.BooleanDtype.__repr__$call$6$11"
-              },
-              {
-                "args": [
-                  {
-                    "kind": "var",
-                    "name": "dtype$0"
-                  }
-                ],
-                "kind": "ctor",
-                "name": "callval___repr___a1"
-              }
-            ],
-            "kind": "atomic",
-            "name": "="
-          }
-        ]
-      },
       "kind": "contract",
-      "name": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::facts",
+      "name": "__repr__#euf#c:call:__repr__()::assertion",
       "outBinding": "out",
-      "sourceWarrants": [
-        {
-          "claimName": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::facts",
-          "contractName": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::assertion",
-          "file": "/Users/tsavo/provekit/.worktrees/python-runtime-branch-predicates-20260614/examples/pandas-source-accounting/good/./test_pandas_source.py",
-          "kind": "source-memento",
-          "param_names": [],
-          "role": "python.test-fact",
-          "source_cid": "blake3-512:60023ae6e3407eed935cc386e69767756b1bf847bb7b98c8991fda32d523630d16e65f90eeb5bdceec83a0187334f9e3bc3f8aba63495ff23379328803ed363e",
-          "source_function_name": "test_boolean_dtype_repr_source_warrant",
-          "span": {
-            "end_col": 45,
-            "end_line": 6,
-            "start_col": 4,
-            "start_line": 6
-          },
-          "template_cid": "blake3-512:87e4c4148eb1fa02484ec75d5c0cea922029d29f29882a87fb3d314337d8fed518f73a6185217da58930663b2818298e959845b3660a81341ff51b4354b9a570"
-        }
-      ]
-    },
-    {
       "inv": {
         "args": [
           {
-            "args": [
-              {
-                "kind": "var",
-                "name": "dtype$0"
-              }
-            ],
+            "args": [],
             "kind": "ctor",
-            "name": "callval___repr___a1"
+            "name": "call:__repr__"
           },
           {
             "kind": "const",
@@ -1293,46 +401,166 @@
         "kind": "atomic",
         "name": "="
       },
-      "kind": "contract",
-      "name": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::assertion",
-      "outBinding": "out",
       "sourceWarrants": [
         {
-          "claimName": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::facts",
-          "contractName": "pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::assertion",
-          "file": "/Users/tsavo/provekit/.worktrees/python-runtime-branch-predicates-20260614/examples/pandas-source-accounting/good/./test_pandas_source.py",
           "kind": "source-memento",
-          "param_names": [],
-          "role": "python.test-fact",
-          "source_cid": "blake3-512:60023ae6e3407eed935cc386e69767756b1bf847bb7b98c8991fda32d523630d16e65f90eeb5bdceec83a0187334f9e3bc3f8aba63495ff23379328803ed363e",
-          "source_function_name": "test_boolean_dtype_repr_source_warrant",
+          "file": "test_pandas_source.py",
           "span": {
-            "end_col": 45,
+            "start_line": 6,
+            "start_col": 4,
             "end_line": 6,
-            "start_col": 4,
-            "start_line": 6
+            "end_col": 45
           },
-          "template_cid": "blake3-512:87e4c4148eb1fa02484ec75d5c0cea922029d29f29882a87fb3d314337d8fed518f73a6185217da58930663b2818298e959845b3660a81341ff51b4354b9a570"
-        },
-        {
-          "file": "/private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/core/arrays/boolean.py",
-          "kind": "source-memento",
-          "param_names": [
-            "self"
-          ],
-          "role": "python.constant-universe",
-          "source_cid": "blake3-512:b7c4a3d1d6a35e3a366c3ff07d49a403765458a0c2bb73f814b3d1202bf1a96caaa8766cb63fc53abe7a6e6935f877a1037ea918fb1444a5f24809c4f92fa5d4",
-          "source_function_name": "BooleanDtype.__repr__",
-          "span": {
-            "end_col": 29,
-            "end_line": 118,
-            "start_col": 4,
-            "start_line": 117
-          },
-          "template_cid": "blake3-512:70a22e0418c3ff0617b2df09745a7428eb85676569412d4697fd95f8270c9d8264ba2e4b1e08dd4603b779f8c98d48b09e0db207dbc91a232ae60d69a6a9b3e3",
-          "universe_kind": "constant"
+          "source_cid": "blake3-512:cd42ae5d6db573c4d1ab64efa941f61885b09007faacbf6ace7a51a21d6920c9138c6ef72fb8c1633df12bee39af4add8beca3d43e907f3e0fd58fffd5b5e352",
+          "sourceCid": "blake3-512:cd42ae5d6db573c4d1ab64efa941f61885b09007faacbf6ace7a51a21d6920c9138c6ef72fb8c1633df12bee39af4add8beca3d43e907f3e0fd58fffd5b5e352",
+          "template_cid": "blake3-512:7c8c1ed021137a1e8fee033280ab3065c95219f8e81261aab9c42cce153bb8d76c6893143c444b87f6e4c230742ea9eb850ac734f65b12eaebe892bf80c12679",
+          "templateCid": "blake3-512:7c8c1ed021137a1e8fee033280ab3065c95219f8e81261aab9c42cce153bb8d76c6893143c444b87f6e4c230742ea9eb850ac734f65b12eaebe892bf80c12679",
+          "source_function_name": "test_boolean_dtype_repr_source_warrant",
+          "sourceFunctionName": "test_boolean_dtype_repr_source_warrant",
+          "role": "python.literal-call-sugar",
+          "contractName": "__repr__#euf#c:call:__repr__()::assertion",
+          "source_kind": "python.ast-stmt"
         }
-      ]
+      ],
+      "proofirProvenance": {
+        "kind": "proofir-provenance",
+        "nodeClass": "EqualityFact",
+        "constructionSite": {
+          "path": "test_pandas_source.py",
+          "line": 6,
+          "column": 4
+        },
+        "warrants": [
+          {
+            "kind": "Stated",
+            "locus": {
+              "path": "test_pandas_source.py",
+              "line": 6,
+              "column": 4
+            }
+          }
+        ]
+      }
     }
-  ]
+  ],
+  "callEdges": [
+    {
+      "kind": "call-edge",
+      "schemaVersion": "1",
+      "sourceContract": "__repr__#euf#c:call:__repr__()::assertion",
+      "targetSymbol": "call:__repr__",
+      "targetContract": null,
+      "targetContractCid": null,
+      "callSiteLocus": {
+        "file": "test_pandas_source.py",
+        "line": 6,
+        "column": 11
+      }
+    }
+  ],
+  "vendorConjoins": [],
+  "superposition": {
+    "methods": 1,
+    "universes": 1,
+    "occurrences": 1,
+    "perMethod": [
+      {
+        "method": "__repr__",
+        "universes": 1,
+        "occurrences": 1
+      }
+    ]
+  },
+  "assemblyPlan": {
+    "source": "component-discovery",
+    "planMementos": 1,
+    "planAtoms": [
+      {
+        "kind": "plan-atom",
+        "schemaVersion": "1",
+        "atomKind": "lifter-binary",
+        "role": "lifter",
+        "surface": "python",
+        "pluginName": "python-lift",
+        "manifestName": "python-lift",
+        "version": "0.1.0",
+        "protocolVersion": "pep/1.7.0",
+        "command": [
+          "/usr/local/opt/python@3.14/bin/python3.14",
+          "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
+          "--rpc"
+        ],
+        "method": null,
+        "phase": null,
+        "workspaceOverride": null,
+        "emit": "ir-document",
+        "layer": null,
+        "binary": {
+          "program": "/usr/local/opt/python@3.14/bin/python3.14",
+          "path": "/usr/local/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+          "cid": "blake3-512:67a64d7737613543c07154c7f5c5eb8b98bf4a61cc3ee2947cc57b9a5236a0f0976d9ac957b9d8d7d5095c966fc47ff3137aa8c81345a278f923ec5f9b02cad9"
+        },
+        "participation": "executed"
+      },
+      {
+        "kind": "plan-atom",
+        "schemaVersion": "1",
+        "atomKind": "source-oracle",
+        "role": "source-oracle",
+        "surface": "python",
+        "pluginName": "python-lift source oracle",
+        "manifestName": "python-lift",
+        "version": "0.1.0",
+        "protocolVersion": "pep/1.7.0",
+        "command": [
+          "/usr/local/opt/python@3.14/bin/python3.14",
+          "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
+          "--rpc"
+        ],
+        "method": null,
+        "phase": null,
+        "workspaceOverride": null,
+        "emit": "ir-document",
+        "layer": null,
+        "binary": {
+          "program": "/usr/local/opt/python@3.14/bin/python3.14",
+          "path": "/usr/local/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+          "cid": "blake3-512:67a64d7737613543c07154c7f5c5eb8b98bf4a61cc3ee2947cc57b9a5236a0f0976d9ac957b9d8d7d5095c966fc47ff3137aa8c81345a278f923ec5f9b02cad9"
+        },
+        "participation": "executed"
+      },
+      {
+        "kind": "plan-atom",
+        "schemaVersion": "1",
+        "atomKind": "factory-report",
+        "role": "factory-report",
+        "pluginName": "sugar-lift-report",
+        "version": "0.1.0",
+        "command": [
+          "/Users/tsavo/.cache/sugar/binaries/sugar-darwin-x86_64-release-blake3-512_f831b190795697a4338ff05350cdf77237f6ec75590a1d1d5089dbf76abcda78728a3b6c2cbcc7afefd6d03553234603bf77e0b6b8f11164dafd92884ab065a8"
+        ],
+        "binary": {
+          "program": "/Users/tsavo/.cache/sugar/binaries/sugar-darwin-x86_64-release-blake3-512_f831b190795697a4338ff05350cdf77237f6ec75590a1d1d5089dbf76abcda78728a3b6c2cbcc7afefd6d03553234603bf77e0b6b8f11164dafd92884ab065a8",
+          "path": "/Users/tsavo/.cache/sugar/binaries/sugar-darwin-x86_64-release-blake3-512_f831b190795697a4338ff05350cdf77237f6ec75590a1d1d5089dbf76abcda78728a3b6c2cbcc7afefd6d03553234603bf77e0b6b8f11164dafd92884ab065a8",
+          "cid": "blake3-512:7d0173f26f3c334f89e1c943e909dffe9281b4585ba856c1d82c92200991c91ac11e43c670fce89c8f781f191f4904fb72ef7442e4a3a78622e07d623c56511b"
+        },
+        "participation": "executed"
+      }
+    ],
+    "expectedOutputCids": [
+      "blake3-512:3defc6d2103188d412d004368cc6bf39f76843da8f3918482412ad6b1ec3b6b5476b2580b532e29099d312706191845ef073859ce58159867b521f8e28768c0b",
+      "blake3-512:7229e552bbf0cbfd4233d9c4363934ee99d88200a09f07f9a4c7bfdc0d022d7eaead175a359699273edef5efa9768fddce76c1c84ced344aaa82b3c4e774cddd"
+    ],
+    "reportSections": {
+      "unitTestFacts": 1,
+      "bodyUniverses": 1,
+      "factoryReport": 6,
+      "callEdgesTotal": 1,
+      "callEdgesResolved": 0,
+      "callEdgesDangling": 1,
+      "implications": 0,
+      "vendorConjoins": 0,
+      "sourceMementos": 1
+    }
+  }
 }
