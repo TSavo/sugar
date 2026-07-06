@@ -1,12 +1,12 @@
 {
   "kind": "lift-source-report",
   "sourceLedger": {
-    "source_loci": 1,
+    "source_loci": 2060220,
     "source_warranted": 1,
     "source_support": 0,
     "source_refused": 0,
-    "source_inactive": 0,
-    "unclassified_source": 0,
+    "source_inactive": 4533,
+    "unclassified_source": 2055686,
     "source_unresolved": 0
   },
   "sourceAudits": [
@@ -54,6 +54,732 @@
           }
         }
       ]
+    },
+    {
+      "kind": "source-audit",
+      "language": "python",
+      "contract": {
+        "name": "pandas#source-accounting"
+      },
+      "role": "python.package-source",
+      "universe_kind": "package-accounting",
+      "accounting_mode": "structural",
+      "package": "pandas",
+      "package_root": "/usr/local/lib/python3.14/site-packages/pandas",
+      "totals": {
+        "source_loci": 2060219,
+        "source_warranted": 0,
+        "source_inactive": 4533,
+        "source_support": 0,
+        "source_refused": 0,
+        "source_unresolved": 0,
+        "unclassified_source": 2055686
+      },
+      "ast_type_counts": {
+        "unclassified": {
+          "ImportFrom": 6586,
+          "Assign": 108471,
+          "For": 2315,
+          "Delete": 102,
+          "Try": 700,
+          "Import": 4356,
+          "alias": 18230,
+          "Name": 607142,
+          "Constant": 397174,
+          "Tuple": 28114,
+          "ExceptHandler": 689,
+          "List": 69399,
+          "Expr": 33828,
+          "Raise": 2776,
+          "Call": 215242,
+          "Attribute": 206016,
+          "JoinedStr": 3458,
+          "Subscript": 29897,
+          "FormattedValue": 4503,
+          "FunctionDef": 28264,
+          "Return": 11111,
+          "UnaryOp": 10715,
+          "If": 17846,
+          "ClassDef": 1772,
+          "AnnAssign": 1366,
+          "Dict": 12092,
+          "BinOp": 18265,
+          "Global": 18,
+          "arg": 56545,
+          "Compare": 27591,
+          "BoolOp": 4352,
+          "AugAssign": 685,
+          "ListComp": 1908,
+          "With": 8048,
+          "keyword": 86661,
+          "Yield": 158,
+          "Slice": 5468,
+          "GeneratorExp": 610,
+          "Starred": 983,
+          "Pass": 323,
+          "IfExp": 1350,
+          "Lambda": 2154,
+          "Assert": 17543,
+          "Continue": 114,
+          "Set": 306,
+          "SetComp": 39,
+          "Break": 77,
+          "DictComp": 225,
+          "While": 66,
+          "YieldFrom": 20,
+          "Match": 1,
+          "MatchValue": 3,
+          "NamedExpr": 8,
+          "Nonlocal": 1
+        },
+        "inactive": {
+          "Expr": 4533
+        }
+      },
+      "package_file_count": 1421,
+      "sample_loci": [
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 1,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 1,
+            "start_col": 0,
+            "end_line": 1,
+            "end_col": 34
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 3,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Assign",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 3,
+            "start_col": 0,
+            "end_line": 3,
+            "end_col": 34
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 7,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Assign",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 7,
+            "start_col": 0,
+            "end_line": 7,
+            "end_col": 42
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 9,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "For",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 9,
+            "start_col": 0,
+            "end_line": 16,
+            "end_col": 17
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 18,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Delete",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 18,
+            "start_col": 0,
+            "end_line": 18,
+            "end_col": 35
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 20,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Try",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 20,
+            "start_col": 0,
+            "end_line": 32,
+            "end_col": 15
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 34,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 34,
+            "start_col": 0,
+            "end_line": 41,
+            "end_col": 1
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 44,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Import",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 44,
+            "start_col": 0,
+            "end_line": 44,
+            "end_col": 30
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 46,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 46,
+            "start_col": 0,
+            "end_line": 108,
+            "end_col": 1
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 109,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 109,
+            "start_col": 0,
+            "end_line": 109,
+            "end_col": 31
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 111,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 111,
+            "start_col": 0,
+            "end_line": 111,
+            "end_col": 49
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 113,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 113,
+            "start_col": 0,
+            "end_line": 113,
+            "end_col": 41
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 114,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 114,
+            "start_col": 0,
+            "end_line": 114,
+            "end_col": 34
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 116,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 116,
+            "start_col": 0,
+            "end_line": 116,
+            "end_col": 44
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 118,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 118,
+            "start_col": 0,
+            "end_line": 133,
+            "end_col": 1
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 135,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 135,
+            "start_col": 0,
+            "end_line": 135,
+            "end_col": 61
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 136,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 136,
+            "start_col": 0,
+            "end_line": 136,
+            "end_col": 26
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 137,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 137,
+            "start_col": 0,
+            "end_line": 137,
+            "end_col": 53
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 139,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 139,
+            "start_col": 0,
+            "end_line": 170,
+            "end_col": 1
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 172,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 172,
+            "start_col": 0,
+            "end_line": 172,
+            "end_col": 52
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 174,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 174,
+            "start_col": 0,
+            "end_line": 174,
+            "end_col": 36
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 177,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Assign",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 177,
+            "start_col": 0,
+            "end_line": 177,
+            "end_col": 25
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 178,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Try",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 178,
+            "start_col": 0,
+            "end_line": 191,
+            "end_col": 23
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 195,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Assign",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 195,
+            "start_col": 0,
+            "end_line": 233,
+            "end_col": 3
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 238,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Assign",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 238,
+            "start_col": 0,
+            "end_line": 353,
+            "end_col": 1
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 1,
+          "col": 23,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "alias",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 1,
+            "start_col": 23,
+            "end_line": 1,
+            "end_col": 34
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 3,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Name",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 3,
+            "start_col": 0,
+            "end_line": 3,
+            "end_col": 13
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 3,
+          "col": 16,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Constant",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 3,
+            "start_col": 16,
+            "end_line": 3,
+            "end_col": 34
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 7,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Name",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 7,
+            "start_col": 0,
+            "end_line": 7,
+            "end_col": 18
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 7,
+          "col": 21,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Tuple",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 7,
+            "start_col": 21,
+            "end_line": 7,
+            "end_col": 42
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 9,
+          "col": 4,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Name",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 9,
+            "start_col": 4,
+            "end_line": 9,
+            "end_col": 15
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 9,
+          "col": 19,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Name",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 9,
+            "start_col": 19,
+            "end_line": 9,
+            "end_col": 37
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 10,
+          "col": 4,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Try",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 10,
+            "start_col": 4,
+            "end_line": 16,
+            "end_col": 17
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 18,
+          "col": 4,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Name",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 18,
+            "start_col": 4,
+            "end_line": 18,
+            "end_col": 22
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 18,
+          "col": 24,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "Name",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 18,
+            "start_col": 24,
+            "end_line": 18,
+            "end_col": 35
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 22,
+          "col": 4,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ImportFrom",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 22,
+            "start_col": 4,
+            "end_line": 24,
+            "end_col": 5
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 25,
+          "col": 0,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "ExceptHandler",
+          "reason": "not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 25,
+            "start_col": 0,
+            "end_line": 32,
+            "end_col": 15
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 35,
+          "col": 4,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "alias",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 35,
+            "start_col": 4,
+            "end_line": 35,
+            "end_col": 14
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 36,
+          "col": 4,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "alias",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 36,
+            "start_col": 4,
+            "end_line": 36,
+            "end_col": 14
+          }
+        },
+        {
+          "file": "/usr/local/lib/python3.14/site-packages/pandas/__init__.py",
+          "line": 37,
+          "col": 4,
+          "status": "unclassified",
+          "role": "python.package-source",
+          "contract": "package-accounting",
+          "ast_kind": "alias",
+          "reason": "import metadata is not classified by any emitted Python source warrant",
+          "span": {
+            "start_line": 37,
+            "start_col": 4,
+            "end_line": 37,
+            "end_col": 16
+          }
+        }
+      ],
+      "loci_elided": true
     }
   ],
   "factoryAudits": [
@@ -62,66 +788,66 @@
       "role": "term",
       "status": "selected",
       "observed": "Call",
-      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:12",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:5:12",
       "selected": "CallSugar",
       "candidates": [
         "CallSugar"
       ],
-      "message": "selected Sugar `CallSugar` for role term at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:12`"
+      "message": "selected Sugar `CallSugar` for role term at `/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:5:12`"
     },
     {
       "kind": "factory-audit-row",
       "role": "statement",
       "status": "selected",
       "observed": "Assign",
-      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:4",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:5:4",
       "selected": "AssignSugar",
       "candidates": [
         "AssignSugar"
       ],
-      "message": "selected Sugar `AssignSugar` for role statement at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:4`"
+      "message": "selected Sugar `AssignSugar` for role statement at `/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:5:4`"
     },
     {
       "kind": "factory-audit-row",
       "role": "term",
       "status": "selected",
       "observed": "Call",
-      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:12",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:5:12",
       "selected": "CallSugar",
       "candidates": [
         "CallSugar"
       ],
-      "message": "selected Sugar `CallSugar` for role term at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:12`"
+      "message": "selected Sugar `CallSugar` for role term at `/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:5:12`"
     },
     {
       "kind": "factory-audit-row",
       "role": "statement",
       "status": "selected",
       "observed": "Assign",
-      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:4",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:5:4",
       "selected": "AssignSugar",
       "candidates": [
         "AssignSugar"
       ],
-      "message": "selected Sugar `AssignSugar` for role statement at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:5:4`"
+      "message": "selected Sugar `AssignSugar` for role statement at `/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:5:4`"
     },
     {
       "kind": "factory-audit-row",
       "role": "term",
       "status": "selected",
       "observed": "PrimitiveLiteral",
-      "blame": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:6:31",
+      "blame": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:6:31",
       "selected": "PrimitiveLiteralSugar",
       "candidates": [
         "PrimitiveLiteralSugar"
       ],
-      "message": "selected Sugar `PrimitiveLiteralSugar` for role term at `/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py:6:31`"
+      "message": "selected Sugar `PrimitiveLiteralSugar` for role term at `/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py:6:31`"
     }
   ],
   "factoryWalk": [
     {
       "kind": "factory-walk-row",
-      "file": "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/examples/pandas-source-accounting/good/test_pandas_source.py",
+      "file": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/test_pandas_source.py",
       "line": 6,
       "requested_role": "AssertionSurface",
       "ast_kind": "Call",
@@ -261,9 +987,9 @@
       },
       "plugins": [
         {
-          "name": "python-lift",
+          "name": "python-tests-lift",
           "kind": "lift",
-          "surface": "python",
+          "surface": "python-tests",
           "workspaceOverride": null,
           "emit": "ir-document",
           "layer": null
@@ -275,15 +1001,13 @@
           "schemaVersion": "1",
           "atomKind": "lifter-binary",
           "role": "lifter",
-          "surface": "python",
-          "pluginName": "python-lift",
-          "manifestName": "python-lift",
-          "version": "0.1.0",
+          "surface": "python-tests",
+          "pluginName": "python-tests-lift",
+          "manifestName": "python-tests-lift",
+          "version": "0.1.0-draft",
           "protocolVersion": "pep/1.7.0",
           "command": [
-            "/usr/local/opt/python@3.14/bin/python3.14",
-            "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-            "--rpc"
+            "./lift-shim.sh"
           ],
           "method": null,
           "phase": null,
@@ -291,9 +1015,9 @@
           "emit": "ir-document",
           "layer": null,
           "binary": {
-            "program": "/usr/local/opt/python@3.14/bin/python3.14",
-            "path": "/usr/local/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
-            "cid": "blake3-512:67a64d7737613543c07154c7f5c5eb8b98bf4a61cc3ee2947cc57b9a5236a0f0976d9ac957b9d8d7d5095c966fc47ff3137aa8c81345a278f923ec5f9b02cad9"
+            "program": "./lift-shim.sh",
+            "path": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/lift-shim.sh",
+            "cid": "blake3-512:779b0e8a956c14d8463a811cab967a9140039cd7a414b78ed06930451ca1ab55768c02d00ebdd8c5596632ad17da68a6cd906f0800f41408f4f1cb5f7366b63c"
           },
           "participation": "executed"
         },
@@ -302,15 +1026,13 @@
           "schemaVersion": "1",
           "atomKind": "source-oracle",
           "role": "source-oracle",
-          "surface": "python",
-          "pluginName": "python-lift source oracle",
-          "manifestName": "python-lift",
-          "version": "0.1.0",
+          "surface": "python-tests",
+          "pluginName": "python-tests-lift source oracle",
+          "manifestName": "python-tests-lift",
+          "version": "0.1.0-draft",
           "protocolVersion": "pep/1.7.0",
           "command": [
-            "/usr/local/opt/python@3.14/bin/python3.14",
-            "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-            "--rpc"
+            "./lift-shim.sh"
           ],
           "method": null,
           "phase": null,
@@ -318,9 +1040,9 @@
           "emit": "ir-document",
           "layer": null,
           "binary": {
-            "program": "/usr/local/opt/python@3.14/bin/python3.14",
-            "path": "/usr/local/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
-            "cid": "blake3-512:67a64d7737613543c07154c7f5c5eb8b98bf4a61cc3ee2947cc57b9a5236a0f0976d9ac957b9d8d7d5095c966fc47ff3137aa8c81345a278f923ec5f9b02cad9"
+            "program": "./lift-shim.sh",
+            "path": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/lift-shim.sh",
+            "cid": "blake3-512:779b0e8a956c14d8463a811cab967a9140039cd7a414b78ed06930451ca1ab55768c02d00ebdd8c5596632ad17da68a6cd906f0800f41408f4f1cb5f7366b63c"
           },
           "participation": "executed"
         },
@@ -346,8 +1068,8 @@
         {
           "name": "lift",
           "role": "lift",
-          "kit": "lift-plugin:python",
-          "surface": "python",
+          "kit": "lift-plugin:python-tests",
+          "surface": "python-tests",
           "verb": "transform",
           "dependsOn": []
         },
@@ -363,16 +1085,16 @@
       ],
       "toolOutputs": [
         {
-          "surface": "python",
-          "actualOutputCid": "blake3-512:3defc6d2103188d412d004368cc6bf39f76843da8f3918482412ad6b1ec3b6b5476b2580b532e29099d312706191845ef073859ce58159867b521f8e28768c0b"
+          "surface": "python-tests",
+          "actualOutputCid": "blake3-512:2ddc054b81e33dd4e33e145b49b657d2e17a5e649cd4cc79a6166e0b033212e6bd84aa4a5d9a1ba7b5ce2d968be9745f46d97be5c8c7314de6935eabf44aca4b"
         },
         {
-          "surface": "python",
+          "surface": "python-tests",
           "actualOutputCid": "blake3-512:7229e552bbf0cbfd4233d9c4363934ee99d88200a09f07f9a4c7bfdc0d022d7eaead175a359699273edef5efa9768fddce76c1c84ced344aaa82b3c4e774cddd"
         }
       ],
       "expectedOutputCids": [
-        "blake3-512:3defc6d2103188d412d004368cc6bf39f76843da8f3918482412ad6b1ec3b6b5476b2580b532e29099d312706191845ef073859ce58159867b521f8e28768c0b",
+        "blake3-512:2ddc054b81e33dd4e33e145b49b657d2e17a5e649cd4cc79a6166e0b033212e6bd84aa4a5d9a1ba7b5ce2d968be9745f46d97be5c8c7314de6935eabf44aca4b",
         "blake3-512:7229e552bbf0cbfd4233d9c4363934ee99d88200a09f07f9a4c7bfdc0d022d7eaead175a359699273edef5efa9768fddce76c1c84ced344aaa82b3c4e774cddd"
       ]
     }
@@ -480,15 +1202,13 @@
         "schemaVersion": "1",
         "atomKind": "lifter-binary",
         "role": "lifter",
-        "surface": "python",
-        "pluginName": "python-lift",
-        "manifestName": "python-lift",
-        "version": "0.1.0",
+        "surface": "python-tests",
+        "pluginName": "python-tests-lift",
+        "manifestName": "python-tests-lift",
+        "version": "0.1.0-draft",
         "protocolVersion": "pep/1.7.0",
         "command": [
-          "/usr/local/opt/python@3.14/bin/python3.14",
-          "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-          "--rpc"
+          "./lift-shim.sh"
         ],
         "method": null,
         "phase": null,
@@ -496,9 +1216,9 @@
         "emit": "ir-document",
         "layer": null,
         "binary": {
-          "program": "/usr/local/opt/python@3.14/bin/python3.14",
-          "path": "/usr/local/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
-          "cid": "blake3-512:67a64d7737613543c07154c7f5c5eb8b98bf4a61cc3ee2947cc57b9a5236a0f0976d9ac957b9d8d7d5095c966fc47ff3137aa8c81345a278f923ec5f9b02cad9"
+          "program": "./lift-shim.sh",
+          "path": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/lift-shim.sh",
+          "cid": "blake3-512:779b0e8a956c14d8463a811cab967a9140039cd7a414b78ed06930451ca1ab55768c02d00ebdd8c5596632ad17da68a6cd906f0800f41408f4f1cb5f7366b63c"
         },
         "participation": "executed"
       },
@@ -507,15 +1227,13 @@
         "schemaVersion": "1",
         "atomKind": "source-oracle",
         "role": "source-oracle",
-        "surface": "python",
-        "pluginName": "python-lift source oracle",
-        "manifestName": "python-lift",
-        "version": "0.1.0",
+        "surface": "python-tests",
+        "pluginName": "python-tests-lift source oracle",
+        "manifestName": "python-tests-lift",
+        "version": "0.1.0-draft",
         "protocolVersion": "pep/1.7.0",
         "command": [
-          "/usr/local/opt/python@3.14/bin/python3.14",
-          "/Users/tsavo/provekit/.worktrees/pandas-census-claims-2/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-          "--rpc"
+          "./lift-shim.sh"
         ],
         "method": null,
         "phase": null,
@@ -523,9 +1241,9 @@
         "emit": "ir-document",
         "layer": null,
         "binary": {
-          "program": "/usr/local/opt/python@3.14/bin/python3.14",
-          "path": "/usr/local/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
-          "cid": "blake3-512:67a64d7737613543c07154c7f5c5eb8b98bf4a61cc3ee2947cc57b9a5236a0f0976d9ac957b9d8d7d5095c966fc47ff3137aa8c81345a278f923ec5f9b02cad9"
+          "program": "./lift-shim.sh",
+          "path": "/Users/tsavo/provekit/.worktrees/pandas-package-audit/examples/pandas-source-accounting/good/lift-shim.sh",
+          "cid": "blake3-512:779b0e8a956c14d8463a811cab967a9140039cd7a414b78ed06930451ca1ab55768c02d00ebdd8c5596632ad17da68a6cd906f0800f41408f4f1cb5f7366b63c"
         },
         "participation": "executed"
       },
@@ -548,7 +1266,7 @@
       }
     ],
     "expectedOutputCids": [
-      "blake3-512:3defc6d2103188d412d004368cc6bf39f76843da8f3918482412ad6b1ec3b6b5476b2580b532e29099d312706191845ef073859ce58159867b521f8e28768c0b",
+      "blake3-512:2ddc054b81e33dd4e33e145b49b657d2e17a5e649cd4cc79a6166e0b033212e6bd84aa4a5d9a1ba7b5ce2d968be9745f46d97be5c8c7314de6935eabf44aca4b",
       "blake3-512:7229e552bbf0cbfd4233d9c4363934ee99d88200a09f07f9a4c7bfdc0d022d7eaead175a359699273edef5efa9768fddce76c1c84ced344aaa82b3c4e774cddd"
     ],
     "reportSections": {
