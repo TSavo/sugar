@@ -48,6 +48,32 @@ PYTEST_WITNESS_SURFACE = "python-pytest-witness"
 PYTEST_WITNESS_LIFT_NAME = "pytest-witness-lift"
 
 
+def witness_package_proofir_provenance(bundle_cid: str, runtime: str) -> dict:
+    """Mirror of the rust `witness_package_contract_ir` stamp (sugar-lift-rust-
+    cargo-test-witness, landed under #3601): every witness-package contract
+    member must carry a `proofirProvenance` so `verify_consistency`'s
+    ambient-testimony gate (sugar-verifier `contract_provenance_kind`) can
+    classify it instead of refusing with `provenance-kind-required`. The
+    python pytest-witness lift built its own witness-package ContractDecl and
+    never got this stamp when #3601 fixed the rust mirror -- a third,
+    unstamped emission path (#3587 recurrence, recensus4)."""
+    return {
+        "kind": "proofir-provenance",
+        "nodeClass": "WitnessPackage",
+        "constructionSite": {
+            "tool": "pytest",
+            "runtimeCid": runtime,
+        },
+        "warrants": [
+            {
+                "kind": "Derived",
+                "floorChain": ["pytest-witness-package", "package-recompute"],
+                "packageCid": bundle_cid,
+            }
+        ],
+    }
+
+
 def _send(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n")
     sys.stdout.flush()
@@ -263,6 +289,13 @@ def handle_lift(msg_id: Any, params: dict) -> None:
                 )
             )
         ir = json.loads(encode_jcs(declarations_to_value(decls))) if decls else []
+        for member in ir:
+            if member.get("kind") == "contract" and member.get("name", "").startswith(
+                "witness-package:"
+            ):
+                member["proofirProvenance"] = witness_package_proofir_provenance(
+                    bundle_cid, runtime_cid()
+                )
         # The signed WitnessMementos flow as `ir` members (kind "witness-memento"):
         # mint envelopes each into the .proof via its per-kind dispatch, so the
         # .proof carries the signed pointer the rust verifier enumerates. (Also

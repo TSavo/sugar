@@ -30,6 +30,31 @@ KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
 RESOLVE_WITNESS_RPC_METHOD = "sugar.plugin.resolve_witness"
 
 
+def build_witness_proofir_provenance(bundle_cid: str, manifest_cid: str) -> dict:
+    """Mirror of the rust `witness_package_contract_ir` stamp (sugar-lift-rust-
+    cargo-test-witness, #3601): every recompute-discharged witness contract
+    must carry a `proofirProvenance` so `verify_consistency`'s ambient-
+    testimony gate classifies it instead of refusing with
+    `provenance-kind-required`. `sugar_build_witness`'s ContractDecls never
+    got this stamp when #3601 fixed the rust mirror -- a third, unstamped
+    emission path (#3587 recurrence, recensus4)."""
+    return {
+        "kind": "proofir-provenance",
+        "nodeClass": "WitnessPackage",
+        "constructionSite": {
+            "tool": "build-witness",
+            "runtimeCid": manifest_cid,
+        },
+        "warrants": [
+            {
+                "kind": "Derived",
+                "floorChain": ["build-witness", "rebuild-recompute"],
+                "packageCid": bundle_cid,
+            }
+        ],
+    }
+
+
 def _send(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n")
     sys.stdout.flush()
@@ -89,7 +114,15 @@ def handle_lift(msg_id: Any, params: dict) -> None:
                 )
             )
         memento = build_witness_memento(w)
-        ir = json.loads(encode_jcs(declarations_to_value(decls))) + [memento]
+        ir = json.loads(encode_jcs(declarations_to_value(decls)))
+        for member in ir:
+            if member.get("kind") == "contract" and member.get("name", "").startswith(
+                f"build-witness:{w.cid}"
+            ):
+                member["proofirProvenance"] = build_witness_proofir_provenance(
+                    w.cid, w.manifest_cid
+                )
+        ir = ir + [memento]
         _send(
             {
                 "jsonrpc": "2.0",
