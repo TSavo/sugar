@@ -18,10 +18,13 @@ BindEffect = MissingBindingEffect | BoundaryBodyShapeEffect
 
 
 def bind_effect_outcome(effect: BindEffect) -> str:
+    # #3632: the materialize RPC outcome is a typed effect, not a verifier
+    # refusal. `implementations/rust/sugar-cli/src/cmd_materialize.rs` reads
+    # both "boundary" (current) and legacy "refused" for this field.
     if isinstance(effect, MissingBindingEffect):
-        return "refused"
+        return "boundary"
     if isinstance(effect, BoundaryBodyShapeEffect):
-        return "refused"
+        return "boundary"
     return _unhandled_bind_effect(effect)
 
 

@@ -79,6 +79,10 @@ def _default_source_ledger(source_memento_count: int) -> dict[str, int]:
         "source_inactive": 0,
         "source_support": 0,
         "source_refused": 0,
+        # #3632: `source_boundary` is the typed-effect vocabulary name for the
+        # same count as `source_refused`; kept dual-written since the Rust
+        # CLI reads `source_refused` from this payload directly.
+        "source_boundary": 0,
         "source_unresolved": 0,
         "unclassified_source": 0,
     }

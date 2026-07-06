@@ -89,7 +89,9 @@ def test_effectful_callee_records_refusal_and_emits_no_floor_fact() -> None:
     source = "def A():\n" "    return 1 // 0\n" "def t():\n" "    assert A() == 1\n"
 
     assert _assertion_facts(source)["call:A"] == [1]
-    refusals = [row for row in _diagnostics(source) if row.get("kind") == "dig-refusal"]
+    refusals = [
+        row for row in _diagnostics(source) if row.get("kind") == "dig-boundary"
+    ]
     assert any(
         row.get("callee") == "A"
         and row.get("caught") == "FactoryGap"

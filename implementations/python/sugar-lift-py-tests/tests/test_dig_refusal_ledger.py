@@ -13,11 +13,11 @@ def test_unconstructible_transitive_body_yields_recorded_dig_refusal() -> None:
     )
 
     refusals = [
-        row for row in report.payload.diagnostics if row.get("kind") == "dig-refusal"
+        row for row in report.payload.diagnostics if row.get("kind") == "dig-boundary"
     ]
     assert refusals == [
         {
-            "kind": "dig-refusal",
+            "kind": "dig-boundary",
             "callee": "f",
             "blame": "t.py:4:11",
             "caught": "FactoryGap",

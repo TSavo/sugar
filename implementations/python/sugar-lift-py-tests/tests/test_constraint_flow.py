@@ -94,7 +94,7 @@ def test_non_name_annassign_target_records_dig_refusal() -> None:
     assert universe.predicates == []
     assert refusal_rows == [
         {
-            "kind": "dig-refusal",
+            "kind": "dig-boundary",
             "callee": "User",
             "blame": "model.py:2:4",
             "caught": "TypeError",

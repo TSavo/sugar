@@ -15,6 +15,9 @@ FactoryWalkRedStatus = Literal[
     "runtime-effect",
     "coverage-gap",
     "factory-gap",
+    "dig-boundary",
+    # #3632 legacy: accepted for read compatibility with rows emitted by an
+    # older kit build; no writer in this tree emits it anymore.
     "dig-refusal",
     "absent",
     "drifted",
@@ -138,7 +141,8 @@ def _row_to_rpc(
         "runtime-effect": "incomplete",
         "coverage-gap": "incomplete",
         "factory-gap": "incomplete",
-        "dig-refusal": "incomplete",
+        "dig-boundary": "incomplete",
+        "dig-refusal": "incomplete",  # #3632 legacy read compatibility
         "absent": "incomplete",
         "drifted": "incomplete",
         "unresolved": "gap",

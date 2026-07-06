@@ -103,7 +103,7 @@ def lift_source(
             )
     if emit_bind:
         for cls_info in collector.class_definitions:
-            entry = _refusal_memento_for_class(
+            entry = _concept_gap_memento_for_class(
                 cls_info.node, rel_path, result.diagnostics
             )
             if entry is not None:
@@ -652,24 +652,36 @@ def _keyword_str_list(call: ast.Call, name: str) -> list[str] | None:
     return None
 
 
-def _is_refuse_func(func: ast.expr) -> bool:
-    """Return True for @refuse(...) or @sugar.refuse(...)."""
+# #3632: the source-level decorator that marks "this concept surface is
+# uncovered, here is why, and what closing it would unlock" was originally
+# spelled `@refuse(...)`. REFUSE is the verifier's verb, not the lifter's, so
+# new source should spell it `@concept_gap(...)`. Existing source using the
+# legacy `@refuse(...)` spelling is accepted forever -- old proofs and
+# already-written sugar files never need to change.
+_CONCEPT_GAP_DECORATOR_NAMES = ("concept_gap", "refuse")
+
+
+def _is_concept_gap_func(func: ast.expr) -> bool:
+    """Return True for @concept_gap(...)/@refuse(...) or their @sugar.* forms."""
     if isinstance(func, ast.Name):
-        return func.id == "refuse"
-    if isinstance(func, ast.Attribute) and func.attr == "refuse":
+        return func.id in _CONCEPT_GAP_DECORATOR_NAMES
+    if isinstance(func, ast.Attribute) and func.attr in _CONCEPT_GAP_DECORATOR_NAMES:
         value = func.value
         return isinstance(value, ast.Name) and value.id == "sugar"
     return False
 
 
-def _refusal_memento_for_class(
+def _concept_gap_memento_for_class(
     node: ast.ClassDef,
     rel_path: str,
     diagnostics: list[Json],
 ) -> Json | None:
-    """Emit a refusal-memento IR record for an empty class decorated with @refuse(...)."""
+    """Emit a concept-gap-memento IR record for an empty class decorated with
+    @concept_gap(...) (or the legacy @refuse(...) spelling)."""
     for decorator in node.decorator_list:
-        if not isinstance(decorator, ast.Call) or not _is_refuse_func(decorator.func):
+        if not isinstance(decorator, ast.Call) or not _is_concept_gap_func(
+            decorator.func
+        ):
             continue
         surface = _keyword_str(decorator, "surface")
         concept = _keyword_str(decorator, "concept")
@@ -678,8 +690,8 @@ def _refusal_memento_for_class(
         if not (surface and concept and reason and would_close):
             diagnostics.append(
                 {
-                    "kind": "refusal-memento-invalid",
-                    "message": "missing required field in @refuse (surface, concept, reason, would_close_with_cluster)",
+                    "kind": "concept-gap-memento-invalid",
+                    "message": "missing required field in @concept_gap (surface, concept, reason, would_close_with_cluster)",
                     "path": rel_path,
                     "line": node.lineno,
                 }
@@ -692,15 +704,15 @@ def _refusal_memento_for_class(
         ):
             diagnostics.append(
                 {
-                    "kind": "refusal-memento-invalid",
-                    "message": "@refuse class body must be empty (pass only)",
+                    "kind": "concept-gap-memento-invalid",
+                    "message": "@concept_gap class body must be empty (pass only)",
                     "path": rel_path,
                     "line": node.lineno,
                 }
             )
             return None
         return {
-            "kind": "refusal-memento",
+            "kind": "concept-gap-memento",
             "target_language": "python",
             "surface": surface,
             "concept": concept,

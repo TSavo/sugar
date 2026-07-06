@@ -914,7 +914,7 @@ def test_effectful_binary_dunder_body_refuses_without_fabricated_derived_fact(
     assert len(rows) == 1
     assert _warrant_kinds(rows[0]) == {"Stated"}
     assert any(
-        item.get("kind") == "dig-refusal"
+        item.get("kind") == "dig-boundary"
         and "callsite floor projection refused this callee" in item.get("reason", "")
         for item in result.lift_doc["diagnostics"]
     )
@@ -999,7 +999,7 @@ def test_effectful_display_conversion_refuses_without_fabricated_derived_fact(
     assert len(rows) == 1
     assert _warrant_kinds(rows[0]) == {"Stated"}
     assert any(
-        item.get("kind") == "dig-refusal"
+        item.get("kind") == "dig-boundary"
         and "callsite floor projection refused this callee" in item.get("reason", "")
         for item in result.lift_doc["diagnostics"]
     )

@@ -35,7 +35,7 @@ def _dig_refusals(source: str) -> list[dict]:
         source=source, filename="t.py", memento_file="t.py"
     )
     return [
-        row for row in report.payload.diagnostics if row.get("kind") == "dig-refusal"
+        row for row in report.payload.diagnostics if row.get("kind") == "dig-boundary"
     ]
 
 
