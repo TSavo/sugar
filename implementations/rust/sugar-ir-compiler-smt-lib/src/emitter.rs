@@ -2707,7 +2707,9 @@ fn monadic_adt_tester_operand_sort(name: &str, args: &[Term]) -> Option<&'static
         return None;
     }
     let arg = args.first()?;
-    monadic_adt_tester_ctor(name, arg).ok().map(|(sort, _)| sort)
+    monadic_adt_tester_ctor(name, arg)
+        .ok()
+        .map(|(sort, _)| sort)
 }
 
 /// Render a reserved monadic ADT tester as a native datatype discriminant, or
@@ -4841,8 +4843,10 @@ mod monadic_adt_tester_tests {
             "adt.is_some over a SugarResult operand must refuse"
         );
         // Direct renderer refusal (loud CompileError), not Ok(None).
-        assert!(emit_monadic_adt_tester_atomic(ADT_IS_SOME, &[ctor(RES_ERR, vec![int_const(1)])])
-            .is_err());
+        assert!(
+            emit_monadic_adt_tester_atomic(ADT_IS_SOME, &[ctor(RES_ERR, vec![int_const(1)])])
+                .is_err()
+        );
     }
 
     #[test]
