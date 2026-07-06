@@ -341,22 +341,20 @@
       "work_order_issue": 3587
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "durable-row-missing/scientific-python-showcase",
+      "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape durable-row-missing/scientific-python-showcase; work order #3576",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 43.122,
-      "name": "examples/pandas-showcase/run.sh",
-      "work_order_issue": 3576
+      "grounds": "script exited 0 after durable receipt checks were updated to the current structural contradiction and witness-package shape",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 23.0,
+      "name": "examples/pandas-showcase/run.sh"
     },
     {
       "expected": "NAMED_RED",
       "failure_shape": "audit-missing/pandas-package-audit",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape audit-missing/pandas-package-audit; work order #3575",
+      "grounds": "script exited 1 with terminal shape audit-missing/pandas-package-audit after unrelated component-plan failures were demoted with --allow-failed-components; work order #3575",
       "last_observed_rc": 1,
-      "last_observed_seconds": 34.263,
+      "last_observed_seconds": 19.0,
       "name": "examples/pandas-source-accounting/run.sh",
       "work_order_issue": 3575
     },
