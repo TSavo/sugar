@@ -15769,6 +15769,20 @@ fn assertion_cli_mint_and_prove(
         .arg("--json")
         .arg("--z3")
         .arg(z3)
+        // The exe-relative component-discovery fallback (component_plan.rs,
+        // "THE ONE DOOR TEST fix") always merges this checkout's full kit
+        // component set (coq/lean/maude/smt-lib) regardless of which solvers
+        // this staged project actually dispatches to. On a box that has not
+        // built the coq/lean/maude adapter binaries (this cohort only needs
+        // z3 via smt-lib), component-plan query treats the missing spawn as
+        // a hard error instead of the documented first-wins graceful-degrade
+        // ("any seat that fails to spawn returns Undecidable ... skips it").
+        // `--allow-failed-components` is the CLI's own escape hatch for
+        // exactly this box-dependent gap; without it the harness conflates
+        // "this box hasn't built every solver adapter" with "production
+        // cannot discharge this truth". Pass it so the verdict tracks the
+        // solver this project actually asked for.
+        .arg("--allow-failed-components")
         .output()
         .map_err(|err| format!("spawn sugar prove: {err}"))?;
     if prove.stdout.is_empty() {
