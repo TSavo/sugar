@@ -13,11 +13,13 @@ class FactoryAuditSummaryDto:
 
     def to_rpc(self) -> dict[str, Any]:
         walk = [to_rpc_value(row) for row in self.rows]
-        counts = {"warranted": 0, "refused": 0, "support": 0, "unresolved": 0}
+        counts = {"warranted": 0, "incomplete": 0, "support": 0, "unresolved": 0}
         for row in walk:
             status = row.get("status")
-            if status in counts:
+            if status in ("warranted", "support", "unresolved"):
                 counts[status] += 1
+            elif row.get("verdict") == "incomplete":
+                counts["incomplete"] += 1
         unresolved = [
             row for row in walk if row.get("status") in ("unresolved", "unclassified")
         ]

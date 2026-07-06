@@ -252,7 +252,7 @@ def _account_locus(
         totals["source_support"] += 1
     elif status == "unresolved":
         totals["source_unresolved"] += 1
-    elif status == "refused":
+    elif status == "boundary":
         totals["source_boundary"] += 1
     else:
         totals["unclassified_source"] += 1
@@ -262,7 +262,7 @@ def _account_locus(
 
 
 def _normalized_source_status(status: Any) -> str:
-    if status in {"warranted", "support", "inactive", "unresolved", "refused"}:
+    if status in {"warranted", "support", "inactive", "unresolved", "boundary"}:
         return str(status)
     return "unclassified"
 
