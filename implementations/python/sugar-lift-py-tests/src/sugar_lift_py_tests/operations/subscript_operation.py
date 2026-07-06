@@ -119,8 +119,11 @@ def _subscript_sequence(
     if isinstance(index, BoolValue):
         index = TermValue(1 if index.value else 0)
     if isinstance(index, TermValue) and type(index.value) is int:
-        if 0 <= index.value < len(items):
-            return Complete(items[index.value])
+        item_index = index.value
+        if item_index < 0:
+            item_index += len(items)
+        if 0 <= item_index < len(items):
+            return Complete(items[item_index])
         _raise_subscript_gap(
             owner=owner,
             blame=blame,

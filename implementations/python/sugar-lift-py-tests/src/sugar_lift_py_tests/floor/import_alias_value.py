@@ -44,6 +44,15 @@ class ImportAliasValue(FloorValue):
             replacement="ImportedModuleSubscriptEffect",
         )
 
+    def contains_with(self, operation: Any, ctx: object):
+        del ctx
+        return _runtime_alias_effect(
+            self,
+            operation=operation,
+            shape="contains membership over imported module binding",
+            replacement="ImportedModuleContainsEffect",
+        )
+
     def binary_operator_with(self, operation: Any, ctx: object):
         del ctx
         return _runtime_alias_effect(

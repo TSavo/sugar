@@ -25,6 +25,45 @@ class StringValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(int(self.value)))
+        if operation.name == "format":
+            from sugar_lift_py_tests.effect import RuntimeEffect
+            from sugar_lift_py_tests.floor.term_value import TermValue
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            args: list[str | int | float] = []
+            for arg in operation.arguments:
+                if isinstance(arg, StringValue):
+                    args.append(arg.value)
+                elif isinstance(arg, TermValue):
+                    args.append(arg.value)
+                else:
+                    return Incomplete(
+                        RuntimeEffect(
+                            "string format runtime boundary: "
+                            "crime=StringValue.format argument is not a static "
+                            "string/numeric floor; "
+                            "owner=StringValue; "
+                            f"shape={type(arg).__name__}; "
+                            "replacement=add a cited str.format floor for this "
+                            "argument type or keep the method call as typed red; "
+                            f"blame={operation.blame}"
+                        )
+                    )
+            try:
+                return Complete(StringValue(self.value.format(*args)))
+            except (IndexError, KeyError, ValueError) as exc:
+                return Incomplete(
+                    RuntimeEffect(
+                        "string format runtime boundary: "
+                        "crime=StringValue.format raised while applying a static "
+                        "format string; "
+                        "owner=StringValue; "
+                        f"shape={type(exc).__name__}; "
+                        "replacement=prove a narrower format-string floor or keep "
+                        "the method call as typed red; "
+                        f"blame={operation.blame}"
+                    )
+                )
         if operation.name == "__format__" and len(operation.arguments) == 1:
             from sugar_lift_py_tests.outcome import Complete
 

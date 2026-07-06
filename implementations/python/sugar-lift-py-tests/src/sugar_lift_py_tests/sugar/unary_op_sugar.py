@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.operations import UnaryOperatorOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -13,6 +14,7 @@ _SYMBOL = {
     "UAdd": "py.pos",
     "USub": "py.neg",
     "Invert": "py.invert",
+    "Not": "py.not",
 }
 
 
@@ -55,6 +57,19 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
         if isinstance(operand_outcome, Incomplete):
             return operand_outcome
         operand = complete_value(operand_outcome, owner="UnaryOpSugar operand")
+        if self.operator == "py.not":
+            return Incomplete(
+                RuntimeEffect(
+                    "value-position unary not runtime boundary: "
+                    "crime=UnaryOp Not requested as a term; "
+                    "owner=UnaryOpSugar; "
+                    f"shape=py.not({type(operand).__name__}); "
+                    "replacement=use assertion-position NotSugar for claims, "
+                    "or add a cited Python truthiness floor before treating "
+                    "value-position not as green; "
+                    f"blame={self.blame}"
+                )
+            )
         return perform_operation(
             owner="UnaryOpSugar",
             blame=self.blame,

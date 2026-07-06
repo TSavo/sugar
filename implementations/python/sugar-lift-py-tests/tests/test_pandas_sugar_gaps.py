@@ -15,10 +15,12 @@ from sugar_lift_py_tests.floor import FloorValue, SymbolicValue
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.sugar.compare_term_sugar import CompareTermSugar
+from sugar_lift_py_tests.sugar.generator_exp_sugar import GeneratorExpSugar
+from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
+from sugar_lift_py_tests.sugar.tuple_unpack_assign_sugar import TupleUnpackAssignSugar
 from sugar_lift_py_tests.sugar.witnesses import (
-    EffectWitnessSource,
     SugarRedEffectWitnessPair,
-    TypedRedEffectExpectation,
 )
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import TemporalContext
@@ -114,59 +116,10 @@ def test_pandas_value_position_membership_compare_names_shape() -> None:
 def test_pandas_compare_typed_red_witness_accepts_right_red_and_rejects_wrong_red(
     tmp_path: Path,
 ) -> None:
-    right_effect = TypedRedEffectExpectation(
-        effect_class="RuntimeEffect",
-        reason_needle="value-position comparison runtime boundary",
-        blame_needle="test_witness.py:2:11",
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        CompareTermSugar.witnesses(),
+        tmp_path,
     )
-    wrong_effect = TypedRedEffectExpectation(
-        effect_class="RuntimeEffect",
-        reason_needle="generator expression runtime boundary",
-        blame_needle="test_witness.py:2:11",
-    )
-    seed = SugarRedEffectWitnessPair(
-        name="pandas_value_position_compare_runtime_effect",
-        owner_sugar="CompareTermSugar",
-        family="pandas-sugar-gap",
-        truthful=EffectWitnessSource(
-            source=(
-                "def A(module_name):\n"
-                "    return module_name not in ['pandas', 'pandas.testing']\n"
-            ),
-            expectation=right_effect,
-            expected_match=True,
-        ),
-        lying=EffectWitnessSource(
-            source=(
-                "def A(module_name):\n"
-                "    return module_name not in ['pandas', 'pandas.testing']\n"
-            ),
-            expectation=wrong_effect,
-            expected_match=False,
-        ),
-    )
-
-    report = evaluate_seed_witnesses((seed,), tmp_path / "right-red")
-
-    assert report.is_zero
-
-    wrong_truth = replace(
-        seed,
-        truthful=replace(seed.truthful, expectation=wrong_effect, expected_match=True),
-    )
-    bad_report = evaluate_seed_witnesses((wrong_truth,), tmp_path / "wrong-red")
-
-    assert bad_report.witness_triples_failing == 1
-    assert [
-        (failure.seed, failure.variant, failure.axis)
-        for failure in bad_report.triple_failures
-    ] == [
-        (
-            "pandas_value_position_compare_runtime_effect",
-            "truthful",
-            "typed-red-effect",
-        )
-    ]
 
 
 @pytest.mark.parametrize(
@@ -191,57 +144,10 @@ def test_pandas_generator_exp_rows_are_typed_red_effects(expr: str) -> None:
 def test_pandas_generator_exp_typed_red_witness_accepts_right_red_and_rejects_wrong_red(
     tmp_path: Path,
 ) -> None:
-    right_effect = TypedRedEffectExpectation(
-        effect_class="RuntimeEffect",
-        reason_needle="generator expression runtime boundary",
-        blame_needle="test_witness.py:2:11",
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        GeneratorExpSugar.witnesses(),
+        tmp_path,
     )
-    wrong_effect = TypedRedEffectExpectation(
-        effect_class="RuntimeEffect",
-        reason_needle="value-position comparison runtime boundary",
-        blame_needle="test_witness.py:2:11",
-    )
-    seed = SugarRedEffectWitnessPair(
-        name="pandas_generator_expression_runtime_effect",
-        owner_sugar="GeneratorExpSugar",
-        family="pandas-sugar-gap",
-        truthful=EffectWitnessSource(
-            source=(
-                "def A(axes):\n" "    return (x for x in [0, 1] if x not in axes)\n"
-            ),
-            expectation=right_effect,
-            expected_match=True,
-        ),
-        lying=EffectWitnessSource(
-            source=(
-                "def A(axes):\n" "    return (x for x in [0, 1] if x not in axes)\n"
-            ),
-            expectation=wrong_effect,
-            expected_match=False,
-        ),
-    )
-
-    report = evaluate_seed_witnesses((seed,), tmp_path / "right-red")
-
-    assert report.is_zero
-
-    wrong_truth = replace(
-        seed,
-        truthful=replace(seed.truthful, expectation=wrong_effect, expected_match=True),
-    )
-    bad_report = evaluate_seed_witnesses((wrong_truth,), tmp_path / "wrong-red")
-
-    assert bad_report.witness_triples_failing == 1
-    assert [
-        (failure.seed, failure.variant, failure.axis)
-        for failure in bad_report.triple_failures
-    ] == [
-        (
-            "pandas_generator_expression_runtime_effect",
-            "truthful",
-            "typed-red-effect",
-        )
-    ]
 
 
 def test_pandas_starred_tuple_unpack_assign_is_typed_red_effect() -> None:
@@ -267,3 +173,95 @@ def test_pandas_named_expr_term_is_typed_red_effect() -> None:
     assert "named expression runtime boundary" in outcome.effect.reason
     assert "owner=NamedExprSugar" in outcome.effect.reason
     assert "pandas_gap.py:1:" in outcome.effect.reason
+
+
+def test_pandas_starred_tuple_unpack_typed_red_witness_accepts_right_red_and_rejects_wrong_red(
+    tmp_path: Path,
+) -> None:
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        _red_seed_from_tuple_unpack_witnesses(),
+        tmp_path,
+    )
+
+
+def test_pandas_named_expr_typed_red_witness_accepts_right_red_and_rejects_wrong_red(
+    tmp_path: Path,
+) -> None:
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        NamedExprSugar.witnesses(),
+        tmp_path,
+    )
+
+
+def test_pandas_typed_red_templates_flip_when_blocking_construct_is_removed() -> None:
+    compare_outcome, compare_selected = _term_outcome(
+        "module_name",
+        {"module_name": SymbolicValue(make_var("module_name"))},
+    )
+    generator_outcome, generator_selected = _term_outcome("[0, 1]")
+    starred_outcome, starred_selected = _block_outcome(
+        "    header, rest = table\n",
+        {"table": SymbolicValue(make_var("table"))},
+    )
+    named_outcome, named_selected = _term_outcome("1")
+
+    assert "CompareTermSugar" not in compare_selected
+    assert "GeneratorExpSugar" not in generator_selected
+    assert "NamedExprSugar" not in named_selected
+    assert not _has_runtime_effect(compare_outcome, "value-position comparison")
+    assert not _has_runtime_effect(generator_outcome, "generator expression")
+    assert not _has_runtime_effect(
+        starred_outcome,
+        "starred tuple-unpack assignment",
+    )
+    assert not _has_runtime_effect(named_outcome, "named expression")
+    assert "TupleUnpackAssignSugar" in starred_selected
+
+
+def _assert_red_effect_seed_has_wrong_effect_twin(
+    seed: SugarRedEffectWitnessPair,
+    tmp_path: Path,
+) -> None:
+    report = evaluate_seed_witnesses((seed,), tmp_path / f"{seed.name}-right-red")
+
+    assert report.is_zero
+
+    wrong_truth = replace(
+        seed,
+        truthful=replace(
+            seed.truthful,
+            expectation=seed.lying.expectation,
+            expected_match=True,
+        ),
+    )
+    bad_report = evaluate_seed_witnesses(
+        (wrong_truth,),
+        tmp_path / f"{seed.name}-wrong-red",
+    )
+
+    assert bad_report.witness_triples_failing == 1
+    assert [
+        (failure.seed, failure.variant, failure.axis)
+        for failure in bad_report.triple_failures
+    ] == [
+        (
+            seed.name,
+            "truthful",
+            "typed-red-effect",
+        )
+    ]
+
+
+def _red_seed_from_tuple_unpack_witnesses() -> SugarRedEffectWitnessPair:
+    for seed in TupleUnpackAssignSugar.witnesses():
+        if isinstance(seed, SugarRedEffectWitnessPair):
+            return seed
+    raise AssertionError("TupleUnpackAssignSugar must expose a red-effect seed")
+
+
+def _has_runtime_effect(outcome, needle: str) -> bool:
+    return (
+        isinstance(outcome, Incomplete)
+        and isinstance(outcome.effect, RuntimeEffect)
+        and needle in outcome.effect.reason
+    )

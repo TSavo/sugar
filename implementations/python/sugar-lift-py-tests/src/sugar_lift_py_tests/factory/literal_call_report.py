@@ -1584,8 +1584,8 @@ def _lift_callsite_assertion(
     expected_term = floor_to_term(expected_value, owner="literal_call_report")
     # Each arg composes through the factory's literal sugars (string, int, array,
     # ...) -- the same path as the expected. A literal the catalog reduces but can't
-    # yet shape into a term (e.g. a nested array) is turned into a clean mouth-panic
-    # naming the next sugar, not a crash.
+    # yet shape into a term is kept as typed red so one opaque arg cannot kill the
+    # report.
     arg_terms = []
     for arg_frag in callsite.call_args():
         try:
@@ -1604,15 +1604,28 @@ def _lift_callsite_assertion(
                 )
             arg_terms.append(floor_to_term(arg_value, owner="literal_call_report"))
         except TypeError as exc:
-            _panic_no_sugar(
+            return _effect_lift(
                 arg_frag,
-                memento_file,
-                observed=f"callsite-arg:{arg_frag.observed}-unliftable",
-                requested="LiftableCallArg",
-                fix=(
-                    "lift this call-arg shape (e.g. nested arrays, mixed-type "
-                    f"lists): {exc}"
+                fn,
+                Incomplete(
+                    RuntimeEffect(
+                        "callsite argument runtime boundary: "
+                        "crime=callsite argument could not be projected to a "
+                        "ProofIR term; "
+                        "owner=literal_call_report; "
+                        f"shape=callsite-arg:{arg_frag.observed}-unliftable; "
+                        "replacement=add a cited floor projection for this "
+                        "call-arg shape or keep the assertion as typed red; "
+                        f"{exc}; "
+                        f"blame={memento_file}:{arg_frag.line}:{arg_frag.col}"
+                    )
                 ),
+                stmt=stmt,
+                selected="CallsiteArgRuntimeEffect",
+                requested_role="CallsiteArg",
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
             )
     for keyword in callsite.call_keywords():
         name = keyword.keyword_arg_name()
