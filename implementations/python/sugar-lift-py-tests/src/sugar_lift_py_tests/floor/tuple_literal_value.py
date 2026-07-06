@@ -22,6 +22,9 @@ class TupleLiteralValue(FloorValue):
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
         return operation.binary_tuple(self, ctx)
 
+    def contains_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.contains_tuple(self, ctx)
+
     def call_method_with(self, operation: Any, ctx: Any) -> Any:
         del ctx
         if operation.name == "__len__" and not operation.arguments:

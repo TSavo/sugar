@@ -19,6 +19,7 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     SymbolicValue,
     TermValue,
+    TupleLiteralValue,
 )
 from sugar_lift_py_tests.ir import _ConstBool, _ConstInt, _ConstReal, _ConstStr, atomic
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -55,6 +56,28 @@ class ContainsOperation:
         if not isinstance(self.item, TermValue):
             self._floor_gap(receiver="ArrayLiteral")
         return Complete(BoolValue(any(item == self.item for item in receiver.items)))
+
+    def contains_tuple(self, receiver: TupleLiteralValue, ctx: object) -> Outcome:
+        del ctx
+        item_term = floor_to_term(self.item, owner=f"{self.owner} item")
+        if any(item == self.item for item in receiver.items):
+            return Complete(BoolValue(True))
+        if _is_ground_literal(item_term) and all(
+            _is_ground_literal(floor_to_term(item, owner=f"{self.owner} container"))
+            for item in receiver.items
+        ):
+            return Complete(BoolValue(False))
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "contains",
+                    [
+                        floor_to_term(receiver, owner=f"{self.owner} container"),
+                        item_term,
+                    ],
+                )
+            )
+        )
 
     def contains_set(self, receiver: SetLiteralValue, ctx: object) -> Outcome:
         del ctx
