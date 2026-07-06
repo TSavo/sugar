@@ -26021,8 +26021,8 @@ fn locus_reason<'a>(doc: &'a serde_json::Value, fn_name: &str) -> Option<&'a str
 fn assert_rpc_source_boundary(doc: &serde_json::Value, fn_name: &str, category: &str) {
     assert_eq!(
         locus_status(doc, fn_name),
-        Some("refused"),
-        "{fn_name} must be named-refused: {doc:#}"
+        Some("boundary"),
+        "{fn_name} must be a named boundary: {doc:#}"
     );
     let reason = locus_reason(doc, fn_name).unwrap_or("");
     assert!(
