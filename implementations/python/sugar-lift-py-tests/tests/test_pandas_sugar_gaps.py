@@ -134,7 +134,7 @@ def test_pandas_array_literal_dict_element_is_typed_red_effect() -> None:
     assert isinstance(outcome.effect, RuntimeEffect)
     assert "array literal non-FOL element runtime boundary" in outcome.effect.reason
     assert "DictLiteralValue is a support carrier" in outcome.effect.reason
-    assert "pandas_gap.py:1:1" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
 
 
 def test_symbolic_attribute_assignment_is_typed_runtime_effect() -> None:
@@ -164,6 +164,17 @@ def test_import_alias_attribute_assignment_is_typed_runtime_effect() -> None:
     assert "`np.foo = ...`" in outcome.effect.reason
     assert "replacement=ImportedModuleAttributeAssignEffect" in outcome.effect.reason
     assert "pandas_gap.py:2:4" in outcome.effect.reason
+
+
+def test_lone_surrogate_string_literal_is_typed_transport_effect() -> None:
+    outcome, selected = _term_outcome('"\\ud83d"')
+
+    assert "PrimitiveLiteralSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "string literal transport boundary" in outcome.effect.reason
+    assert "lone surrogate" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
 
 
 def test_pandas_symbolic_subscript_assignment_is_typed_runtime_effect() -> None:
@@ -518,11 +529,34 @@ def test_pandas_symbolic_string_concat_is_typed_runtime_effect() -> None:
     assert "pandas_gap.py:1:0" in outcome.effect.reason
 
 
+def test_pandas_string_symbolic_concat_is_typed_runtime_effect() -> None:
+    outcome, selected = _term_outcome(
+        '"articleId" + suffix',
+        {"suffix": SymbolicValue(make_var("suffix"))},
+    )
+
+    assert "BinOpSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "symbolic string concatenation runtime boundary" in outcome.effect.reason
+    assert "StringValue + SymbolicValue" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
+
+
 def test_pandas_symbolic_string_concat_typed_red_witness_has_bad_twin(
     tmp_path: Path,
 ) -> None:
     _assert_red_effect_seed_has_wrong_effect_twin(
         _symbolic_string_concat_witness(),
+        tmp_path,
+    )
+
+
+def test_pandas_string_symbolic_concat_typed_red_witness_has_bad_twin(
+    tmp_path: Path,
+) -> None:
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        _string_symbolic_concat_witness(),
         tmp_path,
     )
 
@@ -598,6 +632,29 @@ def test_pandas_string_repeat_reduces_to_string_value() -> None:
 
     assert "BinOpSugar" in selected
     assert outcome == Complete(StringValue("ababab"))
+
+
+def test_pandas_string_repeat_by_symbolic_count_is_typed_runtime_effect() -> None:
+    outcome, selected = _term_outcome(
+        "' ' * indent",
+        {"indent": SymbolicValue(make_var("indent"))},
+    )
+
+    assert "BinOpSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "sequence repetition by symbolic count" in outcome.effect.reason
+    assert "StringValue * SymbolicValue" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
+
+
+def test_pandas_string_repeat_symbolic_count_typed_red_witness_has_bad_twin(
+    tmp_path: Path,
+) -> None:
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        _string_symbolic_repeat_witness(),
+        tmp_path,
+    )
 
 
 def test_pandas_string_repeat_discharges_and_refutes(tmp_path: Path) -> None:
@@ -1106,6 +1163,62 @@ def _symbolic_string_concat_witness() -> SugarRedEffectWitnessPair:
         ),
         lying=EffectWitnessSource(
             source=('def A(prefix):\n    return prefix + "US/Eastern"\n'),
+            expectation=wrong_effect,
+            expected_match=False,
+        ),
+    )
+
+
+def _string_symbolic_concat_witness() -> SugarRedEffectWitnessPair:
+    right_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="symbolic string concatenation runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    wrong_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="map receiver runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    return SugarRedEffectWitnessPair(
+        name="pandas_string_symbolic_concat_runtime_effect",
+        owner_sugar="BinOpSugar",
+        family="pandas-floor-gap",
+        truthful=EffectWitnessSource(
+            source=('def A(suffix):\n    return "articleId" + suffix\n'),
+            expectation=right_effect,
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=('def A(suffix):\n    return "articleId" + suffix\n'),
+            expectation=wrong_effect,
+            expected_match=False,
+        ),
+    )
+
+
+def _string_symbolic_repeat_witness() -> SugarRedEffectWitnessPair:
+    right_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="sequence repetition by symbolic count",
+        blame_needle="test_witness.py:2:",
+    )
+    wrong_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="symbolic string concatenation runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    return SugarRedEffectWitnessPair(
+        name="pandas_string_symbolic_repeat_runtime_effect",
+        owner_sugar="BinOpSugar",
+        family="pandas-floor-gap",
+        truthful=EffectWitnessSource(
+            source=("def A(indent):\n    return ' ' * indent\n"),
+            expectation=right_effect,
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=("def A(indent):\n    return ' ' * indent\n"),
             expectation=wrong_effect,
             expected_match=False,
         ),
