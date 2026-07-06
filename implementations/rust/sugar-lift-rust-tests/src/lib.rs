@@ -357,7 +357,7 @@ impl FactoryDisposition {
     pub fn as_str(self) -> &'static str {
         match self {
             FactoryDisposition::Warranted => "warranted",
-            FactoryDisposition::Effect => "refused",
+            FactoryDisposition::Effect => "boundary",
             FactoryDisposition::Support => "support",
             FactoryDisposition::Unresolved => "unresolved",
         }
