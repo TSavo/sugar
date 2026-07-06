@@ -1422,13 +1422,10 @@ fn relation_constraint_from_bodies(
 }
 
 fn relation_side_may_ground_scan_terminal(expr: &Expr) -> bool {
-    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
-        return false;
-    };
-    if !matches!(call.method.to_string().as_str(), "sum" | "last") {
-        return false;
-    }
-    matches!(strip_refs_groups(&call.receiver), Expr::MethodCall(receiver) if receiver.method == "scan")
+    // Routed through the iter_terminal catalog boundary: that module owns the
+    // scan-terminal method set (`sum`/`last` grounding a `scan` receiver), so
+    // this call site asks it rather than re-encoding the method names here.
+    crate::sugar::iter_terminal::is_scan_terminal_grounding_call(expr)
 }
 
 fn relation_side_grounded_scan_terminal(expr: &Expr, term: &Term, effect: &Effect) -> bool {

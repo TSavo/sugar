@@ -921,6 +921,22 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    /// Runtime-boundary probe: runs `probe` over this fragment's `&syn::Expr`
+    /// form (non-Expr fragments never match) and, when it answers `true`,
+    /// returns the fragment's normalized token string as the boundary name.
+    /// This is the one sanctioned door for callers that need a raw-Expr
+    /// recursive walk to decide whether a receiver grounds a runtime source
+    /// (e.g. slice/chunk/window runtime-boundary detection): the walk itself
+    /// still runs over `&Expr`, but the `as_expr()` escape lives HERE instead
+    /// of being repeated at every call site.
+    pub(crate) fn runtime_boundary_token(
+        &self,
+        probe: impl FnOnce(&'a syn::Expr) -> bool,
+    ) -> Option<String> {
+        let expr = self.as_expr()?;
+        probe(expr).then(|| self.token_str())
+    }
+
     // -- Node-kind guard (non-shim; no raw syn returned) ----------------------
 
     /// Returns `true` if this fragment wraps an expression node

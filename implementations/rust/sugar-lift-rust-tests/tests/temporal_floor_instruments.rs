@@ -181,20 +181,6 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[ExpectedCompositionPath] = &[
         r#"if call.method != "map" || call.args.len() != 1 {"#
     ),
     expected_composition!(
-        "constraint.rs",
-        1401,
-        r#"if !matches!(call.method.to_string().as_str(), "sum" | "last") {"#,
-        owner: "9f1ae82bda (#3490)",
-        reason: "new lift composition path from scan-terminal mutation drain; debt to route via catalog boundary"
-    ),
-    expected_composition!(
-        "constraint.rs",
-        1404,
-        r#"matches!(strip_refs_groups(&call.receiver), Expr::MethodCall(receiver) if receiver.method == "scan")"#,
-        owner: "9f1ae82bda (#3490)",
-        reason: "new lift composition path from scan-terminal mutation drain; debt to route via catalog boundary"
-    ),
-    expected_composition!(
         "cycle.rs",
         98,
         r#"Expr::MethodCall(call) if call.method == "cycle" && call.args.is_empty() => {"#
