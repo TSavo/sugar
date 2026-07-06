@@ -771,7 +771,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"producer","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"function-contract","name":"encoded_len","outBinding":"out","post":{"kind":"atomic","name":"=","args":[{"kind":"var","name":"out"},{"kind":"ctor","name":"call:encoded_len","args":[{"kind":"var","name":"n"},{"kind":"var","name":"padded"}]}]},"sourceWarrants":[{"kind":"source-memento","file":"src/encode.rs","sourceFunctionName":"encoded_len","source_function_name":"encoded_len","span":{"start_line":97,"start_col":0,"end_line":122,"end_col":1},"paramNames":["bytes_len","padding"],"param_names":["bytes_len","padding"],"source_cid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","template_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[{"role":"rust-fn-contracts","universe_kind":"function-contract","totals":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"loci":[{"file":"src/encode.rs","role":"rust-fn-contracts","universe_kind":"function-contract","ast_path":"encoded_len","sourceFunctionName":"encoded_len","line":97,"col":0}]}],"factoryAudits":[],"sourceMementos":[{"kind":"source-memento","file":"src/encode.rs","sourceFunctionName":"encoded_len","source_function_name":"encoded_len","span":{"start_line":97,"start_col":0,"end_line":122,"end_col":1},"paramNames":["bytes_len","padding"],"param_names":["bytes_len","padding"],"source_cid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","template_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"factoryAuditSummary":{"emittedRows":0,"statusCounts":{"warranted":0,"refused":0,"support":0,"unresolved":0},"unresolvedSites":[],"factoryWalk":[]},"diagnostics":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"function-contract","name":"encoded_len","outBinding":"out","post":{"kind":"atomic","name":"=","args":[{"kind":"var","name":"out"},{"kind":"ctor","name":"call:encoded_len","args":[{"kind":"var","name":"n"},{"kind":"var","name":"padded"}]}]},"sourceWarrants":[{"kind":"source-memento","file":"src/encode.rs","sourceFunctionName":"encoded_len","source_function_name":"encoded_len","span":{"start_line":97,"start_col":0,"end_line":122,"end_col":1},"paramNames":["bytes_len","padding"],"param_names":["bytes_len","padding"],"source_cid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","template_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[{"role":"rust-fn-contracts","universe_kind":"function-contract","totals":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"loci":[{"file":"src/encode.rs","role":"rust-fn-contracts","universe_kind":"function-contract","ast_path":"encoded_len","sourceFunctionName":"encoded_len","line":97,"col":0}]}],"factoryAudits":[],"sourceMementos":[{"kind":"source-memento","file":"src/encode.rs","sourceFunctionName":"encoded_len","source_function_name":"encoded_len","span":{"start_line":97,"start_col":0,"end_line":122,"end_col":1},"paramNames":["bytes_len","padding"],"param_names":["bytes_len","padding"],"source_cid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","template_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"factoryAuditSummary":{"emittedRows":0,"statusCounts":{"warranted":0,"incomplete":0,"support":0,"unresolved":0},"unresolvedSites":[],"factoryWalk":[]},"diagnostics":[]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
     exit 0
@@ -802,7 +802,7 @@ while IFS= read -r line; do
       printf 'consumer received invalid contract cid: %s\n' "$line" >&2
       exit 46
     fi
-    printf '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"bridge","name":"dig:encoded_len","sourceSymbol":"encoded_len","targetContractCid":"%s","targetLayer":"rust-fn-contracts"}],"sourceLedger":{"source_loci":0,"source_warranted":0,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"factoryAudits":[],"sourceMementos":[],"factoryAuditSummary":{"emittedRows":0,"statusCounts":{"warranted":0,"refused":0,"support":0,"unresolved":0},"unresolvedSites":[],"factoryWalk":[]},"diagnostics":[]}}\n' "$cid"
+    printf '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"bridge","name":"dig:encoded_len","sourceSymbol":"encoded_len","targetContractCid":"%s","targetLayer":"rust-fn-contracts"}],"sourceLedger":{"source_loci":0,"source_warranted":0,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"factoryAudits":[],"sourceMementos":[],"factoryAuditSummary":{"emittedRows":0,"statusCounts":{"warranted":0,"incomplete":0,"support":0,"unresolved":0},"unresolvedSites":[],"factoryWalk":[]},"diagnostics":[]}}\n' "$cid"
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
     exit 0
@@ -1545,7 +1545,7 @@ emit = "ir-document"
         "factoryAudits": [],
         "factoryAuditSummary": {
             "emittedRows": 0,
-            "statusCounts": {"warranted": 0, "refused": 0, "support": 0, "unresolved": 0},
+            "statusCounts": {"warranted": 0, "incomplete": 0, "support": 0, "unresolved": 0},
             "unresolvedSites": [],
             "factoryWalk": []
         },
@@ -1596,7 +1596,7 @@ emit = "ir-document"
         "factoryAudits": [],
         "factoryAuditSummary": {
             "emittedRows": 1,
-            "statusCounts": {"warranted": 1, "refused": 0, "support": 0, "unresolved": 0},
+            "statusCounts": {"warranted": 1, "incomplete": 0, "support": 0, "unresolved": 0},
             "unresolvedSites": [],
             "factoryWalk": [{
                 "kind": "factory-walk-row",

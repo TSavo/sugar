@@ -1158,7 +1158,7 @@ struct SourceOracleRoute {
 struct FactoryAccountingSummary {
     sites: usize,
     warranted: usize,
-    refused: usize,
+    incomplete: usize,
     support: usize,
     unresolved: usize,
 }
@@ -1545,7 +1545,7 @@ fn factory_accounting_summary_from_response(
     Ok(FactoryAccountingSummary {
         sites,
         warranted: status_count(status_counts, "warranted"),
-        refused: status_count(status_counts, "refused"),
+        incomplete: status_count(status_counts, "incomplete"),
         support: status_count(status_counts, "support"),
         unresolved: status_count(status_counts, "unresolved"),
     })
@@ -3123,7 +3123,7 @@ fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, ser
         "warranted": source_count(&summary.ledger, "source_warranted"),
         "inactive": source_count(&summary.ledger, "source_inactive"),
         "support": source_count(&summary.ledger, "source_support"),
-        "refused": source_count(&summary.ledger, "source_boundary"),
+        "boundary": source_count(&summary.ledger, "source_boundary"),
         "unresolved": source_unresolved,
     });
     let value = serde_json::json!({
@@ -3132,7 +3132,7 @@ fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, ser
         "factoryAccounting": {
             "sites": summary.factory.sites,
             "warranted": summary.factory.warranted,
-            "refused": summary.factory.refused,
+            "incomplete": summary.factory.incomplete,
             "support": summary.factory.support,
             "unresolved": summary.factory.unresolved,
         },
@@ -3150,7 +3150,7 @@ fn render_report_summary_human(summary: &LiftReportSummary) -> String {
     let mut out = String::new();
     let source_unresolved = source_unresolved_count(&summary.ledger);
     out.push_str(&format!(
-        "source accounting: loci={} warranted={} inactive={} support={} refused={} unresolved={}\n",
+        "source accounting: loci={} warranted={} inactive={} support={} boundary={} unresolved={}\n",
         source_count(&summary.ledger, "source_loci"),
         source_count(&summary.ledger, "source_warranted"),
         source_count(&summary.ledger, "source_inactive"),
@@ -3160,10 +3160,10 @@ fn render_report_summary_human(summary: &LiftReportSummary) -> String {
     ));
     if summary.factory.sites > 0 {
         out.push_str(&format!(
-            "factory accounting: sites={} warranted={} refused={} support={} unresolved={}\n",
+            "factory accounting: sites={} warranted={} incomplete={} support={} unresolved={}\n",
             summary.factory.sites,
             summary.factory.warranted,
-            summary.factory.refused,
+            summary.factory.incomplete,
             summary.factory.support,
             summary.factory.unresolved,
         ));
@@ -6395,7 +6395,7 @@ fn format_assertion_surface_row(row: &Value) -> String {
 
 fn format_counts(value: &Value) -> String {
     format!(
-        "loci={} warranted={} inactive={} support={} refused={} unresolved={}",
+        "loci={} warranted={} inactive={} support={} boundary={} unresolved={}",
         source_count(value, "source_loci"),
         source_count(value, "source_warranted"),
         source_count(value, "source_inactive"),
@@ -6433,7 +6433,7 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
         *counts.entry(status).or_default() += 1;
     }
     let mut out = format!(
-        "factory accounting: sites={} warranted={} refused={} support={} unresolved={}\n",
+        "factory accounting: sites={} warranted={} incomplete={} support={} unresolved={}\n",
         factory_audits.len(),
         counts.get("warranted").copied().unwrap_or(0),
         counts.get("refused").copied().unwrap_or(0),
@@ -8424,7 +8424,7 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(human.contains(
-            "source audit: loci=29 warranted=15 inactive=13 support=0 refused=1 unresolved=0"
+            "source audit: loci=29 warranted=15 inactive=13 support=0 boundary=1 unresolved=0"
         ));
         assert!(human.contains("commons-codec.PureJavaCrc32::update(byte[],int,int)"));
         assert!(human.contains("facts observed:"));
@@ -8495,10 +8495,10 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(human.contains(
-            "source audit: loci=3 warranted=1 inactive=0 support=2 refused=0 unresolved=0"
+            "source audit: loci=3 warranted=1 inactive=0 support=2 boundary=0 unresolved=0"
         ));
         assert!(human
-            .contains("totals: loci=3 warranted=1 inactive=0 support=2 refused=0 unresolved=0"));
+            .contains("totals: loci=3 warranted=1 inactive=0 support=2 boundary=0 unresolved=0"));
         assert!(human.contains("support roots: VendorClassDecl=1, VendorComment=1"));
     }
 
@@ -8545,7 +8545,7 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(human.contains(
-            "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 unresolved=1"
+            "source audit: loci=1 warranted=0 inactive=0 support=0 boundary=0 unresolved=1"
         ));
         assert!(human.contains("unresolved roots: ClassDef=1"), "{human}");
         assert!(!human.contains("support roots: ClassDef=1"), "{human}");
@@ -8712,7 +8712,7 @@ mod tests {
         assert!(!human.contains("support: FunctionDef=1"));
         assert!(human.contains("unresolved: Assign=1, Call=1, FunctionDef=1"));
         assert!(human.contains(
-            "source audit: loci=5 warranted=1 inactive=0 support=1 refused=0 unresolved=3"
+            "source audit: loci=5 warranted=1 inactive=0 support=1 boundary=0 unresolved=3"
         ));
         assert!(human.contains("sample loci:"));
         assert!(human.contains("/site-packages/pandas/core/frame.py:10 unresolved Assign"));
@@ -10385,7 +10385,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
                 "emittedRows": 5,
                 "statusCounts": {
                     "warranted": 3,
-                    "refused": 1,
+                    "incomplete": 1,
                     "support": 0,
                     "unresolved": 1
                 },
@@ -10436,10 +10436,11 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
             serde_json::from_str(&json).expect("valid summary json");
 
         assert!(human.contains(
-            "source accounting: loci=2 warranted=1 inactive=0 support=0 refused=1 unresolved=0"
+            "source accounting: loci=2 warranted=1 inactive=0 support=0 boundary=1 unresolved=0"
         ));
-        assert!(human
-            .contains("factory accounting: sites=5 warranted=3 refused=1 support=0 unresolved=1"));
+        assert!(human.contains(
+            "factory accounting: sites=5 warranted=3 incomplete=1 support=0 unresolved=1"
+        ));
         assert!(human.contains("unresolved source lines: 1"), "{human}");
         assert!(human.contains("  tests/foo.rs:1"), "{human}");
         assert!(
@@ -10506,7 +10507,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
                 "emittedRows": 4,
                 "statusCounts": {
                     "warranted": 3,
-                    "refused": 1,
+                    "incomplete": 1,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -10595,7 +10596,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
             factory: FactoryAccountingSummary {
                 sites: 2,
                 warranted: 0,
-                refused: 2,
+                incomplete: 2,
                 support: 0,
                 unresolved: 0,
             },
@@ -10695,7 +10696,7 @@ fn sample() {
                 "emittedRows": 4,
                 "statusCounts": {
                     "warranted": 3,
-                    "refused": 1,
+                    "incomplete": 1,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -10902,7 +10903,7 @@ fn sample() {
                 "emittedRows": 2,
                 "statusCounts": {
                     "warranted": 2,
-                    "refused": 0,
+                    "incomplete": 0,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -11041,7 +11042,7 @@ fn encode_with_padding(input: &[u8], output: &mut [u8], engine: &Engine) {
                 "emittedRows": 1,
                 "statusCounts": {
                     "warranted": 0,
-                    "refused": 1,
+                    "incomplete": 1,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -11205,7 +11206,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "emittedRows": 2,
                 "statusCounts": {
                     "warranted": 2,
-                    "refused": 0,
+                    "incomplete": 0,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -11371,7 +11372,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "emittedRows": 1,
                 "statusCounts": {
                     "warranted": 1,
-                    "refused": 0,
+                    "incomplete": 0,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -11538,7 +11539,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "emittedRows": 1,
                 "statusCounts": {
                     "warranted": 1,
-                    "refused": 0,
+                    "incomplete": 0,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -11579,7 +11580,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "emittedRows": 1,
                 "statusCounts": {
                     "warranted": 0,
-                    "refused": 0,
+                    "incomplete": 0,
                     "support": 0,
                     "unresolved": 1
                 },
@@ -11623,7 +11624,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "emittedRows": 0,
                 "statusCounts": {
                     "warranted": 0,
-                    "refused": 0,
+                    "incomplete": 0,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -11654,7 +11655,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "emittedRows": 1,
                 "statusCounts": {
                     "warranted": 0,
-                    "refused": 0,
+                    "incomplete": 0,
                     "support": 0,
                     "unresolved": 1
                 },

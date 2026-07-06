@@ -5399,7 +5399,7 @@ fn factory_audits_json(
 struct FactoryAuditSummaryAccumulator {
     sites: usize,
     warranted: usize,
-    refused: usize,
+    incomplete: usize,
     support: usize,
     unresolved: usize,
     unpinned_factory_walk_rows: usize,
@@ -5412,7 +5412,7 @@ impl FactoryAuditSummaryAccumulator {
         Self {
             sites: 0,
             warranted: 0,
-            refused: 0,
+            incomplete: 0,
             support: 0,
             unresolved: 0,
             unpinned_factory_walk_rows: 0,
@@ -5449,7 +5449,12 @@ impl FactoryAuditSummaryAccumulator {
     fn observe_status(&mut self, status: &str) {
         match status {
             "warranted" => self.warranted += 1,
-            "refused" => self.refused += 1,
+            // `status` here still carries the pre-#3632 verifier-verb string as
+            // produced by the rust-test-assertions factory walk rows; the
+            // per-row rename is a separate, larger migration. This bucket is
+            // display-layer only: it aggregates that row status into the
+            // typed-effect "incomplete" bucket the CLI report now expects.
+            "refused" => self.incomplete += 1,
             "support" => self.support += 1,
             "unresolved" | "unclassified" => self.unresolved += 1,
             _ => {}
@@ -5466,7 +5471,7 @@ impl FactoryAuditSummaryAccumulator {
             "unpinnedFactoryWalkRows": self.unpinned_factory_walk_rows,
             "statusCounts": {
                 "warranted": self.warranted,
-                "refused": self.refused,
+                "incomplete": self.incomplete,
                 "support": self.support,
                 "unresolved": self.unresolved,
             },
@@ -5604,13 +5609,16 @@ fn unresolved_factory_audit_rows(rows: &[Value]) -> Vec<Value> {
 
 fn factory_audit_status_counts(rows: &[Value]) -> Value {
     let mut warranted = 0usize;
-    let mut refused = 0usize;
+    let mut incomplete = 0usize;
     let mut support = 0usize;
     let mut unresolved = 0usize;
     for row in rows {
         match row.get("status").and_then(Value::as_str).unwrap_or("") {
             "warranted" => warranted += 1,
-            "refused" => refused += 1,
+            // See FactoryAuditSummaryAccumulator::observe_status: display-layer
+            // aggregation of the still-legacy-named row status into the
+            // typed-effect "incomplete" bucket.
+            "refused" => incomplete += 1,
             "support" => support += 1,
             "unresolved" | "unclassified" => unresolved += 1,
             _ => {}
@@ -5618,7 +5626,7 @@ fn factory_audit_status_counts(rows: &[Value]) -> Value {
     }
     json!({
         "warranted": warranted,
-        "refused": refused,
+        "incomplete": incomplete,
         "support": support,
         "unresolved": unresolved,
     })
@@ -8755,7 +8763,7 @@ fn literal_counter_while_literal_twin() {
         assert_eq!(summary["complete"], true);
         assert_eq!(summary["unpinnedFactoryWalkRows"], 3);
         assert_eq!(summary["statusCounts"]["warranted"], 1);
-        assert_eq!(summary["statusCounts"]["refused"], 1);
+        assert_eq!(summary["statusCounts"]["incomplete"], 1);
         assert_eq!(summary["statusCounts"]["unresolved"], 1);
         assert_eq!(summary["unresolvedSites"].as_array().unwrap().len(), 1);
         assert_eq!(summary["unresolvedSites"][0]["file"], "src/lib.rs");

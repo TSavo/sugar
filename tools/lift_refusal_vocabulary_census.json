@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 219,
+  "lift_output_backlog": 216,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -1065,26 +1065,6 @@
       "wire_marker": "wire-protocol:factory-report-diagnostic"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:2eb81c7df2aea8fa:1",
-      "line": 265,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "if status in {\"warranted\", \"support\", \"inactive\", \"unresolved\", \"refused\"}:",
-      "wire_marker": "wire-protocol:source_refused"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py:78d36af9a7ea0b70:1",
-      "line": 255,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/package_source_accounting.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "elif status == \"refused\":",
-      "wire_marker": "wire-protocol:source_refused"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:1bc08d3f4f6ee34b:1",
       "line": 149,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
@@ -1333,16 +1313,6 @@
       "speaker": "instrument-prose",
       "text": "\"_record_dig_refusal\",",
       "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/factory_audit_summary_dto.py:4a2a45df0d51b3cf:1",
-      "line": 16,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/factory_audit_summary_dto.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "counts = {\"warranted\": 0, \"refused\": 0, \"support\": 0, \"unresolved\": 0}",
-      "wire_marker": "wire-protocol:rpc-dto"
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/open_lane_dto.py:f8f0038553d3bff1:1",
@@ -3560,10 +3530,10 @@
     "emitter-provenance-guard": 3,
     "grammar-census-prose": 23,
     "instrument-prose": 2,
-    "lift-output-backlog": 219,
+    "lift-output-backlog": 216,
     "provenance-oracle-guard": 26,
     "verifier-verdict-quote": 42,
     "verify-dialect-boundary": 40
   },
-  "total_occurrences": 355
+  "total_occurrences": 352
 }
