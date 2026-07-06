@@ -19,6 +19,21 @@ BIN="$("$REPO/bin/sugarbin" --profile release)"
 VENV="${PANDAS_WITNESS_VENV:-/tmp/pandas-witness-venv}"
 if [ ! -x "$VENV/bin/python" ]; then
   python3 -m venv "$VENV"
+fi
+# The venv is a durable artifact that can persist, stale or partially built,
+# across runs at a fixed /tmp path (a previous run's pip install may have
+# failed quietly, or a required package may have been added since the venv
+# was created). Never trust bin/python's mere existence: verify every
+# required import actually resolves, and rebuild the deps if not.
+if ! "$VENV/bin/python" - <<'PY' >/dev/null 2>&1
+import blake3
+import cbor2
+import nacl
+import numpy
+import pandas
+import pytest
+PY
+then
   "$VENV/bin/pip" install -q numpy pandas pytest pynacl blake3 cbor2
 fi
 

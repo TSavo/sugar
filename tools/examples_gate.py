@@ -22,6 +22,43 @@ class FailurePattern:
     regex: re.Pattern[str]
 
 
+# Runner/environment failures are NOT product drift: they are noise from the
+# box the gate happened to run on (a stale/half-built temp venv, a runner that
+# cannot mmap a native extension, permission bits on a shared /tmp). They must
+# never classify into a product FailurePattern shape and must never look like
+# a fixture-worthy row, or a dirty runner silently repins a fixture with a
+# lie. These are checked BEFORE FAILURE_PATTERNS below: the runner-env signal
+# always wins over any ambiguous product-shape text it happens to contain.
+# See https://github.com/TSavo/sugar/issues/3677 for the enumerated classes.
+RUNNER_ENV_PATTERNS: tuple[FailurePattern, ...] = (
+    FailurePattern(
+        "runner-env/venv-permission-denied",
+        re.compile(
+            r"Permission denied.*(?:venv|/tmp/)|"
+            r"(?:venv|/tmp/[^\s]*)[^\n]*: Permission denied|"
+            r"PermissionError: \[Errno 13\]|"
+            r"bash: [^\n]*run\.sh: Permission denied"
+        ),
+    ),
+    FailurePattern(
+        "runner-env/native-extension-load-failure",
+        re.compile(
+            r"cannot mmap|failed to map segment from shared object|"
+            r"OSError: \[Errno \d+\] .*\.so|"
+            r"ImportError: [^\n]*\.so[^\n]*: (?:cannot open shared object|failed to map)|"
+            r"numpy\.core\._multiarray_umath.*ImportError|"
+            r"ImportError: numpy\.core\.multiarray failed to import"
+        ),
+    ),
+    FailurePattern(
+        "runner-env/missing-module-in-temp-venv",
+        re.compile(
+            r"ModuleNotFoundError: No module named '[^']+'.*(?:/tmp/[^\s]*venv|-venv/lib/python)|"
+            r"(?:/tmp/[^\s]*venv|-venv/bin/python)[^\n]*ModuleNotFoundError: No module named"
+        ),
+    ),
+)
+
 FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
     FailurePattern(
         "walk-panic/opaque-syn-variant",
@@ -163,10 +200,24 @@ def _excerpt(text: str, max_lines: int = 20) -> str:
 
 def classify_failure(log_text: str) -> str:
     haystack = "\n".join(log_text.splitlines()[-200:])
+    for pattern in RUNNER_ENV_PATTERNS:
+        if pattern.regex.search(haystack):
+            return pattern.shape
     for pattern in FAILURE_PATTERNS:
         if pattern.regex.search(haystack):
             return pattern.shape
     return "unclassified/example-failure"
+
+
+def is_runner_env_shape(shape: str | None) -> bool:
+    """True for rows bucketed as runner/environment noise, not product drift.
+
+    These rows must never be promoted into the ratcheted fixture: a dirty
+    runner (stale venv, permission bits, an unmappable native extension) is
+    not evidence about the Sugar product, and pinning it as NAMED_RED would
+    silently launder runner noise into a row future agents trust.
+    """
+    return shape is not None and shape.startswith("runner-env/")
 
 
 def run_script(
@@ -382,6 +433,57 @@ def check_expectations(
     return 0
 
 
+def write_expectations_from_summary(
+    *,
+    summary: dict[str, object],
+    expectation_path: pathlib.Path,
+    output: TextIO,
+) -> int:
+    """Repin the ratcheted fixture from an observed summary.
+
+    Refuses (nonzero, named reason, no write) if any row in the summary is a
+    runner-env row: those are runner/environment noise, not Sugar product
+    drift, and must never get pinned into the fixture as if they were a
+    named product-shape row. Rerun on a clean/capable runner, or harden the
+    example's run.sh env-precondition, before repinning.
+    """
+    rows = summary.get("examples")
+    if not isinstance(rows, list):
+        raise ValueError("summary has no examples list")
+    runner_env_rows = [
+        row
+        for row in rows
+        if isinstance(row, dict) and is_runner_env_shape(row.get("failure_shape"))
+    ]
+    if runner_env_rows:
+        names = ", ".join(sorted(str(row.get("name")) for row in runner_env_rows))
+        print(
+            "examples-gate: REFUSED to write expectations: "
+            f"{len(runner_env_rows)} runner-env row(s) present: {names}. "
+            "Runner/environment failures are not product drift; rerun on a "
+            "clean/capable runner or harden the run.sh env-precondition "
+            "instead of repinning the fixture (see issue #3677).",
+            file=output,
+        )
+        return 1
+    expectations: dict[str, object] = {
+        "version": summary.get("version", 1),
+        "suite": summary.get("suite"),
+        "examples": [
+            {
+                "name": row["name"],
+                "expected": row["verdict"],
+                "failure_shape": row.get("failure_shape"),
+            }
+            for row in rows
+            if isinstance(row, dict)
+        ],
+    }
+    write_summary(expectation_path, expectations)
+    print(f"examples-gate: wrote expectations to {expectation_path}", file=output)
+    return 0
+
+
 def write_summary(path: pathlib.Path, data: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -409,6 +511,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--suite", choices=("smoke", "extended"), default="smoke")
     parser.add_argument("--timeout-seconds", type=int, default=3600)
     parser.add_argument("--nice", type=int, default=10)
+    parser.add_argument(
+        "--write-expectations",
+        action="store_true",
+        help=(
+            "Repin --expectations from the observed summary instead of "
+            "checking it. Refuses (nonzero) if any observed row is a "
+            "runner-env row; see write_expectations_from_summary."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -428,6 +539,13 @@ def main(argv: list[str] | None = None) -> int:
         write_summary(summary_path, summary)
     else:
         summary_path = args.from_summary
+    if args.write_expectations:
+        observed = summary if args.from_summary is None else _load_json(summary_path)
+        return write_expectations_from_summary(
+            summary=observed,
+            expectation_path=args.expectations,
+            output=sys.stdout,
+        )
     return check_expectations(
         expectation_path=args.expectations,
         summary_path=summary_path,
