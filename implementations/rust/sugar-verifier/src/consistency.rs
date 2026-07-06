@@ -2083,12 +2083,14 @@ struct LinkedPostInstance {
 
 fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
     let mut posts = Vec::new();
-    for (indexed_symbol, bridge_env) in pool.bridge_members_by_indexed_symbol() {
-        let source_symbol = bridge_env
+    for (_bridge_cid, bridge_env) in pool.bridge_members() {
+        let Some(source_symbol) = bridge_env
             .field("sourceSymbol")
             .and_then(|v| v.as_str())
-            .unwrap_or(indexed_symbol)
-            .to_string();
+            .map(str::to_string)
+        else {
+            continue;
+        };
         if source_symbol.is_empty() {
             continue;
         }
@@ -3234,6 +3236,104 @@ mod tests {
             bad.verdict,
             ObligationVerdict::Unsatisfied,
             "vendor post enc(\"def\") = \"ghi\" must refute the fresh bad assertion: {res:?}"
+        );
+    }
+
+    #[test]
+    fn stale_same_symbol_bridge_does_not_hide_body_post_bridge() {
+        let (plan, reg) = z3_plan_and_registry();
+        let vendor_cid = test_cid_string("vendor-enc-contract");
+        let stale_target_cid = test_cid_string("stale-callsite-target");
+        let bridge_source_symbol = "enc";
+        let call_enc = |arg: Json| json!({"kind":"ctor","name":"call:enc","args":[arg]});
+        let post = implies(
+            eqf(var("input"), string_const("def")),
+            eqf(var("out"), string_const("ghi")),
+        );
+
+        let mut pool = MementoPool::default();
+        pool.insert_unanchored_for_tests(
+            test_cid(&vendor_cid),
+            json!({
+                "evidence": {
+                    "kind": "contract",
+                    "body": {
+                        "contractName": "rust-source::enc",
+                        "formals": ["input"],
+                        "outBinding": "out",
+                        "post": post
+                    }
+                }
+            }),
+        );
+        let good_bridge = json!({
+            "evidence": {
+                "kind": "bridge",
+                "body": {
+                    "sourceSymbol": bridge_source_symbol,
+                    "targetContractCid": vendor_cid.clone(),
+                    "targetProofCid": "blake3-512:vendor-proof"
+                }
+            }
+        });
+        let stale_bridge = json!({
+            "evidence": {
+                "kind": "bridge",
+                "body": {
+                    "sourceSymbol": bridge_source_symbol,
+                    "targetContractCid": stale_target_cid,
+                    "callsite": {
+                        "file": "src/lib.rs",
+                        "start_line": 12,
+                        "panicSite": false
+                    }
+                }
+            }
+        });
+        pool.insert_unanchored_for_tests(test_cid("good-body-bridge"), good_bridge);
+        pool.insert_unanchored_for_tests(test_cid("stale-callsite-bridge"), stale_bridge);
+        // Model the production failure: the lossy per-symbol bridge slot can
+        // point at a same-symbol callsite bridge whose target is not a loaded
+        // post-bearing contract. Ambient consistency corroboration must still
+        // see the valid body bridge member rather than treating the assertion
+        // as lone testimony.
+        pool.bridges_by_symbol.insert(
+            bridge_source_symbol.to_string(),
+            test_cid("stale-callsite-bridge"),
+        );
+
+        insert_contract(
+            &mut pool,
+            "blake3-512:good-consumer-assertion",
+            "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion",
+            eqf(call_enc(string_const("def")), string_const("ghi")),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:bad-consumer-assertion",
+            "src/lib.rs::tests::fresh_vendor_fol_bad::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion",
+            eqf(call_enc(string_const("def")), string_const("zzz")),
+        );
+
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 2, "two consumer assertions: {res:?}");
+        let good = res
+            .iter()
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:good-consumer-assertion"))
+            .expect("good consumer assertion row present");
+        assert_eq!(
+            good.verdict,
+            ObligationVerdict::Discharged,
+            "valid body bridge must supply the independent sibling even when the per-symbol slot points at a stale callsite bridge: {res:?}"
+        );
+        let bad = res
+            .iter()
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:bad-consumer-assertion"))
+            .expect("bad consumer assertion row present");
+        assert_eq!(
+            bad.verdict,
+            ObligationVerdict::Unsatisfied,
+            "valid body bridge must still refute a lying same-callsite assertion: {res:?}"
         );
     }
 

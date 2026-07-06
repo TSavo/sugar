@@ -643,6 +643,7 @@ fn lift(params: &Value) -> Value {
                 &fns,
                 &mut source_cache,
             );
+            let assertion_method_posts = literal_method_post_contracts(&assertion_entries);
             let assertion_panic_bridges =
                 assertion_panic_partial_bridges(&assertion_entries, params);
             assertion_surface_audits.extend(assertion_surface_audits_for_file(
@@ -652,6 +653,7 @@ fn lift(params: &Value) -> Value {
                 &mut source_cache,
             ));
             entries.extend(assertion_panic_bridges);
+            entries.extend(assertion_method_posts);
             entries.extend(assertion_entries);
         }
         info!(
@@ -1570,6 +1572,146 @@ fn panic_callsite_proofir_provenance(contract_name: &str) -> Value {
             }
         ],
     })
+}
+
+fn literal_method_post_contracts(assertion_entries: &[Value]) -> Vec<Value> {
+    let mut contracts = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in assertion_entries {
+        if entry.get("kind").and_then(Value::as_str) != Some("contract") {
+            continue;
+        }
+        let Some(inv) = entry.get("inv").filter(|value| value.is_object()) else {
+            continue;
+        };
+        let mut calls = Vec::new();
+        collect_ctor_terms(inv, &mut calls);
+        for call in calls {
+            if call.get("name").and_then(Value::as_str) != Some("method:all_equal") {
+                continue;
+            }
+            let Some(receiver) = call
+                .get("args")
+                .and_then(Value::as_array)
+                .and_then(|args| args.first())
+            else {
+                continue;
+            };
+            let Some(expected) = all_equal_literal_receiver_result(receiver) else {
+                continue;
+            };
+            let key = format!(
+                "method:all_equal\0{}\0{}",
+                encode_jcs(json_to_cvalue(receiver).as_ref()),
+                expected
+            );
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            contracts.push(literal_method_post_contract(
+                "method:all_equal",
+                receiver,
+                expected,
+                entry,
+                &key,
+            ));
+        }
+    }
+    contracts
+}
+
+fn literal_method_post_contract(
+    method_symbol: &str,
+    receiver: &Value,
+    expected: bool,
+    source_entry: &Value,
+    stable_key: &str,
+) -> Value {
+    let hash = blake3_512_of(stable_key.as_bytes());
+    let suffix = hash
+        .strip_prefix("blake3-512:")
+        .unwrap_or(hash.as_str())
+        .chars()
+        .take(24)
+        .collect::<String>();
+    let source_contract = source_entry
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown assertion contract>");
+    let mut entry = json!({
+        "kind": "function-contract",
+        "name": format!("rust-derived::{method_symbol}::literal-receiver::{suffix}"),
+        "bridgeSourceSymbol": method_symbol,
+        "formals": ["receiver"],
+        "formalSorts": [sort_json("Int")],
+        "returnSort": sort_json("Bool"),
+        "outBinding": "out",
+        "bodyDischargeEligible": true,
+        "proofirProvenance": {
+            "kind": "proofir-provenance",
+            "nodeClass": "LiteralMethodPost",
+            "constructionSite": {
+                "surface": SURFACE,
+                "contract": source_contract,
+            },
+            "warrants": [
+                {
+                    "kind": "Derived",
+                    "floorChain": [SURFACE, "literal-method-post", method_symbol],
+                    "contract": source_contract,
+                }
+            ],
+        },
+        "post": {
+            "kind": "implies",
+            "operands": [
+                eq_formula(var_term("receiver"), receiver.clone()),
+                eq_formula(var_term("out"), bool_term(expected)),
+            ],
+        },
+    });
+    if let Some(warrants) = source_entry.get("sourceWarrants").cloned() {
+        entry["sourceWarrants"] = warrants;
+    }
+    entry
+}
+
+fn all_equal_literal_receiver_result(receiver: &Value) -> Option<bool> {
+    if receiver.get("kind").and_then(Value::as_str) != Some("ctor")
+        || receiver.get("name").and_then(Value::as_str) != Some("method:chars")
+    {
+        return None;
+    }
+    let literal = receiver
+        .get("args")
+        .and_then(Value::as_array)
+        .and_then(|args| args.first())?;
+    if literal.get("kind").and_then(Value::as_str) != Some("const")
+        || literal
+            .get("sort")
+            .and_then(|sort| sort.get("name"))
+            .and_then(Value::as_str)
+            != Some("String")
+    {
+        return None;
+    }
+    let mut chars = literal.get("value").and_then(Value::as_str)?.chars();
+    let Some(first) = chars.next() else {
+        return Some(true);
+    };
+    Some(chars.all(|ch| ch == first))
+}
+
+fn eq_formula(lhs: Value, rhs: Value) -> Value {
+    json!({"kind": "atomic", "name": "=", "args": [lhs, rhs]})
+}
+
+fn var_term(name: &str) -> Value {
+    json!({"kind": "var", "name": name})
+}
+
+fn bool_term(value: bool) -> Value {
+    json!({"kind": "const", "value": value, "sort": sort_json("Bool")})
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8587,6 +8729,79 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn all_equal_literal_method_posts_are_derived_from_receiver_not_asserted_bool() {
+        let (root, response) = lift_fixture(
+            "all_equal_literal_method_posts_are_derived_from_receiver_not_asserted_bool",
+            r#"
+#[cfg(test)]
+mod tests {
+    use itertools::Itertools;
+
+    #[test]
+    fn lying_true_receiver() {
+        assert!(!"AAAAAAA".chars().all_equal());
+    }
+
+    #[test]
+    fn truthful_false_receiver() {
+        assert!(!"AABBCCC".chars().all_equal());
+    }
+}
+"#,
+        );
+        let ir = response["ir"].as_array().expect("ir array");
+        let posts = ir
+            .iter()
+            .filter(|entry| {
+                entry["kind"] == json!("function-contract")
+                    && entry["bridgeSourceSymbol"] == json!("method:all_equal")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            posts.len(),
+            2,
+            "each literal all_equal receiver should mint one derived post: {response:#}"
+        );
+        assert!(
+            posts
+                .iter()
+                .any(|entry| method_all_equal_post_matches(entry, "AAAAAAA", true)),
+            "the AAAAAAA post must derive true from the receiver, not copy the lying assertion: {posts:#?}"
+        );
+        assert!(
+            posts
+                .iter()
+                .any(|entry| method_all_equal_post_matches(entry, "AABBCCC", false)),
+            "the AABBCCC post must derive false from the receiver: {posts:#?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn method_all_equal_post_matches(entry: &Value, literal: &str, expected: bool) -> bool {
+        let Some(operands) = entry
+            .get("post")
+            .and_then(|post| post.get("operands"))
+            .and_then(Value::as_array)
+        else {
+            return false;
+        };
+        if operands.len() != 2 {
+            return false;
+        }
+        let Some(guard_args) = operands[0].get("args").and_then(Value::as_array) else {
+            return false;
+        };
+        let Some(consequent_args) = operands[1].get("args").and_then(Value::as_array) else {
+            return false;
+        };
+        guard_args.len() == 2
+            && consequent_args.len() == 2
+            && guard_args[1]["args"][0]["value"] == json!(literal)
+            && consequent_args[1]["value"] == json!(expected)
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
