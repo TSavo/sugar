@@ -3527,122 +3527,204 @@ fn predicate_value_to_ir_formula(predicate: PredicateValue) -> IrFormula {
     raise_ir_formula(predicate.formula())
 }
 
+// #3027 S3: `lift_predicate_value_inner` used to be a single hand-rolled
+// match ladder over every `syn::Expr` variant (the ladder-demolition census's
+// `predicates` row). It is now a priority-ordered chain of shape recognizers,
+// each owning one predicate claim, so the classification a family owns lives
+// in a named recognizer rather than in ladder-arm position. The dispatch
+// order below is unchanged from the prior match: each recognizer either
+// claims the expression and returns, or declines and falls through to the
+// next. The trailing `panic!` keeps the same loud refusal for a
+// `syn::Expr` variant no recognizer (and no bridge) claims.
 fn lift_predicate_value_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<PredicateValue> {
-    match expr {
-        Expr::Lit(syn::ExprLit {
-            lit: Lit::Bool(value),
-            ..
-        }) => Some(predicate_value_from_ir_formula(bool_term_predicate(
-            bool_const_term(value.value),
-        ))),
-        Expr::Binary(ExprBinary {
-            left, op, right, ..
-        }) => match op {
-            BinOp::And(_) => {
-                let l = predicate_value_to_ir_formula(lift_predicate_value_inner(left, ctx)?);
-                let r = predicate_value_to_ir_formula(lift_predicate_value_inner(right, ctx)?);
-                Some(predicate_value_from_ir_formula(IrFormula::And {
-                    operands: vec![l, r],
-                }))
-            }
-            BinOp::Or(_) => {
-                let l = predicate_value_to_ir_formula(lift_predicate_value_inner(left, ctx)?);
-                let r = predicate_value_to_ir_formula(lift_predicate_value_inner(right, ctx)?);
-                Some(predicate_value_from_ir_formula(IrFormula::Or {
-                    operands: vec![l, r],
-                }))
-            }
-            _ => {
-                // Comparison: lift both sides as terms, pick the IR predicate name.
-                let name = bin_op_to_predicate_name(op)?;
-                let l_term = lift_expr_to_term_inner(left, ctx)?;
-                let r_term = lift_expr_to_term_inner(right, ctx)?;
-                Some(predicate_value_from_ir_formula(IrFormula::Atomic {
-                    name: name.to_string(),
-                    args: vec![l_term, r_term],
-                }))
-            }
-        },
-        Expr::Unary(ExprUnary {
-            op: UnOp::Not(_),
-            expr,
-            ..
-        }) => {
-            let inner = predicate_value_to_ir_formula(lift_predicate_value_inner(expr, ctx)?);
-            // Apply De Morgan / double-negation via the negate helper,
-            // so `!(x >= 10)` lifts to `x < 10`, not `¬(x ≥ 10)`.
-            Some(predicate_value_from_ir_formula(negate(inner)))
-        }
-        Expr::Paren(p) => lift_predicate_value_inner(&p.expr, ctx),
-        Expr::Group(g) => lift_predicate_value_inner(&g.expr, ctx),
-        // Zero-argument method calls that return bool: `.is_some()`, `.is_none()`,
-        // `.is_empty()`, `.is_err()`, `.is_ok()`. These are common predicate shapes
-        // in Rust and appear naturally in source-level defensive guards.
-        // Each lifts to `IrFormula::Atomic { name: "is_some" (or similar), args: [recv] }`.
-        Expr::MethodCall(syn::ExprMethodCall {
-            receiver,
-            method,
-            args,
-            ..
-        }) if args.is_empty() => {
-            let method_name = method.to_string();
-            let is_bool_predicate = matches!(
-                method_name.as_str(),
-                panic_freedom::IS_SOME
-                    | panic_freedom::IS_NONE
-                    | "is_empty"
-                    | panic_freedom::IS_ERR
-                    | panic_freedom::IS_OK
-            );
-            if is_bool_predicate {
-                let recv_term = lift_expr_to_term_inner(receiver, ctx)?;
-                Some(predicate_value_from_ir_formula(IrFormula::Atomic {
-                    name: method_name,
-                    args: vec![recv_term],
-                }))
-            } else {
-                None
-            }
-        }
-        Expr::Path(_)
-        | Expr::Field(_)
-        | Expr::Index(_)
-        | Expr::Call(_)
-        | Expr::MethodCall(_)
-        | Expr::Block(_)
-        | Expr::If(_)
-        | Expr::Match(_)
-        | Expr::Try(_)
-        | Expr::Macro(_)
-        | Expr::Reference(_)
-        | Expr::Cast(_)
-        | Expr::Unsafe(_)
-        | Expr::Const(_) => lift_bool_term_predicate_value(expr, ctx),
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Break(_)
-        | Expr::Closure(_)
-        | Expr::Continue(_)
-        | Expr::ForLoop(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Verbatim(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        Expr::Unary(_) => None,
-        _ => panic!("sugar-walk predicate classifier refused unknown syn::Expr variant"),
+    if let Some(result) = recognize_bool_literal_predicate(expr) {
+        return Some(result);
     }
+    if let Expr::Binary(ExprBinary {
+        left, op, right, ..
+    }) = expr
+    {
+        return lift_predicate_binary_operands(left, op, right, ctx);
+    }
+    if let Expr::Unary(ExprUnary {
+        op: UnOp::Not(_),
+        expr: negated,
+        ..
+    }) = expr
+    {
+        let inner = predicate_value_to_ir_formula(lift_predicate_value_inner(negated, ctx)?);
+        // Apply De Morgan / double-negation via the negate helper,
+        // so `!(x >= 10)` lifts to `x < 10`, not `¬(x ≥ 10)`.
+        return Some(predicate_value_from_ir_formula(negate(inner)));
+    }
+    if let Expr::Paren(p) = expr {
+        return lift_predicate_value_inner(&p.expr, ctx);
+    }
+    if let Expr::Group(g) = expr {
+        return lift_predicate_value_inner(&g.expr, ctx);
+    }
+    // Zero-argument method calls that return bool: `.is_some()`, `.is_none()`,
+    // `.is_empty()`, `.is_err()`, `.is_ok()`. These are common predicate shapes
+    // in Rust and appear naturally in source-level defensive guards.
+    // Each lifts to `IrFormula::Atomic { name: "is_some" (or similar), args: [recv] }`.
+    if let Expr::MethodCall(syn::ExprMethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    }) = expr
+    {
+        if args.is_empty() {
+            return recognize_zero_arg_bool_predicate(receiver, method, ctx);
+        }
+    }
+    if known_bool_term_predicate_expr(expr) {
+        return lift_bool_term_predicate_value(expr, ctx);
+    }
+    if known_non_predicate_expr(expr) {
+        return None;
+    }
+    if matches!(expr, Expr::Unary(_)) {
+        return None;
+    }
+    panic!("sugar-walk predicate classifier refused unknown syn::Expr variant")
+}
+
+/// Claims a boolean literal predicate (`true` / `false`). Declines (returns
+/// `None`) for every other expression shape; callers fall through to the
+/// next recognizer in `lift_predicate_value_inner`'s priority order.
+fn recognize_bool_literal_predicate(expr: &Expr) -> Option<PredicateValue> {
+    let Expr::Lit(syn::ExprLit {
+        lit: Lit::Bool(value),
+        ..
+    }) = expr
+    else {
+        return None;
+    };
+    Some(predicate_value_from_ir_formula(bool_term_predicate(
+        bool_const_term(value.value),
+    )))
+}
+
+/// Operand bridge for `&&` / `||` / comparison operators reached through a
+/// binary predicate. `&&` and `||` recurse through the predicate-value
+/// recognizer chain on each operand; every other operator lifts both sides
+/// as terms and picks the IR predicate name via `bin_op_to_predicate_name`.
+fn lift_predicate_binary_operands(
+    left: &Expr,
+    op: &BinOp,
+    right: &Expr,
+    ctx: &mut LiftCtx,
+) -> Option<PredicateValue> {
+    match op {
+        BinOp::And(_) => {
+            let l = predicate_value_to_ir_formula(lift_predicate_value_inner(left, ctx)?);
+            let r = predicate_value_to_ir_formula(lift_predicate_value_inner(right, ctx)?);
+            Some(predicate_value_from_ir_formula(IrFormula::And {
+                operands: vec![l, r],
+            }))
+        }
+        BinOp::Or(_) => {
+            let l = predicate_value_to_ir_formula(lift_predicate_value_inner(left, ctx)?);
+            let r = predicate_value_to_ir_formula(lift_predicate_value_inner(right, ctx)?);
+            Some(predicate_value_from_ir_formula(IrFormula::Or {
+                operands: vec![l, r],
+            }))
+        }
+        _ => {
+            // Comparison: lift both sides as terms, pick the IR predicate name.
+            let name = bin_op_to_predicate_name(op)?;
+            let l_term = lift_expr_to_term_inner(left, ctx)?;
+            let r_term = lift_expr_to_term_inner(right, ctx)?;
+            Some(predicate_value_from_ir_formula(IrFormula::Atomic {
+                name: name.to_string(),
+                args: vec![l_term, r_term],
+            }))
+        }
+    }
+}
+
+/// Claims a zero-arg bool-returning method call (`is_some`/`is_none`/
+/// `is_empty`/`is_err`/`is_ok`) as an atomic predicate over its receiver.
+/// Returns `None` for a zero-arg call to any other method name: per the
+/// original ladder, that is an honest non-predicate result, not a
+/// fall-through to the generic bool-term bridge.
+fn recognize_zero_arg_bool_predicate(
+    receiver: &Expr,
+    method: &syn::Ident,
+    ctx: &mut LiftCtx,
+) -> Option<PredicateValue> {
+    let method_name = method.to_string();
+    let is_bool_predicate = matches!(
+        method_name.as_str(),
+        panic_freedom::IS_SOME
+            | panic_freedom::IS_NONE
+            | "is_empty"
+            | panic_freedom::IS_ERR
+            | panic_freedom::IS_OK
+    );
+    if !is_bool_predicate {
+        return None;
+    }
+    let recv_term = lift_expr_to_term_inner(receiver, ctx)?;
+    Some(predicate_value_from_ir_formula(IrFormula::Atomic {
+        name: method_name,
+        args: vec![recv_term],
+    }))
+}
+
+/// Shapes that carry no dedicated predicate recognizer above but still
+/// denote a boolean value: they route through the generic bool-term bridge
+/// (`lift_bool_term_predicate_value`), which lifts the expression as an
+/// `IrTerm` and wraps it as `<term> = true`.
+fn known_bool_term_predicate_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Path(_)
+            | Expr::Field(_)
+            | Expr::Index(_)
+            | Expr::Call(_)
+            | Expr::MethodCall(_)
+            | Expr::Block(_)
+            | Expr::If(_)
+            | Expr::Match(_)
+            | Expr::Try(_)
+            | Expr::Macro(_)
+            | Expr::Reference(_)
+            | Expr::Cast(_)
+            | Expr::Unsafe(_)
+            | Expr::Const(_)
+    )
+}
+
+/// Shapes the predicate lifter honestly declines: not a predicate the MVP
+/// recognizes, and not a candidate for the generic bool-term bridge either.
+fn known_non_predicate_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Break(_)
+            | Expr::Closure(_)
+            | Expr::Continue(_)
+            | Expr::ForLoop(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Verbatim(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn bool_const_term(value: bool) -> IrTerm {
