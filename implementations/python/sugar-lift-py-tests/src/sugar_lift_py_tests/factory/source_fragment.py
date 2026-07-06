@@ -574,6 +574,11 @@ class SourceFragment:
         self._require(ast.Assert)
         return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
 
+    def assert_has_message(self) -> bool:
+        """Return True when an Assert node carries an assertion message."""
+        self._require(ast.Assert)
+        return self.node.msg is not None  # type: ignore[attr-defined]
+
     def assert_with_test(self, test: "SourceFragment") -> "SourceFragment":
         """Return this Assert as a new Assert fragment with a different test.
 

@@ -40,7 +40,7 @@ class AssertStatementSugar(Sugar, role=SugarRole.STATEMENT):
         return cls(
             blame=site.blame,
             test_observed=site.assert_test().observed,
-            has_message=getattr(site.node, "msg", None) is not None,
+            has_message=site.assert_has_message(),
         )
 
     def _build(self, ctx) -> Outcome:

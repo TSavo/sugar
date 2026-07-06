@@ -132,11 +132,38 @@ def _handler_records_the_gap(handler: SourceFragment) -> bool:
             and _call_references_name(fragment, gap_name)
         ):
             return True
+    return _handler_returns_runtime_effect(handler) and _handler_references_name(
+        handler, gap_name
+    )
+
+
+def _handler_returns_runtime_effect(handler: SourceFragment) -> bool:
+    has_runtime_effect = any(
+        fragment.observed == "Call" and _call_name(fragment) == "RuntimeEffect"
+        for fragment in handler.walk()
+    )
+    if not has_runtime_effect:
+        return False
+    for statement in handler.except_handler_body().statements():
+        if statement.observed != "Return":
+            continue
+        if any(
+            fragment.observed == "Call" and _call_name(fragment) == "Incomplete"
+            for fragment in statement.walk()
+        ):
+            return True
     return False
 
 
 def _call_name(call: SourceFragment) -> str:
     return call.call_target_name() or ""
+
+
+def _handler_references_name(handler: SourceFragment, name: str) -> bool:
+    return any(
+        fragment.observed == "Name" and fragment.name_id() == name
+        for fragment in handler.walk()
+    )
 
 
 def _call_references_name(call: SourceFragment, name: str) -> bool:

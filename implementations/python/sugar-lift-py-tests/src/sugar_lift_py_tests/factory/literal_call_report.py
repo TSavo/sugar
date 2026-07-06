@@ -385,7 +385,7 @@ def build_literal_call_report(
         package_source_audits_for_source(source=source, filename=filename)
     )
     source_audits = _dedupe_rpc_rows(source_audits, _small_rpc_row_key)
-    factory_walk = _dedupe_rpc_rows(factory_walk, _factory_walk_key)
+    factory_walk = _dedupe_factory_walk_rows(factory_walk)
     call_edges = _dedupe_rpc_rows(call_edges, _small_rpc_row_key)
     effects = _dedupe_rpc_rows(effects, _small_rpc_row_key)
     enforce_floor_contract_agreement_gate(agreement_violations)
@@ -2199,6 +2199,57 @@ def _dedupe_rpc_rows(rows: list[_T], key_fn: Callable[[_T], object]) -> list[_T]
         seen.add(key)
         out.append(row)
     return out
+
+
+def _dedupe_factory_walk_rows(
+    rows: list[FactoryWalkRowDto],
+) -> list[FactoryWalkRowDto]:
+    out: list[FactoryWalkRowDto] = []
+    by_merge_key: dict[object, int] = {}
+    seen_exact: set[object] = set()
+    for row in rows:
+        exact_key = _factory_walk_key(row)
+        if exact_key in seen_exact:
+            continue
+        merge_key = _factory_walk_merge_key(row)
+        if merge_key is not None and merge_key in by_merge_key:
+            index = by_merge_key[merge_key]
+            out[index] = _merge_factory_walk_row(out[index], row)
+            seen_exact.add(exact_key)
+            continue
+        seen_exact.add(exact_key)
+        if merge_key is not None:
+            by_merge_key[merge_key] = len(out)
+        out.append(row)
+    return out
+
+
+def _factory_walk_merge_key(row: FactoryWalkRowDto) -> object | None:
+    if row.emitted_formula is None:
+        return None
+    return (
+        row.file,
+        row.line,
+        row.requested_role,
+        row.ast_kind,
+        row.selected,
+        row.status,
+        row.occurrences,
+        _stable_json(row.output),
+        _source_memento_key(row.source_memento),
+        _stable_json(row.span),
+        _stable_json(row.emitted_formula),
+    )
+
+
+def _merge_factory_walk_row(
+    left: FactoryWalkRowDto, right: FactoryWalkRowDto
+) -> FactoryWalkRowDto:
+    if _factory_walk_merge_key(left) != _factory_walk_merge_key(right):
+        raise ValueError("factory walk rows have different semantic keys")
+    reasons = [reason for reason in (left.reason, right.reason) if reason]
+    reason = "; ".join(dict.fromkeys(reasons)) or None
+    return replace(left, reason=reason)
 
 
 def _body_universe_key(row: BodyUniverseDto) -> object:

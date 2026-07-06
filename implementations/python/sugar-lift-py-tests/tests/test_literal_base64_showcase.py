@@ -152,7 +152,14 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     assertion_warrant = assertion_contract["proofirProvenance"]
     assert assertion_warrant["kind"] == "proofir-provenance"
     assert assertion_warrant["nodeClass"] == "EqualityFact"
-    assert [warrant["kind"] for warrant in assertion_warrant["warrants"]] == ["Stated"]
+    assert [warrant["kind"] for warrant in assertion_warrant["warrants"]] == [
+        "Derived",
+        "Stated",
+    ]
+    assert assertion_warrant["warrants"][0]["floorChain"] == [
+        "literal_call_report.callsite_floor",
+        "encodeBase64",
+    ]
     assert assertion_contract["sourceWarrants"][0]["sourceFunctionName"] == (
         "test_encode_base64"
     )
@@ -172,7 +179,20 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     # composes via ambient-post specialization rather than a bespoke warrant.
     assert "warrantedBy" not in assertion_contract
     _assert_assertion_inv(assertion_contract, "YWJj")
-    _assert_assertion_inv(bad_doc["ir"][1], "AAAA")
+    bad_assertions = [
+        contract
+        for contract in bad_doc["ir"]
+        if contract["name"] == assertion_contract["name"]
+    ]
+    assert [contract["inv"]["args"][1]["value"] for contract in bad_assertions] == [
+        "YWJj",
+        "AAAA",
+    ]
+    assert [
+        warrant["kind"]
+        for contract in bad_assertions
+        for warrant in contract["proofirProvenance"]["warrants"]
+    ] == ["Derived", "Stated"]
     # The dig emits no call-edge: composition is ambient-post specialization keyed on
     # the `call:` ctor head, which needs no explicit edge.
     assert good_doc["callEdges"] == []
