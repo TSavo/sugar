@@ -26,7 +26,24 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
+use syn::spanned::Spanned;
+
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
+
+/// Clone a base locus (which carries the file) and stamp it with the 1-based
+/// line and 0-based column of a call-site span. The editor needs a real range
+/// to anchor the diagnostic squiggle; a `None` line collapses the squiggle to
+/// the top of the file. `proc-macro2` span locations are available in this
+/// build (the contract adapter already reads `ident.span().start().line`).
+fn locus_at(base: &CallSiteLocus, span: proc_macro2::Span) -> CallSiteLocus {
+    let start = span.start();
+    CallSiteLocus {
+        file: base.file.clone(),
+        // A zero line means span locations were unavailable; keep `None` then.
+        line: (start.line > 0).then_some(start.line as u32),
+        col: Some(start.column as u32),
+    }
+}
 
 /// A call-edge memento as defined in spec #114 §1.
 #[derive(Debug, Clone)]
@@ -294,7 +311,8 @@ fn collect_call_sites_in_expr(
         // Emit an edge for this call site.
         if let Some(callee_name) = callee_name_from_expr(&c.func) {
             let target_cid = contract_cids.get(&callee_name).map(|s| s.as_str());
-            let edge = mint_call_edge(source_cid, target_cid, locus, &callee_name);
+            let call_locus = locus_at(locus, c.func.span());
+            let edge = mint_call_edge(source_cid, target_cid, &call_locus, &callee_name);
             edges.push(edge);
         }
         collect_call_sites_in_expr(&c.func, source_cid, locus, contract_cids, edges);
@@ -308,7 +326,8 @@ fn collect_call_sites_in_expr(
         // Emit an edge for the method call.
         let callee_name = mc.method.to_string();
         // Methods don't resolve to contract CIDs by name alone; treat as unresolved.
-        let edge = mint_call_edge(source_cid, None, locus, &callee_name);
+        let call_locus = locus_at(locus, mc.method.span());
+        let edge = mint_call_edge(source_cid, None, &call_locus, &callee_name);
         edges.push(edge);
         // Recurse into receiver and arguments.
         collect_call_sites_in_expr(&mc.receiver, source_cid, locus, contract_cids, edges);

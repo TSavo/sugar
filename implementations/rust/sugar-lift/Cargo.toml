@@ -42,7 +42,11 @@ sugar-lift-rpc-client = { path = "../sugar-lift-rpc-client" }
 
 # External.
 syn = { workspace = true }
-proc-macro2 = { workspace = true }
+# span-locations: call-edge loci carry the real 1-based line / 0-based column
+# of each call site so editor diagnostics anchor to the calling expression
+# (see `locus_at` in call_edges.rs). Without this feature proc-macro2 reports
+# line 0 and the LSP squiggle collapses to the top of the file.
+proc-macro2 = { workspace = true, features = ["span-locations"] }
 quote = { workspace = true }
 walkdir = { workspace = true }
 thiserror = { workspace = true }
