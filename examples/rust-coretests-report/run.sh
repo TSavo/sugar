@@ -19,15 +19,13 @@ RUST="$REPO/implementations/rust"
 source "$HERE/run-lib.sh"
 # RELEASE only -- never run a debug build against a large corpus (the lifter is
 # spawned per file; debug is an order of magnitude slower).
-BIN_DIR="$RUST/target/release"
-SUGAR="$BIN_DIR/sugar"
 CORPUS="$HERE/corpus"
 
-echo "== build the CLI + the Rust assertion lifter (release) =="
-cargo build --release --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli --bin sugar \
-  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
-  -p sugar-lift-rust-tests --bin discharge_sweep >/dev/null
+echo "== resolve the CLI + the Rust assertion lifter (release) via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile release)"
+BIN_DIR="$(dirname "$SUGAR")"
+"$REPO/bin/sugarbin" --profile release --bin rust_test_assertions_rpc >/dev/null
+"$REPO/bin/sugarbin" --profile release --bin discharge_sweep >/dev/null
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }

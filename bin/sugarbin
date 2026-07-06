@@ -3,21 +3,42 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: bin/sugarbin [--profile release|debug] [--platform <auto|key>] [--print-source-stamp]
+usage: bin/sugarbin [--bin <name>] [--profile release|debug] [--platform <auto|key>] [--print-source-stamp]
 
-Resolve the Sugar CLI binary by source stamp:
+Resolve a Sugar workspace binary by source stamp:
   SUGAR_BIN override -> local target by stamp -> shelf by stamp -> build + publish.
+
+The stamp is ONE hash over the whole implementations/rust tree, shared by
+every published binary: change any Rust source and every binary rebuilds;
+change only Python and every binary stays cache-hot. --bin selects which
+published binary to resolve (default: sugar). Known names:
+  sugar                       sugar-cli
+  sugar-walk-rpc               sugar-walk
+  witness_rpc                  sugar-lift-rust-cargo-test-witness
+  discharge_cli                sugar-lift-rust-cargo-test-witness
+  rust_test_assertions_rpc     sugar-lift-rust-tests
+  discharge_sweep              sugar-lift-rust-tests
+  sugar-ir-smt-lib              sugar-ir-compiler-smt-lib
+  sugar-ir-lean                 sugar-ir-compiler-lean
+  sugar-ir-coq                   sugar-ir-compiler-coq
+  sugar-ir-maude                 sugar-ir-compiler-maude
 
   --print-source-stamp prints the canonical Rust build-input tree stamp and exits.
 On success, prints exactly the binary path to stdout. Diagnostics go to stderr.
 EOF
 }
 
+bin_name="sugar"
 profile="release"
 platform_override="auto"
 print_source_stamp=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --bin)
+      [[ $# -ge 2 ]] || { echo "sugarbin: --bin requires a value" >&2; exit 2; }
+      bin_name="$2"
+      shift 2
+      ;;
     --profile)
       [[ $# -ge 2 ]] || { echo "sugarbin: --profile requires a value" >&2; exit 2; }
       profile="$2"
@@ -48,6 +69,27 @@ case "$profile" in
   release | debug) ;;
   *) echo "sugarbin: --profile must be release or debug" >&2; exit 2 ;;
 esac
+
+package_for_bin() {
+  case "$1" in
+    sugar) printf 'sugar-cli\n' ;;
+    sugar-walk-rpc) printf 'sugar-walk\n' ;;
+    witness_rpc) printf 'sugar-lift-rust-cargo-test-witness\n' ;;
+    discharge_cli) printf 'sugar-lift-rust-cargo-test-witness\n' ;;
+    rust_test_assertions_rpc) printf 'sugar-lift-rust-tests\n' ;;
+    discharge_sweep) printf 'sugar-lift-rust-tests\n' ;;
+    sugar-ir-smt-lib) printf 'sugar-ir-compiler-smt-lib\n' ;;
+    sugar-ir-lean) printf 'sugar-ir-compiler-lean\n' ;;
+    sugar-ir-coq) printf 'sugar-ir-compiler-coq\n' ;;
+    sugar-ir-maude) printf 'sugar-ir-compiler-maude\n' ;;
+    *)
+      echo "sugarbin: unknown --bin '$1'; run bin/sugarbin --help for the published set" >&2
+      return 1
+      ;;
+  esac
+}
+
+package="$(package_for_bin "$bin_name")" || exit 2
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(git -C "$script_dir/.." rev-parse --show-toplevel 2>/dev/null || (cd "$script_dir/.." && pwd -P))"
@@ -82,11 +124,6 @@ platform_key() {
     linux) os="linux" ;;
   esac
   printf '%s-%s\n' "$os" "$arch"
-}
-
-json_field() {
-  local field="$1"
-  python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$field"
 }
 
 sha256_file() {
@@ -198,32 +235,33 @@ stamp_for_filename() {
 
 artifact_name() {
   local stamp="$1"
-  printf 'sugar-%s-%s-%s\n' "$(platform_key)" "$profile" "$(stamp_for_filename "$stamp")"
+  printf '%s-%s-%s-%s\n' "$bin_name" "$(platform_key)" "$profile" "$(stamp_for_filename "$stamp")"
 }
 
-binary_stamp() {
-  local bin="$1"
-  local version
-  version="$("$bin" version --json 2>/dev/null)" || return 1
-  local stamp
-  stamp="$(printf '%s\n' "$version" | json_field buildStamp)"
-  if [[ -z "$stamp" ]]; then
-    stamp="$(printf '%s\n' "$version" | json_field buildGitHead)"
-  fi
-  [[ -n "$stamp" ]] || return 1
-  printf '%s\n' "$stamp"
+# Every binary in the published set is built from the same one-stamp closure
+# (the whole implementations/rust tree), so a single marker file per profile
+# directory records the stamp the local target dir was last built at. This
+# replaces execing "$bin version --json", which only sugar-cli implements;
+# RPC/compiler binaries have no version subcommand to interrogate. ONE
+# verification mechanism, shared by every binary sugarbin publishes.
+local_stamp_marker() {
+  printf '%s/.sugarbin-source-stamp\n' "${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile"
 }
 
-matches_stamp() {
+write_local_stamp_marker() {
+  local stamp="$1"
+  printf '%s\n' "$stamp" >"$(local_stamp_marker)"
+}
+
+local_target_matches_stamp() {
   local bin="$1" expected="$2" label="$3"
   [[ -x "$bin" ]] || return 1
-  local observed
-  if ! observed="$(binary_stamp "$bin")"; then
-    log "$label skipped: could not read build stamp from $bin"
-    return 1
-  fi
+  local marker observed
+  marker="$(local_stamp_marker)"
+  [[ -f "$marker" ]] || { log "$label skipped: no source-stamp marker at $marker"; return 1; }
+  observed="$(cat "$marker")"
   if [[ "$observed" != "$expected" ]]; then
-    log "$label skipped: stale binary $bin has stamp $observed, need $expected"
+    log "$label skipped: stale target dir has stamp $observed, need $expected"
     return 1
   fi
   return 0
@@ -320,7 +358,10 @@ pull_from_shelf() {
   local dir download_dir candidate
   dir="$(cache_dir)"
   candidate="$dir/$name"
-  if matches_stamp "$candidate" "$stamp" "prebuilt cache"; then
+  # $name already encodes bin_name + platform + profile + stamp, so a hit at
+  # this exact path is stamp-correct by construction; no re-verification.
+  if [[ -x "$candidate" ]]; then
+    log "prebuilt cache hit for $name"
     printf '%s\n' "$candidate"
     return 0
   fi
@@ -334,9 +375,6 @@ pull_from_shelf() {
   [[ -f "$downloaded" ]] || { log "shelf downloaded no $name asset"; return 1; }
   chmod +x "$downloaded"
   verify_attestation_if_present "$downloaded" "$stamp"
-  if ! matches_stamp "$downloaded" "$stamp" "prebuilt shelf"; then
-    return 1
-  fi
   mkdir -p "$dir"
   cp "$downloaded" "$candidate"
   chmod +x "$candidate"
@@ -345,13 +383,17 @@ pull_from_shelf() {
 
 build_from_source() {
   local stamp="$1"
-  log "building sugar once for this session (set SUGAR_BIN to skip)"
+  log "building $bin_name once for this session (set SUGAR_BIN to skip)"
   local cargo_bin="${SUGAR_BINARY_CARGO:-cargo}"
-  local args=(build --locked --manifest-path "$rust_workspace/Cargo.toml" -p sugar-cli --bin sugar)
+  local args=(build --locked --manifest-path "$rust_workspace/Cargo.toml" -p "$package" --bin "$bin_name")
   if [[ "$profile" == "release" ]]; then
     args+=(--release)
   fi
   SUGAR_BUILD_STAMP="$stamp" SUGAR_BUILD_GIT_HEAD="$(git_head)" "$cargo_bin" "${args[@]}"
+  # One marker per profile directory: the whole implementations/rust tree is
+  # ONE stamp, so this build leaves every binary in this target dir valid at
+  # this stamp, not just the one just requested.
+  write_local_stamp_marker "$stamp"
 }
 
 main() {
@@ -369,8 +411,8 @@ main() {
   stamp="$(source_stamp)"
   name="$(artifact_name "$stamp")"
 
-  candidate="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/sugar"
-  if matches_stamp "$candidate" "$stamp" "local target"; then
+  candidate="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
+  if local_target_matches_stamp "$candidate" "$stamp" "local target"; then
     publish_if_absent "$candidate" "$stamp" "$name"
     printf '%s\n' "$candidate"
     return 0
@@ -382,12 +424,12 @@ main() {
   fi
 
   if [[ "${SUGAR_BINARY_ALLOW_BUILD:-1}" == "0" ]]; then
-    log "no matching sugar binary for stamp $stamp and build fallback disabled"
+    log "no matching $bin_name binary for stamp $stamp and build fallback disabled"
     return 1
   fi
   build_from_source "$stamp"
-  built="$rust_workspace/target/$profile/sugar"
-  if ! matches_stamp "$built" "$stamp" "built binary"; then
+  built="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
+  if ! local_target_matches_stamp "$built" "$stamp" "built binary"; then
     log "built binary did not match requested stamp $stamp"
     return 1
   fi

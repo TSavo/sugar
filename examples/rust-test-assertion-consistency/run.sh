@@ -7,16 +7,12 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 
-echo "== build the CLI + rust test-assertion lifter =="
-cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli \
-  -p sugar-lift-rust-tests \
-  -p sugar-ir-compiler-smt-lib \
-  --bins >/dev/null 2>&1 || cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli -p sugar-lift-rust-tests -p sugar-ir-compiler-smt-lib --bins
+echo "== resolve the CLI + rust test-assertion lifter via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+"$REPO/bin/sugarbin" --profile debug --bin rust_test_assertions_rpc >/dev/null
+"$REPO/bin/sugarbin" --profile debug --bin sugar-ir-smt-lib >/dev/null
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }

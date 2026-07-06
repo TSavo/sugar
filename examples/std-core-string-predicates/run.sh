@@ -5,9 +5,6 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
-ASSERT_RPC="$BIN_DIR/rust_test_assertions_rpc"
 source "$REPO/scripts/stdlib-solver-portfolio.sh"
 WORK="${STD_CORE_STRING_PREDICATES_WORK:-$HERE/.work}"
 GOOD="$WORK/good"
@@ -19,16 +16,13 @@ echo "SCOPE: GOOD claims are vendor point assertions only; BAD is an explicit ne
 echo "SCOPE: lifted predicates = contains, starts_with/prefix-of, ends_with/suffix-of, str.len, str.is_ascii, literal chars().all/.any, literal bytes().is_ascii, char ASCII classes, literal char is_alphabetic, and bounded assert_all/assert_none literal macro rows."
 echo "SCOPE: residuals = non-literal receivers, non-literal iterator/macro sources, unsupported closure bodies, and non-bedrockable custom assertion macros."
 
-if [ "${STD_CORE_STRING_PREDICATES_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  echo "== build local proof binaries =="
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar \
-    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
-    -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
-    -p sugar-ir-compiler-coq --bin sugar-ir-coq \
-    -p sugar-ir-compiler-lean --bin sugar-ir-lean \
-    -p sugar-ir-compiler-maude --bin sugar-ir-maude >/dev/null
-fi
+echo "== resolve local proof binaries via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+ASSERT_RPC="$("$REPO/bin/sugarbin" --profile debug --bin rust_test_assertions_rpc)"
+for b in sugar-ir-smt-lib sugar-ir-coq sugar-ir-lean sugar-ir-maude; do
+  "$REPO/bin/sugarbin" --profile debug --bin "$b" >/dev/null
+done
 
 for bin in "$SUGAR" "$ASSERT_RPC"; do
   if [ ! -x "$bin" ]; then

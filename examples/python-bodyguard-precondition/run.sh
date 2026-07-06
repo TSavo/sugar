@@ -4,9 +4,6 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
-WALK_RPC="$BIN_DIR/sugar-walk-rpc"
 WORK="${PYTHON_BODYGUARD_WORK:-$HERE/.work}"
 PY_SRC="$REPO/implementations/python/sugar-lift-python-source/src"
 PY_TESTS="$REPO/implementations/python/sugar-lift-py-tests/src"
@@ -44,12 +41,10 @@ then
   "$PYTHON" -m pip install -q blake3 cbor2 pynacl
 fi
 
-if [ "${PYTHON_BODYGUARD_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  echo "== build local proof binaries =="
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar \
-    -p sugar-walk --bin sugar-walk-rpc >/dev/null
-fi
+echo "== resolve local proof binaries via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+WALK_RPC="$("$REPO/bin/sugarbin" --profile debug --bin sugar-walk-rpc)"
 
 for bin in "$SUGAR" "$WALK_RPC"; do
   if [ ! -x "$bin" ]; then

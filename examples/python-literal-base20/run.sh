@@ -24,12 +24,11 @@ VENV="${PYTHON_LITERAL_BASE64_VENV:-/tmp/python-literal-base20-venv}"
 SYSTEM_PYTHON="${PYTHON_LITERAL_BASE64_PYTHON:-$(command -v python3)}"
 PYTHON="$SYSTEM_PYTHON"
 
-echo "== build the bundled SMT compiler =="
-cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib >/dev/null || {
-    echo "FAIL: SMT compiler build"
-    exit 1
-  }
+echo "== resolve the bundled SMT compiler via sugarbin =="
+"$REPO/bin/sugarbin" --profile release --bin sugar-ir-smt-lib >/dev/null || {
+  echo "FAIL: SMT compiler build"
+  exit 1
+}
 [ -x "$BIN" ] || { echo "FAIL: sugar binary missing at $BIN"; exit 1; }
 command -v z3 >/dev/null 2>&1 || { echo "FAIL: z3 is required for this showcase"; exit 1; }
 

@@ -6,24 +6,17 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 
 echo "SCOPE: base64 0.22.1 exact vendor rows from tests/encode.rs::encoded_len_unpadded/encoded_len_padded and src/decode.rs::decoded_len_est."
 echo "SCOPE: GOOD claims are point-wise exact integer-scalar rows over the public encoded_len/decoded_len_estimate fns; BAD is a contradiction twin."
 echo "SCOPE: residuals = exact encode/decode byte-vector rows (STANDARD.encode(b\"foo\")==\"Zm9v\", decode(...)==b\"...\"): NOT liftable, the rust assertion lifter has no Lit::ByteStr term case (translate_lit covers Int/Float/Str/Char/Bool only), so every byte-string-literal vector is released to layer 0; plus roundtrip-random tests and the 256-byte encode_all_bytes vector."
 
-echo "== build the CLI + Rust assertion, body, implication, and cargo-test witness lifters =="
-cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli --bin sugar \
-  -p sugar-walk --bin sugar-walk-rpc \
-  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
-  -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-  -p sugar-lift-rust-cargo-test-witness --bin discharge_cli \
-  -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
-  -p sugar-ir-compiler-coq --bin sugar-ir-coq \
-  -p sugar-ir-compiler-lean --bin sugar-ir-lean \
-  -p sugar-ir-compiler-maude --bin sugar-ir-maude >/dev/null
+echo "== resolve the CLI + Rust assertion, body, implication, and cargo-test witness lifters via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+for b in sugar-walk-rpc rust_test_assertions_rpc witness_rpc discharge_cli sugar-ir-smt-lib sugar-ir-coq sugar-ir-lean sugar-ir-maude; do
+  "$REPO/bin/sugarbin" --profile debug --bin "$b" >/dev/null
+done
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/sugar-walk-rpc" ] || { echo "FAIL: sugar-walk-rpc not built"; exit 1; }

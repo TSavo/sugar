@@ -4,16 +4,6 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
-ASSERT_RPC="$BIN_DIR/rust_test_assertions_rpc"
-WITNESS_RPC="$BIN_DIR/witness_rpc"
-DISCHARGE_CLI="$BIN_DIR/discharge_cli"
-WALK_RPC="$BIN_DIR/sugar-walk-rpc"
-SMT_IR="$BIN_DIR/sugar-ir-smt-lib"
-LEAN_IR="$BIN_DIR/sugar-ir-lean"
-COQ_IR="$BIN_DIR/sugar-ir-coq"
-MAUDE_IR="$BIN_DIR/sugar-ir-maude"
 
 for suite in good bad; do
   if [ ! -d "$HERE/$suite" ]; then
@@ -47,19 +37,17 @@ if [ "${POLARS_SHOWCASE_ON_REMOTE:-0}" != "1" ] \
   exit $?
 fi
 
-if [ "${POLARS_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  echo "== build local proof binaries =="
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar \
-    -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
-    -p sugar-ir-compiler-lean --bin sugar-ir-lean \
-    -p sugar-ir-compiler-coq --bin sugar-ir-coq \
-    -p sugar-ir-compiler-maude --bin sugar-ir-maude \
-    -p sugar-walk --bin sugar-walk-rpc \
-    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
-    -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-    -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
-fi
+echo "== resolve local proof binaries via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+SMT_IR="$("$REPO/bin/sugarbin" --profile debug --bin sugar-ir-smt-lib)"
+LEAN_IR="$("$REPO/bin/sugarbin" --profile debug --bin sugar-ir-lean)"
+COQ_IR="$("$REPO/bin/sugarbin" --profile debug --bin sugar-ir-coq)"
+MAUDE_IR="$("$REPO/bin/sugarbin" --profile debug --bin sugar-ir-maude)"
+WALK_RPC="$("$REPO/bin/sugarbin" --profile debug --bin sugar-walk-rpc)"
+ASSERT_RPC="$("$REPO/bin/sugarbin" --profile debug --bin rust_test_assertions_rpc)"
+WITNESS_RPC="$("$REPO/bin/sugarbin" --profile debug --bin witness_rpc)"
+DISCHARGE_CLI="$("$REPO/bin/sugarbin" --profile debug --bin discharge_cli)"
 
 for bin in "$SUGAR" "$ASSERT_RPC" "$WITNESS_RPC" "$DISCHARGE_CLI" "$WALK_RPC" "$SMT_IR" "$LEAN_IR" "$COQ_IR" "$MAUDE_IR"; do
   if [ ! -x "$bin" ]; then

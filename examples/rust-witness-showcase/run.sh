@@ -25,15 +25,12 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 
-echo "== build the CLI + the cargo-test-witness kit binaries =="
-cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli \
-  -p sugar-lift-rust-cargo-test-witness \
-  --bins >/dev/null 2>&1 || cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli -p sugar-lift-rust-cargo-test-witness
+echo "== resolve the CLI + the cargo-test-witness kit binaries via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+"$REPO/bin/sugarbin" --profile debug --bin witness_rpc >/dev/null
+"$REPO/bin/sugarbin" --profile debug --bin discharge_cli >/dev/null
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/witness_rpc" ] || { echo "FAIL: witness_rpc not built"; exit 1; }

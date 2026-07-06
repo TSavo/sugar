@@ -55,9 +55,6 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
-ASSERT_RPC="$BIN_DIR/rust_test_assertions_rpc"
 source "$REPO/scripts/stdlib-solver-portfolio.sh"
 WORK="${STD_CORE_SHOWCASE_WORK:-$HERE/.work}"
 PROJECT="$WORK/proof-scope"
@@ -89,18 +86,13 @@ ensure_rust_src() {
   printf '%s\n' "$stdroot"
 }
 
-if [ "${STD_CORE_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  echo "== build local proof binaries =="
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar \
-    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
-    -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-    -p sugar-walk --bin sugar-walk-rpc \
-    -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
-    -p sugar-ir-compiler-coq --bin sugar-ir-coq \
-    -p sugar-ir-compiler-lean --bin sugar-ir-lean \
-    -p sugar-ir-compiler-maude --bin sugar-ir-maude >/dev/null
-fi
+echo "== resolve local proof binaries via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+ASSERT_RPC="$("$REPO/bin/sugarbin" --profile debug --bin rust_test_assertions_rpc)"
+for b in witness_rpc sugar-walk-rpc sugar-ir-smt-lib sugar-ir-coq sugar-ir-lean sugar-ir-maude; do
+  "$REPO/bin/sugarbin" --profile debug --bin "$b" >/dev/null
+done
 
 for bin in "$SUGAR" "$ASSERT_RPC"; do
   if [ ! -x "$bin" ]; then

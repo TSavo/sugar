@@ -36,8 +36,6 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: no python3 on PATH"; exit 0;
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 
 echo "SCOPE: RegexSugar — a rust regex-match assertion lifted to z3 regex theory (str.in_re)."
 echo "SCOPE: re.is_match(s) ⟺ str.in_re(s, R); the pattern literal lowers to a z3 RegLan term."
@@ -48,12 +46,10 @@ echo "SCOPE: BAD: a non-matching subject -> str.in_re UNSAT -> refused (membersh
 echo "SCOPE: NONREGULAR: backref/lookahead refused BY NAME at lift time; no str.in-regex row, the floor stands."
 
 echo
-echo "== build the CLI + rust test-assertion lifter =="
-if [ "${RUST_REGEX_MEMBERSHIP_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar \
-    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null
-fi
+echo "== resolve the CLI + rust test-assertion lifter via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+"$REPO/bin/sugarbin" --profile debug --bin rust_test_assertions_rpc >/dev/null
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }
 

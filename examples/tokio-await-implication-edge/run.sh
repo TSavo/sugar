@@ -4,11 +4,6 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
-WALK_RPC="$BIN_DIR/sugar-walk-rpc"
-WITNESS_RPC="$BIN_DIR/witness_rpc"
-DISCHARGE_CLI="$BIN_DIR/discharge_cli"
 
 for suite in good bad; do
   if [ ! -d "$HERE/$suite" ]; then
@@ -37,14 +32,12 @@ if [ "${TOKIO_AWAIT_EDGE_SHOWCASE_ON_REMOTE:-0}" != "1" ] \
   exit $?
 fi
 
-if [ "${TOKIO_AWAIT_EDGE_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  echo "== build local proof binaries =="
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar \
-    -p sugar-walk --bin sugar-walk-rpc \
-    -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-    -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
-fi
+echo "== resolve local proof binaries via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+WALK_RPC="$("$REPO/bin/sugarbin" --profile debug --bin sugar-walk-rpc)"
+WITNESS_RPC="$("$REPO/bin/sugarbin" --profile debug --bin witness_rpc)"
+DISCHARGE_CLI="$("$REPO/bin/sugarbin" --profile debug --bin discharge_cli)"
 
 for bin in "$SUGAR" "$WALK_RPC" "$WITNESS_RPC" "$DISCHARGE_CLI"; do
   if [ ! -x "$bin" ]; then
