@@ -216,6 +216,7 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
                     )
                 )
                 continue
+            rebound = dotted in attr_writes or f"cls.{member}" in attr_writes
             if kind == "plain":
                 scan.refusals.append(
                     _pin_refusal(
@@ -224,8 +225,7 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
                         kind=ENUM_PIN_REFUSAL_KIND,
                     )
                 )
-                continue
-            if dotted in attr_writes or f"cls.{member}" in attr_writes:
+            elif rebound:
                 scan.refusals.append(
                     _pin_refusal(
                         candidate,
@@ -233,17 +233,52 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
                         f"{attr_writes.get(dotted, attr_writes.get(f'cls.{member}'))}",
                     )
                 )
+            else:
+                try:
+                    term = _render_value_term(class_stmt.value)
+                except _NotAdmissible as exc:
+                    scan.refusals.append(_pin_refusal(candidate, exc.reason))
+                else:
+                    scan.pins[dotted] = ValuePin(
+                        name=dotted,
+                        term=term,
+                        line=class_stmt.lineno,
+                        confession=f"enum.{kind}",
+                    )
+            # `.value` is a stable attribute access on ANY Enum member,
+            # regardless of dispatch flavor: it always returns the
+            # underlying literal, byte-identical to what was written after
+            # `=`. The == dispatch gate that forces plain-Enum members to
+            # refuse at the bare member name does not apply to `.value` --
+            # so this pins even for plain Enum/Flag members, as long as the
+            # member itself was not rebound.
+            value_dotted = f"{dotted}.value"
+            value_candidate = _Candidate(
+                name=value_dotted,
+                value=class_stmt.value,
+                line=class_stmt.lineno,
+                confession=f"enum.{kind}.value",
+            )
+            scan.candidates += 1
+            if rebound:
+                scan.refusals.append(
+                    _pin_refusal(
+                        value_candidate,
+                        f"rebound: attribute write to {dotted} at line "
+                        f"{attr_writes.get(dotted, attr_writes.get(f'cls.{member}'))}",
+                    )
+                )
                 continue
             try:
-                term = _render_value_term(class_stmt.value)
+                value_term = _render_value_term(class_stmt.value)
             except _NotAdmissible as exc:
-                scan.refusals.append(_pin_refusal(candidate, exc.reason))
+                scan.refusals.append(_pin_refusal(value_candidate, exc.reason))
                 continue
-            scan.pins[dotted] = ValuePin(
-                name=dotted,
-                term=term,
+            scan.pins[value_dotted] = ValuePin(
+                name=value_dotted,
+                term=value_term,
                 line=class_stmt.lineno,
-                confession=f"enum.{kind}",
+                confession=f"enum.{kind}.value",
             )
 
 

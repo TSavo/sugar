@@ -3842,6 +3842,106 @@ def test_unpinnable_attribute_default_remains_refused() -> None:
     ]
 
 
+def test_enum_member_value_default_lifts_pinned_for_any_enum_flavor() -> None:
+    """Positive: a plain-Enum member's `.value` attribute is a stable
+    attribute access (any Enum flavor, not just IntEnum/StrEnum), so it
+    pins through the enum-pin machinery even though the bare member
+    itself must refuse (Color.RED == 1 is False for plain Enum)."""
+    source = (
+        "from enum import Enum\n"
+        "\n"
+        "class DisplayModes(Enum):\n"
+        "    stdout = 'stdout'\n"
+        "    binary_file = 'binary_file'\n"
+        "\n"
+        "def show(mode=DisplayModes.stdout.value):\n"
+        "    return mode\n"
+    )
+
+    result = lift_source(source, "enum_value_default.py")
+
+    assert result.refusals == [
+        {
+            "kind": "enum-pin-refused",
+            "function": None,
+            "line": 4,
+            "name": "DisplayModes.stdout",
+            "reason": "plain Enum member: use IntEnum or StrEnum for value pinning",
+        },
+        {
+            "kind": "enum-pin-refused",
+            "function": None,
+            "line": 5,
+            "name": "DisplayModes.binary_file",
+            "reason": "plain Enum member: use IntEnum or StrEnum for value pinning",
+        },
+    ]
+    contract = _contract(result.ir, ".show")
+    assert contract["effects"] == []
+    assert contract["parameterShape"] == [
+        {
+            "name": "mode",
+            "kind": "positional-or-keyword",
+            "default": _str_const("stdout"),
+        }
+    ]
+
+
+def test_enum_member_value_default_discriminates_wrong_pinned_value() -> None:
+    """Discrimination twin: swapping which member the default names must
+    change the pinned literal. A resolver that pinned the wrong member's
+    value (or a stale/no-op pin) would leave this assertion silently
+    correct for the wrong reason; asserting the OTHER member's literal
+    proves the pin tracks the actual named member."""
+    source = (
+        "from enum import Enum\n"
+        "\n"
+        "class DisplayModes(Enum):\n"
+        "    stdout = 'stdout'\n"
+        "    binary_file = 'binary_file'\n"
+        "\n"
+        "def show(mode=DisplayModes.binary_file.value):\n"
+        "    return mode\n"
+    )
+
+    result = lift_source(source, "enum_value_default_other_member.py")
+
+    contract = _contract(result.ir, ".show")
+    assert contract["parameterShape"] == [
+        {
+            "name": "mode",
+            "kind": "positional-or-keyword",
+            "default": _str_const("binary_file"),
+        }
+    ]
+
+
+def test_enum_member_value_default_refuses_when_member_is_rebound() -> None:
+    """Stop-line: a syntactic write to ClassName.MEMBER anywhere in the
+    module means the metaclass's reassignment ban was punctured (or the
+    scan cannot trust it), so `.value` must NOT pin -- it stays the typed
+    effect, same as the bare member."""
+    source = (
+        "from enum import Enum\n"
+        "\n"
+        "class DisplayModes(Enum):\n"
+        "    stdout = 'stdout'\n"
+        "\n"
+        "DisplayModes.stdout = object()\n"
+        "\n"
+        "def show(mode=DisplayModes.stdout.value):\n"
+        "    return mode\n"
+    )
+
+    result = lift_source(source, "enum_value_default_rebound.py")
+
+    kinds = {(r["kind"], r.get("function")) for r in result.refusals}
+    assert (
+        "non-literal-default",
+        "enum_value_default_rebound.show",
+    ) in kinds
+
+
 def test_b1_nonliteral_default_remains_refused_as_definition_time_hazard() -> None:
     result = lift_source("def f(x=make()):\n    return x\n", "b1_default_refusal.py")
 
