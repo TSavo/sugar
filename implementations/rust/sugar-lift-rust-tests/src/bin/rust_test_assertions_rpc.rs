@@ -4772,7 +4772,7 @@ fn source_ledger(loci: &[Value]) -> Value {
         "source_loci": loci.len(),
         "source_warranted": count("warranted"),
         "source_support": count("support"),
-        "source_refused": count("refused"),
+        "source_boundary": count("refused"),
         "source_unresolved": unresolved,
         "source_inactive": count("inactive"),
         // Compatibility alias for current CLI source-ledger plumbing.
@@ -8035,14 +8035,14 @@ fn runtime_array_element_literal_twin() {
             "source_locus_runtime_slice_source_refuses_with_literal_twin",
             r#"
 #[test]
-fn runtime_slice_source_refused() {
+fn runtime_slice_source_boundary() {
     let mut iter = std::env::args().peekable();
     iter.next();
     assert_eq!(iter.peek(), None);
 }
 
 #[test]
-fn runtime_chunk_source_refused() {
+fn runtime_chunk_source_boundary() {
     let v = &[(); usize::MAX];
     let c = v.windows(1);
     assert_eq!(c.count(), usize::MAX);
@@ -8066,12 +8066,12 @@ fn runtime_chunk_source_literal_twin() {
         );
         assert_source_locus_refused(
             &response,
-            "runtime_slice_source_refused",
+            "runtime_slice_source_boundary",
             "runtime slice source, not literal",
         );
         assert_source_locus_refused(
             &response,
-            "runtime_chunk_source_refused",
+            "runtime_chunk_source_boundary",
             "array repeat non-literal length",
         );
         assert_source_locus_warranted(&response, "runtime_slice_source_literal_twin");

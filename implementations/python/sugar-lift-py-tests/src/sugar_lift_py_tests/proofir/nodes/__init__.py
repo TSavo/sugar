@@ -321,7 +321,7 @@ from .function_contract import (  # noqa: E402
     FunctionContract,
     FunctionContractBuilder,
 )
-from .refusal_record import BoundaryRecord, RefusalRecord  # noqa: E402
+from .boundary_record import BoundaryRecord  # noqa: E402
 from .audit_memento import AuditLocus, AuditMemento  # noqa: E402
 from .call_edge_decl import BridgeAtom, CallEdgeDecl  # noqa: E402
 from .universe_mint import BodyUniverse, UniverseMint  # noqa: E402

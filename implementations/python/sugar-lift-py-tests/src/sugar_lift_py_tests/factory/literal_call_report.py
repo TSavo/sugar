@@ -89,7 +89,7 @@ from sugar_lift_py_tests.proofir.sorts import (
     sort_from_ir,
 )
 
-from .dig_refusal import DigRefusal
+from .dig_boundary import DigBoundary
 from .floor_contract_agreement import (
     FloorContractAgreementViolation,
     enforce_floor_contract_agreement_gate,
@@ -320,7 +320,7 @@ def build_literal_call_report(
     call_edges: list[CallEdgeDto] = []
     implications: list[ImplicationDto] = []
     effects: list[EffectDto] = []
-    dig_refusals: list[DigRefusal] = []
+    dig_refusals: list[DigBoundary] = []
     agreement_violations: list[FloorContractAgreementViolation] = []
     local_functions = {
         frag.function_name(): frag
@@ -510,7 +510,7 @@ def _lift_assert(
     from_imports: dict[str, tuple[str, str]],
     contract_bindings: list,
     module_statements: list[SourceFragment],
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
 ) -> LiftResult:
@@ -762,7 +762,7 @@ def _lift_assertion_via_factory(
     contract_bindings: list,
     module_statements: list[SourceFragment],
     factory_audits: list[FactoryAuditDto],
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
     agreement_violations: list[FloorContractAgreementViolation],
 ) -> LiftResult | None:
     from .build import build_node, default_catalog
@@ -897,7 +897,7 @@ def _factory_assertion_derived_context(
     classes_by_name: dict[str, SourceFragment],
     import_aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
 ) -> LiftResult | None:
@@ -1405,7 +1405,7 @@ def _is_open_byte_support_universe(formulas: list[Formula], bound: set[str]) -> 
 
 
 def _record_open_universe_refusal(
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
     *,
     callee: SourceFragment,
     formulas: list[Formula],
@@ -2537,7 +2537,7 @@ def _construct_callsite_from_factory_term(
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
 ) -> LiftResult:
@@ -2827,7 +2827,7 @@ def _immediate_callsite_term(
     *,
     owner: str,
     blame: str,
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
 ) -> Term | _BridgeProjectionRefused | None:
     from sugar_lift_py_tests.factory.factory_gap import FactoryGap
     from sugar_lift_py_tests.floor.call_site_value import (
@@ -2891,7 +2891,7 @@ def _function_universe(
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
     factory_audits: list[FactoryAuditDto],
 ) -> LiftResult | None:
     """The `::callable` universe for ONE resolved function, walked from its DEFINITION.
@@ -3215,7 +3215,7 @@ def _dig_universe(
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
 ) -> LiftResult | None:
     """The dig, when the source is present. Desugar `callee`'s body into the universe
     post (a forall over the function's formals) and mint it as a `function-contract`.
@@ -3505,7 +3505,7 @@ def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResu
 
 
 def _record_dig_refusal(
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
     *,
     callee: str,
     blame: str,
@@ -3513,7 +3513,7 @@ def _record_dig_refusal(
     reason: str,
 ) -> None:
     dig_refusals.append(
-        DigRefusal(
+        DigBoundary(
             callee=callee,
             blame=blame,
             caught=type(caught).__name__,
@@ -3822,7 +3822,7 @@ def _import_bindings(
 
 
 def _source_funcdef(
-    module_name: str, attr: str, *, dig_refusals: list[DigRefusal]
+    module_name: str, attr: str, *, dig_refusals: list[DigBoundary]
 ) -> SourceFragment | None:
     """Resolve ``module_name.attr`` to its installed-source FunctionDef SourceFragment.
 
@@ -3882,7 +3882,7 @@ def _resolve_imported_callees(
     aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
     *,
-    dig_refusals: list[DigRefusal],
+    dig_refusals: list[DigBoundary],
 ) -> dict[str, SourceFragment]:
     """For every callsite referencing an imported callee (``np.rot90(...)`` or a
     ``from``-imported ``rot90(...)``), resolve its installed source to a

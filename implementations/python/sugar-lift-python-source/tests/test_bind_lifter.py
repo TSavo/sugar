@@ -1029,7 +1029,7 @@ def test_bind_lift_recovers_decorator_contract_witnesses() -> None:
 
 
 # =============================================================================
-# Substrate-honest parity: loss, observed_dimension, @refuse
+# Substrate-honest parity: loss, observed_dimension, @concept_gap
 # =============================================================================
 
 
@@ -1097,17 +1097,17 @@ def test_sugar_bind_with_observed_dimension_propagates_to_entry() -> None:
     assert entry["loss_record_contribution"]["value"]["entries"] == []
 
 
-def test_refuse_decorator_emits_refusal_memento() -> None:
+def test_concept_gap_decorator_emits_concept_gap_memento() -> None:
     source = (
-        "from sugar import refuse\n"
+        "from sugar import concept_gap\n"
         "\n"
-        "@refuse(\n"
+        "@concept_gap(\n"
         '    surface="sqlite3.Connection.backup",\n'
         '    concept="concept:sql-physical-backup",\n'
         '    reason="SQLite-binary-specific physical backup. N=1 across connection-level APIs.",\n'
         '    would_close_with_cluster="Connection-level physical-backup method on >=2 SQL drivers",\n'
         ")\n"
-        "class RefusedBackup:\n"
+        "class GappedBackup:\n"
         "    pass\n"
     )
     result = lift_source(source, "shim.py", layer="library-bindings")
@@ -1125,17 +1125,17 @@ def test_refuse_decorator_emits_refusal_memento() -> None:
     )
 
 
-def test_refuse_decorator_sugar_namespace_also_recognized() -> None:
+def test_concept_gap_decorator_sugar_namespace_also_recognized() -> None:
     source = (
         "import sugar\n"
         "\n"
-        "@sugar.refuse(\n"
+        "@sugar.concept_gap(\n"
         '    surface="sqlite3.Connection.backup",\n'
         '    concept="concept:sql-physical-backup",\n'
         '    reason="SQLite-binary-specific physical backup. N=1.",\n'
         '    would_close_with_cluster="Connection-level physical-backup on >=2 drivers",\n'
         ")\n"
-        "class RefusedBackupNs:\n"
+        "class GappedBackupNs:\n"
         "    pass\n"
     )
     result = lift_source(source, "shim.py", layer="library-bindings")
@@ -1146,16 +1146,16 @@ def test_refuse_decorator_sugar_namespace_also_recognized() -> None:
     assert entry["surface"] == "sqlite3.Connection.backup"
 
 
-def test_refuse_missing_field_produces_diagnostic_not_ir() -> None:
+def test_concept_gap_missing_field_produces_diagnostic_not_ir() -> None:
     source = (
-        "from sugar import refuse\n"
+        "from sugar import concept_gap\n"
         "\n"
-        "@refuse(\n"
+        "@concept_gap(\n"
         '    surface="sqlite3.Connection.backup",\n'
         '    concept="concept:sql-physical-backup",\n'
         "    # reason and would_close_with_cluster intentionally omitted\n"
         ")\n"
-        "class RefusedBadBackup:\n"
+        "class BadGapBackup:\n"
         "    pass\n"
     )
     result = lift_source(source, "shim.py", layer="library-bindings")
@@ -1163,9 +1163,9 @@ def test_refuse_missing_field_produces_diagnostic_not_ir() -> None:
     assert any(d["kind"] == "concept-gap-memento-invalid" for d in result.diagnostics)
 
 
-def test_sugar_and_refuse_coexist_in_same_file() -> None:
+def test_sugar_and_concept_gap_coexist_in_same_file() -> None:
     source = (
-        "from sugar import sugar, refuse\n"
+        "from sugar import sugar, concept_gap\n"
         "import sqlite3\n"
         "\n"
         "@sugar.bind(\n"
@@ -1176,13 +1176,13 @@ def test_sugar_and_refuse_coexist_in_same_file() -> None:
         "def open_db(path: str) -> sqlite3.Connection:\n"
         "    return sqlite3.connect(path)\n"
         "\n"
-        "@refuse(\n"
+        "@concept_gap(\n"
         '    surface="sqlite3.Connection.backup",\n'
         '    concept="concept:sql-physical-backup",\n'
         '    reason="SQLite-binary-specific. N=1.",\n'
         '    would_close_with_cluster="Connection-level backup on >=2 drivers",\n'
         ")\n"
-        "class RefusedBackup:\n"
+        "class GappedBackup:\n"
         "    pass\n"
     )
     result = lift_source(source, "shim.py", layer="library-bindings")

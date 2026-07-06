@@ -88,7 +88,6 @@ class AuditMemento(ProofIRNode):
             "source_warranted": source_warranted,
             "source_inactive": 0,
             "source_support": 0,
-            "source_refused": 0,
             "source_boundary": 0,
             "source_unresolved": 0,
             "unclassified_source": 0,

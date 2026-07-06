@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal, Never, NoReturn
 
 from .coverage_gap_effect import CoverageGapEffect
-from .dig_refusal_effect import DigBoundaryEffect
+from .dig_boundary_effect import DigBoundaryEffect
 from .factory_gap_effect import FactoryGapEffect
 from .raise_effect import RaiseEffect
 from .runtime_effect import RuntimeEffect
@@ -24,10 +24,6 @@ EffectStatus = Literal[
     "coverage-gap",
     "factory-gap",
     "dig-boundary",
-    # #3632 legacy: DigBoundaryEffect (né DigRefusalEffect) used to report
-    # this status as "dig-refusal". Kept in the type for read compatibility
-    # with any status value produced by an older kit build.
-    "dig-refusal",
     "absent",
     "drifted",
 ]
@@ -103,7 +99,3 @@ def effect_status(effect: Effect) -> EffectStatus:
 
 def _unhandled_effect(effect: Never) -> NoReturn:
     raise TypeError(f"unhandled Effect arm: {type(effect).__name__}")
-
-
-# Compatibility alias: pre-#3632 code imports `DigRefusalEffect`.
-DigRefusalEffect = DigBoundaryEffect

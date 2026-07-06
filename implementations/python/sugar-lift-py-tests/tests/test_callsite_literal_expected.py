@@ -70,7 +70,7 @@ def test_bound_arg_replays_transitive_prior_assignment_dependencies():
 def test_numeric_expected_and_nested_array_arg_record_downstream_refusal():
     # For `np.rot90([[1,2],[3,4]]) == 5` the numeric expected AND the nested-array
     # arg both compose through the factory now. The remaining downstream gap is
-    # recorded as a DigRefusal so the assertion bridge stays present.
+    # recorded as a DigBoundary so the assertion bridge stays present.
     rep = build_literal_call_report(
         source="import numpy as np\ndef t():\n    assert np.rot90([[1,2],[3,4]]) == 5\n",
         filename="t.py",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..factory.dig_refusal import DigRefusal
+from ..factory.dig_boundary import DigBoundary
 from ..factory.source_fragment import SourceFragment
 from .constraint_dig_request import ConstraintDigRequest
 from .constraint_universe import ConstraintUniverse
@@ -20,7 +20,7 @@ def walk_constraint_universe(
     predicates: list[dict[str, Any]] = []
     proofir: list[dict[str, Any]] = []
     sugar_chain: list[str] = []
-    dig_refusals: list[DigRefusal] = []
+    dig_refusals: list[DigBoundary] = []
 
     for fragment in [tree, *tree.walk()]:
         if fragment.observed != "AnnAssign":
@@ -29,7 +29,7 @@ def walk_constraint_universe(
             target_id = fragment.annassign_target_id()
         except TypeError as exc:
             dig_refusals.append(
-                DigRefusal(
+                DigBoundary(
                     callee=dig.target_symbol,
                     blame=fragment.blame,
                     caught=type(exc).__name__,

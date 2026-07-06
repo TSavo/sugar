@@ -18679,7 +18679,7 @@ fn terminal_verdict_ptr_metadata_literal_warrants_and_runtime_layout_refuses() {
         }
     "#;
     let doc = run_rpc_lift("tests/ptr.rs", runtime);
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "ptr_metadata_vtable_runtime",
         "pointer metadata is a runtime layout property",
@@ -18729,7 +18729,7 @@ fn terminal_verdict_memrchr_literal_warrants_and_mutable_alignment_refuses() {
         }
     "#;
     let doc = run_rpc_lift("tests/slice.rs", mutable_alignment);
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "each_alignment_reversed",
         "runtime slice source, not literal",
@@ -26018,7 +26018,7 @@ fn locus_reason<'a>(doc: &'a serde_json::Value, fn_name: &str) -> Option<&'a str
         .and_then(|l| l["reason"].as_str())
 }
 
-fn assert_rpc_source_refused(doc: &serde_json::Value, fn_name: &str, category: &str) {
+fn assert_rpc_source_boundary(doc: &serde_json::Value, fn_name: &str, category: &str) {
     assert_eq!(
         locus_status(doc, fn_name),
         Some("refused"),
@@ -26526,7 +26526,7 @@ fn matches_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "matches_leading_pipe",
         "compile-only assertion surface",
@@ -27234,7 +27234,7 @@ fn test_iterator_peekable_mut_if_let_guard() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "test_iterator_peekable_mut_if_let_guard",
         "mutable view temporal state",
@@ -27261,7 +27261,7 @@ fn test_iterator_peekable_runtime_cycle_iter_nth() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "test_iterator_peekable_runtime_cycle_iter_nth",
         "unknown iterator consumption",
@@ -27350,7 +27350,7 @@ fn range_literal_method_twin() {
     ] {
         assert_rpc_source_warranted(&doc, name);
     }
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "range_pointer_child_refuses",
         "mutable reference/pointer effect",
@@ -27397,7 +27397,7 @@ fn location_literal_twin() {
         "location_column_runtime_refused",
         "location_file_lifetime",
     ] {
-        assert_rpc_source_refused(&doc, name, "source location runtime-determined");
+        assert_rpc_source_boundary(&doc, name, "source location runtime-determined");
     }
     assert_rpc_source_warranted(&doc, "location_literal_twin");
 }
@@ -27666,7 +27666,7 @@ fn fmt_write_mut_local_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(&doc, "fmt_write_mut_local_refused", "mutation/side effect");
+    assert_rpc_source_boundary(&doc, "fmt_write_mut_local_refused", "mutation/side effect");
     assert_rpc_source_warranted(&doc, "fmt_write_mut_local_literal_twin");
 }
 
@@ -27688,7 +27688,7 @@ fn effectful_control_flow_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "effectful_control_flow_refused",
         "effectful control-flow boundary",
@@ -27716,7 +27716,7 @@ fn mutable_as_mut_view_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "mutable_as_mut_view_refused",
         "mutable view temporal state",
@@ -27747,7 +27747,7 @@ fn reflection_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "reflection_refused",
         "compiler reflection fact not in text",
@@ -27774,7 +27774,7 @@ fn generic_instantiation_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "generic_instantiation_refused",
         "runtime generic instantiation boundary",
@@ -27802,7 +27802,7 @@ fn future_handoff_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "future_handoff_refused",
         "runtime future handoff boundary",
@@ -27835,7 +27835,7 @@ fn runtime_searcher_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "runtime_searcher_refused",
         "runtime state-machine boundary",
@@ -27860,7 +27860,7 @@ fn runtime_match_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "runtime_match_refused",
         "runtime non-scalar call-result boundary",
@@ -27886,7 +27886,7 @@ fn opaque_iterator_collection_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "opaque_iterator_collection_refused",
         "opaque runtime iterator collection",
@@ -28029,7 +28029,7 @@ fn successors_literal_twin() {
         ),
     ] {
         let doc = run_rpc_lift(path, source);
-        assert_rpc_source_refused(&doc, target, category);
+        assert_rpc_source_boundary(&doc, target, category);
         assert_rpc_source_warranted(&doc, literal_twin);
     }
 }
@@ -28052,7 +28052,7 @@ fn array_chunks_count_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "test_iterator_array_chunks_count",
         "array repeat non-literal length",
@@ -28234,7 +28234,7 @@ fn cloned_literal_try_fold_twin() {
 }
 "#,
     );
-    assert_rpc_source_refused(&doc, "test_cloned_try_folds", "consumed iterator state");
+    assert_rpc_source_boundary(&doc, "test_cloned_try_folds", "consumed iterator state");
     assert_rpc_source_warranted(&doc, "cloned_literal_try_fold_twin");
 }
 
@@ -28258,7 +28258,7 @@ fn runtime_callable_element_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "runtime_callable_element_refused",
         "runtime callable element boundary",
@@ -28285,7 +28285,7 @@ fn type_inferred_parse_literal_twin() {
 
     // The source syntax still does not carry the parser target type; #2813-style
     // consumer truth is to preserve the named refusal, while the turbofished twin warrants.
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "type_inferred_parse_refused",
         "type-inferred runtime parser boundary",
@@ -28320,17 +28320,17 @@ fn literal_range_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "literal_unbounded_range_refused",
         "literal range enumeration boundary",
     );
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "literal_runtime_range_bound_refused",
         "literal range enumeration boundary",
     );
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "literal_char_range_refused",
         "literal range enumeration boundary",
@@ -28648,7 +28648,7 @@ fn mutating_closure_value_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "mutating_closure_value_refused",
         "mutation/side effect",
@@ -28673,7 +28673,7 @@ fn nan_comparison_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
+    assert_rpc_source_boundary(
         &doc,
         "nan_comparison_refused",
         "IEEE NaN comparison boundary",
@@ -34309,11 +34309,11 @@ fn slice_tuple_pattern_destructure_literal_sources_have_teeth() {
 fn slice_tuple_pattern_destructure_runtime_sources_are_named_refused() {
     for (label, assertion) in [
         (
-            "slice_pattern_runtime_source_refused",
+            "slice_pattern_runtime_source_boundary",
             "fn runtime_arr() -> [i32; 2] { [std::process::id() as i32, 2_i32] } let [a, b] = runtime_arr(); assert_eq!(a, 1_i32);",
         ),
         (
-            "tuple_pattern_runtime_source_refused",
+            "tuple_pattern_runtime_source_boundary",
             "fn runtime_tup() -> (i32, i32) { (1_i32, std::process::id() as i32) } let (x, y) = runtime_tup(); assert_eq!(y, 2_i32);",
         ),
     ] {

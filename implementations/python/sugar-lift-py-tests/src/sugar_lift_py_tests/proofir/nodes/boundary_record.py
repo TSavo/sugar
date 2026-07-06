@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.effect import (
-    DigRefusalEffect,
+    DigBoundaryEffect,
     Effect,
     FactoryGapEffect,
     RuntimeEffect,
@@ -14,7 +14,7 @@ from sugar_lift_py_tests.effect import (
     require_effect,
 )
 from sugar_lift_py_tests.factory import FactoryGap
-from sugar_lift_py_tests.factory.dig_refusal import DigRefusal
+from sugar_lift_py_tests.factory.dig_boundary import DigBoundary
 from sugar_lift_py_tests.ir import _json_like_to_value, eq, make_var, num
 from sugar_lift_py_tests.outcome import Incomplete
 
@@ -35,15 +35,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, init=False)
 class BoundaryRecord:
-    """A typed-effect record with grounds, not a lift-side refusal.
-
-    #3632 batch 4: this node was previously named `RefusalRecord`. `refusal
-    -record` was previously named that in its emitted wire ``"kind"`` and
-    that string is now ``"boundary-record"``. `RefusalRecord` remains a
-    compatibility alias below for existing importers; no in-tree reader
-    matches the wire ``"kind"`` field by value, so there is no dual-read
-    seam required for this rename (unlike the dig-boundary wire kind).
-    """
+    """A typed-effect record with grounds, not a lift-side refusal."""
 
     node_class: ClassVar[str] = "BoundaryRecord"
 
@@ -86,7 +78,7 @@ class BoundaryRecord:
     @classmethod
     def from_gap(
         cls,
-        gap: FactoryGap | DigRefusal,
+        gap: FactoryGap | DigBoundary,
         *,
         provenance: Provenance,
     ) -> BoundaryRecord:
@@ -95,12 +87,12 @@ class BoundaryRecord:
                 effect=FactoryGapEffect.from_gap(gap),
                 provenance=provenance,
             )
-        if isinstance(gap, DigRefusal):
+        if isinstance(gap, DigBoundary):
             return cls(
-                effect=DigRefusalEffect.from_refusal(gap),
+                effect=DigBoundaryEffect.from_refusal(gap),
                 provenance=provenance,
             )
-        raise TypeError("BoundaryRecord.from_gap requires FactoryGap or DigRefusal")
+        raise TypeError("BoundaryRecord.from_gap requires FactoryGap or DigBoundary")
 
     def denotation(self) -> None:
         return None
@@ -110,10 +102,6 @@ class BoundaryRecord:
 
     def to_declaration(self) -> dict[str, Any]:
         return {
-            # #3632 batch 4: this "kind" was previously "refusal-record".
-            # No in-tree reader matches this field by value; the new CID
-            # this node produces is expected to differ from CIDs minted
-            # before this rename.
             "kind": "boundary-record",
             "effectKind": self.effect_kind,
             "reason": self.reason,
@@ -121,10 +109,10 @@ class BoundaryRecord:
         }
 
     @staticmethod
-    def dig_refusal_diagnostic(refusal: DigRefusal) -> dict[str, Any]:
-        if not isinstance(refusal, DigRefusal):
-            raise TypeError("dig_refusal_diagnostic requires DigRefusal")
-        return DigRefusalEffect.from_refusal(refusal).to_diagnostic()
+    def dig_boundary_diagnostic(refusal: DigBoundary) -> dict[str, Any]:
+        if not isinstance(refusal, DigBoundary):
+            raise TypeError("dig_boundary_diagnostic requires DigBoundary")
+        return DigBoundaryEffect.from_refusal(refusal).to_diagnostic()
 
     @staticmethod
     def agreement_violation_diagnostic(
@@ -215,7 +203,4 @@ def _fact_and_refusal_refuses(cls: type[BoundaryRecord]) -> BoundaryRecord:
     )
 
 
-# Compatibility alias: pre-batch-4 code imports `RefusalRecord`.
-RefusalRecord = BoundaryRecord
-
-__all__ = ["BoundaryRecord", "RefusalRecord"]
+__all__ = ["BoundaryRecord"]

@@ -15,9 +15,9 @@ class FloorContractAgreementViolation:
     reason: str
 
     def to_json(self) -> dict[str, Any]:
-        from sugar_lift_py_tests.proofir.nodes.refusal_record import RefusalRecord
+        from sugar_lift_py_tests.proofir.nodes.boundary_record import BoundaryRecord
 
-        return RefusalRecord.agreement_violation_diagnostic(self)
+        return BoundaryRecord.agreement_violation_diagnostic(self)
 
 
 def floor_contract_agreement_diagnostic(

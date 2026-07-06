@@ -7778,7 +7778,7 @@ fn source_ledger_for_loci(loci: &[Value]) -> Value {
         "source_loci": loci.len(),
         "source_warranted": count("warranted"),
         "source_support": count("support"),
-        "source_refused": count("refused"),
+        "source_boundary": count("refused"),
         "source_inactive": count("inactive"),
         "source_refuted": count("refuted"),
         "unclassified_source": count("unclassified"),

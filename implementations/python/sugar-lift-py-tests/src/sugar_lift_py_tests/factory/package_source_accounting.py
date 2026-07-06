@@ -15,15 +15,10 @@ _LEDGER_KEYS = (
     "source_warranted",
     "source_inactive",
     "source_support",
-    "source_refused",
     "source_boundary",
     "source_unresolved",
     "unclassified_source",
 )
-# `source_refused` is the legacy wire key (implementations/rust/sugar-cli reads
-# it directly from lift/diff JSON). `source_boundary` is the #3632 typed-effect
-# vocabulary name for the same count; emit both, forever, so old and new
-# readers agree without a coordinated cross-language flip.
 
 
 def package_source_audits_for_source(
@@ -258,7 +253,6 @@ def _account_locus(
     elif status == "unresolved":
         totals["source_unresolved"] += 1
     elif status == "refused":
-        totals["source_refused"] += 1
         totals["source_boundary"] += 1
     else:
         totals["unclassified_source"] += 1

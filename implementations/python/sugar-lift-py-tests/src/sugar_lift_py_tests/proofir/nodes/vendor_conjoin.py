@@ -15,7 +15,7 @@ from . import (
     _witness_provenance,
 )
 from .equality_fact import EqualityFact
-from .refusal_record import RefusalRecord
+from .boundary_record import BoundaryRecord
 from .universe_mint import UniverseMint
 
 
@@ -43,7 +43,7 @@ class VendorConjoin(ProofIRNode):
 
     fact: FactAtom | None = field(init=False)
     universe: UniverseAtom | None = field(init=False)
-    refusal: RefusalRecord | None = field(init=False)
+    refusal: BoundaryRecord | None = field(init=False)
     _provenance: Provenance = field(init=False, repr=False)
 
     def __init__(
@@ -51,13 +51,13 @@ class VendorConjoin(ProofIRNode):
         *,
         fact: FactAtom | None = None,
         universe: UniverseAtom | None = None,
-        refusal: RefusalRecord | None = None,
+        refusal: BoundaryRecord | None = None,
         provenance: Provenance,
     ) -> None:
         _require_provenance(provenance, owner=self.node_class)
         if refusal is not None:
-            if not isinstance(refusal, RefusalRecord):
-                raise TypeError("VendorConjoin refusal must be RefusalRecord")
+            if not isinstance(refusal, BoundaryRecord):
+                raise TypeError("VendorConjoin refusal must be BoundaryRecord")
             if fact is not None or universe is not None:
                 _proofir_gap(
                     owner=self.node_class,

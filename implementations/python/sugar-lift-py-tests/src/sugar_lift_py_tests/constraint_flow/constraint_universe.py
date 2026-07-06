@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .constraint_dig_request import ConstraintDigRequest
-from ..factory.dig_refusal import DigRefusal
+from ..factory.dig_boundary import DigBoundary
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class ConstraintUniverse:
     source_memento: dict[str, Any]
     sugar_chain: list[str]
     warranted_by: ConstraintDigRequest
-    dig_refusals: list[DigRefusal]
+    dig_refusals: list[DigBoundary]
 
     def to_json(self) -> dict[str, Any]:
         return {
