@@ -17,7 +17,13 @@ fn test_withdraw_does_not_go_negative() {
 }
 
 // Stand-in declarations so the file compiles without a real crate dep.
-fn deposit(balance: i64, amount: i64) -> i64 { balance + amount }
+fn deposit(balance: i64, amount: i64) -> i64 {
+    balance + amount
+}
 fn withdraw(balance: i64, amount: i64) -> i64 {
-    if amount > balance { balance } else { balance - amount }
+    if amount > balance {
+        balance
+    } else {
+        balance - amount
+    }
 }
