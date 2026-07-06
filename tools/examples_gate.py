@@ -109,6 +109,13 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
         re.compile(r"good verify expected exit 0 got 1|good: expected exit 0, got 1"),
     ),
     FailurePattern(
+        "proof-gap/urlsafe-universe-missing",
+        re.compile(
+            r"consistency check vacuous: single constraint has no sibling to contradict|"
+            r"FAIL\(good\): expected discharged, statuses=\['refused'\]"
+        ),
+    ),
+    FailurePattern(
         "verdict-drift/refused-row-expectation",
         re.compile(r"expected refused rows"),
     ),

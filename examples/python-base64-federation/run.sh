@@ -70,7 +70,8 @@ check_consumer() {
   cp "$VENDOR_PROOF" "$dir/.sugar/imports/"
   (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$dir:$VENDOR:$PYTHON_SRC" "$BIN" mint --out . --quiet) >/dev/null || {
     echo "FAIL($twin): consumer mint"; return 1; }
-  (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$dir:$VENDOR:$PYTHON_SRC" "$BIN" prove . --json) >"$dir/.prove.raw" 2>&1
+  (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$dir:$VENDOR:$PYTHON_SRC" \
+    "$BIN" prove --allow-failed-components . --json) >"$dir/.prove.raw" 2>&1
   local rc=$?
   "$PYTHON" - "$dir/.prove.raw" "$twin" "$expect" "$rc" <<'PY'
 import json, re, sys

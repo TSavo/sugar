@@ -153,7 +153,7 @@ verify_suite() {
 
   echo "== verify $suite =="
   set +e
-  (cd "$dir" && "$SUGAR" verify --project . --json) > "$dir/.verify.raw" 2>&1
+  (cd "$dir" && "$SUGAR" verify --allow-failed-components --project . --json) > "$dir/.verify.raw" 2>&1
   local code=$?
   set -e
   extract_json_receipt "$dir/.verify.raw" > "$dir/.verify.json"

@@ -32,6 +32,7 @@ TARGET_DIR="${CARGO_TARGET_DIR:-$REPO/implementations/rust/target}"
 BIN="$("$REPO/bin/sugarbin" --profile release)"
 VENV="${PYTHON_URLSAFE_SEAM_VENV:-/tmp/python-urlsafe-seam-venv}"
 PYTHON="$VENV/bin/python"
+PYTHON_SRC="$REPO/implementations/python/sugar-lift-py-tests/src:$REPO/implementations/python/sugar-lift-python-source/src"
 
 [ -x "$BIN" ] || { echo "FAIL: sugar binary missing at $BIN"; exit 1; }
 
@@ -77,8 +78,9 @@ run_twin() {
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/__pycache__" 2>/dev/null
   rm -f "$dir"/.prove*.json "$dir"/.verify*.json 2>/dev/null
 
-  ( cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" mint --out . ) >/dev/null || { echo "FAIL: mint ($twin)"; return 1; }
-  ( cd "$dir" && "$BIN" verify --project . --json > .verify.json ) || true
+  ( cd "$dir" && PATH="$VENV/bin:$PATH" PYTHONPATH="$PYTHON_SRC" "$BIN" mint --out . ) >/dev/null || { echo "FAIL: mint ($twin)"; return 1; }
+  ( cd "$dir" && PATH="$VENV/bin:$PATH" PYTHONPATH="$PYTHON_SRC" \
+      "$BIN" verify --allow-failed-components --project . --json > .verify.json ) || true
   [ -s "$dir/.verify.json" ] || { echo "FAIL: no verify receipt ($twin)"; return 1; }
 
   EXPECT="$expect" TWIN="$twin" "$PYTHON" - "$REPO" "$dir/.verify.json" <<'PY' || return 1

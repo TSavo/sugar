@@ -379,26 +379,25 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 1 with terminal shape verdict-drift/expected-proven-label; work order #3589",
       "last_observed_rc": 1,
-      "last_observed_seconds": 76.256,
+      "last_observed_seconds": 43.635,
       "name": "examples/python-base64-federation/run.sh",
       "work_order_issue": 3589
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "build-failed/sugar-walk-bridge-source-symbol",
+      "failure_shape": "prove-red/bodyguard-precondition",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 101 with terminal shape build-failed/sugar-walk-bridge-source-symbol; work order #3606",
-      "last_observed_rc": 101,
-      "last_observed_seconds": 175.441,
-      "name": "examples/python-bodyguard-precondition/run.sh",
-      "work_order_issue": 3606
+      "grounds": "script exited 1 after unrelated failed components were allowed; current terminal shape is the good bounded_digit(16) suite verifying red (`good: expected exit 0, got 1`) even though the Python/Rust precondition CIDs match. Retirement: the bodyguard precondition implication seam discharges the in-range call and refutes the out-of-range twin.",
+      "last_observed_rc": 1,
+      "last_observed_seconds": 10.554,
+      "name": "examples/python-bodyguard-precondition/run.sh"
     },
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 0 in the current examples gate sweep",
+      "grounds": "script exited 0 after prove calls allowed unrelated failed components; witness package still records 8 guarded cases passed and 8 violation cases failed.",
       "last_observed_rc": 0,
-      "last_observed_seconds": 44.306,
+      "last_observed_seconds": 30.366,
       "name": "examples/python-guard-shapes/run.sh"
     },
     {
@@ -407,7 +406,7 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 1 with terminal shape verdict-drift/refused-row-expectation; work order #3591",
       "last_observed_rc": 1,
-      "last_observed_seconds": 70.814,
+      "last_observed_seconds": 33.046,
       "name": "examples/python-literal-base20/run.sh",
       "work_order_issue": 3591
     },
@@ -417,19 +416,18 @@
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
       "grounds": "script exited 1 with terminal shape verdict-drift/refused-row-expectation; work order #3591",
       "last_observed_rc": 1,
-      "last_observed_seconds": 96.396,
+      "last_observed_seconds": 35.587,
       "name": "examples/python-literal-base64/run.sh",
       "work_order_issue": 3591
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "plugin-entrypoint/stale-python-lsp-module",
+      "failure_shape": "proof-gap/urlsafe-universe-missing",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape plugin-entrypoint/stale-python-lsp-module; work order #3581",
+      "grounds": "script exited 1 after the stale python-tests-lift/LSP manifest was removed; current terminal shape is the good URL-safe twin refusing as vacuous because no URL-safe universe/sibling row is minted (`consistency check vacuous: single constraint has no sibling to contradict`). Retirement: the current Python lifter emits or imports a bridge-resolvable URL-safe alphabet universe row so the good twin discharges and the bad twin stays refused.",
       "last_observed_rc": 1,
-      "last_observed_seconds": 16.232,
-      "name": "examples/python-urlsafe-seam/run.sh",
-      "work_order_issue": 3581
+      "last_observed_seconds": 14.996,
+      "name": "examples/python-urlsafe-seam/run.sh"
     },
     {
       "expected": "NAMED_RED",

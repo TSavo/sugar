@@ -63,7 +63,7 @@ print("\nPASS: 2x4 guard-shape matrix -- one package cid, every guarded case pas
 PY
 
 echo "== prove: the verifier asks the oracle to reproduce the package (one cid) =="
-PATH="$VENV/bin:$PATH" "$BIN" prove . --json > .prove.json 2>/dev/null || true
+PATH="$VENV/bin:$PATH" "$BIN" prove --allow-failed-components . --json > .prove.json 2>/dev/null || true
 "$VENV/bin/python" - "$REPO" <<'PY'
 import sys
 
@@ -88,7 +88,7 @@ chmod +x .sugar/lying-discharge.sh
 echo "== prove (LYING DISCHARGE): stdout says DISCHARGED, package body still has failed outcomes =="
 PATH="$VENV/bin:$PATH" \
   SUGAR_WITNESS_DISCHARGE_PYTEST="$HERE/.sugar/lying-discharge.sh" \
-  "$BIN" prove . --json > .prove_lie.json 2>/dev/null || true
+  "$BIN" prove --allow-failed-components . --json > .prove_lie.json 2>/dev/null || true
 "$VENV/bin/python" - "$REPO" <<'PY'
 import sys
 
