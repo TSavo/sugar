@@ -26,6 +26,7 @@ from sugar_lift_py_tests.ir import (
     make_var,
     not_,
     num,
+    or_,
     str_const,
 )
 from sugar_lift_py_tests.operations import ContainsOperation, perform_operation
@@ -44,6 +45,14 @@ FALSE_CONST = {
     "sort": {"kind": "primitive", "name": "Bool"},
     "value": False,
 }
+
+
+def _int_const(value: int) -> dict:
+    return {
+        "kind": "const",
+        "sort": {"kind": "primitive", "name": "Int"},
+        "value": value,
+    }
 
 
 def _reduce_assertion_with_operation_log(source: str, binds: dict | None = None):
@@ -211,6 +220,78 @@ def test_membership_assertion_uses_array_floor_contains() -> None:
         "kind": "atomic",
         "name": "=",
         "args": [TRUE_CONST, TRUE_CONST],
+    }
+
+
+def test_membership_assertion_emits_symbolic_array_contains_disjunction() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert result_year in [1973, 1999]",
+        {"result_year": SymbolicValue(make_var("result_year"))},
+    )
+
+    assert formula == or_(
+        [
+            eq(make_var("result_year"), num(1973)),
+            eq(make_var("result_year"), num(1999)),
+        ]
+    )
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation"),
+    ]
+
+
+def test_membership_assertion_negates_symbolic_array_not_in_disjunction() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert result_year not in [1973, 1999]",
+        {"result_year": SymbolicValue(make_var("result_year"))},
+    )
+
+    assert formula == not_(
+        or_(
+            [
+                eq(make_var("result_year"), num(1973)),
+                eq(make_var("result_year"), num(1999)),
+            ]
+        )
+    )
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation"),
+    ]
+
+
+def test_membership_assertion_array_symbolic_disjunction_reaches_production_cli(
+    tmp_path: Path,
+) -> None:
+    result = run_source_through_real_solver(
+        tmp_path / "array-symbolic-membership",
+        (
+            "def test_array_symbolic_membership(result_year):\n"
+            "    assert result_year in [1973, 1999]\n"
+        ),
+    )
+
+    assert "ArrayLiteralSugar" in result.selected_sugars
+    assert "MembershipAssertionSugar" in result.selected_sugars
+    assert _first_contract_inv(result.lift_doc) == {
+        "kind": "or",
+        "operands": [
+            {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "result_year"},
+                    _int_const(1973),
+                ],
+            },
+            {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "result_year"},
+                    _int_const(1999),
+                ],
+            },
+        ],
     }
 
 
