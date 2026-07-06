@@ -22,14 +22,24 @@
 /// The canonical algorithm prefix carried by every CID string.
 const HASH_TAG: &str = "blake3-512";
 
+/// Format a CID string as a filesystem-safe stem: `blake3-512:<hex>` becomes
+/// `blake3-512_<hex>`. The colon (illegal on Windows) is replaced by an
+/// underscore; the algorithm prefix is retained so the stem stays
+/// self-describing (crypto-agility / multihash discipline). Robust if the
+/// CID already has no colon. This is the ONE place that owns the
+/// colon-to-underscore filename transform; every on-disk filename derived
+/// from a CID (`.proof`, `.witness`, cache files, report artifacts, ...)
+/// routes through this helper rather than reimplementing the replacement.
+pub fn cid_filename_stem(cid: &str) -> String {
+    cid.replace(':', "_")
+}
+
 /// Format an on-disk `.proof` filename from a CID string.
 ///
-/// `blake3-512:<hex>` becomes `blake3-512_<hex>.proof`. The colon (illegal
-/// on Windows) is replaced by an underscore; the algorithm prefix is
-/// retained so the filename stays self-describing (crypto-agility /
-/// multihash discipline). Robust if the CID already has no colon.
+/// `blake3-512:<hex>` becomes `blake3-512_<hex>.proof`. See
+/// [`cid_filename_stem`] for the underlying transform.
 pub fn proof_filename(cid: &str) -> String {
-    format!("{}.proof", cid.replace(':', "_"))
+    format!("{}.proof", cid_filename_stem(cid))
 }
 
 /// Parse a `.proof` filename stem (the part before `.proof`) back into the

@@ -55,7 +55,7 @@ use crate::witness_verify;
 use clap::Parser;
 use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, encode_jcs};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs};
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_ir_compiler::CompilerInput;
 use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_sign_string};
@@ -1412,7 +1412,7 @@ fn mint_verification_witness(
 
     let bytes =
         serde_json::to_string_pretty(&witness).map_err(|e| format!("serialize witness: {e}"))?;
-    let hex = cid.trim_start_matches("blake3-512:");
+    let hex = cid_hex(&cid).unwrap_or(&cid);
     let path = witness_dir.join(format!("witness-{hex}.json"));
     std::fs::write(&path, format!("{bytes}\n"))
         .map_err(|e| format!("write {}: {e}", path.display()))?;
@@ -1699,7 +1699,7 @@ fn format_witness_replay_report(witnesses: &[witness_verify::WitnessVerifyResult
 }
 
 fn short_cid(cid: &str) -> String {
-    let hex = cid.trim_start_matches("blake3-512:");
+    let hex = cid_hex(cid).unwrap_or(cid);
     let take: String = hex.chars().take(16).collect();
     format!("blake3-512:{take}...")
 }
@@ -1957,7 +1957,7 @@ mod tests {
         .expect("witness mint must succeed");
         assert!(cid.starts_with("blake3-512:"));
         // The witness file exists and re-parses as a WitnessMemento.
-        let hex = cid.trim_start_matches("blake3-512:");
+        let hex = cid_hex(&cid).unwrap_or(&cid);
         let path = tmp.join(format!("witness-{hex}.json"));
         let bytes = std::fs::read_to_string(&path).expect("witness file written");
         let parsed: sugar_ir_types::WitnessMemento =

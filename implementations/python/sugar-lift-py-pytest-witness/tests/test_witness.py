@@ -21,6 +21,7 @@ from sugar_lift_py_tests.witness_oracle import (
     WitnessOracleRefusal,
     resolve_witness,
 )
+from sugar_lift_py_tests.filename import cid_filename
 
 GOOD = "def add(a, b):\n    return a + b\n"
 BAD = "def add(a, b):\n    return a + b + 1\n"
@@ -160,7 +161,7 @@ def test_package_writes_cid_named_witness_files(tmp_path):
     paths = write_witness_package([w], str(pkg))
     # the filename IS the CID (":" -> "_"), extension ".witness"
     assert len(paths) == 1
-    assert os.path.basename(paths[0]) == w.cid.replace(":", "_") + ".witness"
+    assert os.path.basename(paths[0]) == cid_filename(w.cid, ".witness")
 
 
 def test_package_body_content_addresses_to_the_pinned_cid(tmp_path):

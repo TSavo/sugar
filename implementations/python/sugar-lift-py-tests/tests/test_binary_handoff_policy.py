@@ -10,6 +10,8 @@ import time
 import tokenize
 from pathlib import Path
 
+from sugar_lift_py_tests.filename import cid_filename_stem
+
 ROOT = Path(__file__).resolve().parents[4]
 SUGARBIN = ROOT / "bin" / "sugarbin"
 PY_KIT_ROOTS = (
@@ -432,7 +434,7 @@ def test_sugarbin_publish_uploads_stamp_named_assets(tmp_path: Path) -> None:
     binary = target / "release" / "sugar"
     binary.parent.mkdir(parents=True)
     stamp = "blake3-512:" + ("a" * 128)
-    artifact_stamp = stamp.replace(":", "_")
+    artifact_stamp = cid_filename_stem(stamp)
     _write_fake_sugar(binary, stamp)
 
     fake_bin = tmp_path / "bin"

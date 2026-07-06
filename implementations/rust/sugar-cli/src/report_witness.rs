@@ -454,7 +454,7 @@ pub(crate) fn mint_witness_bundle(
     let evidence_file = out_dir.join(format!(
         "{}-{}.json",
         sanitize_filename(&name),
-        witness_cid.trim_start_matches("blake3-512:")
+        cid_hex(witness_cid).unwrap_or(witness_cid)
     ));
     let evidence_bytes = serde_json::to_vec_pretty(&witness_body)
         .map_err(|e| format!("serialize report witness body: {e}"))?;
@@ -616,7 +616,7 @@ fn jcs_cid(value: &Json) -> String {
 
 fn deterministic_signer_seed(principal: &str) -> Ed25519Seed {
     let digest = blake3_512_of(format!("sugar-signer:{principal}").as_bytes());
-    let hex = digest.trim_start_matches("blake3-512:");
+    let hex = cid_hex(&digest).unwrap_or(&digest);
     let mut seed = [0u8; 32];
     for i in 0..32 {
         seed[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap_or(0);

@@ -21,6 +21,7 @@ from sugar_lift_py_tests.ir import (
     declarations_to_value,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs, blake3_512_of
+from sugar_lift_py_tests.filename import cid_filename
 
 import base64
 
@@ -327,7 +328,7 @@ def handle_resolve_witness(msg_id: Any, params: dict) -> None:
                 if os.path.isabs(package_dir)
                 else os.path.join(ws or ".", package_dir)
             )
-            path = os.path.join(pdir, cid.replace(":", "_") + ".witness")
+            path = os.path.join(pdir, cid_filename(cid, ".witness"))
             if os.path.isfile(path):
                 with open(path, "rb") as f:
                     body = f.read()

@@ -2014,7 +2014,7 @@ fn callsite_actual_terms(cs: &CallSite) -> Vec<Json> {
 }
 
 fn short(s: &str) -> String {
-    let cleaned = s.trim_start_matches("blake3-512:");
+    let cleaned = sugar_canonicalizer::cid_hex(s).unwrap_or(s);
     let take: String = cleaned.chars().take(12).collect();
     format!("blake3-512:{take}...")
 }
@@ -2219,9 +2219,11 @@ fn mint_and_cache(
     };
     let built = build_proof_envelope(&proof_input);
 
-    // Colon is illegal in Windows filenames; replace it with `_` while
-    // keeping the `blake3-512` algorithm prefix (multihash discipline).
-    let fname = format!("{}-{}.proof", property_hash.replace(':', "_"), safe_prover);
+    let fname = format!(
+        "{}-{}.proof",
+        sugar_proof_envelope::cid_filename_stem(&property_hash),
+        safe_prover
+    );
     let path = cache_dir.join(fname);
     std::fs::write(path, built.bytes)?;
 
@@ -2548,7 +2550,7 @@ mod consistency_owned_callsite_tests {
 
         let path = cache_dir.join(format!(
             "{}-forged-flat.proof",
-            property_hash.replace(':', "_")
+            sugar_proof_envelope::cid_filename_stem(&property_hash)
         ));
         std::fs::write(path, proof_bytes).expect("write forged cache proof");
         pubkey

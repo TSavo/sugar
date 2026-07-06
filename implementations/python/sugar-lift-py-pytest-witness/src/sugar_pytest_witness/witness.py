@@ -35,6 +35,7 @@ from sugar_lift_py_tests.canonicalizer import (
     vobj,
     vstr,
 )
+from sugar_lift_py_tests.filename import cid_filename, proof_filename
 
 
 def code_cid(project_dir: str, code_files: List[str]) -> str:
@@ -265,12 +266,6 @@ def witness_body(w: "Witness") -> bytes:
     ).encode("utf-8")
 
 
-def _cid_filename(cid: str, ext: str) -> str:
-    """CID -> on-disk filename. The name IS the CID; ``:`` -> ``_`` because
-    filesystems reject the colon (the convention `.proof` files already use)."""
-    return cid.replace(":", "_") + ext
-
-
 def write_witness_package(witnesses: List["Witness"], out_dir: str) -> List[str]:
     """Write a witness package: one `<cid>.witness` file per witness, content =
     the bytes the CID addresses. Returns the paths written. This is the
@@ -285,7 +280,7 @@ def write_witness_package(witnesses: List["Witness"], out_dir: str) -> List[str]
                 f"witness body does not address to its CID: computed "
                 f"{blake3_512_of(body)}, pinned {w.cid}"
             )
-        path = os.path.join(out_dir, _cid_filename(w.cid, ".witness"))
+        path = os.path.join(out_dir, cid_filename(w.cid, ".witness"))
         with open(path, "wb") as f:
             f.write(body)
         paths.append(path)
@@ -301,12 +296,12 @@ def read_witness_body(witness_cid: str, package_dir: str) -> bytes:
     any multi-witness ``.witness`` BUNDLE in the dir (the per-test, whole-suite
     shape). Either way the caller re-blake3's the bytes, so this is just a lookup.
     """
-    path = os.path.join(package_dir, _cid_filename(witness_cid, ".witness"))
+    path = os.path.join(package_dir, cid_filename(witness_cid, ".witness"))
     if os.path.isfile(path):
         with open(path, "rb") as f:
             return f.read()
     for name in sorted(os.listdir(package_dir)):
-        if not name.endswith(".witness") or name == _cid_filename(
+        if not name.endswith(".witness") or name == cid_filename(
             witness_cid, ".witness"
         ):
             continue
@@ -518,7 +513,7 @@ def emit_witness_proof(w: Witness, out_dir: str) -> str:
     """Write the witness as a content-addressed ``.proof`` (filename = its CID)."""
     val = _witness_envelope_value(w)
     envelope_cid = jcs_hash(val)
-    path = os.path.join(out_dir, envelope_cid.replace(":", "_") + ".proof")
+    path = os.path.join(out_dir, proof_filename(envelope_cid))
     with open(path, "w", encoding="utf-8") as f:
         f.write(encode_jcs(val))
     return path

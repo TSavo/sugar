@@ -181,3 +181,13 @@ def blake3_512_of(data: bytes) -> str:
 def jcs_hash(v: Value) -> str:
     """Convenience: ``blake3_512_of(encode_jcs(v).encode('utf-8'))``."""
     return blake3_512_of(encode_jcs(v).encode("utf-8"))
+
+
+def cid_hex(cid: str) -> str | None:
+    """Strip the ``blake3-512:`` prefix off a CID string, returning the bare
+    128-char hex body. Mirrors ``sugar_canonicalizer::cid_hex`` (Rust): the
+    ONE place that owns stripping the algorithm prefix in memory. Returns
+    ``None`` if ``cid`` does not carry the canonical colon-prefixed form."""
+    if cid.startswith(BLAKE3_512_PREFIX):
+        return cid[len(BLAKE3_512_PREFIX) :]
+    return None

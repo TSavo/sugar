@@ -30,6 +30,7 @@ from sugar_lift_py_tests.canonicalizer import (
     vobj,
     vstr,
 )
+from sugar_lift_py_tests.filename import cid_filename
 
 BUILD_WITNESS_KIND = "build-witness"
 DEFAULT_MANIFEST = "build-witness.json"
@@ -275,10 +276,6 @@ def build_witness_memento(w: BuildWitness, seed: bytes | None = None) -> dict[st
         "source_tree_cid": w.source_tree_cid,
         "toolchain_id": w.toolchain_id,
     }
-
-
-def cid_filename(cid: str, ext: str) -> str:
-    return cid.replace(":", "_") + ext
 
 
 def write_witness_package(w: BuildWitness, out_dir: str) -> str:
