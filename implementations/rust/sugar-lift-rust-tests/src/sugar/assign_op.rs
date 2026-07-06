@@ -3082,7 +3082,8 @@ mod tests {
         let compound: Expr = syn::parse_quote!(*a += 1);
         assert!(state.apply_with_trace(&compound, false));
         assert!(
-            state.replayed_mutable_alias_base("buf") && state.unknown_mutation_reason("buf").is_none(),
+            state.replayed_mutable_alias_base("buf")
+                && state.unknown_mutation_reason("buf").is_none(),
             "grounded element compound mutation through AliasFloor must reduce the base \
              without leaving a refusal side-set"
         );
@@ -3096,7 +3097,8 @@ mod tests {
         let exact: Expr = syn::parse_quote!(*a = 99);
         assert!(state.apply_with_trace(&exact, false));
         assert!(
-            state.replayed_mutable_alias_base("buf") && state.unknown_mutation_reason("buf").is_none(),
+            state.replayed_mutable_alias_base("buf")
+                && state.unknown_mutation_reason("buf").is_none(),
             "an exact element alias assignment establishes a fresh replayable post-state"
         );
         assert_eq!(
