@@ -142,6 +142,61 @@ def test_numpy_mod_and_floor_divide_follow_python_sign_convention(
     }
 
 
+@pytest.mark.parametrize(
+    ("op", "left", "right", "truth", "lie"),
+    [
+        ("maximum", 7, 3, 7, 3),
+        ("maximum", -7, 3, 3, -7),
+        ("maximum", 5, 5, 5, 4),
+        ("minimum", 7, 3, 3, 7),
+        ("minimum", -7, 3, -7, 3),
+        ("minimum", 5, 5, 5, 4),
+    ],
+)
+def test_numpy_maximum_and_minimum_reduce_to_sibling_fact(
+    tmp_path: Path,
+    op: str,
+    left: int,
+    right: int,
+    truth: int,
+    lie: int,
+) -> None:
+    """np.maximum/np.minimum over integer literals are total, dtype-safe order
+    comparisons; the kit computes them with Python's own ``max``/``min`` and
+    never imports or executes numpy."""
+
+    truthful = _run_numpy_binary_case(
+        tmp_path / f"{op}-{left}-{right}-truthful",
+        op,
+        left,
+        right,
+        truth,
+    )
+    lying = _run_numpy_binary_case(
+        tmp_path / f"{op}-{left}-{right}-lying",
+        op,
+        left,
+        right,
+        lie,
+    )
+    observed = {"truthful": truthful.to_json(), "lying": lying.to_json()}
+    print(json.dumps(observed, indent=2, sort_keys=True))
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+    truthful_rows = _numpy_euf_rows(truthful.result, f"numpy.{op}")
+    assert _rhs_values(truthful_rows) == [truth]
+    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+
+    lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
+    assert _rhs_values(lying_rows) == sorted({truth, lie})
+    assert {_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
+        truth: {"Derived"},
+        lie: {"Stated"},
+    }
+
+
 def test_numpy_power_reduces_only_when_integer_result_is_int64_exact(
     tmp_path: Path,
 ) -> None:

@@ -454,7 +454,7 @@ pub(crate) fn mint_witness_bundle(
     let evidence_file = out_dir.join(format!(
         "{}-{}.json",
         sanitize_filename(&name),
-        cid_hex(witness_cid).unwrap_or(witness_cid)
+        cid_hex(&witness_cid).unwrap_or(&witness_cid)
     ));
     let evidence_bytes = serde_json::to_vec_pretty(&witness_body)
         .map_err(|e| format!("serialize report witness body: {e}"))?;
