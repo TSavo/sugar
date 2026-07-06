@@ -599,7 +599,7 @@ def test_refusal_record_has_no_formula_and_fact_plus_refusal_is_unconstructible(
         Incomplete(RuntimeEffect("opaque runtime effect")),
         provenance=_derived_provenance("BoundaryRecord"),
     )
-    assert BoundaryRecord.__module__.endswith(".proofir.nodes.refusal_record")
+    assert BoundaryRecord.__module__.endswith(".proofir.nodes.boundary_record")
     assert not isinstance(record, ProofIRNode)
     assert record.denotation() is None
     assert record.cid().startswith("blake3-512:")

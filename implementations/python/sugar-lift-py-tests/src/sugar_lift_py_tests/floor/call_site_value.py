@@ -103,7 +103,7 @@ class CallSiteValue(FloorValue):
                 observed="callsite value demand budget exhausted",
                 fix=(
                     f"callsite `{self.target_name}` exceeded force_floor dig budget "
-                    f"{budget}; leave the bridge as axiomatic and record a DigRefusal"
+                    f"{budget}; leave the bridge as axiomatic and record a DigBoundary"
                 ),
             )
         if key in seen:
@@ -113,7 +113,7 @@ class CallSiteValue(FloorValue):
                 observed="recursive callsite value demand",
                 fix=(
                     f"callsite `{self.target_name}` recursively demanded its own "
-                    "floor; leave the bridge as axiomatic and record a DigRefusal"
+                    "floor; leave the bridge as axiomatic and record a DigBoundary"
                 ),
             )
         if (body := self.body) is None:
@@ -147,7 +147,7 @@ class CallSiteValue(FloorValue):
                 observed="Incomplete",
                 fix=(
                     f"callsite `{self.target_name}` reduced to a runtime effect: "
-                    f"{outcome.reason}; leave the floor absent and record a DigRefusal"
+                    f"{outcome.reason}; leave the floor absent and record a DigBoundary"
                 ),
             )
         value = complete_value(outcome, owner=owner)

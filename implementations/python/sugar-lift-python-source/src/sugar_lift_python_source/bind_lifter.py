@@ -653,16 +653,13 @@ def _keyword_str_list(call: ast.Call, name: str) -> list[str] | None:
 
 
 # #3632: the source-level decorator that marks "this concept surface is
-# uncovered, here is why, and what closing it would unlock" was originally
-# spelled `@refuse(...)`. REFUSE is the verifier's verb, not the lifter's, so
-# new source should spell it `@concept_gap(...)`. Existing source using the
-# legacy `@refuse(...)` spelling is accepted forever -- old proofs and
-# already-written sugar files never need to change.
-_CONCEPT_GAP_DECORATOR_NAMES = ("concept_gap", "refuse")
+# uncovered, here is why, and what closing it would unlock" is spelled
+# `@concept_gap(...)`. REFUSE is the verifier's verb, not the lifter's.
+_CONCEPT_GAP_DECORATOR_NAMES = ("concept_gap",)
 
 
 def _is_concept_gap_func(func: ast.expr) -> bool:
-    """Return True for @concept_gap(...)/@refuse(...) or their @sugar.* forms."""
+    """Return True for @concept_gap(...) or its @sugar.* form."""
     if isinstance(func, ast.Name):
         return func.id in _CONCEPT_GAP_DECORATOR_NAMES
     if isinstance(func, ast.Attribute) and func.attr in _CONCEPT_GAP_DECORATOR_NAMES:
@@ -677,7 +674,7 @@ def _concept_gap_memento_for_class(
     diagnostics: list[Json],
 ) -> Json | None:
     """Emit a concept-gap-memento IR record for an empty class decorated with
-    @concept_gap(...) (or the legacy @refuse(...) spelling)."""
+    @concept_gap(...)."""
     for decorator in node.decorator_list:
         if not isinstance(decorator, ast.Call) or not _is_concept_gap_func(
             decorator.func

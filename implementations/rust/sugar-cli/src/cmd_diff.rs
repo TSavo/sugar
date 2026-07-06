@@ -188,7 +188,7 @@ pub struct Residual {
     pub source_loci: Option<i64>,
     pub source_warranted: Option<i64>,
     pub source_support: Option<i64>,
-    pub source_refused: Option<i64>,
+    pub source_boundary: Option<i64>,
     pub source_inactive: Option<i64>,
     pub source_refuted: Option<i64>,
     pub unclassified_source: Option<i64>,
@@ -206,7 +206,7 @@ impl Residual {
         let source_loci = optional_field("source_loci");
         let source_warranted = optional_field("source_warranted");
         let source_support = optional_field("source_support");
-        let source_refused = optional_field("source_refused");
+        let source_boundary = optional_field("source_boundary");
         let source_inactive = optional_field("source_inactive");
         let source_refuted = optional_field("source_refuted");
         let obsolete_source_work = optional_field("source_work");
@@ -220,7 +220,7 @@ impl Residual {
         let has_source_axis = source_loci.is_some()
             || source_warranted.is_some()
             || source_support.is_some()
-            || source_refused.is_some()
+            || source_boundary.is_some()
             || source_inactive.is_some()
             || source_refuted.is_some()
             || obsolete_source_work.is_some()
@@ -240,7 +240,7 @@ impl Residual {
             source_loci,
             source_warranted,
             source_support,
-            source_refused,
+            source_boundary,
             source_inactive,
             source_refuted,
             // Optional: absent on assertion-only ledgers. Once present, diff
@@ -269,7 +269,7 @@ impl Residual {
         self.source_loci.is_some()
             || self.source_warranted.is_some()
             || self.source_support.is_some()
-            || self.source_refused.is_some()
+            || self.source_boundary.is_some()
             || self.source_inactive.is_some()
             || self.source_refuted.is_some()
             || self.unclassified_source.is_some()
@@ -471,9 +471,9 @@ fn source_axis_summary(before: &Residual, after: &Residual) -> String {
     );
     push_source_axis_part(
         &mut parts,
-        "refused",
-        before.source_refused,
-        after.source_refused,
+        "boundary",
+        before.source_boundary,
+        after.source_boundary,
     );
     push_source_axis_part(
         &mut parts,
@@ -825,7 +825,7 @@ mod tests {
             "refused": 20, "unaccounted": 0,
             "source_loci": 48,
             "source_warranted": 8,
-            "source_refused": 21,
+            "source_boundary": 21,
             "source_inactive": 19,
             "source_refuted": 0,
             "unclassified_source": 2
@@ -836,7 +836,7 @@ mod tests {
             "refused": 20, "unaccounted": 0,
             "source_loci": 48,
             "source_warranted": 10,
-            "source_refused": 22,
+            "source_boundary": 22,
             "source_inactive": 16,
             "source_refuted": 0,
             "unclassified_source": 0
@@ -845,7 +845,7 @@ mod tests {
         let md = render_markdown(&s, Some(&(before, after)), true, true, None, false);
         assert!(md.contains("source-loci 48 → 48"), "{md}");
         assert!(md.contains("warranted 8 → 10"), "{md}");
-        assert!(md.contains("refused 21 → 22"), "{md}");
+        assert!(md.contains("boundary 21 → 22"), "{md}");
         assert!(md.contains("inactive 19 → 16"), "{md}");
         assert!(md.contains("unclassified 2 → 0"), "{md}");
     }
@@ -1027,7 +1027,7 @@ mod tests {
             source_loci: None,
             source_warranted: None,
             source_support: None,
-            source_refused: None,
+            source_boundary: None,
             source_inactive: None,
             source_refuted: None,
             unclassified_source: None,
@@ -1065,7 +1065,7 @@ mod tests {
             "source_loci": 48,
             "source_warranted": 10,
             "source_support": 3,
-            "source_refused": 22,
+            "source_boundary": 22,
             "source_inactive": 16,
             "source_refuted": 0,
             "unclassified_source": 0
@@ -1078,7 +1078,7 @@ mod tests {
         assert_eq!(r.source_loci, Some(48));
         assert_eq!(r.source_warranted, Some(10));
         assert_eq!(r.source_support, Some(3));
-        assert_eq!(r.source_refused, Some(22));
+        assert_eq!(r.source_boundary, Some(22));
         assert_eq!(r.source_inactive, Some(16));
         assert_eq!(r.unclassified_source, Some(0));
     }
@@ -1089,7 +1089,7 @@ mod tests {
             "source_loci": 4,
             "source_warranted": 1,
             "source_support": 0,
-            "source_refused": 0,
+            "source_boundary": 0,
             "source_inactive": 0,
             "source_refuted": 0,
             "unclassified_source": 3
@@ -1099,7 +1099,7 @@ mod tests {
             "source_loci": 4,
             "source_warranted": 1,
             "source_support": 2,
-            "source_refused": 0,
+            "source_boundary": 0,
             "source_inactive": 0,
             "source_refuted": 0,
             "unclassified_source": 1
@@ -1222,7 +1222,7 @@ mod tests {
             source_loci: None,
             source_warranted: None,
             source_support: None,
-            source_refused: None,
+            source_boundary: None,
             source_inactive: None,
             source_refuted: None,
             unclassified_source: None,

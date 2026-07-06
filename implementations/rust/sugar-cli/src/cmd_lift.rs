@@ -1188,7 +1188,7 @@ const SOURCE_LEDGER_FIELDS: [&str; 7] = [
     "source_loci",
     "source_warranted",
     "source_support",
-    "source_refused",
+    "source_boundary",
     "source_inactive",
     "source_unresolved",
     "unclassified_source",
@@ -1882,7 +1882,7 @@ fn source_report_from_proof_pool(
             "source_loci": source_loci,
             "source_warranted": source_loci,
             "source_support": 0,
-            "source_refused": 0,
+            "source_boundary": 0,
             "source_inactive": 0,
             "source_unresolved": 0,
         }),
@@ -3123,7 +3123,7 @@ fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, ser
         "warranted": source_count(&summary.ledger, "source_warranted"),
         "inactive": source_count(&summary.ledger, "source_inactive"),
         "support": source_count(&summary.ledger, "source_support"),
-        "refused": source_count(&summary.ledger, "source_refused"),
+        "refused": source_count(&summary.ledger, "source_boundary"),
         "unresolved": source_unresolved,
     });
     let value = serde_json::json!({
@@ -3155,7 +3155,7 @@ fn render_report_summary_human(summary: &LiftReportSummary) -> String {
         source_count(&summary.ledger, "source_warranted"),
         source_count(&summary.ledger, "source_inactive"),
         source_count(&summary.ledger, "source_support"),
-        source_count(&summary.ledger, "source_refused"),
+        source_count(&summary.ledger, "source_boundary"),
         source_unresolved,
     ));
     if summary.factory.sites > 0 {
@@ -6400,7 +6400,7 @@ fn format_counts(value: &Value) -> String {
         source_count(value, "source_warranted"),
         source_count(value, "source_inactive"),
         source_count(value, "source_support"),
-        source_count(value, "source_refused"),
+        source_count(value, "source_boundary"),
         source_unresolved_count(value),
     )
 }
@@ -7928,7 +7928,7 @@ mod tests {
                 "source_loci": 1,
                 "source_warranted": 1,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "source_unresolved": 0
             }),
@@ -8076,7 +8076,7 @@ mod tests {
             "sourceLedger": {
                 "source_loci": 80,
                 "source_warranted": 26,
-                "source_refused": 22,
+                "source_boundary": 22,
                 "source_inactive": 32,
                 "unclassified_source": 0
             },
@@ -8088,7 +8088,7 @@ mod tests {
                     "totals": {
                         "source_loci": 51,
                         "source_warranted": 11,
-                        "source_refused": 21,
+                        "source_boundary": 21,
                         "source_inactive": 19,
                         "unclassified_source": 0
                     },
@@ -8108,7 +8108,7 @@ mod tests {
                     "totals": {
                         "source_loci": 29,
                         "source_warranted": 15,
-                        "source_refused": 1,
+                        "source_boundary": 1,
                         "source_inactive": 13,
                         "unclassified_source": 0
                     },
@@ -8370,7 +8370,7 @@ mod tests {
         assert_eq!(report.source_mementos[0]["role"], "java.crc-value-pin");
         assert_eq!(report.ledger["source_loci"], 29);
         assert_eq!(report.ledger["source_warranted"], 15);
-        assert_eq!(report.ledger["source_refused"], 1);
+        assert_eq!(report.ledger["source_boundary"], 1);
         assert_eq!(report.ledger["source_inactive"], 13);
         assert_eq!(report.ledger["unclassified_source"], 0);
     }
@@ -8447,7 +8447,7 @@ mod tests {
                 "source_loci": 3,
                 "source_warranted": 1,
                 "source_support": 2,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -8460,7 +8460,7 @@ mod tests {
                         "source_loci": 3,
                         "source_warranted": 1,
                         "source_support": 2,
-                        "source_refused": 0,
+                        "source_boundary": 0,
                         "source_inactive": 0,
                         "unclassified_source": 0
                     },
@@ -8511,7 +8511,7 @@ mod tests {
                 "source_loci": 1,
                 "source_warranted": 0,
                 "source_support": 1,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -8524,7 +8524,7 @@ mod tests {
                         "source_loci": 1,
                         "source_warranted": 0,
                         "source_support": 1,
-                        "source_refused": 0,
+                        "source_boundary": 0,
                         "source_inactive": 0,
                         "unclassified_source": 0
                     },
@@ -8561,7 +8561,7 @@ mod tests {
                 "source_loci": 1,
                 "source_warranted": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "source_unresolved": 1
             },
@@ -8606,7 +8606,7 @@ mod tests {
             "sourceLedger": {
                 "source_loci": 1,
                 "source_warranted": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 1
             },
@@ -8621,7 +8621,7 @@ mod tests {
                     "totals": {
                         "source_loci": 1,
                         "source_warranted": 0,
-                        "source_refused": 0,
+                        "source_boundary": 0,
                         "source_inactive": 0,
                         "unclassified_source": 1
                     },
@@ -8660,7 +8660,7 @@ mod tests {
                 "source_loci": 5,
                 "source_warranted": 1,
                 "source_support": 2,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 2
             },
@@ -8678,7 +8678,7 @@ mod tests {
                         "source_loci": 5,
                         "source_warranted": 1,
                         "source_support": 2,
-                        "source_refused": 0,
+                        "source_boundary": 0,
                         "source_inactive": 0,
                         "unclassified_source": 2
                     },
@@ -8726,7 +8726,7 @@ mod tests {
             "sourceLedger": {
                 "source_loci": 4,
                 "source_warranted": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 4
             },
@@ -8741,7 +8741,7 @@ mod tests {
                     "totals": {
                         "source_loci": 4,
                         "source_warranted": 0,
-                        "source_refused": 0,
+                        "source_boundary": 0,
                         "source_inactive": 0,
                         "unclassified_source": 4
                     },
@@ -8790,7 +8790,7 @@ mod tests {
             "sourceLedger": {
                 "source_loci": 10,
                 "source_warranted": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 10
             },
@@ -8805,7 +8805,7 @@ mod tests {
                     "totals": {
                         "source_loci": 10,
                         "source_warranted": 0,
-                        "source_refused": 0,
+                        "source_boundary": 0,
                         "source_inactive": 0,
                         "unclassified_source": 10
                     },
@@ -9103,7 +9103,7 @@ mod tests {
             "sourceLedger": {
                 "source_loci": 1,
                 "source_warranted": 1,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -9124,7 +9124,7 @@ mod tests {
                     "totals": {
                         "source_loci": 1,
                         "source_warranted": 1,
-                        "source_refused": 0,
+                        "source_boundary": 0,
                         "source_inactive": 0,
                         "unclassified_source": 0
                     },
@@ -10377,7 +10377,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
                 "source_warranted": 1,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 1,
+                "source_boundary": 1,
                 "source_unresolved": 0
             },
             "sourceAudits": [],
@@ -10496,7 +10496,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
                 "source_warranted": 0,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 1,
+                "source_boundary": 1,
                 "source_unresolved": 0
             },
             "sourceAudits": [],
@@ -10685,7 +10685,7 @@ fn sample() {
                 "source_warranted": 0,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 1,
+                "source_boundary": 1,
                 "source_unresolved": 0
             },
             "sourceAudits": [],
@@ -10892,7 +10892,7 @@ fn sample() {
                 "source_warranted": 1,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_unresolved": 0
             },
             "sourceAudits": [],
@@ -11031,7 +11031,7 @@ fn encode_with_padding(input: &[u8], output: &mut [u8], engine: &Engine) {
                 "source_warranted": 1,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_unresolved": 0
             },
             "sourceAudits": [],
@@ -11195,7 +11195,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_warranted": 1,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_unresolved": 0
             },
             "sourceAudits": [],
@@ -11361,7 +11361,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_warranted": 1,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_unresolved": 0
             },
             "sourceAudits": [],
@@ -11531,7 +11531,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_warranted": 1,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_unresolved": 0
             },
             "factoryAuditSummary": {
@@ -11572,7 +11572,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_warranted": 0,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_unresolved": 1
             },
             "factoryAuditSummary": {
@@ -11612,7 +11612,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_warranted": 0,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_unresolved": 1
             },
             "sourceAudits": []
@@ -11647,7 +11647,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_warranted": 1,
                 "source_inactive": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_unresolved": 0
             },
             "factoryAuditSummary": {
@@ -11757,7 +11757,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 0,
                 "source_warranted": 0,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -11806,7 +11806,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 1,
                 "source_warranted": 1,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -11857,7 +11857,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 1,
                 "source_warranted": 1,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -11869,7 +11869,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                         "source_loci": 1,
                         "source_warranted": 1,
                         "source_support": 0,
-                        "source_refused": 0,
+                        "source_boundary": 0,
                         "source_inactive": 0,
                         "unclassified_source": 0
                     },
@@ -11934,7 +11934,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 1,
                 "source_warranted": 1,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -12006,7 +12006,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 1,
                 "source_warranted": 1,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -12086,7 +12086,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 1,
                 "source_warranted": 1,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -12148,7 +12148,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 1,
                 "source_warranted": 1,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
@@ -12225,7 +12225,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 3,
                 "source_warranted": 1,
                 "source_support": 1,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "source_unresolved": 1
             },
@@ -12377,7 +12377,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 1,
                 "source_warranted": 1,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             }),
@@ -12520,7 +12520,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "source_loci": 1,
                 "source_warranted": 1,
                 "source_support": 0,
-                "source_refused": 0,
+                "source_boundary": 0,
                 "source_inactive": 0,
                 "unclassified_source": 0
             },
