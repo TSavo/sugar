@@ -50,10 +50,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install system deps (z3, GNU time)
+      - name: Install system deps (z3, GNU time, b3sum)
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends z3 time
+          sudo apt-get install -y --no-install-recommends z3 time b3sum
 
       - name: Build RSS smoke binaries
         working-directory: implementations/rust
@@ -139,10 +139,10 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Install system deps (z3, maven, vampire)
+      - name: Install system deps (z3, maven, vampire, b3sum)
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends z3 maven unzip
+          sudo apt-get install -y --no-install-recommends z3 maven unzip b3sum
           # Vampire v5.0.1 prebuilt static binary (matches tools/portfolio pin) so the
           # forall-vampire showcase runs in CI for real instead of skipping.
           curl -fsSL -o /tmp/vampire.zip https://github.com/vprover/vampire/releases/download/v5.0.1/vampire-Linux-X64.zip
