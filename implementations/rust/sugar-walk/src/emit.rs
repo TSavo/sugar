@@ -247,105 +247,127 @@ impl AlgebraTerm {
         Self::op("skip", vec![Self::Unit])
     }
 
+    /// Claims each `AlgebraTerm` variant and serializes it to the matching
+    /// JSON shape, in the same order and with the same fail-fast op-CID
+    /// lookup as the original ladder. Every variant is a closed, local enum;
+    /// there is no wildcard/default arm to fall through.
     fn to_json(&self) -> Result<JsonValue, String> {
-        match self {
-            AlgebraTerm::Op { name, args } => {
-                let Some(cid) = op_cid(name) else {
-                    return Err(format!("operation `{name}` is not in the Rust signature"));
-                };
-                let args = args
-                    .iter()
-                    .map(AlgebraTerm::to_json)
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(json!({
-                    "kind": "op",
-                    "name": name,
-                    "op_cid": cid,
-                    "args": args,
-                }))
-            }
-            AlgebraTerm::Var(name) => Ok(json!({"kind": "var", "name": name})),
-            AlgebraTerm::FullyQualifiedPath(path) => Ok(json!({
+        if let AlgebraTerm::Op { name, args } = self {
+            let Some(cid) = op_cid(name) else {
+                return Err(format!("operation `{name}` is not in the Rust signature"));
+            };
+            let args = args
+                .iter()
+                .map(AlgebraTerm::to_json)
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(json!({
+                "kind": "op",
+                "name": name,
+                "op_cid": cid,
+                "args": args,
+            }));
+        }
+        if let AlgebraTerm::Var(name) = self {
+            return Ok(json!({"kind": "var", "name": name}));
+        }
+        if let AlgebraTerm::FullyQualifiedPath(path) = self {
+            return Ok(json!({
                 "concept": "concept:fully-qualified-path",
                 "kind": "fully-qualified-path",
                 "path": path,
-            })),
-            AlgebraTerm::Symbol(name) => Ok(json!({"kind": "symbol", "name": name})),
-            AlgebraTerm::List(items) => {
-                let items = items
-                    .iter()
-                    .map(AlgebraTerm::to_json)
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(json!({"kind": "list", "items": items}))
-            }
-            AlgebraTerm::Struct { name, fields } => {
-                let fields = fields
-                    .iter()
-                    .map(|(field, value)| {
-                        Ok(json!({
-                            "name": field,
-                            "value": value.to_json()?,
-                        }))
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-                Ok(json!({
-                    "kind": "struct",
-                    "name": name,
-                    "fields": fields,
-                }))
-            }
-            AlgebraTerm::ConstInt(value) => Ok(json!({
+            }));
+        }
+        if let AlgebraTerm::Symbol(name) = self {
+            return Ok(json!({"kind": "symbol", "name": name}));
+        }
+        if let AlgebraTerm::List(items) = self {
+            let items = items
+                .iter()
+                .map(AlgebraTerm::to_json)
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(json!({"kind": "list", "items": items}));
+        }
+        if let AlgebraTerm::Struct { name, fields } = self {
+            let fields = fields
+                .iter()
+                .map(|(field, value)| {
+                    Ok(json!({
+                        "name": field,
+                        "value": value.to_json()?,
+                    }))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            return Ok(json!({
+                "kind": "struct",
+                "name": name,
+                "fields": fields,
+            }));
+        }
+        if let AlgebraTerm::ConstInt(value) = self {
+            return Ok(json!({
                 "kind": "const",
                 "value": value,
                 "sort": {"kind": "ctor", "name": "Int", "args": []}
-            })),
-            AlgebraTerm::ConstBool(value) => Ok(json!({
+            }));
+        }
+        if let AlgebraTerm::ConstBool(value) = self {
+            return Ok(json!({
                 "kind": "const",
                 "value": value,
                 "sort": {"kind": "ctor", "name": "Bool", "args": []}
-            })),
-            AlgebraTerm::Unit => Ok(json!({"kind": "unit"})),
+            }));
         }
+        Ok(json!({"kind": "unit"}))
     }
 
+    /// Claims each `AlgebraTerm` variant and renders its surface form, in the
+    /// same order and with the same skip-op special case as the original
+    /// ladder's guarded first arm. Every variant is a closed, local enum;
+    /// there is no wildcard/default arm to fall through.
     fn surface(&self) -> String {
-        match self {
-            AlgebraTerm::Op { name, args }
-                if name == "skip" && matches!(args.as_slice(), [AlgebraTerm::Unit]) =>
-            {
-                "skip".to_string()
+        if let AlgebraTerm::Op { name, args } = self {
+            if name == "skip" && matches!(args.as_slice(), [AlgebraTerm::Unit]) {
+                return "skip".to_string();
             }
-            AlgebraTerm::Op { name, args } => {
-                let args = args
-                    .iter()
-                    .map(AlgebraTerm::surface)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{name}({args})")
-            }
-            AlgebraTerm::Var(name) => name.clone(),
-            AlgebraTerm::FullyQualifiedPath(path) => path.clone(),
-            AlgebraTerm::Symbol(name) => name.clone(),
-            AlgebraTerm::List(items) => {
-                let items = items
-                    .iter()
-                    .map(AlgebraTerm::surface)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("[{items}]")
-            }
-            AlgebraTerm::Struct { name, fields } => {
-                let fields = fields
-                    .iter()
-                    .map(|(field, value)| format!("{field}: {}", value.surface()))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{name}{{{fields}}}")
-            }
-            AlgebraTerm::ConstInt(value) => value.to_string(),
-            AlgebraTerm::ConstBool(value) => value.to_string(),
-            AlgebraTerm::Unit => "unit".to_string(),
+            let args = args
+                .iter()
+                .map(AlgebraTerm::surface)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return format!("{name}({args})");
         }
+        if let AlgebraTerm::Var(name) = self {
+            return name.clone();
+        }
+        if let AlgebraTerm::FullyQualifiedPath(path) = self {
+            return path.clone();
+        }
+        if let AlgebraTerm::Symbol(name) = self {
+            return name.clone();
+        }
+        if let AlgebraTerm::List(items) = self {
+            let items = items
+                .iter()
+                .map(AlgebraTerm::surface)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return format!("[{items}]");
+        }
+        if let AlgebraTerm::Struct { name, fields } = self {
+            let fields = fields
+                .iter()
+                .map(|(field, value)| format!("{field}: {}", value.surface()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return format!("{name}{{{fields}}}");
+        }
+        if let AlgebraTerm::ConstInt(value) = self {
+            return value.to_string();
+        }
+        if let AlgebraTerm::ConstBool(value) = self {
+            return value.to_string();
+        }
+        "unit".to_string()
     }
 }
 
@@ -357,12 +379,16 @@ enum ExprSort {
 }
 
 impl ExprSort {
+    /// Claims each closed `ExprSort` variant and names it; there is no
+    /// wildcard/default arm to fall through.
     fn name(self) -> &'static str {
-        match self {
-            ExprSort::Bool => "Bool",
-            ExprSort::Int => "Int",
-            ExprSort::Unit => "Unit",
+        if let ExprSort::Bool = self {
+            return "Bool";
         }
+        if let ExprSort::Int = self {
+            return "Int";
+        }
+        "Unit"
     }
 
     fn concept_sort(self) -> ConceptSort {
@@ -406,23 +432,27 @@ enum ReturnShape {
 }
 
 impl ReturnShape {
+    /// Claims each closed `ReturnShape` variant and extracts its scalar
+    /// sort when there is one; there is no wildcard/default arm to fall
+    /// through.
     fn sort(&self) -> Option<ExprSort> {
-        match self {
-            ReturnShape::Full(sort) => Some(*sort),
-            ReturnShape::Partial { .. } | ReturnShape::SortOnly(_) | ReturnShape::Unsupported => {
-                None
-            }
+        if let ReturnShape::Full(sort) = self {
+            return Some(*sort);
         }
+        None
     }
 
+    /// Claims each closed `ReturnShape` variant and renders its sort JSON;
+    /// there is no wildcard/default arm to fall through.
     fn return_sort_json(&self) -> JsonValue {
-        match self {
-            ReturnShape::Full(sort) => sort.concept_sort().to_json(),
-            ReturnShape::Partial { return_sort, .. } | ReturnShape::SortOnly(return_sort) => {
-                return_sort.to_json()
-            }
-            ReturnShape::Unsupported => JsonValue::Null,
+        if let ReturnShape::Full(sort) = self {
+            return sort.concept_sort().to_json();
         }
+        if let ReturnShape::Partial { return_sort, .. } | ReturnShape::SortOnly(return_sort) = self
+        {
+            return return_sort.to_json();
+        }
+        JsonValue::Null
     }
 }
 
@@ -761,8 +791,8 @@ fn find_term_function_in_items(
     inherited_proc_macro_invocations: &[ProcMacroInvocation],
 ) -> Option<TermFunctionContext> {
     for item in items {
-        match item {
-            syn::Item::Fn(item_fn) if item_fn.sig.ident == name => {
+        if let syn::Item::Fn(item_fn) = item {
+            if item_fn.sig.ident == name {
                 return Some(TermFunctionContext {
                     item_fn: item_fn.clone(),
                     contextual_losses: inherited_losses.to_vec(),
@@ -770,51 +800,70 @@ fn find_term_function_in_items(
                     contextual_proc_macro_invocations: inherited_proc_macro_invocations.to_vec(),
                 });
             }
-            syn::Item::Impl(impl_block) => {
-                let mut impl_losses = inherited_losses.to_vec();
-                if impl_block
-                    .items
-                    .iter()
-                    .any(|item| matches!(item, syn::ImplItem::Type(_)))
-                {
-                    impl_losses.push(LossRecord {
-                        loss: LOSS_IMPL_ASSOCIATED_TYPE_NOT_LOWERED,
-                        detail: impl_block.self_ty.to_token_stream().to_string(),
-                    });
-                }
-                for impl_item in &impl_block.items {
-                    if let syn::ImplItem::Fn(method) = impl_item {
-                        if method.sig.ident == name {
-                            return Some(TermFunctionContext {
-                                item_fn: syn::ItemFn {
-                                    attrs: method.attrs.clone(),
-                                    vis: method.vis.clone(),
-                                    sig: method.sig.clone(),
-                                    block: Box::new(method.block.clone()),
-                                },
-                                contextual_losses: impl_losses,
-                                ffi_declarations: ffi_declarations.clone(),
-                                contextual_proc_macro_invocations: inherited_proc_macro_invocations
-                                    .to_vec(),
-                            });
-                        }
+            continue;
+        }
+        if let syn::Item::Impl(impl_block) = item {
+            let mut impl_losses = inherited_losses.to_vec();
+            if impl_block
+                .items
+                .iter()
+                .any(|item| matches!(item, syn::ImplItem::Type(_)))
+            {
+                impl_losses.push(LossRecord {
+                    loss: LOSS_IMPL_ASSOCIATED_TYPE_NOT_LOWERED,
+                    detail: impl_block.self_ty.to_token_stream().to_string(),
+                });
+            }
+            for impl_item in &impl_block.items {
+                if let syn::ImplItem::Fn(method) = impl_item {
+                    if method.sig.ident == name {
+                        return Some(TermFunctionContext {
+                            item_fn: syn::ItemFn {
+                                attrs: method.attrs.clone(),
+                                vis: method.vis.clone(),
+                                sig: method.sig.clone(),
+                                block: Box::new(method.block.clone()),
+                            },
+                            contextual_losses: impl_losses,
+                            ffi_declarations: ffi_declarations.clone(),
+                            contextual_proc_macro_invocations: inherited_proc_macro_invocations
+                                .to_vec(),
+                        });
                     }
                 }
             }
-            syn::Item::Mod(module) => {
-                if let Some((_, nested_items)) = &module.content {
-                    if let Some(found) = find_term_function_in_items(
-                        nested_items,
-                        name,
-                        inherited_losses,
-                        ffi_declarations,
-                        inherited_proc_macro_invocations,
-                    ) {
-                        return Some(found);
-                    }
+            continue;
+        }
+        if let syn::Item::Mod(module) = item {
+            if let Some((_, nested_items)) = &module.content {
+                if let Some(found) = find_term_function_in_items(
+                    nested_items,
+                    name,
+                    inherited_losses,
+                    ffi_declarations,
+                    inherited_proc_macro_invocations,
+                ) {
+                    return Some(found);
                 }
             }
-            syn::Item::Const(_)
+            continue;
+        }
+        if known_no_term_function_item(item) {
+            continue;
+        }
+        panic!("sugar-walk emit find_term_function refused unknown syn::Item variant")
+    }
+    None
+}
+
+/// Item shapes that never carry a term function and never need recursion:
+/// `Const`, `Enum`, `ExternCrate`, `ForeignMod`, `Fn` (handled above but also
+/// matched here as a fallthrough guard), `Macro`, `Static`, `Struct`,
+/// `Trait`, `TraitAlias`, `Type`, `Union`, `Use`, `Verbatim`.
+fn known_no_term_function_item(item: &syn::Item) -> bool {
+    matches!(
+        item,
+        syn::Item::Const(_)
             | syn::Item::Enum(_)
             | syn::Item::ExternCrate(_)
             | syn::Item::ForeignMod(_)
@@ -827,11 +876,8 @@ fn find_term_function_in_items(
             | syn::Item::Type(_)
             | syn::Item::Union(_)
             | syn::Item::Use(_)
-            | syn::Item::Verbatim(_) => {}
-            _ => panic!("sugar-walk emit find_term_function refused unknown syn::Item variant"),
-        }
-    }
-    None
+            | syn::Item::Verbatim(_)
+    )
 }
 
 fn ffi_declarations_for_file(file: &syn::File) -> HashMap<String, FfiDeclaration> {
@@ -846,43 +892,58 @@ fn collect_ffi_declarations_in_items(
     declarations: &mut HashMap<String, FfiDeclaration>,
 ) {
     for item in items {
-        match item {
-            syn::Item::ForeignMod(foreign_mod) => {
-                let abi = foreign_mod
-                    .abi
-                    .name
-                    .as_ref()
-                    .map(|name| name.value())
-                    .unwrap_or_else(|| "Rust".to_string());
-                for foreign_item in &foreign_mod.items {
-                    let syn::ForeignItem::Fn(foreign_fn) = foreign_item else {
-                        continue;
-                    };
-                    let binding = foreign_fn.sig.ident.to_string();
-                    let symbol =
-                        link_name_from_attrs(&foreign_fn.attrs).unwrap_or_else(|| binding.clone());
-                    let declaration = FfiDeclaration {
-                        abi: abi.clone(),
-                        binding: binding.clone(),
-                        symbol,
-                    };
-                    declarations.insert(binding.clone(), declaration.clone());
-                    if !module_path.is_empty() {
-                        let mut qualified = module_path.join("::");
-                        qualified.push_str("::");
-                        qualified.push_str(&binding);
-                        declarations.insert(qualified, declaration);
-                    }
+        if let syn::Item::ForeignMod(foreign_mod) = item {
+            let abi = foreign_mod
+                .abi
+                .name
+                .as_ref()
+                .map(|name| name.value())
+                .unwrap_or_else(|| "Rust".to_string());
+            for foreign_item in &foreign_mod.items {
+                let syn::ForeignItem::Fn(foreign_fn) = foreign_item else {
+                    continue;
+                };
+                let binding = foreign_fn.sig.ident.to_string();
+                let symbol =
+                    link_name_from_attrs(&foreign_fn.attrs).unwrap_or_else(|| binding.clone());
+                let declaration = FfiDeclaration {
+                    abi: abi.clone(),
+                    binding: binding.clone(),
+                    symbol,
+                };
+                declarations.insert(binding.clone(), declaration.clone());
+                if !module_path.is_empty() {
+                    let mut qualified = module_path.join("::");
+                    qualified.push_str("::");
+                    qualified.push_str(&binding);
+                    declarations.insert(qualified, declaration);
                 }
             }
-            syn::Item::Mod(module) => {
-                if let Some((_, nested_items)) = &module.content {
-                    module_path.push(module.ident.to_string());
-                    collect_ffi_declarations_in_items(nested_items, module_path, declarations);
-                    module_path.pop();
-                }
+            continue;
+        }
+        if let syn::Item::Mod(module) = item {
+            if let Some((_, nested_items)) = &module.content {
+                module_path.push(module.ident.to_string());
+                collect_ffi_declarations_in_items(nested_items, module_path, declarations);
+                module_path.pop();
             }
-            syn::Item::Const(_)
+            continue;
+        }
+        if known_no_ffi_declaration_item(item) {
+            continue;
+        }
+        panic!("sugar-walk emit ffi collector refused unknown syn::Item variant")
+    }
+}
+
+/// Item shapes that never carry an FFI declaration and never need
+/// recursion: `Const`, `Enum`, `ExternCrate`, `Fn`, `Impl`, `Macro`,
+/// `Static`, `Struct`, `Trait`, `TraitAlias`, `Type`, `Union`, `Use`,
+/// `Verbatim`.
+fn known_no_ffi_declaration_item(item: &syn::Item) -> bool {
+    matches!(
+        item,
+        syn::Item::Const(_)
             | syn::Item::Enum(_)
             | syn::Item::ExternCrate(_)
             | syn::Item::Fn(_)
@@ -895,10 +956,8 @@ fn collect_ffi_declarations_in_items(
             | syn::Item::Type(_)
             | syn::Item::Union(_)
             | syn::Item::Use(_)
-            | syn::Item::Verbatim(_) => {}
-            _ => panic!("sugar-walk emit ffi collector refused unknown syn::Item variant"),
-        }
-    }
+            | syn::Item::Verbatim(_)
+    )
 }
 
 fn link_name_from_attrs(attrs: &[syn::Attribute]) -> Option<String> {
@@ -931,54 +990,76 @@ fn collect_proc_macro_invocations_from_item(
     item: &syn::Item,
     invocations: &mut Vec<ProcMacroInvocation>,
 ) {
-    let attrs: &[syn::Attribute] = match item {
-        syn::Item::Const(item) => &item.attrs,
-        syn::Item::Enum(item) => &item.attrs,
-        syn::Item::Fn(item) => &item.attrs,
-        syn::Item::Impl(item) => {
-            extend_proc_macro_invocations(invocations, &item.attrs);
-            for impl_item in &item.items {
-                match impl_item {
-                    syn::ImplItem::Const(item) => {
-                        extend_proc_macro_invocations(invocations, &item.attrs)
-                    }
-                    syn::ImplItem::Fn(item) => {
-                        extend_proc_macro_invocations(invocations, &item.attrs)
-                    }
-                    syn::ImplItem::Type(item) => {
-                        extend_proc_macro_invocations(invocations, &item.attrs)
-                    }
-                    syn::ImplItem::Macro(_) | syn::ImplItem::Verbatim(_) => {}
-                    _ => panic!(
-                        "sugar-walk emit proc-macro collector refused unknown syn::ImplItem variant"
-                    ),
-                }
+    if let syn::Item::Impl(item) = item {
+        extend_proc_macro_invocations(invocations, &item.attrs);
+        for impl_item in &item.items {
+            if let syn::ImplItem::Const(item) = impl_item {
+                extend_proc_macro_invocations(invocations, &item.attrs);
+                continue;
             }
-            return;
-        }
-        syn::Item::Mod(item) => {
-            extend_proc_macro_invocations(invocations, &item.attrs);
-            if let Some((_, items)) = &item.content {
-                for item in items {
-                    collect_proc_macro_invocations_from_item(item, invocations);
-                }
+            if let syn::ImplItem::Fn(item) = impl_item {
+                extend_proc_macro_invocations(invocations, &item.attrs);
+                continue;
             }
-            return;
+            if let syn::ImplItem::Type(item) = impl_item {
+                extend_proc_macro_invocations(invocations, &item.attrs);
+                continue;
+            }
+            if matches!(
+                impl_item,
+                syn::ImplItem::Macro(_) | syn::ImplItem::Verbatim(_)
+            ) {
+                continue;
+            }
+            panic!("sugar-walk emit proc-macro collector refused unknown syn::ImplItem variant")
         }
-        syn::Item::Struct(item) => &item.attrs,
-        syn::Item::Trait(item) => &item.attrs,
-        syn::Item::Type(item) => &item.attrs,
-        syn::Item::Union(item) => &item.attrs,
-        syn::Item::ExternCrate(_)
-        | syn::Item::ForeignMod(_)
-        | syn::Item::Macro(_)
-        | syn::Item::Static(_)
-        | syn::Item::TraitAlias(_)
-        | syn::Item::Use(_)
-        | syn::Item::Verbatim(_) => &[],
-        _ => panic!("sugar-walk emit proc-macro collector refused unknown syn::Item variant"),
+        return;
+    }
+    if let syn::Item::Mod(item) = item {
+        extend_proc_macro_invocations(invocations, &item.attrs);
+        if let Some((_, items)) = &item.content {
+            for item in items {
+                collect_proc_macro_invocations_from_item(item, invocations);
+            }
+        }
+        return;
+    }
+    let attrs: &[syn::Attribute] = if let syn::Item::Const(item) = item {
+        &item.attrs
+    } else if let syn::Item::Enum(item) = item {
+        &item.attrs
+    } else if let syn::Item::Fn(item) = item {
+        &item.attrs
+    } else if let syn::Item::Struct(item) = item {
+        &item.attrs
+    } else if let syn::Item::Trait(item) = item {
+        &item.attrs
+    } else if let syn::Item::Type(item) = item {
+        &item.attrs
+    } else if let syn::Item::Union(item) = item {
+        &item.attrs
+    } else if known_no_attrs_item(item) {
+        &[]
+    } else {
+        panic!("sugar-walk emit proc-macro collector refused unknown syn::Item variant")
     };
     extend_proc_macro_invocations(invocations, attrs);
+}
+
+/// Item shapes that carry no attribute list worth scanning for proc-macro
+/// invocations: `ExternCrate`, `ForeignMod`, `Macro`, `Static`,
+/// `TraitAlias`, `Use`, `Verbatim`.
+fn known_no_attrs_item(item: &syn::Item) -> bool {
+    matches!(
+        item,
+        syn::Item::ExternCrate(_)
+            | syn::Item::ForeignMod(_)
+            | syn::Item::Macro(_)
+            | syn::Item::Static(_)
+            | syn::Item::TraitAlias(_)
+            | syn::Item::Use(_)
+            | syn::Item::Verbatim(_)
+    )
 }
 
 fn extend_proc_macro_invocations(
@@ -1092,28 +1173,35 @@ fn expr_arg_term(expr: &Expr) -> JsonValue {
     token_stream_term(normalize_attr_tokens(expr.to_token_stream().to_string()))
 }
 
+/// Claims the three literal shapes that carry a direct const encoding
+/// (`Bool`/`Int`/`Str`); every other `syn::Lit` variant falls through to the
+/// same fail-safe token-stream default as the original wildcard arm.
 fn literal_arg_term(lit: &Lit) -> JsonValue {
-    match lit {
-        Lit::Bool(value) => json!({
+    if let Lit::Bool(value) = lit {
+        return json!({
             "kind": "const",
             "sort": {"kind": "ctor", "name": "Bool", "args": []},
             "value": value.value(),
-        }),
-        Lit::Int(value) => match value.base10_parse::<i64>() {
+        });
+    }
+    if let Lit::Int(value) = lit {
+        return match value.base10_parse::<i64>() {
             Ok(parsed) => json!({
                 "kind": "const",
                 "sort": {"kind": "ctor", "name": "Int", "args": []},
                 "value": parsed,
             }),
             Err(_) => token_stream_term(normalize_attr_tokens(value.to_token_stream().to_string())),
-        },
-        Lit::Str(value) => json!({
+        };
+    }
+    if let Lit::Str(value) = lit {
+        return json!({
             "kind": "const",
             "sort": {"kind": "ctor", "name": "String", "args": []},
             "value": value.value(),
-        }),
-        _ => token_stream_term(normalize_attr_tokens(lit.to_token_stream().to_string())),
+        });
     }
+    token_stream_term(normalize_attr_tokens(lit.to_token_stream().to_string()))
 }
 
 fn token_stream_term(surface: String) -> JsonValue {
@@ -1199,21 +1287,29 @@ fn lower_stmts_to_stmt(stmts: &[Stmt], ctx: &LoweringContext) -> Result<AlgebraT
     let mut lowered = Vec::new();
     for (idx, stmt) in stmts.iter().enumerate() {
         let is_tail = idx + 1 == stmts.len();
-        match stmt {
-            Stmt::Expr(expr, None) if is_tail => lowered.push(lower_tail_expr_to_stmt(expr, ctx)?),
-            Stmt::Expr(Expr::MethodCall(method), Some(_)) => {
-                let tail = lower_method_call_statement_to_stmt(method, &stmts[idx + 1..], ctx)?;
-                return Ok(seq_all_then(lowered, tail));
+        if let Stmt::Expr(expr, None) = stmt {
+            if is_tail {
+                lowered.push(lower_tail_expr_to_stmt(expr, ctx)?);
+                continue;
             }
-            Stmt::Expr(expr, _) => lowered.push(lower_expr_to_stmt(expr, ctx)?),
-            Stmt::Local(local) => {
-                let tail = lower_local_binding_to_stmt(local, &stmts[idx + 1..], ctx)?;
-                return Ok(seq_all_then(lowered, tail));
-            }
-            Stmt::Item(_) => {}
-            Stmt::Macro(mac) => {
-                lowered.push(lower_macro_to_value_term(&mac.mac, ctx)?);
-            }
+        }
+        if let Stmt::Expr(Expr::MethodCall(method), Some(_)) = stmt {
+            let tail = lower_method_call_statement_to_stmt(method, &stmts[idx + 1..], ctx)?;
+            return Ok(seq_all_then(lowered, tail));
+        }
+        if let Stmt::Expr(expr, _) = stmt {
+            lowered.push(lower_expr_to_stmt(expr, ctx)?);
+            continue;
+        }
+        if let Stmt::Local(local) = stmt {
+            let tail = lower_local_binding_to_stmt(local, &stmts[idx + 1..], ctx)?;
+            return Ok(seq_all_then(lowered, tail));
+        }
+        if let Stmt::Item(_) = stmt {
+            continue;
+        }
+        if let Stmt::Macro(mac) = stmt {
+            lowered.push(lower_macro_to_value_term(&mac.mac, ctx)?);
         }
     }
     Ok(seq_all(lowered))
@@ -1522,103 +1618,154 @@ fn push_unique(items: &mut Vec<String>, item: String) {
     }
 }
 
+/// Claims a `Path`, or recurses through `MethodCall`/`Paren`/`Group`/
+/// `Field`/`Reference`/deref-`Unary` to find the source name of a method
+/// receiver. Every shape in `known_non_receiver_source_expr` is a
+/// recognized non-source (`None`); the trailing panic default is unchanged.
 fn method_receiver_source_name(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Path(path) => path_name(path),
-        Expr::MethodCall(method) => method_receiver_source_name(&method.receiver),
-        Expr::Paren(paren) => method_receiver_source_name(&paren.expr),
-        Expr::Group(group) => method_receiver_source_name(&group.expr),
-        Expr::Field(field) => method_receiver_source_name(&field.base),
-        Expr::Reference(reference) => method_receiver_source_name(&reference.expr),
-        Expr::Unary(unary) if matches!(unary.op, UnOp::Deref(_)) => {
-            method_receiver_source_name(&unary.expr)
-        }
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::Verbatim(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        _ => panic!("sugar-walk emit receiver source refused unknown syn::Expr variant"),
+    if let Expr::Path(path) = expr {
+        return path_name(path);
     }
+    if let Expr::MethodCall(method) = expr {
+        return method_receiver_source_name(&method.receiver);
+    }
+    if let Expr::Paren(paren) = expr {
+        return method_receiver_source_name(&paren.expr);
+    }
+    if let Expr::Group(group) = expr {
+        return method_receiver_source_name(&group.expr);
+    }
+    if let Expr::Field(field) = expr {
+        return method_receiver_source_name(&field.base);
+    }
+    if let Expr::Reference(reference) = expr {
+        return method_receiver_source_name(&reference.expr);
+    }
+    if let Expr::Unary(unary) = expr {
+        if matches!(unary.op, UnOp::Deref(_)) {
+            return method_receiver_source_name(&unary.expr);
+        }
+        return None;
+    }
+    if known_non_receiver_source_expr(expr) {
+        return None;
+    }
+    panic!("sugar-walk emit receiver source refused unknown syn::Expr variant")
 }
 
+/// Shapes that can never resolve to a method receiver source name: neither
+/// the source itself nor a transparent wrapper (`Paren`/`Group`/`Field`/
+/// `Reference`/deref-`Unary`) around one.
+fn known_non_receiver_source_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::Verbatim(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
+}
+
+/// Claims a mutably-borrowed `Path`/`Field`, or recurses through `Paren`/
+/// `Group` wrappers to find one. Every shape in
+/// `known_non_mut_borrow_source_expr` is a recognized non-source (`None`);
+/// the trailing panic default is unchanged.
 fn mut_borrow_source_name(expr: &Expr) -> Option<String> {
     let Expr::Reference(reference) = expr else {
         return None;
     };
     reference.mutability.as_ref()?;
-    match &*reference.expr {
-        Expr::Path(path) => path_name(path),
-        Expr::Paren(paren) => mut_borrow_source_name(&paren.expr),
-        Expr::Group(group) => mut_borrow_source_name(&group.expr),
-        Expr::Field(field) => method_receiver_source_name(&field.base),
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::MethodCall(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Reference(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::Verbatim(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        _ => panic!("sugar-walk emit mutable borrow source refused unknown syn::Expr variant"),
+    let inner = &*reference.expr;
+    if let Expr::Path(path) = inner {
+        return path_name(path);
     }
+    if let Expr::Paren(paren) = inner {
+        return mut_borrow_source_name(&paren.expr);
+    }
+    if let Expr::Group(group) = inner {
+        return mut_borrow_source_name(&group.expr);
+    }
+    if let Expr::Field(field) = inner {
+        return method_receiver_source_name(&field.base);
+    }
+    if known_non_mut_borrow_source_expr(inner) {
+        return None;
+    }
+    panic!("sugar-walk emit mutable borrow source refused unknown syn::Expr variant")
+}
+
+/// Shapes that can never resolve to a mutable-borrow source name: neither
+/// the source itself nor a transparent `Paren`/`Group` wrapper around one.
+fn known_non_mut_borrow_source_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::MethodCall(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Reference(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::Verbatim(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn lower_discarded_value_expr_to_stmt(
@@ -1674,12 +1821,21 @@ fn lower_match_to_stmt(
     ))
 }
 
+/// Claims an empty-tuple or empty-block match-arm body as a no-op `skip`
+/// term; every other shape falls through to the same fail-safe
+/// `lower_expr_to_stmt` default as the original wildcard arm.
 fn lower_match_arm_body_to_stmt(expr: &Expr, ctx: &LoweringContext) -> Result<AlgebraTerm, String> {
-    match expr {
-        Expr::Tuple(tuple) if tuple.elems.is_empty() => Ok(AlgebraTerm::skip()),
-        Expr::Block(block) if block.block.stmts.is_empty() => Ok(AlgebraTerm::skip()),
-        _ => lower_expr_to_stmt(expr, ctx),
+    if let Expr::Tuple(tuple) = expr {
+        if tuple.elems.is_empty() {
+            return Ok(AlgebraTerm::skip());
+        }
     }
+    if let Expr::Block(block) = expr {
+        if block.block.stmts.is_empty() {
+            return Ok(AlgebraTerm::skip());
+        }
+    }
+    lower_expr_to_stmt(expr, ctx)
 }
 
 fn lower_return_expr_to_value_term(
@@ -2136,50 +2292,63 @@ fn lower_match_arms_to_terms(
     Ok(AlgebraTerm::op("arms", vec![AlgebraTerm::List(arms)]))
 }
 
+/// Claims each `syn::Pat` variant that lowers to a specific pattern term
+/// shape; every other variant falls through to the same fail-safe
+/// `pattern_bind`-on-token-stream default as the original wildcard arm.
 fn lower_pat_to_pattern_term(pat: &syn::Pat) -> AlgebraTerm {
-    match pat {
-        syn::Pat::Ident(ident) => AlgebraTerm::op(
+    if let syn::Pat::Ident(ident) = pat {
+        return AlgebraTerm::op(
             "pattern_bind",
             vec![AlgebraTerm::Symbol(ident.ident.to_string())],
-        ),
-        syn::Pat::Lit(lit) => AlgebraTerm::op(
+        );
+    }
+    if let syn::Pat::Lit(lit) = pat {
+        return AlgebraTerm::op(
             "pattern_bind",
             vec![AlgebraTerm::Symbol(lit.to_token_stream().to_string())],
-        ),
-        syn::Pat::Path(path) => AlgebraTerm::op(
+        );
+    }
+    if let syn::Pat::Path(path) = pat {
+        return AlgebraTerm::op(
             "pattern_bind",
             vec![AlgebraTerm::Symbol(path.to_token_stream().to_string())],
-        ),
-        syn::Pat::Reference(reference) => lower_pat_to_pattern_term(&reference.pat),
-        syn::Pat::TupleStruct(tuple) => {
-            let name = tuple
-                .path
-                .segments
-                .last()
-                .map(|segment| segment.ident.to_string());
-            let args = tuple
-                .elems
-                .iter()
-                .map(lower_pat_to_pattern_term)
-                .collect::<Vec<_>>();
-            match name.as_deref() {
-                Some("Ok") => AlgebraTerm::op("pattern_ok", args),
-                Some("Err") => AlgebraTerm::op("pattern_err", args),
-                Some("Some") => AlgebraTerm::op("pattern_some", args),
-                Some("None") => AlgebraTerm::op("pattern_none", args),
-                _ => AlgebraTerm::op(
-                    "pattern_bind",
-                    vec![AlgebraTerm::Symbol(tuple.to_token_stream().to_string())],
-                ),
-            }
-        }
-        syn::Pat::Type(pat_type) => lower_pat_to_pattern_term(&pat_type.pat),
-        syn::Pat::Wild(_) => AlgebraTerm::op("pattern_wild", vec![]),
-        _ => AlgebraTerm::op(
-            "pattern_bind",
-            vec![AlgebraTerm::Symbol(pat.to_token_stream().to_string())],
-        ),
+        );
     }
+    if let syn::Pat::Reference(reference) = pat {
+        return lower_pat_to_pattern_term(&reference.pat);
+    }
+    if let syn::Pat::TupleStruct(tuple) = pat {
+        let name = tuple
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string());
+        let args = tuple
+            .elems
+            .iter()
+            .map(lower_pat_to_pattern_term)
+            .collect::<Vec<_>>();
+        return match name.as_deref() {
+            Some("Ok") => AlgebraTerm::op("pattern_ok", args),
+            Some("Err") => AlgebraTerm::op("pattern_err", args),
+            Some("Some") => AlgebraTerm::op("pattern_some", args),
+            Some("None") => AlgebraTerm::op("pattern_none", args),
+            _ => AlgebraTerm::op(
+                "pattern_bind",
+                vec![AlgebraTerm::Symbol(tuple.to_token_stream().to_string())],
+            ),
+        };
+    }
+    if let syn::Pat::Type(pat_type) = pat {
+        return lower_pat_to_pattern_term(&pat_type.pat);
+    }
+    if let syn::Pat::Wild(_) = pat {
+        return AlgebraTerm::op("pattern_wild", vec![]);
+    }
+    AlgebraTerm::op(
+        "pattern_bind",
+        vec![AlgebraTerm::Symbol(pat.to_token_stream().to_string())],
+    )
 }
 
 fn lower_call_expr_to_value_term(
@@ -2533,56 +2702,83 @@ fn bitwise_binary_op(op: &BinOp) -> Option<&'static str> {
     }
 }
 
+/// Claims each closed `syn::ReturnType` variant; there is no
+/// wildcard/default arm to fall through.
 fn return_shape_from_return_type(output: &ReturnType) -> ReturnShape {
-    match output {
-        ReturnType::Default => ReturnShape::Full(ExprSort::Unit),
-        ReturnType::Type(_, ty) => {
-            if let Some(sort) = sort_from_type(ty) {
-                ReturnShape::Full(sort)
-            } else if let Some(loss) = partial_return_loss(ty) {
-                ReturnShape::Partial {
-                    loss,
-                    rust_type: type_surface(ty),
-                    return_sort: concept_sort_from_type(ty)
-                        .unwrap_or_else(|| ConceptSort::new(type_surface(ty), Vec::new())),
-                }
-            } else if let Some(return_sort) = concept_sort_from_type(ty) {
-                ReturnShape::SortOnly(return_sort)
-            } else {
-                ReturnShape::Unsupported
-            }
-        }
+    if let ReturnType::Default = output {
+        return ReturnShape::Full(ExprSort::Unit);
     }
+    let ReturnType::Type(_, ty) = output else {
+        unreachable!("sugar-walk emit return shape: only Default and Type variants exist")
+    };
+    if let Some(sort) = sort_from_type(ty) {
+        return ReturnShape::Full(sort);
+    }
+    if let Some(loss) = partial_return_loss(ty) {
+        return ReturnShape::Partial {
+            loss,
+            rust_type: type_surface(ty),
+            return_sort: concept_sort_from_type(ty)
+                .unwrap_or_else(|| ConceptSort::new(type_surface(ty), Vec::new())),
+        };
+    }
+    if let Some(return_sort) = concept_sort_from_type(ty) {
+        return ReturnShape::SortOnly(return_sort);
+    }
+    ReturnShape::Unsupported
 }
 
+/// Claims a bare path type name or recurses through `Paren`/`Group`
+/// wrappers, and claims an empty tuple as `Unit`. Every shape in
+/// `known_non_scalar_sort_type` is a recognized sort-neutral non-source
+/// (`None`, kept out of this scalar classifier per #3017 item 2); the
+/// trailing panic default is unchanged.
 fn sort_from_type(ty: &Type) -> Option<ExprSort> {
-    match ty {
-        Type::Path(path) if path.qself.is_none() => {
+    if let Type::Path(path) = ty {
+        if path.qself.is_none() {
             let ident = path.path.segments.last()?.ident.to_string();
-            sort_from_type_name(&ident)
+            return sort_from_type_name(&ident);
         }
-        Type::Paren(paren) => sort_from_type(&paren.elem),
-        Type::Group(group) => sort_from_type(&group.elem),
-        Type::Tuple(tuple) if tuple.elems.is_empty() => Some(ExprSort::Unit),
-        Type::Path(_)
-        | Type::Array(_)
-        | Type::BareFn(_)
-        | Type::ImplTrait(_)
-        | Type::Infer(_)
-        | Type::Macro(_)
-        | Type::Never(_)
-        | Type::Ptr(_)
-        | Type::Reference(_)
-        | Type::Slice(_)
-        | Type::TraitObject(_)
-        | Type::Tuple(_)
-        | Type::Verbatim(_) => {
-            // #3017 item 2 keeps non-primitive and sort-neutral values out of
-            // this scalar classifier; concept_sort_from_type carries them.
-            None
-        }
-        _ => panic!("sugar-walk emit sort_from_type refused unknown syn::Type variant"),
+        return None;
     }
+    if let Type::Paren(paren) = ty {
+        return sort_from_type(&paren.elem);
+    }
+    if let Type::Group(group) = ty {
+        return sort_from_type(&group.elem);
+    }
+    if let Type::Tuple(tuple) = ty {
+        if tuple.elems.is_empty() {
+            return Some(ExprSort::Unit);
+        }
+        return None;
+    }
+    if known_non_scalar_sort_type(ty) {
+        // #3017 item 2 keeps non-primitive and sort-neutral values out of
+        // this scalar classifier; concept_sort_from_type carries them.
+        return None;
+    }
+    panic!("sugar-walk emit sort_from_type refused unknown syn::Type variant")
+}
+
+/// Shapes that never carry a scalar `ExprSort` and never need recursion:
+/// `Array`, `BareFn`, `ImplTrait`, `Infer`, `Macro`, `Never`, `Ptr`,
+/// `Reference`, `Slice`, `TraitObject`, `Verbatim`.
+fn known_non_scalar_sort_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Array(_)
+            | Type::BareFn(_)
+            | Type::ImplTrait(_)
+            | Type::Infer(_)
+            | Type::Macro(_)
+            | Type::Never(_)
+            | Type::Ptr(_)
+            | Type::Reference(_)
+            | Type::Slice(_)
+            | Type::TraitObject(_)
+            | Type::Verbatim(_)
+    )
 }
 
 fn sort_from_type_name(name: &str) -> Option<ExprSort> {
@@ -2595,71 +2791,100 @@ fn sort_from_type_name(name: &str) -> Option<ExprSort> {
     }
 }
 
+/// Claims each `syn::Type` variant that lowers to a `ConceptSort`, in the
+/// same order as the original ladder. Every shape in
+/// `known_non_concept_sort_type` is a recognized non-source (`None`); the
+/// trailing panic default is unchanged.
 fn concept_sort_from_type(ty: &Type) -> Option<ConceptSort> {
-    match ty {
-        Type::Path(path) if path.qself.is_none() => {
+    if let Type::Path(path) = ty {
+        if path.qself.is_none() {
             let segment = path.path.segments.last()?;
             let ident = segment.ident.to_string();
             let name = match concept_sort_name_from_type_name(&ident) {
                 Some(name) => name,
                 None => ident,
             };
-            Some(ConceptSort::new(
+            return Some(ConceptSort::new(
                 name,
                 concept_sort_args_from_path_segment(segment)?,
-            ))
+            ));
         }
-        Type::Reference(reference) => {
-            let name = if reference.mutability.is_some() {
-                "RefMut"
-            } else {
-                "Ref"
-            };
-            Some(ConceptSort::new(
-                name,
-                vec![concept_sort_from_type(&reference.elem)?],
-            ))
-        }
-        Type::Array(array) => Some(ConceptSort::new(
+        return None;
+    }
+    if let Type::Reference(reference) = ty {
+        let name = if reference.mutability.is_some() {
+            "RefMut"
+        } else {
+            "Ref"
+        };
+        return Some(ConceptSort::new(
+            name,
+            vec![concept_sort_from_type(&reference.elem)?],
+        ));
+    }
+    if let Type::Array(array) = ty {
+        return Some(ConceptSort::new(
             "Array",
             vec![concept_sort_from_type(&array.elem)?],
-        )),
-        Type::Slice(slice) => Some(ConceptSort::new(
+        ));
+    }
+    if let Type::Slice(slice) = ty {
+        return Some(ConceptSort::new(
             "Slice",
             vec![concept_sort_from_type(&slice.elem)?],
-        )),
-        Type::Ptr(ptr) => {
-            let name = if ptr.mutability.is_some() {
-                "PtrMut"
-            } else {
-                "Ptr"
-            };
-            Some(ConceptSort::new(
-                name,
-                vec![concept_sort_from_type(&ptr.elem)?],
-            ))
+        ));
+    }
+    if let Type::Ptr(ptr) = ty {
+        let name = if ptr.mutability.is_some() {
+            "PtrMut"
+        } else {
+            "Ptr"
+        };
+        return Some(ConceptSort::new(
+            name,
+            vec![concept_sort_from_type(&ptr.elem)?],
+        ));
+    }
+    if let Type::Tuple(tuple) = ty {
+        if tuple.elems.is_empty() {
+            return Some(ExprSort::Unit.concept_sort());
         }
-        Type::Tuple(tuple) if tuple.elems.is_empty() => Some(ExprSort::Unit.concept_sort()),
-        Type::Tuple(tuple) => Some(ConceptSort::new(
+        return Some(ConceptSort::new(
             "Tuple",
             tuple
                 .elems
                 .iter()
                 .map(concept_sort_from_type)
                 .collect::<Option<Vec<_>>>()?,
-        )),
-        Type::Paren(paren) => concept_sort_from_type(&paren.elem),
-        Type::Group(group) => concept_sort_from_type(&group.elem),
-        Type::BareFn(_)
-        | Type::ImplTrait(_)
-        | Type::Infer(_)
-        | Type::Macro(_)
-        | Type::Never(_)
-        | Type::Path(_)
-        | Type::TraitObject(_)
-        | Type::Verbatim(_) => None,
-        _ => panic!("sugar-walk emit concept_sort refused unknown syn::Type variant"),
+        ));
     }
+    if let Type::Paren(paren) = ty {
+        return concept_sort_from_type(&paren.elem);
+    }
+    if let Type::Group(group) = ty {
+        return concept_sort_from_type(&group.elem);
+    }
+    if known_non_concept_sort_type(ty) {
+        return None;
+    }
+    panic!("sugar-walk emit concept_sort refused unknown syn::Type variant")
+}
+
+/// Shapes that never carry a `ConceptSort`: `BareFn`, `ImplTrait`, `Infer`,
+/// `Macro`, `Never`, `Path` (only reachable via a qualified-self path,
+/// handled above), `TraitObject`, `Verbatim`.
+fn known_non_concept_sort_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::BareFn(_)
+            | Type::ImplTrait(_)
+            | Type::Infer(_)
+            | Type::Macro(_)
+            | Type::Never(_)
+            | Type::Path(_)
+            | Type::TraitObject(_)
+            | Type::Verbatim(_)
+    )
 }
 
 fn concept_sort_name_from_type_name(name: &str) -> Option<String> {
@@ -2689,38 +2914,73 @@ fn concept_sort_args_from_path_segment(segment: &syn::PathSegment) -> Option<Vec
     }
 }
 
+/// Claims a bare `Result`/`Option`/`Vec` path type, a `u8` array, or
+/// recurses through `Reference`/`Paren`/`Group` wrappers to find one. Every
+/// shape in `known_no_partial_return_loss_type` is a recognized non-source
+/// (`None`); the trailing panic default is unchanged.
 fn partial_return_loss(ty: &Type) -> Option<&'static str> {
-    match ty {
-        Type::Path(path) if path.qself.is_none() => {
+    if let Type::Path(path) = ty {
+        if path.qself.is_none() {
             let segment = path.path.segments.last()?;
             let ident = segment.ident.to_string();
-            match ident.as_str() {
-                "Result" => Some("return-type-result"),
-                "Option" => Some("return-type-option"),
-                "Vec" if path_type_arg_is_u8(segment) => Some("return-type-byte-vec"),
-                "Vec" => Some("return-type-vec"),
-                // sugar-audit: not-mine(non-container-return-type-has-no-partial-loss-record)
-                _ => None,
+            if ident == "Result" {
+                return Some("return-type-result");
             }
+            if ident == "Option" {
+                return Some("return-type-option");
+            }
+            if ident == "Vec" {
+                if path_type_arg_is_u8(segment) {
+                    return Some("return-type-byte-vec");
+                }
+                return Some("return-type-vec");
+            }
+            // sugar-audit: not-mine(non-container-return-type-has-no-partial-loss-record)
+            return None;
         }
-        Type::Array(array) if type_is_u8(&array.elem) => Some("return-type-byte-array"),
-        Type::Reference(reference) => partial_return_loss(&reference.elem),
-        Type::Paren(paren) => partial_return_loss(&paren.elem),
-        Type::Group(group) => partial_return_loss(&group.elem),
-        Type::Array(_)
-        | Type::BareFn(_)
-        | Type::ImplTrait(_)
-        | Type::Infer(_)
-        | Type::Macro(_)
-        | Type::Never(_)
-        | Type::Path(_)
-        | Type::Ptr(_)
-        | Type::Slice(_)
-        | Type::TraitObject(_)
-        | Type::Tuple(_)
-        | Type::Verbatim(_) => None,
-        _ => panic!("sugar-walk emit partial_return_loss refused unknown syn::Type variant"),
+        return None;
     }
+    if let Type::Array(array) = ty {
+        if type_is_u8(&array.elem) {
+            return Some("return-type-byte-array");
+        }
+        return None;
+    }
+    if let Type::Reference(reference) = ty {
+        return partial_return_loss(&reference.elem);
+    }
+    if let Type::Paren(paren) = ty {
+        return partial_return_loss(&paren.elem);
+    }
+    if let Type::Group(group) = ty {
+        return partial_return_loss(&group.elem);
+    }
+    if known_no_partial_return_loss_type(ty) {
+        return None;
+    }
+    panic!("sugar-walk emit partial_return_loss refused unknown syn::Type variant")
+}
+
+/// Shapes that never carry a partial-return loss record and never need
+/// recursion: `Array` (non-`u8`, handled above), `BareFn`, `ImplTrait`,
+/// `Infer`, `Macro`, `Never`, `Path` (non-container, handled above), `Ptr`,
+/// `Slice`, `TraitObject`, `Tuple`, `Verbatim`.
+fn known_no_partial_return_loss_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Array(_)
+            | Type::BareFn(_)
+            | Type::ImplTrait(_)
+            | Type::Infer(_)
+            | Type::Macro(_)
+            | Type::Never(_)
+            | Type::Path(_)
+            | Type::Ptr(_)
+            | Type::Slice(_)
+            | Type::TraitObject(_)
+            | Type::Tuple(_)
+            | Type::Verbatim(_)
+    )
 }
 
 fn path_type_arg_is_u8(segment: &syn::PathSegment) -> bool {
@@ -2780,46 +3040,66 @@ impl LocalLetPattern {
     }
 }
 
+/// Claims `Ident`/`Type`/`Wild` let-binding patterns; every other pattern
+/// falls through to the same fail-safe `Err` default as the original
+/// wildcard arm.
 fn lower_local_let_pattern(
     pat: &syn::Pat,
     ctx: &LoweringContext,
 ) -> Result<LocalLetPattern, String> {
-    match pat {
-        syn::Pat::Ident(ident) => {
-            let name = ident.ident.to_string();
-            let is_mutable = ident.mutability.is_some();
-            if ident.mutability.is_some() {
-                ctx.add_loss(LOSS_LET_BINDING_MUTABILITY, name.clone());
-            }
-            Ok(LocalLetPattern::Bind { name, is_mutable })
+    if let syn::Pat::Ident(ident) = pat {
+        let name = ident.ident.to_string();
+        let is_mutable = ident.mutability.is_some();
+        if ident.mutability.is_some() {
+            ctx.add_loss(LOSS_LET_BINDING_MUTABILITY, name.clone());
         }
-        syn::Pat::Type(pat_type) => lower_local_let_pattern(&pat_type.pat, ctx),
-        syn::Pat::Wild(_) => Ok(LocalLetPattern::Wild),
-        _ => Err("unsupported let-binding pattern".to_string()),
+        return Ok(LocalLetPattern::Bind { name, is_mutable });
     }
+    if let syn::Pat::Type(pat_type) = pat {
+        return lower_local_let_pattern(&pat_type.pat, ctx);
+    }
+    if let syn::Pat::Wild(_) = pat {
+        return Ok(LocalLetPattern::Wild);
+    }
+    Err("unsupported let-binding pattern".to_string())
 }
 
+/// Claims a `syn::Pat::Type` annotation; every shape in
+/// `known_no_pat_type` carries no type annotation of its own (`None`); the
+/// trailing panic default is unchanged.
 fn local_pat_type(pat: &syn::Pat) -> Option<&Type> {
-    match pat {
-        syn::Pat::Type(pat_type) => Some(&pat_type.ty),
-        syn::Pat::Const(_)
-        | syn::Pat::Ident(_)
-        | syn::Pat::Lit(_)
-        | syn::Pat::Macro(_)
-        | syn::Pat::Or(_)
-        | syn::Pat::Paren(_)
-        | syn::Pat::Path(_)
-        | syn::Pat::Range(_)
-        | syn::Pat::Reference(_)
-        | syn::Pat::Rest(_)
-        | syn::Pat::Slice(_)
-        | syn::Pat::Struct(_)
-        | syn::Pat::Tuple(_)
-        | syn::Pat::TupleStruct(_)
-        | syn::Pat::Verbatim(_)
-        | syn::Pat::Wild(_) => None,
-        _ => panic!("sugar-walk emit local_pat_type refused unknown syn::Pat variant"),
+    if let syn::Pat::Type(pat_type) = pat {
+        return Some(&pat_type.ty);
     }
+    if known_no_pat_type(pat) {
+        return None;
+    }
+    panic!("sugar-walk emit local_pat_type refused unknown syn::Pat variant")
+}
+
+/// Pattern shapes that never carry their own type annotation: `Const`,
+/// `Ident`, `Lit`, `Macro`, `Or`, `Paren`, `Path`, `Range`, `Reference`,
+/// `Rest`, `Slice`, `Struct`, `Tuple`, `TupleStruct`, `Verbatim`, `Wild`.
+fn known_no_pat_type(pat: &syn::Pat) -> bool {
+    matches!(
+        pat,
+        syn::Pat::Const(_)
+            | syn::Pat::Ident(_)
+            | syn::Pat::Lit(_)
+            | syn::Pat::Macro(_)
+            | syn::Pat::Or(_)
+            | syn::Pat::Paren(_)
+            | syn::Pat::Path(_)
+            | syn::Pat::Range(_)
+            | syn::Pat::Reference(_)
+            | syn::Pat::Rest(_)
+            | syn::Pat::Slice(_)
+            | syn::Pat::Struct(_)
+            | syn::Pat::Tuple(_)
+            | syn::Pat::TupleStruct(_)
+            | syn::Pat::Verbatim(_)
+            | syn::Pat::Wild(_)
+    )
 }
 
 fn path_name(path: &syn::ExprPath) -> Option<String> {
