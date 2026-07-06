@@ -79,6 +79,10 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
         ),
     ),
     FailurePattern(
+        "proof-pool/bridge-target-missing",
+        re.compile(r"resolve-target: bridge target CID .* not in pool"),
+    ),
+    FailurePattern(
         "prove-refused/panic-callsite-row",
         re.compile(r"contract verify rc=1 expected 0|panic_callsite"),
     ),
