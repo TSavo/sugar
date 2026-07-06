@@ -124,10 +124,10 @@ if expect == "good":
 else:
     if prove_rc == 0 or verify_rc == 0:
         raise SystemExit(f"FAIL({twin}): bad twin must make prove/verify exit nonzero")
-    if assertion.get("status") != "unsatisfied" or witness.get("status") != "refused":
-        raise SystemExit(f"FAIL({twin}): expected refused rows")
-    if v_assertion.get("status") != "unsatisfied" or v_witness.get("status") != "refused":
-        raise SystemExit(f"FAIL({twin}): expected durable refused rows")
+    if assertion.get("status") != "unsatisfied" or witness.get("status") != "unsatisfied":
+        raise SystemExit(f"FAIL({twin}): expected unsatisfied rows")
+    if v_assertion.get("status") != "unsatisfied" or v_witness.get("status") != "unsatisfied":
+        raise SystemExit(f"FAIL({twin}): expected durable unsatisfied rows")
     if verify.get("ok") is not False:
         raise SystemExit(f"FAIL({twin}): verify ok must be false")
 
