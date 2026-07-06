@@ -35195,3 +35195,70 @@ fn assert_singleton_decl_verdict(src: &str, want_sat: bool, label: &str) {
         );
     }
 }
+
+// ── #3588: `assert_eq!`/`assert_ne!` inside for-replay must never PANIC on a
+// comparison operand ──
+//
+// `for_replay::emit_assertion_macro_payload` used to build the `lhs == rhs` /
+// `lhs != rhs` relation by round-tripping through `syn::parse_quote!((#lhs) ==
+// (#rhs))`: quote the operands to tokens, splice them into a literal-paren
+// template, then REPARSE the whole thing as a fresh `syn::Expr`. `syn`'s
+// `ToTokens` for `Expr` never restores parens that aren't part of the AST
+// node itself, so when an operand is itself a comparison (`a < b`), the
+// spliced token stream can read like a bare chain (`a < b == c`) the instant
+// any wrapping the human originally wrote has already been normalized away.
+// Reparsing that is `rustc`'s own "comparison operators cannot be chained"
+// restriction -- and `parse_quote!` panics on a reparse failure instead of
+// returning a `Result`. The exact corpus trigger was
+// `examples/rust-coretests-report`'s vendored coretests, but any
+// `assert_eq!`/`assert_ne!` whose operand is itself a relation reproduces it.
+//
+// The fix builds `syn::ExprBinary { left: syn::ExprParen(lhs), .. right:
+// syn::ExprParen(rhs) }` directly as AST nodes -- no tokenization, no
+// reparse, so there is no text for a chain to ever form in. This is a real
+// factory-safe lift (the relation is exactly the one the source asserts),
+// not a side-door text patch.
+#[test]
+fn for_replay_assert_eq_with_comparison_operands_does_not_panic() {
+    // The `assert_eq!(align_of::<T>(), size_of::<T>())` shape is representative of the
+    // vendored coretests trigger; the direct chained-comparison-operand shape below is
+    // the minimal reproduction of the actual reparse hazard.
+    let src = r#"
+#[test]
+fn t() {
+    let a = [1, 2, 3];
+    let b = [1, 2, 4];
+    for i in 0..3 {
+        assert_eq!(a[i] < b[i], a[i] <= b[i]);
+    }
+}
+"#;
+    // Must not panic (the old bug), and must not silently swallow the loop as an
+    // unrelated skip either -- for_replay owns this body.
+    let out = lift_file(&parse(src), "tests/for_replay_chained_comparison.rs");
+    assert!(
+        out.decls.iter().any(|d| d.name.contains("loop")),
+        "the replayed loop must still emit a decl once the relation no longer panics: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn for_replay_assert_ne_with_comparison_operands_does_not_panic() {
+    let src = r#"
+#[test]
+fn t() {
+    let a = [1, 2, 3];
+    let b = [2, 2, 2];
+    for i in 0..3 {
+        assert_ne!(a[i] < b[i], a[i] > b[i]);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/for_replay_chained_comparison_ne.rs");
+    assert!(
+        out.decls.iter().any(|d| d.name.contains("loop")),
+        "the replayed loop must still emit a decl once the relation no longer panics: {:?}",
+        out.skip_reasons
+    );
+}

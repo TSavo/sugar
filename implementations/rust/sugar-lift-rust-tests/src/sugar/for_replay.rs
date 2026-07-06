@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, eq, ConstValue, Formula, Term};
-use syn::{BinOp, Expr, Item, Lit, Pat, Stmt, Type, UnOp};
+use syn::{BinOp, Expr, ExprBinary, ExprParen, Item, Lit, Pat, Stmt, Type, UnOp};
 use tracing::debug;
 
 use crate::sugar::callsite::{CallsiteOutcome, CallsiteSugar};
@@ -1285,6 +1285,16 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         self.emit_constraint_expr(&expr)
     }
 
+    // Build `lhs OP rhs` as an AST node directly instead of round-tripping through
+    // `syn::parse_quote!`. `lhs`/`rhs` here can themselves be relations (e.g. a
+    // substituted loop-carried value that is a comparison, or source that reads
+    // `assert_eq!(a < b, c < d)`), and `Expr`'s `ToTokens` impl does not restore the
+    // parens a human would have written. Re-tokenizing that unparenthesized chain and
+    // reparsing it (what `parse_quote!` does) hits rustc's own "comparison operators
+    // cannot be chained" restriction and panics (#3588). Wrapping each operand in an
+    // explicit `syn::ExprParen` node and assembling the `syn::ExprBinary` node by hand
+    // sidesteps the reparse entirely: chained comparisons never touch that code path
+    // because there is no text to chain them in.
     fn emit_assertion_macro_payload(&mut self, expr: &Expr) -> Option<()> {
         let Expr::Macro(expr_macro) = expr else {
             return None;
@@ -1296,13 +1306,13 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             "assert_eq" | "debug_assert_eq" | "assert_eq_const_safe" if args.exprs.len() >= 2 => {
                 let lhs = &args.exprs[0];
                 let rhs = &args.exprs[1];
-                let relation: Expr = syn::parse_quote!((#lhs) == (#rhs));
+                let relation = binary_relation_expr(lhs, BinOp::Eq(Default::default()), rhs);
                 self.emit_constraint_expr(&relation)
             }
             "assert_ne" | "debug_assert_ne" if args.exprs.len() >= 2 => {
                 let lhs = &args.exprs[0];
                 let rhs = &args.exprs[1];
-                let relation: Expr = syn::parse_quote!((#lhs) != (#rhs));
+                let relation = binary_relation_expr(lhs, BinOp::Ne(Default::default()), rhs);
                 self.emit_constraint_expr(&relation)
             }
             _ => None,
@@ -1656,6 +1666,29 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         };
         Some((left, right))
     }
+}
+
+// Wraps `expr` in an explicit `(..)` AST node (never a reparsed text `(..)`), so a
+// nested comparison operand keeps its grouping when it becomes the operand of another
+// binary expression.
+fn paren_expr(expr: &Expr) -> Expr {
+    Expr::Paren(ExprParen {
+        attrs: Vec::new(),
+        paren_token: Default::default(),
+        expr: Box::new(expr.clone()),
+    })
+}
+
+// Builds `(lhs) OP (rhs)` directly as a `syn::ExprBinary` AST node. See the comment on
+// `emit_assertion_macro_payload`'s `assert_eq`/`assert_ne` arms for why this never goes
+// through `syn::parse_quote!`/token reparsing.
+fn binary_relation_expr(lhs: &Expr, op: BinOp, rhs: &Expr) -> Expr {
+    Expr::Binary(ExprBinary {
+        attrs: Vec::new(),
+        left: Box::new(paren_expr(lhs)),
+        op,
+        right: Box::new(paren_expr(rhs)),
+    })
 }
 
 fn annotate_vec_collect_return(expr: Expr, output: &syn::ReturnType) -> Expr {
@@ -2140,4 +2173,95 @@ fn simple_path_name(expr: &Expr) -> Option<String> {
 fn count_asserts_in_expr_local(expr: &Expr) -> usize {
     let stmt = Stmt::Expr(expr.clone(), None);
     count_asserts_in_stmts(&[stmt])
+}
+
+#[cfg(test)]
+mod chained_comparison_relation_tests {
+    use super::{binary_relation_expr, paren_expr};
+    use syn::{BinOp, Expr};
+
+    // #3588: `substitute_expr` substitutes a bound `Expr` straight into an operand
+    // position (see `substitute_expr_inner`'s `Expr::Path` arm) with no added
+    // grouping. When the bound value is itself a comparison and it lands as the
+    // operand of ANOTHER comparison, the resulting in-memory AST is a `Binary`
+    // nested directly inside a `Binary` with no `Paren` node between them -- legal
+    // to hold in memory, but if it is ever tokenized and reparsed as `syn`'s old
+    // `parse_quote!((#lhs) == (#rhs))` construction did, the token stream reads as
+    // a bare chain (`a < b == c`) and `syn`/`rustc` refuse it. That refusal is what
+    // made `parse_quote!` panic at `for_replay.rs:1299`. This test pins the
+    // mechanism directly: (1) the naive nested tree really does fail to
+    // round-trip through tokens, and (2) `binary_relation_expr` -- the direct AST
+    // construction that replaced the `parse_quote!` call -- never performs that
+    // round-trip, so it cannot hit the failure no matter what is nested inside.
+    fn parse_expr(src: &str) -> Expr {
+        syn::parse_str(src).expect("fixture expr parses")
+    }
+
+    #[test]
+    fn old_parse_quote_construction_panics_on_a_bare_operand_chain() {
+        // `syn`'s `ToTokens` for a properly-typed nested `Expr::Binary` is
+        // precedence-aware and inserts its own parens on the way back out (`a < b`
+        // wrapped in a comparison prints as `(a < b) == c`), so a *well-formed* `Expr`
+        // tree can't reproduce #3588 by itself. The panic needs an operand that is
+        // already a bare, unparenthesized token fragment by the time it reaches the
+        // `(#lhs) == (#rhs)` template -- exactly what `lhs`/`rhs` are before this fix
+        // reparses them into full `Expr` trees on every hop between macro-arg
+        // splitting, binding substitution, and relation assembly. This test
+        // reproduces the mechanism directly at the token level: splice a bare
+        // comparison-chain token fragment into the OLD template and show the reparse
+        // -- what `parse_quote!` panics on -- fails, then show `binary_relation_expr`
+        // cannot be handed that fragment in the first place because it takes a typed
+        // `&Expr`, not tokens.
+        let bare_chain_operand: proc_macro2::TokenStream =
+            "a < b < c".parse().expect("token fragment lexes");
+        let old_style_template = quote::quote!((#bare_chain_operand) == (d));
+        assert!(
+            syn::parse2::<Expr>(old_style_template.clone()).is_err(),
+            "expected the OLD `(#lhs) == (#rhs)` template to fail reparse when handed a \
+             bare chained-comparison token fragment (tokens: `{old_style_template}`); \
+             `syn::parse_quote!` panics on exactly this reparse failure"
+        );
+    }
+
+    #[test]
+    fn binary_relation_expr_never_reparses_so_nested_comparisons_cannot_panic() {
+        // Build the exact same nested-comparison operand as above, but as the `lhs`
+        // fed to the replacement helper instead of assembled by hand.
+        let nested_comparison_operand = Expr::Binary(syn::ExprBinary {
+            attrs: Vec::new(),
+            left: Box::new(parse_expr("a")),
+            op: BinOp::Lt(Default::default()),
+            right: Box::new(parse_expr("b")),
+        });
+        let rhs = parse_expr("c");
+        let relation = binary_relation_expr(
+            &nested_comparison_operand,
+            BinOp::Eq(Default::default()),
+            &rhs,
+        );
+        // No reparse happened to build `relation` -- it is a direct `ExprBinary` over
+        // `Paren`-wrapped operands. Confirm the shape and, belt-and-suspenders, that
+        // the tokens it emits (unlike the naive tree above) DO round-trip cleanly,
+        // because the operand is now wrapped in an explicit `Paren` node.
+        assert!(matches!(relation, Expr::Binary(_)));
+        let tokens = quote::quote!(#relation);
+        assert!(
+            syn::parse2::<Expr>(tokens.clone()).is_ok(),
+            "binary_relation_expr's paren-wrapped operands must round-trip through \
+             tokens even though the raw operand it was given is itself a bare \
+             comparison; tokens: `{tokens}`"
+        );
+        // And the wrapped operand really is a `Paren` node, not a bare splice.
+        if let Expr::Binary(binary) = &relation {
+            assert!(matches!(binary.left.as_ref(), Expr::Paren(_)));
+            assert!(matches!(binary.right.as_ref(), Expr::Paren(_)));
+        }
+    }
+
+    #[test]
+    fn paren_expr_wraps_without_reparsing() {
+        let inner = parse_expr("a < b");
+        let wrapped = paren_expr(&inner);
+        assert!(matches!(wrapped, Expr::Paren(_)));
+    }
 }
