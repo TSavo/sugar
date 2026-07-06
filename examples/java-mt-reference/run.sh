@@ -41,10 +41,7 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: no python3 on PATH"; exit 0;
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 KIT_JAVA="$(which java)"
 
 echo "SCOPE: FLOOR — MT reference-vector point contracts (bin-1, deterministic theorem)."
@@ -55,11 +52,9 @@ echo "SCOPE: BAD:  same draw[0], two contradictory assertEquals in one test → 
 echo "SCOPE: NOT this showcase: derivation from algorithm (rung 2/3, tempering universe)."
 
 echo
-echo "== build the sugar CLI =="
-if [ "${JAVA_MT_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar >/dev/null
-fi
+echo "== resolve the sugar CLI via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not at $SUGAR"; exit 1; }
 
 echo
