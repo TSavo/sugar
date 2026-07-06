@@ -34,6 +34,21 @@ class CallSiteValue(FloorValue):
     def project_callsite_with(self, operation, ctx):
         return operation.project_callsite(self, ctx)
 
+    def attribute_with(self, operation: Any, ctx: Any):
+        del ctx
+        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            RuntimeEffect(
+                "callsite attribute runtime boundary: "
+                f"`{self.target_name}.{operation.name}` requires executing the "
+                "call result before Python attribute lookup; keep as typed red "
+                "until a narrower vendor-cited floor owns the call result and "
+                f"attribute. blame={operation.blame}"
+            )
+        )
+
     def force_floor(
         self,
         ctx: Any,

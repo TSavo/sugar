@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import json
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,7 +13,12 @@ from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.floor import FloorValue, ImportAliasValue, SymbolicValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    FloorValue,
+    ImportAliasValue,
+    SymbolicValue,
+)
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Incomplete
@@ -27,6 +34,7 @@ from sugar_lift_py_tests.sugar.witnesses import (
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import _ensure_sugar_bin, _stage_cli_project
 
 
 def _term_outcome(expr: str, binds: dict[str, FloorValue] | None = None):
@@ -205,6 +213,72 @@ def test_pandas_dict_literal_subscript_discharges_and_refutes(
             "    assert A() == 2\n"
         ),
     )
+
+
+def test_pandas_callsite_attribute_is_typed_runtime_effect() -> None:
+    outcome, selected = _term_outcome(
+        "result.dtype",
+        {"result": _callsite_floor("constructor")},
+    )
+
+    assert "AttributeSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "callsite attribute runtime boundary" in outcome.effect.reason
+    assert "constructor.dtype" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
+
+
+def test_pandas_callsite_attribute_wrong_effect_twin_is_rejected() -> None:
+    outcome, _selected = _term_outcome(
+        "result.dtype",
+        {"result": _callsite_floor("constructor")},
+    )
+
+    _assert_runtime_effect_matches(
+        outcome,
+        TypedRedEffectExpectation(
+            effect_class="RuntimeEffect",
+            reason_needle="callsite attribute runtime boundary",
+            blame_needle="pandas_gap.py:1:0",
+        ),
+    )
+    assert not _runtime_effect_matches(
+        outcome,
+        TypedRedEffectExpectation(
+            effect_class="RuntimeEffect",
+            reason_needle="array literal non-FOL element runtime boundary",
+            blame_needle="pandas_gap.py:1:0",
+        ),
+    )
+
+
+def test_pandas_callsite_attribute_production_path_is_typed_red(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "def constructor(x):\n"
+        "    return x\n\n"
+        "def test_callsite_attribute():\n"
+        "    result = constructor(5)\n"
+        "    assert result.dtype == 5\n"
+    )
+
+    doc = _mint_lift_document(tmp_path / "callsite-attribute", source)
+
+    walk = doc["factoryAuditSummary"]["factoryWalk"]
+    assert len(walk) == 1
+    row = walk[0]
+    assert row["selected"] == "ProjectedEqualityAssertionSugar"
+    assert row["status"] == "runtime-effect"
+    assert row["output"] == {"effect": "RuntimeEffect"}
+    assert "AttributeSugar" in {
+        audit["selected"]
+        for audit in doc["factoryAudits"]
+        if isinstance(audit.get("selected"), str)
+    }
+    assert "callsite attribute runtime boundary" in row["reason"]
+    assert "`constructor.dtype`" in row["reason"]
 
 
 @pytest.mark.parametrize(
@@ -395,6 +469,60 @@ def _red_seed_from_tuple_unpack_witnesses() -> SugarRedEffectWitnessPair:
         if isinstance(seed, SugarRedEffectWitnessPair):
             return seed
     raise AssertionError("TupleUnpackAssignSugar must expose a red-effect seed")
+
+
+def _callsite_floor(target_name: str) -> CallSiteValue:
+    return CallSiteValue(
+        target_name=target_name,
+        arg_values=(),
+        parameters=(),
+        term=make_var(f"call:{target_name}"),
+        body=None,
+    )
+
+
+def _mint_lift_document(project: Path, source: str) -> dict:
+    _stage_cli_project(project, source)
+    sugar = _ensure_sugar_bin()
+    capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"
+    completed = subprocess.run(
+        [str(sugar), "mint", "--out", ".", "--quiet"],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    responses = [
+        json.loads(line) for line in capture.read_text(encoding="utf-8").splitlines()
+    ]
+    primary = [
+        item
+        for item in responses
+        if item.get("id") == 2 and isinstance(item.get("result"), dict)
+    ]
+    assert len(primary) == 1
+    return primary[0]["result"]
+
+
+def _assert_runtime_effect_matches(
+    outcome,
+    expectation: TypedRedEffectExpectation,
+) -> None:
+    assert _runtime_effect_matches(outcome, expectation)
+
+
+def _runtime_effect_matches(
+    outcome,
+    expectation: TypedRedEffectExpectation,
+) -> bool:
+    return (
+        isinstance(outcome, Incomplete)
+        and type(outcome.effect).__name__ == expectation.effect_class
+        and expectation.reason_needle in outcome.effect.reason
+        and expectation.blame_needle in outcome.effect.reason
+    )
 
 
 def _has_runtime_effect(outcome, needle: str) -> bool:
