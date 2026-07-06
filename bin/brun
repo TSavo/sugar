@@ -310,6 +310,11 @@ sync_file .sugar/config.toml
 sync_dir .sugar/lift
 sync_dir .sugar/realize
 sync_dir .sugar/ir-compilers
+# Checked-in kit component manifests. Component discovery (component_plan.rs)
+# reads `<project_root>/.sugar/components` to decide which kit claims a
+# workspace; without this, remote runs hit "no Sugar <lang> kit component
+# claimed it" even though the manifests are committed.
+sync_dir .sugar/components
 sync_dir .github
 
 sync_dir implementations/rust
