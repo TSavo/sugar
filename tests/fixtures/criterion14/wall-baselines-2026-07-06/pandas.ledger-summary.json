@@ -1,0 +1,16 @@
+{
+  "contracts": 8323,
+  "diagnosticsCount": 144707,
+  "hasLineAccounting": false,
+  "package": "pandas",
+  "sourceAuditsCount": 8321,
+  "sourceLedger": {
+    "source_boundary": 0,
+    "source_inactive": 0,
+    "source_loci": 8321,
+    "source_support": 0,
+    "source_unresolved": 0,
+    "source_warranted": 8321,
+    "unclassified_source": 0
+  }
+}

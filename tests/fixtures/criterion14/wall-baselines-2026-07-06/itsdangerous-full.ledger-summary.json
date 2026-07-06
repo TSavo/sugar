@@ -1,0 +1,43 @@
+{
+  "contracts": 0,
+  "diagnosticsCount": 62,
+  "diagnosticsSample": [
+    {
+      "function": "__main__.__getattr__",
+      "message": "verify-dialect refusal: body does not reduce to supported precondition guard(s) followed by a single `return <expr>`; refusing",
+      "path": "__init__.py"
+    },
+    {
+      "function": "_json._CompactJSON.loads",
+      "message": "verify-dialect refusal: constant of sort `String` is not Int/Bool; refusing",
+      "path": "_json.py"
+    },
+    {
+      "function": "_json._CompactJSON.dumps",
+      "message": "verify-dialect refusal: body does not reduce to supported precondition guard(s) followed by a single `return <expr>`; refusing",
+      "path": "_json.py"
+    },
+    {
+      "function": "encoding.want_bytes",
+      "message": "verify-dialect refusal: body does not reduce to supported precondition guard(s) followed by a single `return <expr>`; refusing",
+      "path": "encoding.py"
+    },
+    {
+      "function": "encoding.base64_encode",
+      "message": "verify-dialect refusal: body does not reduce to supported precondition guard(s) followed by a single `return <expr>`; refusing",
+      "path": "encoding.py"
+    }
+  ],
+  "hasLineAccounting": false,
+  "package": "itsdangerous",
+  "sourceAuditsCount": 0,
+  "sourceLedger": {
+    "source_boundary": 0,
+    "source_inactive": 0,
+    "source_loci": 0,
+    "source_support": 0,
+    "source_unresolved": 0,
+    "source_warranted": 0,
+    "unclassified_source": 0
+  }
+}
