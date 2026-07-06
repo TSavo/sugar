@@ -166,6 +166,11 @@ $(BCARGO_PYTHON_ENV_STAMP): Makefile $(wildcard implementations/python/*/pyproje
 check-cargo-entrypoint:
 	tools/check-cargo-entrypoint.sh
 
+.PHONY: check-lift-refusal-vocabulary
+check-lift-refusal-vocabulary:
+	tools/check-lift-refusal-vocabulary.py
+	tools/check-lift-refusal-vocabulary.py --self-test
+
 .PHONY: numpy-wall
 numpy-wall:
 	python3 tools/numpy_wall.py
@@ -490,7 +495,7 @@ coretests-invariants:
 	python3 scripts/check-coretests-invariants.py /tmp/coretests-hermetic.out implementations/rust/coretests-invariants.json
 
 .PHONY: ci
-ci: check-cargo-entrypoint test-python-format test-all test-showcases self-attest coretests-source-audit coretests-invariants
+ci: check-cargo-entrypoint check-lift-refusal-vocabulary test-python-format test-all test-showcases self-attest coretests-source-audit coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 
