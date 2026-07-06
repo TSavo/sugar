@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.temporal import TemporalContext
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.factory.factory_build_result import FactoryBuildResult
+    from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
@@ -15,15 +21,19 @@ class FactoryBuildContext:
     source_oracle: Any = None
     expected_role: SugarRole | None = None
     name_resolver: Any = None
-    import_aliases: dict[str, str] = field(default_factory=dict)
-    from_imports: dict[str, tuple[str, str]] = field(default_factory=dict)
-    contract_bindings: list[Any] = field(default_factory=list)
+    import_aliases: dict[str, str] = field(default_factory=dict[str, str])
+    from_imports: dict[str, tuple[str, str]] = field(
+        default_factory=dict[str, tuple[str, str]]
+    )
+    contract_bindings: list[Any] = field(default_factory=list[Any])
     external_bridge_sink: Any = None
     audit_sink: Any = None
     factory_audit_sink: Any = None
     proof_sink: Any = None
     report_sink: Any = None
-    operation_log: list[tuple[str, str, str]] = field(default_factory=list)
+    operation_log: list[tuple[str, str, str]] = field(
+        default_factory=list[tuple[str, str, str]]
+    )
     dig_sink: Any = None
     record_operation: Any = None
     # The set of callee names whose body is CURRENTLY being built, up the build stack.
@@ -31,13 +41,15 @@ class FactoryBuildContext:
     # set: eagerly building a recursive universe never terminates, and an infinite
     # recursion is not finitely constructible -> the bridge stays the vendor's axiom
     # rather than hanging the lifter.
-    building: frozenset = field(default_factory=frozenset)
+    building: frozenset[str] = field(default_factory=frozenset[str])
 
     def __post_init__(self) -> None:
         if self.factory_audit_sink is None and self.audit_sink is not None:
             object.__setattr__(self, "factory_audit_sink", self.audit_sink)
 
-    def build_child(self, node, role: SugarRole):
+    def build_child(
+        self, node: ast.AST | SourceFragment | None, role: SugarRole
+    ) -> FactoryBuildResult:
         from sugar_lift_py_tests.factory.build import build_node
 
         return build_node(
@@ -48,9 +60,10 @@ class FactoryBuildContext:
             ctx=self,
         )
 
-    def build_body(self, node, role: SugarRole):
+    def build_body(
+        self, node: ast.AST | SourceFragment | None, role: SugarRole
+    ) -> "SugarBody[Any]":
         from sugar_lift_py_tests.factory.build import build_node
-        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
         from sugar_lift_py_tests.sugar_body import SugarBody
 
         # Accept a SourceFragment directly (idempotent) or an ast node.

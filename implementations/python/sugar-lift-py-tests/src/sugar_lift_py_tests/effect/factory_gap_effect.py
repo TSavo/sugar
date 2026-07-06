@@ -22,12 +22,20 @@ class FactoryGapEffect:
     gap_locus: GapLocus
 
     def __post_init__(self) -> None:
-        if not isinstance(self.gap_kind, GapKind):
+        # Static typing says these are always GapKind/GapLocus; the runtime guard
+        # stays because construction still happens from untyped call sites
+        # (kwargs unpacked from dicts, vendor-facing constructors) where the
+        # static type is a promise, not a proof. Boundary law, not dead code.
+        if not isinstance(
+            self.gap_kind, GapKind
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise TypeError(
                 "FactoryGapEffect.gap_kind must be GapKind: owner=FactoryGapEffect "
                 f"shape={type(self.gap_kind).__name__} replacement=GapKind.FLOOR"
             )
-        if not isinstance(self.gap_locus, GapLocus):
+        if not isinstance(
+            self.gap_locus, GapLocus
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise TypeError(
                 "FactoryGapEffect.gap_locus must be GapLocus: owner=FactoryGapEffect "
                 f"shape={type(self.gap_locus).__name__} "

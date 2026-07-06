@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from typing import NoReturn, Optional
 
 from sugar_lift_py_tests.claim import SugarCandidate, SugarCatalog, SugarRole
@@ -19,7 +20,7 @@ class FactoryCandidateDeclined(RuntimeError):
 
 
 def build_node(
-    node,
+    node: ast.AST | SourceFragment | None,
     *,
     filename: str,
     role: SugarRole,
