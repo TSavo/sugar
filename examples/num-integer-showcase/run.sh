@@ -6,19 +6,17 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 
 echo "SCOPE: num-integer 0.1.46 exact vendor rows from doc-examples and Integer trait."
 echo "SCOPE: GOOD claims are point-wise exact gcd/lcm/div_floor/mod_floor/is_multiple_of/is_even rows; BAD is a contradiction twin."
 echo "SCOPE: residuals = extended_gcd rows, div_rem tuple rows, next_multiple_of rows, is_odd alias (mirrors is_even), lcm overflow behavior."
 
-echo "== build the CLI + Rust assertion and cargo-test witness lifters =="
-cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli --bin sugar \
-  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
-  -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-  -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
+echo "== resolve the CLI + Rust assertion and cargo-test witness lifters via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+"$REPO/bin/sugarbin" --profile debug --bin rust_test_assertions_rpc >/dev/null
+"$REPO/bin/sugarbin" --profile debug --bin witness_rpc >/dev/null
+"$REPO/bin/sugarbin" --profile debug --bin discharge_cli >/dev/null
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }

@@ -6,25 +6,18 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 
 echo "SCOPE: serde_json 1.0.150 exact vendor rows from tests/test.rs."
 echo "SCOPE: GOOD claims are point-wise exact serialization rows; BAD is a contradiction twin."
 echo "SCOPE: current discharge law refuses singleton/ambient testimony; load replay must stay clean."
 echo "SCOPE: residuals = helper-loop structure, format-macro debug rows, cfg-dependent map ordering rows, and nonfinite-float rows."
 
-echo "== build the CLI, component planners, Rust assertion lifter, and cargo-test witness lifter =="
-cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli --bin sugar \
-  -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
-  -p sugar-ir-compiler-lean --bin sugar-ir-lean \
-  -p sugar-ir-compiler-coq --bin sugar-ir-coq \
-  -p sugar-ir-compiler-maude --bin sugar-ir-maude \
-  -p sugar-walk --bin sugar-walk-rpc \
-  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
-  -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-  -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
+echo "== resolve the CLI, component planners, Rust assertion lifter, and cargo-test witness lifter via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+for b in sugar-ir-smt-lib sugar-ir-lean sugar-ir-coq sugar-ir-maude sugar-walk-rpc rust_test_assertions_rpc witness_rpc discharge_cli; do
+  "$REPO/bin/sugarbin" --profile debug --bin "$b" >/dev/null
+done
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/sugar-ir-smt-lib" ] || { echo "FAIL: sugar-ir-smt-lib not built"; exit 1; }

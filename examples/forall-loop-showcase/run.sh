@@ -6,19 +6,17 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 
 echo "SCOPE: a concrete bounded loop lifts to forall x. (0 <= x < 3 => g(x) == 1)."
 echo "SCOPE: GOOD is the universal alone (consistent); BAD adds the in-range contradiction g(2)==2 (z3 instantiates x=2 and refutes)."
 echo "SCOPE: residuals = runtime-collection loops, mutated-accumulator bodies, open ranges (all sound refusals)."
 
-echo "== build the CLI + Rust assertion and cargo-test witness lifters =="
-cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli --bin sugar \
-  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
-  -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-  -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
+echo "== resolve the CLI + Rust assertion and cargo-test witness lifters via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+"$REPO/bin/sugarbin" --profile debug --bin rust_test_assertions_rpc >/dev/null
+"$REPO/bin/sugarbin" --profile debug --bin witness_rpc >/dev/null
+"$REPO/bin/sugarbin" --profile debug --bin discharge_cli >/dev/null
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }

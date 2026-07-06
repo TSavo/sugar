@@ -49,8 +49,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
-BIN_DIR="$RUST/target/debug"
-SUGAR="$BIN_DIR/sugar"
 KIT_JAVA="$(which java)"
 
 BASE64_VERSION="${BASE64_VERSION:-0.22.1}"
@@ -115,14 +113,11 @@ PY
 }
 
 echo
-echo "== build the sugar CLI =="
-if [ "${JAVA_PANAMA_BRIDGE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar \
-    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null
-fi
+echo "== resolve the sugar CLI via sugarbin =="
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
+RUST_ASSERT_RPC="$("$REPO/bin/sugarbin" --profile debug --bin rust_test_assertions_rpc)"
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not found at $SUGAR"; exit 1; }
-RUST_ASSERT_RPC="$BIN_DIR/rust_test_assertions_rpc"
 [ -x "$RUST_ASSERT_RPC" ] || { echo "FAIL: rust_test_assertions_rpc not found"; exit 1; }
 
 echo
