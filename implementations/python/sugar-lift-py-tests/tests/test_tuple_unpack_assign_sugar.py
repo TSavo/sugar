@@ -12,6 +12,7 @@ from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     BlockValue,
@@ -20,7 +21,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.tuple_unpack_projection import TupleUnpackProjection
 from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -95,16 +96,19 @@ def test_list_unpack_assign_binds_nested_list_projection_from_symbolic_rhs() -> 
     )
 
 
-def test_tuple_unpack_assign_keeps_starred_targets_refused() -> None:
-    with pytest.raises(FactoryGap) as raised:
-        build_node(
-            ast.parse("x, *rest = values").body[0],
-            filename="f.py",
-            role=SugarRole.STATEMENT,
-        )
+def test_tuple_unpack_assign_starred_targets_are_typed_red_effects() -> None:
+    result = build_node(
+        ast.parse("x, *rest = values").body[0],
+        filename="f.py",
+        role=SugarRole.STATEMENT,
+    )
 
-    assert raised.value.info["observed"] == "Assign"
-    assert raised.value.info["requested"] == "statement"
+    assert result.audit_row.selected == "TupleUnpackAssignSugar"
+    outcome = result.sugar.desugar(ReduceContext(temporal=TemporalContext.empty()))
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert "starred tuple-unpack assignment runtime boundary" in outcome.effect.reason
+    assert "owner=TupleUnpackAssignSugar" in outcome.effect.reason
 
 
 def _compose_block_with_log(body_src: str, binds: dict | None = None):
