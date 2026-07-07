@@ -2662,6 +2662,324 @@ pub fn build_manifest_from_pool(
     manifest
 }
 
+/// G2 RECEIPT HELPER: the scan-path conjunct-set for every `#euf#`-named
+/// group in `pool`, keyed by name -- exactly the CID set
+/// `verify_consistency`'s own `by_name` grouping would feed into a group's
+/// solve, exposed standalone (no solve) so a differential test can compare
+/// it, name-for-name, against the manifest-projected equivalent
+/// (`projected_conjunct_cids_by_name`) without needing to run two full solve
+/// passes to check they visited the same members.
+pub fn scan_conjunct_cids_by_name(
+    pool: &MementoPool,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let (candidates, _refusals) = collect_consistency_candidates(pool);
+    let mut by_name: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for candidate in &candidates {
+        let name = contract_property_name(&candidate.body).to_string();
+        if !name.contains("#euf#") {
+            continue;
+        }
+        by_name.entry(name).or_default().insert(candidate.cid.clone());
+    }
+    by_name
+}
+
+/// G2 RECEIPT HELPER: the manifest-projected conjunct-set for every
+/// `#euf#`-named group across `manifests`, keyed by name -- the CROSS-PROOF
+/// MERGE of design item 3 (union by name across every loaded proof's
+/// manifest), exposed standalone so a differential test can compare it
+/// against `scan_conjunct_cids_by_name` for EXACT set equality, the "conjunct
+/// CID SETS identical (NOT verdict equality)" the design's G2 gate demands.
+pub fn projected_conjunct_cids_by_name(
+    manifests: &std::collections::BTreeMap<String, sugar_proof_envelope::manifest::Manifest>,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let mut by_name: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for manifest in manifests.values() {
+        for (name, group) in &manifest.groups {
+            by_name
+                .entry(name.clone())
+                .or_default()
+                .extend(group.member_cids.iter().cloned());
+        }
+    }
+    by_name
+}
+
+/// Which path produced a consistency pass's results (join-manifest design,
+/// lane 2: PROJECTION). Named on the row/receipt, never silent -- see design
+/// item 5. `PoolScanFallback` is the unconditional default in this workflow;
+/// `ManifestProjected` is opt-in (see `verify_consistency_projected`) and is
+/// only ever returned when every forced-fallback precondition below passed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsistencyMode {
+    ManifestProjected,
+    PoolScanFallback,
+}
+
+/// Why a projected pass fell back to a full pool scan. Multiple reasons may
+/// fire in the same pass; ALL are surfaced (never just the first), matching
+/// the "named on the row, never silent" discipline design item 5 requires.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectionFallbackReason {
+    /// A bundle contributing to this pool carries no sealed manifest at all
+    /// (pre-lane-1 proof, or seal skipped).
+    ManifestMissing { bundle: String },
+    /// A bundle's manifest declares a `version` this reader does not
+    /// understand -- never guess at an unknown wire-format.
+    VersionMismatch { bundle: String, version: u32 },
+    /// Recomputing the manifest from this bundle's own pool subset
+    /// (`build_manifest_from_pool`) does not reproduce the CID the manifest
+    /// itself carries -- the per-solve integrity precondition (design item
+    /// 5), checked every solve, not only at `sugar verify`'s own mint-time
+    /// self-check.
+    IntegrityMismatch { bundle: String },
+    /// A manifest group's `contributorBundle` no longer matches the bundle
+    /// it is loaded from -- the signature of a re-mint (G3): the consumer's
+    /// staged manifest still names the OLD vendor bundle CID.
+    VendorBundleMismatch {
+        name: String,
+        expected: String,
+        actual: String,
+    },
+}
+
+/// Look up one member CID directly in an already-loaded pool and resolve it
+/// into the same `ConsistencyCandidate` shape `collect_consistency_candidates`
+/// builds by scanning -- this is the "fetch exactly that closure" half of
+/// design item 4, driven by a manifest-named CID instead of a whole-pool
+/// scan-and-filter. Silently skips (returns `None`) a CID that is missing,
+/// not a contract member, has no resolvable body, or fails the same
+/// provenance-KIND gate `collect_consistency_candidates` enforces -- callers
+/// that need refusal visibility for those should use the scan path.
+fn candidate_from_pool(pool: &MementoPool, cid: &str) -> Option<ConsistencyCandidate> {
+    let memento_cid = MementoCid::try_parse(cid.to_string()).ok()?;
+    let member = pool.mementos.get(&memento_cid)?;
+    let body = pool.contract_body_for_member(member).filter(|v| v.is_object())?;
+    let provenance_kind = contract_provenance_kind(member, &body).ok()?;
+    Some(ConsistencyCandidate {
+        cid: cid.to_string(),
+        body,
+        provenance_kind,
+    })
+}
+
+/// Clone `pool`, keeping only the mementos named in `member_cids`. Used to
+/// re-derive ONE bundle's own manifest at solve time
+/// (`build_manifest_from_pool` scans `pool.contract_members()`, which reads
+/// `self.mementos`), for the per-solve integrity precondition. The shared
+/// `body`/`atoms` maps are left intact -- they are content-addressed and
+/// pool-wide by design, so restricting only the memento set reproduces
+/// exactly what seal-time saw for that one proof.
+fn restrict_pool_to_members(
+    pool: &MementoPool,
+    member_cids: &std::collections::BTreeSet<MementoCid>,
+) -> MementoPool {
+    let mut restricted = pool.clone();
+    restricted.mementos.retain(|cid, _| member_cids.contains(cid));
+    restricted
+}
+
+/// Union every loaded manifest's per-name groups and ambient sets into the
+/// projected equivalent of `verify_consistency`'s scan-built `groups` /
+/// `ambient_foralls` / `ambient_ground_callsite_facts` -- the CROSS-PROOF
+/// MERGE of design item 3, keyed by EUF NAME (never by baked member CID, so a
+/// re-minted vendor with new CIDs but the same names still merges correctly
+/// as long as its manifest is current -- see the `VendorBundleMismatch`
+/// forced-fallback check in `verify_consistency_projected` for the case
+/// where it is NOT current).
+fn projected_groups(
+    pool: &MementoPool,
+    manifests: &std::collections::BTreeMap<String, sugar_proof_envelope::manifest::Manifest>,
+) -> (
+    Vec<(String, Vec<ConsistencyCandidate>)>,
+    Vec<Json>,
+    Vec<AmbientGroundCallsiteFact>,
+) {
+    let mut member_cids_by_name: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeSet<String>,
+    > = std::collections::BTreeMap::new();
+    let mut ambient_forall_cids: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    let mut ambient_ground_cids: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    for manifest in manifests.values() {
+        for (name, group) in &manifest.groups {
+            member_cids_by_name
+                .entry(name.clone())
+                .or_default()
+                .extend(group.member_cids.iter().cloned());
+        }
+        ambient_forall_cids.extend(manifest.ambient.closed_forall_cids.iter().cloned());
+        ambient_ground_cids.extend(manifest.ambient.ground_callsite_fact_cids.iter().cloned());
+    }
+
+    let groups: Vec<(String, Vec<ConsistencyCandidate>)> = member_cids_by_name
+        .into_iter()
+        .map(|(name, cids)| {
+            let members: Vec<ConsistencyCandidate> = cids
+                .iter()
+                .filter_map(|cid| candidate_from_pool(pool, cid))
+                .collect();
+            (name, members)
+        })
+        .collect();
+
+    let mut ambient_foralls: Vec<Json> = Vec::new();
+    for cid in &ambient_forall_cids {
+        let Some(candidate) = candidate_from_pool(pool, cid) else {
+            continue;
+        };
+        if is_witness_member(&candidate.body) {
+            continue;
+        }
+        if let Some(inv) = candidate.body.get("inv") {
+            let inv = canonicalize_formula_json(inv);
+            collect_ambient_foralls(&inv, &mut ambient_foralls);
+        }
+    }
+
+    let mut ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact> = Vec::new();
+    for cid in &ambient_ground_cids {
+        let Some(candidate) = candidate_from_pool(pool, cid) else {
+            continue;
+        };
+        if is_witness_member(&candidate.body) {
+            continue;
+        }
+        let Some(inv) = candidate.body.get("inv") else {
+            continue;
+        };
+        let inv = canonicalize_formula_json(inv);
+        let contract_name = contract_property_name(&candidate.body);
+        let ground_scope = ambient_ground_callsite_scope(contract_name);
+        collect_ambient_ground_callsite_facts(
+            &inv,
+            cid,
+            &ground_scope,
+            candidate.provenance_kind,
+            &mut ambient_ground_callsite_facts,
+        );
+    }
+
+    (groups, ambient_foralls, ambient_ground_callsite_facts)
+}
+
+/// Evaluate every forced-fallback precondition design item 5 names, against
+/// every bundle contributing members to `pool`. Returns every reason that
+/// fired (empty == safe to project).
+fn projection_fallback_reasons(
+    pool: &MementoPool,
+    manifests: &std::collections::BTreeMap<String, sugar_proof_envelope::manifest::Manifest>,
+) -> Vec<ProjectionFallbackReason> {
+    let mut reasons = Vec::new();
+    for (bundle_cid, member_cids) in &pool.bundle_members {
+        let bundle_cid_str = bundle_cid.as_str().to_string();
+        let Some(manifest) = manifests.get(&bundle_cid_str) else {
+            reasons.push(ProjectionFallbackReason::ManifestMissing {
+                bundle: bundle_cid_str,
+            });
+            continue;
+        };
+        if manifest.version != sugar_proof_envelope::manifest::MANIFEST_VERSION {
+            reasons.push(ProjectionFallbackReason::VersionMismatch {
+                bundle: bundle_cid_str.clone(),
+                version: manifest.version,
+            });
+        }
+        let restricted = restrict_pool_to_members(pool, member_cids);
+        let recomputed = build_manifest_from_pool(&restricted, &bundle_cid_str);
+        if recomputed.cid() != manifest.cid() {
+            reasons.push(ProjectionFallbackReason::IntegrityMismatch {
+                bundle: bundle_cid_str.clone(),
+            });
+        }
+        for (name, group) in &manifest.groups {
+            if group.contributor_bundle != bundle_cid_str {
+                reasons.push(ProjectionFallbackReason::VendorBundleMismatch {
+                    name: name.clone(),
+                    expected: bundle_cid_str.clone(),
+                    actual: group.contributor_bundle.clone(),
+                });
+            }
+        }
+    }
+    reasons
+}
+
+/// PROJECTION entry point (join-manifest design, lane 2). Attempts to answer
+/// the consistency pass from sealed per-proof manifests instead of a
+/// whole-pool scan: euf-name lookup across every loaded proof's manifest
+/// (design item 3's cross-proof merge), ambient sets unioned exactly as
+/// `verify_consistency` conjoins them today, member closures fetched by CID
+/// straight out of the already-loaded pool (design item 4), and the SAME
+/// per-group solve (`process_consistency_group`) -- so a projected row and a
+/// scanned row differ only in which member CIDs fed the SAME conjoin/vacuity
+/// code, never in how they were classified once fetched.
+///
+/// Falls back to a full `verify_consistency` scan, WHOLESALE, the moment any
+/// forced-fallback precondition fires (design item 5) -- this function never
+/// mixes a projected group with a scanned group in the same pass; a partial
+/// trust failure degrades the whole pass, not just the affected name.
+pub fn verify_consistency_projected(
+    pool: &MementoPool,
+    manifests: &std::collections::BTreeMap<String, sugar_proof_envelope::manifest::Manifest>,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+) -> (Vec<ConsistencyResult>, ConsistencyMode, Vec<ProjectionFallbackReason>) {
+    let reasons = projection_fallback_reasons(pool, manifests);
+    if !reasons.is_empty() {
+        let results = verify_consistency(pool, plan, registry, compilers, project_root);
+        return (results, ConsistencyMode::PoolScanFallback, reasons);
+    }
+
+    let (groups, ambient_foralls, ambient_ground_callsite_facts) =
+        projected_groups(pool, manifests);
+    let ambient_posts = collect_ambient_posts(pool);
+
+    let mut locus_by_name: HashMap<String, SourceLocus> = HashMap::new();
+    for (_cid, member) in pool.source_memento_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if let Some(l) = locus_from_body(&body) {
+            let name = contract_property_name(&body).to_string();
+            locus_by_name.entry(name).or_insert(l);
+        }
+    }
+
+    let mut results: Vec<ConsistencyResult> = groups
+        .par_iter()
+        .flat_map(|(property_name, members)| {
+            process_consistency_group(
+                property_name,
+                members,
+                &ambient_posts,
+                &ambient_ground_callsite_facts,
+                &ambient_foralls,
+                &locus_by_name,
+                plan,
+                registry,
+                compilers,
+            )
+        })
+        .collect();
+    // Provenance refusals are a scan-side concept (raised while walking
+    // candidates that FAIL the provenance-KIND gate); `candidate_from_pool`
+    // silently skips those rather than re-deriving refusal rows here, so
+    // projected mode never fabricates a refusal scan mode would not have
+    // independently raised for the same CID.
+    results.sort_by(|a, b| a.property_name.cmp(&b.property_name));
+    (results, ConsistencyMode::ManifestProjected, reasons)
+}
+
 pub fn verify_consistency(
     pool: &MementoPool,
     plan: &SolverPlan,
@@ -2796,6 +3114,65 @@ pub fn verify_consistency(
     let mut results: Vec<ConsistencyResult> = groups
         .par_iter()
         .flat_map(|(property_name, members)| {
+            process_consistency_group(
+                property_name,
+                members,
+                &ambient_posts,
+                &ambient_ground_callsite_facts,
+                &ambient_foralls,
+                &locus_by_name,
+                plan,
+                registry,
+                compilers,
+            )
+        })
+        .collect();
+    results.extend(provenance_refusals);
+
+    info!(
+        candidates = candidates.len(),
+        consistent = results
+            .iter()
+            .filter(|r| r.verdict == ObligationVerdict::Discharged)
+            .count(),
+        contradictory = results
+            .iter()
+            .filter(|r| r.verdict == ObligationVerdict::Unsatisfied)
+            .count(),
+        undecidable = results
+            .iter()
+            .filter(|r| r.verdict == ObligationVerdict::Undecidable)
+            .count(),
+        witnessed = results.iter().filter(|r| r.witnessed).count(),
+        "verifier: test-assertion consistency pass complete"
+    );
+
+    results
+}
+
+/// PER-GROUP SOLVE, factored out of `verify_consistency` (pure relocation, no
+/// behavior change) so `verify_consistency_projected` (join-manifest design,
+/// lane 2: PROJECTION) can drive the identical conjoin/vacuity classification
+/// over a manifest-projected member set instead of a whole-pool scan group --
+/// design item 4's "same conjoin/vacuity classification as today over the
+/// fetched members". `property_name`/`members` name one `#euf#` (or plain)
+/// callsite group; `ambient_posts`/`ambient_ground_callsite_facts`/
+/// `ambient_foralls` are the pool-wide (or, in projected mode, manifest-
+/// ambient-union) background facts asserted into every obligation.
+#[allow(clippy::too_many_arguments)]
+fn process_consistency_group(
+    property_name: &str,
+    members: &[ConsistencyCandidate],
+    ambient_posts: &[AmbientPost],
+    ambient_ground_callsite_facts: &[AmbientGroundCallsiteFact],
+    ambient_foralls: &[Json],
+    locus_by_name: &HashMap<String, SourceLocus>,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+) -> Vec<ConsistencyResult> {
+    let property_name = &property_name.to_string();
+    {
             let mut out: Vec<ConsistencyResult> = Vec::new();
 
             // WITNESS members are settled from the rust-recomputed package body,
@@ -2976,29 +3353,7 @@ pub fn verify_consistency(
                 }
             }
             out
-        })
-        .collect();
-    results.extend(provenance_refusals);
-
-    info!(
-        candidates = candidates.len(),
-        consistent = results
-            .iter()
-            .filter(|r| r.verdict == ObligationVerdict::Discharged)
-            .count(),
-        contradictory = results
-            .iter()
-            .filter(|r| r.verdict == ObligationVerdict::Unsatisfied)
-            .count(),
-        undecidable = results
-            .iter()
-            .filter(|r| r.verdict == ObligationVerdict::Undecidable)
-            .count(),
-        witnessed = results.iter().filter(|r| r.witnessed).count(),
-        "verifier: test-assertion consistency pass complete"
-    );
-
-    results
+    }
 }
 
 #[cfg(test)]
