@@ -1382,6 +1382,46 @@ fn read_conjoined_import_cids(project_root: &Path) -> Result<Vec<MementoCid>, St
     Ok(cids.into_iter().collect())
 }
 
+/// Content-addressed cache key for one project's staged `.sugar/imports/`
+/// set: the sorted, deduplicated list of import-catalog CIDs, hashed. Vendor
+/// `.proof` catalogs are named `<blake3-512 CID>.proof` (the trust-root
+/// filename convention `read_conjoined_import_cids` already validates), so
+/// this key changes if and only if the import set itself changes -- add,
+/// remove, or replace one byte of any staged import and the key moves.
+/// Unchanged imports (the common editor save-cycle case: the vendor proof is
+/// staged once and never touched again) keep hitting the same cache entry.
+fn contract_bindings_cache_key(project_root: &Path) -> Option<String> {
+    let cids = read_conjoined_import_cids(project_root).ok()?;
+    if cids.is_empty() {
+        return None;
+    }
+    let joined = cids
+        .iter()
+        .map(|c| c.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(blake3_512_of(joined.as_bytes()))
+}
+
+fn contract_bindings_cache_path(project_root: &Path, key: &str) -> std::path::PathBuf {
+    project_root
+        .join(".sugar")
+        .join("cache")
+        .join("mint-import-bindings")
+        .join(format!("{key}.json"))
+}
+
+/// Cache path for `dependency_contract_refs`'s implication-endpoint pass
+/// (distinct cache namespace from `contract_bindings_cache_path` above --
+/// same import set, different derived shape).
+fn dependency_contract_refs_cache_path(project_root: &Path, key: &str) -> std::path::PathBuf {
+    project_root
+        .join(".sugar")
+        .join("cache")
+        .join("mint-import-contract-refs")
+        .join(format!("{key}.json"))
+}
+
 fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
     // Scope strictly to declared dependency proofs under `.sugar/imports/`.
     // (`load_all_proofs::run` recursively walks the WHOLE crate tree, which
@@ -1401,6 +1441,25 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
     if proof_files.is_empty() {
         return Vec::new();
     }
+
+    // O(1) hot path: the vendor import(s) are content-addressed and, across
+    // an editor save-cycle, byte-for-byte unchanged between mint invocations.
+    // Re-parsing a 96 MB pandas `.proof` catalog on every save (whole-catalog
+    // `ProofGraph::read` inside `load_files_into_pool`, below) is a forall
+    // over the same input every time -- recompute once, then serve a CID-
+    // keyed cache hit, and only fall through to the real derivation when the
+    // import set actually changed (or the cache entry is missing/corrupt:
+    // recompute-or-refuse, never trust an unreadable cache file).
+    let cache_key = contract_bindings_cache_key(project_root);
+    if let Some(key) = &cache_key {
+        let cache_path = contract_bindings_cache_path(project_root, key);
+        if let Ok(bytes) = std::fs::read(&cache_path) {
+            if let Ok(cached) = serde_json::from_slice::<Vec<Value>>(&bytes) {
+                return cached;
+            }
+        }
+    }
+
     let mut pool = sugar_verifier::types::MementoPool::default();
     sugar_verifier::load_all_proofs::load_files_into_pool(&proof_files, &mut pool);
 
@@ -1578,7 +1637,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
             );
         }
     }
-    by_key
+    let result: Vec<Value> = by_key
         .into_iter()
         .map(
             |(
@@ -1631,7 +1690,28 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
                 binding
             },
         )
-        .collect()
+        .collect();
+
+    // Seed the cache for the next mint invocation against this exact import
+    // set. Best-effort: a write failure (read-only fs, race with another
+    // mint) just means the next invocation recomputes -- never a correctness
+    // hazard, since the cache is never trusted un-keyed (see the cache-key
+    // derivation above) and a fresh recompute is always available as the
+    // ground truth.
+    if let Some(key) = &cache_key {
+        let cache_path = contract_bindings_cache_path(project_root, key);
+        if let Some(parent) = cache_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(bytes) = serde_json::to_vec(&result) {
+            let tmp = cache_path.with_extension("json.tmp");
+            if std::fs::write(&tmp, &bytes).is_ok() {
+                let _ = std::fs::rename(&tmp, &cache_path);
+            }
+        }
+    }
+
+    result
 }
 
 impl Kit for MintKit {
@@ -2959,7 +3039,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
         principal: String,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, serde::Serialize, serde::Deserialize)]
     struct MintedContractRef {
         contract_name: String,
         attestation_cid: String,
@@ -3046,6 +3126,30 @@ fn mint_ir_document_with_source_and_plan_mementos(
         }
         if proof_files.is_empty() {
             return (BTreeMap::new(), BTreeMap::new());
+        }
+
+        // Same O(1) content-addressed cache discipline as
+        // `contract_bindings_from_dependency_proofs` above: this closure is a
+        // SECOND independent whole-catalog parse of the exact same staged
+        // `.sugar/imports/` set (implication-endpoint resolution vs. contract
+        // binding resolution need overlapping but not identical fields, so
+        // they are cached separately rather than unified into one pass here).
+        // Re-parsing a multi-megabyte vendor `.proof` twice per mint
+        // invocation, on top of the binding pass, doubles a cost that a CID-
+        // keyed cache hit collapses to a small JSON read on the common case
+        // (import set unchanged since the last mint).
+        let cache_key = contract_bindings_cache_key(project_root);
+        if let Some(key) = &cache_key {
+            let cache_path = dependency_contract_refs_cache_path(project_root, key);
+            if let Ok(bytes) = std::fs::read(&cache_path) {
+                if let Ok(cached) = serde_json::from_slice::<(
+                    BTreeMap<String, MintedContractRef>,
+                    BTreeMap<String, Vec<String>>,
+                )>(&bytes)
+                {
+                    return cached;
+                }
+            }
         }
 
         let mut pool = sugar_verifier::types::MementoPool::default();
@@ -3168,7 +3272,20 @@ fn mint_ir_document_with_source_and_plan_mementos(
             );
         }
 
-        (by_cid, by_name)
+        let result = (by_cid, by_name);
+        if let Some(key) = &cache_key {
+            let cache_path = dependency_contract_refs_cache_path(project_root, key);
+            if let Some(parent) = cache_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(bytes) = serde_json::to_vec(&result) {
+                let tmp = cache_path.with_extension("json.tmp");
+                if std::fs::write(&tmp, &bytes).is_ok() {
+                    let _ = std::fs::rename(&tmp, &cache_path);
+                }
+            }
+        }
+        result
     };
 
     if let Some(source_mementos) = source_mementos {
