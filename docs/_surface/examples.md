@@ -404,22 +404,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Doc priority:** P1 (federation flagship)
 - **Existing docs:** `./examples/polyglot-rust-go/README.md`
 
-### go-double
-**Summary:** Go scalar-assertion consistency: good suite SAT, bad suite UNSAT contradiction.
-
-- **Key paths:** `/examples/go-double/` (run.sh, README.md, test_double.go)
-- **Audience:** Contributor (Go template)
-- **Doc priority:** P1 (Go learning)
-- **Existing docs:** `./examples/go-double/README.md`
-
-### go-identity
-**Summary:** Go identity and equality operations: proving identity operators (==, !=) over Go value types.
-
-- **Key paths:** `/examples/go-identity/` (run.sh, README.md, test_identity.go)
-- **Audience:** Contributor (Go operators)
-- **Doc priority:** P1 (Go technique)
-- **Existing docs:** `./examples/go-identity/README.md`
-
 ## Async / Effects Proofs (Tokio)
 
 ### tokio-channel-implication-edge
@@ -542,14 +526,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Doc priority:** P2 (accounting technique)
 - **Existing docs:** none
 
-### python-boundary
-**Summary:** Python boundary function stub: wrapper over library call with contract interface for `materialize` command.
-
-- **Key paths:** `/examples/python-boundary/` (double.py, test_double.py)
-- **Audience:** Contributor (boundary stub)
-- **Doc priority:** P2 (tool support)
-- **Existing docs:** none
-
 ### python-array-map-sugar
 **Summary:** Python array map operation lifted as Sugar. Demonstrates collection-operation contract lifting.
 
@@ -662,14 +638,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Doc priority:** P2 (safety proof)
 - **Existing docs:** none
 
-### rusqlite-demo-consumer
-**Summary:** Rusqlite (Rust SQLite bindings) consumer demo: calling rusqlite from app code.
-
-- **Key paths:** `/examples/rusqlite-demo-consumer/` ()
-- **Audience:** Contributor (database-binding demo)
-- **Doc priority:** P2 (demo)
-- **Existing docs:** none
-
 ### sugar-rpc-minimal
 **Summary:** Minimal RPC server fixture: test infrastructure for witness RPC services.
 
@@ -684,14 +652,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Key paths:** `/examples/agent-plugins/` (doubleledger-fixture/, echo-agent/)
 - **Audience:** Contributor (plugin testing)
 - **Doc priority:** P2 (plugin reference)
-- **Existing docs:** none
-
-### voltron-demo
-**Summary:** Voltron collection demo: multiple libraries linked through shared contracts.
-
-- **Key paths:** `/examples/voltron-demo/` ()
-- **Audience:** Contributor (composition demo)
-- **Doc priority:** P2 (demo)
 - **Existing docs:** none
 
 ### zero-touch-demo
@@ -711,8 +671,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 2. **Examples without run.sh:** Some fixtures (e.g., `oracle-hover-fixture`, `panic-freedom-fixture`) lack `run.sh`. Are these meant to be manually invoked or included as libraries?
 
 3. **Organizational structure:** Are the 88 examples meant to be grouped by language, by proof technique, or by maturity level? Current repo has them flat; should examples.md provide navigation hints?
-
-4. **Go support scope:** Only two Go examples (`go-double`, `go-identity`). Is Go support complete or in-progress?
 
 5. **Library coverage gaps:** Several patterns are "prototype" (base64, bitflags, itertools, etc.) with run.sh but no README and no PROVENANCE. Are these stable enough to document publicly?
 

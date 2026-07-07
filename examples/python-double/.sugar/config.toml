@@ -1,15 +1,10 @@
 # Sugar project config for the Python end-to-end example. Registration is
-# per project: lift, realize, and emit surfaces are declared here and resolved
+# per project: lift and emit surfaces are declared here and resolved
 # through .sugar/<kind>/<surface>/manifest.toml.
 
 [[plugins]]
 name = "python-lift"
 kind = "lift"
-surface = "python"
-
-[[plugins]]
-name = "python-realize"
-kind = "realize"
 surface = "python"
 
 [[plugins]]

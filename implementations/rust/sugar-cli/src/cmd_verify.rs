@@ -7,8 +7,8 @@
 // lift-plugin conformance gate). `verify` runs the *kit-level
 // verification flow* end-to-end and emits a verification receipt:
 //
-//   1. Lift the kit's contract claims. The lifter writes each
-//      @sugar/@boundary annotation as a contract memento (referencing
+//   1. Lift the kit's contract claims. The lifter writes each lifted
+//      contract from native source as a contract memento (referencing
 //      its concept) into the kit's `.proof` catalog under `.sugar/`.
 //      We load that catalog with `load_all_proofs` and enumerate the
 //      contract claims via `enumerate_callsites` (the bridge/callsite

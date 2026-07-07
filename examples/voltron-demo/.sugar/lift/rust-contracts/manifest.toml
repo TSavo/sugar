@@ -1,7 +1,0 @@
-# PEP 1.7.0 `kind = "lift"` plugin manifest for the Rust contracts surface.
-# Mirrors examples/sugar-shim-blake3-rust/.sugar/lift/rust-contracts/.
-# Dispatches sugar-lift's contracts lane (rust-tests adapter + panic/early-
-# return shapes) against this crate's src/ + tests/.
-name = "rust-contracts-lift"
-command = ["../../implementations/rust/target/debug/sugar-lift", "--rpc"]
-working_dir = "."

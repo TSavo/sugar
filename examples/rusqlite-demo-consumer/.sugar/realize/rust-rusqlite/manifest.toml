@@ -1,4 +1,0 @@
-name = "rust-realize-rusqlite"
-library_tag = "rusqlite"
-command = ["../../implementations/rust/target/debug/sugar-realize-rust", "--rpc"]
-working_dir = "."

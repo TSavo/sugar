@@ -2684,12 +2684,6 @@ def _refused_decorator(
 
 
 def _is_transparent_decorator(decorator: ast.expr) -> bool:
-    # Verify-facing AUTHORING decorators (@sugar.boundary / @boundary /
-    # @sugar.sugar / @sugar) are declarative metadata, not behavioral wrappers.
-    from .authoring import is_authoring_decorator
-
-    if is_authoring_decorator(decorator):
-        return True
     name = _decorator_name(decorator)
     return name in {
         "abstractmethod",

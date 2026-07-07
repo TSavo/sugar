@@ -1,8 +1,0 @@
-# Go realize surface: the SHIM that materializes the `identity` concept back
-# into Go sugar (sugar-realize-go-core). Closes the loop: the boundary the
-# author declared above is realized here as `func Id(x int) int { return x }`.
-name = "go-realize"
-library_tag = "go"
-materialize_source = true
-command = ["sugar-realize-go", "--rpc"]
-working_dir = "."

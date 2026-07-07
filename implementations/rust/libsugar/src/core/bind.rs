@@ -238,7 +238,7 @@ pub struct NamedTermDocument {
     #[serde(rename = "sourceLanguage")]
     pub source_language: String,
     pub terms: Vec<NamedTerm>,
-    /// @boundary entries carried alongside @sugar terms.
+    /// Boundary entries carried alongside sugar terms.
     #[serde(
         default,
         rename = "boundaryEntries",

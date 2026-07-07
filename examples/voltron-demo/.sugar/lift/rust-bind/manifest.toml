@@ -1,9 +1,0 @@
-# PEP 1.7.0 `kind = "lift"` plugin manifest for the Rust bind-IR surface.
-# Mirrors examples/sugar-shim-blake3-rust/.sugar/lift/rust-bind/.
-# Returns `ir-document` with `bind-lift-entry` records per the bind-IR spec.
-# `command` path is relative to `working_dir`; `working_dir = "."` means the
-# project root (examples/voltron-demo/), so `../../` resolves to the workspace
-# root and finds the shared sugar-walk-rpc binary.
-name = "rust-bind-lift"
-command = ["../../implementations/rust/target/debug/sugar-walk-rpc", "--rpc"]
-working_dir = "."

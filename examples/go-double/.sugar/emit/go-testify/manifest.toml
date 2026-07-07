@@ -1,4 +1,0 @@
-name = "go-testify"
-command = ["sugar-emit-go-testify", "--rpc"]
-working_dir = "."
-protocol_versions = ["pep/1.7.0"]

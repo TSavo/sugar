@@ -1,6 +1,0 @@
-name = "rust-realize-reqwest"
-library_tag = "reqwest"
-materialize_source = true
-command = ["../../implementations/rust/target/debug/sugar-realize-rust", "--rpc"]
-working_dir = "."
-protocol_versions = ["pep/1.7.0"]

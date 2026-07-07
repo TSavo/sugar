@@ -98,8 +98,8 @@ impl PluginEntry {
 
 /// #1358 / #1355: Per-shim or per-consumer-project platform profile.
 /// Declares the five-axis realization tuple (language, family, library,
-/// version) plus the concept-level binding the shim's @sugar / @boundary
-/// annotations declare on a per-function basis. Any axis may be absent
+/// version) plus the concept-level binding the shim's lifted bindings
+/// declare on a per-function basis. Any axis may be absent
 /// (None) — absent means the axis FLOATS and resolves against the
 /// consumer's profile at realization time (per #1355 dispatch model).
 ///

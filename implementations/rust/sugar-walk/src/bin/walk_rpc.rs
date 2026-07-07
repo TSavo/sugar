@@ -5549,8 +5549,8 @@ fn push_rust_binding_key_leaf(leaves: &mut Vec<String>, leaf: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// Source Oracle + materialize (#1359). The rust mirror of the python kit's
-// `source_oracle.py` + `bind_rpc.py::materialize_impl`. The `.proof` carries a
+// Source Oracle (#1359). The rust mirror of the python kit's
+// `source_oracle.py`. The `.proof` carries a
 // SourceMemento (locus + source_cid/template_cid, no inline body); the
 // oracle reconstructs the body from on-disk source IFF it recomputes to the
 // pinned CIDs, else REFUSES. Exact-or-refuse, no silent loss.
