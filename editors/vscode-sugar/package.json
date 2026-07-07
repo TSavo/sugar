@@ -45,6 +45,11 @@
           "type": "boolean",
           "default": true,
           "description": "Run the PROVE path (full `sugar prove` on the consumer project) on save rather than on every keystroke. A directory prove mints + solves, so per-keystroke is too slow; on-save keeps the flip live without thrashing."
+        },
+        "sugar.prove.timingLog": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a JSONL file the LSP prove path writes per-step timing to (mint / prove / paint durations, with a per-pass total). If empty, defaults to `<workspace>/.sugar/lsp-timing.jsonl`. Timings are mirrored live to the \"Sugar Timing\" output channel."
         }
       }
     }

@@ -20,12 +20,14 @@ import * as crypto from "crypto";
 import * as vscode from "vscode";
 import { LinkerdClient, kitIdForFile, LinkerDiagnostic } from "./linkerdClient";
 import { proveProject, mintProject, ProveDiagnostic, formatDetail } from "./proveClient";
+import { TimingLogger } from "./timing";
 
 let client: LinkerdClient | undefined;
 let diagnostics: vscode.DiagnosticCollection;
 let proveDiagnostics: vscode.DiagnosticCollection;
 let proveBinaryPath = "";
 let proveOnSave = true;
+let timing: TimingLogger | undefined;
 const timers = new Map<string, NodeJS.Timeout>();
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -37,6 +39,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const cfg = vscode.workspace.getConfiguration("sugar");
   proveBinaryPath = cfg.get<string>("prove.binaryPath") || "";
   proveOnSave = cfg.get<boolean>("prove.onSave") ?? true;
+
+  // Timing log for the LSP prove path. Default: `<workspace>/.sugar/
+  // lsp-timing.jsonl` (durable, greppable) mirrored to the "Sugar Timing"
+  // OutputChannel (live). Override the path with `sugar.prove.timingLog`.
+  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.tmpdir();
+  const timingPath =
+    cfg.get<string>("prove.timingLog") || path.join(wsRoot, ".sugar", "lsp-timing.jsonl");
+  const timingChannel = vscode.window.createOutputChannel("Sugar Timing");
+  context.subscriptions.push(timingChannel);
+  timing = new TimingLogger(timingPath, timingChannel);
+  timingChannel.appendLine(`sugar: LSP timing -> ${timingPath}`);
   const socketPath = resolveSocketPath(cfg.get<string>("linkerd.socketPath") || "");
   const binaryPath = cfg.get<string>("linkerd.binaryPath") || undefined;
   const snapshotPath = socketPath + ".snapshot";
@@ -177,10 +190,26 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     if (pyPath) {
       env.PYTHONPATH = process.env.PYTHONPATH ? `${pyPath}:${process.env.PYTHONPATH}` : pyPath;
     }
+    // Time each LSP step (mint -> prove -> paint) into the timing log.
+    const run = timing?.run(path.basename(projectDir) + "/" + path.basename(doc.fileName));
     // On-save: re-mint the edited source first so prove reflects the current
     // text (not a stale proof), then prove.
-    await mintProject({ binaryPath: proveBinaryPath, projectDir, env });
-    const res = await proveProject({ binaryPath: proveBinaryPath, projectDir, env });
+    const mint = () => mintProject({ binaryPath: proveBinaryPath, projectDir, env });
+    if (run) {
+      await run.time("mint", mint, (ok) => ({ ok }));
+    } else {
+      await mint();
+    }
+    const prove = () => proveProject({ binaryPath: proveBinaryPath, projectDir, env });
+    const res = run
+      ? await run.time("prove", prove, (r) => ({
+          rows: r.rows.length,
+          diagnostics: r.diagnostics.length,
+          exitCode: r.exitCode,
+          subprocessMs: r.elapsedMs,
+        }))
+      : await prove();
+    const paintStart = Date.now();
     // Rebuild the whole prove collection for this project from scratch so
     // cleared rows (green now) drop their squiggles.
     proveDiagnostics.clear();
@@ -207,6 +236,11 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     }
     for (const [file, list] of byFile) {
       proveDiagnostics.set(vscode.Uri.file(file), list);
+    }
+    if (run) {
+      const painted = Array.from(byFile.values()).reduce((n, l) => n + l.length, 0);
+      run.step("paint", Date.now() - paintStart, { files: byFile.size, painted });
+      run.end({ projectDir, file: doc.fileName });
     }
   } catch (e) {
     console.error(`sugar: prove failed for ${projectDir}: ${(e as Error).message}`);
