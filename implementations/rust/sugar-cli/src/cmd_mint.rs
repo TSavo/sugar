@@ -1166,6 +1166,10 @@ impl MintKit {
                 );
             }
         }
+        // #3774 daemonLift phase split: the mint terminal (member minting,
+        // signing, JCS canonicalization, proof envelope write) timed apart
+        // from the plugin dispatch loops above.
+        let mint_terminal_started = std::time::Instant::now();
         let result = mint_lift_response(
             &project_root_for_manifests,
             &out_dir,
@@ -1173,6 +1177,10 @@ impl MintKit {
             merged_lift_response,
         )
         .map_err(KitError::Transformation)?;
+        tracing::info!(
+            mint_terminal_ms = mint_terminal_started.elapsed().as_millis() as u64,
+            "mint: terminal mint step complete"
+        );
         let claim = mint_result_claim(input, combined_lift_claim.as_ref(), &result)?;
         Ok(MintSession {
             claim,
@@ -1769,10 +1777,21 @@ fn dispatch_multi(
     quiet: bool,
     library_bindings: bool,
 ) -> Result<MintSession, String> {
+    let input_started = std::time::Instant::now();
     let mint_input = mint_input_multi(project_root, plugins, out_dir, quiet, library_bindings);
-    MintKit::new(mint_input.inputs)
+    let input_ms = input_started.elapsed().as_millis() as u64;
+    let session_started = std::time::Instant::now();
+    let session = MintKit::new(mint_input.inputs)
         .transform_session(&mint_input.input)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    // #3774 daemonLift phase split: input/path composition vs the kit
+    // transform (which itself logs dispatch + terminal-mint sub-phases).
+    tracing::info!(
+        input_ms,
+        transform_ms = session_started.elapsed().as_millis() as u64,
+        "mint: dispatch_multi phase split"
+    );
+    session
 }
 
 pub fn mint_lift_plugins_for_report(
@@ -2238,16 +2257,26 @@ fn toolchain_plan_seed(
             })
         })
         .collect();
+    let plan_started = std::time::Instant::now();
     let component_plan = crate::component_plan::plan_workspace(
         project_root,
         crate::component_plan::PlanIntent::Lift,
     );
+    let plan_workspace_ms = plan_started.elapsed().as_millis() as u64;
+    let atoms_started = std::time::Instant::now();
     let mut plan_atoms = plan_atoms_for_plugins(project_root, plugins);
     plan_atoms.extend(support_plan_atoms_for_component_plan(
         project_root,
         plugins,
         &component_plan,
     ));
+    // #3774 daemonLift phase split: component discovery vs plan-atom
+    // manifest resolution inside the toolchain plan seed.
+    tracing::info!(
+        plan_workspace_ms,
+        plan_atoms_ms = atoms_started.elapsed().as_millis() as u64,
+        "mint: toolchain plan seed phase split"
+    );
     json!({
         "kind": "component-plan",
         "schemaVersion": "1",

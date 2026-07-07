@@ -66,6 +66,118 @@ pub const ERR_LINKER_DISCHARGE_FAILURE: i64 = -33003;
 /// `sugar prove` shell path for that one request.
 pub const ERR_PROVE_CONTEXT_UNAVAILABLE: i64 = -33004;
 
+/// Build (or refresh) the SOURCE-OVERLAY lift project for a prove request:
+/// a stable per-project directory holding the project's lift surface --
+/// `.sugar/config.toml`, `.sugar/lift/**` (manifests/wrappers), and its
+/// source files -- with the request's buffer content substituted at
+/// `request_file`'s project-relative path. Deliberately EXCLUDED:
+/// `.sugar/imports` (the vendor pool is resident in the daemon), any
+/// `*.proof`, `.sugar/runs|cache|witnesses` (generated), and dot/target
+/// dirs. The directory is stable across calls (keyed by project hash at the
+/// caller) so the resident lifter's (command, cwd) key holds; contents are
+/// refreshed on every call (tiny: config + a handful of source files).
+fn build_source_overlay_project(
+    project_root: &std::path::Path,
+    overlay_root: &std::path::Path,
+    request_file: &std::path::Path,
+    source: &str,
+) -> Result<(), String> {
+    fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+        std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(from).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name();
+            let src = entry.path();
+            let dst = to.join(&name);
+            if src.is_dir() {
+                copy_tree(&src, &dst)?;
+            } else {
+                std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    std::fs::create_dir_all(overlay_root).map_err(|e| e.to_string())?;
+    // INCREMENTAL COPY (perf, daemonLift trim): `overlay_root` is a STABLE
+    // per-project directory (hashed from `project_root`, see the caller's
+    // doc comment) that only needs the full config/lift/component/source
+    // tree copied ONCE per daemon session -- the tree is immutable across
+    // calls, only the single edited file changes. Measured re-copying the
+    // whole project tree on every keystroke-save was pure waste once the
+    // marker below confirms a prior populate. If the project's structural
+    // surface changes underneath a live daemon (rare mid-session), delete
+    // the marker (or the daemon process) to force a repopulate -- the same
+    // manual-invalidation shape the coarse `.proof`-manifest rebuild above
+    // already accepts for a much larger surface.
+    let populated_marker = overlay_root.join(".sugar-overlay-populated");
+    if !populated_marker.exists() {
+        // Lift surface: config + lift manifests. (No imports/proofs/caches.)
+        let cfg = project_root.join(".sugar").join("config.toml");
+        if cfg.exists() {
+            std::fs::create_dir_all(overlay_root.join(".sugar")).map_err(|e| e.to_string())?;
+            std::fs::copy(&cfg, overlay_root.join(".sugar").join("config.toml"))
+                .map_err(|e| e.to_string())?;
+        }
+        let lift_dir = project_root.join(".sugar").join("lift");
+        if lift_dir.is_dir() {
+            copy_tree(&lift_dir, &overlay_root.join(".sugar").join("lift"))?;
+        }
+        let comps = project_root.join(".sugar").join("components");
+        if comps.is_dir() {
+            copy_tree(&comps, &overlay_root.join(".sugar").join("components"))?;
+        }
+    // Source files: top-level walk skipping generated/vendor surfaces.
+    fn copy_sources(
+        from: &std::path::Path,
+        to: &std::path::Path,
+        depth: usize,
+    ) -> Result<(), String> {
+        if depth > 6 {
+            return Ok(());
+        }
+        std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(from).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name_os = entry.file_name();
+            let name = name_os.to_string_lossy().to_string();
+            let src = entry.path();
+            if src.is_dir() {
+                if name == ".sugar"
+                    || name == ".git"
+                    || name == "target"
+                    || name == "__pycache__"
+                    || name == ".vscode"
+                    || name == "node_modules"
+                {
+                    continue;
+                }
+                copy_sources(&src, &to.join(&name), depth + 1)?;
+            } else {
+                if name.ends_with(".proof") || name.ends_with(".witness") {
+                    continue;
+                }
+                std::fs::copy(&src, to.join(&name)).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+        copy_sources(project_root, overlay_root, 0)?;
+        std::fs::write(&populated_marker, "").map_err(|e| e.to_string())?;
+    }
+
+    // Substitute the request buffer at the file's project-relative path.
+    let rel = request_file
+        .strip_prefix(project_root)
+        .unwrap_or(request_file);
+    let dst = overlay_root.join(rel);
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&dst, source).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn rpc_error(code: i64, message: &str, id: &Json) -> Json {
     serde_json::json!({
         "jsonrpc": "2.0",
@@ -1413,12 +1525,15 @@ pub async fn handle_prove_consistency(
         Some(f) => f.to_string(),
         None => return rpc_error(ERR_INVALID_PARAMS, "missing 'file'", id),
     };
-    // Accepted for wire-shape parity with parseFile. Not read directly (the
-    // v2 lift-and-merge below re-lifts the project's ON-DISK sources via
-    // the mint pipeline, which requires the file to have been saved --
-    // see the doc comment above); kept in the wire contract so a future
-    // slice can pass it straight to a single-file lift fast path.
-    let _source = params.get("source").and_then(|v| v.as_str());
+    // The saved/edited buffer. When present and non-empty, the lift-and-merge
+    // below mints a SOURCE-OVERLAY scratch project: the project's lift config
+    // plus its source files with THIS content substituted for `file` -- so the
+    // flip is driven by what the editor holds, not by what disk last saw.
+    let source = params
+        .get("source")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
 
     let ctx = {
         let st = state.lock().await;
@@ -1442,7 +1557,12 @@ pub async fn handle_prove_consistency(
     // it for the project's next call. Without this the editor would keep
     // proving a stale consumer `.proof` and the green/red flip would never
     // flip.
-    let current_manifest = crate::server::scan_proof_manifest(&ctx.project_root);
+    // Imports-only watch (matches build_prove_context_for's vendor-only pool):
+    // consumer saves must NOT trigger the full rebuild -- only a changed
+    // vendor import does.
+    let current_manifest = crate::server::scan_proof_manifest(
+        &ctx.project_root.join(".sugar").join("imports"),
+    );
     if current_manifest != ctx.proof_manifest {
         let project_root = ctx.project_root.clone();
         tracing::info!(
@@ -1500,7 +1620,38 @@ pub async fn handle_prove_consistency(
     let scratch_dir = std::env::temp_dir().join("sugar-linkerd-lift-scratch").join(
         sugar_canonicalizer::blake3_512_hex(project_root_for_lift.display().to_string().as_bytes()),
     );
-    let base_pool_for_lift = ctx.pool.clone();
+    // SOURCE-OVERLAY project (bug-A fix): when the request carries `source`,
+    // mint a STABLE per-project copy of the lift surface (config + lift
+    // manifests + source files, never .sugar/imports//.proof/cache) with the
+    // request's buffer substituted at `file`'s relative path. Stable dir =>
+    // stable lifter working_dir => the resident lifter pool's (command, cwd)
+    // key holds across calls. Without this the daemon lifted the ON-DISK
+    // file and the editor's flip could never flip.
+    let lift_root_override: Option<std::path::PathBuf> = match &source {
+        None => None,
+        Some(src) => {
+            let overlay_root = std::env::temp_dir()
+                .join("sugar-linkerd-lift-src")
+                .join(sugar_canonicalizer::blake3_512_hex(
+                    project_root_for_lift.display().to_string().as_bytes(),
+                ));
+            match build_source_overlay_project(
+                &project_root_for_lift,
+                &overlay_root,
+                std::path::Path::new(&file),
+                src,
+            ) {
+                Ok(()) => Some(overlay_root),
+                Err(err) => {
+                    tracing::warn!(
+                        %err,
+                        "proveConsistency: source-overlay build failed; lifting on-disk project"
+                    );
+                    None
+                }
+            }
+        }
+    };
     let lift_started = std::time::Instant::now();
     let lift_result = task::spawn_blocking(move || {
         // Wipe the scratch dir before every mint. `dispatch_multi`'s mint
@@ -1519,22 +1670,55 @@ pub async fn handle_prove_consistency(
                 scratch_dir.display()
             ));
         }
-        let proof_file = sugar_cli::cmd_mint::mint_project_scratch_proof(
-            &project_root_for_lift,
-            &scratch_dir,
-            false,
-        )?;
+        let lift_root = lift_root_override
+            .as_deref()
+            .unwrap_or(&project_root_for_lift);
+        let mint_started = std::time::Instant::now();
+        let proof_file =
+            sugar_cli::cmd_mint::mint_project_scratch_proof(lift_root, &scratch_dir, false)?;
+        let mint_ms = mint_started.elapsed().as_millis();
         let Some(proof_file) = proof_file else {
             return Ok(None);
         };
-        let mut overlay_pool = base_pool_for_lift;
+        // #3774 daemonSolve trim: the scratch proof loads into an EMPTY
+        // overlay pool -- the resident 44k-member base pool is NEVER cloned
+        // per request anymore. The solve below merges this small pool's
+        // prebuilt-index-shaped view onto the cached base index
+        // (`verify_consistency_scoped_with_base_index`), which is
+        // differential-tested equal to the old merged-pool scoped run.
+        let load_started = std::time::Instant::now();
+        let mut overlay_pool = sugar_verifier::types::MementoPool::default();
         sugar_verifier::load_all_proofs::load_files_into_pool(&[proof_file], &mut overlay_pool);
+        let load_ms = load_started.elapsed().as_millis();
+        // SOUNDNESS (#3802): a lift whose RPC binary is unreachable, or whose
+        // kit silently emits an empty ir-document, exits `Ok` with a
+        // `proof_file` that loads ZERO testimony members -- exactly the
+        // rust-overlay false green witnessed on the serde consumer (0 rows,
+        // 0 diagnostics, degraded reported false). Never report such a mint
+        // as a live overlay: return the degraded marker so the extension
+        // falls back cold instead of painting a false green.
+        use sugar_verifier::types::MemberKind;
+        let overlay_contracts = overlay_pool.member_count_by_kind(MemberKind::Contract);
+        let overlay_sources = overlay_pool.member_count_by_kind(MemberKind::SourceMemento);
+        tracing::info!(
+            mint_ms,
+            load_ms,
+            overlay_contracts,
+            overlay_sources,
+            "proveConsistency: overlay scratch mint phase split"
+        );
+        if overlay_contracts == 0 && overlay_sources == 0 {
+            return Ok(None);
+        }
         Ok(Some(overlay_pool))
     })
     .await;
     let lift_ms = lift_started.elapsed().as_millis();
 
-    let (pool_for_solve, degraded, degraded_reason): (
+    // `overlay_for_solve` is the SMALL per-request scratch pool (or empty on
+    // the degraded fallbacks, which then solve exactly the resident base
+    // index alone -- the same rows the old ctx.pool.clone() fallback gave).
+    let (overlay_for_solve, degraded, degraded_reason): (
         sugar_verifier::types::MementoPool,
         bool,
         Option<String>,
@@ -1544,10 +1728,10 @@ pub async fn handle_prove_consistency(
             (overlay_pool, false, None)
         }
         Ok(Ok(None)) => (
-            ctx.pool.clone(),
+            sugar_verifier::types::MementoPool::default(),
             true,
             Some(
-                "project declares no [[plugins]] lift entries; nothing to lift-and-merge -- resident disk-pool only"
+                "overlay produced no consumer testimony (either no [[plugins]] lift entries declared, or the mint ran but contributed zero project-anchored contract/source-memento members -- see #3802); falling back to resident disk-pool"
                     .to_string(),
             ),
         ),
@@ -1557,7 +1741,7 @@ pub async fn handle_prove_consistency(
                 "proveConsistency: daemon lift failed, falling back to resident disk-pool"
             );
             (
-                ctx.pool.clone(),
+                sugar_verifier::types::MementoPool::default(),
                 true,
                 Some(format!("daemon lift-and-merge failed, falling back to resident disk-pool: {err}")),
             )
@@ -1568,7 +1752,7 @@ pub async fn handle_prove_consistency(
                 "proveConsistency: daemon lift panicked, falling back to resident disk-pool"
             );
             (
-                ctx.pool.clone(),
+                sugar_verifier::types::MementoPool::default(),
                 true,
                 Some(format!("daemon lift-and-merge panicked, falling back to resident disk-pool: {join_err}")),
             )
@@ -1583,8 +1767,9 @@ pub async fn handle_prove_consistency(
     // (milliseconds). The CLI's full `sugar prove` remains the unscoped door.
     let solve_started = std::time::Instant::now();
     let results = task::spawn_blocking(move || {
-        sugar_verifier::consistency::verify_consistency_scoped(
-            &pool_for_solve,
+        sugar_verifier::consistency::verify_consistency_scoped_with_base_index(
+            &ctx.consistency_index,
+            &overlay_for_solve,
             &ctx.plan,
             &ctx.registry,
             &ctx.compilers,

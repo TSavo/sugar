@@ -130,6 +130,13 @@ pub struct ProveContext {
     /// warm path would keep proving a stale consumer `.proof` forever and the
     /// green/red flip would never flip.
     pub proof_manifest: std::collections::BTreeMap<std::path::PathBuf, std::time::SystemTime>,
+    /// Prebuilt consistency index over `pool` (#3774 daemonSolve trim):
+    /// candidates + ambient sets + locus entries, computed ONCE at context
+    /// build by the same `build_consistency_index` stage `verify_consistency`
+    /// itself runs -- factored, not reimplemented (differential-tested in
+    /// tests/prove_consistency.rs). Valid exactly as long as `pool` is: both
+    /// are replaced together on every ProveContext rebuild.
+    pub consistency_index: sugar_verifier::consistency::ConsistencyIndex,
 }
 
 /// Per-project daemon state.
