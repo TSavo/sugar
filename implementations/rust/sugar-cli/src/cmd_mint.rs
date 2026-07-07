@@ -4483,6 +4483,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
         "seal-time-manifest-self-load",
         unsealed.cid.clone(),
         unsealed.bytes.clone(),
+        sugar_verifier::Speaker::consumer("seal-time-manifest-self-load"),
     )
     .map_err(|e| format!("seal-time manifest: could not stage just-minted proof bytes: {e}"))?;
     sugar_verifier::load_all_proofs::load_proof_bytes_into_pool(&[proof_bytes], &mut pool);

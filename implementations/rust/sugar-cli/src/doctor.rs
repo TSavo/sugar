@@ -3511,6 +3511,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
             label.to_string(),
             sugar_canonicalizer::blake3_512_of(bytes),
             bytes.to_vec(),
+            sugar_verifier::Speaker::vendor(label.to_string()),
         )
         .expect("test proof CID must parse")
     }

@@ -62,8 +62,13 @@ fn test_compilers() -> CompilerRegistry {
 fn load_single_bundle(bytes: &[u8]) -> (String, MementoPool) {
     let bundle_cid = sugar_canonicalizer::blake3_512_of(bytes);
     let mut pool = MementoPool::default();
-    let proof_bytes = ProofBytes::try_from_parts("fixture", bundle_cid.clone(), bytes.to_vec())
-        .expect("fixture bytes stage into ProofBytes");
+    let proof_bytes = ProofBytes::try_from_parts(
+        "fixture",
+        bundle_cid.clone(),
+        bytes.to_vec(),
+        sugar_verifier::Speaker::consumer("fixture"),
+    )
+    .expect("fixture bytes stage into ProofBytes");
     load_proof_bytes_into_pool(&[proof_bytes], &mut pool);
     (bundle_cid, pool)
 }
@@ -78,8 +83,13 @@ fn load_combined(fixtures: &[Vec<u8>]) -> (BTreeMap<String, Manifest>, MementoPo
     for bytes in fixtures {
         let bundle_cid = sugar_canonicalizer::blake3_512_of(bytes);
         proofs.push(
-            ProofBytes::try_from_parts("fixture", bundle_cid.clone(), bytes.clone())
-                .expect("fixture bytes stage into ProofBytes"),
+            ProofBytes::try_from_parts(
+                "fixture",
+                bundle_cid.clone(),
+                bytes.clone(),
+                sugar_verifier::Speaker::consumer("fixture"),
+            )
+            .expect("fixture bytes stage into ProofBytes"),
         );
         bundle_cids.push(bundle_cid);
     }

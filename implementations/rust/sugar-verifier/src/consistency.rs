@@ -157,6 +157,13 @@ struct ConsistencyCandidate {
     cid: String,
     body: Json,
     provenance_kind: ProofIrProvenanceKind,
+    /// #3807/#3812: was this candidate's own member CID SPOKEN BY A VENDOR
+    /// (attributed to a `SpeakerRole::Vendor` speaker -- a staged `.proof`
+    /// under `.sugar/imports/` or a vendor-role `speak_*` utterance)? Read
+    /// once at candidate-construction time via `pool.is_vendor_member` so
+    /// the group solve below never has to touch the pool again to answer
+    /// "whose fact is this" -- the CONSTRUCTED label, not an inference.
+    spoken_by_vendor: bool,
 }
 
 /// Does this contract carry asserted axioms that must be checked for
@@ -2569,10 +2576,12 @@ fn collect_consistency_candidates(
                         reason,
                     ));
                 } else {
+                    let spoken_by_vendor = pool.is_vendor_member(&cid.to_string());
                     candidates.push(ConsistencyCandidate {
                         cid: cid.to_string(),
                         body,
                         provenance_kind,
+                        spoken_by_vendor,
                     });
                 }
             }
@@ -2758,10 +2767,12 @@ fn candidate_from_pool(pool: &MementoPool, cid: &str) -> Option<ConsistencyCandi
     let member = pool.mementos.get(&memento_cid)?;
     let body = pool.contract_body_for_member(member).filter(|v| v.is_object())?;
     let provenance_kind = contract_provenance_kind(member, &body).ok()?;
+    let spoken_by_vendor = pool.is_vendor_member(cid);
     Some(ConsistencyCandidate {
         cid: cid.to_string(),
         body,
         provenance_kind,
+        spoken_by_vendor,
     })
 }
 
@@ -3472,9 +3483,52 @@ fn process_consistency_group(
                     .collect();
                 let (inv, collapsed_same_kind_duplicate) =
                     conjoin_distinct_provenance_witnesses(invs);
-                // The consumer's OWN fact, before any vendor universe/vector is
-                // conjoined -- this is the YOUR-FACT half of the three-part FOL.
-                let client_fact = inv.clone();
+                // #3807/#3812: the group's SOLVER INPUT (`inv`, above) stays
+                // the full conjunction of every candidate -- consumer-spoken
+                // AND vendor-spoken -- byte-identical to before this change.
+                // What changes is what gets LABELED "your fact" for the
+                // report/IDE row: partition the group's candidates by their
+                // CONSTRUCTED speaker attribution
+                // (`ConsistencyCandidate::spoken_by_vendor`, stamped at
+                // intake from which speaker each member's bytes actually
+                // came from) instead of treating the whole conjoined group
+                // as the client's own fact. `clientFactIr` is the
+                // conjunction of the CONSUMER-spoken candidates ONLY (a
+                // single candidate needs no `and` wrapper); `vendorFactIr`
+                // gathers the VENDOR-spoken candidates' equalities alongside
+                // the imported ambient sworn facts. A group with no
+                // consumer-spoken candidate at all (vendor-internal, e.g.
+                // two staged vendor mementos sharing an `#euf#` name)
+                // attaches nothing new, matching pre-#3774 behavior.
+                let (own_candidates, vendor_candidates): (Vec<_>, Vec<_>) =
+                    inv_candidates.iter().partition(|c| !c.spoken_by_vendor);
+                // ONE construction (#3813 review): the client fact is built
+                // by the SAME conjoin/flatten/dedup helper that builds the
+                // solver input, restricted to the consumer-spoken
+                // candidates. For an all-consumer group this is
+                // byte-identical to the pre-partition `clientFactIr` (the
+                // whole group's flattened, provenance-deduped conjunction);
+                // for a mixed group it is that same construction minus the
+                // vendor's conjuncts.
+                let client_fact_partitioned: Option<Json> = if own_candidates.is_empty() {
+                    None
+                } else {
+                    let own_invs: Vec<(Json, ProofIrProvenanceKind)> = own_candidates
+                        .iter()
+                        .map(|candidate| {
+                            (
+                                canonicalize_formula_json(&axiom_context_formula(&candidate.body)),
+                                candidate.provenance_kind,
+                            )
+                        })
+                        .collect();
+                    let (client_fact, _) = conjoin_distinct_provenance_witnesses(own_invs);
+                    Some(client_fact)
+                };
+                let vendor_spoken_equalities: Vec<Json> = vendor_candidates
+                    .iter()
+                    .map(|c| canonicalize_formula_json(&axiom_context_formula(&c.body)))
+                    .collect();
                 let current_ground_witnesses: std::collections::BTreeSet<_> = inv_candidates
                     .iter()
                     .flat_map(|candidate| {
@@ -3517,16 +3571,18 @@ fn process_consistency_group(
                         compilers,
                     )
                 };
-                let sworn = collect_vendor_sworn_facts(
-                    &client_fact,
-                    &ambient_ground_callsite_facts,
-                    &inv_cids,
-                );
-                attach_conjoined_facts(
-                    &mut result,
-                    &client_fact,
-                    &union_facts(vendor_facts, sworn),
-                );
+                if let Some(client_fact_own) = &client_fact_partitioned {
+                    let sworn = collect_vendor_sworn_facts(
+                        client_fact_own,
+                        &ambient_ground_callsite_facts,
+                        &inv_cids,
+                    );
+                    attach_conjoined_facts(
+                        &mut result,
+                        client_fact_own,
+                        &union_facts(union_facts(vendor_facts, vendor_spoken_equalities), sworn),
+                    );
+                }
                 out.push(result);
             } else {
                 for candidate in &inv_candidates {
@@ -3571,16 +3627,27 @@ fn process_consistency_group(
                             compilers,
                         )
                     };
-                    let sworn = collect_vendor_sworn_facts(
-                        &original_inv,
-                        &ambient_ground_callsite_facts,
-                        std::slice::from_ref(&candidate.cid),
-                    );
-                    attach_conjoined_facts(
-                        &mut result,
-                        &original_inv,
-                        &union_facts(vendor_facts, sworn),
-                    );
+                    // #3807/#3812: this branch processes ONE candidate at a
+                    // time (no cross-proof conjoin), so `original_inv` is
+                    // already that candidate's own formula with nothing else
+                    // folded in. It is the client's own fact ONLY when the
+                    // candidate was spoken by the consumer; a lone
+                    // VENDOR-spoken candidate (a vendor-internal contract
+                    // that never joined an `#euf#` group) must attach
+                    // nothing new rather than mislabel a vendor fact as the
+                    // client's.
+                    if !candidate.spoken_by_vendor {
+                        let sworn = collect_vendor_sworn_facts(
+                            &original_inv,
+                            &ambient_ground_callsite_facts,
+                            std::slice::from_ref(&candidate.cid),
+                        );
+                        attach_conjoined_facts(
+                            &mut result,
+                            &original_inv,
+                            &union_facts(vendor_facts, sworn),
+                        );
+                    }
                     if !suppress_standalone_support_vacuity(
                         property_name,
                         candidate,
@@ -3944,6 +4011,92 @@ mod tests {
             res[0].verdict,
             ObligationVerdict::Refused,
             "lone constraint has no sibling to contradict — must be Refused (vacuous), not Discharged: {res:?}"
+        );
+    }
+
+    /// #3812 ATTRIBUTION LABELS on the cross-proof contradiction: the row's
+    /// `clientFactIr` must be EXACTLY the CONSUMER-spoken conjunct and
+    /// `vendorFactIr` must carry the VENDOR-spoken conjunct, read from the
+    /// pool's Speaker attribution -- and FLIPPING the attribution flips the
+    /// labels while the verdict stays REFUSED, because attribution never
+    /// touches the solver input. This is the pandas-demo row shape ("Your
+    /// fact = 6 / Vendor fact = 5") as a constructed fact, with the
+    /// discrimination arm (flip) that a positional heuristic would fail.
+    #[test]
+    fn attribution_constructs_fact_labels_and_flipping_attribution_flips_them() {
+        use crate::types::SpeakerRole;
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "numpy.add#euf#callresult_numpy_add_a2(2,3)::assertion";
+
+        let solve_with = |consumer_speaks_6: bool| -> ConsistencyResult {
+            let mut pool = MementoPool::default();
+            insert_contract(&mut pool, "speaker-c6", name, eqf(var("r"), int(6)));
+            insert_contract(&mut pool, "speaker-v5", name, eqf(var("r"), int(5)));
+            let (consumer_cid, vendor_cid) = if consumer_speaks_6 {
+                ("speaker-c6", "speaker-v5")
+            } else {
+                ("speaker-v5", "speaker-c6")
+            };
+            pool.attribute_member_for_tests(
+                &test_cid_string(consumer_cid),
+                SpeakerRole::Consumer,
+                "me",
+            );
+            pool.attribute_member_for_tests(
+                &test_cid_string(vendor_cid),
+                SpeakerRole::Vendor,
+                "the-vendor",
+            );
+            let mut res = verify_consistency(
+                &pool,
+                &plan,
+                &reg,
+                &test_compilers(),
+                std::path::Path::new("."),
+            );
+            assert_eq!(res.len(), 1, "one conjoined group: {res:?}");
+            res.remove(0)
+        };
+
+        let labels = |r: &ConsistencyResult| -> (String, String) {
+            let v = r.verification.as_ref().expect("verification detail");
+            let client = v.get("clientFactIr").expect("client fact label").to_string();
+            let vendor = v
+                .get("vendorFactIr")
+                .expect("vendor fact label")
+                .to_string();
+            (client, vendor)
+        };
+
+        // Consumer speaks ==6, vendor speaks ==5.
+        let normal = solve_with(true);
+        assert_eq!(normal.verdict, ObligationVerdict::Unsatisfied);
+        let (client, vendor) = labels(&normal);
+        assert!(
+            client.contains("\"value\":6") && !client.contains("\"value\":5"),
+            "clientFactIr must be the consumer's ==6 conjunct ONLY: {client}"
+        );
+        assert!(
+            vendor.contains("\"value\":5") && !vendor.contains("\"value\":6"),
+            "vendorFactIr must carry the vendor's ==5 conjunct: {vendor}"
+        );
+
+        // FLIP the speakers over the SAME two contracts: labels flip,
+        // verdict does not.
+        let flipped = solve_with(false);
+        assert_eq!(
+            flipped.verdict,
+            ObligationVerdict::Unsatisfied,
+            "attribution must never change the verdict (solver input is byte-identical)"
+        );
+        let (client, vendor) = labels(&flipped);
+        assert!(
+            client.contains("\"value\":5") && !client.contains("\"value\":6"),
+            "flipped clientFactIr must be the (now consumer-spoken) ==5 conjunct: {client}"
+        );
+        assert!(
+            vendor.contains("\"value\":6") && !vendor.contains("\"value\":5"),
+            "flipped vendorFactIr must carry the (now vendor-spoken) ==6 conjunct: {vendor}"
         );
     }
 
