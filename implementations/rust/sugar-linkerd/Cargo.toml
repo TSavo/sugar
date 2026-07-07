@@ -13,6 +13,10 @@ path = "src/main.rs"
 [dependencies]
 sugar-linker = { path = "../sugar-linker" }
 sugar-lift = { path = "../sugar-lift" }
+# Resident prove context (#3774 warm-daemon slice): the daemon calls the SAME
+# verify_consistency construction `sugar prove` uses, never a reimplementation.
+sugar-verifier = { path = "../sugar-verifier" }
+sugar-ir-compiler = { path = "../sugar-ir-compiler" }
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-ir-symbolic = { path = "../sugar-ir-symbolic" }
 sugar-claim-envelope = { path = "../sugar-claim-envelope" }
@@ -38,3 +42,4 @@ libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros", "fs"] }
+sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }

@@ -87,26 +87,24 @@ fn superposition_report_to_json(s: &SuperpositionReport) -> Json {
     })
 }
 
+// Base row shape lives in `sugar_verifier::report::row_to_json` (part of
+// #3774 warm-daemon slice, pure move, no logic change) so the sugar-linkerd
+// `proveConsistency` RPC and `sugar prove --json` render the SAME base wire
+// row from the SAME function, never a reimplementation. This cold-path
+// producer then composes the FOL enrichment on top (`verification_with_fol`,
+// same `proofir_formula_to_fol_with_instances` renderer `sugar lift --report
+// --visual` uses) -- the daemon's resident-pool RPC does not enrich (no
+// sugar-cli dependency), so this wrapper is what keeps the CLI's richer
+// verification detail without forking the base renderer.
 fn row_to_json(row: &ReportRow) -> Json {
-    json!({
-        "bridge": row.callsite.bridge_ir_name,
-        "targetCid": row.callsite.bridge_target_cid,
-        "sourceLayer": row.callsite.bridge_source_layer,
-        "targetLayer": row.callsite.bridge_target_layer,
-        "property": row.callsite.property_name,
-        "propertyCid": row.callsite.property_cid,
-        "status": row.status.as_str(),
-        "reason": row.reason,
-        "dischargeMethod": row.discharge_method,
-        "bodyDischargeTier": row.body_discharge_tier,
-        "verification": verification_with_fol(row.verification.as_ref()),
-        "file": row.callsite.file,
-        "line": row.callsite.line,
-        "column": row.callsite.source_column,
-        "callee": row.callsite.callee,
-        "callsiteBundleCid": row.callsite.callsite_bundle_cid,
-        "panicSite": row.callsite.panic_site,
-    })
+    let mut j = sugar_verifier::report::row_to_json(row);
+    if let Some(obj) = j.as_object_mut() {
+        obj.insert(
+            "verification".to_string(),
+            verification_with_fol(row.verification.as_ref()),
+        );
+    }
+    j
 }
 
 /// Enrich a consistency-row's verification detail with the THREE conjoined

@@ -18,8 +18,23 @@ import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
 import * as vscode from "vscode";
-import { LinkerdClient, kitIdForFile, LinkerDiagnostic } from "./linkerdClient";
-import { proveProject, mintProject, ProveDiagnostic, formatDetail } from "./proveClient";
+import {
+  LinkerdClient,
+  kitIdForFile,
+  LinkerDiagnostic,
+  LinkerdRpcError,
+  ERR_METHOD_NOT_FOUND,
+  ERR_PROVE_CONTEXT_UNAVAILABLE,
+  ProveRow as DaemonProveRow,
+} from "./linkerdClient";
+import {
+  proveProject,
+  mintProject,
+  ProveDiagnostic,
+  formatDetail,
+  diagnosticsFromRows,
+  ProveRow as ProveClientRow,
+} from "./proveClient";
 import { TimingLogger } from "./timing";
 
 let client: LinkerdClient | undefined;
@@ -153,6 +168,10 @@ async function linkDocument(doc: vscode.TextDocument, kitId: string): Promise<vo
     // surface it as an information diagnostic-free notice rather than a squiggle.
     console.error(`sugar: parseFile failed for ${doc.fileName}: ${(e as Error).message}`);
   }
+  // Warm consistency prove now runs as part of `runProve` (see below): the
+  // resident daemon's `proveConsistency` is tried first there, on the actual
+  // editor prove path (mint-on-save + project-local diagnostics), instead of
+  // as an unpainted side-channel here.
 }
 
 /**
@@ -200,15 +219,58 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     } else {
       await mint();
     }
-    const prove = () => proveProject({ binaryPath: proveBinaryPath, projectDir, env });
-    const res = run
-      ? await run.time("prove", prove, (r) => ({
-          rows: r.rows.length,
-          diagnostics: r.diagnostics.length,
-          exitCode: r.exitCode,
-          subprocessMs: r.elapsedMs,
+    // DAEMON-FIRST PRODUCER (#3774 warm-daemon slice): if the resident
+    // sugar-linkerd daemon is up and speaks `proveConsistency`, ask it first --
+    // it amortizes the pool/plan/registry/compiler load across saves instead of
+    // re-loading the whole catalog per `sugar prove` shell-out. Both producers
+    // feed the SAME diagnostic mapping below (`diagnosticsFromRows` +
+    // `proveToVsDiagnostic`), so there is exactly one painter regardless of
+    // which producer ran. Any failure (older daemon: ERR_METHOD_NOT_FOUND;
+    // daemon still loading: ERR_PROVE_CONTEXT_UNAVAILABLE; daemon down: any
+    // throw) falls back to the existing mint+proveProject shell path -- never a
+    // silent gap, just a slower cold path.
+    const kitIdForDaemon = kitId; // narrowed to "python" above
+    const daemonProve = async (): Promise<ProveDiagnostic[] | undefined> => {
+      if (!client) {
+        return undefined;
+      }
+      try {
+        const rows = await client.proveConsistency(
+          kitIdForDaemon,
+          doc.fileName,
+          doc.getText()
+        );
+        return diagnosticsFromRows(rows as unknown as ProveClientRow[]);
+      } catch (e) {
+        const code = e instanceof LinkerdRpcError ? e.code : undefined;
+        const expected =
+          code === ERR_METHOD_NOT_FOUND || code === ERR_PROVE_CONTEXT_UNAVAILABLE;
+        console.log(
+          `sugar: daemon-prove unavailable, falling back to cold prove ` +
+            `(file=${doc.fileName} expected=${expected} error=${(e as Error).message})`
+        );
+        return undefined;
+      }
+    };
+    let diagnostics = run
+      ? await run.time("daemon-prove", daemonProve, (d) => ({
+          usedDaemon: d !== undefined,
+          diagnostics: d?.length ?? 0,
         }))
-      : await prove();
+      : await daemonProve();
+    let usedDaemon = diagnostics !== undefined;
+    if (diagnostics === undefined) {
+      const prove = () => proveProject({ binaryPath: proveBinaryPath, projectDir, env });
+      const res = run
+        ? await run.time("prove", prove, (r) => ({
+            rows: r.rows.length,
+            diagnostics: r.diagnostics.length,
+            exitCode: r.exitCode,
+            subprocessMs: r.elapsedMs,
+          }))
+        : await prove();
+      diagnostics = res.diagnostics;
+    }
     const paintStart = Date.now();
     // Rebuild the whole prove collection for this project from scratch so
     // cleared rows (green now) drop their squiggles.
@@ -221,7 +283,7 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     // would squiggle files the user never wrote. Keep only rows whose resolved
     // file is INSIDE projectDir AND exists on disk (the consumer's own sources).
     const rootAbs = path.resolve(projectDir);
-    for (const d of res.diagnostics) {
+    for (const d of diagnostics) {
       const abs = path.resolve(
         path.isAbsolute(d.file) ? d.file : path.join(projectDir, d.file)
       );
@@ -240,7 +302,7 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     if (run) {
       const painted = Array.from(byFile.values()).reduce((n, l) => n + l.length, 0);
       run.step("paint", Date.now() - paintStart, { files: byFile.size, painted });
-      run.end({ projectDir, file: doc.fileName });
+      run.end({ projectDir, file: doc.fileName, usedDaemon });
     }
   } catch (e) {
     console.error(`sugar: prove failed for ${projectDir}: ${(e as Error).message}`);
