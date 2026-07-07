@@ -355,7 +355,11 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
         continue;
       }
       const list = byFile.get(abs) ?? [];
-      list.push(proveToVsDiagnostic(d));
+      let dd = d;
+      if (abs === doc.uri.fsPath && d.line - 1 >= 0 && d.line - 1 < doc.lineCount) {
+        dd = relabelFactsAgainstSource(d, doc.lineAt(d.line - 1).text);
+      }
+      list.push(proveToVsDiagnostic(dd));
       byFile.set(abs, list);
     }
     for (const [file, list] of byFile) {
@@ -378,6 +382,43 @@ function resolveProjectDir(uri: vscode.Uri): string | undefined {
     return folder.uri.fsPath;
   }
   return path.dirname(uri.fsPath);
+}
+
+/**
+ * GROUND-TRUTH RELABEL: on a two-literal stated/stated contradiction, which
+ * value is "yours" is decided by the SOURCE LINE the row anchors to -- the
+ * buffer IS the consumer's assertion. Producer-dependent conjunction order
+ * (daemon overlay vs CLI on-disk pool) can swap the vendor/client labels the
+ * verifier attached (provenance-carried labels are the constructional fix,
+ * tracked separately); the editor corrects the LABELS -- never the verdict,
+ * never the conjuncts -- using what the user actually typed. If the anchored
+ * line contains the "vendor" value but not the "client" value, the labels are
+ * swapped: fix them.
+ */
+function relabelFactsAgainstSource(d: ProveDiagnostic, lineText: string): ProveDiagnostic {
+  const rhs = (fol?: string): string | undefined => {
+    if (!fol) return undefined;
+    const i = fol.lastIndexOf(" = ");
+    return i >= 0 ? fol.slice(i + 3).trim() : undefined;
+  };
+  const vendorVal = rhs(d.vendorFactFol);
+  if (vendorVal === undefined || !d.vendorFactFol) return d;
+  const bare = vendorVal.replace(/^"|"$/g, "");
+  const lineHasVendorVal =
+    lineText.includes(`== ${vendorVal}`) || lineText.includes(`== "${bare}"`) ||
+    lineText.includes(`, ${vendorVal})`) || lineText.includes(`, "${bare}")`);
+  if (!lineHasVendorVal) return d; // labels already correct
+  // The "vendor" value is what the user typed => labels are swapped. The true
+  // vendor value is the OTHER literal in the client conjunction.
+  const clientEqs = (d.clientFactFol ?? "").split("\u2227").join("∧").split("∧");
+  for (const part of clientEqs) {
+    const v = rhs(part.trim());
+    if (v !== undefined && v !== vendorVal) {
+      const lhs = d.vendorFactFol.slice(0, d.vendorFactFol.lastIndexOf(" = "));
+      return { ...d, vendorFactFol: `${lhs} = ${v}` };
+    }
+  }
+  return d;
 }
 
 /** Turn one prove diagnostic into a VS Code diagnostic anchored at its locus. */
