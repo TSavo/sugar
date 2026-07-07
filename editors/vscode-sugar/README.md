@@ -1,11 +1,17 @@
-# vscode-sugar — the inline wall (slice A)
+# vscode-sugar — the inline wall (slice A + B)
 
-Part of **#3774**. This is slice A of the LSP path: **one red squiggle, end to
-end.** Open a project, put a source line into a state the prover cannot
-discharge, and a red diagnostic appears from the **production** pipeline —
-`sugar-linkerd` lifting the file and calling `link()`, the same construction the
-proofchain uses. Correct the line and the squiggle clears. Both directions,
-live.
+Part of **#3774** and **#3767 slice 2**. This is the LSP path: **the line flips
+red↔green live, through the production pipeline.** Open a project, put a source
+line into a state the prover cannot discharge, and a red diagnostic appears from
+the **production** pipeline — `sugar-linkerd` lifting the file and calling the
+linker, the same construction the proofchain uses. Correct the line and the
+squiggle clears. Both directions, live.
+
+Slice B adds the **semantic current**: when a solver is available the daemon
+calls `link_with_solvers` instead of pure `link()`, so an obligation that is
+structurally distinct but logically decidable is adjudicated by **z3** — a
+truthful implication is DISCHARGED (green), a lie is refuted UNSAT (red), live
+in the editor.
 
 There is no shadow verifier in this extension. The editor shows exactly what the
 linker says because it asks it, over the daemon's `parseFile` RPC.
@@ -29,6 +35,37 @@ directly:
 Delete the `#[requires(...)]` line to go green; type it back to go red. That is
 the red→green→green→red flip the acceptance bar names, running against the real
 `sugar-linkerd`.
+
+## The semantic flip (slice B — z3, when a solver is available)
+
+When z3 is on `PATH` (or a workspace `SolversConfig` declares solvers) the daemon
+runs in **semantic** mode. The obligation `post_caller ⊃ pre_callee` is then
+handed to z3 for any structurally-distinct pair. The semantic fixtures
+(`test/fixtures/*_semantic.rs`) exercise a genuine solver decision over the
+shared contract quantity `result`:
+
+- **`green_semantic.rs` (z3 discharges):** caller ensures `result >= 5`, callee
+  requires `result >= 1`. `result >= 5 ⊃ result >= 1` is valid — z3 discharges
+  it and there is **no diagnostic**. Pure `link()` could only call this
+  `implication-undecidable`; z3 turns it green.
+- **`red_semantic.rs` (z3 refutes):** weaken the caller's `#[ensures]` to
+  `result >= 0`. `result >= 0 ⊃ result >= 1` is **not** valid (counterexample
+  `result = 0`): z3 returns sat and the daemon emits a red
+  **`implication-unprovable`** at the `callee(x)` call site, reason
+  `solver 'z3' returned sat (counterexample found)`.
+
+Edit that one `#[ensures]` line and the line flips green↔red on z3's verdict, not
+on structure. Observed round-trip (lift + z3 subprocess + link) is ~0.6–0.7 s per
+re-derive on a warm daemon — within a debounced editor cadence; a solver call is
+bounded by the `SolverPlan`'s own typed `solver-timeout` terminal (default 10 s),
+so a pathological obligation degrades loudly instead of hanging the editor.
+
+### Modes are named, never silent
+
+`projectStatus` reports the daemon's discharge mode in its capabilities:
+`solverMode: "semantic"` with `solverSeats: ["z3"]` when a registry is wired, or
+`solverMode: "structural"` (with an empty seat list) when none is — the honest
+degraded mode. Force structural mode explicitly with `--no-solvers`.
 
 ## The on-stage script (VS Code, human demo)
 
@@ -60,14 +97,18 @@ editors/vscode-sugar/test/run-e2e.sh
 ```
 
 It resolves the daemon through `bin/sugarbin`, compiles the TypeScript client,
-and runs the wire-protocol test. Expected output ends with:
+and runs the wire-protocol test in **both modes**: a structural leg
+(`--no-solvers`, slice A's `implication-undecidable` flip) and a semantic leg
+(default z3, slice B's `implication-unprovable` flip). Expected output ends with:
 
 ```
-slice A receipt: red -> green -> red verified through sugar-linkerd
+slice A + B receipt: structural red->green->red AND semantic (z3) green->red->green verified through sugar-linkerd
 ```
 
-The `rust` kit is used because its lifter runs **in-process** inside the daemon,
-so the receipt is hermetic — no external kit binary required.
+If z3 is not resolvable the semantic leg **skips** (the daemon honestly reports
+`solverMode: "structural"`) and the structural leg still passes — the degraded
+mode is honest. The `rust` kit is used because its lifter runs **in-process**
+inside the daemon, so the receipt is hermetic — no external kit binary required.
 
 ## Daemon glue landed in this change
 
@@ -84,18 +125,27 @@ closed (verified by the receipt):
    and 0-based column of the calling expression. (`sugar-lift/src/call_edges.rs`,
    `sugar-lift/Cargo.toml` enabling `proc-macro2` `span-locations`)
 
-## What slice A does NOT do yet (slice B / C)
+## What is now wired (slice B) and what still remains
 
-- **Semantic, solver-backed adjudication.** Today's daemon runs pure `link()`
-  with an empty solver registry, so it discharges only structurally
-  (JCS-canonical implication) or vacuously. It cannot yet prove a *literal test
-  assertion* SAT/UNSAT against the vendor universe (`encodeBase64("abc") ==
-  "YWJj"` green vs `== "AAAA"` red). That flip needs the linker's
-  `link_with_solvers` path wired into the daemon (z3 registry + argument
-  binding), which is the natural home of **#3767 slice 2 / the LinkedProof
-  upgrade**. When it lands, the same extension paints those diagnostics with no
-  editor-side change — the wire shape is identical.
-- **Green inlay for discharged facts** (the warrant, hover = CID): **slice B**.
+- **Semantic, solver-backed adjudication — LANDED.** The daemon now builds the
+  solver registry/plan at startup (from the workspace `SolversConfig`, else a
+  default single-z3 registry when z3 is on `PATH`) and calls the linker's
+  `link_with_solvers` path, so a structurally-distinct obligation is decided by
+  z3. The pure-`link()` structural path remains as the named degraded fallback.
+- **LinkedProof consumption (the #3767 slice-2 seam).** The daemon's discharge
+  now flows entirely through the linker's own semantic output — the mechanical
+  slice-2 piece *at the daemon boundary* is done: the editor consumes the
+  linker's constructed verdicts, never a shadow. The remaining slice-2 work is
+  verify-side: migrating `resolve_target`'s kind-check onto a `LinkedProof`
+  value so `verify` accepts `LinkedProof` only. That is correctly still deferred
+  (per #3767 slice 1's note) — removing the kind-check before `verify` consumes
+  `LinkedProof` would drop a live soundness check with no constructed
+  replacement. It is not on the editor's critical path.
+- **The literal-fact vendor-universe flip** (`encodeBase64("abc") == "YWJj"`
+  green vs `== "AAAA"` red) additionally needs the vendor proof pool loaded into
+  the daemon's `LinkerInputs` and per-call argument binding; the z3 discharge
+  machinery it rides on is now in place.
+- **Green inlay for discharged facts** (the warrant, hover = CID): still to come.
 - **Latency hardening** (incremental re-link, warm pool) and the
   `SourcePartition` gutter classes: **slice C**.
 - **Stage-rehearsal harness** (scripted, timed red→green→red on the demo

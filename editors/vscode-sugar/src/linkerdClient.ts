@@ -67,7 +67,8 @@ export class LinkerdClient {
   async ensureDaemon(
     binaryPath: string | undefined,
     snapshotPath: string,
-    idleTimeoutMs = 600_000
+    idleTimeoutMs = 600_000,
+    extraArgs: string[] = []
   ): Promise<void> {
     if (await this.isLive()) {
       return;
@@ -92,11 +93,21 @@ export class LinkerdClient {
         snapshotPath,
         "--idle-timeout-ms",
         String(idleTimeoutMs),
+        ...extraArgs,
       ],
       { stdio: "ignore" }
     );
     this.child.unref();
     await this.waitForSocket(10_000);
+  }
+
+  /** Read the daemon's status/capabilities (includes `solverMode`). */
+  async projectStatus(): Promise<any> {
+    const res = await this.rpc("projectStatus", {});
+    if (res.error) {
+      throw new LinkerdRpcError(res.error.code, res.error.message);
+    }
+    return res.result ?? {};
   }
 
   private async isLive(): Promise<boolean> {

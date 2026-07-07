@@ -178,23 +178,31 @@ pub async fn handle_project_status(
     _params: &Json,
     id: &Json,
 ) -> Json {
-    let status = {
+    let (status, caps) = {
         let st = state.lock().await;
-        st.project_status()
+        (st.project_status(), st.solver_capabilities())
     };
 
-    match status {
-        Some(s) => rpc_result(s, id),
-        None => rpc_result(
-            serde_json::json!({
-                "contractSetCid": null,
-                "callEdgeSetCid": null,
-                "bridgeSetCid":   null,
-                "linkBundleCid":  null,
-            }),
-            id,
-        ),
+    // Base pin data (null before the first link).
+    let mut result = status.unwrap_or_else(|| {
+        serde_json::json!({
+            "contractSetCid": null,
+            "callEdgeSetCid": null,
+            "bridgeSetCid":   null,
+            "linkBundleCid":  null,
+        })
+    });
+
+    // Fold in the daemon's capabilities: `solverMode` names semantic vs the
+    // honest structural (degraded) mode, so no consumer mistakes one for the
+    // other. Always present, even before the first link.
+    if let (Some(obj), Some(cap_obj)) = (result.as_object_mut(), caps.as_object()) {
+        for (k, v) in cap_obj {
+            obj.insert(k.clone(), v.clone());
+        }
     }
+
+    rpc_result(result, id)
 }
 
 // -------------------------------------------------------------------

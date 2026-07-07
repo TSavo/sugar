@@ -44,6 +44,8 @@ fn main() -> anyhow::Result<()> {
     let mut snapshot_path: Option<PathBuf> = None;
     let mut idle_timeout_ms: u64 = 5 * 60 * 1000; // 5 min default
     let mut cache_cap: usize = 1024;
+    let mut project_root: Option<PathBuf> = None;
+    let mut solvers_enabled = true;
 
     let mut i = 1usize;
     while i < args.len() {
@@ -78,6 +80,17 @@ fn main() -> anyhow::Result<()> {
                     cache_cap = v.parse().unwrap_or(cache_cap);
                 }
             }
+            "--project-root" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    project_root = Some(PathBuf::from(v));
+                }
+            }
+            // Force the pure-link() structural (degraded) discharge mode even
+            // when a solver is resolvable. Names the degraded mode explicitly.
+            "--no-solvers" => {
+                solvers_enabled = false;
+            }
             _ => {}
         }
         i += 1;
@@ -88,6 +101,9 @@ fn main() -> anyhow::Result<()> {
         snapshot_path: snapshot_path.unwrap_or_else(|| default_snapshot_path(&project_cid)),
         idle_timeout: Duration::from_millis(idle_timeout_ms),
         cache_cap,
+        project_root: project_root
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
+        solvers_enabled,
     };
 
     info!(

@@ -21,7 +21,32 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use serde_json::Value as Json;
-use sugar_linker::{link, LinkerCallEdge, LinkerContract, LinkerInputs, LinkerOutput};
+use sugar_linker::solver_api::SolverPlan;
+use sugar_linker::{
+    link, link_with_solvers, LinkerCallEdge, LinkerContract, LinkerInputs, LinkerOutput, Registry,
+};
+
+/// Solver wiring for SEMANTIC obligation discharge.
+///
+/// When a `SolverContext` is attached, `update_and_link`/`relink` call
+/// `sugar_linker::link_with_solvers` instead of the pure `link()`. That routes
+/// every structurally-distinct `post_caller \u{2283} pre_callee` obligation
+/// through the real solver registry (built by the verifier's
+/// `solvers::registry::build` from the same `SolversConfig` `sugar prove` uses,
+/// or a default single-z3 registry when z3 is on PATH). A literal-fact
+/// assertion then discharges (green) or is refuted UNSAT (red) live in the
+/// editor.
+///
+/// When NO context is attached the daemon runs pure `link()`: obligations
+/// discharge only structurally / vacuously. That is a real degraded mode, and
+/// it is reported by name in `projectStatus` (`solverMode: "structural"`) —
+/// never silently.
+pub struct SolverContext {
+    pub registry: Registry,
+    pub plan: SolverPlan,
+    /// Seat labels (e.g. `["z3"]`) for the capabilities report.
+    pub seats: Vec<String>,
+}
 
 /// Key type for the LRU cache.
 type CacheKey = (String, String);
@@ -86,6 +111,8 @@ pub struct ProjectState {
     last_output: Option<LinkerOutput>,
     /// LRU cache: (contractSetCid, callEdgeSetCid) -> LinkerOutput.
     cache: Lru,
+    /// Solver wiring. `None` = structural (degraded) mode; `Some` = semantic.
+    solvers: Option<SolverContext>,
 }
 
 impl ProjectState {
@@ -94,6 +121,45 @@ impl ProjectState {
             streams: BTreeMap::new(),
             last_output: None,
             cache: Lru::new(cache_cap),
+            solvers: None,
+        }
+    }
+
+    /// Attach (or clear) the solver context and re-derive the current union so
+    /// a warm-started daemon immediately reflects the mode. Called once at
+    /// startup after the state is constructed (fresh or snapshot-restored).
+    pub fn attach_solvers(&mut self, solvers: Option<SolverContext>) {
+        self.solvers = solvers;
+        // A restored snapshot already has streams: re-run under the new mode so
+        // the first projectStatus/diagnostics reflect semantic discharge.
+        self.cache.clear();
+        self.relink();
+    }
+
+    /// Run the linker over `inputs`, dispatching to the semantic solver path
+    /// when a context is attached and the pure path otherwise. This is the ONE
+    /// place the daemon chooses link() vs link_with_solvers().
+    fn run_link(&self, inputs: LinkerInputs) -> LinkerOutput {
+        match &self.solvers {
+            Some(ctx) => link_with_solvers(inputs, &ctx.registry, &ctx.plan),
+            None => link(inputs),
+        }
+    }
+
+    /// Capabilities projection for `projectStatus`: names the discharge mode so
+    /// no consumer mistakes a structural (solver-less) session for a semantic
+    /// one. `solverMode` is `"semantic"` when a registry is wired, else
+    /// `"structural"`.
+    pub fn solver_capabilities(&self) -> Json {
+        match &self.solvers {
+            Some(ctx) => serde_json::json!({
+                "solverMode": "semantic",
+                "solverSeats": ctx.seats,
+            }),
+            None => serde_json::json!({
+                "solverMode": "structural",
+                "solverSeats": [],
+            }),
         }
     }
 
@@ -121,8 +187,11 @@ impl ProjectState {
             all_call_edges.extend(ces.iter().cloned());
         }
 
-        // Run the linker (pure function: deterministic per R13).
-        let output = link(LinkerInputs {
+        // Run the linker. Semantic when a solver context is attached (verdicts
+        // stable per the crate's determinism contract; subprocess wall-time is
+        // not, and is bounded by the SolverPlan's own typed timeout terminal),
+        // pure/structural otherwise.
+        let output = self.run_link(LinkerInputs {
             contracts: all_contracts,
             call_edges: all_call_edges,
         });
@@ -149,7 +218,7 @@ impl ProjectState {
         if all_contracts.is_empty() && all_call_edges.is_empty() {
             return;
         }
-        let output = link(LinkerInputs {
+        let output = self.run_link(LinkerInputs {
             contracts: all_contracts,
             call_edges: all_call_edges,
         });

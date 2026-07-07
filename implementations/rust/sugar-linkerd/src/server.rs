@@ -47,6 +47,12 @@ pub struct ServerConfig {
     pub idle_timeout: Duration,
     /// LRU cache capacity (R12).
     pub cache_cap: usize,
+    /// Workspace root used to discover the solver `SolversConfig` (the same
+    /// discovery `sugar prove` uses).
+    pub project_root: PathBuf,
+    /// When false, force the pure-`link()` structural mode even if a solver is
+    /// resolvable (`--no-solvers`). Used to exercise the honest degraded mode.
+    pub solvers_enabled: bool,
 }
 
 impl Default for ServerConfig {
@@ -56,8 +62,70 @@ impl Default for ServerConfig {
             snapshot_path: default_snapshot_path("default"),
             idle_timeout: Duration::from_secs(300), // 5 min per R4
             cache_cap: 1024,
+            project_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            solvers_enabled: true,
         }
     }
+}
+
+/// Build the solver context the daemon links with, mirroring the CLI's
+/// `build_plan_and_registry`: the kit-declared `SolversConfig` wins verbatim;
+/// otherwise fall back to a default single-z3 registry when `z3` is on PATH.
+/// Returns `None` (structural / degraded mode) when solvers are disabled or no
+/// solver is resolvable. z3 presence is detected the same way `sugar prove`
+/// relies on it — the `z3` binary reachable on PATH.
+fn build_solver_context(config: &ServerConfig) -> Option<crate::state::SolverContext> {
+    use sugar_linker::solver_api::{registry, SolverPlan, SolverSeat, SolversConfig};
+
+    if !config.solvers_enabled {
+        info!("solvers disabled (--no-solvers): running in structural (degraded) discharge mode");
+        return None;
+    }
+
+    // (1) Kit author's declared solver config wins, verbatim — identical to the
+    // CLI verify/prove path.
+    if let Ok(Some(sc)) = SolversConfig::load(&config.project_root) {
+        let registry = registry::build(&sc);
+        let plan = SolverPlan::from_config(&sc);
+        let seats: Vec<String> = registry.keys().map(|s| format!("{s:?}")).collect();
+        info!(seats = ?seats, "semantic discharge: built solver registry from workspace SolversConfig");
+        return Some(crate::state::SolverContext {
+            registry,
+            plan,
+            seats,
+        });
+    }
+
+    // (2) No kit config: default single-z3, but only if z3 is actually on PATH
+    // so the reported mode is honest (an unreachable solver would surface every
+    // obligation as undecidable — a silent structural mode wearing a semantic
+    // label).
+    if let Some(z3_path) = which_on_path("z3") {
+        let registry = registry::build_default_z3(&z3_path.to_string_lossy());
+        let plan = SolverPlan::Single(SolverSeat::Z3);
+        info!(z3 = %z3_path.display(), "semantic discharge: default single-z3 registry (no SolversConfig found)");
+        return Some(crate::state::SolverContext {
+            registry,
+            plan,
+            seats: vec!["z3".to_string()],
+        });
+    }
+
+    info!("no solver resolvable (no SolversConfig, no z3 on PATH): structural (degraded) mode");
+    None
+}
+
+/// Minimal PATH scan for an executable, so we can report an HONEST capability
+/// (z3 present vs absent) without a new dependency.
+fn which_on_path(bin: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(bin);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// Compute the socket path for a given projectCid per R1.
@@ -128,24 +196,30 @@ fn dirs_next_cache_home() -> String {
 /// Loads snapshot if available, binds socket, accepts connections,
 /// and shuts down cleanly on idle timeout or `shutdown` RPC.
 pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
+    // Build the solver context once at startup (semantic vs structural mode).
+    let solver_ctx = build_solver_context(&config);
+
     // Load snapshot if available (R14).
-    let state = match snapshot::load(&config.snapshot_path) {
+    let mut base = match snapshot::load(&config.snapshot_path) {
         Ok(Some(s)) => {
             info!(
                 "warm-start: loaded snapshot from {}",
                 config.snapshot_path.display()
             );
-            Arc::new(Mutex::new(s))
+            s
         }
         Ok(None) => {
             info!("cold-start: no snapshot found");
-            Arc::new(Mutex::new(ProjectState::new(config.cache_cap)))
+            ProjectState::new(config.cache_cap)
         }
         Err(e) => {
             warn!("snapshot load failed ({e}); starting cold");
-            Arc::new(Mutex::new(ProjectState::new(config.cache_cap)))
+            ProjectState::new(config.cache_cap)
         }
     };
+    // Attach the solver wiring (re-derives any restored streams under the mode).
+    base.attach_solvers(solver_ctx);
+    let state = Arc::new(Mutex::new(base));
 
     // Resident rust-analyzer host: one warm session per workspace root, shared
     // across all clients. Created empty; sessions spawn lazily on the first
