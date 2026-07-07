@@ -78,7 +78,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   client = new LinkerdClient(socketPath);
   let linkerdUp = false;
   try {
-    await client.ensureDaemon(binaryPath, snapshotPath);
+    // The daemon's resident prove context (vendor pool, lift overlay) is
+    // per-project: pass the workspace root explicitly so proveConsistency
+    // serves THIS project rather than whatever cwd the extension host had.
+    await client.ensureDaemon(binaryPath, snapshotPath, 600_000, [
+      "--project-root",
+      wsRoot,
+    ]);
     linkerdUp = true;
   } catch (e) {
     client = undefined;
@@ -219,16 +225,14 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     if (kitId === "rust" && rustBinDir) {
       env.PATH = `${rustBinDir}:${process.env.PATH ?? ""}`;
     }
-    // Time each LSP step (mint -> prove -> paint) into the timing log.
+    // Time each LSP step into the timing log.
     const run = timing?.run(path.basename(projectDir) + "/" + path.basename(doc.fileName));
-    // On-save: re-mint the edited source first so prove reflects the current
-    // text (not a stale proof), then prove.
+    // DAEMON-FIRST, MINT-FREE: the daemon's lift-and-merge overlay lifts the
+    // request's OWN source text (sent below), so no CLI mint is needed on the
+    // warm path -- the mint runs ONLY if the daemon path falls through to the
+    // cold shell fallback (which proves the on-disk .proof and therefore
+    // needs the on-save re-mint).
     const mint = () => mintProject({ binaryPath: proveBinaryPath, projectDir, env });
-    if (run) {
-      await run.time("mint", mint, (ok) => ({ ok }));
-    } else {
-      await mint();
-    }
     // DAEMON-FIRST PRODUCER (#3774 warm-daemon slice): if the resident
     // sugar-linkerd daemon is up and speaks `proveConsistency`, ask it first --
     // it amortizes the pool/plan/registry/compiler load across saves instead of
@@ -245,13 +249,12 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
         return undefined;
       }
       try {
-        // NOTE: `mint()` above already ran unconditionally -- this handler
-        // does NOT skip it. The daemon's `proveConsistency` reports
-        // `degraded: true` on every response today (resident on-disk pool,
-        // not a live lift of `doc.getText()`); until a future daemon lands
-        // lift-and-merge and flips that to `false`, skipping `mint` here
-        // would silently prove a stale pool. See
-        // `sugar-linkerd/src/methods.rs::handle_prove_consistency` FINDING.
+        // The daemon's lift-and-merge overlay lifts `doc.getText()` itself
+        // (source-overlay project + resident vendor pool), so the warm path
+        // needs NO CLI mint. A `degraded: true` response means the daemon
+        // fell back to its resident on-disk pool for this request -- treat it
+        // as a MISS (return undefined) so the cold path below runs its own
+        // mint+prove against fresh disk state instead of trusting stale rows.
         const { rows, degraded, degradedReason } =
           await client.proveConsistencyDetailed(
             kitIdForDaemon,
@@ -260,8 +263,9 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
           );
         if (degraded) {
           console.log(
-            `sugar: daemon-prove degraded (mint still required this save): ${degradedReason ?? "no reason given"}`
+            `sugar: daemon-prove degraded -> cold fallback: ${degradedReason ?? "no reason given"}`
           );
+          return undefined;
         }
         return diagnosticsFromRows(rows as unknown as ProveClientRow[]);
       } catch (e) {
@@ -283,6 +287,13 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
       : await daemonProve();
     let usedDaemon = diagnostics !== undefined;
     if (diagnostics === undefined) {
+      // COLD FALLBACK: shell mint (the on-disk .proof must reflect the save)
+      // then shell prove. This is the only path that mints now.
+      if (run) {
+        await run.time("mint", mint, (ok) => ({ ok }));
+      } else {
+        await mint();
+      }
       const prove = () => proveProject({ binaryPath: proveBinaryPath, projectDir, env });
       const res = run
         ? await run.time("prove", prove, (r) => ({

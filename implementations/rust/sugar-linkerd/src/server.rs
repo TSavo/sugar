@@ -140,10 +140,22 @@ pub(crate) fn build_prove_context_for(
         project_root: project_root.to_path_buf(),
         ..Default::default()
     };
-    let pool = sugar_verifier::runner::load_pool(&cfg);
+    // VENDOR-ONLY base pool: load ONLY the staged imports (.sugar/imports),
+    // never the consumer's own on-disk .proof/.sugar/runs. The per-request
+    // lift-and-merge overlay is the SOLE consumer testimony -- loading a stale
+    // consumer proof alongside it would double-testify (the old literal and
+    // the new one in one pool) and the flip would never flip. The invalidation
+    // manifest watches the same imports-only surface, so a consumer save-mint
+    // no longer triggers the full pool rebuild (that was ~13s per save).
+    let imports_root = project_root.join(".sugar").join("imports");
+    let pool_cfg = sugar_verifier::runner::RunnerConfig {
+        project_root: imports_root.clone(),
+        ..Default::default()
+    };
+    let pool = sugar_verifier::runner::load_pool(&pool_cfg);
     let (plan, registry) = sugar_verifier::runner::build_plan_and_registry_pub(&cfg);
     let compilers = sugar_verifier::compiler_registry::build(project_root);
-    let proof_manifest = scan_proof_manifest(project_root);
+    let proof_manifest = scan_proof_manifest(&imports_root);
     Some(crate::state::ProveContext {
         pool,
         plan,
@@ -592,10 +604,15 @@ mod prove_context_invalidation_tests {
     #[test]
     fn build_prove_context_for_stamps_matching_manifest() {
         let dir = tempdir();
-        std::fs::write(dir.join("consumer.proof"), b"v1").unwrap();
+        // The resident base pool is VENDOR-ONLY: it loads (and its
+        // invalidation manifest watches) `.sugar/imports` exclusively -- the
+        // consumer's own proofs are per-request overlay, never resident.
+        let imports = dir.join(".sugar").join("imports");
+        std::fs::create_dir_all(&imports).unwrap();
+        std::fs::write(imports.join("vendor.proof"), b"v1").unwrap();
 
         let ctx = build_prove_context_for(&dir).expect("context should build even with a minimal pool");
-        let rescanned = scan_proof_manifest(&dir);
+        let rescanned = scan_proof_manifest(&imports);
         assert_eq!(
             ctx.proof_manifest, rescanned,
             "a freshly-built context's manifest must equal an immediate re-scan"

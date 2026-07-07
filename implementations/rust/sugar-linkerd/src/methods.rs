@@ -66,6 +66,103 @@ pub const ERR_LINKER_DISCHARGE_FAILURE: i64 = -33003;
 /// `sugar prove` shell path for that one request.
 pub const ERR_PROVE_CONTEXT_UNAVAILABLE: i64 = -33004;
 
+/// Build (or refresh) the SOURCE-OVERLAY lift project for a prove request:
+/// a stable per-project directory holding the project's lift surface --
+/// `.sugar/config.toml`, `.sugar/lift/**` (manifests/wrappers), and its
+/// source files -- with the request's buffer content substituted at
+/// `request_file`'s project-relative path. Deliberately EXCLUDED:
+/// `.sugar/imports` (the vendor pool is resident in the daemon), any
+/// `*.proof`, `.sugar/runs|cache|witnesses` (generated), and dot/target
+/// dirs. The directory is stable across calls (keyed by project hash at the
+/// caller) so the resident lifter's (command, cwd) key holds; contents are
+/// refreshed on every call (tiny: config + a handful of source files).
+fn build_source_overlay_project(
+    project_root: &std::path::Path,
+    overlay_root: &std::path::Path,
+    request_file: &std::path::Path,
+    source: &str,
+) -> Result<(), String> {
+    fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+        std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(from).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name();
+            let src = entry.path();
+            let dst = to.join(&name);
+            if src.is_dir() {
+                copy_tree(&src, &dst)?;
+            } else {
+                std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    std::fs::create_dir_all(overlay_root).map_err(|e| e.to_string())?;
+    // Lift surface: config + lift manifests. (No imports/proofs/caches.)
+    let cfg = project_root.join(".sugar").join("config.toml");
+    if cfg.exists() {
+        std::fs::create_dir_all(overlay_root.join(".sugar")).map_err(|e| e.to_string())?;
+        std::fs::copy(&cfg, overlay_root.join(".sugar").join("config.toml"))
+            .map_err(|e| e.to_string())?;
+    }
+    let lift_dir = project_root.join(".sugar").join("lift");
+    if lift_dir.is_dir() {
+        copy_tree(&lift_dir, &overlay_root.join(".sugar").join("lift"))?;
+    }
+    let comps = project_root.join(".sugar").join("components");
+    if comps.is_dir() {
+        copy_tree(&comps, &overlay_root.join(".sugar").join("components"))?;
+    }
+    // Source files: top-level walk skipping generated/vendor surfaces.
+    fn copy_sources(
+        from: &std::path::Path,
+        to: &std::path::Path,
+        depth: usize,
+    ) -> Result<(), String> {
+        if depth > 6 {
+            return Ok(());
+        }
+        std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(from).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name_os = entry.file_name();
+            let name = name_os.to_string_lossy().to_string();
+            let src = entry.path();
+            if src.is_dir() {
+                if name == ".sugar"
+                    || name == ".git"
+                    || name == "target"
+                    || name == "__pycache__"
+                    || name == ".vscode"
+                    || name == "node_modules"
+                {
+                    continue;
+                }
+                copy_sources(&src, &to.join(&name), depth + 1)?;
+            } else {
+                if name.ends_with(".proof") || name.ends_with(".witness") {
+                    continue;
+                }
+                std::fs::copy(&src, to.join(&name)).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+    copy_sources(project_root, overlay_root, 0)?;
+
+    // Substitute the request buffer at the file's project-relative path.
+    let rel = request_file
+        .strip_prefix(project_root)
+        .unwrap_or(request_file);
+    let dst = overlay_root.join(rel);
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&dst, source).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn rpc_error(code: i64, message: &str, id: &Json) -> Json {
     serde_json::json!({
         "jsonrpc": "2.0",
@@ -1413,12 +1510,15 @@ pub async fn handle_prove_consistency(
         Some(f) => f.to_string(),
         None => return rpc_error(ERR_INVALID_PARAMS, "missing 'file'", id),
     };
-    // Accepted for wire-shape parity with parseFile. Not read directly (the
-    // v2 lift-and-merge below re-lifts the project's ON-DISK sources via
-    // the mint pipeline, which requires the file to have been saved --
-    // see the doc comment above); kept in the wire contract so a future
-    // slice can pass it straight to a single-file lift fast path.
-    let _source = params.get("source").and_then(|v| v.as_str());
+    // The saved/edited buffer. When present and non-empty, the lift-and-merge
+    // below mints a SOURCE-OVERLAY scratch project: the project's lift config
+    // plus its source files with THIS content substituted for `file` -- so the
+    // flip is driven by what the editor holds, not by what disk last saw.
+    let source = params
+        .get("source")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
 
     let ctx = {
         let st = state.lock().await;
@@ -1442,7 +1542,12 @@ pub async fn handle_prove_consistency(
     // it for the project's next call. Without this the editor would keep
     // proving a stale consumer `.proof` and the green/red flip would never
     // flip.
-    let current_manifest = crate::server::scan_proof_manifest(&ctx.project_root);
+    // Imports-only watch (matches build_prove_context_for's vendor-only pool):
+    // consumer saves must NOT trigger the full rebuild -- only a changed
+    // vendor import does.
+    let current_manifest = crate::server::scan_proof_manifest(
+        &ctx.project_root.join(".sugar").join("imports"),
+    );
     if current_manifest != ctx.proof_manifest {
         let project_root = ctx.project_root.clone();
         tracing::info!(
@@ -1500,6 +1605,38 @@ pub async fn handle_prove_consistency(
     let scratch_dir = std::env::temp_dir().join("sugar-linkerd-lift-scratch").join(
         sugar_canonicalizer::blake3_512_hex(project_root_for_lift.display().to_string().as_bytes()),
     );
+    // SOURCE-OVERLAY project (bug-A fix): when the request carries `source`,
+    // mint a STABLE per-project copy of the lift surface (config + lift
+    // manifests + source files, never .sugar/imports//.proof/cache) with the
+    // request's buffer substituted at `file`'s relative path. Stable dir =>
+    // stable lifter working_dir => the resident lifter pool's (command, cwd)
+    // key holds across calls. Without this the daemon lifted the ON-DISK
+    // file and the editor's flip could never flip.
+    let lift_root_override: Option<std::path::PathBuf> = match &source {
+        None => None,
+        Some(src) => {
+            let overlay_root = std::env::temp_dir()
+                .join("sugar-linkerd-lift-src")
+                .join(sugar_canonicalizer::blake3_512_hex(
+                    project_root_for_lift.display().to_string().as_bytes(),
+                ));
+            match build_source_overlay_project(
+                &project_root_for_lift,
+                &overlay_root,
+                std::path::Path::new(&file),
+                src,
+            ) {
+                Ok(()) => Some(overlay_root),
+                Err(err) => {
+                    tracing::warn!(
+                        %err,
+                        "proveConsistency: source-overlay build failed; lifting on-disk project"
+                    );
+                    None
+                }
+            }
+        }
+    };
     let base_pool_for_lift = ctx.pool.clone();
     let lift_started = std::time::Instant::now();
     let lift_result = task::spawn_blocking(move || {
@@ -1519,11 +1656,11 @@ pub async fn handle_prove_consistency(
                 scratch_dir.display()
             ));
         }
-        let proof_file = sugar_cli::cmd_mint::mint_project_scratch_proof(
-            &project_root_for_lift,
-            &scratch_dir,
-            false,
-        )?;
+        let lift_root = lift_root_override
+            .as_deref()
+            .unwrap_or(&project_root_for_lift);
+        let proof_file =
+            sugar_cli::cmd_mint::mint_project_scratch_proof(lift_root, &scratch_dir, false)?;
         let Some(proof_file) = proof_file else {
             return Ok(None);
         };
