@@ -482,14 +482,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Doc priority:** P1 (compiler plugin reference)
 - **Existing docs:** none
 
-### sugar-shim-numpy
-**Summary:** NumPy shim layer for Sugar: provides a NumPy-compatible surface that records all operations as assertions for lifting.
-
-- **Key paths:** `/examples/sugar-shim-numpy/` (run.sh, README.md)
-- **Audience:** Contributor (framework integration)
-- **Doc priority:** P2 (integration technique)
-- **Existing docs:** `./examples/sugar-shim-numpy/README.md`
-
 ## Test Fixtures & Dummies
 
 ### numpy-consumer-demo
