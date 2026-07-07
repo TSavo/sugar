@@ -2933,9 +2933,9 @@ fn dispatch_result_to_value(result: &DispatchResult) -> Value {
 
 /// #1358 / #1355: Fill `family` and `library_version` on each IR entry from
 /// the project's platform_profile when the entry doesn't already pin those
-/// axes via @sugar / @boundary annotation. ANNOTATION WINS: an entry whose
-/// emission already includes a family or library_version (because walk_rpc
-/// pulled it from the source annotation) keeps that value verbatim.
+/// axes itself. THE ENTRY WINS: an entry whose emission already includes a
+/// family or library_version (because walk_rpc pulled it from the source)
+/// keeps that value verbatim.
 ///
 /// Applies to all per-concept memento kinds:
 ///   - library-sugar-binding-entry

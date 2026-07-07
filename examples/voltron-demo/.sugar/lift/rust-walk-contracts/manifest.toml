@@ -1,3 +1,0 @@
-name = "rust-walk-contracts"
-command = ["../../implementations/rust/target/debug/sugar-walk-rpc", "--rpc"]
-working_dir = "."

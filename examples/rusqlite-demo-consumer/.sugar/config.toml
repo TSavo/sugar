@@ -1,5 +1,0 @@
-[[plugins]]
-name = "rust-realize-rusqlite"
-kind = "realize"
-surface = "rust-rusqlite"
-

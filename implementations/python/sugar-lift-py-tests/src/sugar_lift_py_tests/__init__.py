@@ -74,7 +74,6 @@ from .ir import (
     subst_var_in_term,
     term_to_value,
 )
-from .decorators import contract, ContractViolation, collect_module
 from .proof_envelope import ProofEnvelopeInput, envelope_body_to_value
 from .claim_envelope import (
     Authoring,
@@ -112,7 +111,6 @@ __all__ = [
     "ClaimEnvelope",
     "ClaimEnvelopeError",
     "ContractDecl",
-    "ContractViolation",
     "EmptyContractError",
     "EmptyOutBindingError",
     "EvidenceCertificate",
@@ -134,10 +132,8 @@ __all__ = [
     "bridge_decl_to_value",
     "call_edge_decl_to_value",
     "call_edges_to_value",
-    "collect_module",
     "compute_contract_set_cid",
     "connective",
-    "contract",
     "contract_cid",
     "contract_decl_to_value",
     "ctor",

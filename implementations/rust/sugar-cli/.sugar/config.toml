@@ -5,7 +5,7 @@
 # This is the substrate proving itself: sugar-cli is the program;
 # four lift surfaces, conjoined by `sugar mint --project .`:
 #
-#   rust-bind        sugar lifter      (#[sugar::sugar] boundaries)
+#   rust-bind        sugar lifter      (library-binding catalog)
 #   rust-contracts   test lifter       (#[test] asserts -> inv witnessed
 #                                       facts)
 #   rust-fn-contracts production fn lifter (every src/ fn -> body-bearing
@@ -38,11 +38,6 @@ emit = "ir-document"
 [[plugins]]
 name = "rust-implications"
 surface = "rust-implications"
-
-[[plugins]]
-name = "rust-realize"
-kind = "realize"
-surface = "rust"
 
 [platform_profile]
 language = "rust"

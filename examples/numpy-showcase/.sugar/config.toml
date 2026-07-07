@@ -2,13 +2,12 @@
 #
 # lift   : the numpy sugar `.proof` (in imports/) carries numpy.add's sugar;
 #          mint lifts the unit-test CONTRACTS from test_numpy_add.py.
-# materialize: a @boundary stub gets its body filled with numpy.add's body_text.
 # recognize  : a production np.add callsite is found from the sugar `.proof`.
 # prove      : the test contracts discharge (consistent) / refuse (contradictory).
 # verify     : signed witness mementos cite the discharging solver.
 #
 # The pytest surface drives mint/prove/verify; the python-bind surface (kit
-# manifest) drives recognize/materialize. Both kits self-resolve their `.proof`s.
+# manifest) drives recognize. Both kits self-resolve their `.proof`s.
 [[plugins]]
 name = "python-numpy-testing-lift"
 kind = "lift"

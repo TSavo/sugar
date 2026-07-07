@@ -1,1 +1,0 @@
-int process(int n);

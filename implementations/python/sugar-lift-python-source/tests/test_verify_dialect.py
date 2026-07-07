@@ -6,7 +6,7 @@ Covers the three transform halves and the cardinal-sin division guard:
     and wp refuses -> Undecidable, NEVER a false discharge.
   - an unannotated arithmetic body refuses (no `Value`-sorted obligation).
   - leaf harvester lifts `assert double(3) == 6` -> `=(double(3), 6)`.
-  - the `contracts` surface gates emission on `@sugar.boundary`/`@sugar`.
+  - the `contracts` surface lifts every function (annotations retired, #3816).
 """
 
 from __future__ import annotations
@@ -643,26 +643,26 @@ def test_leaf_harvester_negative_int_literal():
     assert inv["args"][1]["value"] == -4
 
 
-def test_contracts_surface_gates_on_boundary_declaration(tmp_path):
-    # The `contracts` (ir-document) surface emits a function-contract ONLY for
-    # functions carrying a `@sugar.boundary`/`@boundary` declaration.
+def test_contracts_surface_lifts_all_functions(tmp_path):
+    # Annotation authoring surfaces are retired (#3816): the `contracts`
+    # (ir-document) surface lifts EVERY function from native source; there is
+    # no declaration gate and no authoring metadata on the contract.
     (tmp_path / "lib.py").write_text(
-        "import sugar\n\n\n"
-        "@sugar.boundary(concept='concept:mul')\n"
         "def declared(x: int) -> int:\n    return x * 2\n\n\n"
         "def undeclared(x: int) -> int:\n    return x + 1\n"
     )
     ir, _diag = lift_workspace(str(tmp_path), "contracts")
-    fn_names = [
+    fn_names = sorted(
         i["fnName"].rsplit(".", 1)[-1]
         for i in ir
         if i.get("kind") == "function-contract"
-    ]
-    assert "declared" in fn_names
-    assert "undeclared" not in fn_names
-    declared = next(i for i in ir if i.get("kind") == "function-contract")
-    assert declared["opCid"]
-    assert declared["authoringKind"] == "boundary"
+    )
+    assert fn_names == ["declared", "undeclared"]
+    assert all(
+        "authoringKind" not in i
+        for i in ir
+        if i.get("kind") == "function-contract"
+    )
 
 
 def test_bare_surface_emits_all_functions(tmp_path):

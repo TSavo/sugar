@@ -1,3 +1,0 @@
-name = "go-bind"
-command = ["sugar-lift-go-verify", "--rpc"]
-working_dir = "."
