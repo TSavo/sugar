@@ -21,11 +21,6 @@ from sugar_lift_python_source.bind_lifter import (
     _public_reexport_map,
     lift_source,
 )
-from sugar_lift_python_source.bind_effects import (
-    BoundaryBodyShapeEffect,
-    MissingBindingEffect,
-    bind_effect_result,
-)
 from sugar_lift_python_source.bind_rpc import dispatch, initialize_result
 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.op_cid import local_op_cid
@@ -788,7 +783,7 @@ def test_bind_rpc_initialize_declares_bind_ir_surface() -> None:
     }
 
 
-def test_checked_in_project_registers_python_bind_recognizer_surface() -> None:
+def test_checked_in_project_registers_python_bind_lift_surface() -> None:
     entries = _plugin_entries(ROOT / "implementations/python/.sugar/config.toml")
 
     assert {
@@ -848,7 +843,6 @@ def test_bind_rpc_kit_declaration_returns_python_bind_surface() -> None:
         "initialize": True,
         KIT_DECLARATION_RPC_METHOD: True,
         "lift": True,
-        "sugar.plugin.recognize": True,
         "shutdown": False,
     }
     assert result["proofResolution"] == {"strategy": "pip"}
@@ -882,34 +876,6 @@ def test_bind_rpc_lift_returns_ir_document(tmp_path: Path) -> None:
     assert response["result"]["diagnostics"] == []
     assert "concept_annotation" not in response["result"]["ir"][0]
     assert "fn_name" not in response["result"]["ir"][0]
-
-
-def test_bind_effects_lower_to_legacy_materialize_results_once() -> None:
-    missing = bind_effect_result(
-        MissingBindingEffect(symbol="numpy.missing"),
-        file="app.py",
-        function="my_add",
-    )
-    assert missing == {
-        "file": "app.py",
-        "function": "my_add",
-        "symbol": "numpy.missing",
-        "outcome": "boundary",
-        "reason": "no sugar binding for symbol `numpy.missing` in scope",
-    }
-
-    boundary = bind_effect_result(
-        BoundaryBodyShapeEffect(symbol="numpy.add"),
-        file="app.py",
-        function="my_add",
-    )
-    assert boundary == {
-        "file": "app.py",
-        "function": "my_add",
-        "symbol": "numpy.add",
-        "outcome": "boundary",
-        "reason": "boundary body must be on its own line(s)",
-    }
 
 
 def test_bind_lift_recovers_contract_comment_witness() -> None:
@@ -1357,232 +1323,6 @@ def test_sugar_body_param_name_swap_canonicalizes() -> None:
     assert (
         entry_a["body_source"]["template_cid"] == entry_b["body_source"]["template_cid"]
     )
-
-
-def test_recognize_rpc_self_resolves_sugar_templates_from_python_sources(
-    tmp_path: Path,
-) -> None:
-    sugar_source = (
-        "from sugar import sugar\n"
-        "import requests\n"
-        "\n"
-        "@sugar.bind(\n"
-        '    concept="concept:http-request",\n'
-        '    library="sugar-shim-python-requests",\n'
-        '    family="concept:family:http",\n'
-        ")\n"
-        "def fetch(url, headers):\n"
-        "    return requests.get(url, headers=headers)\n"
-    )
-    sugar_entry = _single_sugar_entry(sugar_source)
-    shim_rel = "shims/requests.py"
-    shim_file = tmp_path / shim_rel
-    shim_file.parent.mkdir()
-    shim_file.write_text(sugar_source, encoding="utf-8")
-    user_rel = "src/lib.py"
-    user_file = tmp_path / user_rel
-    user_file.parent.mkdir()
-    user_file.write_text(
-        "import requests\n"
-        "\n"
-        "def fetch_url(u, h):\n"
-        "    return requests.get(u, headers=h)\n",
-        encoding="utf-8",
-    )
-
-    response = dispatch(
-        {
-            "jsonrpc": "2.0",
-            "id": 41,
-            "method": "sugar.plugin.recognize",
-            "params": {
-                "project_root": str(tmp_path),
-                "source_paths": [shim_rel, user_rel],
-            },
-        }
-    )
-
-    assert "error" not in response
-    tags = response["result"]["tags"]
-    assert len(tags) == 1
-    tag = tags[0]
-    assert tag["file"] == user_rel
-    assert tag["function_name"] == "fetch_url"
-    assert tag["op_cid"] == sugar_entry["op_cid"]
-    assert tag["library_tag"] == "sugar-shim-python-requests"
-    assert tag["family"] == "concept:family:http"
-    assert tag["template_cid"] == sugar_entry["body_source"]["template_cid"]
-    assert tag["contract_cid"] is None
-    assert tag["match_tier"] == "exact"
-    assert tag["param_bindings"] == [
-        {"index": 1, "source_text": "u"},
-        {"index": 2, "source_text": "h"},
-    ]
-
-
-def test_recognize_returns_empty_tags_for_non_matching_source(tmp_path: Path) -> None:
-    sugar_source = (
-        "from sugar import sugar\n"
-        "import json\n"
-        "\n"
-        '@sugar.bind(concept="concept:json-parse", library="json")\n'
-        "def json_parse(payload):\n"
-        "    return json.loads(payload)\n"
-    )
-    shim_rel = "shims/json.py"
-    shim_file = tmp_path / shim_rel
-    shim_file.parent.mkdir()
-    shim_file.write_text(sugar_source, encoding="utf-8")
-    user_rel = "src/lib.py"
-    user_file = tmp_path / user_rel
-    user_file.parent.mkdir()
-    user_file.write_text(
-        "def json_parse(payload):\n"
-        "    return completely_different_function(payload)\n",
-        encoding="utf-8",
-    )
-
-    response = dispatch(
-        {
-            "jsonrpc": "2.0",
-            "id": 42,
-            "method": "sugar.plugin.recognize",
-            "params": {
-                "project_root": str(tmp_path),
-                "source_paths": [shim_rel, user_rel],
-            },
-        }
-    )
-
-    assert response["result"]["tags"] == []
-
-
-def test_recognize_routes_multiple_bindings_per_call_site_pool(tmp_path: Path) -> None:
-    json_source = (
-        "from sugar import sugar\n"
-        "import json\n"
-        "\n"
-        '@sugar.bind(concept="concept:json-parse", library="json-lib")\n'
-        "def json_parse(payload):\n"
-        "    return json.loads(payload)\n"
-    )
-    sql_source = (
-        "from sugar import sugar\n"
-        "\n"
-        '@sugar.bind(concept="concept:sql-execute", library="sql-lib")\n'
-        "def sql_execute(conn, sql, args):\n"
-        "    return conn.execute(sql, args)\n"
-    )
-    shim_rel = "shims/bindings.py"
-    shim_file = tmp_path / shim_rel
-    shim_file.parent.mkdir()
-    shim_file.write_text(json_source + "\n" + sql_source, encoding="utf-8")
-    user_rel = "src/lib.py"
-    user_file = tmp_path / user_rel
-    user_file.parent.mkdir()
-    user_file.write_text(
-        "import json\n"
-        "\n"
-        "def parse(input_text):\n"
-        "    return json.loads(input_text)\n"
-        "\n"
-        "class Store:\n"
-        "    def write(self, c, q, p):\n"
-        "        def nested(conn, sql_text, params):\n"
-        "            return conn.execute(sql_text, params)\n"
-        "        return nested(c, q, p)\n",
-        encoding="utf-8",
-    )
-
-    response = dispatch(
-        {
-            "jsonrpc": "2.0",
-            "id": 43,
-            "method": "sugar.plugin.recognize",
-            "params": {
-                "project_root": str(tmp_path),
-                "source_paths": [shim_rel, user_rel],
-            },
-        }
-    )
-
-    tags = response["result"]["tags"]
-    assert len(tags) == 2
-    by_op = {tag["op_cid"]: tag for tag in tags}
-    assert by_op[_local_op_cid("concept:json-parse")]["library_tag"] == "json-lib"
-    assert by_op[_local_op_cid("concept:sql-execute")]["library_tag"] == "sql-lib"
-    assert by_op[_local_op_cid("concept:sql-execute")]["function_name"] == "nested"
-
-
-def test_snake_eats_tail_materialize_then_recognize(tmp_path: Path) -> None:
-    """The fixpoint: materialize writes a sugar body into a `@boundary` stub,
-    and recognize reads that same materialized sugar straight back as the
-    symbol. Egress (lower-sugar) and ingress (recognize) are inverses over one
-    sugar binding — the snake eats its tail."""
-    (tmp_path / "shims").mkdir()
-    shim_rel = "shims/numpy_sugar.py"
-    (tmp_path / shim_rel).write_text(
-        "from sugar import sugar\n"
-        "import numpy\n"
-        "\n"
-        '@sugar.bind(library="numpy", symbol="numpy.add")\n'
-        "def add(x, y):\n"
-        "    return numpy.add(x, y)\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "src").mkdir()
-    app_rel = "src/app.py"
-    (tmp_path / app_rel).write_text(
-        "from sugar import boundary\n"
-        "\n"
-        '@boundary(library="numpy", call="add")\n'
-        "def my_add(x, y):\n"
-        "    raise NotImplementedError\n",
-        encoding="utf-8",
-    )
-
-    # Materialize: fill the @boundary body with the sugar body_text, in place.
-    materialize = dispatch(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "sugar.plugin.materialize",
-            "params": {
-                "project_root": str(tmp_path),
-                "source_paths": [shim_rel, app_rel],
-                "write": True,
-            },
-        }
-    )
-    assert "error" not in materialize
-    materialized = [
-        r
-        for r in materialize["result"]["results"]
-        if r.get("outcome") == "materialized"
-    ]
-    assert len(materialized) == 1
-    assert {"function": "my_add", "symbol": "numpy.add"} in materialized[0][
-        "materialized"
-    ]
-    assert "return numpy.add(x, y)" in (tmp_path / app_rel).read_text(encoding="utf-8")
-
-    # Recognize the materialized sugar back as numpy.add (snake eats its tail).
-    response = dispatch(
-        {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "sugar.plugin.recognize",
-            "params": {
-                "project_root": str(tmp_path),
-                "source_paths": [shim_rel, app_rel],
-            },
-        }
-    )
-    assert "error" not in response
-    app_tags = [t for t in response["result"]["tags"] if t["file"] == app_rel]
-    assert len(app_tags) == 1
-    assert app_tags[0]["symbol"] == "numpy.add"
-    assert app_tags[0]["function_name"] == "my_add"
 
 
 def test_universal_lift_untagged_function_is_sugar_at_library_bindings_layer() -> None:

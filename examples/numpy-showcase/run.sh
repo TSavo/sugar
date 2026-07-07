@@ -9,10 +9,6 @@
 #                 (lib/_function_base_impl.py), so the oracle resolves the body
 #                 from the installed numpy on demand. (numpy.add is a C ufunc with
 #                 no python body -- rot90 is real python, which is why it lifts.)
-#   materialize — a @boundary(numpy.rot90) stub gets its body filled with rot90's
-#                 REAL body, resolved by the source oracle from installed numpy.
-#   recognize   — a production np.rot90 callsite is found from the sugar .proof
-#                 by PUBLIC SYMBOL (alias-resolved, anywhere).
 #   mint        — three lift surfaces conjoin into one .proof: sugar (python-bind,
 #                 code IDENTITY) + contract (numpy.testing, the PROPOSITION) +
 #                 witness (pytest-witness, the EVIDENCE).
@@ -67,16 +63,6 @@ cd "$HERE"
 rm -f blake3-512_*.proof 2>/dev/null || true
 rm -rf .sugar/runs .sugar/witnesses 2>/dev/null || true
 rm -f .sugar/imports/*.proof 2>/dev/null || true
-# Restore the @boundary stub (materialize rewrites it in place; a re-run needs
-# the unfilled stub back).
-cat > boundary.py <<'PY'
-from sugar import boundary
-
-
-@boundary(library="numpy", call="rot90")
-def my_rot90(m):
-    raise NotImplementedError
-PY
 
 echo "== sugar-lift numpy -> .sugar/imports/ (lean: CIDs, not inline bodies) =="
 # Stage the universal-lift config in numpy's own installed tree (mirrors
@@ -107,19 +93,6 @@ mkdir -p .sugar/imports
 "$BIN" mint --project "$NUMPY_DIR" --out .sugar/imports --library-bindings --quiet
 NUMPY_PROOF="$(ls .sugar/imports/*.proof)"
 echo "  numpy sugar .proof: $(du -h "$NUMPY_PROOF" | cut -f1) (public symbol numpy.rot90, lean SourceMemento)"
-
-echo "== materialize @boundary(numpy.rot90) (body resolved by the oracle) =="
-# Run via the venv python: the source oracle locates the installed numpy by the
-# binding's library tag, and the system python3 has no numpy.
-PYTHONPATH="$PP" "$VENV/bin/python" -c "
-from sugar_lift_python_source.bind_rpc import dispatch
-r=dispatch({'jsonrpc':'2.0','id':1,'method':'sugar.plugin.materialize','params':{'project_root':'.','source_paths':['boundary.py'],'write':True}})
-res=r['result']['results'][0]
-print(' ', res['outcome'], res.get('materialized'))"
-
-echo "== recognize np.rot90 in app.py (by public symbol) =="
-"$BIN" recognize --surface python-bind --target python --project . --source app.py --json 2>/dev/null \
-  | "$VENV/bin/python" -c "import sys,json;[print('  recognized',t['symbol'],'tier',t['match_tier']) for t in json.load(sys.stdin)['tags']]"
 
 echo "== mint ALL THREE lifters -> one .proof =="
 # sugar (python-bind, code IDENTITY) + contract (numpy.testing, the PROPOSITION)

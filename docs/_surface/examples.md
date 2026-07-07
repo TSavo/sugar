@@ -137,9 +137,9 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Existing docs:** `./examples/pandas-showcase/README.md`
 
 ### numpy-showcase
-**Summary:** NumPy correctness: one real `numpy.rot90` operation lifted across the full Sugar lifecycle (lift → materialize → recognize → prove). Shows public-symbol resolution, oracle materialize, consistency and witness verification.
+**Summary:** NumPy correctness: one real `numpy.rot90` operation lifted across the Sugar lifecycle (lift → mint → prove). Shows public-symbol resolution, lean SourceMemento lift, consistency and witness verification.
 
-- **Key paths:** `/examples/numpy-showcase/` (run.sh, README.md, app.py, boundary.py, test_numpy_rot90.py)
+- **Key paths:** `/examples/numpy-showcase/` (run.sh, README.md, app.py, test_numpy_rot90.py)
 - **Audience:** End-user (foundational Python library)
 - **Doc priority:** P0 (core library)
 - **Existing docs:** `./examples/numpy-showcase/README.md`
@@ -419,22 +419,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Audience:** Contributor (Go operators)
 - **Doc priority:** P1 (Go technique)
 - **Existing docs:** `./examples/go-identity/README.md`
-
-### recognize-demo-go
-**Summary:** `recognize` command over Go source: finding and tagging function calls to recognized libraries.
-
-- **Key paths:** `/examples/recognize-demo-go/` (app.go)
-- **Audience:** Contributor (CLI demo)
-- **Doc priority:** P2 (tool demo)
-- **Existing docs:** none
-
-### recognize-demo-python
-**Summary:** `recognize` command over Python source: tagging library calls in Python apps.
-
-- **Key paths:** `/examples/recognize-demo-python/` (app.py)
-- **Audience:** Contributor (CLI demo)
-- **Doc priority:** P2 (tool demo)
-- **Existing docs:** none
 
 ## Async / Effects Proofs (Tokio)
 

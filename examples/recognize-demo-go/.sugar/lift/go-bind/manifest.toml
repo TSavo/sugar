@@ -1,3 +1,0 @@
-name = "go-bind-lift"
-command = ["go", "run", ".sugar/lift/go-bind/go-bind-rpc.go"]
-working_dir = "."

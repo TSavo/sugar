@@ -3,7 +3,7 @@
 # Target-scoped panic-site residue annotations for sugar-cli self-check.
 # These enrich the panicCensus without changing proof discharge.
 #
-# Re-synced 2026-06-12 against the current sources: the two cmd_materialize.rs
+# Re-synced 2026-06-12 against the current sources: the two retired materialize
 # fragment-mutex annotations were removed (take_fragments/transform_site no longer
 # exist -- the panic sites are gone, not moved), and the six kit_dispatch.rs lines
 # were realigned to the current method:expect lock-poisoning sites by ROLE. The

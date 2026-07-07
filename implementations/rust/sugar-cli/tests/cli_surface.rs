@@ -291,49 +291,6 @@ fn sugar_cli_does_not_expose_legacy_link_subcommand() {
 }
 
 #[test]
-fn materialize_does_not_expose_source_lang_discovery_mode() {
-    let help = Command::new(sugar_bin())
-        .arg("materialize")
-        .arg("--help")
-        .output()
-        .expect("spawn sugar materialize --help");
-    let stdout = String::from_utf8_lossy(&help.stdout);
-    let stderr = String::from_utf8_lossy(&help.stderr);
-    assert!(
-        help.status.success(),
-        "sugar materialize --help failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-    assert!(
-        !stdout.contains("--source-lang"),
-        "`materialize --source-lang` is the legacy CLI-side cross-language discovery mode; source language discovery must be kit-owned over RPC\nstdout:\n{stdout}"
-    );
-
-    let rejected = Command::new(sugar_bin())
-        .arg("materialize")
-        .arg("--library")
-        .arg("python-requests")
-        .arg("--source-dir")
-        .arg(".")
-        .arg("--target")
-        .arg("python")
-        .arg("--source-lang")
-        .arg("rust")
-        .output()
-        .expect("spawn sugar materialize --source-lang");
-    let stderr = String::from_utf8_lossy(&rejected.stderr);
-    assert!(
-        !rejected.status.success(),
-        "`sugar materialize --source-lang` must be rejected at the CLI boundary"
-    );
-    assert!(
-        stderr.contains("unexpected argument")
-            || stderr.contains("unrecognized")
-            || stderr.contains("unknown"),
-        "stderr should reject --source-lang at clap boundary\n{stderr}"
-    );
-}
-
-#[test]
 fn lift_identify_only_delegates_from_project_config() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");
