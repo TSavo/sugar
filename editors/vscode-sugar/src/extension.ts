@@ -81,14 +81,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // The daemon's resident prove context (vendor pool, lift overlay) is
     // per-project: pass the workspace root explicitly so proveConsistency
     // serves THIS project rather than whatever cwd the extension host had.
-    await client.ensureDaemon(binaryPath, snapshotPath, 600_000, [
+    // 24h idle timeout: the editor session owns this daemon; a 10-minute
+    // idle-suicide meant every post-coffee save silently paid the ~34s cold
+    // shell prove (the daemon died, the client threw, the fallback ate it).
+    await client.ensureDaemon(binaryPath, snapshotPath, 86_400_000, [
       "--project-root",
       wsRoot,
     ]);
     linkerdUp = true;
   } catch (e) {
-    client = undefined;
-    console.error(`sugar: linkerd unavailable (link() path off): ${(e as Error).message}`);
+    // Keep the client: the prove path heals (respawns the daemon) per save.
+    // Nulling it here doomed the whole session to the cold path.
+    console.error(`sugar: linkerd unavailable at activation (will heal on save): ${(e as Error).message}`);
   }
 
   if (linkerdUp) {
@@ -269,6 +273,30 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
         }
         return diagnosticsFromRows(rows as unknown as ProveClientRow[]);
       } catch (e) {
+        // HEAL, don't just fall back: a dead daemon (idle exit, crash, stale
+        // socket) is respawned once and the request retried -- otherwise every
+        // save after an idle period silently pays the ~34s cold prove.
+        try {
+          const cfg2 = vscode.workspace.getConfiguration("sugar");
+          const lbin = cfg2.get<string>("linkerd.binaryPath") || undefined;
+          const sp = resolveSocketPath(cfg2.get<string>("linkerd.socketPath") || "");
+          const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? projectDir;
+          await client!.ensureDaemon(lbin, sp + ".snapshot", 86_400_000, [
+            "--project-root",
+            ws,
+          ]);
+          const retry = await client!.proveConsistencyDetailed(
+            kitIdForDaemon,
+            doc.fileName,
+            doc.getText()
+          );
+          if (!retry.degraded) {
+            console.log("sugar: daemon healed after respawn");
+            return diagnosticsFromRows(retry.rows as unknown as ProveClientRow[]);
+          }
+        } catch (e2) {
+          console.log(`sugar: daemon respawn failed: ${(e2 as Error).message}`);
+        }
         const code = e instanceof LinkerdRpcError ? e.code : undefined;
         const expected =
           code === ERR_METHOD_NOT_FOUND || code === ERR_PROVE_CONTEXT_UNAVAILABLE;
