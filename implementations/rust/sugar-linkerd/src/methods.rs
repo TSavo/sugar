@@ -1364,16 +1364,46 @@ fn value_arc_to_json(v: &std::sync::Arc<sugar_canonicalizer::Value>) -> Json {
 /// `sugar-verifier::runner::Runner` calls for the "test-assertion consistency"
 /// receipt. No shadow verifier.
 ///
-/// NAMED SCOPE GAP (not silently assumed done): this handler does not yet
-/// lift `source` and merge it into a scratch overlay of the resident pool --
-/// unlike `parseFile`, `LinkerContract` (what `lift_source` returns) is not
-/// yet bridged into `sugar_verifier::types::AnchoredMember`/`MementoPool`
-/// insertion. Today `proveConsistency` verifies the resident pool as loaded
-/// from disk (the project's `.proof` catalog as of daemon startup / last
-/// resident-pool rebuild), not the unsaved editor buffer. `kitId`/`file`/
-/// `source` are accepted and logged so the wire contract matches `parseFile`
-/// and the extension's call site does not need a second RPC shape once the
-/// lift-and-merge bridge lands; `source` is otherwise unused in this slice.
+/// NAMED SCOPE GAP (not silently assumed done, and NOT closeable by a
+/// naive bridge -- see the finding below): this handler does not lift
+/// `source` and merge it into a scratch overlay of the resident pool.
+/// `proveConsistency` verifies the resident pool as loaded from disk (the
+/// project's `.proof` catalog as of daemon startup / last resident-pool
+/// rebuild), not the unsaved editor buffer. `kitId`/`file`/`source` are
+/// accepted and logged so the wire contract matches `parseFile`; `source`
+/// is otherwise unused in this slice. The response carries an explicit
+/// `"degraded": true` + `"degradedReason"` so callers never mistake this
+/// disk-pool answer for a live lift-and-merge one (named degraded mode,
+/// per the never-silently-differently-shaped-scratch-member rule).
+///
+/// FINDING (this session, #3774 lift-and-merge attempt): `lift_source`'s
+/// output (`LinkerContract`, from the LSP `parse` RPC each kit lifter
+/// speaks) is the WRONG shape to bridge for this RPC. `LinkerContract`
+/// carries `pre_json`/`post_json` for cross-function contract LINKING.
+/// `consistency.rs::collect_consistency_candidates` -> `is_consistency_candidate`
+/// requires a member body with an `"inv"` (invariant) field and NO `"pre"`,
+/// plus `contract_provenance_kind` requires a `proofirProvenance` or
+/// `sourceWarrants` field on the member. None of those three fields exist
+/// on `LinkerContract` or anywhere in the LSP `parse` response -- they are
+/// produced later, in `sugar-cli`'s ir-document/witness-discharge pipeline
+/// (`cmd_mint.rs`), not in the lightweight per-kit LSP lift used for
+/// linking. A scratch member built from `LinkerContract` alone would
+/// either fail `is_consistency_candidate` (silently proving nothing, a
+/// false green) or require fabricating `proofirProvenance`/`sourceWarrants`
+/// values with no real warrant behind them (a false green with fake
+/// teeth) -- both are exactly the silently-differently-shaped-scratch-member
+/// failure this mission's soundness rail forbids. The correct next
+/// construction is to have the daemon invoke the SAME ir-document plugin
+/// dispatch `cmd_mint.rs` uses (`dispatch_report_lift_plugin` /
+/// `mint_lift_plugins_for_report`, which already emits `inv`/provenance-
+/// bearing contract bodies) instead of the LSP `parse` method, then wrap
+/// those bodies into lean header/body envelopes for `pool.insert`. That
+/// is materially more work than a `LinkerContract` bridge (it means
+/// standing up the plugin-dispatch call from inside the daemon, resident
+/// per kit) and was not completed in this slice; shipping it half-done
+/// as a silent scratch member would be strictly worse than the current
+/// honest disk-pool answer, so this slice keeps the disk-pool path and
+/// makes its degraded status explicit on the wire instead.
 #[instrument(skip(state, params))]
 pub async fn handle_prove_consistency(
     state: Arc<Mutex<ProjectState>>,
@@ -1390,7 +1420,10 @@ pub async fn handle_prove_consistency(
         None => return rpc_error(ERR_INVALID_PARAMS, "missing 'file'", id),
     };
     // Accepted for wire-shape parity with parseFile; not yet consumed (see
-    // the NAMED SCOPE GAP doc comment above).
+    // the NAMED SCOPE GAP / FINDING doc comment above -- lift-and-merge is
+    // not safe to fake from `LinkerContract`, so this stays disk-pool and
+    // reports itself as degraded rather than silently answering from an
+    // unfaithful scratch member).
     let _source = params.get("source").and_then(|v| v.as_str());
 
     let ctx = {
@@ -1499,7 +1532,21 @@ pub async fn handle_prove_consistency(
         })
         .collect();
 
-    rpc_result(serde_json::json!({ "rows": rows }), id)
+    // Degraded mode, always true today (see FINDING above): these rows come
+    // from the resident on-disk pool, not a live lift of `source`. The
+    // extension must not treat this as "typing-speed, no mint needed" --
+    // it still needs a `sugar mint` + pool-manifest-drift rebuild between
+    // an edit and this RPC seeing it. Named explicitly on the wire so a
+    // future lift-and-merge landing is the only thing that flips this to
+    // `false`, rather than the extension silently assuming freshness.
+    rpc_result(
+        serde_json::json!({
+            "rows": rows,
+            "degraded": true,
+            "degradedReason": "resident disk-pool only; source lift-and-merge not implemented (LinkerContract lacks inv/provenance fields consistency.rs requires -- see handler doc comment)",
+        }),
+        id,
+    )
 }
 
 fn value_to_json(v: &sugar_canonicalizer::Value) -> Json {

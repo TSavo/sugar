@@ -235,11 +235,24 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
         return undefined;
       }
       try {
-        const rows = await client.proveConsistency(
-          kitIdForDaemon,
-          doc.fileName,
-          doc.getText()
-        );
+        // NOTE: `mint()` above already ran unconditionally -- this handler
+        // does NOT skip it. The daemon's `proveConsistency` reports
+        // `degraded: true` on every response today (resident on-disk pool,
+        // not a live lift of `doc.getText()`); until a future daemon lands
+        // lift-and-merge and flips that to `false`, skipping `mint` here
+        // would silently prove a stale pool. See
+        // `sugar-linkerd/src/methods.rs::handle_prove_consistency` FINDING.
+        const { rows, degraded, degradedReason } =
+          await client.proveConsistencyDetailed(
+            kitIdForDaemon,
+            doc.fileName,
+            doc.getText()
+          );
+        if (degraded) {
+          console.log(
+            `sugar: daemon-prove degraded (mint still required this save): ${degradedReason ?? "no reason given"}`
+          );
+        }
         return diagnosticsFromRows(rows as unknown as ProveClientRow[]);
       } catch (e) {
         const code = e instanceof LinkerdRpcError ? e.code : undefined;

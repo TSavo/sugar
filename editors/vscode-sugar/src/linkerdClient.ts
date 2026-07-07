@@ -195,12 +195,39 @@ export class LinkerdClient {
     file: string,
     source: string
   ): Promise<ProveRow[]> {
+    const { rows } = await this.proveConsistencyDetailed(kitId, file, source);
+    return rows;
+  }
+
+  /**
+   * Same RPC as `proveConsistency`, but also surfaces the `degraded` /
+   * `degradedReason` fields the daemon sets on every response today (see
+   * `sugar-linkerd/src/methods.rs::handle_prove_consistency`): `degraded:
+   * true` means these rows came from the resident on-disk pool, NOT a live
+   * lift of `source` -- a save still needs `mint` to have run first. Callers
+   * that want to skip `mint` on the daemon path must check `degraded ===
+   * false` before doing so; today it is always `true`, so no caller should
+   * skip `mint` yet.
+   */
+  async proveConsistencyDetailed(
+    kitId: string,
+    file: string,
+    source: string
+  ): Promise<{ rows: ProveRow[]; degraded: boolean; degradedReason?: string }> {
     const res = await this.rpc("proveConsistency", { kitId, file, source });
     if (res.error) {
       throw new LinkerdRpcError(res.error.code, res.error.message);
     }
     const rows = res.result?.rows;
-    return Array.isArray(rows) ? (rows as ProveRow[]) : [];
+    const degraded = res.result?.degraded;
+    return {
+      rows: Array.isArray(rows) ? (rows as ProveRow[]) : [],
+      degraded: typeof degraded === "boolean" ? degraded : true,
+      degradedReason:
+        typeof res.result?.degradedReason === "string"
+          ? res.result.degradedReason
+          : undefined,
+    };
   }
 
   /** Best-effort daemon shutdown (used by tests). */
