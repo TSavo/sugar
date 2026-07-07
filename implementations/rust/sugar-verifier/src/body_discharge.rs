@@ -1219,7 +1219,7 @@ fn extract_eq_nested_reduce_obligation(
 #[cfg(test)]
 mod discharge_method_tests {
     use super::*;
-    use libsugar::panic_freedom;
+    use sugar_ir_types::panic_freedom;
     use serde_json::json;
 
     fn ok_ctor(arg: &str) -> Json {
@@ -1478,7 +1478,7 @@ mod callee_post_guard_fact_tests {
     //!   - a `var` arg_term (not a call) does NOT yield a fact (structural).
     use super::*;
     use crate::types::{CallSite, MementoPool};
-    use libsugar::panic_freedom;
+    use sugar_ir_types::panic_freedom;
     use serde_json::json;
 
     // CIDs for hand-built contracts in these tests.

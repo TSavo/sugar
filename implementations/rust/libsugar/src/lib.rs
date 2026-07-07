@@ -4,7 +4,6 @@ pub mod canonical;
 pub mod compose;
 pub mod core;
 pub mod ffi;
-pub mod panic_freedom;
 pub mod wp;
 
 #[derive(Debug, thiserror::Error)]
