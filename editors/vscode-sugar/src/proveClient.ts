@@ -80,26 +80,147 @@ export interface ProveDiagnostic {
  * reachable at prove-emission are simply omitted (fail-open). YOUR FACT is
  * listed last as the most familiar line (the same equality the source asserts).
  */
+/**
+ * Pretty-print one FOL formula for the hover: break top-level conjuncts onto
+ * their own lines and, when a call's argument list is long, put each argument
+ * on its own indented line (recursively). NOTHING is truncated -- this is
+ * layout only; every byte of the formula survives. Quoted strings are opaque
+ * (never split, never counted for bracket depth).
+ */
+export function prettyFol(fol: string, indent = "    "): string {
+  const splitTop = (s: string, sep: string): string[] => {
+    const parts: string[] = [];
+    let depth = 0;
+    let inStr = false;
+    let start = 0;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) {
+        if (ch === '"' && s[i - 1] !== "\\") inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "(" || ch === "[") depth++;
+      else if (ch === ")" || ch === "]") depth--;
+      else if (depth === 0 && s.startsWith(sep, i)) {
+        parts.push(s.slice(start, i));
+        start = i + sep.length;
+        i += sep.length - 1;
+      }
+    }
+    parts.push(s.slice(start));
+    return parts;
+  };
+  const hasTopComma = (s: string): boolean => {
+    let depth = 0;
+    let inStr = false;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) {
+        if (ch === '"' && s[i - 1] !== "\\") inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "(" || ch === "[") depth++;
+      else if (ch === ")" || ch === "]") depth--;
+      else if (ch === "," ) return true;
+    }
+    return false;
+  };
+  const breakCall = (s: string, pad: string): string => {
+    s = s.trim();
+    // STRUCTURAL RULE (T): every comma becomes a line break + indent --
+    // deterministic layout, not width-triggered. Only comma-free spans stay
+    // on one line.
+    if (!hasTopComma(s)) return pad + s;
+    // find the outermost call's opening paren/bracket
+    let inStr = false;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) {
+        if (ch === '"' && s[i - 1] !== "\\") inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "(" || ch === "[") {
+        const close = ch === "(" ? ")" : "]";
+        // find matching close
+        let depth = 1;
+        let j = i + 1;
+        let instr2 = false;
+        for (; j < s.length; j++) {
+          const c2 = s[j];
+          if (instr2) {
+            if (c2 === '"' && s[j - 1] !== "\\") instr2 = false;
+            continue;
+          }
+          if (c2 === '"') instr2 = true;
+          else if (c2 === "(" || c2 === "[") depth++;
+          else if (c2 === ")" || c2 === "]") {
+            depth--;
+            if (depth === 0) break;
+          }
+        }
+        const head = s.slice(0, i + 1);
+        const body = s.slice(i + 1, j);
+        const tail = s.slice(j); // starts with close
+        const args = splitTop(body, ", ");
+        if (args.length < 2) {
+          // no comma at this level: descend -- a comma may hide deeper
+          const innerOne = breakCall(body, pad + indent);
+          if (innerOne.trim() === body.trim()) return pad + s;
+          return pad + head + "\n" + innerOne + "\n" + pad + tail;
+        }
+        const inner = args
+          .map((a) => breakCall(a, pad + indent))
+          .join(",\n");
+        return pad + head + "\n" + inner + "\n" + pad + tail;
+      }
+    }
+    return pad + s;
+  };
+  const conjuncts = splitTop(fol, " ∧ ");
+  if (conjuncts.length > 1) {
+    // Every ∧ becomes a line break; the connective leads the continuation
+    // line so the eye scans the conjunction vertically.
+    return conjuncts
+      .map((c, i) => {
+        const body = breakCall(c, indent);
+        if (i === 0) return body;
+        return indent.slice(0, Math.max(0, indent.length - 2)) + "∧ " + body.trimStart();
+      })
+      .join("\n");
+  }
+  return breakCall(fol, indent);
+}
+
 export function formatDetail(d: ProveDiagnostic): string {
   const strip = (s: string): string => s.replace(/^⊢\s*/, "");
   const lines: string[] = [];
   const parts: string[] = [];
+  const section = (label: string, fol: string) => {
+    lines.push(label);
+    lines.push(prettyFol("⊢ " + strip(fol)));
+  };
   if (d.vendorFactFol) {
-    lines.push(`Vendor fact:     ${d.vendorFactFol}`);
+    section("Vendor fact:", d.vendorFactFol);
     parts.push(strip(d.vendorFactFol));
   }
   if (d.vendorUniverseFol) {
-    lines.push(`Vendor universe: ${d.vendorUniverseFol}`);
+    section("Vendor universe:", d.vendorUniverseFol);
     parts.push(strip(d.vendorUniverseFol));
   }
   if (d.clientFactFol) {
-    lines.push(`Your fact:       ${d.clientFactFol}`);
+    section("Your fact:", d.clientFactFol);
     parts.push(strip(d.clientFactFol));
   }
   const verdict = d.status === "unsatisfied" ? "UNSAT" : d.status.toUpperCase();
   if (parts.length > 0) {
-    // The Conjoined line IS the three parts conjoined -> the solver's verdict.
-    lines.push(`Conjoined:       ${parts.map((p) => `(${p})`).join(" ∧ ")}  →  ${verdict}`);
+    // The Conjoined section IS the parts conjoined -> the solver's verdict:
+    // each conjunct pretty-printed on its own block, verdict on the last line.
+    lines.push("Conjoined:");
+    lines.push(parts.map((p) => prettyFol("(" + p + ")")).join("\n∧\n"));
+    lines.push(`  →  ${verdict}`);
   } else {
     lines.push(`z3: ${d.status} — ${d.reason}`);
   }
