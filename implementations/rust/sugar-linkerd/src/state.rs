@@ -98,6 +98,47 @@ impl Lru {
     }
 }
 
+/// Resident context for the `proveConsistency` RPC (#3774 warm-daemon slice).
+///
+/// Holds the SAME three things `sugar prove`/`Runner::new` build per-invocation
+/// (memento pool, solver plan, solver registry, compiler registry), built ONCE
+/// at daemon startup via `sugar_verifier::runner::load_pool` and
+/// `sugar_verifier::runner::build_plan_and_registry_pub` -- never a
+/// reimplementation of that construction. `project_root` is kept alongside for
+/// `verify_consistency`'s panic-site / bridge-body resolution needs.
+///
+/// Mission-scoped gap (named, not silently assumed away): there is no file
+/// watcher wired yet, so this context goes stale if `.proof` files under
+/// `project_root`/`extra_projects` change on disk after startup (a fresh
+/// `sugar mint` regenerating `.sugar/imports/*.proof`). v1 requires a daemon
+/// restart to pick up such changes; a coarse mtime re-check is the named
+/// follow-on (see PR description).
+pub struct ProveContext {
+    pub pool: sugar_verifier::types::MementoPool,
+    pub plan: sugar_verifier::solvers::SolverPlan,
+    pub registry: std::collections::HashMap<
+        sugar_verifier::solvers::SolverSeat,
+        sugar_verifier::solvers::SolverHandle,
+    >,
+    pub compilers: sugar_ir_compiler::registry::Registry,
+    pub project_root: std::path::PathBuf,
+    /// Coarse invalidation manifest (#3774 follow-on): every `.proof` path
+    /// under `project_root` mapped to its mtime AS OF the last (re)build.
+    /// `handle_prove_consistency` re-stats this cheaply before each call; any
+    /// path or mtime drift (a fresh `sugar mint` after an editor save) means
+    /// this pool is stale and triggers a full rebuild -- without this, the
+    /// warm path would keep proving a stale consumer `.proof` forever and the
+    /// green/red flip would never flip.
+    pub proof_manifest: std::collections::BTreeMap<std::path::PathBuf, std::time::SystemTime>,
+    /// Prebuilt consistency index over `pool` (#3774 daemonSolve trim):
+    /// candidates + ambient sets + locus entries, computed ONCE at context
+    /// build by the same `build_consistency_index` stage `verify_consistency`
+    /// itself runs -- factored, not reimplemented (differential-tested in
+    /// tests/prove_consistency.rs). Valid exactly as long as `pool` is: both
+    /// are replaced together on every ProveContext rebuild.
+    pub consistency_index: sugar_verifier::consistency::ConsistencyIndex,
+}
+
 /// Per-project daemon state.
 ///
 /// One instance lives behind a `tokio::sync::Mutex` inside the server.
@@ -113,6 +154,12 @@ pub struct ProjectState {
     cache: Lru,
     /// Solver wiring. `None` = structural (degraded) mode; `Some` = semantic.
     solvers: Option<SolverContext>,
+    /// Resident prove context for `proveConsistency`. `None` means the
+    /// resident pool/plan/registry failed to build at startup (or the
+    /// project has no `.proof` catalog yet); callers surface
+    /// `ERR_PROVE_CONTEXT_UNAVAILABLE` and the extension falls back to the
+    /// cold `sugar prove` shell path for that request.
+    pub prove_ctx: Option<std::sync::Arc<ProveContext>>,
 }
 
 impl ProjectState {
@@ -122,6 +169,7 @@ impl ProjectState {
             last_output: None,
             cache: Lru::new(cache_cap),
             solvers: None,
+            prove_ctx: None,
         }
     }
 

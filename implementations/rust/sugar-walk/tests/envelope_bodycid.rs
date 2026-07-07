@@ -52,6 +52,7 @@ fn write_proof(dir: &Path, graph: ProofGraph) {
         signer_cid,
         signer_seed: DEV_SIGNER_SEED,
         declared_at: "2026-07-01T00:00:00Z".to_string(),
+        manifest: None,
     });
     let hex = cid_hex(&proof.cid).expect("proof cid prefix");
     fs::write(dir.join(format!("{hex}.proof")), proof.bytes).expect("write proof");

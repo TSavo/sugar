@@ -2527,13 +2527,18 @@ fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
     serde_json::json!({ "kind": "and", "operands": operands })
 }
 
-pub fn verify_consistency(
+/// Walk every contract member in `pool`, apply the consistency-candidate
+/// filter (`is_consistency_candidate`) and the provenance-KIND gate, and
+/// return the surviving candidates plus any provenance refusals. This is the
+/// FIRST loop of `verify_consistency`, factored out (pure relocation, no
+/// behavior change) so the seal-time manifest builder
+/// (`build_manifest_from_pool`) can run the identical filter scoped to one
+/// proof's own pool instead of re-scanning a whole-pool verify pass -- the
+/// "pure relocation of the existing scan/grouping code from every-prove to
+/// once-per-seal" the join-manifest design calls for.
+fn collect_consistency_candidates(
     pool: &MementoPool,
-    plan: &SolverPlan,
-    registry: &HashMap<SolverSeat, SolverHandle>,
-    compilers: &CompilerRegistry,
-    project_root: &Path,
-) -> Vec<ConsistencyResult> {
+) -> (Vec<ConsistencyCandidate>, Vec<ConsistencyResult>) {
     let mut candidates: Vec<ConsistencyCandidate> = Vec::new();
     let mut provenance_refusals: Vec<ConsistencyResult> = Vec::new();
     for (cid, member) in pool.contract_members() {
@@ -2582,6 +2587,508 @@ pub fn verify_consistency(
             }
         }
     }
+    (candidates, provenance_refusals)
+}
+
+/// SEAL-TIME MANIFEST BUILDER (join-manifest design, lane 1). Runs the exact
+/// same candidate filter `verify_consistency` uses
+/// (`collect_consistency_candidates`), the exact same `#euf#`-name grouping
+/// criterion (`property_name.contains("#euf#")`), and the exact same ambient
+/// collectors (`collect_ambient_foralls`, `collect_ambient_ground_callsite_facts`),
+/// scoped to ONE proof's own pool -- `pool` here is expected to be loaded
+/// from just-minted bytes (this proof alone), not the whole project pool.
+/// `contributor_bundle` is this proof's own identity, recorded per group so a
+/// LATER cross-proof reader (out of this lane's scope; see design items 3-4)
+/// can detect a stale reference after a re-mint.
+pub fn build_manifest_from_pool(
+    pool: &MementoPool,
+    contributor_bundle: &str,
+) -> sugar_proof_envelope::manifest::Manifest {
+    let (candidates, _provenance_refusals) = collect_consistency_candidates(pool);
+
+    let mut manifest = sugar_proof_envelope::manifest::Manifest::new();
+
+    for candidate in &candidates {
+        let name = contract_property_name(&candidate.body).to_string();
+        if !name.contains("#euf#") {
+            continue;
+        }
+        let group = manifest.groups.entry(name).or_default();
+        group.member_cids.insert(candidate.cid.clone());
+        // First writer sets the contributor bundle; every candidate in this
+        // pool comes from the same just-minted proof, so this is invariant
+        // across a group's members.
+        if group.contributor_bundle.is_empty() {
+            group.contributor_bundle = contributor_bundle.to_string();
+        }
+    }
+
+    for candidate in &candidates {
+        if is_witness_member(&candidate.body) {
+            continue;
+        }
+        let Some(inv) = candidate.body.get("inv") else {
+            continue;
+        };
+        let inv = canonicalize_formula_json(inv);
+
+        let mut foralls: Vec<Json> = Vec::new();
+        collect_ambient_foralls(&inv, &mut foralls);
+        if !foralls.is_empty() {
+            manifest
+                .ambient
+                .closed_forall_cids
+                .insert(candidate.cid.clone());
+        }
+
+        let contract_name = contract_property_name(&candidate.body);
+        let ground_scope = ambient_ground_callsite_scope(contract_name);
+        let mut facts: Vec<AmbientGroundCallsiteFact> = Vec::new();
+        collect_ambient_ground_callsite_facts(
+            &inv,
+            &candidate.cid,
+            &ground_scope,
+            candidate.provenance_kind,
+            &mut facts,
+        );
+        if !facts.is_empty() {
+            manifest
+                .ambient
+                .ground_callsite_fact_cids
+                .insert(candidate.cid.clone());
+        }
+    }
+
+    manifest
+}
+
+/// G2 RECEIPT HELPER: the scan-path conjunct-set for every `#euf#`-named
+/// group in `pool`, keyed by name -- exactly the CID set
+/// `verify_consistency`'s own `by_name` grouping would feed into a group's
+/// solve, exposed standalone (no solve) so a differential test can compare
+/// it, name-for-name, against the manifest-projected equivalent
+/// (`projected_conjunct_cids_by_name`) without needing to run two full solve
+/// passes to check they visited the same members.
+pub fn scan_conjunct_cids_by_name(
+    pool: &MementoPool,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let (candidates, _refusals) = collect_consistency_candidates(pool);
+    let mut by_name: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for candidate in &candidates {
+        let name = contract_property_name(&candidate.body).to_string();
+        if !name.contains("#euf#") {
+            continue;
+        }
+        by_name.entry(name).or_default().insert(candidate.cid.clone());
+    }
+    by_name
+}
+
+/// G2 RECEIPT HELPER: the manifest-projected conjunct-set for every
+/// `#euf#`-named group across `manifests`, keyed by name -- the CROSS-PROOF
+/// MERGE of design item 3 (union by name across every loaded proof's
+/// manifest), exposed standalone so a differential test can compare it
+/// against `scan_conjunct_cids_by_name` for EXACT set equality, the "conjunct
+/// CID SETS identical (NOT verdict equality)" the design's G2 gate demands.
+pub fn projected_conjunct_cids_by_name(
+    manifests: &std::collections::BTreeMap<String, sugar_proof_envelope::manifest::Manifest>,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let mut by_name: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for manifest in manifests.values() {
+        for (name, group) in &manifest.groups {
+            by_name
+                .entry(name.clone())
+                .or_default()
+                .extend(group.member_cids.iter().cloned());
+        }
+    }
+    by_name
+}
+
+/// Which path produced a consistency pass's results (join-manifest design,
+/// lane 2: PROJECTION). Named on the row/receipt, never silent -- see design
+/// item 5. `PoolScanFallback` is the unconditional default in this workflow;
+/// `ManifestProjected` is opt-in (see `verify_consistency_projected`) and is
+/// only ever returned when every forced-fallback precondition below passed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsistencyMode {
+    ManifestProjected,
+    PoolScanFallback,
+}
+
+/// Why a projected pass fell back to a full pool scan. Multiple reasons may
+/// fire in the same pass; ALL are surfaced (never just the first), matching
+/// the "named on the row, never silent" discipline design item 5 requires.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectionFallbackReason {
+    /// A bundle contributing to this pool carries no sealed manifest at all
+    /// (pre-lane-1 proof, or seal skipped).
+    ManifestMissing { bundle: String },
+    /// A bundle's manifest declares a `version` this reader does not
+    /// understand -- never guess at an unknown wire-format.
+    VersionMismatch { bundle: String, version: u32 },
+    /// Recomputing the manifest from this bundle's own pool subset
+    /// (`build_manifest_from_pool`) does not reproduce the CID the manifest
+    /// itself carries -- the per-solve integrity precondition (design item
+    /// 5), checked every solve, not only at `sugar verify`'s own mint-time
+    /// self-check.
+    IntegrityMismatch { bundle: String },
+    /// A manifest group's `contributorBundle` no longer matches the bundle
+    /// it is loaded from -- the signature of a re-mint (G3): the consumer's
+    /// staged manifest still names the OLD vendor bundle CID.
+    VendorBundleMismatch {
+        name: String,
+        expected: String,
+        actual: String,
+    },
+}
+
+/// Look up one member CID directly in an already-loaded pool and resolve it
+/// into the same `ConsistencyCandidate` shape `collect_consistency_candidates`
+/// builds by scanning -- this is the "fetch exactly that closure" half of
+/// design item 4, driven by a manifest-named CID instead of a whole-pool
+/// scan-and-filter. Silently skips (returns `None`) a CID that is missing,
+/// not a contract member, has no resolvable body, or fails the same
+/// provenance-KIND gate `collect_consistency_candidates` enforces -- callers
+/// that need refusal visibility for those should use the scan path.
+fn candidate_from_pool(pool: &MementoPool, cid: &str) -> Option<ConsistencyCandidate> {
+    let memento_cid = MementoCid::try_parse(cid.to_string()).ok()?;
+    let member = pool.mementos.get(&memento_cid)?;
+    let body = pool.contract_body_for_member(member).filter(|v| v.is_object())?;
+    let provenance_kind = contract_provenance_kind(member, &body).ok()?;
+    Some(ConsistencyCandidate {
+        cid: cid.to_string(),
+        body,
+        provenance_kind,
+    })
+}
+
+/// Clone `pool`, keeping only the mementos named in `member_cids`. Used to
+/// re-derive ONE bundle's own manifest at solve time
+/// (`build_manifest_from_pool` scans `pool.contract_members()`, which reads
+/// `self.mementos`), for the per-solve integrity precondition. The shared
+/// `body`/`atoms` maps are left intact -- they are content-addressed and
+/// pool-wide by design, so restricting only the memento set reproduces
+/// exactly what seal-time saw for that one proof.
+fn restrict_pool_to_members(
+    pool: &MementoPool,
+    member_cids: &std::collections::BTreeSet<MementoCid>,
+) -> MementoPool {
+    let mut restricted = pool.clone();
+    restricted.mementos.retain(|cid, _| member_cids.contains(cid));
+    restricted
+}
+
+/// Union every loaded manifest's per-name groups and ambient sets into the
+/// projected equivalent of `verify_consistency`'s scan-built `groups` /
+/// `ambient_foralls` / `ambient_ground_callsite_facts` -- the CROSS-PROOF
+/// MERGE of design item 3, keyed by EUF NAME (never by baked member CID, so a
+/// re-minted vendor with new CIDs but the same names still merges correctly
+/// as long as its manifest is current -- see the `VendorBundleMismatch`
+/// forced-fallback check in `verify_consistency_projected` for the case
+/// where it is NOT current).
+fn projected_groups(
+    pool: &MementoPool,
+    manifests: &std::collections::BTreeMap<String, sugar_proof_envelope::manifest::Manifest>,
+) -> (
+    Vec<(String, Vec<ConsistencyCandidate>)>,
+    Vec<Json>,
+    Vec<AmbientGroundCallsiteFact>,
+) {
+    let mut member_cids_by_name: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeSet<String>,
+    > = std::collections::BTreeMap::new();
+    let mut ambient_forall_cids: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    let mut ambient_ground_cids: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    for manifest in manifests.values() {
+        for (name, group) in &manifest.groups {
+            member_cids_by_name
+                .entry(name.clone())
+                .or_default()
+                .extend(group.member_cids.iter().cloned());
+        }
+        ambient_forall_cids.extend(manifest.ambient.closed_forall_cids.iter().cloned());
+        ambient_ground_cids.extend(manifest.ambient.ground_callsite_fact_cids.iter().cloned());
+    }
+
+    let groups: Vec<(String, Vec<ConsistencyCandidate>)> = member_cids_by_name
+        .into_iter()
+        .map(|(name, cids)| {
+            let members: Vec<ConsistencyCandidate> = cids
+                .iter()
+                .filter_map(|cid| candidate_from_pool(pool, cid))
+                .collect();
+            (name, members)
+        })
+        .collect();
+
+    let mut ambient_foralls: Vec<Json> = Vec::new();
+    for cid in &ambient_forall_cids {
+        let Some(candidate) = candidate_from_pool(pool, cid) else {
+            continue;
+        };
+        if is_witness_member(&candidate.body) {
+            continue;
+        }
+        if let Some(inv) = candidate.body.get("inv") {
+            let inv = canonicalize_formula_json(inv);
+            collect_ambient_foralls(&inv, &mut ambient_foralls);
+        }
+    }
+
+    let mut ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact> = Vec::new();
+    for cid in &ambient_ground_cids {
+        let Some(candidate) = candidate_from_pool(pool, cid) else {
+            continue;
+        };
+        if is_witness_member(&candidate.body) {
+            continue;
+        }
+        let Some(inv) = candidate.body.get("inv") else {
+            continue;
+        };
+        let inv = canonicalize_formula_json(inv);
+        let contract_name = contract_property_name(&candidate.body);
+        let ground_scope = ambient_ground_callsite_scope(contract_name);
+        collect_ambient_ground_callsite_facts(
+            &inv,
+            cid,
+            &ground_scope,
+            candidate.provenance_kind,
+            &mut ambient_ground_callsite_facts,
+        );
+    }
+
+    (groups, ambient_foralls, ambient_ground_callsite_facts)
+}
+
+/// Evaluate every forced-fallback precondition design item 5 names, against
+/// every bundle contributing members to `pool`. Returns every reason that
+/// fired (empty == safe to project).
+fn projection_fallback_reasons(
+    pool: &MementoPool,
+    manifests: &std::collections::BTreeMap<String, sugar_proof_envelope::manifest::Manifest>,
+) -> Vec<ProjectionFallbackReason> {
+    let mut reasons = Vec::new();
+    for (bundle_cid, member_cids) in &pool.bundle_members {
+        let bundle_cid_str = bundle_cid.as_str().to_string();
+        let Some(manifest) = manifests.get(&bundle_cid_str) else {
+            reasons.push(ProjectionFallbackReason::ManifestMissing {
+                bundle: bundle_cid_str,
+            });
+            continue;
+        };
+        if manifest.version != sugar_proof_envelope::manifest::MANIFEST_VERSION {
+            reasons.push(ProjectionFallbackReason::VersionMismatch {
+                bundle: bundle_cid_str.clone(),
+                version: manifest.version,
+            });
+        }
+        let restricted = restrict_pool_to_members(pool, member_cids);
+        let recomputed = build_manifest_from_pool(&restricted, &bundle_cid_str);
+        if recomputed.cid() != manifest.cid() {
+            reasons.push(ProjectionFallbackReason::IntegrityMismatch {
+                bundle: bundle_cid_str.clone(),
+            });
+        }
+        for (name, group) in &manifest.groups {
+            if group.contributor_bundle != bundle_cid_str {
+                reasons.push(ProjectionFallbackReason::VendorBundleMismatch {
+                    name: name.clone(),
+                    expected: bundle_cid_str.clone(),
+                    actual: group.contributor_bundle.clone(),
+                });
+            }
+        }
+    }
+    reasons
+}
+
+/// PROJECTION entry point (join-manifest design, lane 2). Attempts to answer
+/// the consistency pass from sealed per-proof manifests instead of a
+/// whole-pool scan: euf-name lookup across every loaded proof's manifest
+/// (design item 3's cross-proof merge), ambient sets unioned exactly as
+/// `verify_consistency` conjoins them today, member closures fetched by CID
+/// straight out of the already-loaded pool (design item 4), and the SAME
+/// per-group solve (`process_consistency_group`) -- so a projected row and a
+/// scanned row differ only in which member CIDs fed the SAME conjoin/vacuity
+/// code, never in how they were classified once fetched.
+///
+/// Falls back to a full `verify_consistency` scan, WHOLESALE, the moment any
+/// forced-fallback precondition fires (design item 5) -- this function never
+/// mixes a projected group with a scanned group in the same pass; a partial
+/// trust failure degrades the whole pass, not just the affected name.
+pub fn verify_consistency_projected(
+    pool: &MementoPool,
+    manifests: &std::collections::BTreeMap<String, sugar_proof_envelope::manifest::Manifest>,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+) -> (Vec<ConsistencyResult>, ConsistencyMode, Vec<ProjectionFallbackReason>) {
+    let reasons = projection_fallback_reasons(pool, manifests);
+    if !reasons.is_empty() {
+        let results = verify_consistency(pool, plan, registry, compilers, project_root);
+        return (results, ConsistencyMode::PoolScanFallback, reasons);
+    }
+
+    let (groups, ambient_foralls, ambient_ground_callsite_facts) =
+        projected_groups(pool, manifests);
+    let ambient_posts = collect_ambient_posts(pool);
+
+    let mut locus_by_name: HashMap<String, SourceLocus> = HashMap::new();
+    for (_cid, member) in pool.source_memento_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if let Some(l) = locus_from_body(&body) {
+            let name = contract_property_name(&body).to_string();
+            locus_by_name.entry(name).or_insert(l);
+        }
+    }
+
+    let mut results: Vec<ConsistencyResult> = groups
+        .par_iter()
+        .flat_map(|(property_name, members)| {
+            process_consistency_group(
+                property_name,
+                members,
+                &ambient_posts,
+                &ambient_ground_callsite_facts,
+                &ambient_foralls,
+                &locus_by_name,
+                plan,
+                registry,
+                compilers,
+            )
+        })
+        .collect();
+    // Provenance refusals are a scan-side concept (raised while walking
+    // candidates that FAIL the provenance-KIND gate); `candidate_from_pool`
+    // silently skips those rather than re-deriving refusal rows here, so
+    // projected mode never fabricates a refusal scan mode would not have
+    // independently raised for the same CID.
+    results.sort_by(|a, b| a.property_name.cmp(&b.property_name));
+    (results, ConsistencyMode::ManifestProjected, reasons)
+}
+
+pub fn verify_consistency(
+    pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+) -> Vec<ConsistencyResult> {
+    verify_consistency_inner(pool, plan, registry, compilers, project_root, None)
+}
+
+/// EDITOR-SCOPED consistency: identical construction to `verify_consistency`,
+/// but only GROUPS anchored inside `scope` are solved. A kept group keeps ALL
+/// its members -- vendor conjuncts included -- so every solved row is
+/// identical to the full run's row for that group (same conjuncts, same
+/// verdict); the scope only skips solving vendor-internal groups the editor
+/// never paints (the same predicate the extension's painter applies POST-solve
+/// today, moved PRE-solve). This is the O(consumer) editor path: on the pandas
+/// demo it collapses 8k+ vendor-internal solves to the consumer's own handful.
+/// The CLI's full `prove` continues to use the unscoped door.
+pub fn verify_consistency_scoped(
+    pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: &Path,
+) -> Vec<ConsistencyResult> {
+    verify_consistency_inner(pool, plan, registry, compilers, project_root, Some(scope))
+}
+
+fn verify_consistency_inner(
+    pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: Option<&Path>,
+) -> Vec<ConsistencyResult> {
+    let index = build_consistency_index(pool);
+    verify_consistency_from_indexes(&index, None, plan, registry, compilers, project_root, scope)
+}
+
+/// Pool-derived consistency inputs, computed once per pool and reusable
+/// across solve calls (#3774 daemonSolve trim). Every field is a pure
+/// projection of `pool` -- field for field, the same construction
+/// `verify_consistency_inner` performed inline before this factoring (the
+/// stages MOVED into `build_consistency_index_filtered`; they were not
+/// reimplemented). The daemon caches the resident base (vendor) pool's index
+/// in its ProveContext and, per request, builds only the tiny scratch-proof
+/// overlay's index, merging the two in
+/// `verify_consistency_scoped_with_base_index` -- so the per-save cost is
+/// O(overlay members), not O(pool re-scan + pool clone).
+pub struct ConsistencyIndex {
+    candidates: Vec<ConsistencyCandidate>,
+    provenance_refusals: Vec<ConsistencyResult>,
+    ambient_foralls: Vec<Json>,
+    ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact>,
+    ambient_posts: Vec<AmbientPost>,
+    /// Raw (contract/property name, locus) pairs in pool iteration order.
+    /// The project-local preference merge (consumer file beats vendor file
+    /// for the squiggle anchor) happens at solve time in
+    /// `verify_consistency_from_indexes` because it needs `project_root`.
+    locus_entries: Vec<(String, SourceLocus)>,
+}
+
+impl ConsistencyIndex {
+    /// Number of consistency candidates the pool contributed. Exposed for
+    /// caller-side telemetry only; the solve path never re-derives from it.
+    pub fn candidate_count(&self) -> usize {
+        self.candidates.len()
+    }
+}
+
+/// Build the pool's [`ConsistencyIndex`]. This is stage 1 of
+/// `verify_consistency` factored out verbatim; callers that hold a stable
+/// pool (the daemon's resident vendor pool) build this once and pass it to
+/// `verify_consistency_scoped_with_base_index` per request.
+pub fn build_consistency_index(pool: &MementoPool) -> ConsistencyIndex {
+    build_consistency_index_filtered(pool, None)
+}
+
+/// Same construction as [`build_consistency_index`], but candidates and
+/// provenance refusals whose CID appears in `skip_cids` are dropped BEFORE
+/// ambient collection. Used for the overlay index in the merged (cached)
+/// path: when the same member CID exists in both the base pool and the
+/// overlay scratch proof, the merged-pool semantics are "one member" (the
+/// pool dedupes by CID on load), so the overlay index must not contribute a
+/// second copy -- a duplicate would flip an identical-assertion group from
+/// PROVEN to a same-kind-duplicate vacuity refusal the merged-pool run never
+/// raises.
+fn build_consistency_index_filtered(
+    pool: &MementoPool,
+    skip_cids: Option<&std::collections::HashSet<String>>,
+) -> ConsistencyIndex {
+    let (candidates, provenance_refusals) = collect_consistency_candidates(pool);
+    let (candidates, provenance_refusals): (Vec<ConsistencyCandidate>, Vec<ConsistencyResult>) =
+        match skip_cids {
+            None => (candidates, provenance_refusals),
+            Some(skip) => (
+                candidates
+                    .into_iter()
+                    .filter(|c| !skip.contains(&c.cid))
+                    .collect(),
+                provenance_refusals
+                    .into_iter()
+                    .filter(|r| !skip.contains(&r.contract_cid))
+                    .collect(),
+            ),
+        };
 
     // AMBIENT UNIVERSALS: a forall invariant (a lifted bounded loop, memento
     // `<test>::loop::<var>`, from any language's lifter) constrains every claim
@@ -2630,13 +3137,155 @@ pub fn verify_consistency(
             }
         }
     }
+    let ambient_posts = collect_ambient_posts(pool);
+
+    // Pool-wide assertion-locus entries, keyed by contract/property name. The
+    // callsite-keyed consistency candidate is a coalesced claim whose OWN body
+    // carries no `file`/`span`; the assertion's source locus lives on the
+    // sibling SOURCE-MEMENTO member the lifter emitted for that same assertion
+    // (its `contractName` == the property name). We read `file`+`span` straight
+    // off that member -- no re-derivation -- so an `unsatisfied` verdict can be
+    // anchored back to the exact `assert` line/column in the editor.
+    // #3802 root cause: locus carriers differ per lifter. The python lifter
+    // emits `source-memento` members; the RUST lifter emits
+    // `assertion-surface-memento` members carrying the same
+    // contractName+file+line payload. Reading only source mementos left the
+    // rust overlay's locus map EMPTY, so the editor-scope filter dropped
+    // every rust consumer group -- the daemon then answered 0 rows with
+    // degraded=false (the false green). Scan BOTH kinds; `locus_from_body`
+    // applies the identical field contract to each.
+    let mut locus_entries: Vec<(String, SourceLocus)> = Vec::new();
+    for (_cid, member) in pool.source_memento_members().chain(
+        pool.members_by_kind(sugar_proof_envelope::MemberKind::AssertionSurfaceMemento),
+    ) {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if let Some(l) = locus_from_body(&body) {
+            locus_entries.push((contract_property_name(&body).to_string(), l));
+        }
+    }
+
+    ConsistencyIndex {
+        candidates,
+        provenance_refusals,
+        ambient_foralls,
+        ambient_ground_callsite_facts,
+        ambient_posts,
+        locus_entries,
+    }
+}
+
+/// CACHED-BASE editor path (#3774 daemonSolve trim): identical semantics to
+/// loading `overlay_pool`'s members onto the base pool and running
+/// `verify_consistency_scoped` over the merged pool -- adjudicated by the
+/// differential test `cached_index_path_matches_merged_pool_scoped_run`
+/// (sugar-linkerd/tests/prove_consistency.rs) -- but the base pool's
+/// candidates/ambients/locus come from the prebuilt `base` index instead of
+/// an O(pool) re-scan, and the base pool itself is never cloned. Per-request
+/// work: index the (tiny) overlay pool, dedupe by CID against the base,
+/// merge, group, solve the in-scope groups.
+pub fn verify_consistency_scoped_with_base_index(
+    base: &ConsistencyIndex,
+    overlay_pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: &Path,
+) -> Vec<ConsistencyResult> {
+    let skip: std::collections::HashSet<String> = base
+        .candidates
+        .iter()
+        .map(|c| c.cid.clone())
+        .chain(
+            base.provenance_refusals
+                .iter()
+                .map(|r| r.contract_cid.clone()),
+        )
+        .collect();
+    let overlay = build_consistency_index_filtered(overlay_pool, Some(&skip));
+    verify_consistency_from_indexes(
+        base,
+        Some(&overlay),
+        plan,
+        registry,
+        compilers,
+        project_root,
+        Some(scope),
+    )
+}
+
+/// Stage 2 of `verify_consistency`: grouping, scoping, and the per-group
+/// solve, over the merged (base + optional overlay) index. Everything below
+/// is the former inline tail of `verify_consistency_inner`, operating on the
+/// chained candidate/ambient/locus sets instead of pool-derived locals.
+#[allow(clippy::too_many_arguments)]
+fn verify_consistency_from_indexes(
+    base: &ConsistencyIndex,
+    overlay: Option<&ConsistencyIndex>,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: Option<&Path>,
+) -> Vec<ConsistencyResult> {
+    let candidates: Vec<&ConsistencyCandidate> = base
+        .candidates
+        .iter()
+        .chain(overlay.iter().flat_map(|o| o.candidates.iter()))
+        .collect();
+    let provenance_refusals: Vec<ConsistencyResult> = base
+        .provenance_refusals
+        .iter()
+        .cloned()
+        .chain(
+            overlay
+                .iter()
+                .flat_map(|o| o.provenance_refusals.iter().cloned()),
+        )
+        .collect();
+    let ambient_foralls: Vec<Json> = base
+        .ambient_foralls
+        .iter()
+        .cloned()
+        .chain(overlay.iter().flat_map(|o| o.ambient_foralls.iter().cloned()))
+        .collect();
+    let ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact> = base
+        .ambient_ground_callsite_facts
+        .iter()
+        .cloned()
+        .chain(
+            overlay
+                .iter()
+                .flat_map(|o| o.ambient_ground_callsite_facts.iter().cloned()),
+        )
+        .collect();
+    // Ambient posts merge with (source_symbol, target_cid) dedupe: the
+    // merged-pool run sees one bridge member per CID, so an overlay proof
+    // re-declaring a base bridge must not conjoin the same post twice.
+    let mut ambient_posts: Vec<AmbientPost> = base.ambient_posts.clone();
+    if let Some(o) = overlay {
+        let seen: std::collections::HashSet<(String, String)> = ambient_posts
+            .iter()
+            .map(|p| (p.source_symbol.clone(), p.target_cid.clone()))
+            .collect();
+        for p in &o.ambient_posts {
+            if !seen.contains(&(p.source_symbol.clone(), p.target_cid.clone())) {
+                ambient_posts.push(p.clone());
+            }
+        }
+    }
+
     info!(
         candidates = candidates.len(),
         ambient_foralls = ambient_foralls.len(),
         ambient_ground_callsite_facts = ambient_ground_callsite_facts.len(),
         "verifier/ambient: universals will be conjoined into every obligation"
     );
-    let ambient_posts = collect_ambient_posts(pool);
     info!(
         candidates = candidates.len(),
         ambient_posts = ambient_posts.len(),
@@ -2652,62 +3301,133 @@ pub fn verify_consistency(
     // assertions dedupe by CID (one member) and stay PROVEN. The contract NAME is
     // the content-keyed callsite, so same name == same callsite == sound to
     // conjoin -- the same invariant mint relies on.
-    let mut by_name: std::collections::BTreeMap<String, Vec<ConsistencyCandidate>> =
+    let mut by_name: std::collections::BTreeMap<String, Vec<&ConsistencyCandidate>> =
         std::collections::BTreeMap::new();
     for candidate in &candidates {
         let name = contract_property_name(&candidate.body).to_string();
-        by_name.entry(name).or_default().push(candidate.clone());
+        by_name.entry(name).or_default().push(*candidate);
     }
-    let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name.into_iter().collect();
 
-    // Pool-wide assertion-locus index, keyed by contract/property name. The
-    // callsite-keyed consistency candidate is a coalesced claim whose OWN body
-    // carries no `file`/`span`; the assertion's source locus lives on the
-    // sibling SOURCE-MEMENTO member the lifter emitted for that same assertion
-    // (its `contractName` == the property name). We read `file`+`span` straight
-    // off that member -- no re-derivation -- so an `unsatisfied` verdict can be
-    // anchored back to the exact `assert` line/column in the editor.
+    // Locus map with PROJECT-LOCAL PREFERENCE. When two source mementos share
+    // a contractName (a consumer asserting the EXACT sworn fact -> case-1
+    // congruence, e.g. `len(pd.DataFrame()) == 1` contradicting pandas' sworn
+    // `== 0`), the consumer's assertion and the vendor's sworn assertion
+    // collide on the same euf coordinate. First-write-wins would anchor the
+    // squiggle at the VENDOR's source file (pandas' internal
+    // `tests/frame/test_constructors.py`) instead of the user's line.
+    // Overwrite only when the NEW locus's file EXISTS under project_root on
+    // disk and the CURRENT one does not -- the consumer's `test_consumer.py`
+    // lives under the project; the vendor's path does not. Fail-open: if
+    // neither or both exist, keep first-write (no worse than before).
     let mut locus_by_name: HashMap<String, SourceLocus> = HashMap::new();
-    for (_cid, member) in pool.source_memento_members() {
-        let Some(body) = pool
-            .contract_body_for_member(member)
-            .filter(|v| v.is_object())
-        else {
-            continue;
-        };
-        if let Some(l) = locus_from_body(&body) {
-            let name = contract_property_name(&body).to_string();
-            match locus_by_name.entry(name) {
-                std::collections::hash_map::Entry::Vacant(e) => {
-                    e.insert(l);
-                }
-                std::collections::hash_map::Entry::Occupied(mut e) => {
-                    // PROJECT-LOCAL PREFERENCE. When two source mementos share a
-                    // contractName (a consumer asserting the EXACT sworn fact ->
-                    // case-1 congruence, e.g. `len(pd.DataFrame()) == 1`
-                    // contradicting pandas' sworn `== 0`), the consumer's
-                    // assertion and the vendor's sworn assertion collide on the
-                    // same euf coordinate. First-write-wins would anchor the
-                    // squiggle at the VENDOR's source file (pandas' internal
-                    // `tests/frame/test_constructors.py`) instead of the user's
-                    // line. Overwrite only when the NEW locus's file EXISTS under
-                    // project_root on disk and the CURRENT one does not -- the
-                    // consumer's `test_consumer.py` lives under the project; the
-                    // vendor's path does not. Fail-open: if neither or both
-                    // exist, keep first-write (no worse than before).
-                    let new_local = project_root.join(&l.file).exists();
-                    let cur_local = project_root.join(&e.get().file).exists();
-                    if new_local && !cur_local {
-                        e.insert(l);
-                    }
+    for (name, l) in base
+        .locus_entries
+        .iter()
+        .chain(overlay.iter().flat_map(|o| o.locus_entries.iter()))
+    {
+        match locus_by_name.entry(name.clone()) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(l.clone());
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let new_local = project_root.join(&l.file).exists();
+                let cur_local = project_root.join(&e.get().file).exists();
+                if new_local && !cur_local {
+                    e.insert(l.clone());
                 }
             }
         }
     }
 
+    // EDITOR SCOPE (see verify_consistency_scoped): keep only groups whose
+    // anchor locus resolves inside `scope` ON DISK. Whole groups are kept or
+    // dropped -- never individual members -- so a kept group's conjunct set
+    // (vendor sworn facts included) is identical to the unscoped run's, and
+    // its solved row is therefore identical too. Ambient sets stay pool-wide.
+    // Members are CLONED only for KEPT groups (post-filter), never for the
+    // vendor-internal thousands the editor never paints.
+    let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name
+        .into_iter()
+        .filter(|(property_name, members)| match scope {
+            None => true,
+            Some(scope_root) => {
+                let anchored_in_scope = |name: &str| {
+                    locus_by_name
+                        .get(name)
+                        .map(|l| scope_root.join(&l.file).exists())
+                        .unwrap_or(false)
+                };
+                anchored_in_scope(property_name)
+                    || members
+                        .iter()
+                        .any(|m| anchored_in_scope(contract_property_name(&m.body).as_ref()))
+            }
+        })
+        .map(|(name, members)| (name, members.into_iter().cloned().collect()))
+        .collect();
+
     let mut results: Vec<ConsistencyResult> = groups
         .par_iter()
         .flat_map(|(property_name, members)| {
+            process_consistency_group(
+                property_name,
+                members,
+                &ambient_posts,
+                &ambient_ground_callsite_facts,
+                &ambient_foralls,
+                &locus_by_name,
+                plan,
+                registry,
+                compilers,
+            )
+        })
+        .collect();
+    results.extend(provenance_refusals);
+
+    info!(
+        candidates = candidates.len(),
+        consistent = results
+            .iter()
+            .filter(|r| r.verdict == ObligationVerdict::Discharged)
+            .count(),
+        contradictory = results
+            .iter()
+            .filter(|r| r.verdict == ObligationVerdict::Unsatisfied)
+            .count(),
+        undecidable = results
+            .iter()
+            .filter(|r| r.verdict == ObligationVerdict::Undecidable)
+            .count(),
+        witnessed = results.iter().filter(|r| r.witnessed).count(),
+        "verifier: test-assertion consistency pass complete"
+    );
+
+    results
+}
+
+/// PER-GROUP SOLVE, factored out of `verify_consistency` (pure relocation, no
+/// behavior change) so `verify_consistency_projected` (join-manifest design,
+/// lane 2: PROJECTION) can drive the identical conjoin/vacuity classification
+/// over a manifest-projected member set instead of a whole-pool scan group --
+/// design item 4's "same conjoin/vacuity classification as today over the
+/// fetched members". `property_name`/`members` name one `#euf#` (or plain)
+/// callsite group; `ambient_posts`/`ambient_ground_callsite_facts`/
+/// `ambient_foralls` are the pool-wide (or, in projected mode, manifest-
+/// ambient-union) background facts asserted into every obligation.
+#[allow(clippy::too_many_arguments)]
+fn process_consistency_group(
+    property_name: &str,
+    members: &[ConsistencyCandidate],
+    ambient_posts: &[AmbientPost],
+    ambient_ground_callsite_facts: &[AmbientGroundCallsiteFact],
+    ambient_foralls: &[Json],
+    locus_by_name: &HashMap<String, SourceLocus>,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+) -> Vec<ConsistencyResult> {
+    let property_name = &property_name.to_string();
+    {
             let mut out: Vec<ConsistencyResult> = Vec::new();
 
             // WITNESS members are settled from the rust-recomputed package body,
@@ -2888,29 +3608,7 @@ pub fn verify_consistency(
                 }
             }
             out
-        })
-        .collect();
-    results.extend(provenance_refusals);
-
-    info!(
-        candidates = candidates.len(),
-        consistent = results
-            .iter()
-            .filter(|r| r.verdict == ObligationVerdict::Discharged)
-            .count(),
-        contradictory = results
-            .iter()
-            .filter(|r| r.verdict == ObligationVerdict::Unsatisfied)
-            .count(),
-        undecidable = results
-            .iter()
-            .filter(|r| r.verdict == ObligationVerdict::Undecidable)
-            .count(),
-        witnessed = results.iter().filter(|r| r.witnessed).count(),
-        "verifier: test-assertion consistency pass complete"
-    );
-
-    results
+    }
 }
 
 #[cfg(test)]
@@ -4687,7 +5385,7 @@ mod tests {
             SolverSeat::Z3,
             Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
         );
-        let res = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let res = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         let point = res
             .iter()
             .find(|r| r.contract_cid == test_cid_string("blake3-512:point"))
@@ -4780,6 +5478,7 @@ mod tests {
             &SolverPlan::Single(SolverSeat::Bitwuzla),
             &reg,
             &test_compilers(),
+            std::path::Path::new("."),
         );
         let point = res
             .iter()
@@ -4824,6 +5523,7 @@ mod tests {
             &SolverPlan::Single(SolverSeat::Bitwuzla),
             &reg,
             &test_compilers(),
+            std::path::Path::new("."),
         );
         let point = res
             .iter()
@@ -5192,7 +5892,7 @@ mod tests {
         let inv = ne(var("x"), none());
         let pool = pool_with_contract("test_consistent", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -5219,7 +5919,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("test_contradictory", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -5251,7 +5951,7 @@ mod tests {
         });
         pool.insert_unanchored_for_tests(test_cid("bridge"), env);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert!(
             results.is_empty(),
             "pre-bearing contract must not be a consistency candidate"
@@ -5278,7 +5978,7 @@ mod tests {
         });
         pool.insert_unanchored_for_tests(test_cid("inv-post"), env);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
 
         assert_eq!(
             results.len(),
@@ -5302,7 +6002,7 @@ mod tests {
         let facts_inv = eqf(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::facts", facts_inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert!(
             results.is_empty(),
             "::facts setup-binding contract must not be a consistency candidate; got: {:?}",
@@ -5317,7 +6017,7 @@ mod tests {
         let facts_inv = eqf(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::facts::1", facts_inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert!(
             results.is_empty(),
             "::facts::N setup-binding contract must not be a consistency candidate; got: {:?}",
@@ -5336,7 +6036,7 @@ mod tests {
         let inv = ne(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(
             results.len(),
             1,
@@ -5356,7 +6056,7 @@ mod tests {
         let inv = ne(var("x"), none());
         let pool = pool_with_contract("test_x_consistent", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(
             results.len(),
             1,
@@ -5383,7 +6083,7 @@ mod tests {
         let inv = eqf(var("r"), string_const(r#"{"a":1}"#));
         let pool = pool_with_contract("encode_jcs::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -5413,7 +6113,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("encode_jcs_two_literals::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -5436,7 +6136,7 @@ mod tests {
         let inv = eqf(var("r"), string_const(r#"{"a":"x"}"#));
         let pool = pool_with_contract("encode_jcs_brace::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_ne!(
             results[0].verdict,
@@ -5470,7 +6170,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_str_int::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -5489,7 +6189,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_none_int::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -5510,7 +6210,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_none_false::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -5532,7 +6232,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_true_one::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -5551,7 +6251,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("same_str::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].verdict, ObligationVerdict::Unsatisfied);
     }

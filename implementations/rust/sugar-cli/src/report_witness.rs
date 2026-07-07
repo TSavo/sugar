@@ -445,6 +445,7 @@ pub(crate) fn mint_witness_bundle(
         signer_cid: ed25519_pubkey_string(&signer_seed),
         signer_seed,
         declared_at: produced_at,
+        manifest: None,
     });
 
     std::fs::create_dir_all(out_dir).map_err(|e| format!("mkdir {}: {e}", out_dir.display()))?;

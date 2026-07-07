@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sugar_ir_types::{IrFormula, IrTerm, Sort};
@@ -234,6 +237,64 @@ impl LiftPluginKit {
             ));
         }
 
+        // RESIDENT-LIFTER FAST PATH (#3774): the lift-plugin protocol is
+        // already a request loop (`initialize` once, then N `lift` calls,
+        // then `shutdown` -- see e.g. the python `lift_rpc.py::main`'s
+        // `while True` dispatch). The bottleneck killing the pandas-demo
+        // save cycle (~15s of ~35s) was never the protocol: it was THIS
+        // caller spawning a fresh process and sending `shutdown` after
+        // exactly one `lift`, forcing a fresh `import pandas` every mint.
+        // `SUGAR_LIFT_NO_RESIDENT=1` is the escape hatch back to the old
+        // one-shot-per-call behavior (kept below, byte-identical) for any
+        // caller that cannot tolerate a long-lived subprocess.
+        if resident_enabled() {
+            match self.dispatch_resident(lift_params) {
+                Ok(pair) => return Ok(pair),
+                Err(ResidentDispatchError::Fatal(e)) => return Err(e),
+                Err(ResidentDispatchError::Retry) => {
+                    // Resident connection died mid-flight (broken pipe,
+                    // process exited, etc). Fall through to a one-shot
+                    // spawn for THIS request so the caller still gets an
+                    // answer; the pool slot was already evicted by
+                    // `dispatch_resident` and will be respawned next call.
+                }
+            }
+        }
+
+        let (initialize_response, response, mut child, mut stdin, _reader) =
+            self.spawn_and_run_once(lift_params)?;
+        let shutdown_req = json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"});
+        let _ = writeln!(stdin, "{shutdown_req}");
+        drop(stdin);
+        let status = child
+            .wait()
+            .map_err(|error| LiftPluginKitError::Failed(format!("wait lift plugin: {error}")))?;
+        if !status.success() {
+            return Err(LiftPluginKitError::Failed(format!(
+                "lift plugin exited {status}"
+            )));
+        }
+        Ok((initialize_response, response))
+    }
+
+    /// Spawn a fresh child, run exactly one `initialize` + one lift call
+    /// (using request ids 1/2, matching the historical one-shot protocol),
+    /// and return the live child + its stdin/stdout handles so the caller
+    /// decides whether to `shutdown` it (one-shot path) or keep it resident
+    /// (pool path, which keeps `reader`/`stdin` alive for further requests).
+    fn spawn_and_run_once(
+        &self,
+        lift_params: &Value,
+    ) -> Result<
+        (
+            Value,
+            Value,
+            Child,
+            ChildStdin,
+            BufReader<std::process::ChildStdout>,
+        ),
+        LiftPluginKitError,
+    > {
         let mut cmd = Command::new(&self.command[0]);
         if self.command.len() > 1 {
             cmd.args(&self.command[1..]);
@@ -299,24 +360,220 @@ impl LiftPluginKit {
             .map_err(|error| LiftPluginKitError::Failed(format!("write lift request: {error}")))?;
         let response = read_response(&mut reader, 2)?;
 
-        let shutdown_req = json!({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "shutdown"
-        });
-        let _ = writeln!(stdin, "{shutdown_req}");
-        drop(stdin);
+        Ok((initialize_response, response, child, stdin, reader))
+    }
 
-        let status = child
-            .wait()
-            .map_err(|error| LiftPluginKitError::Failed(format!("wait lift plugin: {error}")))?;
-        if !status.success() {
-            return Err(LiftPluginKitError::Failed(format!(
-                "lift plugin exited {status}"
-            )));
+    /// Key identifying a resident slot: the exact command + working dir.
+    /// Two `LiftPluginKit`s with the same command/cwd share one resident
+    /// process (e.g. repeated mints of the same project/kit), matching the
+    /// mission's "keyed by project root + kit" requirement.
+    fn resident_key(&self) -> String {
+        let mut key = self.command.join("\u{1f}");
+        if let Some(dir) = &self.working_dir {
+            key.push('\u{1e}');
+            key.push_str(&dir.display().to_string());
+        }
+        key
+    }
+
+    /// Try to serve `lift_params` from a resident (already-warm) child.
+    /// Spawns one on first use for this key, keyed by command+cwd, and
+    /// keeps it alive across calls so `import pandas` (or any equally
+    /// heavy one-time interpreter/module cost) is paid exactly once per
+    /// process, not once per mint.
+    ///
+    /// STALENESS RULE (named explicitly, not assumed): a resident is
+    /// restarted if it is older than `SUGAR_LIFT_RESIDENT_MAX_AGE_SECS`
+    /// (default 30 minutes) -- long enough that a normal edit/save/mint
+    /// cadence never pays the restart cost, short enough that a stale
+    /// `pip install` / vendor env change during a long dev session is
+    /// bounded, not permanent. The CONSUMER SOURCE is never cached here:
+    /// every call sends a fresh `lift` request; the plugin process reads
+    /// the file from disk each time (this pool caches the warm
+    /// PROCESS/IMPORT, never the file content).
+    fn dispatch_resident(
+        &self,
+        lift_params: &Value,
+    ) -> Result<(Value, Value), ResidentDispatchError> {
+        let key = self.resident_key();
+        let pool = resident_pool();
+        let mut guard = pool
+            .lock()
+            .map_err(|_| ResidentDispatchError::Fatal(LiftPluginKitError::Failed(
+                "resident lifter pool poisoned".to_string(),
+            )))?;
+
+        let max_age = resident_max_age();
+        let needs_fresh = match guard.get(&key) {
+            None => true,
+            Some(entry) => entry.started_at.elapsed() > max_age,
+        };
+        if needs_fresh {
+            if let Some(mut old) = guard.remove(&key) {
+                old.shutdown_best_effort();
+            }
+            let (initialize_response, child, stdin, reader, first_response) = self
+                .spawn_resident(lift_params)
+                .map_err(ResidentDispatchError::Fatal)?;
+            guard.insert(
+                key.clone(),
+                ResidentLifter {
+                    child,
+                    stdin,
+                    reader,
+                    next_id: 3, // 1=initialize, 2=first lift already consumed below
+                    started_at: Instant::now(),
+                    initialize_response,
+                    first_lift_response: Some(first_response),
+                },
+            );
         }
 
-        Ok((initialize_response, response))
+        let entry = guard.get_mut(&key).expect("just inserted or already present");
+        let initialize_response = entry.initialize_response.clone();
+
+        // On a freshly spawned resident, `spawn_resident` already performed
+        // request id=2's lift as part of establishing the process (mirrors
+        // the one-shot protocol exactly for the FIRST call), so skip
+        // re-sending it here.
+        if needs_fresh {
+            let response = entry
+                .first_lift_response
+                .take()
+                .expect("fresh resident carries its first lift response");
+            return Ok((initialize_response, response));
+        }
+
+        let id = entry.next_id;
+        entry.next_id += 1;
+        let lift_req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": self.lift_method,
+            "params": lift_params
+        });
+        if let Err(error) = writeln!(entry.stdin, "{lift_req}") {
+            guard.remove(&key);
+            return Err(ResidentDispatchError::retry_after(format!(
+                "write lift request to resident: {error}"
+            )));
+        }
+        match read_response(&mut entry.reader, id) {
+            Ok(response) => Ok((initialize_response, response)),
+            Err(error) => {
+                // Resident died or desynced mid-protocol: evict it so the
+                // NEXT call spawns fresh, and answer THIS call via one-shot.
+                guard.remove(&key);
+                Err(ResidentDispatchError::retry_after(error.to_string()))
+            }
+        }
+    }
+
+    /// Spawn a resident child and drive its first `initialize` + `lift`
+    /// (ids 1/2), WITHOUT sending `shutdown` -- the process is left running
+    /// for the pool to reuse. Returns the live child/stdin/reader plus the
+    /// first lift's response (stashed into the pool entry by the caller).
+    #[allow(clippy::type_complexity)]
+    fn spawn_resident(
+        &self,
+        lift_params: &Value,
+    ) -> Result<
+        (
+            Value,
+            Child,
+            ChildStdin,
+            BufReader<std::process::ChildStdout>,
+            Value,
+        ),
+        LiftPluginKitError,
+    > {
+        let (initialize_response, first_response, child, stdin, reader) =
+            self.spawn_and_run_once(lift_params)?;
+        Ok((initialize_response, child, stdin, reader, first_response))
+    }
+}
+
+/// One warm lift-plugin process kept alive across `dispatch` calls.
+struct ResidentLifter {
+    child: Child,
+    stdin: ChildStdin,
+    reader: BufReader<std::process::ChildStdout>,
+    next_id: i64,
+    started_at: Instant,
+    initialize_response: Value,
+    /// The first `lift` response, stashed at spawn time (spawning already
+    /// drives one full `initialize`+`lift` round trip identical to the
+    /// historical one-shot protocol); consumed by the first
+    /// `dispatch_resident` call against a freshly (re)spawned entry.
+    first_lift_response: Option<Value>,
+}
+
+impl ResidentLifter {
+    /// Best-effort graceful shutdown of a resident being evicted (stale or
+    /// replaced). Never blocks the caller on a hung process: errors here
+    /// are swallowed, the entry is being dropped regardless.
+    fn shutdown_best_effort(&mut self) {
+        let shutdown_req = json!({"jsonrpc": "2.0", "id": 0, "method": "shutdown"});
+        let _ = writeln!(self.stdin, "{shutdown_req}");
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for ResidentLifter {
+    fn drop(&mut self) {
+        self.shutdown_best_effort();
+    }
+}
+
+/// Process-wide resident lifter pool, keyed by `LiftPluginKit::resident_key`
+/// (command + working dir). One entry per (project, kit) pair, matching the
+/// mission's "keyed by project root + kit" requirement -- multiple projects
+/// or multiple distinct lift kits never share a resident process.
+fn resident_pool() -> &'static Mutex<HashMap<String, ResidentLifter>> {
+    static POOL: OnceLock<Mutex<HashMap<String, ResidentLifter>>> = OnceLock::new();
+    POOL.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// `SUGAR_LIFT_NO_RESIDENT=1` disables the resident pool entirely (falls
+/// back to spawn-per-call, byte-identical to the pre-#3774 behavior). The
+/// default is resident-ON: the whole point is that a caller which never
+/// sets this env var gets the warm path for free.
+fn resident_enabled() -> bool {
+    std::env::var("SUGAR_LIFT_NO_RESIDENT")
+        .map(|v| v != "1")
+        .unwrap_or(true)
+}
+
+/// Staleness bound: how long a resident process may serve requests before
+/// being restarted. Default 30 minutes, overridable via
+/// `SUGAR_LIFT_RESIDENT_MAX_AGE_SECS`. This is the named staleness rule
+/// (mission requirement): the resident caches the warm IMPORT/process, never
+/// the consumer source (each `lift` call re-reads the file from disk), so
+/// the only staleness risk is an environment change (e.g. `pip install`)
+/// made *after* the process started. Bounding the process age caps how long
+/// such a change can go unpicked-up without requiring an explicit restart.
+fn resident_max_age() -> Duration {
+    std::env::var("SUGAR_LIFT_RESIDENT_MAX_AGE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(30 * 60))
+}
+
+/// Outcome of a resident-path dispatch attempt.
+enum ResidentDispatchError {
+    /// A real failure the caller should propagate (e.g. binary missing).
+    Fatal(LiftPluginKitError),
+    /// The resident connection died mid-flight; already evicted from the
+    /// pool. The caller should retry via a one-shot spawn for this request.
+    Retry,
+}
+
+impl ResidentDispatchError {
+    fn retry_after(reason: String) -> Self {
+        info!(reason, "resident lifter connection lost, evicting and retrying one-shot");
+        Self::Retry
     }
 }
 

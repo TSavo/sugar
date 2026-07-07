@@ -1064,6 +1064,7 @@ fn write_proof_run_bundle(
         signer_cid,
         signer_seed: RUN_SIGNER_SEED,
         declared_at: iso_now(),
+        manifest: None,
     });
     let out_dir = project_root.join(".sugar").join("runs");
     std::fs::create_dir_all(&out_dir)?;
@@ -1241,6 +1242,32 @@ fn build_solve_pool() -> Option<rayon::ThreadPool> {
         .thread_name(|i| format!("sugar-solve-{i}"))
         .build()
         .ok()
+}
+
+/// Load the full memento pool for `cfg` (canonical project root + configured
+/// extras), exactly as `run_with_tiers`/`run_with_proof_run_inner` do inline.
+/// Extracted (part of #3774 warm-daemon slice) so a resident daemon can call
+/// the SAME construction once at startup and hold the result, instead of
+/// re-running `load_all_proofs::run` (a full 96MB CBOR pool decode) on every
+/// prove request.
+pub fn load_pool(cfg: &RunnerConfig) -> MementoPool {
+    let mut pool = load_all_proofs::run(&cfg.project_root);
+    for extra in &cfg.extra_projects {
+        let extra_pool = load_all_proofs::run(extra);
+        pool.merge(extra_pool);
+    }
+    load_all_proofs::load_files_into_pool(&cfg.extra_proof_files, &mut pool);
+    load_all_proofs::load_proof_bytes_into_pool(&cfg.extra_proofs, &mut pool);
+    pool
+}
+
+/// Public wrapper around the solver-plan construction `Runner::new_with_compilers`
+/// uses, so a resident daemon can build the identical `(SolverPlan, registry)`
+/// once at startup rather than reimplementing solver config resolution.
+pub fn build_plan_and_registry_pub(
+    cfg: &RunnerConfig,
+) -> (SolverPlan, HashMap<SolverSeat, SolverHandle>) {
+    build_plan_and_registry(cfg)
 }
 
 fn build_plan_and_registry(cfg: &RunnerConfig) -> (SolverPlan, HashMap<SolverSeat, SolverHandle>) {
@@ -2224,6 +2251,7 @@ fn mint_and_cache(
         signer_cid,
         signer_seed: *seed,
         declared_at: now.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&proof_input);
 

@@ -31,6 +31,29 @@ export interface LinkerDiagnostic {
   } | null;
 }
 
+/**
+ * One row as returned by sugar-linkerd's `proveConsistency` (#3774
+ * warm-daemon slice), the SAME JSON shape `sugar prove --json` renders (both
+ * go through `sugar_verifier::report::row_to_json`).
+ */
+export interface ProveRow {
+  bridge: string | null;
+  property: string | null;
+  propertyCid: string | null;
+  status: string;
+  reason: string;
+  dischargeMethod: string | null;
+  bodyDischargeTier: string | null;
+  verification: unknown;
+  file: string | null;
+  line: number | null;
+  column: number | null;
+}
+
+/** Error codes the daemon can return for `proveConsistency`. */
+export const ERR_PROVE_CONTEXT_UNAVAILABLE = -33004;
+export const ERR_METHOD_NOT_FOUND = -32601;
+
 /** Map a source file extension to the kitId sugar-linkerd dispatches on. */
 export function kitIdForFile(file: string): string | undefined {
   const dot = file.lastIndexOf(".");
@@ -150,6 +173,61 @@ export class LinkerdClient {
     }
     const diags = res.result?.diagnostics;
     return Array.isArray(diags) ? (diags as LinkerDiagnostic[]) : [];
+  }
+
+  /**
+   * Send a `proveConsistency` request and return the rows. This is the warm
+   * path (#3774 warm-daemon slice): the daemon runs `verify_consistency`
+   * against its resident pool/plan/registry (built once at startup), instead
+   * of a cold `sugar prove` shell re-loading the whole proof catalog per
+   * save. Throws `LinkerdRpcError` (code `ERR_PROVE_CONTEXT_UNAVAILABLE` or
+   * `ERR_METHOD_NOT_FOUND` for an older daemon) on failure — callers should
+   * treat that identically to "daemon down" and fall back to a cold path.
+   *
+   * NAMED GAP: as of this slice the daemon verifies its resident on-disk
+   * pool, not `source` (the unsaved buffer) — see
+   * `sugar-linkerd/src/methods.rs::handle_prove_consistency` doc comment.
+   * `source` is still sent so the wire shape matches `parseFile` and no
+   * second RPC shape is needed once lift-and-merge lands.
+   */
+  async proveConsistency(
+    kitId: string,
+    file: string,
+    source: string
+  ): Promise<ProveRow[]> {
+    const { rows } = await this.proveConsistencyDetailed(kitId, file, source);
+    return rows;
+  }
+
+  /**
+   * Same RPC as `proveConsistency`, but also surfaces the `degraded` /
+   * `degradedReason` fields the daemon sets on every response today (see
+   * `sugar-linkerd/src/methods.rs::handle_prove_consistency`): `degraded:
+   * true` means these rows came from the resident on-disk pool, NOT a live
+   * lift of `source` -- a save still needs `mint` to have run first. Callers
+   * that want to skip `mint` on the daemon path must check `degraded ===
+   * false` before doing so; today it is always `true`, so no caller should
+   * skip `mint` yet.
+   */
+  async proveConsistencyDetailed(
+    kitId: string,
+    file: string,
+    source: string
+  ): Promise<{ rows: ProveRow[]; degraded: boolean; degradedReason?: string }> {
+    const res = await this.rpc("proveConsistency", { kitId, file, source });
+    if (res.error) {
+      throw new LinkerdRpcError(res.error.code, res.error.message);
+    }
+    const rows = res.result?.rows;
+    const degraded = res.result?.degraded;
+    return {
+      rows: Array.isArray(rows) ? (rows as ProveRow[]) : [],
+      degraded: typeof degraded === "boolean" ? degraded : true,
+      degradedReason:
+        typeof res.result?.degradedReason === "string"
+          ? res.result.degradedReason
+          : undefined,
+    };
   }
 
   /** Best-effort daemon shutdown (used by tests). */

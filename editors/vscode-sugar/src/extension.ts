@@ -18,8 +18,23 @@ import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
 import * as vscode from "vscode";
-import { LinkerdClient, kitIdForFile, LinkerDiagnostic } from "./linkerdClient";
-import { proveProject, mintProject, ProveDiagnostic, formatDetail } from "./proveClient";
+import {
+  LinkerdClient,
+  kitIdForFile,
+  LinkerDiagnostic,
+  LinkerdRpcError,
+  ERR_METHOD_NOT_FOUND,
+  ERR_PROVE_CONTEXT_UNAVAILABLE,
+  ProveRow as DaemonProveRow,
+} from "./linkerdClient";
+import {
+  proveProject,
+  mintProject,
+  ProveDiagnostic,
+  formatDetail,
+  diagnosticsFromRows,
+  ProveRow as ProveClientRow,
+} from "./proveClient";
 import { TimingLogger } from "./timing";
 
 let client: LinkerdClient | undefined;
@@ -63,11 +78,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   client = new LinkerdClient(socketPath);
   let linkerdUp = false;
   try {
-    await client.ensureDaemon(binaryPath, snapshotPath);
+    // The daemon's resident prove context (vendor pool, lift overlay) is
+    // per-project: pass the workspace root explicitly so proveConsistency
+    // serves THIS project rather than whatever cwd the extension host had.
+    // 24h idle timeout: the editor session owns this daemon; a 10-minute
+    // idle-suicide meant every post-coffee save silently paid the ~34s cold
+    // shell prove (the daemon died, the client threw, the fallback ate it).
+    await client.ensureDaemon(binaryPath, snapshotPath, 86_400_000, [
+      "--project-root",
+      wsRoot,
+    ]);
     linkerdUp = true;
   } catch (e) {
-    client = undefined;
-    console.error(`sugar: linkerd unavailable (link() path off): ${(e as Error).message}`);
+    // Keep the client: the prove path heals (respawns the daemon) per save.
+    // Nulling it here doomed the whole session to the cold path.
+    console.error(`sugar: linkerd unavailable at activation (will heal on save): ${(e as Error).message}`);
   }
 
   if (linkerdUp) {
@@ -153,6 +178,10 @@ async function linkDocument(doc: vscode.TextDocument, kitId: string): Promise<vo
     // surface it as an information diagnostic-free notice rather than a squiggle.
     console.error(`sugar: parseFile failed for ${doc.fileName}: ${(e as Error).message}`);
   }
+  // Warm consistency prove now runs as part of `runProve` (see below): the
+  // resident daemon's `proveConsistency` is tried first there, on the actual
+  // editor prove path (mint-on-save + project-local diagnostics), instead of
+  // as an unpainted side-channel here.
 }
 
 /**
@@ -167,8 +196,9 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     return;
   }
   const kitId = kitIdForFile(doc.fileName);
-  if (kitId !== "python") {
-    // The demo lifter (native-assertion vs vendor .proof) is python today.
+  if (kitId !== "python" && kitId !== "rust") {
+    // The demo lifters (native-assertion vs vendor .proof) are python and rust
+    // today; other kits fall through until their own lift/witness surfaces land.
     return;
   }
   const projectDir = resolveProjectDir(doc.uri);
@@ -176,39 +206,133 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     return;
   }
   try {
-    // The lifter needs a Python env with the sugar kit importable. The editor's
-    // ambient env usually lacks it, so honor optional config: a bin dir prefixed
-    // onto PATH and a PYTHONPATH suffix. Without these, prove mints in the
-    // ambient env (works only if the kit is globally installed).
+    // The lifter needs its language env resolvable. For python that means a
+    // PYTHONPATH import root. For rust, `sugar-cli` discovers component
+    // manifests (rust-test-assertions / rust-cargo-test-witness lifters) by
+    // walking the project root and its ancestors for `.sugar/components/`
+    // (see component_plan.rs::ancestor_component_roots) -- so a consumer
+    // project that ships its OWN `.sugar/components/*/manifest.toml` with
+    // sugarbin-resolved absolute binary paths needs no extra env at all. The
+    // optional `sugar.prove.rustBinDir` only covers the case where cargo/
+    // rustc or the helper RPC binaries are not already on the ambient PATH.
     const cfg = vscode.workspace.getConfiguration("sugar");
     const binDir = cfg.get<string>("prove.pythonBinDir") || "";
     const pyPath = cfg.get<string>("prove.pythonPath") || "";
+    const rustBinDir = cfg.get<string>("prove.rustBinDir") || "";
     const env: NodeJS.ProcessEnv = {};
-    if (binDir) {
+    if (kitId === "python" && binDir) {
       env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
     }
-    if (pyPath) {
+    if (kitId === "python" && pyPath) {
       env.PYTHONPATH = process.env.PYTHONPATH ? `${pyPath}:${process.env.PYTHONPATH}` : pyPath;
     }
-    // Time each LSP step (mint -> prove -> paint) into the timing log.
-    const run = timing?.run(path.basename(projectDir) + "/" + path.basename(doc.fileName));
-    // On-save: re-mint the edited source first so prove reflects the current
-    // text (not a stale proof), then prove.
-    const mint = () => mintProject({ binaryPath: proveBinaryPath, projectDir, env });
-    if (run) {
-      await run.time("mint", mint, (ok) => ({ ok }));
-    } else {
-      await mint();
+    if (kitId === "rust" && rustBinDir) {
+      env.PATH = `${rustBinDir}:${process.env.PATH ?? ""}`;
     }
-    const prove = () => proveProject({ binaryPath: proveBinaryPath, projectDir, env });
-    const res = run
-      ? await run.time("prove", prove, (r) => ({
-          rows: r.rows.length,
-          diagnostics: r.diagnostics.length,
-          exitCode: r.exitCode,
-          subprocessMs: r.elapsedMs,
+    // Time each LSP step into the timing log.
+    const run = timing?.run(path.basename(projectDir) + "/" + path.basename(doc.fileName));
+    // DAEMON-FIRST, MINT-FREE: the daemon's lift-and-merge overlay lifts the
+    // request's OWN source text (sent below), so no CLI mint is needed on the
+    // warm path -- the mint runs ONLY if the daemon path falls through to the
+    // cold shell fallback (which proves the on-disk .proof and therefore
+    // needs the on-save re-mint).
+    const mint = () => mintProject({ binaryPath: proveBinaryPath, projectDir, env });
+    // DAEMON-FIRST PRODUCER (#3774 warm-daemon slice): if the resident
+    // sugar-linkerd daemon is up and speaks `proveConsistency`, ask it first --
+    // it amortizes the pool/plan/registry/compiler load across saves instead of
+    // re-loading the whole catalog per `sugar prove` shell-out. Both producers
+    // feed the SAME diagnostic mapping below (`diagnosticsFromRows` +
+    // `proveToVsDiagnostic`), so there is exactly one painter regardless of
+    // which producer ran. Any failure (older daemon: ERR_METHOD_NOT_FOUND;
+    // daemon still loading: ERR_PROVE_CONTEXT_UNAVAILABLE; daemon down: any
+    // throw) falls back to the existing mint+proveProject shell path -- never a
+    // silent gap, just a slower cold path.
+    const kitIdForDaemon = kitId; // narrowed to "python" above
+    const daemonProve = async (): Promise<ProveDiagnostic[] | undefined> => {
+      if (!client) {
+        return undefined;
+      }
+      try {
+        // The daemon's lift-and-merge overlay lifts `doc.getText()` itself
+        // (source-overlay project + resident vendor pool), so the warm path
+        // needs NO CLI mint. A `degraded: true` response means the daemon
+        // fell back to its resident on-disk pool for this request -- treat it
+        // as a MISS (return undefined) so the cold path below runs its own
+        // mint+prove against fresh disk state instead of trusting stale rows.
+        const { rows, degraded, degradedReason } =
+          await client.proveConsistencyDetailed(
+            kitIdForDaemon,
+            doc.fileName,
+            doc.getText()
+          );
+        if (degraded) {
+          console.log(
+            `sugar: daemon-prove degraded -> cold fallback: ${degradedReason ?? "no reason given"}`
+          );
+          return undefined;
+        }
+        return diagnosticsFromRows(rows as unknown as ProveClientRow[]);
+      } catch (e) {
+        // HEAL, don't just fall back: a dead daemon (idle exit, crash, stale
+        // socket) is respawned once and the request retried -- otherwise every
+        // save after an idle period silently pays the ~34s cold prove.
+        try {
+          const cfg2 = vscode.workspace.getConfiguration("sugar");
+          const lbin = cfg2.get<string>("linkerd.binaryPath") || undefined;
+          const sp = resolveSocketPath(cfg2.get<string>("linkerd.socketPath") || "");
+          const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? projectDir;
+          await client!.ensureDaemon(lbin, sp + ".snapshot", 86_400_000, [
+            "--project-root",
+            ws,
+          ]);
+          const retry = await client!.proveConsistencyDetailed(
+            kitIdForDaemon,
+            doc.fileName,
+            doc.getText()
+          );
+          if (!retry.degraded) {
+            console.log("sugar: daemon healed after respawn");
+            return diagnosticsFromRows(retry.rows as unknown as ProveClientRow[]);
+          }
+        } catch (e2) {
+          console.log(`sugar: daemon respawn failed: ${(e2 as Error).message}`);
+        }
+        const code = e instanceof LinkerdRpcError ? e.code : undefined;
+        const expected =
+          code === ERR_METHOD_NOT_FOUND || code === ERR_PROVE_CONTEXT_UNAVAILABLE;
+        console.log(
+          `sugar: daemon-prove unavailable, falling back to cold prove ` +
+            `(file=${doc.fileName} expected=${expected} error=${(e as Error).message})`
+        );
+        return undefined;
+      }
+    };
+    let diagnostics = run
+      ? await run.time("daemon-prove", daemonProve, (d) => ({
+          usedDaemon: d !== undefined,
+          diagnostics: d?.length ?? 0,
         }))
-      : await prove();
+      : await daemonProve();
+    let usedDaemon = diagnostics !== undefined;
+    if (diagnostics === undefined) {
+      // COLD FALLBACK: shell mint (the on-disk .proof must reflect the save)
+      // then shell prove. This is the only path that mints now.
+      if (run) {
+        await run.time("mint", mint, (ok) => ({ ok }));
+      } else {
+        await mint();
+      }
+      const prove = () => proveProject({ binaryPath: proveBinaryPath, projectDir, env });
+      const res = run
+        ? await run.time("prove", prove, (r) => ({
+            rows: r.rows.length,
+            diagnostics: r.diagnostics.length,
+            exitCode: r.exitCode,
+            subprocessMs: r.elapsedMs,
+          }))
+        : await prove();
+      diagnostics = res.diagnostics;
+    }
     const paintStart = Date.now();
     // Rebuild the whole prove collection for this project from scratch so
     // cleared rows (green now) drop their squiggles.
@@ -221,7 +345,7 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     // would squiggle files the user never wrote. Keep only rows whose resolved
     // file is INSIDE projectDir AND exists on disk (the consumer's own sources).
     const rootAbs = path.resolve(projectDir);
-    for (const d of res.diagnostics) {
+    for (const d of diagnostics) {
       const abs = path.resolve(
         path.isAbsolute(d.file) ? d.file : path.join(projectDir, d.file)
       );
@@ -231,7 +355,11 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
         continue;
       }
       const list = byFile.get(abs) ?? [];
-      list.push(proveToVsDiagnostic(d));
+      let dd = d;
+      if (abs === doc.uri.fsPath && d.line - 1 >= 0 && d.line - 1 < doc.lineCount) {
+        dd = relabelFactsAgainstSource(d, doc.lineAt(d.line - 1).text);
+      }
+      list.push(proveToVsDiagnostic(dd));
       byFile.set(abs, list);
     }
     for (const [file, list] of byFile) {
@@ -240,7 +368,7 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     if (run) {
       const painted = Array.from(byFile.values()).reduce((n, l) => n + l.length, 0);
       run.step("paint", Date.now() - paintStart, { files: byFile.size, painted });
-      run.end({ projectDir, file: doc.fileName });
+      run.end({ projectDir, file: doc.fileName, usedDaemon });
     }
   } catch (e) {
     console.error(`sugar: prove failed for ${projectDir}: ${(e as Error).message}`);
@@ -254,6 +382,43 @@ function resolveProjectDir(uri: vscode.Uri): string | undefined {
     return folder.uri.fsPath;
   }
   return path.dirname(uri.fsPath);
+}
+
+/**
+ * GROUND-TRUTH RELABEL: on a two-literal stated/stated contradiction, which
+ * value is "yours" is decided by the SOURCE LINE the row anchors to -- the
+ * buffer IS the consumer's assertion. Producer-dependent conjunction order
+ * (daemon overlay vs CLI on-disk pool) can swap the vendor/client labels the
+ * verifier attached (provenance-carried labels are the constructional fix,
+ * tracked separately); the editor corrects the LABELS -- never the verdict,
+ * never the conjuncts -- using what the user actually typed. If the anchored
+ * line contains the "vendor" value but not the "client" value, the labels are
+ * swapped: fix them.
+ */
+function relabelFactsAgainstSource(d: ProveDiagnostic, lineText: string): ProveDiagnostic {
+  const rhs = (fol?: string): string | undefined => {
+    if (!fol) return undefined;
+    const i = fol.lastIndexOf(" = ");
+    return i >= 0 ? fol.slice(i + 3).trim() : undefined;
+  };
+  const vendorVal = rhs(d.vendorFactFol);
+  if (vendorVal === undefined || !d.vendorFactFol) return d;
+  const bare = vendorVal.replace(/^"|"$/g, "");
+  const lineHasVendorVal =
+    lineText.includes(`== ${vendorVal}`) || lineText.includes(`== "${bare}"`) ||
+    lineText.includes(`, ${vendorVal})`) || lineText.includes(`, "${bare}")`);
+  if (!lineHasVendorVal) return d; // labels already correct
+  // The "vendor" value is what the user typed => labels are swapped. The true
+  // vendor value is the OTHER literal in the client conjunction.
+  const clientEqs = (d.clientFactFol ?? "").split("\u2227").join("∧").split("∧");
+  for (const part of clientEqs) {
+    const v = rhs(part.trim());
+    if (v !== undefined && v !== vendorVal) {
+      const lhs = d.vendorFactFol.slice(0, d.vendorFactFol.lastIndexOf(" = "));
+      return { ...d, vendorFactFol: `${lhs} = ${v}` };
+    }
+  }
+  return d;
 }
 
 /** Turn one prove diagnostic into a VS Code diagnostic anchored at its locus. */

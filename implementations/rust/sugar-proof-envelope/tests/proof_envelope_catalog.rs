@@ -39,6 +39,7 @@ fn fixture_input() -> ProofEnvelopeInput {
         signer_cid: "blake3-512:cc".to_string(),
         signer_seed: [0x42u8; 32],
         declared_at: "2026-04-30T00:00:00.000Z".to_string(),
+        manifest: None,
     }
 }
 
@@ -93,6 +94,7 @@ fn member_insertion_order_does_not_matter() {
         signer_cid: "blake3-512:cc".into(),
         signer_seed: [0u8; 32],
         declared_at: "2026-04-30T00:00:00.000Z".into(),
+        manifest: None,
     };
     assert_eq!(
         build_proof_envelope(&mk(graph_with_sources(&["bb", "aa"]))).bytes,
@@ -123,6 +125,7 @@ fn empty_members_still_produces_valid_envelope() {
         signer_cid: "blake3-512:cc".into(),
         signer_seed: [0u8; 32],
         declared_at: "2026-04-30T00:00:00.000Z".into(),
+        manifest: None,
     };
     let out = build_proof_envelope(&input);
     assert_eq!(out.bytes[0], 0xA9);
@@ -213,6 +216,7 @@ fn catalog_member_filename_rule_matches_blake3_of_value_bytes() {
         signer_cid: "blake3-512:cc".into(),
         signer_seed: [0u8; 32],
         declared_at: "2026-04-30T00:00:00.000Z".into(),
+        manifest: None,
     };
     assert_ne!(
         build_proof_envelope(&mk(graph_with_sources(&["aa"]))).cid,

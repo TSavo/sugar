@@ -1,0 +1,11 @@
+name = "rust-test-assertions-lift"
+version = "0.1.0"
+protocol_version = "pep/1.7.0"
+kind = "lift"
+command = ["@BIN_DIR@/rust_test_assertions_rpc"]
+working_dir = "."
+
+[capabilities]
+authoring_surfaces = ["rust-test-assertions"]
+ir_version = "v1.1.0"
+emits_signed_mementos = false

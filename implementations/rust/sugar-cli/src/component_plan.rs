@@ -8,7 +8,7 @@
 // override this path; component planning is the default only when no explicit
 // config exists.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -218,6 +218,26 @@ pub fn plan_workspace(project_root: &Path, intent: PlanIntent) -> ComponentPlan 
     plan_workspace_with_options(project_root, intent, ComponentPlanOptions::default())
 }
 
+/// Process-wide memo for `plan_workspace_with_options` (#3774 daemonLift
+/// trim). The dominant per-save cost in the daemon's overlay mint was this
+/// function: it SPAWNS every registered component binary and runs an
+/// initialize/plan/shutdown JSON-RPC handshake (~1.1s/call on the pandas
+/// demo) to answer a question whose inputs are stable across saves. The
+/// cache key is a fingerprint of EVERYTHING the subprocess round-trip
+/// depends on: project root, intent, options, the full workspace census
+/// (languages + forensic items), and each discovered component registration
+/// INCLUDING its binary's mtime -- so editing the workspace surface, adding
+/// a component, or rebuilding a component binary all miss the cache and
+/// re-run the real handshake. The census + discovery walk still runs fresh
+/// on every call (it is the cheap part and it feeds the key); only the
+/// subprocess RPCs are memoized. One-shot CLI processes are unaffected
+/// (cold cache per process); the long-lived daemon is the beneficiary.
+fn component_plan_cache() -> &'static std::sync::Mutex<HashMap<String, ComponentPlan>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, ComponentPlan>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
 pub fn plan_workspace_with_options(
     project_root: &Path,
     intent: PlanIntent,
@@ -232,6 +252,35 @@ pub fn plan_workspace_with_options(
     let discovered = discover_components(&project_root);
     let components = discovered.components;
     plan.diagnostics.extend(discovered.diagnostics);
+
+    let cache_key = {
+        let mut key = format!(
+            "root={}\nintent={}\noptions={:?}\ncensus={:?}\n",
+            project_root.display(),
+            intent.as_str(),
+            options,
+            plan.census,
+        );
+        for component in &components {
+            let binary_mtime = component
+                .command
+                .first()
+                .and_then(|bin| std::fs::metadata(bin).ok())
+                .and_then(|meta| meta.modified().ok());
+            key.push_str(&format!("component={component:?} mtime={binary_mtime:?}\n"));
+        }
+        blake3_512_of(key.as_bytes())
+    };
+    if let Ok(cache) = component_plan_cache().lock() {
+        if let Some(cached) = cache.get(&cache_key) {
+            debug!(
+                project = %project_root.display(),
+                intent = intent.as_str(),
+                "component plan served from process cache (fingerprint hit)"
+            );
+            return cached.clone();
+        }
+    }
     let census_languages = census_languages(&plan.census);
     let mut claimed_languages = BTreeSet::new();
     let mut declined_languages = BTreeSet::new();
@@ -302,6 +351,9 @@ pub fn plan_workspace_with_options(
                 });
             }
         }
+    }
+    if let Ok(mut cache) = component_plan_cache().lock() {
+        cache.insert(cache_key, plan.clone());
     }
     plan
 }
