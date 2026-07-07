@@ -8,7 +8,7 @@ From clone to first demo:
 
 ```sh
 # 1. Install system dependencies (macOS example; see table below for Ubuntu)
-brew install rust go python@3.12 node@22 pnpm openssl@3 nlohmann-json
+brew install rust python@3.12 node@22 pnpm openssl@3 nlohmann-json
 
 # 2. Build the CLI
 cargo install --path implementations/rust/sugar-cli
@@ -27,7 +27,6 @@ The build supports **11 host languages** (Rust, Go, C++, TypeScript, C#, Python,
 |---------|------------------|-----------------|---------|
 | **Rust stable** | `rustup install stable` | `rustup install stable` | Canonical CLI, all Rust kits, conformance harness |
 | **Python 3.12** | `brew install python@3.12` | `sudo apt install python3.12 python3-pip` | Python kit, test lifting, pip venv provisioning |
-| **Go 1.22+** | `brew install go` | `nodesource` apt repo | Go kit, go test lifting |
 | **Node 22 + pnpm** | `brew install node@22 pnpm` | `nodesource` apt repo + `npm i -g pnpm` | TypeScript kit, emitter plugins |
 | **.NET 10 SDK** | `brew install --cask dotnet-sdk` | Microsoft `packages-microsoft-prod` apt repo | C# kit |
 | **OpenSSL 3** | `brew install openssl@3` | `sudo apt install libssl-dev` | Crypto (ed25519, blake3 build) |
@@ -60,9 +59,6 @@ cargo install --path implementations/rust/sugar-cli
 
 # Python kits (test lifting, hypothesis, pytest witness, source binding)
 cd implementations/python && pip install -e .
-
-# Go kits
-cd implementations/go && go build ./... && go build ./sugar-lift-go/...
 
 # TypeScript (Node.js emitters, realize kits)
 cd implementations/typescript && pnpm install && pnpm build

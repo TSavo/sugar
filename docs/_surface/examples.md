@@ -394,16 +394,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Doc priority:** P2 (witness verification)
 - **Existing docs:** none
 
-## Cross-Language & Polyglot Proofs
-
-### polyglot-rust-go
-**Summary:** Rust and Go library interop: same algorithm (e.g., checksum, encoding) proven in both languages and shown to produce equivalent results.
-
-- **Key paths:** `/examples/polyglot-rust-go/` (run.sh, README.md, rust/, go/)
-- **Audience:** End-user (multi-language correctness)
-- **Doc priority:** P1 (federation flagship)
-- **Existing docs:** `./examples/polyglot-rust-go/README.md`
-
 ## Async / Effects Proofs (Tokio)
 
 ### tokio-channel-implication-edge
