@@ -1494,7 +1494,7 @@ fn value_arc_to_json(v: &std::sync::Arc<sugar_canonicalizer::Value>) -> Json {
 /// `.sugar/imports` and the project root) is never mutated in place, so
 /// subsequent requests always overlay onto the same vendor-only base. No
 /// scratch `.proof` file is ever written or re-read.
-/// `verify_consistency_scoped` runs against the per-request overlay. `degraded` is `false` on this path; a lift failure
+/// The solve door (`Some(scope)`) runs against the per-request overlay. `degraded` is `false` on this path; a lift failure
 /// (mint error, missing lift kit, no `[[plugins]]` declared) falls back to
 /// the v1 disk-pool answer with `degraded: true` and a reason, exactly as
 /// before -- never a silently different (unfaithful) scratch member.
@@ -1781,7 +1781,7 @@ pub async fn handle_prove_consistency(
 
     // EDITOR SCOPE: the daemon serves an editor, and the editor only paints
     // rows anchored inside the project. Solve ONLY those groups (whole groups,
-    // vendor conjuncts intact -- see verify_consistency_scoped) instead of the
+    // vendor conjuncts intact -- the door's `Some(scope)` filter) instead of the
     // vendor's thousands of internal obligations. On the pandas demo this is
     // the difference between ~8k solves (~60s) and the consumer's own handful
     // (milliseconds). The CLI's full `sugar prove` remains the unscoped door.

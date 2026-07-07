@@ -150,7 +150,7 @@ fn z3_on_path() -> bool {
 
 /// DIFFERENTIAL GATE for the cached-index solve path (#3774 daemonSolve
 /// trim): `verify_consistency_scoped_with_base_index(base_index, overlay)`
-/// must produce EXACTLY the rows `verify_consistency_scoped` produces over
+/// must produce EXACTLY the rows the solve door (`Some(scope)`) produces over
 /// the merged (base + overlay members) pool -- field for field. This is the
 /// soundness rail for the factoring: the cached structures are the SAME
 /// construction verify_consistency computes, moved not reimplemented; any
@@ -196,8 +196,9 @@ fn cached_index_path_matches_merged_pool_scoped_run() {
     let (plan, registry) = z3_plan_and_registry();
     let compilers = test_compilers();
 
-    let mut reference = sugar_verifier::consistency::verify_consistency_scoped(
-        &merged, &plan, &registry, &compilers, root, root,
+    let reference_index = sugar_verifier::consistency::build_consistency_index(&merged);
+    let mut reference = sugar_verifier::consistency::verify_consistency_from_indexes(
+        &reference_index, None, &plan, &registry, &compilers, root, Some(root),
     );
     let base_index = sugar_verifier::consistency::build_consistency_index(&base);
     let mut cached = sugar_verifier::consistency::verify_consistency_scoped_with_base_index(
@@ -241,8 +242,9 @@ fn cached_index_path_matches_merged_pool_scoped_run() {
     insert_source_memento(&mut dup_overlay, "cached_vendor5_src", name, "Cargo.toml");
     let mut merged_dup = base.clone(); // pool dedupes by CID: identical to base
     insert_contract(&mut merged_dup, "cached_vendor5", name, eqf(var("r"), int(5)));
-    let mut ref_dup = sugar_verifier::consistency::verify_consistency_scoped(
-        &merged_dup, &plan, &registry, &compilers, root, root,
+    let ref_dup_index = sugar_verifier::consistency::build_consistency_index(&merged_dup);
+    let mut ref_dup = sugar_verifier::consistency::verify_consistency_from_indexes(
+        &ref_dup_index, None, &plan, &registry, &compilers, root, Some(root),
     );
     let mut cached_dup = sugar_verifier::consistency::verify_consistency_scoped_with_base_index(
         &base_index, &dup_overlay, &plan, &registry, &compilers, root, root,
