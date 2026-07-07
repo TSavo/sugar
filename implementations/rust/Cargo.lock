@@ -1824,6 +1824,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
+ "serde",
  "serde_json",
  "sugar-canonicalizer",
  "sugar-claim-envelope",

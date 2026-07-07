@@ -40,6 +40,7 @@ sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-claim-envelope = { path = "../sugar-claim-envelope" }
 sugar-proof-envelope = { path = "../sugar-proof-envelope" }
 libsugar = { path = "../libsugar" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
 thiserror = { workspace = true }

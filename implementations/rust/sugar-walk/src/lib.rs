@@ -20,6 +20,7 @@ pub mod lift;
 pub mod locus;
 pub mod loops_and_exceptions;
 pub mod ra_daemon_client;
+pub mod source_aliases;
 pub mod ra_oracle;
 pub mod shadow;
 pub mod signature;
