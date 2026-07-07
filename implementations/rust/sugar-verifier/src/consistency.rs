@@ -2532,6 +2532,7 @@ pub fn verify_consistency(
     plan: &SolverPlan,
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
+    project_root: &Path,
 ) -> Vec<ConsistencyResult> {
     let mut candidates: Vec<ConsistencyCandidate> = Vec::new();
     let mut provenance_refusals: Vec<ConsistencyResult> = Vec::new();
@@ -2675,9 +2676,32 @@ pub fn verify_consistency(
             continue;
         };
         if let Some(l) = locus_from_body(&body) {
-            locus_by_name
-                .entry(contract_property_name(&body).to_string())
-                .or_insert(l);
+            let name = contract_property_name(&body).to_string();
+            match locus_by_name.entry(name) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(l);
+                }
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    // PROJECT-LOCAL PREFERENCE. When two source mementos share a
+                    // contractName (a consumer asserting the EXACT sworn fact ->
+                    // case-1 congruence, e.g. `len(pd.DataFrame()) == 1`
+                    // contradicting pandas' sworn `== 0`), the consumer's
+                    // assertion and the vendor's sworn assertion collide on the
+                    // same euf coordinate. First-write-wins would anchor the
+                    // squiggle at the VENDOR's source file (pandas' internal
+                    // `tests/frame/test_constructors.py`) instead of the user's
+                    // line. Overwrite only when the NEW locus's file EXISTS under
+                    // project_root on disk and the CURRENT one does not -- the
+                    // consumer's `test_consumer.py` lives under the project; the
+                    // vendor's path does not. Fail-open: if neither or both
+                    // exist, keep first-write (no worse than before).
+                    let new_local = project_root.join(&l.file).exists();
+                    let cur_local = project_root.join(&e.get().file).exists();
+                    if new_local && !cur_local {
+                        e.insert(l);
+                    }
+                }
+            }
         }
     }
 
@@ -3171,7 +3195,13 @@ mod tests {
             eqf(var("r"), int(6)),
         );
         insert_contract(&mut pool, "blake3-512:numpy5", name, eqf(var("r"), int(5)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3187,7 +3217,13 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:a", name, eqf(var("r"), int(5)));
         insert_contract(&mut pool, "blake3-512:b", name, gt(var("r"), int(0)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -3198,7 +3234,13 @@ mod tests {
         // a LONE contract has no sibling to contradict -> REFUSED (vacuous)
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:solo", name, eqf(var("r"), int(5)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -3235,7 +3277,13 @@ mod tests {
             "make_value#euf#c:callresult_make_value_a0()::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3269,7 +3317,13 @@ mod tests {
             "tokio_await_scalar_contradiction",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3301,7 +3355,13 @@ mod tests {
             "width_refine#euf#c:callresult_x::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_ne!(
             res[0].verdict,
@@ -3331,7 +3391,13 @@ mod tests {
             "width_value#euf#c:callresult_x::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3363,7 +3429,13 @@ mod tests {
             "two_distinct_calls#euf#c:callresult_x::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3403,7 +3475,13 @@ mod tests {
             name,
             lt(callg.clone(), int(5)),
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3437,7 +3515,13 @@ mod tests {
             name,
             lt(callg.clone(), int(5)),
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "still ONE contract: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3505,7 +3589,13 @@ mod tests {
             eqf(call_enc(string_const("def")), string_const("zzz")),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two fresh consumer assertions: {res:?}");
         let good = res
             .iter()
@@ -3626,7 +3716,13 @@ mod tests {
             eqf(call_enc(string_const("def")), string_const("zzz")),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two consumer assertions: {res:?}");
         let good = res
             .iter()
@@ -3674,7 +3770,13 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:strrow", name, universe);
         insert_contract(&mut pool, "blake3-512:introw", name, eqf(callf, int(7)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3717,7 +3819,13 @@ mod tests {
         let inv = str_in_regex(str_const("alice_01"), "^[a-z][a-z0-9_]{2,15}$");
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:regexgood", name, inv);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one membership row: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3738,7 +3846,13 @@ mod tests {
         let inv = str_in_regex(str_const("Alice!"), "^[a-z][a-z0-9_]{2,15}$");
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:regexbad", name, inv);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one membership row: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3760,7 +3874,13 @@ mod tests {
         let inv = str_in_regex(opaque_subject, "^[a-z][a-z0-9_]{2,15}$");
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:regexopaque", name, inv);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one membership row: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3790,7 +3910,13 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:enclt", name, lt10);
         insert_contract(&mut pool, "blake3-512:encgt", name, gt20);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3817,7 +3943,13 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:enclt10", name, lt10);
         insert_contract(&mut pool, "blake3-512:enclt15", name, lt15);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3856,7 +3988,13 @@ mod tests {
         // The universal alone has no sibling to contradict -> REFUSED (vacuous).
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:fa", name, forall.clone());
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -3871,7 +4009,13 @@ mod tests {
         ]});
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:fc", name, contradiction);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -3919,7 +4063,13 @@ mod tests {
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             point_inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         // Pin WHICH row refutes: the point-claim must be the Unsatisfied one and
         // the loop universal itself must stay internally consistent. An any()
@@ -3972,7 +4122,13 @@ mod tests {
             "src/lib.rs::tests::t::g#euf#c:callresult_g_a1(i:2)::assertion",
             point_inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         let point = res
             .iter()
@@ -4008,7 +4164,13 @@ mod tests {
             stated_inv,
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one stated-only obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -4039,7 +4201,13 @@ mod tests {
         );
         insert_contract(&mut pool, "blake3-512:stated-lie-copy-b", name, stated_inv);
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -4078,7 +4246,13 @@ mod tests {
             stated_inv,
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "distinct names stay distinct rows: {res:?}");
         for row in &res {
             assert_eq!(
@@ -4114,7 +4288,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(calla, int(11))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -4151,7 +4331,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(calla, int(10))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             2,
@@ -4189,7 +4375,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(calla, int(11))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -4234,7 +4426,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(calla, int(20))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -4275,7 +4473,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 3, "three separate obligations: {res:?}");
         let consumer_a = res
             .iter()
@@ -4668,7 +4872,13 @@ mod tests {
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             point_inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         let point = res
             .iter()
@@ -4716,7 +4926,13 @@ mod tests {
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]}),
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         let point = res
             .iter()
             .find(|r| r.contract_cid == test_cid_string("blake3-512:wpoint"))
@@ -4752,7 +4968,13 @@ mod tests {
         pool.insert_unanchored_for_tests(test_cid("witnessmember"), witness);
         insert_contract(&mut pool, "blake3-512:c5", name, eqf(var("r"), int(5)));
         insert_contract(&mut pool, "blake3-512:c6", name, eqf(var("r"), int(6)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert!(
             res.iter()
                 .any(|r| r.verdict == ObligationVerdict::Unsatisfied),
@@ -4781,7 +5003,13 @@ mod tests {
             "test_add",
             eqf(var("r"), int(6)),
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         // per-contract: each is a lone constraint (vacuous) -> both Refused, none Discharged.
         // The key guarantee: bare names are NOT conjoined — the two rows stay separate and
         // do NOT combine into one obligation that could falsely refuse.
@@ -4881,7 +5109,13 @@ mod tests {
             body,
         );
         let (plan, reg) = z3_plan_and_registry();
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
 
         assert_eq!(res.len(), 1, "one witness-package obligation: {res:?}");
         assert_eq!(
@@ -4916,7 +5150,13 @@ mod tests {
             "Stated",
         );
         let (plan, reg) = z3_plan_and_registry();
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
 
         assert_eq!(res.len(), 1, "one panic-callsite obligation: {res:?}");
         assert_eq!(
