@@ -99,7 +99,7 @@ fn row_to_json(row: &ReportRow) -> Json {
         "reason": row.reason,
         "dischargeMethod": row.discharge_method,
         "bodyDischargeTier": row.body_discharge_tier,
-        "verification": row.verification.clone(),
+        "verification": verification_with_fol(row.verification.as_ref()),
         "file": row.callsite.file,
         "line": row.callsite.line,
         "column": row.callsite.source_column,
@@ -107,6 +107,78 @@ fn row_to_json(row: &ReportRow) -> Json {
         "callsiteBundleCid": row.callsite.callsite_bundle_cid,
         "panicSite": row.callsite.panic_site,
     })
+}
+
+/// Enrich a consistency-row's verification detail with the THREE conjoined
+/// facts rendered as human-readable FOL -- the SAME rendering
+/// `sugar lift --report --visual` produces (`proofir_formula_to_fol_with_instances`).
+/// This is what the IDE squiggle shows for the green/red flip:
+///   - `vendorUniverseFol`: the vendor's proved universe (`str.eq-bv-blocks(...)`),
+///     from `linkedPosts[].vendorPost` (ProofIR, inline on the row).
+///   - `clientFactFol`:     the consumer's OWN sworn fact, from `clientFactIr`.
+///   - `vendorFactFol`:     the vendor's own sworn vector(s), from `vendorFactIr`.
+/// Wire-don't-invent: every string comes from the shared renderer. Fail-open:
+/// a fact whose ProofIR is absent or unrenderable is simply omitted, never faked.
+/// Non-consistency verifications (or `None`) pass through unchanged.
+fn verification_with_fol(verification: Option<&Json>) -> Json {
+    let Some(v) = verification else {
+        return Json::Null;
+    };
+    if v.get("kind").and_then(|x| x.as_str()) != Some("consistency") {
+        return v.clone();
+    }
+    let mut out = v.clone();
+    let obj = match out.as_object_mut() {
+        Some(o) => o,
+        None => return v.clone(),
+    };
+
+    // VENDOR UNIVERSE: render each distinct linked vendor post's ProofIR.
+    if let Some(posts) = v.get("linkedPosts").and_then(|x| x.as_array()) {
+        let mut readings: Vec<String> = Vec::new();
+        for post in posts {
+            if let Some(ir) = post.get("vendorPost") {
+                let fol = crate::cmd_lift::proofir_formula_to_fol_with_instances(ir);
+                if !readings.contains(&fol) {
+                    readings.push(fol);
+                }
+            }
+        }
+        if !readings.is_empty() {
+            obj.insert(
+                "vendorUniverseFol".to_string(),
+                json!(fol_line(&readings.join(" ∧ "))),
+            );
+        }
+    }
+
+    // YOUR FACT: the consumer's own asserted equality.
+    if let Some(ir) = v.get("clientFactIr") {
+        let fol = crate::cmd_lift::proofir_formula_to_fol_with_instances(ir);
+        obj.insert("clientFactFol".to_string(), json!(fol_line(&fol)));
+    }
+
+    // VENDOR FACT: the vendor's own sworn ground vector(s).
+    if let Some(facts) = v.get("vendorFactIr").and_then(|x| x.as_array()) {
+        let readings: Vec<String> = facts
+            .iter()
+            .map(crate::cmd_lift::proofir_formula_to_fol_with_instances)
+            .collect();
+        if !readings.is_empty() {
+            obj.insert(
+                "vendorFactFol".to_string(),
+                json!(fol_line(&readings.join(" ∧ "))),
+            );
+        }
+    }
+
+    out
+}
+
+/// Prefix a rendered FOL formula with the turnstile, matching the
+/// `{name} ⊢ {rendered}` shape of `sugar lift --report --visual`.
+fn fol_line(rendered: &str) -> String {
+    format!("⊢ {rendered}")
 }
 
 fn discharge_split_to_json(r: &Report) -> Json {
@@ -476,6 +548,92 @@ mod tests {
             j["rows"][0]["verification"]["linkedPosts"][0]["sourceSymbol"],
             "call:enc"
         );
+    }
+
+    #[test]
+    fn consistency_row_renders_three_part_fol() {
+        // A consistency row carrying the vendor universe (linkedPosts.vendorPost),
+        // the consumer's own fact (clientFactIr), and the vendor's sworn vector
+        // (vendorFactIr) as ProofIR must surface all three as human-readable FOL
+        // rendered by the SAME renderer `sugar lift --report --visual` uses.
+        let mut r = Report::default();
+        r.rows.push(ReportRow {
+            callsite: CallSite {
+                bridge_ir_name: "consistency".into(),
+                property_name: "consistency:enc#euf#c:call:enc(s:'xyz')::assertion".into(),
+                ..CallSite::default()
+            },
+            status: ObligationVerdict::Unsatisfied,
+            reason: "contradictory".into(),
+            discharge_method: Some("consistency".into()),
+            body_discharge_tier: None,
+            verification: Some(json!({
+                "kind": "consistency",
+                "linkedPosts": [{
+                    "sourceSymbol": "call:enc",
+                    "vendorPost": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            { "kind": "var", "name": "out" },
+                            { "kind": "const", "value": "YWJj",
+                              "sort": { "kind": "primitive", "name": "String" } }
+                        ]
+                    }
+                }],
+                "clientFactIr": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        { "kind": "ctor", "name": "call:enc", "args": [
+                            { "kind": "const", "value": "xyz",
+                              "sort": { "kind": "primitive", "name": "String" } }
+                        ]},
+                        { "kind": "const", "value": "AAAA",
+                          "sort": { "kind": "primitive", "name": "String" } }
+                    ]
+                },
+                "vendorFactIr": [{
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        { "kind": "ctor", "name": "call:enc", "args": [
+                            { "kind": "const", "value": "abc",
+                              "sort": { "kind": "primitive", "name": "String" } }
+                        ]},
+                        { "kind": "const", "value": "YWJj",
+                          "sort": { "kind": "primitive", "name": "String" } }
+                    ]
+                }],
+            })),
+        });
+
+        let j = report_to_json(&r);
+        let v = &j["rows"][0]["verification"];
+        let universe = v["vendorUniverseFol"].as_str().unwrap_or_default();
+        let client = v["clientFactFol"].as_str().unwrap_or_default();
+        let vendor = v["vendorFactFol"].as_str().unwrap_or_default();
+        assert!(universe.starts_with("⊢ "), "universe: {universe}");
+        assert!(client.contains("call:enc(\"xyz\")"), "client: {client}");
+        assert!(client.contains("\"AAAA\""), "client: {client}");
+        assert!(vendor.contains("call:enc(\"abc\")"), "vendor: {vendor}");
+        assert!(vendor.contains("\"YWJj\""), "vendor: {vendor}");
+    }
+
+    #[test]
+    fn non_consistency_verification_passes_through_unchanged() {
+        let mut r = Report::default();
+        r.rows.push(ReportRow {
+            callsite: CallSite::default(),
+            status: ObligationVerdict::Discharged,
+            reason: "ok".into(),
+            discharge_method: Some("reflexive".into()),
+            body_discharge_tier: None,
+            verification: Some(json!({ "kind": "body-eq" })),
+        });
+        let j = report_to_json(&r);
+        assert_eq!(j["rows"][0]["verification"]["kind"], "body-eq");
+        assert!(j["rows"][0]["verification"]["vendorUniverseFol"].is_null());
     }
 
     #[test]
