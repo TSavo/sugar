@@ -23,7 +23,6 @@ pub mod lift_plugin;
 pub mod path_executor;
 pub mod primitives;
 pub mod prove_kit;
-pub mod source_aliases;
 pub mod stubs;
 pub mod traits;
 pub mod types;

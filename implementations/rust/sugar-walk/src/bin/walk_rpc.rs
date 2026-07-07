@@ -6778,7 +6778,7 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
                 ]);
                 let signature_shape_cid = blake3_512_of(encode_jcs(&sig_shape).as_bytes());
                 let mut parametric_sort_expansions: Vec<
-                    libsugar::core::source_aliases::ParametricSortExpansion,
+                    sugar_walk::source_aliases::ParametricSortExpansion,
                 > = Vec::new();
                 let param_sort_cids: Vec<String> = param_types
                     .iter()
@@ -8367,21 +8367,21 @@ fn fn_param_names(item_fn: &syn::ItemFn) -> Vec<String> {
 /// Catalog-driven rust-source-syntax → concept-hub sort CID (#1370).
 ///
 /// NO hardcoded source-token names. Reads kit-source-alias mementos via
-/// libsugar::core::source_aliases::load_kit_source_aliases("rust") and
+/// sugar_walk::source_aliases::load_kit_source_aliases("rust") and
 /// dispatches via the recursive resolver. Parametric types emit composite
 /// CIDs computed via content-addressing; expansions are accumulated for
 /// realize-side dispatch.
 fn rust_source_type_to_concept_hub_sort_cid(
     rust_type: &str,
-    expansions: &mut Vec<libsugar::core::source_aliases::ParametricSortExpansion>,
+    expansions: &mut Vec<sugar_walk::source_aliases::ParametricSortExpansion>,
 ) -> Option<String> {
     let aliases = RUST_ALIASES
-        .get_or_init(|| libsugar::core::source_aliases::load_kit_source_aliases("rust"));
-    libsugar::core::source_aliases::rust_type_to_sort_cid(rust_type, aliases, expansions)
+        .get_or_init(|| sugar_walk::source_aliases::load_kit_source_aliases("rust"));
+    sugar_walk::source_aliases::rust_type_to_sort_cid(rust_type, aliases, expansions)
 }
 
 static RUST_ALIASES: OnceLock<
-    std::collections::BTreeMap<String, libsugar::core::source_aliases::KitSourceAliasEntry>,
+    std::collections::BTreeMap<String, sugar_walk::source_aliases::KitSourceAliasEntry>,
 > = OnceLock::new();
 
 fn sugar_param_types(item_fn: &syn::ItemFn) -> Vec<String> {

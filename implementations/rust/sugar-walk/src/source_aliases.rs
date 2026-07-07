@@ -22,7 +22,7 @@ impl ParametricSortExpansion {
             "constructor_cid": constructor_cid,
             "arg_cids": arg_cids,
         });
-        let jcs = crate::canonical::serializable_jcs(&canonical)
+        let jcs = libsugar::canonical::serializable_jcs(&canonical)
             .expect("parametric expansion canonicalizes");
         sugar_canonicalizer::blake3_512_of(jcs.as_bytes())
     }
