@@ -28,7 +28,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::rc::Rc;
 
-use libsugar::panic_freedom;
+use sugar_ir_types::panic_freedom;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use sugar_floor_algebra::{
     guard_exit, Desugared, PredicateValue, PredicateValueFloorAccept,

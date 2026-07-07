@@ -26,7 +26,7 @@ use std::sync::{Arc, OnceLock};
 
 use base64::Engine;
 use libsugar::canonical::local_op_cid as canonical_local_op_cid;
-use libsugar::panic_freedom;
+use sugar_ir_types::panic_freedom;
 use quote::ToTokens;
 use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};

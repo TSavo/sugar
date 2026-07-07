@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use libsugar::panic_freedom;
+use sugar_ir_types::panic_freedom;
 
 #[test]
 fn panic_freedom_constants_are_the_bare_wire_tokens() {

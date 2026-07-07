@@ -5344,7 +5344,7 @@ pub fn run(args: MintArgs) -> u8 {
 mod tests {
     use super::*;
     use crate::project_config::PlatformProfile;
-    use libsugar::panic_freedom;
+    use sugar_ir_types::panic_freedom;
 
     fn temp_workspace(name: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
