@@ -167,8 +167,9 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     return;
   }
   const kitId = kitIdForFile(doc.fileName);
-  if (kitId !== "python") {
-    // The demo lifter (native-assertion vs vendor .proof) is python today.
+  if (kitId !== "python" && kitId !== "rust") {
+    // The demo lifters (native-assertion vs vendor .proof) are python and rust
+    // today; other kits fall through until their own lift/witness surfaces land.
     return;
   }
   const projectDir = resolveProjectDir(doc.uri);
@@ -176,19 +177,28 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     return;
   }
   try {
-    // The lifter needs a Python env with the sugar kit importable. The editor's
-    // ambient env usually lacks it, so honor optional config: a bin dir prefixed
-    // onto PATH and a PYTHONPATH suffix. Without these, prove mints in the
-    // ambient env (works only if the kit is globally installed).
+    // The lifter needs its language env resolvable. For python that means a
+    // PYTHONPATH import root. For rust, `sugar-cli` discovers component
+    // manifests (rust-test-assertions / rust-cargo-test-witness lifters) by
+    // walking the project root and its ancestors for `.sugar/components/`
+    // (see component_plan.rs::ancestor_component_roots) -- so a consumer
+    // project that ships its OWN `.sugar/components/*/manifest.toml` with
+    // sugarbin-resolved absolute binary paths needs no extra env at all. The
+    // optional `sugar.prove.rustBinDir` only covers the case where cargo/
+    // rustc or the helper RPC binaries are not already on the ambient PATH.
     const cfg = vscode.workspace.getConfiguration("sugar");
     const binDir = cfg.get<string>("prove.pythonBinDir") || "";
     const pyPath = cfg.get<string>("prove.pythonPath") || "";
+    const rustBinDir = cfg.get<string>("prove.rustBinDir") || "";
     const env: NodeJS.ProcessEnv = {};
-    if (binDir) {
+    if (kitId === "python" && binDir) {
       env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
     }
-    if (pyPath) {
+    if (kitId === "python" && pyPath) {
       env.PYTHONPATH = process.env.PYTHONPATH ? `${pyPath}:${process.env.PYTHONPATH}` : pyPath;
+    }
+    if (kitId === "rust" && rustBinDir) {
+      env.PATH = `${rustBinDir}:${process.env.PATH ?? ""}`;
     }
     // Time each LSP step (mint -> prove -> paint) into the timing log.
     const run = timing?.run(path.basename(projectDir) + "/" + path.basename(doc.fileName));

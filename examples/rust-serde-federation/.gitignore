@@ -1,0 +1,9 @@
+target/
+*.proof
+.sugar/runs/
+.sugar/witnesses/
+.sugar/lift/*/manifest.toml
+.prove*.json
+.prove*.raw
+Cargo.lock
+.sugar-components-runtime/

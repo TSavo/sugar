@@ -50,6 +50,21 @@
           "type": "string",
           "default": "",
           "description": "Path to a JSONL file the LSP prove path writes per-step timing to (mint / prove / paint durations, with a per-pass total). If empty, defaults to `<workspace>/.sugar/lsp-timing.jsonl`. Timings are mirrored live to the \"Sugar Timing\" output channel."
+        },
+        "sugar.prove.pythonBinDir": {
+          "type": "string",
+          "default": "",
+          "description": "Prepended onto PATH before running `sugar mint`/`sugar prove` for a python consumer project."
+        },
+        "sugar.prove.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Prepended onto PYTHONPATH before running `sugar mint`/`sugar prove` for a python consumer project (the sugar kit's importable src roots)."
+        },
+        "sugar.prove.rustBinDir": {
+          "type": "string",
+          "default": "",
+          "description": "Prepended onto PATH before running `sugar mint`/`sugar prove` for a rust consumer project. Usually unnecessary: a rust consumer project that ships its own `.sugar/components/*/manifest.toml` (sugarbin-resolved absolute paths to the rust-test-assertions / rust-cargo-test-witness lifter binaries) is discovered by `sugar-cli` without any extra env, since component discovery walks the project root and its ancestors. Set this only when cargo/rustc or the helper RPC binaries are not already resolvable."
         }
       }
     }
@@ -58,7 +73,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "e2e": "node ./test/e2e.test.js",
-    "prove-e2e": "node ./test/prove-e2e.test.js"
+    "prove-e2e": "node ./test/prove-e2e.test.js",
+    "rust-prove-e2e": "node ./test/rust-prove-e2e.test.js"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
