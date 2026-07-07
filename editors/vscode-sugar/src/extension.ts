@@ -40,23 +40,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const binaryPath = cfg.get<string>("linkerd.binaryPath") || undefined;
   const snapshotPath = socketPath + ".snapshot";
 
+  // The link() path (bridge obligations) needs the linkerd daemon. The PROVE
+  // path (native assertion vs a vendor .proof) does NOT — it shells `sugar
+  // prove` and is fully independent. A linkerd failure must therefore NOT kill
+  // the prove path: it is the actual red/green flip. Register linkerd's
+  // listeners only if the daemon comes up; register prove unconditionally.
+  const debounceMs = cfg.get<number>("debounceMs") ?? 250;
   client = new LinkerdClient(socketPath);
+  let linkerdUp = false;
   try {
     await client.ensureDaemon(binaryPath, snapshotPath);
+    linkerdUp = true;
   } catch (e) {
-    vscode.window.showWarningMessage(
-      `Sugar: could not reach sugar-linkerd — ${(e as Error).message}`
-    );
-    return;
+    client = undefined;
+    console.error(`sugar: linkerd unavailable (link() path off): ${(e as Error).message}`);
   }
 
-  const debounceMs = cfg.get<number>("debounceMs") ?? 250;
-
-  context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument((doc) => scheduleLink(doc, 0)),
-    vscode.workspace.onDidChangeTextDocument((e) => scheduleLink(e.document, debounceMs)),
-    vscode.workspace.onDidCloseTextDocument((doc) => diagnostics.delete(doc.uri))
-  );
+  if (linkerdUp) {
+    context.subscriptions.push(
+      vscode.workspace.onDidOpenTextDocument((doc) => scheduleLink(doc, 0)),
+      vscode.workspace.onDidChangeTextDocument((e) => scheduleLink(e.document, debounceMs)),
+      vscode.workspace.onDidCloseTextDocument((doc) => diagnostics.delete(doc.uri))
+    );
+  }
 
   // The PROVE path (native assertion vs vendor .proof). A directory prove mints
   // + solves, so it runs on OPEN and on SAVE (or on keystroke debounce only if
@@ -77,7 +83,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Prime any already-open documents.
   for (const doc of vscode.workspace.textDocuments) {
-    scheduleLink(doc, 0);
+    if (linkerdUp) {
+      scheduleLink(doc, 0);
+    }
     if (proveBinaryPath) {
       void runProve(doc);
     }
@@ -149,7 +157,21 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     return;
   }
   try {
-    const res = await proveProject({ binaryPath: proveBinaryPath, projectDir });
+    // The lifter needs a Python env with the sugar kit importable. The editor's
+    // ambient env usually lacks it, so honor optional config: a bin dir prefixed
+    // onto PATH and a PYTHONPATH suffix. Without these, prove mints in the
+    // ambient env (works only if the kit is globally installed).
+    const cfg = vscode.workspace.getConfiguration("sugar");
+    const binDir = cfg.get<string>("prove.pythonBinDir") || "";
+    const pyPath = cfg.get<string>("prove.pythonPath") || "";
+    const env: NodeJS.ProcessEnv = {};
+    if (binDir) {
+      env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+    }
+    if (pyPath) {
+      env.PYTHONPATH = process.env.PYTHONPATH ? `${pyPath}:${process.env.PYTHONPATH}` : pyPath;
+    }
+    const res = await proveProject({ binaryPath: proveBinaryPath, projectDir, env });
     // Rebuild the whole prove collection for this project from scratch so
     // cleared rows (green now) drop their squiggles.
     proveDiagnostics.clear();
