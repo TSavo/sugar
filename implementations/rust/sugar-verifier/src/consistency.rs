@@ -1105,6 +1105,64 @@ fn is_witness_member(body: &Json) -> bool {
         == Some("custom")
 }
 
+/// Discharge strategy: ONE LEVEL ABOVE `Solver`. Every obligation is settled by
+/// exactly one of these arms, and both converge on the same
+/// `ConsistencyResult`/`ObligationVerdict` codomain. This sum type answers the
+/// fuzzy "is this a solver or a witness?" question ONCE, at intake, so the two
+/// discharge kinds sit behind a single `Obligation -> verdict` interface.
+///
+/// Neither arm changes WHAT it computes:
+/// * [`DischargeStrategy::ProvedBySolver`] defers, unchanged, to the symbolic
+///   `Solver`/`SolverPlan` group-solve path.
+/// * [`DischargeStrategy::WitnessedByExecution`] delegates, unchanged, to
+///   [`try_witness_discharge`] (re-check the pinned execution-witness package).
+///
+/// The proved-by-solver vs witnessed-by-execution provenance distinction is NOT
+/// re-invented here: it is already carried on the produced `ConsistencyResult`
+/// (`witnessed: bool` + `verification.kind == "witness"`) and surfaced on the
+/// report row as `dischargeMethod`/`bodyDischargeTier`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DischargeStrategy {
+    /// Settle symbolically via the existing `Solver` path (group conjunction).
+    ProvedBySolver,
+    /// Settle by re-checking the pinned execution-witness package.
+    WitnessedByExecution,
+}
+
+impl DischargeStrategy {
+    /// Answer "solver or witness?" ONCE, from the obligation body. Custom
+    /// execution-witness contracts take [`DischargeStrategy::WitnessedByExecution`];
+    /// everything else is [`DischargeStrategy::ProvedBySolver`].
+    fn classify(body: &Json) -> Self {
+        if is_witness_member(body) {
+            DischargeStrategy::WitnessedByExecution
+        } else {
+            DischargeStrategy::ProvedBySolver
+        }
+    }
+
+    /// Discharge the obligation through the selected strategy's execution arm.
+    /// For [`DischargeStrategy::WitnessedByExecution`] this calls
+    /// [`try_witness_discharge`] UNCHANGED (it may itself return `None` when
+    /// there is no settleable custom witness, in which case the caller falls
+    /// through to symbolic solving). For [`DischargeStrategy::ProvedBySolver`]
+    /// there is nothing to settle here: `None` signals "hand to the solver
+    /// path", which is the existing behavior.
+    fn discharge(
+        self,
+        body: &Json,
+        contract_cid: String,
+        property_name: String,
+    ) -> Option<ConsistencyResult> {
+        match self {
+            DischargeStrategy::WitnessedByExecution => {
+                try_witness_discharge(body, contract_cid, property_name)
+            }
+            DischargeStrategy::ProvedBySolver => None,
+        }
+    }
+}
+
 fn witness_provenance_kind_error(
     body: &Json,
     provenance_kind: ProofIrProvenanceKind,
@@ -3104,13 +3162,17 @@ fn process_consistency_group(
             let mut inv_candidates: Vec<ConsistencyCandidate> = Vec::new();
             for candidate in members {
                 let body = &candidate.body;
-                if is_witness_member(body) {
-                    if let Some(res) =
-                        try_witness_discharge(body, candidate.cid.clone(), property_name.clone())
-                    {
-                        out.push(res);
-                        continue;
-                    }
+                // Answer "solver or witness?" ONCE via the discharge-strategy sum
+                // type, then dispatch. The WitnessedByExecution arm wraps
+                // `try_witness_discharge` unchanged; ProvedBySolver falls through
+                // to the symbolic group-solve path below (byte-identical control
+                // flow to the prior `if is_witness_member { try_witness_discharge }`).
+                let strategy = DischargeStrategy::classify(body);
+                if let Some(res) =
+                    strategy.discharge(body, candidate.cid.clone(), property_name.clone())
+                {
+                    out.push(res);
+                    continue;
                 }
                 inv_cids.push(candidate.cid.clone());
                 inv_candidates.push(candidate.clone());
