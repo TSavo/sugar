@@ -694,6 +694,7 @@ pub fn mint_proof(decls: &[ContractDecl], opts: &LiftOptions) -> Result<MintOutp
         signer_cid,
         signer_seed: opts.signer_seed,
         declared_at: opts.produced_at.clone(),
+        manifest: None,
     };
     let built = build_proof_envelope(&proof_input);
 

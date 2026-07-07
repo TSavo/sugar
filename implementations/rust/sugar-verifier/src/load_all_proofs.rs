@@ -666,6 +666,7 @@ mod tests {
             signer_cid: "test-signer".to_string(),
             signer_seed: [0x24; 32],
             declared_at: "2026-06-01T00:00:00Z".to_string(),
+            manifest: None,
         });
         ProofBytes::try_from_parts("annotation-test.proof".to_string(), proof.cid, proof.bytes)
             .expect("built proof CID must parse")

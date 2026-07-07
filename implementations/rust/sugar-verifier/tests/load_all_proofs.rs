@@ -162,6 +162,7 @@ fn publish_parseint_proof(dir: &Path) -> String {
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&input);
     let hex = cid_hex(&built.cid).unwrap();
@@ -211,6 +212,7 @@ fn publish_parseint_proof_with_target_proof_cid(dir: &Path, target_proof_cid: St
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&input);
     let hex = cid_hex(&built.cid).unwrap();
@@ -292,6 +294,7 @@ fn catalog_graph_sections_load_flat_atoms_and_pointer_bodies_by_cid() {
         signer_cid,
         signer_seed,
         declared_at: "2026-04-30T00:00:00.000Z".into(),
+        manifest: None,
     });
     let hex = cid_hex(&built.cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write");
@@ -637,6 +640,7 @@ fn multiple_proofs_in_one_dir_all_loaded() {
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     });
     let hex = cid_hex(&built.cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write");

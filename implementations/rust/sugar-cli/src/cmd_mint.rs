@@ -4141,9 +4141,37 @@ fn mint_ir_document_with_source_and_plan_mementos(
         signer_cid: proof_signer,
         signer_seed: proof_signer_seed,
         declared_at: produced_at,
+        manifest: None,
     };
 
-    let built = build_proof_envelope(&proof_input);
+    // SEAL-TIME MANIFEST (join-manifest design, lane 1). Two-pass mint: build
+    // the envelope once WITHOUT a manifest, load those just-minted bytes into
+    // a fresh (this-proof-only) pool via the exact loader every consumer of a
+    // `.proof` file uses, then run the SAME grouping+ambient-collection logic
+    // `verify_consistency` runs at every prove -- `build_manifest_from_pool`
+    // is a pure relocation of that scan, scoped here to once-per-seal instead
+    // of once-per-verify-pass. Re-build the envelope WITH the sealed manifest
+    // so it lands inside the signed root (a byte-flip anywhere in it then
+    // fails the whole-proof trust root, per G4). Any failure in this second
+    // pass (malformed just-built bytes, pool load error) is loud: it means
+    // the manifest could not be honestly computed from what was just minted,
+    // so minting must not silently ship a stale/empty one.
+    let unsealed = build_proof_envelope(&proof_input);
+    let mut pool = sugar_verifier::types::MementoPool::default();
+    let proof_bytes = sugar_verifier::load_all_proofs::ProofBytes::try_from_parts(
+        "seal-time-manifest-self-load",
+        unsealed.cid.clone(),
+        unsealed.bytes.clone(),
+    )
+    .map_err(|e| format!("seal-time manifest: could not stage just-minted proof bytes: {e}"))?;
+    sugar_verifier::load_all_proofs::load_proof_bytes_into_pool(&[proof_bytes], &mut pool);
+    let manifest = sugar_verifier::consistency::build_manifest_from_pool(&pool, &unsealed.cid);
+
+    let sealed_input = ProofEnvelopeInput {
+        manifest: Some(manifest),
+        ..proof_input
+    };
+    let built = build_proof_envelope(&sealed_input);
 
     Ok(MintedIrDocument {
         bytes: built.bytes,

@@ -1328,6 +1328,7 @@ mod tests {
             signer_cid,
             signer_seed,
             declared_at: "2026-04-30T00:00:00.000Z".into(),
+            manifest: None,
         });
         let hex = sugar_canonicalizer::cid_hex(&built.cid).unwrap_or(&built.cid);
         assert!(!hex.contains(':'), "proof filename stem must be colon-free");
