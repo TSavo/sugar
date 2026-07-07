@@ -75,7 +75,10 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::jcs_cid_of_json;
 
 use crate::cbor_decode::{checked_end, decode_value, read_head, CborDecodeError, CborValue};
-use crate::proof_graph::{member_signature, recompute_member_cid, verify_member_signature};
+use crate::proof_graph::{
+    json_to_canonical_value, member_signature, recompute_member_cid, verify_member_signature,
+    AtomMemento, ContractBody, FlatAtom, MemberRecord, MementoCid,
+};
 
 /// A half-open byte range `[start, start+len)` into the catalog's raw bytes,
 /// naming exactly one CBOR `bstr` payload (no header bytes included).
@@ -144,6 +147,129 @@ pub enum FetchError {
     SignatureMissing(String),
     #[error("cbor-index: member {cid}: {reason}")]
     SignatureInvalid { cid: String, reason: String },
+    #[error("cbor-index: {0} is not present in the catalog index")]
+    NotIndexed(String),
+    #[error("cbor-index: {0}")]
+    Decode(String),
+    #[error("cbor-index: body {body} references unknown atom {atom}")]
+    UnknownAtomRef { body: String, atom: String },
+}
+
+/// The typed value the eager loader (`ProofGraph::read`) constructs for one
+/// catalog entry, keyed by which of the three CID maps it came from. This is
+/// the SAME typed construction the eager loop performs inline per entry
+/// (`FlatAtom::new` / `ContractBody::from_slots` / `MemberRecord::new`) --
+/// `new` below reuses those functions verbatim rather than reimplementing
+/// them, so `TypedEntry` is exactly what `ProofGraph::read`'s three bespoke
+/// loops build today, just returned per-CID instead of accumulated inline.
+#[derive(Debug, Clone)]
+pub(crate) enum TypedEntry {
+    Atom(FlatAtom),
+    Body(ContractBody),
+    Member(MemberRecord),
+}
+
+/// THE unification primitive: index lookup -> verified byte range -> typed
+/// entry. `fold(new, index.keys())` (enumerate every key) reproduces
+/// `ProofGraph::read`'s eager loop; calling `new` once for a single CID is
+/// "load one" -- the same function, singleton enumeration (see `one` below).
+///
+/// Reuses `fetch_one`'s existing per-entry CID (and, for members, signature)
+/// verification unchanged, then performs the typed-construction tail
+/// `ProofGraph::read` currently inlines per loop. For `Body` entries this
+/// also reproduces the eager loop's atom-existence check (`body {cid}
+/// references unknown atom {atom_cid}`): a body's slots reference atoms by
+/// CID, and the eager reader requires that atom to already be present in the
+/// atoms map constructed so far in the same `read()` call. Since `new` has no
+/// implicit accumulator, callers enumerating atoms-then-bodies-then-members
+/// (the same order `ProofGraph::read` walks the catalog) must pass the atoms
+/// materialized so far via `atoms_so_far`; passing an empty map for a
+/// members-only or atoms-only enumeration is correct as long as no body in
+/// that enumeration is being resolved.
+pub(crate) fn new(
+    bytes: &[u8],
+    index: &CatalogIndex,
+    kind: EntryKind,
+    cid: &str,
+    atoms_so_far: &BTreeMap<String, FlatAtom>,
+) -> Result<TypedEntry, FetchError> {
+    let range = match kind {
+        EntryKind::Atom => *index
+            .atoms
+            .get(cid)
+            .ok_or_else(|| FetchError::NotIndexed(cid.to_string()))?,
+        EntryKind::Body => *index
+            .bodies
+            .get(cid)
+            .ok_or_else(|| FetchError::NotIndexed(cid.to_string()))?,
+        EntryKind::Member => *index
+            .members
+            .get(cid)
+            .ok_or_else(|| FetchError::NotIndexed(cid.to_string()))?,
+    };
+    let raw = fetch_one(bytes, kind, cid, range)?;
+
+    match kind {
+        EntryKind::Atom => {
+            let json: Json = serde_json::from_slice(&raw)
+                .map_err(|e| FetchError::Decode(format!("atom {cid} bytes not JSON: {e}")))?;
+            // `fetch_one` already checked `jcs_cid_of_json(&json) == cid`
+            // above, the same CID rule `FlatAtom::new` derives its CID with,
+            // so this construction is guaranteed to carry the same CID.
+            let atom = FlatAtom::new(json_to_canonical_value(&json));
+            Ok(TypedEntry::Atom(atom))
+        }
+        EntryKind::Body => {
+            let json: Json = serde_json::from_slice(&raw)
+                .map_err(|e| FetchError::Decode(format!("body {cid} bytes not JSON: {e}")))?;
+            let slots = json
+                .get("body")
+                .and_then(Json::as_object)
+                .ok_or_else(|| FetchError::Decode(format!("body {cid} has no `body` object")))?;
+            let mut atom_mementos: Vec<(String, AtomMemento)> = Vec::with_capacity(slots.len());
+            for (slot, slot_val) in slots {
+                let atom_cid = slot_val.get("atomCid").and_then(Json::as_str).ok_or_else(|| {
+                    FetchError::Decode(format!("body {cid} slot {slot} missing atomCid"))
+                })?;
+                let atom = atoms_so_far.get(atom_cid).ok_or_else(|| FetchError::UnknownAtomRef {
+                    body: cid.to_string(),
+                    atom: atom_cid.to_string(),
+                })?;
+                atom_mementos.push((slot.clone(), AtomMemento::new(atom)));
+            }
+            let body = ContractBody::from_slots(
+                atom_mementos.iter().map(|(s, m)| (s.as_str(), m)).collect(),
+            );
+            if body.cid().as_str() != cid {
+                return Err(FetchError::CidMismatch {
+                    expected: cid.to_string(),
+                    actual: body.cid().as_str().to_string(),
+                });
+            }
+            Ok(TypedEntry::Body(body))
+        }
+        EntryKind::Member => {
+            let memento_cid = MementoCid::try_parse(cid.to_string()).map_err(|raw| {
+                FetchError::Decode(format!(
+                    "member {raw}: invalid memento CID; requires `blake3-512:` plus 128 hex characters"
+                ))
+            })?;
+            Ok(TypedEntry::Member(MemberRecord::new(memento_cid, raw)))
+        }
+    }
+}
+
+/// The singleton-enumeration peer of `new`: "load one" is `new` called once.
+/// No new logic -- a named entry point for future incremental callers that
+/// want exactly one CID's typed entry without folding over the whole index.
+pub(crate) fn one(
+    bytes: &[u8],
+    index: &CatalogIndex,
+    kind: EntryKind,
+    cid: &str,
+    atoms_so_far: &BTreeMap<String, FlatAtom>,
+) -> Result<TypedEntry, FetchError> {
+    new(bytes, index, kind, cid, atoms_so_far)
 }
 
 /// Build a `CatalogIndex` over a `.proof` catalog's raw CBOR bytes.
@@ -277,21 +403,30 @@ pub fn fetch_one(
                     actual,
                 });
             }
-            // Unconditional signature requirement: unlike
-            // `AnchoredMember::new` (which only verifies a signature if one
-            // is present, silently no-op'ing on an absent signature), this
-            // gate refuses any member without one. Closes the confirmed gap
-            // the soundness review flagged: a legacy-format member's CID
-            // hash excludes `producerSignature`, so deleting the signature
-            // does not change the CID -- CID match alone must never be
-            // accepted as authentication for members.
-            if member_signature(&envelope).is_none() {
-                return Err(FetchError::SignatureMissing(cid.to_string()));
+            // Signature-if-present, exactly like `AnchoredMember::new`: real
+            // `.proof` catalogs legitimately contain unsigned members (their
+            // CID hash excludes `producerSignature`, so authentication for
+            // those happens lazily/off-graph, not at bulk catalog-read time).
+            // The eager `ProofGraph::read` member loop this replaces performs
+            // NO signature check at load time at all -- matching that loop
+            // byte/member-identically is the hard constraint here (see the
+            // `fold_new_matches_eager_read_on_real_*_proof` differential
+            // tests below), so this gate must never be stricter than the
+            // eager loop or than `AnchoredMember::new`. An earlier revision
+            // of this gate made the signature unconditionally required,
+            // which rejected every unsigned member in real base64
+            // vendor/consumer proofs and emptied the whole catalog on load
+            // (root-caused and reverted here; a possible follow-up
+            // hardening pass belongs off this hot path, gated by its own
+            // differential against real data, not added back unconditionally).
+            if member_signature(&envelope).is_some() {
+                verify_member_signature(&envelope).map_err(|reason| {
+                    FetchError::SignatureInvalid {
+                        cid: cid.to_string(),
+                        reason,
+                    }
+                })?;
             }
-            verify_member_signature(&envelope).map_err(|reason| FetchError::SignatureInvalid {
-                cid: cid.to_string(),
-                reason,
-            })?;
             Ok(raw.to_vec())
         }
     }
@@ -534,8 +669,9 @@ mod tests {
     /// atom, a body over the formula atom, and a signed layered contract
     /// member over that body, then cross-checks the lazy index against the
     /// eager `ProofGraph::read` path. Every member in this fixture is signed
-    /// (unsigned members are a separate, deliberately-refused case covered by
-    /// `fetch_one_rejects_legacy_shape_member_with_signature_and_cid_field_both_stripped`)
+    /// (unsigned members are a separate, deliberately-accepted case covered
+    /// by `fetch_one_accepts_legacy_shape_member_with_no_signature_matching_eager_and_anchored_member`
+    /// and by the real base64 differential tests below)
     /// so the "every fetched payload matches the eager path" assertion below
     /// exercises the passing case end to end.
     fn real_proof_fixture() -> (Vec<u8>, ProofGraph) {
@@ -676,29 +812,380 @@ mod tests {
     }
 
     #[test]
-    fn fetch_one_rejects_legacy_shape_member_with_signature_and_cid_field_both_stripped() {
-        // The soundness review's CONFIRMED gap: a legacy/flat-format member's
-        // CID hash computation strips `cid` and `producerSignature` before
-        // hashing, so an attacker who deletes `producerSignature` produces
-        // a member whose CID re-derives to the SAME value. `fetch_one` must
-        // refuse it anyway via the unconditional signature-presence gate
-        // (not by delegating to `AnchoredMember::new`, which would silently
-        // accept this).
+    fn fetch_one_accepts_legacy_shape_member_with_no_signature_matching_eager_and_anchored_member() {
+        // Previously this gate unconditionally required a signature and
+        // refused any member without one (the soundness review's flagged
+        // gap: a legacy/flat-format member's CID hash strips `cid` and
+        // `producerSignature` before hashing, so deleting the signature
+        // does not change the CID). That unconditional gate was reverted:
+        // real base64 vendor/consumer `.proof` files legitimately contain
+        // unsigned members (see `fold_new_matches_eager_read_on_real_base64_proof`),
+        // and both the eager `ProofGraph::read` member loop and
+        // `AnchoredMember::new` accept an unsigned member unconditionally
+        // (verifying a signature only when one is present). `fetch_one`
+        // must match that acceptance set exactly, so this legacy-shape,
+        // no-signature member is now accepted too -- the CID still has to
+        // match, but a present-or-absent signature is the only thing that
+        // changes what gets checked.
         let legacy = serde_json::json!({
             "header": { "kind": "witness-memento" },
             "body": { "ok": true }
         });
-        // No `producerSignature` field at all: CID is computed over the
-        // object with `cid`/`producerSignature` stripped (no-ops here since
-        // neither is present), so this is exactly the legacy shape's CID.
         let cid = recompute_member_cid(&legacy);
         let raw = serde_json::to_vec(&legacy).expect("legacy JSON bytes");
         let synthetic = small_catalog(&[], &[(cid.as_str(), raw.as_slice())]);
         let index = build_index(&synthetic).expect("indexes");
         let range = *index.members.get(cid.as_str()).unwrap();
 
-        let err = fetch_one(&synthetic, EntryKind::Member, &cid, range)
-            .expect_err("unsigned legacy member must be refused despite a matching CID");
-        assert!(matches!(err, FetchError::SignatureMissing(_)));
+        let fetched = fetch_one(&synthetic, EntryKind::Member, &cid, range)
+            .expect("unsigned legacy member with a matching CID must be accepted");
+        assert_eq!(fetched, raw);
+    }
+
+    // ---- differential gate: fold(new) vs eager ProofGraph::read ----------
+
+    /// THE safety net authorizing deletion of the bespoke eager loop:
+    /// `fold(new, index.keys())`, enumerated atoms-then-bodies-then-members
+    /// (the same order `ProofGraph::read` walks the catalog), must produce a
+    /// CID-set-identical, byte/member-identical result to today's
+    /// `ProofGraph::read` on a real `.proof` fixture. Must be green before
+    /// `ProofGraph::read`'s internals are ever refactored to use `new`/fold.
+    #[test]
+    fn fold_new_matches_eager_read_byte_and_member_identical() {
+        let (bytes, _expected_graph) = real_proof_fixture();
+        let index = build_index(&bytes).expect("real proof indexes");
+        let eager = ProofGraph::read(&bytes).expect("eager read of the same bytes");
+
+        // Fold atoms first (no dependency), giving `new` the completed atoms
+        // map bodies need for their atom-existence check.
+        let mut new_atoms: StdBTreeMap<String, FlatAtom> = StdBTreeMap::new();
+        for cid in index.atoms.keys() {
+            match new(&bytes, &index, EntryKind::Atom, cid, &new_atoms)
+                .unwrap_or_else(|e| panic!("new() atom {cid} must match eager read: {e}"))
+            {
+                TypedEntry::Atom(atom) => {
+                    new_atoms.insert(cid.clone(), atom);
+                }
+                other => panic!("expected Atom, got {other:?}"),
+            }
+        }
+
+        let mut new_bodies: StdBTreeMap<String, ContractBody> = StdBTreeMap::new();
+        for cid in index.bodies.keys() {
+            match new(&bytes, &index, EntryKind::Body, cid, &new_atoms)
+                .unwrap_or_else(|e| panic!("new() body {cid} must match eager read: {e}"))
+            {
+                TypedEntry::Body(body) => {
+                    new_bodies.insert(cid.clone(), body);
+                }
+                other => panic!("expected Body, got {other:?}"),
+            }
+        }
+
+        let mut new_members: StdBTreeMap<String, Vec<u8>> = StdBTreeMap::new();
+        for cid in index.members.keys() {
+            match new(&bytes, &index, EntryKind::Member, cid, &new_atoms)
+                .unwrap_or_else(|e| panic!("new() member {cid} must match eager read: {e}"))
+            {
+                TypedEntry::Member(record) => {
+                    new_members.insert(cid.clone(), record.bytes().to_vec());
+                }
+                other => panic!("expected Member, got {other:?}"),
+            }
+        }
+
+        // (1) CID-key-set equality per kind, and no dropped/duplicated keys:
+        // fold cardinality equals index cardinality exactly.
+        assert_eq!(new_atoms.len(), index.atoms.len());
+        assert_eq!(new_bodies.len(), index.bodies.len());
+        assert_eq!(new_members.len(), index.members.len());
+
+        let eager_atoms: StdBTreeMap<String, Vec<u8>> = eager
+            .atoms()
+            .map(|a| (a.cid().as_str().to_string(), a.bytes().to_vec()))
+            .collect();
+        let eager_bodies: StdBTreeMap<String, Vec<u8>> = eager
+            .bodies()
+            .map(|b| (b.cid().as_str().to_string(), b.bytes().to_vec()))
+            .collect();
+        let eager_members: StdBTreeMap<String, Vec<u8>> = eager
+            .members()
+            .map(|(cid, bytes)| (cid.as_str().to_string(), bytes.to_vec()))
+            .collect();
+
+        assert_eq!(
+            new_atoms.keys().cloned().collect::<Vec<_>>(),
+            eager_atoms.keys().cloned().collect::<Vec<_>>(),
+            "atom CID sets must match"
+        );
+        assert_eq!(
+            new_bodies.keys().cloned().collect::<Vec<_>>(),
+            eager_bodies.keys().cloned().collect::<Vec<_>>(),
+            "body CID sets must match"
+        );
+        assert_eq!(
+            new_members.keys().cloned().collect::<Vec<_>>(),
+            eager_members.keys().cloned().collect::<Vec<_>>(),
+            "member CID sets must match"
+        );
+
+        // (2) byte/member-identical: same typed bytes per CID.
+        for (cid, atom) in &new_atoms {
+            assert_eq!(
+                atom.bytes(),
+                eager_atoms.get(cid).unwrap().as_slice(),
+                "atom {cid} bytes differ"
+            );
+        }
+        for (cid, body) in &new_bodies {
+            assert_eq!(
+                body.bytes(),
+                eager_bodies.get(cid).unwrap().as_slice(),
+                "body {cid} bytes differ"
+            );
+        }
+        for (cid, bytes) in &new_members {
+            assert_eq!(bytes, eager_members.get(cid).unwrap(), "member {cid} bytes differ");
+        }
+    }
+
+    /// A body referencing a nonexistent atom CID must be refused by `new`,
+    /// exactly as `ProofGraph::read` refuses it today (`body {cid}
+    /// references unknown atom {atom_cid}`) -- the referential-integrity
+    /// check the soundness review flagged as CONFIRMED-at-risk for a naive
+    /// per-cid constructor. Proves `new`'s `atoms_so_far` parameter actually
+    /// enforces it rather than silently accepting a dangling reference.
+    #[test]
+    fn new_rejects_body_with_dangling_atom_reference() {
+        let body_json = serde_json::json!({
+            "header": { "kind": "contract-body", "schemaVersion": "1" },
+            "body": {
+                "post": { "kind": "atom-memento", "atomCid": "blake3-512:does-not-exist" }
+            }
+        });
+        let cid = jcs_cid_of_json(&body_json);
+        let raw = serde_json::to_vec(&body_json).expect("body JSON bytes");
+        let mut out = Vec::new();
+        cbor_encode_map_head(&mut out, 1);
+        cbor_encode_tstr(&mut out, "body");
+        cbor_encode_map_head(&mut out, 1);
+        cbor_encode_tstr(&mut out, cid.as_str());
+        cbor_encode_bstr(&mut out, raw.as_slice());
+
+        let index = build_index(&out).expect("indexes");
+        let empty_atoms: StdBTreeMap<String, FlatAtom> = StdBTreeMap::new();
+        let err = new(&out, &index, EntryKind::Body, &cid, &empty_atoms)
+            .expect_err("dangling atom reference must be refused");
+        assert!(matches!(err, FetchError::UnknownAtomRef { .. }), "{err:?}");
+    }
+
+    /// `one` is `new` called once: for a given CID it must return the same
+    /// typed entry the fold produces for that same CID. No new logic; this
+    /// only names the singleton-enumeration entry point.
+    #[test]
+    fn one_matches_new_for_the_same_cid() {
+        let (bytes, _expected_graph) = real_proof_fixture();
+        let index = build_index(&bytes).expect("real proof indexes");
+        let (cid, _) = index.atoms.iter().next().expect("at least one atom");
+        let cid = cid.clone();
+        let empty_atoms: StdBTreeMap<String, FlatAtom> = StdBTreeMap::new();
+
+        let via_new = match new(&bytes, &index, EntryKind::Atom, &cid, &empty_atoms).unwrap() {
+            TypedEntry::Atom(a) => a.bytes().to_vec(),
+            _ => panic!("expected Atom"),
+        };
+        let via_one = match one(&bytes, &index, EntryKind::Atom, &cid, &empty_atoms).unwrap() {
+            TypedEntry::Atom(a) => a.bytes().to_vec(),
+            _ => panic!("expected Atom"),
+        };
+        assert_eq!(via_new, via_one);
+    }
+
+    // ---- differential gate on REAL proof bytes (not a toy fixture) -------
+    //
+    // The crate's own toy `real_proof_fixture()` only ever builds signed
+    // members (see its doc comment), so it never exercised the unsigned
+    // members every real `.proof` catalog contains -- the fold(new) vs
+    // eager `ProofGraph::read` differential stayed green on that fixture
+    // while breaking on real base64 vendor/consumer proofs (root cause:
+    // an unconditional member-signature gate that real proofs' unsigned
+    // members tripped). These tests run the same differential directly on
+    // the committed real proof bytes so this class of regression cannot
+    // hide behind a synthetic fixture again.
+
+    fn read_fixture_proof(name: &str) -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
+    }
+
+    /// Runs `fold(new, index.keys())` against the unmodified
+    /// `ProofGraph::read` baseline on the SAME real proof bytes, asserting
+    /// CID-set equality per kind and byte/member-identical values, plus
+    /// `count == index.len()` per kind so nothing was silently dropped.
+    fn assert_fold_new_matches_eager_read(bytes: &[u8], label: &str) {
+        let index = build_index(bytes).unwrap_or_else(|e| panic!("{label}: build_index: {e:?}"));
+        let eager = ProofGraph::read(bytes).unwrap_or_else(|e| panic!("{label}: eager read: {e}"));
+
+        let mut new_atoms: StdBTreeMap<String, FlatAtom> = StdBTreeMap::new();
+        for cid in index.atoms.keys() {
+            match new(bytes, &index, EntryKind::Atom, cid, &new_atoms)
+                .unwrap_or_else(|e| panic!("{label}: new() atom {cid} must match eager read: {e}"))
+            {
+                TypedEntry::Atom(atom) => {
+                    new_atoms.insert(cid.clone(), atom);
+                }
+                other => panic!("{label}: expected Atom, got {other:?}"),
+            }
+        }
+        let new_atom_bytes: StdBTreeMap<String, Vec<u8>> = new_atoms
+            .iter()
+            .map(|(cid, atom)| (cid.clone(), atom.bytes().to_vec()))
+            .collect();
+
+        let mut new_bodies: StdBTreeMap<String, ContractBody> = StdBTreeMap::new();
+        for cid in index.bodies.keys() {
+            match new(bytes, &index, EntryKind::Body, cid, &new_atoms)
+                .unwrap_or_else(|e| panic!("{label}: new() body {cid} must match eager read: {e}"))
+            {
+                TypedEntry::Body(body) => {
+                    new_bodies.insert(cid.clone(), body);
+                }
+                other => panic!("{label}: expected Body, got {other:?}"),
+            }
+        }
+        let new_body_bytes: StdBTreeMap<String, Vec<u8>> = new_bodies
+            .iter()
+            .map(|(cid, body)| (cid.clone(), body.bytes().to_vec()))
+            .collect();
+
+        let mut new_members: StdBTreeMap<String, Vec<u8>> = StdBTreeMap::new();
+        for cid in index.members.keys() {
+            match new(bytes, &index, EntryKind::Member, cid, &new_atoms).unwrap_or_else(|e| {
+                panic!("{label}: new() member {cid} must match eager read: {e}")
+            }) {
+                TypedEntry::Member(record) => {
+                    new_members.insert(cid.clone(), record.bytes().to_vec());
+                }
+                other => panic!("{label}: expected Member, got {other:?}"),
+            }
+        }
+
+        assert_eq!(new_atoms.len(), index.atoms.len(), "{label}: atom count == index.len()");
+        assert_eq!(new_bodies.len(), index.bodies.len(), "{label}: body count == index.len()");
+        assert_eq!(
+            new_members.len(),
+            index.members.len(),
+            "{label}: member count == index.len()"
+        );
+
+        let eager_atoms: StdBTreeMap<String, Vec<u8>> = eager
+            .atoms()
+            .map(|a| (a.cid().as_str().to_string(), a.bytes().to_vec()))
+            .collect();
+        let eager_bodies: StdBTreeMap<String, Vec<u8>> = eager
+            .bodies()
+            .map(|b| (b.cid().as_str().to_string(), b.bytes().to_vec()))
+            .collect();
+        let eager_members: StdBTreeMap<String, Vec<u8>> = eager
+            .members()
+            .map(|(cid, bytes)| (cid.as_str().to_string(), bytes.to_vec()))
+            .collect();
+
+        assert_eq!(
+            new_atom_bytes.keys().collect::<Vec<_>>(),
+            eager_atoms.keys().collect::<Vec<_>>(),
+            "{label}: atom CID sets differ"
+        );
+        assert_eq!(
+            new_body_bytes.keys().collect::<Vec<_>>(),
+            eager_bodies.keys().collect::<Vec<_>>(),
+            "{label}: body CID sets differ"
+        );
+        assert_eq!(
+            new_members.keys().collect::<Vec<_>>(),
+            eager_members.keys().collect::<Vec<_>>(),
+            "{label}: member CID sets differ"
+        );
+
+        for (cid, bytes) in &new_atom_bytes {
+            assert_eq!(bytes, eager_atoms.get(cid).unwrap(), "{label}: atom {cid} byte-identical");
+        }
+        for (cid, bytes) in &new_body_bytes {
+            assert_eq!(bytes, eager_bodies.get(cid).unwrap(), "{label}: body {cid} byte-identical");
+        }
+        for (cid, bytes) in &new_members {
+            assert_eq!(
+                bytes,
+                eager_members.get(cid).unwrap(),
+                "{label}: member {cid} byte-identical"
+            );
+        }
+    }
+
+    #[test]
+    fn fold_new_matches_eager_read_on_real_base64_vendor_proof() {
+        let bytes = read_fixture_proof("base64_vendor.proof");
+        assert_fold_new_matches_eager_read(&bytes, "base64 vendor");
+    }
+
+    #[test]
+    fn fold_new_matches_eager_read_on_real_base64_consumer_proof() {
+        let bytes = read_fixture_proof("base64_consumer.proof");
+        assert_fold_new_matches_eager_read(&bytes, "base64 consumer");
+    }
+
+    /// Path-gated: the ~96MB pandas vendor proof is not committed to the
+    /// repo. When present on disk (e.g. after minting the pandas demo
+    /// locally), this runs the identical differential against it; when
+    /// absent, the test skips rather than failing CI on missing local state.
+    #[test]
+    fn fold_new_matches_eager_read_on_real_pandas_proof_when_present() {
+        let dir = std::path::Path::new(
+            "/Users/tsavo/sugar-pandas-demo/consumer-bad/.sugar/imports",
+        );
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            eprintln!("skipping: {} not present", dir.display());
+            return;
+        };
+        let proof_path = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| p.extension().and_then(|e| e.to_str()) == Some("proof"));
+        let Some(proof_path) = proof_path else {
+            eprintln!("skipping: no .proof file found under {}", dir.display());
+            return;
+        };
+        let bytes = std::fs::read(&proof_path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", proof_path.display()));
+
+        // The pandas proof can carry JSON numbers up to i128::MAX, which a
+        // pre-existing, unrelated bug in `sugar-canonicalizer` rejects
+        // ("non-integer JSON number") -- affecting the eager `ProofGraph::read`
+        // baseline exactly as much as `fold(new)`, since both call the same
+        // canonicalizer. That is orthogonal to this reader-unification work
+        // (it is not a fold-vs-eager divergence; both sides fail identically),
+        // so catch it here and skip rather than mask real reader-parity
+        // regressions behind an unrelated, already-tracked limitation.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_fold_new_matches_eager_read(&bytes, "pandas vendor");
+        }));
+        if let Err(payload) = result {
+            let msg = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
+            if msg.contains("canonicalizer: non-integer JSON number") {
+                eprintln!(
+                    "skipping: pandas proof hit pre-existing canonicalizer limitation \
+                     unrelated to reader unification: {msg}"
+                );
+                return;
+            }
+            std::panic::resume_unwind(payload);
+        }
     }
 }

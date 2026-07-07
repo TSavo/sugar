@@ -261,7 +261,7 @@ impl AuthorityMementoRef {
     }
 }
 
-fn json_to_canonical_value(value: &Json) -> Arc<Value> {
+pub(crate) fn json_to_canonical_value(value: &Json) -> Arc<Value> {
     json_to_canonical_value_at(value, "$").unwrap_or_else(|err| panic!("{err}"))
 }
 
@@ -454,14 +454,18 @@ impl ContractBody {
 }
 
 #[derive(Clone, Debug)]
-struct MemberRecord {
+pub(crate) struct MemberRecord {
     cid: MementoCid,
     bytes: Vec<u8>,
 }
 
 impl MemberRecord {
-    fn new(cid: MementoCid, bytes: Vec<u8>) -> Self {
+    pub(crate) fn new(cid: MementoCid, bytes: Vec<u8>) -> Self {
         Self { cid, bytes }
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 
     fn from_whole_bytes(bytes: Vec<u8>, type_name: &str, expected_kinds: &[&str]) -> Self {
@@ -1233,91 +1237,71 @@ impl ProofGraph {
     /// records. Each member resolves its body by CID lookup against the graph;
     /// nothing is inlined. Source/witness leaves are never in the catalog --
     /// those resolve through kit-driven oracles, off this graph.
+    ///
+    /// Re-expressed (per the reader-unification mandate) as ONE primitive --
+    /// `crate::cbor_index::new(cid)`: index lookup -> verified byte range ->
+    /// typed entry -- folded over `build_index`'s CID enumeration instead of
+    /// three bespoke inline loops. Atoms are folded first (no dependency),
+    /// then bodies (consulting the completed atoms map for the same
+    /// atom-existence check the old loop performed), then members. This is
+    /// gated by `cbor_index`'s differential test
+    /// (`fold_new_matches_eager_read_byte_and_member_identical`), which
+    /// proved this fold produces a byte/member-identical result to the
+    /// bespoke loop it replaces on a real `.proof` fixture before this
+    /// refactor landed.
     pub fn read(bytes: &[u8]) -> Result<ProofGraph, crate::ProofEnvelopeError> {
-        use crate::cbor_decode::{decode, CborValue};
+        use crate::cbor_index::{build_index, new as new_entry, EntryKind, TypedEntry};
         use crate::ProofEnvelopeError::Other;
 
-        let catalog = decode(bytes).map_err(|e| Other(format!("CBOR decode catalog: {e:?}")))?;
-        let map = catalog
-            .as_map()
-            .ok_or_else(|| Other("catalog root is not a CBOR map".into()))?;
-
+        let index = build_index(bytes).map_err(|e| Other(format!("CBOR decode catalog: {e:?}")))?;
         let mut graph = ProofGraph::new();
 
-        // 1. Atoms: the data leaves. The content-addressed hash is lossless over
-        //    the store, so we restore by recomputation -- re-derive each FlatAtom
-        //    from its bytes and check the CID matches the catalog key.
-        if let Some(atoms) = map.get("atoms").and_then(CborValue::as_map) {
-            for (cid, val) in atoms {
-                let raw = val
-                    .as_bstr()
-                    .ok_or_else(|| Other(format!("atom {cid} is not a byte string")))?;
-                let json: Json = serde_json::from_slice(raw)
-                    .map_err(|e| Other(format!("atom {cid} bytes not JSON: {e}")))?;
-                let atom = FlatAtom::new(json_to_canonical_value(&json));
-                if atom.cid().as_str() != cid {
-                    return Err(Other(format!(
-                        "atom CID mismatch: catalog key {cid} != recomputed {}",
-                        atom.cid().as_str()
-                    )));
+        // 1. Atoms: the data leaves. The content-addressed hash is lossless
+        //    over the store, so `new` restores each by recomputation -- CID
+        //    equality (checked inside `new`/`fetch_one`) is what is trusted,
+        //    never the byte range alone.
+        for cid in index.atoms.keys() {
+            match new_entry(bytes, &index, EntryKind::Atom, cid, &graph.atoms)
+                .map_err(|e| Other(format!("atom {cid}: {e}")))?
+            {
+                TypedEntry::Atom(atom) => {
+                    graph.atoms.insert(cid.clone(), atom);
                 }
-                graph.atoms.insert(cid.clone(), atom);
+                _ => unreachable!("EntryKind::Atom always yields TypedEntry::Atom"),
             }
         }
 
         // 2. Bodies: relationships, by CID only. A body holds atom-memento
-        //    references, never inline atom data -- resolve each atomCid out of
-        //    the atoms map and rebuild from slots, then recompute the CID.
-        if let Some(bodies) = map.get("body").and_then(CborValue::as_map) {
-            for (cid, val) in bodies {
-                let raw = val
-                    .as_bstr()
-                    .ok_or_else(|| Other(format!("body {cid} is not a byte string")))?;
-                let json: Json = serde_json::from_slice(raw)
-                    .map_err(|e| Other(format!("body {cid} bytes not JSON: {e}")))?;
-                let slots = json
-                    .get("body")
-                    .and_then(Json::as_object)
-                    .ok_or_else(|| Other(format!("body {cid} has no `body` object")))?;
-                let mut atom_mementos: Vec<(String, AtomMemento)> = Vec::with_capacity(slots.len());
-                for (slot, slot_val) in slots {
-                    let atom_cid = slot_val
-                        .get("atomCid")
-                        .and_then(Json::as_str)
-                        .ok_or_else(|| Other(format!("body {cid} slot {slot} missing atomCid")))?;
-                    let atom = graph.atoms.get(atom_cid).ok_or_else(|| {
-                        Other(format!("body {cid} references unknown atom {atom_cid}"))
-                    })?;
-                    atom_mementos.push((slot.clone(), AtomMemento::new(atom)));
+        //    references, never inline atom data; `new` resolves each
+        //    `atomCid` against `graph.atoms` (the atoms folded in step 1)
+        //    and refuses a body that references an atom not yet present --
+        //    the same referential-integrity check the old inline loop made.
+        for cid in index.bodies.keys() {
+            match new_entry(bytes, &index, EntryKind::Body, cid, &graph.atoms)
+                .map_err(|e| Other(format!("body {cid}: {e}")))?
+            {
+                TypedEntry::Body(body) => {
+                    graph.bodies.insert(cid.clone(), body);
                 }
-                let body = ContractBody::from_slots(
-                    atom_mementos.iter().map(|(s, m)| (s.as_str(), m)).collect(),
-                );
-                if body.cid().as_str() != cid {
-                    return Err(Other(format!(
-                        "body CID mismatch: catalog key {cid} != recomputed {}",
-                        body.cid().as_str()
-                    )));
-                }
-                graph.bodies.insert(cid.clone(), body);
+                _ => unreachable!("EntryKind::Body always yields TypedEntry::Body"),
             }
         }
 
-        // 3. Members: signed mementos, kept as records. Each resolves its body
-        //    lazily by CID lookup when asked (see `contract_body_of`); source and
-        //    witness leaves are never stored here -- those resolve off-graph
-        //    through kit-driven oracles.
-        if let Some(members) = map.get("members").and_then(CborValue::as_map) {
-            for (cid, val) in members {
-                let memento_cid = MementoCid::try_parse(cid.clone()).map_err(|raw| {
-                    Other(format!(
-                        "member {raw}: invalid memento CID; requires `blake3-512:` plus 128 hex characters"
-                    ))
-                })?;
-                let raw = val
-                    .as_bstr()
-                    .ok_or_else(|| Other(format!("member {cid} is not a byte string")))?;
-                graph.insert_member(MemberRecord::new(memento_cid, raw.to_vec()));
+        // 3. Members: signed mementos, kept as records. Each resolves its
+        //    body lazily by CID lookup when asked (see `contract_body_of`);
+        //    source and witness leaves are never stored here -- those
+        //    resolve off-graph through kit-driven oracles. Members have no
+        //    atom-existence dependency, so `graph.atoms` is passed only
+        //    because `new`'s signature is uniform across all three kinds;
+        //    it is unused on this branch.
+        for cid in index.members.keys() {
+            match new_entry(bytes, &index, EntryKind::Member, cid, &graph.atoms)
+                .map_err(|e| Other(format!("member {cid}: {e}")))?
+            {
+                TypedEntry::Member(record) => {
+                    graph.insert_member(record);
+                }
+                _ => unreachable!("EntryKind::Member always yields TypedEntry::Member"),
             }
         }
 

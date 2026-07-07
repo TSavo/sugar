@@ -130,6 +130,14 @@ implementations/*/blake3-512_*.proof
 # `cargo run -p sugar-baseline-rust-std --bin mint-rust-std-baseline`).
 !.sugar/baselines/*.proof
 
+# Real base64 vendor/consumer `.proof` fixtures ARE checked in: they anchor
+# the reader-unification differential test (`fold(new) == ProofGraph::read`)
+# against actual proof bytes instead of a toy fixture -- the whole point
+# being that a synthetic fixture can miss real-world shapes (e.g. unsigned
+# members) a toy fixture never constructs. Regenerate via
+# `examples/python-base64-federation` if the format changes.
+!implementations/rust/sugar-proof-envelope/tests/fixtures/*.proof
+
 # Zig build artifacts
 implementations/zig/**/.zig-cache/
 implementations/zig/**/zig-out/
