@@ -445,7 +445,7 @@ fn derive_link_bundle_inner(
     all_contract_cids.sort();
     let contract_set_cid = compute_set_cid_sorted(&all_contract_cids);
 
-    let mut bridges: Vec<Json> = Vec::new();
+    let mut bridges: Vec<DerivedBridge> = Vec::new();
     let mut linker_errors_out: Vec<LinkerError> = Vec::new();
 
     // Sort call edges for determinism
@@ -491,17 +491,31 @@ fn derive_link_bundle_inner(
             .get(target_cid)
             .and_then(|c| c.pre_json.as_ref());
 
-        let bridge = derive_bridge(
+        // Construct the satisfaction obligation `post_B \u{2283} pre_A` ONCE,
+        // as a typed [`ObligationState`]. Before this seam the obligation was
+        // rebuilt as untyped JSON in disjoint places, so the term *carried on
+        // the bridge* could drift from the term *checked by the verifier*.
+        // Here it is a single value: attached to the [`DerivedBridge`] and
+        // discharged below. Carried == checked by construction.
+        let obligation = ObligationState::derive(source_post, target_pre);
+
+        // The on-wire memento is byte-identical: `evidenceTerm` still carries
+        // the emit-side placeholder (replacing it with the live obligation
+        // changes call-edge / bridge CIDs — the emit-side follow-up). Only the
+        // in-memory `obligation` field is new, and it is not serialized.
+        let memento = derive_bridge(
             &edge.source_contract_cid,
             target_cid,
             &edge.call_site_locus_json,
             &edge.evidence_term_json,
         );
-        bridges.push(bridge);
+        let bridge = DerivedBridge {
+            memento,
+            obligation,
+        };
 
         if let Some(mut err) = discharge_obligation(
-            source_post,
-            target_pre,
+            &bridge.obligation,
             &edge.source_contract_cid,
             target_cid,
             &edge.target_symbol,
@@ -512,11 +526,14 @@ fn derive_link_bundle_inner(
             err.call_site_locus_json = Some(edge.call_site_locus_json.clone());
             linker_errors_out.push(err);
         }
+
+        bridges.push(bridge);
     }
 
-    // Sort bridges for determinism
+    // Sort bridges for determinism (over the wire memento only).
     bridges.sort_by(|a, b| {
         let ak = a
+            .memento
             .get("header")
             .and_then(|h| h.get("target"))
             .and_then(|t| t.get("cid"))
@@ -524,6 +541,7 @@ fn derive_link_bundle_inner(
             .unwrap_or("")
             .to_string();
         let bk = b
+            .memento
             .get("header")
             .and_then(|h| h.get("target"))
             .and_then(|t| t.get("cid"))
@@ -550,9 +568,10 @@ fn derive_link_bundle_inner(
         compute_set_cid_sorted(&edge_bytes)
     };
 
-    // bridgeSetCid
+    // bridgeSetCid (over the wire memento only).
     let bridge_set_cid = {
-        let mut bridge_strs: Vec<String> = bridges.iter().map(|b| b.to_string()).collect();
+        let mut bridge_strs: Vec<String> =
+            bridges.iter().map(|b| b.memento.to_string()).collect();
         bridge_strs.sort();
         compute_set_cid_sorted(&bridge_strs)
     };
@@ -571,6 +590,11 @@ fn derive_link_bundle_inner(
         })
         .collect();
 
+    // Wire bridges: only the byte-identical mementos are serialized. The
+    // in-memory `obligation` field on each [`DerivedBridge`] never reaches the
+    // bundle, so the bundle bytes (and linkBundleCid) are unchanged.
+    let bridge_mementos: Vec<Json> = bridges.into_iter().map(|b| b.memento).collect();
+
     // linkBundleCid is over JCS of the bundle sans the CID field itself
     let bundle_without_cid = serde_json::json!({
         "schemaVersion": "1",
@@ -580,7 +604,7 @@ fn derive_link_bundle_inner(
         "bridgeSetCid": bridge_set_cid,
         "linkerVersion": "0.1.0",
         "linkerErrors": linker_error_jsons,
-        "bridges": bridges,
+        "bridges": bridge_mementos,
     });
 
     let link_bundle_cid = blake3_512_of(&jcs_of_json(&bundle_without_cid));
@@ -759,6 +783,96 @@ fn derive_bridge(
 }
 
 // -------------------------------------------------------------------
+// Obligation: the one typed representation of `post_B \u{2283} pre_A`
+// -------------------------------------------------------------------
+
+/// The satisfaction obligation `post_caller \u{2283} pre_callee` for one bound
+/// call edge, expressed over strongly-typed [`IrFormula`]s.
+///
+/// This is the single typed representation of the thing the linker proves.
+/// Before this seam the obligation was rebuilt as untyped `serde_json::Value`
+/// in disjoint places — the emit-side `evidenceTerm` placeholder carried into
+/// the bridge, and `discharge_obligation`'s inline `implies` term — so the term
+/// *minted* into a bridge could drift from the term *checked* by the verifier.
+/// Constructing it once (see [`ObligationState::derive`]) and threading the same
+/// value to both the [`DerivedBridge`] and the discharge makes carried ==
+/// checked by construction.
+///
+/// The bridge's on-wire `evidenceTerm` field still serializes the emit-side
+/// placeholder for byte-identity (replacing it changes call-edge / bridge CIDs
+/// and is the emit-side follow-up). The in-memory obligation carried on the
+/// [`DerivedBridge`] is the authoritative value the verifier discharges, and
+/// [`Obligation::as_implies`] already lowers to the exact JSON that future wire
+/// minting would use.
+#[derive(Debug, Clone, PartialEq)]
+struct Obligation {
+    /// Caller post-condition `post_B`.
+    post: IrFormula,
+    /// Callee pre-condition `pre_A`.
+    pre: IrFormula,
+}
+
+impl Obligation {
+    fn new(post: IrFormula, pre: IrFormula) -> Self {
+        Self { post, pre }
+    }
+
+    /// Lower to the `{"kind":"implies","operands":[post,pre]}` IR formula the
+    /// SMT compiler consumes. Byte-identical to the inline `IrFormula::Implies`
+    /// term this seam replaced, so no solver input or verdict changes.
+    fn as_implies(&self) -> IrFormula {
+        IrFormula::Implies {
+            operands: vec![self.post.clone(), self.pre.clone()],
+        }
+    }
+}
+
+/// The link-time obligation state for one bound edge: a concrete obligation to
+/// discharge, or one of the two structural short-circuits. Built once by
+/// [`ObligationState::derive`] and consumed by [`discharge_obligation`], so the
+/// discharge branches map one-to-one onto the historical error strings.
+#[derive(Debug, Clone, PartialEq)]
+enum ObligationState {
+    /// Both formulas present: a concrete `post \u{2283} pre` to discharge.
+    Pending(Obligation),
+    /// Caller post-condition absent: `post \u{2283} pre` cannot be discharged
+    /// (`unprovable-obligation`).
+    CallerPostAbsent,
+    /// Callee pre-condition absent: vacuously discharged.
+    VacuousPreAbsent,
+}
+
+impl ObligationState {
+    /// Derive the obligation state from the caller post / callee pre formulas.
+    /// The `(None, _)` before `(Some, None)` ordering preserves the historical
+    /// precedence: caller-post-absent is reported even when the callee also has
+    /// no pre-condition.
+    fn derive(source_post: Option<&IrFormula>, target_pre: Option<&IrFormula>) -> Self {
+        match (source_post, target_pre) {
+            (None, _) => ObligationState::CallerPostAbsent,
+            (Some(_), None) => ObligationState::VacuousPreAbsent,
+            (Some(post), Some(pre)) => {
+                ObligationState::Pending(Obligation::new(post.clone(), pre.clone()))
+            }
+        }
+    }
+}
+
+/// A derived bridge: the byte-identical wire memento plus the in-memory
+/// [`ObligationState`] it stands for.
+///
+/// Serializing a `LinkBundle` uses only `memento` (unchanged bytes); the
+/// verifier discharges `obligation` — the SAME value that is carried here, so
+/// the thing carried on the bridge IS the thing checked. The `obligation` field
+/// is never serialized, keeping the bundle bytes and `linkBundleCid` identical.
+struct DerivedBridge {
+    /// The wire-facing bridge memento (byte-identical to the pre-seam JSON).
+    memento: Json,
+    /// The in-memory obligation this bridge carries and the verifier discharges.
+    obligation: ObligationState,
+}
+
+// -------------------------------------------------------------------
 // Obligation discharge
 // -------------------------------------------------------------------
 
@@ -790,19 +904,21 @@ fn derive_bridge(
 ///      * `Undecidable` / `Disagreement` / no solver registered:
 ///        `implication-undecidable` (do NOT silently discharge).
 fn discharge_obligation(
-    source_post: Option<&IrFormula>,
-    target_pre: Option<&IrFormula>,
+    state: &ObligationState,
     source_contract_cid: &str,
     target_cid: &str,
     target_symbol: &str,
     registry: &Registry,
     plan: &SolverPlan,
 ) -> Option<LinkerError> {
-    // (1) Caller post absent: cannot discharge. (A wire `null` deserializes to
-    // `None` under `Option<IrFormula>`, so the old `Some(Json::Null)` arm is
-    // now folded into `None` with identical behavior.)
-    let post = match source_post {
-        None => {
+    // (1)/(2) Structural short-circuits, decided when the obligation was
+    // derived (see [`ObligationState::derive`]). A caller with no post-condition
+    // promises nothing (`unprovable-obligation`); a callee with no pre-condition
+    // is vacuously discharged. (A wire `null` deserializes to `None` under
+    // `Option<IrFormula>`, so the old `Some(Json::Null)` arm folds into these
+    // with identical behavior.)
+    let obligation = match state {
+        ObligationState::CallerPostAbsent => {
             return Some(LinkerError {
                 kind: LinkerErrorKind::UnprovableObligation,
                 target_symbol: target_symbol.to_string(),
@@ -814,20 +930,15 @@ fn discharge_obligation(
                 call_site_locus_json: None, // populated by caller from locus
             });
         }
-        Some(p) => p,
-    };
-
-    // (2) Callee pre absent: vacuously discharged.
-    let pre = match target_pre {
-        None => return None,
-        Some(p) => p,
+        ObligationState::VacuousPreAbsent => return None,
+        ObligationState::Pending(o) => o,
     };
 
     // (3) JCS-canonical equality: P -> P trivially. JCS sorts keys, so the
     // comparison is insensitive to formula field order; typing the formulas
     // does not change any verdict here.
-    let post_jcs = jcs_of_formula(post);
-    let pre_jcs = jcs_of_formula(pre);
+    let post_jcs = jcs_of_formula(&obligation.post);
+    let pre_jcs = jcs_of_formula(&obligation.pre);
     if post_jcs == pre_jcs {
         return None;
     }
@@ -838,9 +949,11 @@ fn discharge_obligation(
     // plan are external to the linker (the architect's "use whatever
     // Cargo.toml says" rule); we never reach for a hardcoded solver
     // name.
-    let implication_formula = IrFormula::Implies {
-        operands: vec![post.clone(), pre.clone()],
-    };
+    //
+    // The implication is lowered from the SAME [`Obligation`] carried on the
+    // bridge, so the term checked here is exactly the term the bridge stands
+    // for.
+    let implication_formula = obligation.as_implies();
     // Lower the typed formula back to the same `{"kind":"implies","operands":
     // [post, pre]}` JSON the compiler consumed before this seam. `to_value`
     // on an `IrFormula` is infallible (derived Serialize over owned data);
@@ -1025,6 +1138,53 @@ mod tests {
             let reserialized = serde_json::to_string(&parsed).expect("IrFormula serializes");
             assert_eq!(reserialized, wire, "IrFormula round-trip must be byte-identical");
         }
+    }
+
+    /// The obligation-typeify seam: the single [`Obligation`] value the linker
+    /// checks lowers to the EXACT `{"kind":"implies","operands":[post,pre]}`
+    /// JSON the SMT compiler consumed before this seam. This is both the term
+    /// discharged and the term a future emit-side follow-up would mint into the
+    /// bridge, so carried == checked is pinned to a byte string.
+    #[test]
+    fn obligation_lowers_to_the_exact_implies_wire() {
+        let post: IrFormula =
+            serde_json::from_str(r#"{"kind":"atomic","name":"true","args":[]}"#).unwrap();
+        let pre: IrFormula =
+            serde_json::from_str(r#"{"kind":"atomic","name":"true","args":[]}"#).unwrap();
+        let obligation = Obligation::new(post, pre);
+        let wire = serde_json::to_string(&obligation.as_implies()).unwrap();
+        assert_eq!(
+            wire,
+            r#"{"kind":"implies","operands":[{"kind":"atomic","name":"true","args":[]},{"kind":"atomic","name":"true","args":[]}]}"#,
+            "Obligation::as_implies must lower to the exact pre-seam implies term"
+        );
+    }
+
+    /// [`ObligationState::derive`] maps the caller-post / callee-pre presence
+    /// matrix onto the three discharge outcomes, preserving the historical
+    /// precedence (caller-post-absent wins even when the callee pre is also
+    /// absent).
+    #[test]
+    fn obligation_state_derive_matches_presence_matrix() {
+        let f: IrFormula =
+            serde_json::from_str(r#"{"kind":"atomic","name":"true","args":[]}"#).unwrap();
+
+        assert!(matches!(
+            ObligationState::derive(None, None),
+            ObligationState::CallerPostAbsent
+        ));
+        assert!(matches!(
+            ObligationState::derive(None, Some(&f)),
+            ObligationState::CallerPostAbsent
+        ));
+        assert!(matches!(
+            ObligationState::derive(Some(&f), None),
+            ObligationState::VacuousPreAbsent
+        ));
+        assert!(matches!(
+            ObligationState::derive(Some(&f), Some(&f)),
+            ObligationState::Pending(_)
+        ));
     }
 
     /// The `Option<IrFormula>` field itself must serialize/deserialize
