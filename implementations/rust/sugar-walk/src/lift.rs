@@ -223,7 +223,16 @@ enum ValueKind {
     Number,
     Bool,
     JsonObject(BTreeMap<String, ValueKind>),
+    /// The expression shape itself is not one this recognizer classifies
+    /// (an unrecognized `Expr` variant, an unrecognized macro, an
+    /// unresolvable call target). A genuine "no claim" outcome.
     Unknown,
+    /// The expression IS a recognized local-path reference, but no
+    /// value-kind fact is on record for it in `ctx.local_value_kinds`
+    /// (the binding predates this pass, was cleared by a mutable/complex
+    /// pattern, or was never assigned a tracked kind). Distinct from
+    /// `Unknown`: the shape was claimed, the lookup simply missed.
+    Untracked,
 }
 
 #[derive(Clone, Debug)]
@@ -1823,11 +1832,10 @@ fn infer_value_kind(expr: &Expr, ctx: &LiftCtx) -> ValueKind {
         let Some(seg) = path.path.segments.last() else {
             return ValueKind::Unknown;
         };
-        return ctx
-            .local_value_kinds
-            .get(&seg.ident.to_string())
-            .cloned()
-            .unwrap_or(ValueKind::Unknown);
+        return match ctx.local_value_kinds.get(&seg.ident.to_string()) {
+            Some(kind) => kind.clone(),
+            None => ValueKind::Untracked,
+        };
     }
     if let Expr::Paren(paren) = expr {
         return infer_value_kind(&paren.expr, ctx);

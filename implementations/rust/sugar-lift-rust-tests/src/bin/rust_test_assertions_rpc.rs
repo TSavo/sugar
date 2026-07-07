@@ -273,6 +273,40 @@ impl RpcMode {
     }
 }
 
+/// #3753: production `lift` used to call `lift(params)` directly and splice the
+/// result into a JSON-RPC reply. A factory structural-gap panic (e.g. a for-loop
+/// AST shape the factory has no `Composite` recognizer for) would then unwind
+/// straight out of `main`'s request loop, killing the process before `send`
+/// wrote a reply -- the transport "closes stdout before responding" symptom.
+/// A recognizer miss is a construction GAP, not a crash: this wrapper catches
+/// the panic and replies with a typed, structured error (reusing the same
+/// `audit_only_gap_from_panic_message` translation the audit-only RPC mode
+/// already uses) so the transport survives and the caller gets a named gap
+/// instead of a dead pipe. An unclassified panic still gets a reply (never a
+/// silent process death), just without the structured `auditOnlyGaps` payload.
+fn lift_reply_never_kills_transport(id: &Value, params: &Value) -> Value {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lift(params)));
+    match result {
+        Ok(value) => json!({"jsonrpc": "2.0", "id": id, "result": value}),
+        Err(payload) => {
+            let message = panic_payload_message(payload);
+            let label = "rust-test-assertions::lift";
+            match audit_only_gap_from_panic_message(&message, label) {
+                Some(gap) => json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": -32603,
+                        "message": "construction gap: no Sugar recognizer for this AST shape yet (typed effect, not a crash)",
+                        "data": { "auditOnlyGaps": [gap] },
+                    },
+                }),
+                None => err_reply(id, format!("lift panicked: {message}")),
+            }
+        }
+    }
+}
+
 fn lift(params: &Value) -> Value {
     trace_lift_rpc_checkpoint("lift.start", &Value::Null);
     let workspace_root = params
@@ -5930,7 +5964,7 @@ fn handle_with_mode(id: &Value, method: &str, params: &Value, mode: RpcMode) -> 
             json!({"jsonrpc": "2.0", "id": id, "result": component_plan_result(params)})
         }
         "lift" if mode == RpcMode::AuditOnlyConstructionGaps => audit_only_lift_reply(id, params),
-        "lift" => json!({"jsonrpc": "2.0", "id": id, "result": lift(params)}),
+        "lift" => lift_reply_never_kills_transport(id, params),
         RESOLVE_PROOF_BY_CID_RPC_METHOD => {
             let workspace_root = params
                 .get("workspace_root")
@@ -6268,6 +6302,62 @@ fn no_gap() {
         assert_eq!(gap["auditRow"]["status"], "sugar-gap");
     }
 
+    /// #3753 end-to-end: the exact offending shape from
+    /// `rust-coretests-report` -- a `for (i, (_, w)) in witness.iter().enumerate()`
+    /// loop the factory has no `Composite` recognizer for -- used to panic all the
+    /// way out of `lift()` uncaught in PRODUCTION mode (the mode the RPC transport
+    /// actually runs in), which killed the process before a reply was ever written
+    /// ("plugin closes stdout before responding"). Driving the request through
+    /// `handle_with_mode` in `RpcMode::Production` must now always yield a JSON-RPC
+    /// reply -- a typed construction-gap error, never an uncaught panic/dead pipe.
+    #[test]
+    fn production_lift_reports_typed_gap_instead_of_killing_transport_for_enumerate_tuple_destructure_for_loop(
+    ) {
+        let src = r#"
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[test]
+fn t() {
+    let witness = [8, 9, 10].map(|i| (i, AtomicUsize::new(0)));
+    for (i, (_, w)) in witness.iter().enumerate() {
+        let v = w.load(Ordering::Relaxed);
+        assert!(v <= 1, "expected idx {i} to be visited at most once, actual: {v}");
+    }
+}
+"#;
+        let root = unique_temp_dir("production_lift_enumerate_tuple_destructure_for_loop");
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src/lib.rs"), src).expect("write rust source");
+        let params = json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"],
+        });
+
+        // The bug reproduces as an uncaught panic; catch_unwind here proves the
+        // FIX makes the call not panic at all (a bare call would abort the test
+        // binary before this assertion ever ran, under the old behavior).
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handle_with_mode(&json!(1), "lift", &params, RpcMode::Production)
+        }));
+        let reply = outcome.expect(
+            "production lift must reply, not panic -- a factory recognizer miss is a typed gap, not a plugin death",
+        );
+
+        assert_eq!(reply["jsonrpc"], "2.0");
+        assert_eq!(reply["id"], 1);
+        assert!(
+            reply.get("result").is_some() || reply.get("error").is_some(),
+            "reply must carry either a result or a typed error, reply={reply}"
+        );
+        if let Some(error) = reply.get("error") {
+            let gaps = error["data"]["auditOnlyGaps"]
+                .as_array()
+                .expect("typed gap error must carry structured auditOnlyGaps");
+            assert!(!gaps.is_empty(), "expected at least one structured gap");
+            assert_eq!(gaps[0]["gap"]["requested"], "Composite");
+            assert_eq!(gaps[0]["gap"]["observed"], "Other:Expr:ForLoop");
+        }
+    }
+
     #[test]
     fn audit_only_gap_parser_rejects_unstructured_panics() {
         assert!(
@@ -6292,6 +6382,35 @@ fn no_gap() {
             "macro `json` has no visible macro_rules source"
         );
         assert_eq!(gap["gap"]["requested"], "Unknown");
+        assert_eq!(gap["gap"]["gap_kind"], "Sugar");
+        assert_eq!(gap["auditRow"]["status"], "sugar-gap");
+    }
+
+    /// #3753: a factory structural gap panic for a Composite role (e.g. a for-loop
+    /// over `.enumerate()` with a tuple-destructured pattern the factory has no
+    /// recognizer for) is a TWO-LINE message: `unresolved_reason()` followed by a
+    /// second `\n  gap: write more Sugar for this AST: owner=...` line built by
+    /// `catalog::build_expr_role`. The parser must find the STRUCTURED second line
+    /// (not bail on the unstructured first "write more " occurrence) so this panic
+    /// becomes an audit-only construction gap instead of an uncaught re-panic that
+    /// kills the RPC transport.
+    #[test]
+    fn audit_only_gap_parser_records_composite_structural_gap_two_line_panics() {
+        let message = "factory structural gap: no Sugar candidate for role Composite at \
+`for (i , (_ , w)) in witness . iter () . enumerate () { let v = w . load (Ordering :: Relaxed) ; \
+assert ! (v <= 1 , \"expected idx {i} to be visited at most once, actual: {v}\") ; }`; \
+write more Sugar for this AST\n  \
+gap: write more Sugar for this AST: owner=rust.factory blame=<factory>:6:4 \
+observed=Other:Expr:ForLoop requested=Composite fix=sugar::other";
+
+        let gap = audit_only_gap_from_panic_message(message, "src/lib.rs::f")
+            .expect("two-line composite structural gap panic should become an audit-only gap, not an uncaught re-panic");
+
+        assert_eq!(gap["kind"], "audit-only-construction-gap");
+        assert_eq!(gap["gap"]["owner"], "rust.factory");
+        assert_eq!(gap["gap"]["requested"], "Composite");
+        assert_eq!(gap["gap"]["observed"], "Other:Expr:ForLoop");
+        assert_eq!(gap["gap"]["fix"], "sugar::other");
         assert_eq!(gap["gap"]["gap_kind"], "Sugar");
         assert_eq!(gap["auditRow"]["status"], "sugar-gap");
     }
