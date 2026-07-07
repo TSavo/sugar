@@ -1446,14 +1446,25 @@ pub async fn handle_prove_consistency(
         }
     }
 
-    tracing::debug!(kit_id, file, "proveConsistency: resident-pool verify_consistency");
+    tracing::debug!(
+        kit_id,
+        file,
+        "proveConsistency: resident-pool verify_consistency (editor-scoped)"
+    );
 
+    // EDITOR SCOPE: the daemon serves an editor, and the editor only paints
+    // rows anchored inside the project. Solve ONLY those groups (whole groups,
+    // vendor conjuncts intact -- see verify_consistency_scoped) instead of the
+    // vendor's thousands of internal obligations. On the pandas demo this is
+    // the difference between ~8k solves (~60s) and the consumer's own handful
+    // (milliseconds). The CLI's full `sugar prove` remains the unscoped door.
     let results = task::spawn_blocking(move || {
-        sugar_verifier::consistency::verify_consistency(
+        sugar_verifier::consistency::verify_consistency_scoped(
             &ctx.pool,
             &ctx.plan,
             &ctx.registry,
             &ctx.compilers,
+            &ctx.project_root,
             &ctx.project_root,
         )
     })

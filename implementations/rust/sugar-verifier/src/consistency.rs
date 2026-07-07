@@ -2987,6 +2987,37 @@ pub fn verify_consistency(
     compilers: &CompilerRegistry,
     project_root: &Path,
 ) -> Vec<ConsistencyResult> {
+    verify_consistency_inner(pool, plan, registry, compilers, project_root, None)
+}
+
+/// EDITOR-SCOPED consistency: identical construction to `verify_consistency`,
+/// but only GROUPS anchored inside `scope` are solved. A kept group keeps ALL
+/// its members -- vendor conjuncts included -- so every solved row is
+/// identical to the full run's row for that group (same conjuncts, same
+/// verdict); the scope only skips solving vendor-internal groups the editor
+/// never paints (the same predicate the extension's painter applies POST-solve
+/// today, moved PRE-solve). This is the O(consumer) editor path: on the pandas
+/// demo it collapses 8k+ vendor-internal solves to the consumer's own handful.
+/// The CLI's full `prove` continues to use the unscoped door.
+pub fn verify_consistency_scoped(
+    pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: &Path,
+) -> Vec<ConsistencyResult> {
+    verify_consistency_inner(pool, plan, registry, compilers, project_root, Some(scope))
+}
+
+fn verify_consistency_inner(
+    pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: Option<&Path>,
+) -> Vec<ConsistencyResult> {
     let (candidates, provenance_refusals) = collect_consistency_candidates(pool);
 
     // AMBIENT UNIVERSALS: a forall invariant (a lifted bounded loop, memento
@@ -3110,6 +3141,30 @@ pub fn verify_consistency(
             }
         }
     }
+
+    // EDITOR SCOPE (see verify_consistency_scoped): keep only groups whose
+    // anchor locus resolves inside `scope` ON DISK. Whole groups are kept or
+    // dropped -- never individual members -- so a kept group's conjunct set
+    // (vendor sworn facts included) is identical to the unscoped run's, and
+    // its solved row is therefore identical too. Ambient sets stay pool-wide.
+    let groups: Vec<(String, Vec<ConsistencyCandidate>)> = match scope {
+        None => groups,
+        Some(scope_root) => groups
+            .into_iter()
+            .filter(|(property_name, members)| {
+                let anchored_in_scope = |name: &str| {
+                    locus_by_name
+                        .get(name)
+                        .map(|l| scope_root.join(&l.file).exists())
+                        .unwrap_or(false)
+                };
+                anchored_in_scope(property_name)
+                    || members.iter().any(|m| {
+                        anchored_in_scope(contract_property_name(&m.body).as_ref())
+                    })
+            })
+            .collect(),
+    };
 
     let mut results: Vec<ConsistencyResult> = groups
         .par_iter()
