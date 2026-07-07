@@ -221,6 +221,7 @@ fn run() -> Result<(), String> {
         signer_cid,
         signer_seed: catalog_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&proof_input);
     let consumer_path = project_root.join(format!("{}.proof", built.cid));

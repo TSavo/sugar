@@ -765,6 +765,7 @@ mod tests {
             signer_cid: "blake3-512:bb".into(),
             signer_seed: [0x11; 32],
             declared_at: "2026-04-30T00:00:00.000Z".into(),
+            manifest: None,
         })
         .bytes;
 

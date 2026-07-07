@@ -22,6 +22,7 @@ pub mod cbor;
 pub mod cbor_decode;
 pub mod cbor_index;
 pub mod filename;
+pub mod manifest;
 pub mod proof;
 pub mod proof_graph;
 pub mod sign;

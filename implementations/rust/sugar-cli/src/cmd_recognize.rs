@@ -486,6 +486,7 @@ fn emit_bridge_envelope(
         signer_cid: signer,
         signer_seed: RECOGNIZE_BRIDGE_SIGNER_SEED,
         declared_at: RECOGNIZE_BRIDGE_DECLARED_AT.to_string(),
+        manifest: None,
     });
     let path = proof_dir.join(proof_filename(&proof.cid));
     std::fs::write(&path, &proof.bytes).map_err(|e| format!("write {}: {e}", path.display()))?;

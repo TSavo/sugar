@@ -55,6 +55,16 @@ pub struct ProofEnvelopeInput {
     pub signer_seed: Ed25519Seed,
     /// ISO-8601 string with millisecond precision and trailing 'Z'.
     pub declared_at: String,
+    /// Optional seal-time manifest (join-manifest design, lane 1). When
+    /// present, both the raw canonical-CBOR `manifest` bstr and its
+    /// `manifestCid` are added to the SIGNED body -- inside the same
+    /// `emit_sorted_map` call as every other field -- so the manifest is
+    /// covered by the envelope's root hash and signature exactly like
+    /// `atoms`/`body`/`members`. A byte-flip anywhere in the manifest bytes
+    /// therefore fails the whole-proof trust root (G4), not a side channel.
+    /// Proofs minted before this lane simply carry `None`, so old readers
+    /// (and old proofs) are unaffected.
+    pub manifest: Option<crate::manifest::Manifest>,
 }
 
 #[derive(Debug, Clone)]
@@ -137,6 +147,12 @@ fn body_pairs_unsigned(input: &ProofEnvelopeInput) -> Vec<CborPair> {
     if let Some(ref bcid) = input.binary_cid {
         pairs.push(make_string_pair("binaryCid", bcid));
     }
+    if let Some(ref manifest) = input.manifest {
+        let bytes = manifest.to_canonical_cbor();
+        let cid = manifest.cid();
+        pairs.push(make_bytes_pair("manifest", &bytes));
+        pairs.push(make_string_pair("manifestCid", &cid));
+    }
     if let Some(ref meta) = input.metadata {
         let mut meta_pairs: Vec<CborPair> =
             meta.iter().map(|(k, v)| make_string_pair(k, v)).collect();
@@ -196,11 +212,40 @@ mod tests {
             signer_cid: "blake3-512:bb".to_string(),
             signer_seed: [0x11; 32],
             declared_at: "2026-04-30T00:00:00.000Z".to_string(),
+            manifest: None,
         };
         let out = build_proof_envelope(&input);
         assert!(out.cid.starts_with("blake3-512:"));
         // First byte is map head with 9 entries (atoms, body, kind, name,
         // version, members, signer, declaredAt, signature) = 0xa9.
         assert_eq!(out.bytes[0], 0xa9);
+    }
+
+    #[test]
+    fn manifest_slot_is_absent_by_default_and_present_when_set() {
+        let mut graph = ProofGraph::new();
+        graph.push_source(SourceMemento::new(
+            br#"{"body":{"kind":"source-memento"},"header":{"kind":"source-memento"},"schemaVersion":"1"}"#.to_vec(),
+        ));
+        let base = ProofEnvelopeInput {
+            name: "@x/y".to_string(),
+            version: "0.0.1".to_string(),
+            binary_cid: None,
+            metadata: None,
+            graph,
+            signer_cid: "blake3-512:bb".to_string(),
+            signer_seed: [0x11; 32],
+            declared_at: "2026-04-30T00:00:00.000Z".to_string(),
+            manifest: None,
+        };
+        let without = build_proof_envelope(&base);
+        assert_eq!(without.bytes[0], 0xa9);
+
+        let mut with_manifest_input = base.clone();
+        with_manifest_input.manifest = Some(crate::manifest::Manifest::new());
+        let with = build_proof_envelope(&with_manifest_input);
+        // Two extra top-level keys: manifest, manifestCid -> 11 entries = 0xab.
+        assert_eq!(with.bytes[0], 0xab);
+        assert_ne!(with.cid, without.cid);
     }
 }

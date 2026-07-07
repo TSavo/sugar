@@ -195,6 +195,7 @@ fn main() -> ExitCode {
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&proof_input);
 

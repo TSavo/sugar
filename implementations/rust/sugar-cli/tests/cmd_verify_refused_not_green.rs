@@ -166,6 +166,7 @@ fn publish_inv_project(suffix: &str, solver_fixture: SolverFixture) -> PathBuf {
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     });
     let hex = cid_hex(&built.cid).expect("cid prefix");
     fs::write(proof_dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");

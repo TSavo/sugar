@@ -164,6 +164,7 @@ fn write_fixture(project: &Path) -> Result<(), Box<dyn std::error::Error>> {
         signer_cid,
         signer_seed,
         declared_at: "2026-06-09T00:00:00.000Z".into(),
+        manifest: None,
     });
     let hex = cid_hex(&built.cid).unwrap();
     fs::write(proof_dir.join(format!("{hex}.proof")), &built.bytes)?;

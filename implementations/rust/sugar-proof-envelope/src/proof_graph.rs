@@ -1467,6 +1467,12 @@ impl ProofGraph {
             signer_cid: identity.signer_cid.clone(),
             signer_seed: identity.signer_seed,
             declared_at: identity.declared_at.clone(),
+            // `ProofGraph::write` is the generic identity-only writer; the
+            // seal-time manifest (join-manifest design) is populated by
+            // `cmd_mint.rs` via `ProofEnvelopeInput` directly, not through
+            // this path, so callers here get the pre-lane behavior (no
+            // manifest slot) unchanged.
+            manifest: None,
         })
     }
 
@@ -1953,6 +1959,7 @@ mod tests {
             signer_cid: "blake3-512:bb".into(),
             signer_seed: [0x11; 32],
             declared_at: "2026-04-30T00:00:00.000Z".into(),
+            manifest: None,
         });
 
         // Read the catalog back into a strongly typed graph.

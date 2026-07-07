@@ -161,6 +161,7 @@ fn write_proof(dir: &Path, name: &str, graph: ProofGraph) -> String {
         signer_cid,
         signer_seed,
         declared_at: "2026-05-27T00:00:00.000Z".into(),
+        manifest: None,
     });
     let hex = cid_hex(&built.cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");

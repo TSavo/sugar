@@ -78,6 +78,7 @@ fn fixture_proof_bytes() -> (String, Vec<u8>) {
         signer_cid: ed25519_pubkey_string(&signer_seed),
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&input);
     (built.cid, built.bytes)

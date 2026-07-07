@@ -1064,6 +1064,7 @@ fn write_proof_run_bundle(
         signer_cid,
         signer_seed: RUN_SIGNER_SEED,
         declared_at: iso_now(),
+        manifest: None,
     });
     let out_dir = project_root.join(".sugar").join("runs");
     std::fs::create_dir_all(&out_dir)?;
@@ -2224,6 +2225,7 @@ fn mint_and_cache(
         signer_cid,
         signer_seed: *seed,
         declared_at: now.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&proof_input);
 

@@ -317,6 +317,7 @@ fn write_fixture(
         signer_cid,
         signer_seed,
         declared_at: DECLARED_AT.into(),
+        manifest: None,
     });
     fs::write(
         project.join(".sugar").join(proof_filename(&built.cid)),

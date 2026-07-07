@@ -2527,13 +2527,18 @@ fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
     serde_json::json!({ "kind": "and", "operands": operands })
 }
 
-pub fn verify_consistency(
+/// Walk every contract member in `pool`, apply the consistency-candidate
+/// filter (`is_consistency_candidate`) and the provenance-KIND gate, and
+/// return the surviving candidates plus any provenance refusals. This is the
+/// FIRST loop of `verify_consistency`, factored out (pure relocation, no
+/// behavior change) so the seal-time manifest builder
+/// (`build_manifest_from_pool`) can run the identical filter scoped to one
+/// proof's own pool instead of re-scanning a whole-pool verify pass -- the
+/// "pure relocation of the existing scan/grouping code from every-prove to
+/// once-per-seal" the join-manifest design calls for.
+fn collect_consistency_candidates(
     pool: &MementoPool,
-    plan: &SolverPlan,
-    registry: &HashMap<SolverSeat, SolverHandle>,
-    compilers: &CompilerRegistry,
-    project_root: &Path,
-) -> Vec<ConsistencyResult> {
+) -> (Vec<ConsistencyCandidate>, Vec<ConsistencyResult>) {
     let mut candidates: Vec<ConsistencyCandidate> = Vec::new();
     let mut provenance_refusals: Vec<ConsistencyResult> = Vec::new();
     for (cid, member) in pool.contract_members() {
@@ -2582,6 +2587,89 @@ pub fn verify_consistency(
             }
         }
     }
+    (candidates, provenance_refusals)
+}
+
+/// SEAL-TIME MANIFEST BUILDER (join-manifest design, lane 1). Runs the exact
+/// same candidate filter `verify_consistency` uses
+/// (`collect_consistency_candidates`), the exact same `#euf#`-name grouping
+/// criterion (`property_name.contains("#euf#")`), and the exact same ambient
+/// collectors (`collect_ambient_foralls`, `collect_ambient_ground_callsite_facts`),
+/// scoped to ONE proof's own pool -- `pool` here is expected to be loaded
+/// from just-minted bytes (this proof alone), not the whole project pool.
+/// `contributor_bundle` is this proof's own identity, recorded per group so a
+/// LATER cross-proof reader (out of this lane's scope; see design items 3-4)
+/// can detect a stale reference after a re-mint.
+pub fn build_manifest_from_pool(
+    pool: &MementoPool,
+    contributor_bundle: &str,
+) -> sugar_proof_envelope::manifest::Manifest {
+    let (candidates, _provenance_refusals) = collect_consistency_candidates(pool);
+
+    let mut manifest = sugar_proof_envelope::manifest::Manifest::new();
+
+    for candidate in &candidates {
+        let name = contract_property_name(&candidate.body).to_string();
+        if !name.contains("#euf#") {
+            continue;
+        }
+        let group = manifest.groups.entry(name).or_default();
+        group.member_cids.insert(candidate.cid.clone());
+        // First writer sets the contributor bundle; every candidate in this
+        // pool comes from the same just-minted proof, so this is invariant
+        // across a group's members.
+        if group.contributor_bundle.is_empty() {
+            group.contributor_bundle = contributor_bundle.to_string();
+        }
+    }
+
+    for candidate in &candidates {
+        if is_witness_member(&candidate.body) {
+            continue;
+        }
+        let Some(inv) = candidate.body.get("inv") else {
+            continue;
+        };
+        let inv = canonicalize_formula_json(inv);
+
+        let mut foralls: Vec<Json> = Vec::new();
+        collect_ambient_foralls(&inv, &mut foralls);
+        if !foralls.is_empty() {
+            manifest
+                .ambient
+                .closed_forall_cids
+                .insert(candidate.cid.clone());
+        }
+
+        let contract_name = contract_property_name(&candidate.body);
+        let ground_scope = ambient_ground_callsite_scope(contract_name);
+        let mut facts: Vec<AmbientGroundCallsiteFact> = Vec::new();
+        collect_ambient_ground_callsite_facts(
+            &inv,
+            &candidate.cid,
+            &ground_scope,
+            candidate.provenance_kind,
+            &mut facts,
+        );
+        if !facts.is_empty() {
+            manifest
+                .ambient
+                .ground_callsite_fact_cids
+                .insert(candidate.cid.clone());
+        }
+    }
+
+    manifest
+}
+
+pub fn verify_consistency(
+    pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+) -> Vec<ConsistencyResult> {
+    let (candidates, provenance_refusals) = collect_consistency_candidates(pool);
 
     // AMBIENT UNIVERSALS: a forall invariant (a lifted bounded loop, memento
     // `<test>::loop::<var>`, from any language's lifter) constrains every claim

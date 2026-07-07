@@ -114,6 +114,15 @@ pub struct CatalogIndex {
     pub atoms: BTreeMap<String, EntryRange>,
     pub bodies: BTreeMap<String, EntryRange>,
     pub members: BTreeMap<String, EntryRange>,
+    /// Byte range of the top-level `manifest` bstr, when this catalog was
+    /// sealed with one (join-manifest design, lane 1). `None` for proofs
+    /// minted before this lane -- readers must treat that as "no manifest,
+    /// fall back to pool scan", never as an error.
+    pub manifest: Option<EntryRange>,
+    /// The `manifestCid` tstr the catalog claims for the manifest payload.
+    /// `fetch_manifest` verifies the manifest bytes recompute to exactly
+    /// this CID before handing them back.
+    pub manifest_cid: Option<String>,
 }
 
 impl CatalogIndex {
@@ -306,10 +315,27 @@ pub fn build_index(bytes: &[u8]) -> Result<CatalogIndex, CborDecodeError> {
             "atoms" => index.atoms = scan_range_map(bytes, &mut idx)?,
             "body" => index.bodies = scan_range_map(bytes, &mut idx)?,
             "members" => index.members = scan_range_map(bytes, &mut idx)?,
+            "manifest" => {
+                // A single top-level bstr (not a nested map like
+                // atoms/body/members): record its byte range directly, the
+                // same way `scan_range_map` records each inner entry.
+                let (vmajor, vlen) = read_head(bytes, &mut idx)?;
+                if vmajor != 2 {
+                    return Err(CborDecodeError::UnsupportedMajor(vmajor << 5));
+                }
+                let len = vlen as usize;
+                let end = checked_end(idx, len, bytes.len())?;
+                index.manifest = Some(EntryRange { start: idx, len });
+                idx = end;
+            }
+            "manifestCid" => {
+                let v = decode_value(bytes, &mut idx)?;
+                index.manifest_cid = v.as_tstr().map(|s| s.to_string());
+            }
             _ => {
-                // Not one of the three payload maps this index covers:
-                // decode (and discard) structurally so `idx` advances past
-                // it correctly, reusing the audited decoder rather than a
+                // Not one of the payload slots this index covers: decode
+                // (and discard) structurally so `idx` advances past it
+                // correctly, reusing the audited decoder rather than a
                 // second hand-rolled skip routine.
                 let _ = decode_value(bytes, &mut idx)?;
             }
@@ -430,6 +456,42 @@ pub fn fetch_one(
             Ok(raw.to_vec())
         }
     }
+}
+
+/// Fetch this catalog's sealed manifest, CID-verified against the stored
+/// `manifestCid`, and decode it. Returns `Ok(None)` when the catalog carries
+/// no manifest slot at all (proofs minted before this lane) -- that is the
+/// designed "no behavior change when absent" path, not an error. Returns
+/// `Err` when a manifest slot IS present but fails to verify (range out of
+/// bounds, CID mismatch, or malformed CBOR) -- callers must treat that as a
+/// forced fallback to pool-scan (`ConsistencyMode::PoolScanFallback`), never
+/// as "absent".
+pub fn fetch_manifest(
+    bytes: &[u8],
+    index: &CatalogIndex,
+) -> Result<Option<crate::manifest::Manifest>, FetchError> {
+    let (Some(range), Some(expected_cid)) = (index.manifest, index.manifest_cid.as_deref()) else {
+        return Ok(None);
+    };
+    let end = range.end()?;
+    if end > bytes.len() {
+        return Err(FetchError::RangeOutOfBounds {
+            start: range.start,
+            end,
+            total: bytes.len(),
+        });
+    }
+    let raw = &bytes[range.start..end];
+    let actual = sugar_canonicalizer::blake3_512_of(raw);
+    if actual != expected_cid {
+        return Err(FetchError::CidMismatch {
+            expected: expected_cid.to_string(),
+            actual,
+        });
+    }
+    let manifest = crate::manifest::Manifest::from_canonical_cbor(raw)
+        .map_err(|e| FetchError::Decode(format!("manifest: {e}")))?;
+    Ok(Some(manifest))
 }
 
 #[cfg(test)]
@@ -697,6 +759,7 @@ mod tests {
             signer_cid: "blake3-512:bb".to_string(),
             signer_seed: [0x22; 32],
             declared_at: "2026-04-30T00:00:00.000Z".to_string(),
+            manifest: None,
         };
         let out = build_proof_envelope(&input);
         (out.bytes, graph)
