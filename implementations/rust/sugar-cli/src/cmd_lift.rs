@@ -9046,7 +9046,7 @@ mod tests {
 
         assert_eq!(
             proofir_formula_to_fol(&formula),
-            "∀ x:Int. (x ≥ 0 ∧ x < 10) ⇒ call:encode(x) = \"baz\""
+            "∀ x:Int. (x ≥ 0 ∧ x < 10) ⇒ encode(x) = \"baz\""
         );
     }
 
@@ -9141,7 +9141,7 @@ mod tests {
 
         assert_eq!(
             proofir_formula_to_fol(&formula),
-            "str.eq-bv-blocks(call:encodeBase64String(\"foo\"), base64.blocks(input=[102, 111, 111], chars=[((bits >>> 18) & 63)], table=\"ABC+/\"))"
+            "str.eq-bv-blocks(encodeBase64String(\"foo\"), base64.blocks(input=[102, 111, 111], chars=[((bits >>> 18) & 63)], table=\"ABC+/\"))"
         );
     }
 
@@ -9248,10 +9248,10 @@ mod tests {
 
         assert!(human.contains("generalized FOL:"));
         assert!(human.contains("∀ b0:Int. ∀ b1:Int. ∀ b2:Int."));
-        assert!(human.contains("call:encodeBase64String(bytes(b0, b1, b2))"));
+        assert!(human.contains("encodeBase64String(bytes(b0, b1, b2))"));
         assert!(human.contains("instantiated FOL:"));
         assert!(human.contains(
-            "b0=102, b1=111, b2=111 ⊢ str.eq-bv-blocks(call:encodeBase64String(\"foo\")"
+            "b0=102, b1=111, b2=111 ⊢ str.eq-bv-blocks(encodeBase64String(\"foo\")"
         ));
     }
 
@@ -9577,7 +9577,7 @@ mod tests {
         );
         assert!(human.contains("known callers of this function:"), "{human}");
         assert!(
-            human.contains("src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len::assertion :: 3 = call:encoded_len(2, false)"),
+            human.contains("src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len::assertion :: 3 = encoded_len(2, false)"),
             "{human}"
         );
     }
@@ -9683,7 +9683,7 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(
-            human.contains("callsite preconditions depending on this post:\n  - callee.post [post: result = Some(value)] -> method:unwrap.pre via method:unwrap [pre: is_some(call:callee(7))]"),
+            human.contains("callsite preconditions depending on this post:\n  - callee.post [post: result = Some(value)] -> method:unwrap.pre via method:unwrap [pre: is_some(callee(7))]"),
             "{human}"
         );
     }
@@ -9831,7 +9831,7 @@ mod tests {
 
         assert!(
             human.contains(
-                "    assert_eq!(3, encoded_len(2, false).unwrap());  FACT ⊢ ¬panic(call:encoded_len#panic_callsite(2, false))"
+                "    assert_eq!(3, encoded_len(2, false).unwrap());  FACT ⊢ ¬panic(encoded_len#panic_callsite(2, false))"
             ),
             "{human}"
         );
@@ -9968,7 +9968,7 @@ mod tests {
         );
         assert!(
             human.contains(
-                "walk warranted by observed facts:\n  - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(call:encoded_len#panic_callsite(2, false))"
+                "walk warranted by observed facts:\n  - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(encoded_len#panic_callsite(2, false))"
             ),
             "{human}"
         );
@@ -10013,7 +10013,7 @@ mod tests {
         let visual = render_report_visual(&report, None);
         assert!(
             visual.contains(
-                "    walk warranted by observed facts:\n      - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(call:encoded_len#panic_callsite(2, false))"
+                "    walk warranted by observed facts:\n      - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(encoded_len#panic_callsite(2, false))"
             ),
             "{visual}"
         );
@@ -10412,7 +10412,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
             "the `::callable` contract marker must not attach unrelated call:callable facts:\n{visual}"
         );
         assert!(
-            !section.contains("call:callable(method)"),
+            !section.contains("callable(method)"),
             "callable builtin facts are not _as_dict callsite evidence:\n{visual}"
         );
     }
@@ -12285,7 +12285,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
         assert!(
             human.contains(
-                "facts observed:\n  - src/lib.rs::tests::enc_asserts :: call:enc(\"abc\") = \"def\" @ src/lib.rs:12-14 enc_asserts() source_cid=blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "facts observed:\n  - src/lib.rs::tests::enc_asserts :: enc(\"abc\") = \"def\" @ src/lib.rs:12-14 enc_asserts() source_cid=blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             ),
             "{human}"
         );
@@ -12418,7 +12418,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         );
         assert!(
             human.contains(
-                "src/lib.rs::tests::support_only::panic-free::answer :: panic-free(call:answer())"
+                "src/lib.rs::tests::support_only::panic-free::answer :: panic-free(answer())"
             ),
             "{human}"
         );

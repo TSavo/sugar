@@ -796,12 +796,15 @@ mod tests {
                           "sort": { "kind": "primitive", "name": "String" } }
                     ]
                 },
+                // The vendor's sworn value for the SAME callsite the consumer
+                // asserted (LHS must match; a different-callsite vector is
+                // correctly ignored by the callsite-matched vendor-fact rule).
                 "vendorFactIr": [{
                     "kind": "atomic",
                     "name": "=",
                     "args": [
                         { "kind": "ctor", "name": "call:enc", "args": [
-                            { "kind": "const", "value": "abc",
+                            { "kind": "const", "value": "xyz",
                               "sort": { "kind": "primitive", "name": "String" } }
                         ]},
                         { "kind": "const", "value": "YWJj",
@@ -817,9 +820,9 @@ mod tests {
         let client = v["clientFactFol"].as_str().unwrap_or_default();
         let vendor = v["vendorFactFol"].as_str().unwrap_or_default();
         assert!(universe.starts_with("⊢ "), "universe: {universe}");
-        assert!(client.contains("call:enc(\"xyz\")"), "client: {client}");
+        assert!(client.contains("enc(\"xyz\")"), "client: {client}");
         assert!(client.contains("\"AAAA\""), "client: {client}");
-        assert!(vendor.contains("call:enc(\"abc\")"), "vendor: {vendor}");
+        assert!(vendor.contains("enc(\"xyz\")"), "vendor: {vendor}");
         assert!(vendor.contains("\"YWJj\""), "vendor: {vendor}");
     }
 
