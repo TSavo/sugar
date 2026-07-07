@@ -47,6 +47,7 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CanonValue};
 use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT as SMT_DIALECT};
+use sugar_ir_types::IrFormula;
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
 
@@ -68,6 +69,162 @@ pub type Registry = HashMap<SolverSeat, SolverHandle>;
 // Public input types
 // -------------------------------------------------------------------
 
+/// A cross-kit resolution symbol: the `<kit>:<name>` join key, as a type.
+///
+/// Replaces three flattened representations with one value whose `Ord` *is* the
+/// join key: the `"<kit>:<name>"` `target_symbol` string on [`LinkerCallEdge`],
+/// the `(name, kit)` tuple key of the linker's resolution index, and
+/// [`ImportSignature`]'s `symbol` field. The split-on-`':'` string surgery that
+/// `resolve_target_symbol` used to perform at resolution time now lives once
+/// here, in [`Symbol::from_wire`], and resolution is a single `BTreeMap` lookup.
+///
+/// ## Wire byte-identity
+///
+/// A `Symbol` serializes to / deserializes from the exact `"<kit>:<name>"`
+/// string it replaced (see the custom `Serialize`/`Deserialize` impls), so every
+/// `targetSymbol` on the wire and in `callEdgeSetCid` is byte-for-byte
+/// preserved. `kit` is an `Option` precisely to keep that identity total: an
+/// *unqualified* symbol with no `':'` (real corpus forms like `"id"`,
+/// `"witness"`, `"implication"`, `"encode_len"`) round-trips losslessly as
+/// itself rather than gaining a spurious colon — a qualified symbol keeps its
+/// `kit`, an unqualified one has `kit = None`. Unqualified or empty-part symbols
+/// never match a contract-derived key (a contract always exports a non-empty kit
+/// and name), so they surface as `unresolved-symbol` exactly as the old
+/// `find(':')` guard did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Symbol {
+    /// The kit qualifier before the `':'`, or `None` for an unqualified symbol
+    /// (a wire string with no colon).
+    pub kit: Option<String>,
+    /// The bare name after the `':'` (or the whole string when unqualified).
+    pub name: String,
+}
+
+impl Symbol {
+    /// The qualified `<kit>:<name>` join key a contract exports: the index-key
+    /// side of the resolution join.
+    fn qualified(kit: impl Into<String>, name: impl Into<String>) -> Self {
+        Symbol {
+            kit: Some(kit.into()),
+            name: name.into(),
+        }
+    }
+
+    /// Parse a wire `targetSymbol` string. The first `':'` splits kit from name
+    /// (a name may itself contain colons); a string with no colon is an
+    /// unqualified symbol (`kit = None`). Total and infallible: every wire string
+    /// is a `Symbol`, and malformed ones simply fail to resolve — the same
+    /// outcome the old `resolve_target_symbol` guard produced.
+    fn from_wire(s: &str) -> Self {
+        match s.find(':') {
+            Some(pos) => Symbol {
+                kit: Some(s[..pos].to_string()),
+                name: s[pos + 1..].to_string(),
+            },
+            None => Symbol {
+                kit: None,
+                name: s.to_string(),
+            },
+        }
+    }
+
+    /// Render back to the exact `"<kit>:<name>"` wire string (or the bare name
+    /// when unqualified). Inverse of [`Symbol::from_wire`] on every input.
+    fn to_wire(&self) -> String {
+        match &self.kit {
+            Some(kit) => format!("{kit}:{}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_wire())
+    }
+}
+
+impl From<&str> for Symbol {
+    fn from(s: &str) -> Self {
+        Symbol::from_wire(s)
+    }
+}
+
+impl From<String> for Symbol {
+    fn from(s: String) -> Self {
+        Symbol::from_wire(&s)
+    }
+}
+
+impl Serialize for Symbol {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_wire())
+    }
+}
+
+impl<'de> Deserialize<'de> for Symbol {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Symbol::from_wire(&s))
+    }
+}
+
+/// The formals / sorts / EUF-coordinate triple a contract *exports* or a call
+/// site *imports* — one type in two roles.
+///
+/// [`LinkerContract`] exports one (via [`LinkerContract::exported_signature`]);
+/// an [`ImportSignature`] imports one (it flattens a `Signature` inline).
+/// [`Signature::check`] is the single place the two are matched, replacing the
+/// runtime formals/sorts/EUF kind-checks that verify used to re-derive. The
+/// empty-vector refinement is preserved verbatim: a dimension the importer
+/// leaves empty imposes no constraint, so pre-signature wire edges never
+/// spuriously fail.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Signature {
+    /// Formal parameter names, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub formals: Vec<String>,
+    /// Formal sorts, positionally aligned with `formals`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sorts: Vec<Json>,
+    /// EUF coordinate this signature answers to, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub euf_coordinate: Option<String>,
+}
+
+impl Signature {
+    /// Type-check this *imported* signature against an *exported* one. Only the
+    /// dimensions the importer actually declares are constrained (the empty-vector
+    /// refinement), so a signature that names no formals imposes no formal-arity
+    /// constraint. `Err(reason)` names the first disagreement for a
+    /// `signature-mismatch` [`LinkerError`]; the messages are byte-identical to
+    /// the pre-hoist `ImportSignature::check` strings.
+    fn check(&self, exported: &Signature) -> Result<(), String> {
+        if !self.formals.is_empty() && self.formals != exported.formals {
+            return Err(format!(
+                "formals disagree: caller imports {:?}, callee exports {:?}",
+                self.formals, exported.formals
+            ));
+        }
+        if !self.sorts.is_empty() && self.sorts != exported.sorts {
+            return Err(format!(
+                "formal sorts disagree: caller imports {:?}, callee exports {:?}",
+                self.sorts, exported.sorts
+            ));
+        }
+        if let Some(coord) = &self.euf_coordinate {
+            if exported.euf_coordinate.as_ref() != Some(coord) {
+                return Err(format!(
+                    "EUF coordinate disagrees: caller imports {:?}, callee exports {:?}",
+                    Some(coord),
+                    exported.euf_coordinate
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A contract lifted from any kit, identified by its content-addressed CID.
 ///
 /// Both the `contracts` from the rust-kit lifter and the `declarations` emitted
@@ -81,12 +238,17 @@ pub struct LinkerContract {
     pub kit: String,
     /// Content-addressed contract CID, `blake3-512:<hex>`.
     pub contract_cid: String,
-    /// Pre-condition formula as a `serde_json::Value` (ProofIR term).
-    /// `None` if the function has no pre-condition annotation.
-    pub pre_json: Option<Json>,
-    /// Post-condition formula as a `serde_json::Value` (ProofIR term).
-    /// `None` if the function has no post-condition annotation.
-    pub post_json: Option<Json>,
+    /// Pre-condition formula as a strongly-typed [`IrFormula`] (ProofIR
+    /// formula). `None` if the function has no pre-condition annotation.
+    /// Retyped from `serde_json::Value` in the formula-typeify seam: the
+    /// `{"kind":...}` wire JSON is unchanged (IrFormula is `#[serde(tag =
+    /// "kind")]` and serializes to the identical tagged object), so contract
+    /// CIDs and snapshot bytes are byte-for-byte preserved.
+    pub pre_json: Option<IrFormula>,
+    /// Post-condition formula as a strongly-typed [`IrFormula`] (ProofIR
+    /// formula). `None` if the function has no post-condition annotation.
+    /// See [`LinkerContract::pre_json`] for the byte-identity contract.
+    pub post_json: Option<IrFormula>,
     /// Declared formal parameter names, in order. Part of the contract's
     /// exported signature: an importing call edge whose [`ImportSignature`]
     /// disagrees with these is rejected by [`bind`] as `signature-mismatch`.
@@ -104,6 +266,23 @@ pub struct LinkerContract {
     pub euf_coordinate: Option<String>,
 }
 
+impl LinkerContract {
+    /// The signature this contract *exports*, as the shared [`Signature`] type.
+    ///
+    /// The three wire fields (`formals` / `formal_sorts` / `euf_coordinate`) stay
+    /// flat on `LinkerContract` for byte-identity (they keep their own wire keys —
+    /// notably `formal_sorts`, which an [`ImportSignature`] spells `sorts`), while
+    /// the resolution *algebra* is expressed once against [`Signature`]. This is
+    /// the exported-role view a call site's imported signature is checked against.
+    fn exported_signature(&self) -> Signature {
+        Signature {
+            formals: self.formals.clone(),
+            sorts: self.formal_sorts.clone(),
+            euf_coordinate: self.euf_coordinate.clone(),
+        }
+    }
+}
+
 /// A call edge emitted by a kit lifter.
 ///
 /// Describes a call site where one contracted function calls another. Cross-kit
@@ -116,8 +295,10 @@ pub struct LinkerCallEdge {
     /// CID of the callee's contract if already known (same-kit call), or `None`
     /// for cross-kit calls where the linker must resolve `target_symbol`.
     pub target_contract_cid: Option<String>,
-    /// Symbol name for cross-kit resolution, e.g. `"rust-kit:process"`.
-    pub target_symbol: String,
+    /// Typed symbol for cross-kit resolution, e.g. `"rust-kit:process"`. Its
+    /// `Ord` is the resolution join key; it serializes to / from the exact
+    /// `"<kit>:<name>"` wire string (see [`Symbol`]).
+    pub target_symbol: Symbol,
     /// JCS-canonical locus of the call site.  Shape per `ir-formal-grammar.md`.
     pub call_site_locus_json: Json,
     /// ProofIR evidence term encoding the satisfaction obligation `post_B ⊃ pre_A`.
@@ -142,49 +323,30 @@ pub struct LinkerCallEdge {
 /// signature instead of scattered runtime checks.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ImportSignature {
-    /// `<kit>:<name>` symbol the call site imports.
-    pub symbol: String,
-    /// Formal names the caller expects the callee to export, in order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub formals: Vec<String>,
-    /// Formal sorts, positionally aligned with `formals`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sorts: Vec<Json>,
-    /// EUF coordinate the caller expects the callee to answer to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub euf_coordinate: Option<String>,
+    /// `<kit>:<name>` symbol the call site imports, as the typed [`Symbol`]. Its
+    /// `Ord` is the resolution join key; it serializes to / from the exact
+    /// `"<kit>:<name>"` wire string.
+    pub symbol: Symbol,
+    /// The imported [`Signature`] — formals / sorts / EUF coordinate — flattened
+    /// so the wire object keeps its byte-identical flat keys
+    /// (`symbol` + `formals` / `sorts` / `euf_coordinate`), the exact shape the
+    /// pre-hoist `ImportSignature` emitted. This makes the doc's own claim literal:
+    /// `ImportSignature == Symbol + Signature`.
+    #[serde(flatten)]
+    pub signature: Signature,
 }
 
 impl ImportSignature {
     /// Type-check this declared import signature against a resolved contract's
-    /// exported signature. `Ok(())` when they agree (a bound edge may be
-    /// minted); `Err(reason)` names the disagreement for a `signature-mismatch`
-    /// [`LinkerError`]. Only dimensions the caller actually declares are
-    /// checked: a signature that names no formals imposes no formal-arity
-    /// constraint, so pre-signature wire edges never spuriously fail.
+    /// exported signature. `Ok(())` when they agree (a bound edge may be minted);
+    /// `Err(reason)` names the disagreement for a `signature-mismatch`
+    /// [`LinkerError`]. The check itself is a single [`Signature::check`] against
+    /// the contract's [`exported signature`](LinkerContract::exported_signature),
+    /// which owns the empty-vector refinement (a caller that names no formals
+    /// imposes no formal-arity constraint, so pre-signature wire edges never
+    /// spuriously fail).
     fn check(&self, target: &LinkerContract) -> Result<(), String> {
-        if !self.formals.is_empty() && self.formals != target.formals {
-            return Err(format!(
-                "formals disagree: caller imports {:?}, callee exports {:?}",
-                self.formals, target.formals
-            ));
-        }
-        if !self.sorts.is_empty() && self.sorts != target.formal_sorts {
-            return Err(format!(
-                "formal sorts disagree: caller imports {:?}, callee exports {:?}",
-                self.sorts, target.formal_sorts
-            ));
-        }
-        if let Some(coord) = &self.euf_coordinate {
-            if target.euf_coordinate.as_ref() != Some(coord) {
-                return Err(format!(
-                    "EUF coordinate disagrees: caller imports {:?}, callee exports {:?}",
-                    Some(coord),
-                    target.euf_coordinate
-                ));
-            }
-        }
-        Ok(())
+        self.signature.check(&target.exported_signature())
     }
 }
 
@@ -422,12 +584,19 @@ fn derive_link_bundle_inner(
     plan: &SolverPlan,
 ) -> LinkerOutput {
     // Build the resolution indices once:
-    //   name_kit_index   : (name, kit) -> contract_cid   (cross-kit symbol join)
-    //   contracts_by_cid : cid -> &LinkerContract         (member lookup)
-    let mut name_kit_index: BTreeMap<(String, String), String> = BTreeMap::new();
+    //   name_kit_index   : Symbol -> contract_cid   (cross-kit symbol join)
+    //   contracts_by_cid : cid -> &LinkerContract     (member lookup)
+    // The key is the typed [`Symbol`] whose `Ord` *is* the join key, replacing
+    // the `(name, kit)` tuple. Resolution is now a single lookup against a
+    // `Symbol` parsed from the edge's `target_symbol` (see [`bind`]); the
+    // split-on-`':'` surgery moved into [`Symbol::from_wire`].
+    let mut name_kit_index: BTreeMap<Symbol, String> = BTreeMap::new();
     let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();
     for c in &all_contracts {
-        name_kit_index.insert((c.name.clone(), c.kit.clone()), c.contract_cid.clone());
+        name_kit_index.insert(
+            Symbol::qualified(c.kit.clone(), c.name.clone()),
+            c.contract_cid.clone(),
+        );
         contracts_by_cid.insert(c.contract_cid.as_str(), c);
     }
 
@@ -439,7 +608,7 @@ fn derive_link_bundle_inner(
     all_contract_cids.sort();
     let contract_set_cid = compute_set_cid_sorted(&all_contract_cids);
 
-    let mut bridges: Vec<Json> = Vec::new();
+    let mut bridges: Vec<DerivedBridge> = Vec::new();
     let mut linker_errors_out: Vec<LinkerError> = Vec::new();
 
     // Sort call edges for determinism
@@ -485,17 +654,31 @@ fn derive_link_bundle_inner(
             .get(target_cid)
             .and_then(|c| c.pre_json.as_ref());
 
-        let bridge = derive_bridge(
+        // Construct the satisfaction obligation `post_B \u{2283} pre_A` ONCE,
+        // as a typed [`ObligationState`]. Before this seam the obligation was
+        // rebuilt as untyped JSON in disjoint places, so the term *carried on
+        // the bridge* could drift from the term *checked by the verifier*.
+        // Here it is a single value: attached to the [`DerivedBridge`] and
+        // discharged below. Carried == checked by construction.
+        let obligation = ObligationState::derive(source_post, target_pre);
+
+        // The on-wire memento is byte-identical: `evidenceTerm` still carries
+        // the emit-side placeholder (replacing it with the live obligation
+        // changes call-edge / bridge CIDs — the emit-side follow-up). Only the
+        // in-memory `obligation` field is new, and it is not serialized.
+        let memento = derive_bridge(
             &edge.source_contract_cid,
             target_cid,
             &edge.call_site_locus_json,
             &edge.evidence_term_json,
         );
-        bridges.push(bridge);
+        let bridge = DerivedBridge {
+            memento,
+            obligation,
+        };
 
         if let Some(mut err) = discharge_obligation(
-            source_post,
-            target_pre,
+            &bridge.obligation,
             &edge.source_contract_cid,
             target_cid,
             &edge.target_symbol,
@@ -506,11 +689,14 @@ fn derive_link_bundle_inner(
             err.call_site_locus_json = Some(edge.call_site_locus_json.clone());
             linker_errors_out.push(err);
         }
+
+        bridges.push(bridge);
     }
 
-    // Sort bridges for determinism
+    // Sort bridges for determinism (over the wire memento only).
     bridges.sort_by(|a, b| {
         let ak = a
+            .memento
             .get("header")
             .and_then(|h| h.get("target"))
             .and_then(|t| t.get("cid"))
@@ -518,6 +704,7 @@ fn derive_link_bundle_inner(
             .unwrap_or("")
             .to_string();
         let bk = b
+            .memento
             .get("header")
             .and_then(|h| h.get("target"))
             .and_then(|t| t.get("cid"))
@@ -535,7 +722,7 @@ fn derive_link_bundle_inner(
                 serde_json::json!({
                     "sourceContractCid": e.source_contract_cid,
                     "targetContractCid": e.target_contract_cid,
-                    "targetSymbol": e.target_symbol,
+                    "targetSymbol": e.target_symbol.to_wire(),
                 })
                 .to_string()
             })
@@ -544,9 +731,10 @@ fn derive_link_bundle_inner(
         compute_set_cid_sorted(&edge_bytes)
     };
 
-    // bridgeSetCid
+    // bridgeSetCid (over the wire memento only).
     let bridge_set_cid = {
-        let mut bridge_strs: Vec<String> = bridges.iter().map(|b| b.to_string()).collect();
+        let mut bridge_strs: Vec<String> =
+            bridges.iter().map(|b| b.memento.to_string()).collect();
         bridge_strs.sort();
         compute_set_cid_sorted(&bridge_strs)
     };
@@ -565,6 +753,11 @@ fn derive_link_bundle_inner(
         })
         .collect();
 
+    // Wire bridges: only the byte-identical mementos are serialized. The
+    // in-memory `obligation` field on each [`DerivedBridge`] never reaches the
+    // bundle, so the bundle bytes (and linkBundleCid) are unchanged.
+    let bridge_mementos: Vec<Json> = bridges.into_iter().map(|b| b.memento).collect();
+
     // linkBundleCid is over JCS of the bundle sans the CID field itself
     let bundle_without_cid = serde_json::json!({
         "schemaVersion": "1",
@@ -574,7 +767,7 @@ fn derive_link_bundle_inner(
         "bridgeSetCid": bridge_set_cid,
         "linkerVersion": "0.1.0",
         "linkerErrors": linker_error_jsons,
-        "bridges": bridges,
+        "bridges": bridge_mementos,
     });
 
     let link_bundle_cid = blake3_512_of(&jcs_of_json(&bundle_without_cid));
@@ -626,9 +819,7 @@ impl LinkerCallEdge {
             None => EdgeTarget::Unbound(self.import_signature.clone().unwrap_or_else(|| {
                 ImportSignature {
                     symbol: self.target_symbol.clone(),
-                    formals: Vec::new(),
-                    sorts: Vec::new(),
-                    euf_coordinate: None,
+                    signature: Signature::default(),
                 }
             })),
         }
@@ -652,12 +843,12 @@ impl LinkerCallEdge {
 /// it.
 fn bind(
     edge: &LinkerCallEdge,
-    name_kit_index: &BTreeMap<(String, String), String>,
+    name_kit_index: &BTreeMap<Symbol, String>,
     contracts_by_cid: &BTreeMap<&str, &LinkerContract>,
 ) -> Result<BoundContractCid, LinkerError> {
     let undefined = || LinkerError {
         kind: LinkerErrorKind::UnresolvedSymbol,
-        target_symbol: edge.target_symbol.clone(),
+        target_symbol: edge.target_symbol.to_wire(),
         source_contract_cid: edge.source_contract_cid.clone(),
         reason: format!(
             "targetSymbol `{}` did not resolve to any contract in the union",
@@ -668,11 +859,14 @@ fn bind(
     };
 
     // Resolve to a candidate CID: the kit's claim, else the cross-kit symbol
-    // join. A symbol that resolves to nothing is undefined.
+    // join — now a single `Symbol` lookup (the split-on-`':'` lives in
+    // [`Symbol::from_wire`]). A symbol that resolves to nothing is undefined,
+    // including any unqualified or empty-part symbol, which never keys a
+    // contract-derived entry.
     let cid: String = match edge.edge_target() {
         EdgeTarget::Bound(cid) => cid.to_string(),
         EdgeTarget::Unbound(sig) => {
-            resolve_target_symbol(&sig.symbol, name_kit_index).ok_or_else(undefined)?
+            name_kit_index.get(&sig.symbol).cloned().ok_or_else(undefined)?
         }
     };
 
@@ -685,7 +879,7 @@ fn bind(
         if let Err(reason) = sig.check(target) {
             return Err(LinkerError {
                 kind: LinkerErrorKind::SignatureMismatch,
-                target_symbol: edge.target_symbol.clone(),
+                target_symbol: edge.target_symbol.to_wire(),
                 source_contract_cid: edge.source_contract_cid.clone(),
                 reason: format!(
                     "import signature for `{}` does not match contract {}: {reason}",
@@ -703,21 +897,13 @@ fn bind(
 // -------------------------------------------------------------------
 // Cross-kit symbol resolution (R3)
 // -------------------------------------------------------------------
-
-fn resolve_target_symbol(
-    target_symbol: &str,
-    name_kit_index: &BTreeMap<(String, String), String>,
-) -> Option<String> {
-    let pos = target_symbol.find(':')?;
-    let kit = &target_symbol[..pos];
-    let name = &target_symbol[pos + 1..];
-    if kit.is_empty() || name.is_empty() {
-        return None;
-    }
-    name_kit_index
-        .get(&(name.to_string(), kit.to_string()))
-        .cloned()
-}
+//
+// Resolution is now a single `name_kit_index.get(&Symbol)` lookup inside
+// [`bind`]; the former `resolve_target_symbol` split-on-`':'` string surgery
+// moved into [`Symbol::from_wire`], the sole place a wire `targetSymbol` is
+// parsed. An unqualified (`kit = None`) or empty-part symbol keys no
+// contract-derived entry, so it resolves to `unresolved-symbol` exactly as the
+// old `find(':')` / non-empty guard did.
 
 // -------------------------------------------------------------------
 // Bridge derivation (R2)
@@ -753,6 +939,96 @@ fn derive_bridge(
 }
 
 // -------------------------------------------------------------------
+// Obligation: the one typed representation of `post_B \u{2283} pre_A`
+// -------------------------------------------------------------------
+
+/// The satisfaction obligation `post_caller \u{2283} pre_callee` for one bound
+/// call edge, expressed over strongly-typed [`IrFormula`]s.
+///
+/// This is the single typed representation of the thing the linker proves.
+/// Before this seam the obligation was rebuilt as untyped `serde_json::Value`
+/// in disjoint places — the emit-side `evidenceTerm` placeholder carried into
+/// the bridge, and `discharge_obligation`'s inline `implies` term — so the term
+/// *minted* into a bridge could drift from the term *checked* by the verifier.
+/// Constructing it once (see [`ObligationState::derive`]) and threading the same
+/// value to both the [`DerivedBridge`] and the discharge makes carried ==
+/// checked by construction.
+///
+/// The bridge's on-wire `evidenceTerm` field still serializes the emit-side
+/// placeholder for byte-identity (replacing it changes call-edge / bridge CIDs
+/// and is the emit-side follow-up). The in-memory obligation carried on the
+/// [`DerivedBridge`] is the authoritative value the verifier discharges, and
+/// [`Obligation::as_implies`] already lowers to the exact JSON that future wire
+/// minting would use.
+#[derive(Debug, Clone, PartialEq)]
+struct Obligation {
+    /// Caller post-condition `post_B`.
+    post: IrFormula,
+    /// Callee pre-condition `pre_A`.
+    pre: IrFormula,
+}
+
+impl Obligation {
+    fn new(post: IrFormula, pre: IrFormula) -> Self {
+        Self { post, pre }
+    }
+
+    /// Lower to the `{"kind":"implies","operands":[post,pre]}` IR formula the
+    /// SMT compiler consumes. Byte-identical to the inline `IrFormula::Implies`
+    /// term this seam replaced, so no solver input or verdict changes.
+    fn as_implies(&self) -> IrFormula {
+        IrFormula::Implies {
+            operands: vec![self.post.clone(), self.pre.clone()],
+        }
+    }
+}
+
+/// The link-time obligation state for one bound edge: a concrete obligation to
+/// discharge, or one of the two structural short-circuits. Built once by
+/// [`ObligationState::derive`] and consumed by [`discharge_obligation`], so the
+/// discharge branches map one-to-one onto the historical error strings.
+#[derive(Debug, Clone, PartialEq)]
+enum ObligationState {
+    /// Both formulas present: a concrete `post \u{2283} pre` to discharge.
+    Pending(Obligation),
+    /// Caller post-condition absent: `post \u{2283} pre` cannot be discharged
+    /// (`unprovable-obligation`).
+    CallerPostAbsent,
+    /// Callee pre-condition absent: vacuously discharged.
+    VacuousPreAbsent,
+}
+
+impl ObligationState {
+    /// Derive the obligation state from the caller post / callee pre formulas.
+    /// The `(None, _)` before `(Some, None)` ordering preserves the historical
+    /// precedence: caller-post-absent is reported even when the callee also has
+    /// no pre-condition.
+    fn derive(source_post: Option<&IrFormula>, target_pre: Option<&IrFormula>) -> Self {
+        match (source_post, target_pre) {
+            (None, _) => ObligationState::CallerPostAbsent,
+            (Some(_), None) => ObligationState::VacuousPreAbsent,
+            (Some(post), Some(pre)) => {
+                ObligationState::Pending(Obligation::new(post.clone(), pre.clone()))
+            }
+        }
+    }
+}
+
+/// A derived bridge: the byte-identical wire memento plus the in-memory
+/// [`ObligationState`] it stands for.
+///
+/// Serializing a `LinkBundle` uses only `memento` (unchanged bytes); the
+/// verifier discharges `obligation` — the SAME value that is carried here, so
+/// the thing carried on the bridge IS the thing checked. The `obligation` field
+/// is never serialized, keeping the bundle bytes and `linkBundleCid` identical.
+struct DerivedBridge {
+    /// The wire-facing bridge memento (byte-identical to the pre-seam JSON).
+    memento: Json,
+    /// The in-memory obligation this bridge carries and the verifier discharges.
+    obligation: ObligationState,
+}
+
+// -------------------------------------------------------------------
 // Obligation discharge
 // -------------------------------------------------------------------
 
@@ -784,20 +1060,24 @@ fn derive_bridge(
 ///      * `Undecidable` / `Disagreement` / no solver registered:
 ///        `implication-undecidable` (do NOT silently discharge).
 fn discharge_obligation(
-    source_post: Option<&Json>,
-    target_pre: Option<&Json>,
+    state: &ObligationState,
     source_contract_cid: &str,
     target_cid: &str,
-    target_symbol: &str,
+    target_symbol: &Symbol,
     registry: &Registry,
     plan: &SolverPlan,
 ) -> Option<LinkerError> {
-    // (1) Caller post absent: cannot discharge.
-    let post = match source_post {
-        None | Some(Json::Null) => {
+    // (1)/(2) Structural short-circuits, decided when the obligation was
+    // derived (see [`ObligationState::derive`]). A caller with no post-condition
+    // promises nothing (`unprovable-obligation`); a callee with no pre-condition
+    // is vacuously discharged. (A wire `null` deserializes to `None` under
+    // `Option<IrFormula>`, so the old `Some(Json::Null)` arm folds into these
+    // with identical behavior.)
+    let obligation = match state {
+        ObligationState::CallerPostAbsent => {
             return Some(LinkerError {
                 kind: LinkerErrorKind::UnprovableObligation,
-                target_symbol: target_symbol.to_string(),
+                target_symbol: target_symbol.to_wire(),
                 source_contract_cid: source_contract_cid.to_string(),
                 reason: format!(
                     "caller post-condition is absent; cannot discharge `post_caller \u{2283} pre_callee` for target `{target_cid}`"
@@ -806,18 +1086,15 @@ fn discharge_obligation(
                 call_site_locus_json: None, // populated by caller from locus
             });
         }
-        Some(p) => p,
+        ObligationState::VacuousPreAbsent => return None,
+        ObligationState::Pending(o) => o,
     };
 
-    // (2) Callee pre absent: vacuously discharged.
-    let pre = match target_pre {
-        None | Some(Json::Null) => return None,
-        Some(p) => p,
-    };
-
-    // (3) JCS-canonical equality: P -> P trivially.
-    let post_jcs = jcs_of_json(post);
-    let pre_jcs = jcs_of_json(pre);
+    // (3) JCS-canonical equality: P -> P trivially. JCS sorts keys, so the
+    // comparison is insensitive to formula field order; typing the formulas
+    // does not change any verdict here.
+    let post_jcs = jcs_of_formula(&obligation.post);
+    let pre_jcs = jcs_of_formula(&obligation.pre);
     if post_jcs == pre_jcs {
         return None;
     }
@@ -828,17 +1105,24 @@ fn discharge_obligation(
     // plan are external to the linker (the architect's "use whatever
     // Cargo.toml says" rule); we never reach for a hardcoded solver
     // name.
-    let implication = serde_json::json!({
-        "kind": "implies",
-        "operands": [post.clone(), pre.clone()],
-    });
+    //
+    // The implication is lowered from the SAME [`Obligation`] carried on the
+    // bridge, so the term checked here is exactly the term the bridge stands
+    // for.
+    let implication_formula = obligation.as_implies();
+    // Lower the typed formula back to the same `{"kind":"implies","operands":
+    // [post, pre]}` JSON the compiler consumed before this seam. `to_value`
+    // on an `IrFormula` is infallible (derived Serialize over owned data);
+    // the SMT script it feeds is a derived intermediate, never a wire artifact.
+    let implication = serde_json::to_value(&implication_formula)
+        .expect("IrFormula::Implies always serializes to JSON");
 
     let implication_input = match CompilerInput::decode_json(implication.clone()) {
         Ok(input) => input,
         Err(error) => {
             return Some(LinkerError {
                 kind: LinkerErrorKind::ImplicationUndecidable,
-                target_symbol: target_symbol.to_string(),
+                target_symbol: target_symbol.to_wire(),
                 source_contract_cid: source_contract_cid.to_string(),
                 reason: format!(
                     "decode post-implies-pre ProofIR failed for target `{target_cid}`: {}",
@@ -859,7 +1143,7 @@ fn discharge_obligation(
             // undecidable rather than silent-discharge.
             return Some(LinkerError {
                 kind: LinkerErrorKind::ImplicationUndecidable,
-                target_symbol: target_symbol.to_string(),
+                target_symbol: target_symbol.to_wire(),
                 source_contract_cid: source_contract_cid.to_string(),
                 reason: format!(
                     "compile post-implies-pre to SMT-LIB failed for target `{target_cid}`: {e}"
@@ -876,7 +1160,7 @@ fn discharge_obligation(
         ObligationVerdict::Discharged => None,
         ObligationVerdict::Unsatisfied => Some(LinkerError {
             kind: LinkerErrorKind::ImplicationUnprovable,
-            target_symbol: target_symbol.to_string(),
+            target_symbol: target_symbol.to_wire(),
             source_contract_cid: source_contract_cid.to_string(),
             reason: format!(
                 "solver reports `post_caller \u{2283} pre_callee` is violated for target `{target_cid}`: {reason}"
@@ -886,7 +1170,7 @@ fn discharge_obligation(
         }),
         ObligationVerdict::Undecidable | ObligationVerdict::Disagreement => Some(LinkerError {
             kind: LinkerErrorKind::ImplicationUndecidable,
-            target_symbol: target_symbol.to_string(),
+            target_symbol: target_symbol.to_wire(),
             source_contract_cid: source_contract_cid.to_string(),
             reason: format!(
                 "solver could not decide `post_caller \u{2283} pre_callee` for target `{target_cid}`: {reason}"
@@ -896,7 +1180,7 @@ fn discharge_obligation(
         }),
         ObligationVerdict::SolverTimeout => Some(LinkerError {
             kind: LinkerErrorKind::ImplicationSolverTimeout,
-            target_symbol: target_symbol.to_string(),
+            target_symbol: target_symbol.to_wire(),
             source_contract_cid: source_contract_cid.to_string(),
             reason: format!(
                 "solver exceeded host timeout while checking `post_caller \u{2283} pre_callee` for target `{target_cid}`: {reason}"
@@ -910,7 +1194,7 @@ fn discharge_obligation(
         // undecidable gap.
         ObligationVerdict::Refused => Some(LinkerError {
             kind: LinkerErrorKind::ImplicationRefused,
-            target_symbol: target_symbol.to_string(),
+            target_symbol: target_symbol.to_wire(),
             source_contract_cid: source_contract_cid.to_string(),
             reason: format!(
                 "no sound discharger for `post_caller \u{2283} pre_callee` on target `{target_cid}`; refused, not guessed: {reason}"
@@ -937,6 +1221,15 @@ fn compute_set_cid_sorted(sorted_items: &[String]) -> String {
 
 fn jcs_of_json(v: &Json) -> Vec<u8> {
     encode_jcs(&json_to_canon_value(v)).into_bytes()
+}
+
+/// JCS-canonical bytes of a typed formula. Lowers the `IrFormula` to its
+/// `{"kind":...}` JSON (byte-identical to the pre-typeify wire value) and runs
+/// the same JCS canonicalizer, so equality checks against the old `Json` path
+/// are bit-for-bit identical.
+fn jcs_of_formula(f: &IrFormula) -> Vec<u8> {
+    let json = serde_json::to_value(f).expect("IrFormula always serializes to JSON");
+    jcs_of_json(&json)
 }
 
 fn json_to_canon_value(j: &Json) -> CanonValue {
@@ -976,18 +1269,197 @@ fn json_to_canon_value(j: &Json) -> CanonValue {
 mod tests {
     use super::*;
 
+    /// BYTE-IDENTITY GATE for the formula-typeify seam.
+    ///
+    /// Every `pre`/`post` formula reaching the linker is produced by
+    /// `serde_json::to_value(&IrFormula)` upstream (e.g.
+    /// `libsugar::core::bind::bind_function_bridge`), so its wire key order is
+    /// the `IrFormula` declaration order. This test pins that round-tripping a
+    /// representative set of those exact wire values through `Option<IrFormula>`
+    /// (deserialize -> re-serialize) reproduces the bytes exactly. If a producer
+    /// ever emits a formula IrFormula cannot represent, `from_value` fails here
+    /// and the seam is reported as a mismatch rather than silently green.
+    #[test]
+    fn formula_typeify_is_byte_identical_on_the_wire() {
+        // Exact `{"kind":...}` wire strings in IrFormula declaration order.
+        let wire_forms = [
+            r#"{"kind":"atomic","name":"true","args":[]}"#,
+            r#"{"kind":"atomic","name":">","args":[{"kind":"var","name":"n"},{"kind":"const","value":0,"sort":{"kind":"primitive","name":"Int"}}]}"#,
+            r#"{"kind":"and","operands":[{"kind":"atomic","name":">=","args":[{"kind":"var","name":"x"},{"kind":"const","value":1,"sort":{"kind":"primitive","name":"Int"}}]},{"kind":"atomic","name":"<","args":[{"kind":"var","name":"x"},{"kind":"const","value":9,"sort":{"kind":"primitive","name":"Int"}}]}]}"#,
+            r#"{"kind":"implies","operands":[{"kind":"atomic","name":"true","args":[]},{"kind":"atomic","name":"true","args":[]}]}"#,
+        ];
+        for wire in wire_forms {
+            let parsed: IrFormula =
+                serde_json::from_str(wire).expect("wire formula must parse as IrFormula");
+            let reserialized = serde_json::to_string(&parsed).expect("IrFormula serializes");
+            assert_eq!(reserialized, wire, "IrFormula round-trip must be byte-identical");
+        }
+    }
+
+    /// BYTE-IDENTITY GATE for the Symbol seam. A `Symbol` round-trips every
+    /// `targetSymbol` wire string — qualified, unqualified (no colon),
+    /// multi-colon, and empty-part — byte-for-byte through both the
+    /// parse/render pair and serde. The no-colon forms (`id`, `witness`,
+    /// `implication`, `encode_len`) are real corpus symbols; `kit: Option` is
+    /// exactly what keeps them lossless (they would otherwise gain a spurious
+    /// colon and change `callEdgeSetCid`).
+    #[test]
+    fn symbol_wire_is_byte_identical_roundtrip() {
+        for wire in [
+            "rust-kit:process",
+            "call:numpy.asarray",
+            "method:checked_add",
+            "a:b:c",
+            "id",
+            "witness",
+            "implication",
+            "encode_len",
+            ":leading",
+            "trailing:",
+        ] {
+            assert_eq!(
+                Symbol::from_wire(wire).to_wire(),
+                wire,
+                "Symbol::to_wire must invert from_wire on `{wire}`"
+            );
+            // Same string, through serde as a JSON string literal.
+            let json = serde_json::to_string(wire).unwrap();
+            let sym: Symbol = serde_json::from_str(&json).unwrap();
+            let back = serde_json::to_string(&sym).unwrap();
+            assert_eq!(
+                back, json,
+                "Symbol serde round-trip must be byte-identical on `{wire}`"
+            );
+        }
+    }
+
+    /// Unqualified / empty-part symbols resolve to nothing, exactly as the old
+    /// `resolve_target_symbol` `find(':')` + non-empty guard did: they key no
+    /// contract-derived entry in the `Symbol`-keyed index.
+    #[test]
+    fn unqualified_and_empty_part_symbols_never_resolve() {
+        let mut index: BTreeMap<Symbol, String> = BTreeMap::new();
+        index.insert(Symbol::qualified("rust-kit", "process"), "cid".into());
+        // Qualified, present.
+        assert_eq!(
+            index.get(&Symbol::from_wire("rust-kit:process")).cloned(),
+            Some("cid".to_string())
+        );
+        // No colon, empty kit, empty name: all miss.
+        for miss in ["process", "rust-kit", ":process", "rust-kit:", "id"] {
+            assert!(
+                index.get(&Symbol::from_wire(miss)).is_none(),
+                "`{miss}` must not resolve"
+            );
+        }
+    }
+
+    /// BYTE-IDENTITY GATE for the Signature-hoist seam: `ImportSignature` still
+    /// serializes as the flat `{symbol, formals, sorts, euf_coordinate}` object,
+    /// with the empty-dimension fields skipped, even though `Signature` is now
+    /// `#[serde(flatten)]`ed inside it.
+    #[test]
+    fn import_signature_flat_wire_is_byte_identical() {
+        let wire = r#"{"symbol":"rust-kit:process","formals":["n"],"sorts":[{"kind":"primitive","name":"Int"}],"euf_coordinate":"enc#euf#c:0"}"#;
+        let parsed: ImportSignature =
+            serde_json::from_str(wire).expect("ImportSignature must parse");
+        let back = serde_json::to_string(&parsed).expect("ImportSignature serializes");
+        assert_eq!(back, wire, "ImportSignature flat wire must be byte-identical");
+
+        // Symbol-only: the flattened Signature's skip_serializing_if omits every
+        // empty dimension, so the object is exactly `{"symbol":...}`.
+        let wire_min = r#"{"symbol":"rust-kit:process"}"#;
+        let parsed_min: ImportSignature =
+            serde_json::from_str(wire_min).expect("symbol-only ImportSignature must parse");
+        let back_min = serde_json::to_string(&parsed_min).expect("serializes");
+        assert_eq!(
+            back_min, wire_min,
+            "symbol-only ImportSignature must omit empty signature fields"
+        );
+    }
+
+    /// The obligation-typeify seam: the single [`Obligation`] value the linker
+    /// checks lowers to the EXACT `{"kind":"implies","operands":[post,pre]}`
+    /// JSON the SMT compiler consumed before this seam. This is both the term
+    /// discharged and the term a future emit-side follow-up would mint into the
+    /// bridge, so carried == checked is pinned to a byte string.
+    #[test]
+    fn obligation_lowers_to_the_exact_implies_wire() {
+        let post: IrFormula =
+            serde_json::from_str(r#"{"kind":"atomic","name":"true","args":[]}"#).unwrap();
+        let pre: IrFormula =
+            serde_json::from_str(r#"{"kind":"atomic","name":"true","args":[]}"#).unwrap();
+        let obligation = Obligation::new(post, pre);
+        let wire = serde_json::to_string(&obligation.as_implies()).unwrap();
+        assert_eq!(
+            wire,
+            r#"{"kind":"implies","operands":[{"kind":"atomic","name":"true","args":[]},{"kind":"atomic","name":"true","args":[]}]}"#,
+            "Obligation::as_implies must lower to the exact pre-seam implies term"
+        );
+    }
+
+    /// [`ObligationState::derive`] maps the caller-post / callee-pre presence
+    /// matrix onto the three discharge outcomes, preserving the historical
+    /// precedence (caller-post-absent wins even when the callee pre is also
+    /// absent).
+    #[test]
+    fn obligation_state_derive_matches_presence_matrix() {
+        let f: IrFormula =
+            serde_json::from_str(r#"{"kind":"atomic","name":"true","args":[]}"#).unwrap();
+
+        assert!(matches!(
+            ObligationState::derive(None, None),
+            ObligationState::CallerPostAbsent
+        ));
+        assert!(matches!(
+            ObligationState::derive(None, Some(&f)),
+            ObligationState::CallerPostAbsent
+        ));
+        assert!(matches!(
+            ObligationState::derive(Some(&f), None),
+            ObligationState::VacuousPreAbsent
+        ));
+        assert!(matches!(
+            ObligationState::derive(Some(&f), Some(&f)),
+            ObligationState::Pending(_)
+        ));
+    }
+
+    /// The `Option<IrFormula>` field itself must serialize/deserialize
+    /// byte-identically inside a `LinkerContract` (the shape the linkerd R14
+    /// snapshot persists), including the `None -> null` and present-formula
+    /// cases.
+    #[test]
+    fn contract_formula_fields_roundtrip_in_snapshot_shape() {
+        let contract = make_process_contract(); // pre: `n > 0`, post: None
+        let bytes = serde_json::to_vec(&contract).expect("serialize contract");
+        let restored: LinkerContract = serde_json::from_slice(&bytes).expect("deserialize contract");
+        let rebytes = serde_json::to_vec(&restored).expect("re-serialize contract");
+        assert_eq!(bytes, rebytes, "LinkerContract formula fields must round-trip byte-identically");
+        assert_eq!(restored.pre_json, contract.pre_json);
+        assert_eq!(restored.post_json, contract.post_json);
+    }
+
     fn make_process_contract() -> LinkerContract {
         LinkerContract {
             name: "process".into(),
             kit: "rust-kit".into(),
             contract_cid: "blake3-512:aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001".into(),
-            pre_json: Some(serde_json::json!({
-                "kind": "Gt",
-                "args": [
-                    {"kind": "Var", "name": "n", "sort": "Int"},
-                    {"kind": "Num", "value": 0}
-                ]
-            })),
+            // A valid IrFormula pre (`n > 0`). It is inert in every test that
+            // uses this fixture (each hits `unprovable-obligation` because the
+            // caller post is absent, so this pre is never decoded, and the
+            // pinned linkBundleCid derives from bridges, not contract formulas).
+            pre_json: Some(
+                serde_json::from_value(serde_json::json!({
+                    "kind": "atomic",
+                    "name": ">",
+                    "args": [
+                        {"kind": "var", "name": "n"},
+                        {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
+                    ]
+                }))
+                .expect("valid IrFormula"),
+            ),
             post_json: None,
             ..Default::default()
         }
@@ -1142,9 +1614,11 @@ mod tests {
         let mut edge = make_cgo_call_edge(&make_go_caller_fail_contract());
         edge.import_signature = Some(ImportSignature {
             symbol: "rust-kit:process".into(),
-            formals: vec!["n".into(), "extra".into()],
-            sorts: vec![],
-            euf_coordinate: None,
+            signature: Signature {
+                formals: vec!["n".into(), "extra".into()],
+                sorts: vec![],
+                euf_coordinate: None,
+            },
         });
 
         let output = link(LinkerInputs {
@@ -1184,7 +1658,10 @@ mod tests {
             name: "frame_pipeline".into(),
             kit: "polars-kit".into(),
             contract_cid: "blake3-512:1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111".into(),
-            post_json: Some(serde_json::json!({"kind": "atomic", "name": "true", "args": []})),
+            post_json: Some(
+                serde_json::from_value(serde_json::json!({"kind": "atomic", "name": "true", "args": []}))
+                    .expect("valid IrFormula"),
+            ),
             ..Default::default()
         };
         let edge = LinkerCallEdge {
@@ -1217,10 +1694,10 @@ mod tests {
     /// null CID is unrepresentable (see `BoundContractCid`'s private field).
     #[test]
     fn test_bound_edge_cid_is_linker_minted_non_null() {
-        let mut name_kit_index: BTreeMap<(String, String), String> = BTreeMap::new();
+        let mut name_kit_index: BTreeMap<Symbol, String> = BTreeMap::new();
         let process = make_process_contract();
         name_kit_index.insert(
-            ("process".into(), "rust-kit".into()),
+            Symbol::qualified("rust-kit", "process"),
             process.contract_cid.clone(),
         );
         let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();

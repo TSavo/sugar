@@ -220,6 +220,88 @@ fn contract_property_name(body: &Json) -> &str {
         .unwrap_or("<unnamed>")
 }
 
+/// The pieces of a callsite-keyed group key, split ONCE at construction.
+#[derive(Debug, Clone, Copy)]
+struct EufParts<'a> {
+    /// Scope prefix: everything before the FINAL `::` of the pre-`#euf#`
+    /// segment. When that segment carries no `::`, the whole segment is the
+    /// scope (mirrors the prior `ambient_ground_callsite_scope` unwrap_or).
+    scope: &'a str,
+    /// Callee segment: the piece after the final `::` of the pre-`#euf#`
+    /// prefix (the whole prefix when it carries no `::`).
+    callee: &'a str,
+    /// Everything AFTER the `#euf#` marker: `<cid>(args)::assertion`. The
+    /// content-keyed callsite CID plus its `::`-suffixed obligation role.
+    euf_cid: &'a str,
+}
+
+/// A parsed view over a consistency GROUP KEY (a `property_name`). The
+/// canonical callsite-keyed spelling is
+/// `<scope>::<callee>#euf#<cid>(args)::assertion`; a plain (bare) key carries
+/// no `#euf#` marker. Historically the bucketing map, the cross-proof conjoin
+/// gate, the ambient scope, and the standalone-vacuity guard each re-split this
+/// string with ad-hoc `.contains`/`split_once`/`rsplit_once`. `EufCoordinate`
+/// performs that split exactly ONCE (at `parse`) and exposes the fields; it
+/// BORROWS the source string and `Display`s back the exact same bytes, so the
+/// wire/property string stays byte-identical.
+#[derive(Debug, Clone, Copy)]
+struct EufCoordinate<'a> {
+    raw: &'a str,
+    /// `Some` iff the key is callsite-keyed (the `#euf#` marker is present).
+    parts: Option<EufParts<'a>>,
+}
+
+impl<'a> EufCoordinate<'a> {
+    /// Split the group key once. `split_once("#euf#")` is `Some` exactly when
+    /// the marker is present, so `is_callsite_keyed()` is byte-for-byte the old
+    /// `raw.contains("#euf#")`. The prefix is then split on its final `::` into
+    /// `(scope, callee)`, falling back to `(prefix, prefix)` when it carries no
+    /// separator -- identical to the old `rsplit_once(...).unwrap_or(prefix)`.
+    fn parse(raw: &'a str) -> Self {
+        let parts = raw.split_once("#euf#").map(|(prefix, suffix)| {
+            let (scope, callee) = prefix.rsplit_once("::").unwrap_or((prefix, prefix));
+            EufParts {
+                scope,
+                callee,
+                euf_cid: suffix,
+            }
+        });
+        EufCoordinate { raw, parts }
+    }
+
+    /// True iff the key carries the `#euf#` callsite marker. This is the gate
+    /// for cross-proof conjoin, ambient-forall travel, and ground-fact travel.
+    fn is_callsite_keyed(&self) -> bool {
+        self.parts.is_some()
+    }
+
+    /// The ambient scope of a callsite-keyed key (the scope prefix, or the
+    /// whole pre-`#euf#` segment when it has no `::`). `None` for a bare key.
+    /// Owned to match the prior `ambient_ground_callsite_scope` return type.
+    fn scope(&self) -> Option<String> {
+        self.parts.map(|p| p.scope.to_string())
+    }
+
+    /// The callee segment of a callsite-keyed key; `None` for a bare key.
+    #[allow(dead_code)]
+    fn callee(&self) -> Option<&'a str> {
+        self.parts.map(|p| p.callee)
+    }
+
+    /// The `#euf#` CID-plus-role suffix of a callsite-keyed key; `None` for a
+    /// bare key.
+    #[allow(dead_code)]
+    fn euf_cid(&self) -> Option<&'a str> {
+        self.parts.map(|p| p.euf_cid)
+    }
+}
+
+impl std::fmt::Display for EufCoordinate<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.raw)
+    }
+}
+
 fn contract_provenance_kind(
     member: &StoredMember,
     body: &Json,
@@ -1824,7 +1906,7 @@ fn is_derived_ground_callsite_support(
     inv: &Json,
 ) -> bool {
     if candidate.provenance_kind != ProofIrProvenanceKind::Derived
-        || !property_name.contains("#euf#")
+        || !EufCoordinate::parse(property_name).is_callsite_keyed()
     {
         return false;
     }
@@ -1936,15 +2018,7 @@ fn ground_callsite_term_key(term: &Json) -> Option<String> {
 }
 
 fn ambient_ground_callsite_scope(property_name: &str) -> Option<String> {
-    if let Some((prefix, _)) = property_name.split_once("#euf#") {
-        return Some(
-            prefix
-                .rsplit_once("::")
-                .map(|(scope, _callee)| scope.to_string())
-                .unwrap_or_else(|| prefix.to_string()),
-        );
-    }
-    None
+    EufCoordinate::parse(property_name).scope()
 }
 
 /// True if every `var` occurrence in the formula/term tree is bound by an
@@ -2262,7 +2336,7 @@ fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Jso
     // tests can share a spelling -> cross-test name capture; see
     // `collect_ambient_foralls`), so there -- and only there -- we still travel
     // concrete CLOSED ground instances, which carry no free names.
-    let callsite_keyed = property_name.contains("#euf#");
+    let callsite_keyed = EufCoordinate::parse(property_name).is_callsite_keyed();
     let closed_templates: Vec<Json> = if callsite_keyed {
         ambient
             .iter()
@@ -2308,7 +2382,7 @@ fn with_ambient_ground_callsite_facts(
     excluded_source_cids: &[String],
     current_ground_witnesses: &std::collections::BTreeSet<AmbientFactWitnessKey>,
 ) -> (Json, bool, Vec<Json>) {
-    if ambient.is_empty() || !property_name.contains("#euf#") {
+    if ambient.is_empty() || !EufCoordinate::parse(property_name).is_callsite_keyed() {
         return (inv, false, Vec::new());
     }
 
@@ -2677,7 +2751,7 @@ pub fn build_manifest_from_pool(
 
     for candidate in &candidates {
         let name = contract_property_name(&candidate.body).to_string();
-        if !name.contains("#euf#") {
+        if !EufCoordinate::parse(&name).is_callsite_keyed() {
             continue;
         }
         let group = manifest.groups.entry(name).or_default();
@@ -3187,7 +3261,7 @@ fn process_consistency_group(
             // -> unsat -> refused. A bare test/location name does NOT guarantee the
             // same subject, so those stay PER-CONTRACT (conjoining them could falsely
             // refuse two unrelated tests that happen to share a function name).
-            let callsite_keyed = property_name.contains("#euf#");
+            let callsite_keyed = EufCoordinate::parse(property_name).is_callsite_keyed();
             if callsite_keyed && inv_candidates.len() > 1 {
                 let invs: Vec<(Json, ProofIrProvenanceKind)> = inv_candidates
                     .iter()
@@ -3465,6 +3539,55 @@ mod tests {
     }
     fn int(n: i64) -> Json {
         json!({"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":n})
+    }
+
+    /// LIFT-AND-SHIFT FLOOR: `EufCoordinate` is a strong-typed view over the
+    /// group-key string, and its `Display` MUST reproduce the source bytes
+    /// verbatim so the wire/property string stays byte-identical. Also pins the
+    /// four accessors against the exact prior scattered-parse semantics:
+    /// `is_callsite_keyed` == old `contains("#euf#")`; `scope` == old
+    /// `ambient_ground_callsite_scope`; `callee`/`euf_cid` complete the split.
+    #[test]
+    fn euf_coordinate_round_trips_and_matches_prior_parses() {
+        // Scoped, callsite-keyed: scope is everything before the final `::`.
+        let scoped = "src/lib.rs::tests::t::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion";
+        let c = EufCoordinate::parse(scoped);
+        assert_eq!(c.to_string(), scoped, "Display must be byte-identical");
+        assert!(c.is_callsite_keyed());
+        assert_eq!(c.scope().as_deref(), Some("src/lib.rs::tests::t"));
+        assert_eq!(c.callee(), Some("enc"));
+        assert_eq!(c.euf_cid(), Some("c:callresult_enc_a1(s:\"def\")::assertion"));
+
+        // Unscoped prefix (no `::` before `#euf#`): the WHOLE prefix is the
+        // scope AND the callee -- mirrors the old `unwrap_or_else(prefix)`.
+        let bare_prefix = "numpy.add#euf#callresult_numpy_add_a2(2,3)::assertion";
+        let c = EufCoordinate::parse(bare_prefix);
+        assert_eq!(c.to_string(), bare_prefix);
+        assert!(c.is_callsite_keyed());
+        assert_eq!(c.scope().as_deref(), Some("numpy.add"));
+        assert_eq!(c.callee(), Some("numpy.add"));
+
+        // Not callsite-keyed: no `#euf#` marker -> every accessor is None.
+        let plain = "src/lib.rs::tests::some_test::assertion";
+        let c = EufCoordinate::parse(plain);
+        assert_eq!(c.to_string(), plain);
+        assert!(!c.is_callsite_keyed());
+        assert_eq!(c.scope(), None);
+        assert_eq!(c.callee(), None);
+        assert_eq!(c.euf_cid(), None);
+
+        // The accessors agree with the exact spellings the old free function
+        // and `.contains` produced, across every euf name literal in this file.
+        for name in [scoped, bare_prefix, plain] {
+            assert_eq!(
+                EufCoordinate::parse(name).is_callsite_keyed(),
+                name.contains("#euf#"),
+            );
+            assert_eq!(
+                EufCoordinate::parse(name).scope(),
+                ambient_ground_callsite_scope(name),
+            );
+        }
     }
     fn gt(a: Json, b: Json) -> Json {
         json!({"kind":"atomic","name":">","args":[a,b]})

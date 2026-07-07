@@ -458,11 +458,14 @@ mod tests {
                 kit: "rust-kit".into(),
                 contract_cid: source_cid.into(),
                 pre_json: None,
-                post_json: Some(serde_json::json!({
-                    "kind": "atomic",
-                    "name": "true",
-                    "args": []
-                })),
+                post_json: Some(
+                    serde_json::from_value(serde_json::json!({
+                        "kind": "atomic",
+                        "name": "true",
+                        "args": []
+                    }))
+                    .expect("valid IrFormula"),
+                ),
                 ..Default::default()
             }],
             vec![LinkerCallEdge {

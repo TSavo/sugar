@@ -190,13 +190,20 @@ fn make_process_contract() -> LinkerContract {
         // Stable fixture CID computed from {name, outBinding, pre=(n>0)}.
         // In production this is computed by sugar-lift from the source file.
         contract_cid: "blake3-512:aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001".into(),
-        pre_json: Some(serde_json::json!({
-            "kind": "Gt",
-            "args": [
-                {"kind": "Var", "name": "n", "sort": "Int"},
-                {"kind": "Num", "value": 0}
-            ]
-        })),
+        // A valid IrFormula pre (`n > 0`). Inert in this smoke test (the go
+        // caller has no post, so the pre is never decoded); the pinned
+        // linkBundleCid derives from bridges, not contract formulas.
+        pre_json: Some(
+            serde_json::from_value(serde_json::json!({
+                "kind": "atomic",
+                "name": ">",
+                "args": [
+                    {"kind": "var", "name": "n"},
+                    {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
+                ]
+            }))
+            .expect("valid IrFormula"),
+        ),
         post_json: None,
         ..Default::default()
     }

@@ -15,6 +15,7 @@ doctest = false
 
 [dependencies]
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
+sugar-ir-types = { path = "../sugar-ir-types" }
 sugar-verifier = { path = "../sugar-verifier" }
 sugar-ir-compiler = { path = "../sugar-ir-compiler" }
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
