@@ -395,6 +395,7 @@ fn recognize_for(
             Some(OptionAdaptorSugar::new(
                 SugarBody::term(&call.receiver, fcx),
                 Kind::Map(f.clone()),
+                carrier,
             ))
         }
         Method::AndThen => {
@@ -404,6 +405,7 @@ fn recognize_for(
             Some(OptionAdaptorSugar::new(
                 SugarBody::term(&call.receiver, fcx),
                 Kind::AndThen(f.clone()),
+                carrier,
             ))
         }
         Method::OrElse => {
@@ -413,6 +415,7 @@ fn recognize_for(
             Some(OptionAdaptorSugar::new(
                 SugarBody::term(&call.receiver, fcx),
                 Kind::OrElse(f.clone()),
+                carrier,
             ))
         }
         Method::Filter => {
@@ -422,11 +425,13 @@ fn recognize_for(
             Some(OptionAdaptorSugar::new(
                 SugarBody::term(&call.receiver, fcx),
                 Kind::Filter(f.clone()),
+                carrier,
             ))
         }
         Method::OkOr => Some(OptionAdaptorSugar::new(
             SugarBody::term(&call.receiver, fcx),
             Kind::OkOr(SugarBody::term(&call.args[0], fcx)),
+            carrier,
         )),
         Method::MapErr => {
             let Expr::Closure(f) = &call.args[0] else {
@@ -435,11 +440,13 @@ fn recognize_for(
             Some(OptionAdaptorSugar::new(
                 SugarBody::term(&call.receiver, fcx),
                 Kind::MapErr(f.clone()),
+                carrier,
             ))
         }
         Method::UnwrapOr => Some(OptionAdaptorSugar::new(
             SugarBody::term(&call.receiver, fcx),
             Kind::UnwrapOr(SugarBody::term(&call.args[0], fcx)),
+            carrier,
         )),
         Method::UnwrapOrElse => {
             let Expr::Closure(f) = &call.args[0] else {
@@ -448,6 +455,7 @@ fn recognize_for(
             Some(OptionAdaptorSugar::new(
                 SugarBody::term(&call.receiver, fcx),
                 Kind::UnwrapOrElse(f.clone()),
+                carrier,
             ))
         }
         Method::UnwrapOrDefault => Some(OptionAdaptorSugar::new(
@@ -455,14 +463,17 @@ fn recognize_for(
             Kind::UnwrapOrDefault {
                 default: default_term_for_receiver(&call.receiver, fcx, 0),
             },
+            carrier,
         )),
         Method::Ok => Some(OptionAdaptorSugar::new(
             SugarBody::term(&call.receiver, fcx),
             Kind::Ok,
+            carrier,
         )),
         Method::Err => Some(OptionAdaptorSugar::new(
             SugarBody::term(&call.receiver, fcx),
             Kind::Err,
+            carrier,
         )),
     }
 }
@@ -639,11 +650,27 @@ enum Kind {
 struct OptionAdaptorSugar {
     receiver: SugarBody<TermFloor>,
     kind: Kind,
+    // The Carrier the RECOGNIZER used to match this call site (#3445 Part 1
+    // slice, collapse family). `recognize_for` already knows this
+    // syntactically -- `Carrier::Option` / `Carrier::Result` are each reached
+    // through a single dedicated entry point (`OPTION_UNWRAP_OR_EXPR_SUGAR`,
+    // the legacy `option_adaptor` Result arm), so the family is ESTABLISHED at
+    // recognize time even when the receiver later reduces to a SYMBOLIC (not
+    // concrete Some/None/Ok/Err) value. `Carrier::Any` (the legacy
+    // `unwrap_or_else` / `unwrap_or_default` dispatch, which accepts either
+    // monadic source syntactically) carries no such fact -- a symbolic
+    // receiver under `Carrier::Any` cannot be assigned a family without
+    // guessing, so it stays a named refusal rather than a guarded split.
+    carrier: Carrier,
 }
 
 impl OptionAdaptorSugar {
-    fn new(receiver: SugarBody<TermFloor>, kind: Kind) -> Box<dyn Sugar> {
-        Box::new(Self { receiver, kind })
+    fn new(receiver: SugarBody<TermFloor>, kind: Kind, carrier: Carrier) -> Box<dyn Sugar> {
+        Box::new(Self {
+            receiver,
+            kind,
+            carrier,
+        })
     }
 }
 
@@ -716,7 +743,7 @@ impl Sugar for OptionAdaptorSugar {
                 } else if let Some(payload) = result_payload(&receiver) {
                     desugar_result_unwrap_or(payload, default)
                 } else {
-                    option_adaptor_gap("unwrap_or receiver completed without Option/Result floor")
+                    symbolic_unwrap_or_guarded_split(self.carrier, "unwrap_or", &receiver, default)
                 }
             }
             Kind::UnwrapOrElse(f) => {
@@ -735,10 +762,21 @@ impl Sugar for OptionAdaptorSugar {
                     desugar_option_unwrap_or_default(payload, default.clone())
                 } else if let Some(payload) = result_payload(&receiver) {
                     desugar_result_unwrap_or_default(payload, default.clone())
-                } else {
-                    option_adaptor_gap(
-                        "unwrap_or_default receiver completed without Option/Result floor",
+                } else if let Some(default) = default.clone() {
+                    symbolic_unwrap_or_guarded_split(
+                        self.carrier,
+                        "unwrap_or_default",
+                        &receiver,
+                        default,
                     )
+                } else {
+                    // No reified default term AND no concrete Some/Ok/Err payload:
+                    // neither the family nor the none/err-arm value can be
+                    // established from this call's own syntax. Named typed
+                    // refusal, never a guess.
+                    Outcome::Incomplete(Effect::UnestablishableMonadicFamily {
+                        method: "unwrap_or_default".to_string(),
+                    })
                 }
             }
             Kind::Ok => {
@@ -758,6 +796,91 @@ impl Sugar for OptionAdaptorSugar {
         }
     }
 }
+
+// ── Symbolic-variant guarded split (#3445 Part 1 slice, collapse family) ───
+//
+// `unwrap_or`/`unwrap_or_default` over a receiver that reduced to a COMPLETE
+// term but not a concrete `Some`/`None`/`Ok`/`Err` literal (a symbolic
+// Option/Result: a Var, an opaque call result, ...) used to hit the panic
+// arm (`option_adaptor_gap`). T's ruling (#3445) names the carrier: the
+// reserved interpreted `adt.is_some`/`adt.is_none`/`adt.is_ok`/`adt.is_err`
+// tester family (landed) and the native `opt:some#0`/`res:ok#0` payload
+// selectors (PR #3758, landed), composed through the existing
+// `cf_ite`/`cf_guarded` value-region carrier -- OptionAdaptorSugar stays a
+// value producer whose produced value is itself a control-flow term:
+//
+//   cf_ite(adt.is_some(r), cf_guarded(adt.is_some(r), opt:some#0(r)),
+//                          cf_guarded(adt.is_none(r), default))
+//
+// The FAMILY (Option vs Result) is never guessed from the value -- it comes
+// from `Carrier`, which `recognize_for` fixed at RECOGNIZE time from the
+// call's own syntax. `Carrier::Any` (the legacy `unwrap_or_else` /
+// `unwrap_or_default` dispatch, which structurally accepts either monadic
+// source) carries no such fact, so it cannot select a tester without
+// guessing -- a named, typed refusal (`Effect::UnestablishableMonadicFamily`),
+// never a panic and never a silent default family.
+fn symbolic_unwrap_or_guarded_split(
+    carrier: Carrier,
+    method: &'static str,
+    receiver: &Rc<Term>,
+    default: Rc<Term>,
+) -> Outcome {
+    let (is_present, is_absent, selector) = match carrier {
+        Carrier::Option => (ADT_IS_SOME, ADT_IS_NONE, OPT_SOME_SELECTOR),
+        Carrier::Result => (ADT_IS_OK, ADT_IS_ERR, RES_OK_SELECTOR),
+        Carrier::Any => {
+            return Outcome::Incomplete(Effect::UnestablishableMonadicFamily {
+                method: method.to_string(),
+            });
+        }
+    };
+    let is_present_term = Rc::new(Term::Ctor {
+        name: is_present.to_string(),
+        args: vec![Rc::clone(receiver)],
+    });
+    let is_absent_term = Rc::new(Term::Ctor {
+        name: is_absent.to_string(),
+        args: vec![Rc::clone(receiver)],
+    });
+    let some_arm_value = Rc::new(Term::Ctor {
+        name: selector.to_string(),
+        args: vec![Rc::clone(receiver)],
+    });
+    let some_arm = Rc::new(Term::Ctor {
+        name: "cf_guarded".to_string(),
+        args: vec![Rc::clone(&is_present_term), some_arm_value],
+    });
+    let none_arm = Rc::new(Term::Ctor {
+        name: "cf_guarded".to_string(),
+        args: vec![Rc::clone(&is_absent_term), default],
+    });
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method,
+        carrier = ?carrier,
+        "resolved symbolic Option/Result receiver through the adt.is_* guarded split (#3445)"
+    );
+    Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+        name: "cf_ite".to_string(),
+        args: vec![is_present_term, some_arm, none_arm],
+    })))
+}
+
+// Reserved interpreted ADT discriminant testers (T's ruling, #3445 Part 1):
+// emitter-rendered as NATIVE datatype testers, NEVER declared as EUF
+// predicates. See `sugar-ir-compiler-smt-lib/src/emitter.rs`'s
+// `ADT_IS_SOME`/`ADT_IS_NONE`/`ADT_IS_OK`/`ADT_IS_ERR` (the same reserved
+// names; this is the producer side of that landed carrier).
+const ADT_IS_SOME: &str = "adt.is_some";
+const ADT_IS_NONE: &str = "adt.is_none";
+const ADT_IS_OK: &str = "adt.is_ok";
+const ADT_IS_ERR: &str = "adt.is_err";
+
+// Reserved native monadic ADT payload selectors (PR #3758, landed): NEVER
+// declared as uninterpreted functions -- they are the datatype's own
+// projection accessors, see `is_monadic_field_accessor` in the emitter.
+const OPT_SOME_SELECTOR: &str = "opt:some#0";
+const RES_OK_SELECTOR: &str = "res:ok#0";
 
 fn term_from_body(
     body: &SugarBody<TermFloor>,
@@ -1525,5 +1648,171 @@ fn monadic_result_expr(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<
         "Ok" => Some(ResultPayload::Ok(term)),
         "Err" => Some(ResultPayload::Err(term)),
         _ => None,
+    }
+}
+
+// ── #3445 Part 1 slice receipts: symbolic-variant collapse family ──────────
+//
+// `Carrier::Option`/`Carrier::Result` are the ONLY entry points that reach
+// `Kind::UnwrapOr` today (`OPTION_UNWRAP_OR_EXPR_SUGAR` and the legacy
+// `option_adaptor` claim's Result arm), so a real Rust fixture can never drive
+// a symbolic RECEIVER through `Carrier::Any` for `unwrap_or` -- every existing
+// symbolic-receiver source shape this crate recognizes (`checked_add` et al.
+// over a runtime operand) refuses upstream as a runtime NUMERIC operand
+// before the monadic receiver is even built (`RuntimeNumericOperand`), never
+// reaching a bare symbolic Option/Result term. These receipts therefore
+// exercise `symbolic_unwrap_or_guarded_split` directly against a synthesized
+// symbolic receiver (`make_var`), then run the PRODUCTION SMT-LIB compiler +
+// real z3 over the emitted term -- the same compile_asserted_formula_to_parts
+// path `sugar-lift-rust-tests/tests/assertion_lift.rs`'s receipts use -- so
+// the semantic claim (native tester + native selector + native `ite`, #3445
+// Part 1 slice 2's emitter half) is checked for real, not asserted by string
+// match.
+#[cfg(test)]
+mod symbolic_collapse_family_tests {
+    use super::*;
+    use sugar_ir_symbolic::{atomic_, eq, make_var, ContractDecl, Formula};
+
+    fn z3_binary() -> String {
+        std::env::var("Z3").unwrap_or_else(|_| "z3".to_string())
+    }
+
+    /// Compile `formula` (a `sugar_ir_symbolic::Formula`, the SAME kind this
+    /// crate's real assertion pipeline emits) through the production
+    /// SMT-LIB compiler, run real z3 over the result, and report SAT/UNSAT.
+    /// Bridges via the SAME JSON round-trip
+    /// `sugar-lift-rust-tests/tests/assertion_lift.rs`'s receipts use
+    /// (`marshal_declarations` -> `serde_json` -> `CompilerInput::decode_json`).
+    fn z3_check(formula: Rc<Formula>, label: &str) -> bool {
+        let decl = ContractDecl {
+            name: format!("collapse_family_{label}"),
+            pre: None,
+            post: None,
+            inv: Some(formula),
+            out_binding: "out".to_string(),
+            evidence: None,
+            panic_loci: vec![],
+            concept_hint: None,
+        };
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&doc).expect("marshaled declarations decode as JSON");
+        let inv_json = parsed[0]["inv"].clone();
+        let input =
+            sugar_ir_compiler::CompilerInput::decode_json(inv_json).expect("decode IR-JSON inv");
+        let sugar_ir_compiler::CompilerInput::Formula(ir_formula) = input else {
+            panic!("expected a formula input");
+        };
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(ir_formula.formula())
+            .expect("guarded-split formula must compile to SMT-LIB");
+        let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+        let path = std::env::temp_dir().join(format!("sugar_3445_collapse_{label}.smt2"));
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3_binary())
+            .arg(&path)
+            .output()
+            .expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "guarded-split formula must be well-sorted:\n{stdout}\n--- {script}"
+        );
+        stdout.contains("sat") && !stdout.contains("unsat")
+    }
+
+    /// Conjoin: `r` IS the some/ok variant, its payload is `5`, and the
+    /// guarded-split value equals `claimed`.
+    fn some_arm_claim(carrier: Carrier, claimed: i128) -> Rc<Formula> {
+        let r = make_var("r");
+        let default = num(999); // never read on the some/ok arm
+        let split = match symbolic_unwrap_or_guarded_split(carrier, "unwrap_or", &r, default) {
+            Outcome::Complete(Desugared::Term(term)) => term,
+            Outcome::Complete(_) => panic!("expected a Term, got a non-Term Desugared"),
+            Outcome::Incomplete(_) => panic!("expected a completed guarded-split term, got Incomplete"),
+        };
+        let (is_present, selector) = match carrier {
+            Carrier::Option => (ADT_IS_SOME, OPT_SOME_SELECTOR),
+            Carrier::Result => (ADT_IS_OK, RES_OK_SELECTOR),
+            Carrier::Any => unreachable!("test only drives the established carriers"),
+        };
+        let is_present_fact = atomic_(is_present, vec![Rc::clone(&r)]);
+        let payload_fact = eq(
+            Rc::new(Term::Ctor {
+                name: selector.to_string(),
+                args: vec![Rc::clone(&r)],
+            }),
+            num(5),
+        );
+        let claim_fact = eq(split, num(claimed));
+        sugar_ir_symbolic::connective_(
+            "and",
+            vec![is_present_fact, payload_fact, claim_fact],
+        )
+    }
+
+    #[test]
+    fn positive_symbolic_unwrap_or_discharges_through_guarded_split_option() {
+        // r is established `Some`-shaped with payload 5; the guarded split's
+        // some-arm reads `opt:some#0(r)`, so claiming the split equals 5 must
+        // be SAT -- the native tester + native selector + native `ite`
+        // actually thread the discriminant/projection laws.
+        let sat = z3_check(
+            some_arm_claim(Carrier::Option, 5),
+            "positive_option_unwrap_or",
+        );
+        assert!(
+            sat,
+            "symbolic Option receiver unwrap_or must discharge through the guarded split (SAT)"
+        );
+    }
+
+    #[test]
+    fn positive_symbolic_unwrap_or_discharges_through_guarded_split_result() {
+        let sat = z3_check(
+            some_arm_claim(Carrier::Result, 5),
+            "positive_result_unwrap_or",
+        );
+        assert!(
+            sat,
+            "symbolic Result receiver unwrap_or must discharge through the guarded split (SAT)"
+        );
+    }
+
+    #[test]
+    fn discrimination_lying_twin_flips_red_through_the_same_door() {
+        // Same construction, same door (the guarded-split term), but the
+        // claimed value (6) contradicts the established payload fact
+        // (opt:some#0(r) = 5) via the SAME native selector -- must be UNSAT.
+        let sat = z3_check(
+            some_arm_claim(Carrier::Option, 6),
+            "discrimination_lying_twin",
+        );
+        assert!(
+            !sat,
+            "lying twin (claimed value contradicts the established payload) must be UNSAT"
+        );
+    }
+
+    #[test]
+    fn structural_unestablishable_family_yields_typed_effect_not_panic() {
+        // Carrier::Any (the legacy unwrap_or_else/unwrap_or_default dispatch)
+        // carries no static Option-vs-Result fact. A symbolic receiver under
+        // it must refuse by NAME -- never guess a family, never panic.
+        let r = make_var("r");
+        let default = num(9);
+        let outcome = symbolic_unwrap_or_guarded_split(Carrier::Any, "unwrap_or_default", &r, default);
+        match outcome {
+            Outcome::Incomplete(Effect::UnestablishableMonadicFamily { method }) => {
+                assert_eq!(method, "unwrap_or_default");
+            }
+            Outcome::Complete(_) => panic!(
+                "unestablishable family must yield a typed Effect::UnestablishableMonadicFamily, \
+                 not a completed Outcome (and never a panic)"
+            ),
+            Outcome::Incomplete(_) => panic!(
+                "unestablishable family must yield Effect::UnestablishableMonadicFamily specifically, \
+                 not some other Effect"
+            ),
+        }
     }
 }
