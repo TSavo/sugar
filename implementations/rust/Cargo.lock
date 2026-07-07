@@ -1725,6 +1725,7 @@ dependencies = [
  "serde_json",
  "sugar-canonicalizer",
  "sugar-claim-envelope",
+ "sugar-cli",
  "sugar-ir-compiler",
  "sugar-ir-compiler-smt-lib",
  "sugar-ir-symbolic",

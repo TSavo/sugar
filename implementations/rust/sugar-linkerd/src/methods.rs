@@ -1364,46 +1364,40 @@ fn value_arc_to_json(v: &std::sync::Arc<sugar_canonicalizer::Value>) -> Json {
 /// `sugar-verifier::runner::Runner` calls for the "test-assertion consistency"
 /// receipt. No shadow verifier.
 ///
-/// NAMED SCOPE GAP (not silently assumed done, and NOT closeable by a
-/// naive bridge -- see the finding below): this handler does not lift
-/// `source` and merge it into a scratch overlay of the resident pool.
-/// `proveConsistency` verifies the resident pool as loaded from disk (the
-/// project's `.proof` catalog as of daemon startup / last resident-pool
-/// rebuild), not the unsaved editor buffer. `kitId`/`file`/`source` are
-/// accepted and logged so the wire contract matches `parseFile`; `source`
-/// is otherwise unused in this slice. The response carries an explicit
-/// `"degraded": true` + `"degradedReason"` so callers never mistake this
-/// disk-pool answer for a live lift-and-merge one (named degraded mode,
-/// per the never-silently-differently-shaped-scratch-member rule).
+/// V2 (#3774 daemon lift-and-merge): the v1 finding below stands (the LSP
+/// `parse`/`LinkerContract` shape cannot make sound consistency members --
+/// no `inv`, no `proofirProvenance`/`sourceWarrants`). This handler no
+/// longer bridges from `LinkerContract`. Instead it calls
+/// `sugar_cli::cmd_mint::mint_project_scratch_proof`, the SAME
+/// `dispatch_multi`/`mint_lift_plugins_for_report` plugin-dispatch path
+/// `sugar mint`'s CLI uses for a project's declared `[[plugins]]`, in
+/// process, against a scratch `out_dir` under the project's `.sugar/`
+/// tree. That path already emits `inv`/provenance-bearing contract bodies
+/// (pure reuse -- no reshaping). The resulting scratch `.proof` is loaded
+/// (via `sugar_verifier::load_all_proofs::load_files_into_pool`, the SAME
+/// loader `load_pool` uses for every on-disk `.proof`) into a CLONE of the
+/// resident vendor-only pool (`ctx.pool`, loaded once at startup / manifest-
+/// drift rebuild from `.sugar/imports` and the project root); the base pool
+/// is never mutated in place, so subsequent requests always overlay onto
+/// the same vendor-only base. `verify_consistency_scoped` runs against the
+/// per-request overlay. `degraded` is `false` on this path; a lift failure
+/// (mint error, missing lift kit, no `[[plugins]]` declared) falls back to
+/// the v1 disk-pool answer with `degraded: true` and a reason, exactly as
+/// before -- never a silently different (unfaithful) scratch member.
 ///
-/// FINDING (this session, #3774 lift-and-merge attempt): `lift_source`'s
-/// output (`LinkerContract`, from the LSP `parse` RPC each kit lifter
-/// speaks) is the WRONG shape to bridge for this RPC. `LinkerContract`
-/// carries `pre_json`/`post_json` for cross-function contract LINKING.
-/// `consistency.rs::collect_consistency_candidates` -> `is_consistency_candidate`
-/// requires a member body with an `"inv"` (invariant) field and NO `"pre"`,
-/// plus `contract_provenance_kind` requires a `proofirProvenance` or
-/// `sourceWarrants` field on the member. None of those three fields exist
-/// on `LinkerContract` or anywhere in the LSP `parse` response -- they are
-/// produced later, in `sugar-cli`'s ir-document/witness-discharge pipeline
-/// (`cmd_mint.rs`), not in the lightweight per-kit LSP lift used for
-/// linking. A scratch member built from `LinkerContract` alone would
-/// either fail `is_consistency_candidate` (silently proving nothing, a
-/// false green) or require fabricating `proofirProvenance`/`sourceWarrants`
-/// values with no real warrant behind them (a false green with fake
-/// teeth) -- both are exactly the silently-differently-shaped-scratch-member
-/// failure this mission's soundness rail forbids. The correct next
-/// construction is to have the daemon invoke the SAME ir-document plugin
-/// dispatch `cmd_mint.rs` uses (`dispatch_report_lift_plugin` /
-/// `mint_lift_plugins_for_report`, which already emits `inv`/provenance-
-/// bearing contract bodies) instead of the LSP `parse` method, then wrap
-/// those bodies into lean header/body envelopes for `pool.insert`. That
-/// is materially more work than a `LinkerContract` bridge (it means
-/// standing up the plugin-dispatch call from inside the daemon, resident
-/// per kit) and was not completed in this slice; shipping it half-done
-/// as a silent scratch member would be strictly worse than the current
-/// honest disk-pool answer, so this slice keeps the disk-pool path and
-/// makes its degraded status explicit on the wire instead.
+/// FINDING (v1, #3774 lift-and-merge attempt, still the reason the LSP
+/// bridge is refused): `lift_source`'s output (`LinkerContract`, from the
+/// LSP `parse` RPC each kit lifter speaks) is the WRONG shape to bridge for
+/// this RPC. `LinkerContract` carries `pre_json`/`post_json` for
+/// cross-function contract LINKING. `consistency.rs::collect_consistency_candidates`
+/// -> `is_consistency_candidate` requires a member body with an `"inv"`
+/// (invariant) field and NO `"pre"`, plus `contract_provenance_kind`
+/// requires a `proofirProvenance` or `sourceWarrants` field on the member.
+/// None of those three fields exist on `LinkerContract` or anywhere in the
+/// LSP `parse` response -- they are produced in `sugar-cli`'s
+/// ir-document/witness-discharge pipeline (`cmd_mint.rs`), which is exactly
+/// the pipeline this v2 slice now calls in-daemon instead of reshaping the
+/// LSP output.
 #[instrument(skip(state, params))]
 pub async fn handle_prove_consistency(
     state: Arc<Mutex<ProjectState>>,
@@ -1419,11 +1413,11 @@ pub async fn handle_prove_consistency(
         Some(f) => f.to_string(),
         None => return rpc_error(ERR_INVALID_PARAMS, "missing 'file'", id),
     };
-    // Accepted for wire-shape parity with parseFile; not yet consumed (see
-    // the NAMED SCOPE GAP / FINDING doc comment above -- lift-and-merge is
-    // not safe to fake from `LinkerContract`, so this stays disk-pool and
-    // reports itself as degraded rather than silently answering from an
-    // unfaithful scratch member).
+    // Accepted for wire-shape parity with parseFile. Not read directly (the
+    // v2 lift-and-merge below re-lifts the project's ON-DISK sources via
+    // the mint pipeline, which requires the file to have been saved --
+    // see the doc comment above); kept in the wire contract so a future
+    // slice can pass it straight to a single-file lift fast path.
     let _source = params.get("source").and_then(|v| v.as_str());
 
     let ctx = {
@@ -1482,8 +1476,104 @@ pub async fn handle_prove_consistency(
     tracing::debug!(
         kit_id,
         file,
-        "proveConsistency: resident-pool verify_consistency (editor-scoped)"
+        "proveConsistency: attempting daemon lift-and-merge overlay"
     );
+
+    // V2 lift-and-merge (#3774): mint the project's declared `[[plugins]]`
+    // lift set into a scratch `.proof` via the SAME `dispatch_multi` path
+    // `sugar mint` uses (pure reuse -- see `mint_project_scratch_proof`'s
+    // doc comment), then merge it onto a CLONE of the resident vendor-only
+    // pool. `ctx.pool` itself is never mutated, so every request overlays
+    // freshly onto the same base.
+    let project_root_for_lift = ctx.project_root.clone();
+    // Scratch output MUST live OUTSIDE `project_root`: `scan_proof_manifest`
+    // (the coarse-invalidation re-stat above) walks the whole project tree
+    // for `.proof` files, so a scratch `.proof` written INSIDE the project
+    // would drift the manifest on every call and force a full
+    // `build_prove_context_for` disk reload (the very cold path this daemon
+    // exists to avoid) on the NEXT request -- a self-inflicted invalidation
+    // storm discovered while measuring this slice's steady-state timing.
+    // A stable per-project temp directory (hashed from `project_root`)
+    // keeps scratch output out of the manifest walk while still letting
+    // Real disk-backed `.proof` loading (`load_files_into_pool`) reuse the
+    // SAME loader every on-disk proof uses.
+    let scratch_dir = std::env::temp_dir().join("sugar-linkerd-lift-scratch").join(
+        sugar_canonicalizer::blake3_512_hex(project_root_for_lift.display().to_string().as_bytes()),
+    );
+    let base_pool_for_lift = ctx.pool.clone();
+    let lift_started = std::time::Instant::now();
+    let lift_result = task::spawn_blocking(move || {
+        // Wipe the scratch dir before every mint. `dispatch_multi`'s mint
+        // step accumulates content-addressed witness members onto whatever
+        // catalog already exists in `out_dir`; a reused scratch dir would
+        // keep EVERY prior edit's assertion members alongside the current
+        // one (discovered while flip-testing this slice: a corrected source
+        // still read back "contradictory" because the stale pre-edit
+        // member was still sitting in the catalog). A fresh directory per
+        // call guarantees the overlay reflects ONLY the current on-disk
+        // source, never accumulated history.
+        let _ = std::fs::remove_dir_all(&scratch_dir);
+        if let Err(err) = std::fs::create_dir_all(&scratch_dir) {
+            return Err(format!(
+                "cannot create daemon scratch dir {}: {err}",
+                scratch_dir.display()
+            ));
+        }
+        let proof_file = sugar_cli::cmd_mint::mint_project_scratch_proof(
+            &project_root_for_lift,
+            &scratch_dir,
+            false,
+        )?;
+        let Some(proof_file) = proof_file else {
+            return Ok(None);
+        };
+        let mut overlay_pool = base_pool_for_lift;
+        sugar_verifier::load_all_proofs::load_files_into_pool(&[proof_file], &mut overlay_pool);
+        Ok(Some(overlay_pool))
+    })
+    .await;
+    let lift_ms = lift_started.elapsed().as_millis();
+
+    let (pool_for_solve, degraded, degraded_reason): (
+        sugar_verifier::types::MementoPool,
+        bool,
+        Option<String>,
+    ) = match lift_result {
+        Ok(Ok(Some(overlay_pool))) => {
+            tracing::info!(lift_ms, "proveConsistency: daemon lift-and-merge overlay built");
+            (overlay_pool, false, None)
+        }
+        Ok(Ok(None)) => (
+            ctx.pool.clone(),
+            true,
+            Some(
+                "project declares no [[plugins]] lift entries; nothing to lift-and-merge -- resident disk-pool only"
+                    .to_string(),
+            ),
+        ),
+        Ok(Err(err)) => {
+            tracing::warn!(
+                error = %err,
+                "proveConsistency: daemon lift failed, falling back to resident disk-pool"
+            );
+            (
+                ctx.pool.clone(),
+                true,
+                Some(format!("daemon lift-and-merge failed, falling back to resident disk-pool: {err}")),
+            )
+        }
+        Err(join_err) => {
+            tracing::warn!(
+                error = %join_err,
+                "proveConsistency: daemon lift panicked, falling back to resident disk-pool"
+            );
+            (
+                ctx.pool.clone(),
+                true,
+                Some(format!("daemon lift-and-merge panicked, falling back to resident disk-pool: {join_err}")),
+            )
+        }
+    };
 
     // EDITOR SCOPE: the daemon serves an editor, and the editor only paints
     // rows anchored inside the project. Solve ONLY those groups (whole groups,
@@ -1491,9 +1581,10 @@ pub async fn handle_prove_consistency(
     // vendor's thousands of internal obligations. On the pandas demo this is
     // the difference between ~8k solves (~60s) and the consumer's own handful
     // (milliseconds). The CLI's full `sugar prove` remains the unscoped door.
+    let solve_started = std::time::Instant::now();
     let results = task::spawn_blocking(move || {
         sugar_verifier::consistency::verify_consistency_scoped(
-            &ctx.pool,
+            &pool_for_solve,
             &ctx.plan,
             &ctx.registry,
             &ctx.compilers,
@@ -1502,6 +1593,7 @@ pub async fn handle_prove_consistency(
         )
     })
     .await;
+    let solve_ms = solve_started.elapsed().as_millis();
 
     let results = match results {
         Ok(r) => r,
@@ -1532,21 +1624,29 @@ pub async fn handle_prove_consistency(
         })
         .collect();
 
-    // Degraded mode, always true today (see FINDING above): these rows come
-    // from the resident on-disk pool, not a live lift of `source`. The
-    // extension must not treat this as "typing-speed, no mint needed" --
-    // it still needs a `sugar mint` + pool-manifest-drift rebuild between
-    // an edit and this RPC seeing it. Named explicitly on the wire so a
-    // future lift-and-merge landing is the only thing that flips this to
-    // `false`, rather than the extension silently assuming freshness.
-    rpc_result(
-        serde_json::json!({
-            "rows": rows,
-            "degraded": true,
-            "degradedReason": "resident disk-pool only; source lift-and-merge not implemented (LinkerContract lacks inv/provenance fields consistency.rs requires -- see handler doc comment)",
-        }),
-        id,
-    )
+    tracing::info!(
+        lift_ms,
+        solve_ms,
+        degraded,
+        "proveConsistency: daemon-cycle timing"
+    );
+
+    // `degraded` is `false` on the live lift-and-merge path (see V2 doc
+    // comment above); it stays `true` only for the named genuine fallbacks
+    // (lift failure, missing lift kit, no `[[plugins]]` declared), each
+    // with an explicit reason, never a silently different scratch member.
+    let mut response = serde_json::json!({
+        "rows": rows,
+        "degraded": degraded,
+        "timingMs": {
+            "daemonLift": lift_ms,
+            "daemonSolve": solve_ms,
+        },
+    });
+    if let Some(reason) = degraded_reason {
+        response["degradedReason"] = Json::String(reason);
+    }
+    rpc_result(response, id)
 }
 
 fn value_to_json(v: &sugar_canonicalizer::Value) -> Json {

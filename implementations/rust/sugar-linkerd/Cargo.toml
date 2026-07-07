@@ -25,6 +25,13 @@ sugar-claim-envelope = { path = "../sugar-claim-envelope" }
 # used to cold-spawn. `default-features = false` keeps the heavy `rpc`/realize
 # feature out of the daemon; `ra_oracle` needs only serde_json/tracing/std.
 sugar-walk = { path = "../sugar-walk", default-features = false }
+# Daemon lift-and-merge v2 (#3774): reuse sugar-cli's `sugar_cli` LIB target
+# (not the `sugar` binary crate) to mint a consumer's ir-document/witness-
+# discharge members in-process, via the SAME `dispatch_multi`/
+# `mint_lift_plugins_for_report` path `sugar mint` uses. Pure reuse, no
+# reshaping -- see `cmd_mint::mint_project_scratch_proof` and
+# `methods::handle_prove_consistency`.
+sugar-cli = { path = "../sugar-cli" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
