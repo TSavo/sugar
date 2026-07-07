@@ -57,6 +57,7 @@ pub mod solve_obligation;
 pub mod solvers;
 pub mod superposition;
 pub mod types;
+pub mod utterance;
 
 pub use domain_claim_shape_report::{
     shape_report_claim, shape_report_claims, validate_trichotomy, DomainClaimShapeReport,

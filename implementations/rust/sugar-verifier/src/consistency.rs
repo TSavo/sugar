@@ -157,6 +157,13 @@ struct ConsistencyCandidate {
     cid: String,
     body: Json,
     provenance_kind: ProofIrProvenanceKind,
+    /// #3807/#3812: was this candidate's own member CID SPOKEN BY A VENDOR
+    /// (attributed to a `SpeakerRole::Vendor` speaker -- a staged `.proof`
+    /// under `.sugar/imports/` or a vendor-role `speak_*` utterance)? Read
+    /// once at candidate-construction time via `pool.is_vendor_member` so
+    /// the group solve below never has to touch the pool again to answer
+    /// "whose fact is this" -- the CONSTRUCTED label, not an inference.
+    spoken_by_vendor: bool,
 }
 
 /// Does this contract carry asserted axioms that must be checked for
@@ -2569,10 +2576,12 @@ fn collect_consistency_candidates(
                         reason,
                     ));
                 } else {
+                    let spoken_by_vendor = pool.is_vendor_member(&cid.to_string());
                     candidates.push(ConsistencyCandidate {
                         cid: cid.to_string(),
                         body,
                         provenance_kind,
+                        spoken_by_vendor,
                     });
                 }
             }
@@ -2758,10 +2767,12 @@ fn candidate_from_pool(pool: &MementoPool, cid: &str) -> Option<ConsistencyCandi
     let member = pool.mementos.get(&memento_cid)?;
     let body = pool.contract_body_for_member(member).filter(|v| v.is_object())?;
     let provenance_kind = contract_provenance_kind(member, &body).ok()?;
+    let spoken_by_vendor = pool.is_vendor_member(cid);
     Some(ConsistencyCandidate {
         cid: cid.to_string(),
         body,
         provenance_kind,
+        spoken_by_vendor,
     })
 }
 
@@ -3472,9 +3483,38 @@ fn process_consistency_group(
                     .collect();
                 let (inv, collapsed_same_kind_duplicate) =
                     conjoin_distinct_provenance_witnesses(invs);
-                // The consumer's OWN fact, before any vendor universe/vector is
-                // conjoined -- this is the YOUR-FACT half of the three-part FOL.
-                let client_fact = inv.clone();
+                // #3807/#3812: the group's SOLVER INPUT (`inv`, above) stays
+                // the full conjunction of every candidate -- consumer-spoken
+                // AND vendor-spoken -- byte-identical to before this change.
+                // What changes is what gets LABELED "your fact" for the
+                // report/IDE row: partition the group's candidates by their
+                // CONSTRUCTED speaker attribution
+                // (`ConsistencyCandidate::spoken_by_vendor`, stamped at
+                // intake from which speaker each member's bytes actually
+                // came from) instead of treating the whole conjoined group
+                // as the client's own fact. `clientFactIr` is the
+                // conjunction of the CONSUMER-spoken candidates ONLY (a
+                // single candidate needs no `and` wrapper); `vendorFactIr`
+                // gathers the VENDOR-spoken candidates' equalities alongside
+                // the imported ambient sworn facts. A group with no
+                // consumer-spoken candidate at all (vendor-internal, e.g.
+                // two staged vendor mementos sharing an `#euf#` name)
+                // attaches nothing new, matching pre-#3774 behavior.
+                let (own_candidates, vendor_candidates): (Vec<_>, Vec<_>) =
+                    inv_candidates.iter().partition(|c| !c.spoken_by_vendor);
+                let own_formulas: Vec<Json> = own_candidates
+                    .iter()
+                    .map(|c| canonicalize_formula_json(&axiom_context_formula(&c.body)))
+                    .collect();
+                let client_fact_partitioned: Option<Json> = match own_formulas.len() {
+                    0 => None,
+                    1 => own_formulas.into_iter().next(),
+                    _ => Some(json!({ "kind": "and", "operands": own_formulas })),
+                };
+                let vendor_spoken_equalities: Vec<Json> = vendor_candidates
+                    .iter()
+                    .map(|c| canonicalize_formula_json(&axiom_context_formula(&c.body)))
+                    .collect();
                 let current_ground_witnesses: std::collections::BTreeSet<_> = inv_candidates
                     .iter()
                     .flat_map(|candidate| {
@@ -3517,16 +3557,18 @@ fn process_consistency_group(
                         compilers,
                     )
                 };
-                let sworn = collect_vendor_sworn_facts(
-                    &client_fact,
-                    &ambient_ground_callsite_facts,
-                    &inv_cids,
-                );
-                attach_conjoined_facts(
-                    &mut result,
-                    &client_fact,
-                    &union_facts(vendor_facts, sworn),
-                );
+                if let Some(client_fact_own) = &client_fact_partitioned {
+                    let sworn = collect_vendor_sworn_facts(
+                        client_fact_own,
+                        &ambient_ground_callsite_facts,
+                        &inv_cids,
+                    );
+                    attach_conjoined_facts(
+                        &mut result,
+                        client_fact_own,
+                        &union_facts(union_facts(vendor_facts, vendor_spoken_equalities), sworn),
+                    );
+                }
                 out.push(result);
             } else {
                 for candidate in &inv_candidates {
@@ -3571,16 +3613,27 @@ fn process_consistency_group(
                             compilers,
                         )
                     };
-                    let sworn = collect_vendor_sworn_facts(
-                        &original_inv,
-                        &ambient_ground_callsite_facts,
-                        std::slice::from_ref(&candidate.cid),
-                    );
-                    attach_conjoined_facts(
-                        &mut result,
-                        &original_inv,
-                        &union_facts(vendor_facts, sworn),
-                    );
+                    // #3807/#3812: this branch processes ONE candidate at a
+                    // time (no cross-proof conjoin), so `original_inv` is
+                    // already that candidate's own formula with nothing else
+                    // folded in. It is the client's own fact ONLY when the
+                    // candidate was spoken by the consumer; a lone
+                    // VENDOR-spoken candidate (a vendor-internal contract
+                    // that never joined an `#euf#` group) must attach
+                    // nothing new rather than mislabel a vendor fact as the
+                    // client's.
+                    if !candidate.spoken_by_vendor {
+                        let sworn = collect_vendor_sworn_facts(
+                            &original_inv,
+                            &ambient_ground_callsite_facts,
+                            std::slice::from_ref(&candidate.cid),
+                        );
+                        attach_conjoined_facts(
+                            &mut result,
+                            &original_inv,
+                            &union_facts(vendor_facts, sworn),
+                        );
+                    }
                     if !suppress_standalone_support_vacuity(
                         property_name,
                         candidate,

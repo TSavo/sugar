@@ -449,39 +449,27 @@ pub(crate) fn verification_with_fol(verification: Option<&Json>) -> Json {
 }
 
 /// The vendor's sworn fact for the consumer's OWN callsite: an `=(lhs, value)`
-/// atom whose `lhs` matches the consumer's asserted call term and whose value
-/// differs from what the consumer asserted (the contradicting vendor value).
-/// The pool conjoins every fact sharing the callee symbol, so we match by LHS.
-/// None if the consumer has no equality or nothing contradicts it.
+/// atom whose `lhs` matches the consumer's asserted call term.
+///
+/// #3807: `clientFactIr` is now CONSTRUCTED at the pool as the conjunction of
+/// the group's OWN-origin candidates ONLY (see `consistency.rs`'s
+/// `client_fact_partitioned`); it never carries the vendor's conjunct, so
+/// there is nothing left here to disambiguate by position. This is a trivial
+/// projection: `vendorFactIr` may hold sworn vectors for OTHER arguments of
+/// the same callee (the pool conjoins every fact sharing the callee symbol,
+/// e.g. `len(a)=0`, `len(b)=2`, `len(c)=20`), so match by LHS to pick out the
+/// vector that actually shares the consumer's own call term. No positional
+/// `first()` heuristic, no client-side disambiguation: if no `vendorFactIr`
+/// entry's LHS matches, there is no vendor sworn fact for this callsite (the
+/// derive-case fallback in `verification_with_fol` handles that case).
 fn matching_vendor_fact(v: &Json) -> Option<Json> {
     let client_eqs = collect_equalities(v.get("clientFactIr")?);
-
-    // AUTHORITATIVE PATH: the vendor's SWORN vector for the consumer's own
-    // callsite. clientFactIr is the CONJOINED formula and its clause ORDER is
-    // producer-dependent (the daemon's overlay pool and the CLI's on-disk pool
-    // assemble it differently), so "first equality = the consumer's assertion"
-    // is not a stable fact -- trusting position swapped the vendor/your labels
-    // (and therefore the Quick Fix value) on the daemon path. The sworn vector
-    // in vendorFactIr is order-independent testimony: if it carries an
-    // equality whose LHS matches ANY of the conjoined callsite equalities,
-    // THAT is the vendor's fact, regardless of clause order.
-    if let Some(vf) = v.get("vendorFactIr").and_then(|x| x.as_array()) {
-        for f in vf {
-            for (vl, vr) in collect_equalities(f) {
-                if client_eqs.iter().any(|(cl, _)| *cl == vl) {
-                    return Some(json!({ "kind": "atomic", "name": "=", "args": [vl, vr] }));
-                }
+    let vf = v.get("vendorFactIr").and_then(|x| x.as_array())?;
+    for f in vf {
+        for (vl, vr) in collect_equalities(f) {
+            if client_eqs.iter().any(|(cl, _)| *cl == vl) {
+                return Some(json!({ "kind": "atomic", "name": "=", "args": [vl, vr] }));
             }
-        }
-    }
-
-    // DERIVE-CASE FALLBACK (no sworn vector -- e.g. a base64-style universe):
-    // the positional heuristic survives only here, where clientFactIr is the
-    // consumer's own single assertion and there is nothing to mislabel.
-    let (lhs, asserted_rhs) = client_eqs.first()?;
-    for (l, r) in &client_eqs {
-        if l == lhs && r != asserted_rhs {
-            return Some(json!({ "kind": "atomic", "name": "=", "args": [l, r] }));
         }
     }
     None

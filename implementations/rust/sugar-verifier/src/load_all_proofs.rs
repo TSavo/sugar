@@ -32,8 +32,42 @@ use sugar_proof_envelope::{
 };
 
 use crate::types::{
-    BridgePin, BundleScopedCallsiteKey, EffectSiteAnnotation, LoadError, MementoPool,
+    BridgePin, BundleScopedCallsiteKey, EffectSiteAnnotation, LoadError, MementoPool, Speaker,
+    SpeakerRole,
 };
+
+/// Is `path` staged under a project's `.sugar/imports/` tree? (#3807
+/// attribution stamp.) That is the ONE place a vendor bundle is staged into a consumer's
+/// project (see `sugar_cli::cmd_import` / the daemon's
+/// `build_prove_context_for`, which loads `<project_root>/.sugar/imports`
+/// as its vendor-only base pool). A component-wise check (not a substring
+/// match) so a project path that merely CONTAINS the string "imports"
+/// elsewhere does not false-positive.
+fn path_is_imported(path: &Path) -> bool {
+    let components: Vec<String> = path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    components
+        .windows(2)
+        .any(|w| w[0] == ".sugar" && w[1] == "imports")
+}
+
+/// The Speaker a path-walk load attributes a bundle's members to: the bundle
+/// path is the identity label, and the role is derived from WHERE the bundle
+/// sits (`.sugar/imports/**` = the vendor speaking; anywhere else = the
+/// consumer's own project output). Path-derived, not caller-declared, so the
+/// walk cannot get it wrong.
+fn speaker_for_path(path: &Path) -> Speaker {
+    Speaker {
+        id: path.display().to_string(),
+        role: if path_is_imported(path) {
+            SpeakerRole::Vendor
+        } else {
+            SpeakerRole::Consumer
+        },
+    }
+}
 
 const PANIC_FREEDOM_EFFECT: &str = "panic-freedom";
 const EFFECT_SITE_ANNOTATION_LOAD_ERROR_TAG: &str = "[effect-site-annotation]";
@@ -69,8 +103,9 @@ pub fn run(project_root: &Path) -> MementoPool {
     info!(root = %project_root.display(), "load_all_proofs: scanning for .proof files");
     let mut pool = MementoPool::default();
     for path in enumerate_proof_files(project_root) {
-        debug!(path = %path.display(), "load_all_proofs: loading .proof file");
-        load_path_into_pool(&path, &mut pool);
+        let speaker = speaker_for_path(&path);
+        debug!(path = %path.display(), role = ?speaker.role, "load_all_proofs: loading .proof file");
+        load_path_into_pool(&path, &mut pool, &speaker);
     }
     info!(
         mementos = pool.mementos.len(),
@@ -95,12 +130,22 @@ pub fn run_with_files(project_root: &Path, proof_files: &[PathBuf]) -> MementoPo
     pool
 }
 
+/// Load explicit files, attributing each one's members to a Speaker derived
+/// from its own path (#3807: `speaker_for_path`, the same rule `run()`'s
+/// walk uses). Every existing caller of this function loads a bundle that is
+/// either the consumer's own project output (the daemon's scratch-overlay
+/// mint under a temp dir, `sugar mint`'s applied-proof merge, self-check
+/// fixtures) -- never a path under `.sugar/imports` -- so in practice these
+/// all stamp `SpeakerRole::Consumer` today, but the check is the honest one
+/// (path-derived, not caller-declared) rather than a role the caller could
+/// get wrong.
 pub fn load_files_into_pool(proof_files: &[PathBuf], pool: &mut MementoPool) {
     let mut proof_files = proof_files.to_vec();
     proof_files.sort();
     proof_files.dedup();
     for path in proof_files {
-        load_path_into_pool(&path, pool);
+        let speaker = speaker_for_path(&path);
+        load_path_into_pool(&path, pool, &speaker);
     }
 }
 
@@ -112,12 +157,23 @@ pub fn load_proof_bytes_into_pool(proofs: &[ProofBytes], pool: &mut MementoPool)
     });
     proofs.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
     for proof in proofs {
-        load_bytes_into_pool(&proof.label, &proof.expected_cid, &proof.bytes, pool);
+        // Same reasoning as `load_files_into_pool`: every current caller
+        // (cmd_mint's applied-proof merge, self_check/doctor fixtures)
+        // supplies its OWN bundle bytes, never a staged vendor import, so
+        // the members are attributed to a Consumer-role speaker labeled by
+        // the proof's own label. Callers who need a different speaker (a
+        // vendor handing over an envelope) go through the utterance verbs
+        // (`crate::utterance::speak_*`), which pass their Speaker here.
+        let speaker = Speaker {
+            id: proof.label.clone(),
+            role: SpeakerRole::Consumer,
+        };
+        load_bytes_into_pool(&proof.label, &proof.expected_cid, &proof.bytes, pool, &speaker);
     }
 }
 
-fn load_path_into_pool(path: &Path, pool: &mut MementoPool) {
-    match load_one(path, pool) {
+fn load_path_into_pool(path: &Path, pool: &mut MementoPool, speaker: &Speaker) {
+    match load_one(path, pool, speaker) {
         Ok(()) => {}
         Err(e) => pool.load_errors.push(LoadError {
             proof_path: path.display().to_string(),
@@ -147,7 +203,11 @@ fn enumerate_proof_files(project_root: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::error::Error>> {
+fn load_one(
+    path: &Path,
+    pool: &mut MementoPool,
+    speaker: &Speaker,
+) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(path)?;
     let source_label = path.display().to_string();
 
@@ -178,7 +238,13 @@ fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::erro
                 });
                 return Ok(());
             }
-            return load_catalog_bytes(path.display().to_string(), &derived_full, &bytes, pool);
+            return load_catalog_bytes(
+                path.display().to_string(),
+                &derived_full,
+                &bytes,
+                pool,
+                speaker,
+            );
         }
         None => {
             // Stem isn't a recognizable CID (e.g. the negative fixture
@@ -195,13 +261,23 @@ fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::erro
     }
 }
 
-fn load_bytes_into_pool(
+/// `pub(crate)` so the utterance verbs (`crate::utterance::speak_*`) can
+/// load one envelope's bytes under THEIR caller's Speaker instead of the
+/// Consumer default `load_proof_bytes_into_pool` stamps.
+pub(crate) fn load_bytes_into_pool(
     source_label: &str,
     expected_cid: &MementoCid,
     bytes: &[u8],
     pool: &mut MementoPool,
+    speaker: &Speaker,
 ) {
-    if let Err(e) = load_catalog_bytes(source_label.to_string(), expected_cid, bytes, pool) {
+    if let Err(e) = load_catalog_bytes(
+        source_label.to_string(),
+        expected_cid,
+        bytes,
+        pool,
+        speaker,
+    ) {
         pool.load_errors.push(LoadError {
             proof_path: source_label.to_string(),
             reason: format!("read/decode: {e}"),
@@ -214,6 +290,7 @@ fn load_catalog_bytes(
     expected_cid: &MementoCid,
     bytes: &[u8],
     pool: &mut MementoPool,
+    speaker: &Speaker,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Rule 1: content hash matches the expected CID.
     let derived_full = computed_memento_cid(blake3_512_of(bytes));
@@ -438,6 +515,13 @@ fn load_catalog_bytes(
                     continue;
                 }
             };
+
+        // #3807/#3812: attribute this member to its speaker now that
+        // insertion has succeeded. The Speaker was constructed once, by the
+        // intake that actually knows where the bytes came from (path walk,
+        // ProofBytes caller, or utterance verb). Idempotent by CID: a
+        // member already attributed keeps its FIRST speaker.
+        pool.attribute_member(cid.clone(), speaker.clone());
 
         if let Some((sym, callsite_key)) = bridge_index {
             pool.bridges_by_symbol.insert(sym.clone(), cid.clone());
