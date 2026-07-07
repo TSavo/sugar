@@ -23,6 +23,8 @@ pub enum CborDecodeError {
     IndefiniteLength,
     #[error("cbor: duplicate map key {0:?}")]
     DuplicateMapKey(String),
+    #[error("cbor: length prefix overflows available bytes")]
+    LengthOverflow,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +63,21 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<CborValue, CborDecodeError> {
     Ok(v)
 }
 
-fn read_head(bytes: &[u8], idx: &mut usize) -> Result<(u8, u64), CborDecodeError> {
+/// Bounds-check helper: `idx + len` computed with an overflow-safe checked
+/// add rather than `idx + len > bytes.len()`, which can wrap in release
+/// builds when `len` derives from an attacker-controlled CBOR length prefix
+/// (flagged in the cbor_index.rs soundness review; fixed here at the shared
+/// source so every caller -- eager `decode_value` and the lazy index scan in
+/// `cbor_index.rs` -- gets the fix for free).
+pub(crate) fn checked_end(idx: usize, len: usize, total: usize) -> Result<usize, CborDecodeError> {
+    let end = idx.checked_add(len).ok_or(CborDecodeError::LengthOverflow)?;
+    if end > total {
+        return Err(CborDecodeError::UnexpectedEof);
+    }
+    Ok(end)
+}
+
+pub(crate) fn read_head(bytes: &[u8], idx: &mut usize) -> Result<(u8, u64), CborDecodeError> {
     if *idx >= bytes.len() {
         return Err(CborDecodeError::UnexpectedEof);
     }
@@ -115,28 +131,24 @@ fn read_head(bytes: &[u8], idx: &mut usize) -> Result<(u8, u64), CborDecodeError
     Ok((major, arg))
 }
 
-fn decode_value(bytes: &[u8], idx: &mut usize) -> Result<CborValue, CborDecodeError> {
+pub(crate) fn decode_value(bytes: &[u8], idx: &mut usize) -> Result<CborValue, CborDecodeError> {
     let (major, arg) = read_head(bytes, idx)?;
     match major {
         0 => Ok(CborValue::Uint(arg)),
         2 => {
             let len = arg as usize;
-            if *idx + len > bytes.len() {
-                return Err(CborDecodeError::UnexpectedEof);
-            }
-            let out = bytes[*idx..*idx + len].to_vec();
-            *idx += len;
+            let end = checked_end(*idx, len, bytes.len())?;
+            let out = bytes[*idx..end].to_vec();
+            *idx = end;
             Ok(CborValue::Bstr(out))
         }
         3 => {
             let len = arg as usize;
-            if *idx + len > bytes.len() {
-                return Err(CborDecodeError::UnexpectedEof);
-            }
-            let s = std::str::from_utf8(&bytes[*idx..*idx + len])
+            let end = checked_end(*idx, len, bytes.len())?;
+            let s = std::str::from_utf8(&bytes[*idx..end])
                 .map_err(|_| CborDecodeError::BadUtf8)?
                 .to_string();
-            *idx += len;
+            *idx = end;
             Ok(CborValue::Tstr(s))
         }
         4 => {

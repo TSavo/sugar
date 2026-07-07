@@ -20,6 +20,7 @@
 
 pub mod cbor;
 pub mod cbor_decode;
+pub mod cbor_index;
 pub mod filename;
 pub mod proof;
 pub mod proof_graph;
