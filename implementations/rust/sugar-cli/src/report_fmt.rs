@@ -172,7 +172,153 @@ fn verification_with_fol(verification: Option<&Json>) -> Json {
         }
     }
 
+    // VENDOR FACT (derived case). A base64-style universe carries NO sworn
+    // ground vector -- the vendor proved a ∀ law (`str.eq-bv-blocks`), not a
+    // point. But the vendor's fact FOR THIS CALLSITE is that law instantiated at
+    // the consumer's OWN argument: derive it by asking z3 what the universe
+    // COMPUTES at that input (the SAME z3.model derive `sugar derive` runs),
+    // then present it as `call:f(arg) = <derived>` -- the missing third
+    // conjunct. Fail-open: no z3 / non-sat / no `{str}` RHS => omitted, not faked.
+    if !obj.contains_key("vendorFactFol") {
+        if let (Some(client_ir), Some(payload)) =
+            (v.get("clientFactIr"), universe_blocks_payload(v))
+        {
+            if let Some(derived) = derive_blocks_value(&payload) {
+                if let Some(ir) = client_fact_with_rhs(client_ir, &derived) {
+                    let fol = crate::cmd_lift::proofir_formula_to_fol_with_instances(&ir);
+                    obj.insert("vendorFactFol".to_string(), json!(fol_line(&fol)));
+                }
+            }
+        }
+    }
+
     out
+}
+
+/// Locate the vendor universe's `str.eq-bv-blocks` atom for this callsite
+/// (preferring the INSTANTIATED post, which binds the consumer's argument) and
+/// return a derive-ready payload JSON -- the walked block equations with
+/// `input_bytes` bound to the pinned input's UTF-8 bytes. Searches each
+/// `linkedPosts[].{instantiatedPost,vendorPost}` recursively. None if no such
+/// atom / bound input is present.
+fn universe_blocks_payload(v: &Json) -> Option<String> {
+    let posts = v.get("linkedPosts").and_then(|x| x.as_array())?;
+    for post in posts {
+        for field in ["instantiatedPost", "vendorPost"] {
+            if let Some(ir) = post.get(field) {
+                if let Some(p) = blocks_payload_from_node(ir) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Recursively find a `str.eq-bv-blocks` atom and build a derive-ready payload.
+fn blocks_payload_from_node(node: &Json) -> Option<String> {
+    if node.get("kind").and_then(|k| k.as_str()) == Some("atomic")
+        && node.get("name").and_then(|n| n.as_str()) == Some("str.eq-bv-blocks")
+    {
+        if let Some(p) = derive_ready_payload(node) {
+            return Some(p);
+        }
+    }
+    match node {
+        Json::Object(map) => map.values().find_map(blocks_payload_from_node),
+        Json::Array(arr) => arr.iter().find_map(blocks_payload_from_node),
+        _ => None,
+    }
+}
+
+/// From a `str.eq-bv-blocks` atom, produce a payload JSON with `input_bytes`
+/// bound. The atom is `[subject, payload]` (payload already carries bytes) or
+/// `[subject, input, payload]` (bind the bytes from the pinned input String
+/// const -- the general ∀ body carries only var names, so the concrete input
+/// lives in the second arg). None if the payload is unreadable or the input is
+/// not a pinned string literal.
+fn derive_ready_payload(atom: &Json) -> Option<String> {
+    let args = atom.get("args").and_then(|a| a.as_array())?;
+    let (input_term, payload_term) = match args.as_slice() {
+        [_subject, payload] => (None, payload),
+        [_subject, input, payload] => (Some(input), payload),
+        _ => return None,
+    };
+    let raw = payload_term.get("value").and_then(|x| x.as_str())?;
+    let mut payload: Json = serde_json::from_str(raw).ok()?;
+    // Already carries concrete bytes -> derive as-is.
+    if payload.get("input_bytes").and_then(|x| x.as_array()).is_some() {
+        return Some(raw.to_string());
+    }
+    // Otherwise bind them from the pinned input string literal.
+    let input_str = input_term?.get("value").and_then(|x| x.as_str())?;
+    let bytes: Vec<Json> = input_str.bytes().map(|b| json!(b as i64)).collect();
+    if let Json::Object(map) = &mut payload {
+        map.insert("input_bytes".to_string(), Json::Array(bytes));
+    }
+    serde_json::to_string(&payload).ok()
+}
+
+/// Ask z3 what the block-equation universe COMPUTES (its output string) at the
+/// pinned input -- the derived vendor value. The same z3.model derive
+/// `sugar derive` performs. None (fail-open) if z3 is absent or non-sat.
+fn derive_blocks_value(payload_json: &str) -> Option<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let dq =
+        sugar_ir_compiler_smt_lib::derive_query::emit_blocks_derive_query(payload_json).ok()?;
+    let mut child = Command::new("z3")
+        .args(["-smt2", "-in"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    child.stdin.as_mut()?.write_all(dq.smt.as_bytes()).ok()?;
+    let out = child.wait_with_output().ok()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.first().copied() != Some("sat") {
+        return None;
+    }
+    let model_line = lines.get(1).copied().unwrap_or("");
+    sugar_ir_compiler_smt_lib::derive_query::parse_model_string(model_line, &dq.result_var)
+}
+
+/// Clone the consumer's own asserted equality and swap its RIGHT-HAND side for
+/// the string literal `rhs`, yielding the vendor's fact for the same callsite:
+/// `call:f(arg) = <derived>`. Swaps the equality atom's `args[1]` (NOT the first
+/// string leaf, which would be the call's own `"xyz"` argument). None if no
+/// 2-arg atomic is found.
+fn client_fact_with_rhs(client_ir: &Json, rhs: &str) -> Option<Json> {
+    let mut cloned = client_ir.clone();
+    if replace_eq_rhs(&mut cloned, rhs) {
+        Some(cloned)
+    } else {
+        None
+    }
+}
+
+fn replace_eq_rhs(node: &mut Json, rhs: &str) -> bool {
+    if let Json::Object(map) = node {
+        if map.get("kind").and_then(|k| k.as_str()) == Some("atomic") {
+            if let Some(Json::Array(args)) = map.get_mut("args") {
+                if args.len() == 2 {
+                    args[1] = json!({ "str": rhs });
+                    return true;
+                }
+            }
+        }
+        return map.values_mut().any(|child| replace_eq_rhs(child, rhs));
+    }
+    if let Json::Array(arr) = node {
+        return arr.iter_mut().any(|child| replace_eq_rhs(child, rhs));
+    }
+    false
 }
 
 /// Prefix a rendered FOL formula with the turnstile, matching the

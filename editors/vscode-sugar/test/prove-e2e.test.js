@@ -175,13 +175,28 @@ function consistencyDiag(res, consumerFile) {
           d.clientFactFol.includes('"AAAA"'),
         d.clientFactFol
       );
+      // VENDOR FACT (derived): the universe carries no sworn vector, so the
+      // vendor's fact for this callsite is the law instantiated at "xyz" ->
+      // z3.model derives "eHl6". It must show as its OWN labeled line.
       check(
-        "bad: the squiggle message carries all rendered facts + the z3 verdict",
-        detail.includes("VENDOR UNIVERSE") &&
+        "bad: VENDOR FACT renders the DERIVED vendor value (eHl6), not the lie",
+        typeof d.vendorFactFol === "string" &&
+          /call:(?:[\w.]+\.)?encodeBase64\("xyz"\)/.test(d.vendorFactFol) &&
+          d.vendorFactFol.includes('"eHl6"') &&
+          !d.vendorFactFol.includes('"AAAA"'),
+        d.vendorFactFol
+      );
+      check(
+        "bad: the squiggle shows all 4 labeled lines + the conjoined verdict",
+        detail.includes("Vendor fact:") &&
+          detail.includes('"eHl6"') &&
+          detail.includes("Vendor universe:") &&
           detail.includes("str.eq-bv-blocks") &&
-          detail.includes("YOUR FACT") &&
+          detail.includes("Your fact:") &&
           detail.includes('"AAAA"') &&
-          detail.includes("z3:"),
+          detail.includes("Conjoined:") &&
+          detail.includes("∧") &&
+          detail.includes("UNSAT"),
         detail
       );
     }

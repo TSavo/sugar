@@ -81,18 +81,28 @@ export interface ProveDiagnostic {
  * listed last as the most familiar line (the same equality the source asserts).
  */
 export function formatDetail(d: ProveDiagnostic): string {
+  const strip = (s: string): string => s.replace(/^⊢\s*/, "");
   const lines: string[] = [];
+  const parts: string[] = [];
   if (d.vendorFactFol) {
-    lines.push(`VENDOR FACT     ${d.vendorFactFol}`);
+    lines.push(`Vendor fact:     ${d.vendorFactFol}`);
+    parts.push(strip(d.vendorFactFol));
   }
   if (d.vendorUniverseFol) {
-    lines.push(`VENDOR UNIVERSE ${d.vendorUniverseFol}`);
+    lines.push(`Vendor universe: ${d.vendorUniverseFol}`);
+    parts.push(strip(d.vendorUniverseFol));
   }
   if (d.clientFactFol) {
-    lines.push(`YOUR FACT       ${d.clientFactFol}`);
+    lines.push(`Your fact:       ${d.clientFactFol}`);
+    parts.push(strip(d.clientFactFol));
   }
-  lines.push(`z3: ${d.status} — ${d.reason}`);
-  lines.push(`property: ${d.property}`);
+  const verdict = d.status === "unsatisfied" ? "UNSAT" : d.status.toUpperCase();
+  if (parts.length > 0) {
+    // The Conjoined line IS the three parts conjoined -> the solver's verdict.
+    lines.push(`Conjoined:       ${parts.map((p) => `(${p})`).join(" ∧ ")}  →  ${verdict}`);
+  } else {
+    lines.push(`z3: ${d.status} — ${d.reason}`);
+  }
   return lines.join("\n");
 }
 
@@ -216,6 +226,53 @@ export function diagnosticsFromRows(rows: ProveRow[]): ProveDiagnostic[] {
     });
   }
   return out;
+}
+
+/**
+ * The editor's "on save" step: re-lift the edited source into a fresh `.proof`
+ * so `prove` reflects what the user just typed, not a stale mint. Cleans the
+ * project's OWN prior proofs first (staged vendor imports under `.sugar/imports/`
+ * are untouched), drops `.sugar/runs`, then `sugar mint --out . --quiet`.
+ * Resolves true on a clean mint, false (never throws) so prove is still attempted.
+ */
+export function mintProject(opts: ProveOptions): Promise<boolean> {
+  const fs = require("fs") as typeof import("fs");
+  const pathMod = require("path") as typeof import("path");
+  try {
+    for (const n of fs.readdirSync(opts.projectDir)) {
+      if (/^blake3-512_.*\.proof$/.test(n)) {
+        fs.rmSync(pathMod.join(opts.projectDir, n), { force: true });
+      }
+    }
+    fs.rmSync(pathMod.join(opts.projectDir, ".sugar", "runs"), { recursive: true, force: true });
+  } catch {
+    /* best-effort clean */
+  }
+  return new Promise((resolve) => {
+    const child = cp.spawn(opts.binaryPath, ["mint", "--out", ".", "--quiet"], {
+      cwd: opts.projectDir,
+      env: { ...process.env, ...(opts.env ?? {}) },
+    });
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      resolve(false);
+    }, opts.timeoutMs ?? 120_000);
+    child.on("error", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(false);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(code === 0);
+    });
+  });
 }
 
 /**

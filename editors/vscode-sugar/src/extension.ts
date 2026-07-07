@@ -18,7 +18,7 @@ import * as path from "path";
 import * as crypto from "crypto";
 import * as vscode from "vscode";
 import { LinkerdClient, kitIdForFile, LinkerDiagnostic } from "./linkerdClient";
-import { proveProject, ProveDiagnostic, formatDetail } from "./proveClient";
+import { proveProject, mintProject, ProveDiagnostic, formatDetail } from "./proveClient";
 
 let client: LinkerdClient | undefined;
 let diagnostics: vscode.DiagnosticCollection;
@@ -71,6 +71,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // distinct from link() above.
   if (proveBinaryPath) {
     context.subscriptions.push(
+      vscode.languages.registerCodeActionsProvider(
+        { language: "python", scheme: "file" },
+        new SugarProveFixProvider(),
+        { providedCodeActionKinds: SugarProveFixProvider.kinds }
+      ),
       vscode.workspace.onDidSaveTextDocument((doc) => void runProve(doc)),
       vscode.workspace.onDidOpenTextDocument((doc) => void runProve(doc)),
       vscode.workspace.onDidChangeTextDocument((e) => {
@@ -171,6 +176,9 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     if (pyPath) {
       env.PYTHONPATH = process.env.PYTHONPATH ? `${pyPath}:${process.env.PYTHONPATH}` : pyPath;
     }
+    // On-save: re-mint the edited source first so prove reflects the current
+    // text (not a stale proof), then prove.
+    await mintProject({ binaryPath: proveBinaryPath, projectDir, env });
     const res = await proveProject({ binaryPath: proveBinaryPath, projectDir, env });
     // Rebuild the whole prove collection for this project from scratch so
     // cleared rows (green now) drop their squiggles.
@@ -212,7 +220,77 @@ function proveToVsDiagnostic(d: ProveDiagnostic): vscode.Diagnostic {
   );
   diag.source = "sugar-prove";
   diag.code = d.status;
+  // Stash the PROVEN value (the vendor's fact for this callsite) so a Quick Fix
+  // can offer to replace the asserted RHS with it. Case 2 (universe): the
+  // z3-derived value; case 1 (sworn vector): the vendor's own value -- both
+  // arrive as the RHS of `vendorFactFol` (`... = <value>`). No extra solve here.
+  const proven = provenValueOf(d.vendorFactFol);
+  if (proven !== undefined) {
+    (diag as unknown as { sugarFixValue: string }).sugarFixValue = proven;
+  }
   return diag;
+}
+
+/**
+ * Extract the proven right-hand value from a `vendorFactFol` string such as
+ * `⊢ call:encodeBase64("xyz") = "eHl6"` (-> `"eHl6"`) or `... = 0` (-> `0`).
+ * Returns the literal verbatim (quotes preserved for strings), or undefined.
+ */
+function provenValueOf(vendorFactFol?: string): string | undefined {
+  if (!vendorFactFol) {
+    return undefined;
+  }
+  const idx = vendorFactFol.lastIndexOf(" = ");
+  if (idx < 0) {
+    return undefined;
+  }
+  const rhs = vendorFactFol.slice(idx + 3).trim();
+  return rhs.length > 0 ? rhs : undefined;
+}
+
+/**
+ * The Quick Fix: on a red prove diagnostic that carries a proven value, offer
+ * to rewrite the assertion's RHS (everything after `==`) to that value. This is
+ * "replace with proven value" -- the vendor's fact the consumer contradicted.
+ */
+class SugarProveFixProvider implements vscode.CodeActionProvider {
+  static readonly kinds = [vscode.CodeActionKind.QuickFix];
+
+  provideCodeActions(
+    document: vscode.TextDocument,
+    _range: vscode.Range | vscode.Selection,
+    context: vscode.CodeActionContext
+  ): vscode.CodeAction[] {
+    const actions: vscode.CodeAction[] = [];
+    for (const diag of context.diagnostics) {
+      if (diag.source !== "sugar-prove") {
+        continue;
+      }
+      const proven = (diag as unknown as { sugarFixValue?: string }).sugarFixValue;
+      if (proven === undefined) {
+        continue;
+      }
+      const line0 = diag.range.start.line;
+      const lineText = document.lineAt(line0).text;
+      const eq = lineText.indexOf("==");
+      if (eq < 0) {
+        continue;
+      }
+      // Replace everything after `==` (the asserted RHS) with the proven value.
+      const rhsStart = new vscode.Position(line0, eq + 2);
+      const rhsEnd = new vscode.Position(line0, lineText.length);
+      const fix = new vscode.CodeAction(
+        `Replace with proven value: ${proven}`,
+        vscode.CodeActionKind.QuickFix
+      );
+      fix.diagnostics = [diag];
+      fix.isPreferred = true;
+      fix.edit = new vscode.WorkspaceEdit();
+      fix.edit.replace(document.uri, new vscode.Range(rhsStart, rhsEnd), ` ${proven}`);
+      actions.push(fix);
+    }
+    return actions;
+  }
 }
 
 /** Turn one linkerd diagnostic into a VS Code diagnostic anchored at its locus. */
