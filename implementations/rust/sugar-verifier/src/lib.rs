@@ -41,6 +41,7 @@ pub mod compiler_registry;
 pub mod consistency;
 pub mod domain_claim_shape_report;
 pub mod effects;
+pub mod fol_render;
 pub mod enumerate_callsites;
 pub mod formula_rewrite;
 pub mod handshake;
