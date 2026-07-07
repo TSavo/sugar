@@ -4775,7 +4775,7 @@ mod tests {
             SolverSeat::Z3,
             Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
         );
-        let res = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let res = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         let point = res
             .iter()
             .find(|r| r.contract_cid == test_cid_string("blake3-512:point"))
@@ -4868,6 +4868,7 @@ mod tests {
             &SolverPlan::Single(SolverSeat::Bitwuzla),
             &reg,
             &test_compilers(),
+            std::path::Path::new("."),
         );
         let point = res
             .iter()
@@ -4912,6 +4913,7 @@ mod tests {
             &SolverPlan::Single(SolverSeat::Bitwuzla),
             &reg,
             &test_compilers(),
+            std::path::Path::new("."),
         );
         let point = res
             .iter()
@@ -5280,7 +5282,7 @@ mod tests {
         let inv = ne(var("x"), none());
         let pool = pool_with_contract("test_consistent", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -5307,7 +5309,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("test_contradictory", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -5339,7 +5341,7 @@ mod tests {
         });
         pool.insert_unanchored_for_tests(test_cid("bridge"), env);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert!(
             results.is_empty(),
             "pre-bearing contract must not be a consistency candidate"
@@ -5366,7 +5368,7 @@ mod tests {
         });
         pool.insert_unanchored_for_tests(test_cid("inv-post"), env);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
 
         assert_eq!(
             results.len(),
@@ -5390,7 +5392,7 @@ mod tests {
         let facts_inv = eqf(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::facts", facts_inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert!(
             results.is_empty(),
             "::facts setup-binding contract must not be a consistency candidate; got: {:?}",
@@ -5405,7 +5407,7 @@ mod tests {
         let facts_inv = eqf(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::facts::1", facts_inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert!(
             results.is_empty(),
             "::facts::N setup-binding contract must not be a consistency candidate; got: {:?}",
@@ -5424,7 +5426,7 @@ mod tests {
         let inv = ne(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(
             results.len(),
             1,
@@ -5444,7 +5446,7 @@ mod tests {
         let inv = ne(var("x"), none());
         let pool = pool_with_contract("test_x_consistent", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(
             results.len(),
             1,
@@ -5471,7 +5473,7 @@ mod tests {
         let inv = eqf(var("r"), string_const(r#"{"a":1}"#));
         let pool = pool_with_contract("encode_jcs::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -5501,7 +5503,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("encode_jcs_two_literals::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -5524,7 +5526,7 @@ mod tests {
         let inv = eqf(var("r"), string_const(r#"{"a":"x"}"#));
         let pool = pool_with_contract("encode_jcs_brace::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_ne!(
             results[0].verdict,
@@ -5558,7 +5560,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_str_int::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -5577,7 +5579,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_none_int::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -5598,7 +5600,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_none_false::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -5620,7 +5622,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_true_one::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -5639,7 +5641,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("same_str::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].verdict, ObligationVerdict::Unsatisfied);
     }
