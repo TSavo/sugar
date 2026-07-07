@@ -1775,7 +1775,7 @@ fn dispatch_multi(
         .map_err(|error| error.to_string())
 }
 
-pub(crate) fn mint_lift_plugins_for_report(
+pub fn mint_lift_plugins_for_report(
     project_root: &Path,
     plugins: &[PluginEntry],
     out_dir: &Path,
@@ -1783,6 +1783,36 @@ pub(crate) fn mint_lift_plugins_for_report(
 ) -> Result<Option<PathBuf>, String> {
     let session = dispatch_multi(project_root, plugins, out_dir, true, library_bindings)?;
     Ok(session.result.proof_file)
+}
+
+/// Daemon-facing seam (#3774 v2): mint a project's `.sugar/config.toml`
+/// `[[plugins]]` lift set into a scratch `.proof` under `out_dir`, reusing
+/// the SAME `dispatch_multi` path `sugar mint`'s CLI `run()` uses for the
+/// config-declared multi-plugin case (see the `project_cfg.plugins...
+/// is_lift_plugin()` branch above). Pure reuse: no reshaping of the
+/// ir-document/witness-discharge output, so members minted this way carry
+/// the same `inv`/`proofirProvenance`/`sourceWarrants` fields
+/// `is_consistency_candidate` requires, unlike the LSP `parse` shape (see
+/// `sugar-linkerd::methods::handle_prove_consistency`'s doc comment).
+///
+/// Returns `Ok(None)` when the project declares no lift plugins (nothing to
+/// mint here; callers should treat this as "not applicable", not an error).
+pub fn mint_project_scratch_proof(
+    project_root: &Path,
+    out_dir: &Path,
+    library_bindings: bool,
+) -> Result<Option<PathBuf>, String> {
+    let project_cfg = read_project_config(project_root);
+    let lift_plugins = project_cfg
+        .plugins
+        .iter()
+        .filter(|plugin| plugin.is_lift_plugin())
+        .cloned()
+        .collect::<Vec<_>>();
+    if lift_plugins.is_empty() {
+        return Ok(None);
+    }
+    mint_lift_plugins_for_report(project_root, &lift_plugins, out_dir, library_bindings)
 }
 
 pub(crate) fn lift_plugins_response_for_report(
