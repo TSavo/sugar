@@ -55,7 +55,7 @@ base64 = "0.22"
 thiserror = "1"
 # JSON for IR text emission
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 # Verifier glue
 walkdir = "2"
 toml = "0.8"

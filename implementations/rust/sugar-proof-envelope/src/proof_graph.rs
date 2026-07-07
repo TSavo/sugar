@@ -274,6 +274,12 @@ fn json_to_canonical_value_at(value: &Json, path: &str) -> Result<Arc<Value>, Ca
                 Ok(Value::integer(i128::from(i)))
             } else if let Some(u) = n.as_u64() {
                 Ok(Value::integer(i128::from(u)))
+            } else if let Ok(i) = n.to_string().parse::<i128>() {
+                // Big integers beyond i64/u64 (e.g. i128::MAX = 2^127-1, sworn by
+                // pandas' own tests) still canonicalize losslessly. serde_json's
+                // arbitrary_precision keeps the exact digits so the parse is exact,
+                // never a float round-trip.
+                Ok(Value::integer(i))
             } else {
                 Err(CanonicalizerError::Other(format!(
                     "non-integer JSON number at {path}: {n}"
@@ -1709,6 +1715,20 @@ mod tests {
             .unwrap_or_else(|| "<non-string panic>".to_string());
         assert!(msg.contains("non-integer JSON number"), "{msg}");
         assert!(msg.contains("$.envelope.body.value"), "{msg}");
+    }
+
+    #[test]
+    fn proof_graph_json_canonicalization_keeps_big_integers_beyond_u64() {
+        // The REAL pandas 3.0.3 proof (minted from pandas' own test suite) swears
+        // a fact whose value is i128::MAX = 2^127-1, well beyond i64/u64. serde_json
+        // parses that as an arbitrary-precision number; the canonicalizer must keep
+        // the exact digits (never round-trip through f64) and never panic.
+        let big = "170141183460469231731687303715884105727"; // i128::MAX
+        let raw = format!(r#"{{"kind":"const","value":{big}}}"#);
+        let value: Json = serde_json::from_str(&raw).expect("big-int JSON");
+        let canon = json_to_canonical_value_at(&value, "$").expect("big int canonicalizes");
+        let jcs = encode_jcs(&canon);
+        assert!(jcs.contains(big), "exact digits preserved, got {jcs}");
     }
 
     #[test]
