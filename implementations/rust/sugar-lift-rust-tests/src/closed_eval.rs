@@ -414,7 +414,7 @@ pub struct Dissolvable {
     /// EXACT-PARTITION tag: this unit's asserts are collected from inside a `while` body,
     /// so the lifter classifies their sites as TERMINAL ("under while context" -- the only
     /// terminal context that holds dissolvable greens). A green here is credited to the
-    /// REFUSED (terminal) bucket, not unclassified. Every other unit (top-level asserts,
+    /// UNDERIVABLE (terminal) bucket, not unclassified. Every other unit (top-level asserts,
     /// macro-carry, helper-inlining) is `false` => its greens credit unclassified. This is
     /// what makes the sweep partition exact (credit each green to its real disposition)
     /// rather than a draw-order guess that could fake-zero unclassified.
@@ -523,8 +523,8 @@ pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
             });
         }
         // WHILE-body asserts: their own unit, tagged terminal. A green here credits the
-        // REFUSED bucket (exact partition), so a while-body closed equality the lifter
-        // refused as "under while context" is recovered to discharged -- and a non-green
+        // UNDERIVABLE bucket (exact partition), so a while-body closed equality the lifter
+        // marks underivable as "under while context" is recovered to discharged -- and a non-green
         // top-level unclassified assert is never drawn down by it (no fake-zero).
         if !while_asserts.is_empty() {
             units.push(Dissolvable {
@@ -852,7 +852,7 @@ fn collect_block_asserts(
     let mut macro_asserts: std::collections::BTreeMap<String, Vec<String>> =
         std::collections::BTreeMap::new();
     // Asserts collected from inside a `while` body (lifter disposition = terminal). Kept
-    // SEPARATE so the sweep credits their greens to refused, not unclassified (exact
+    // SEPARATE so the sweep credits their greens to underivable, not unclassified (exact
     // partition, no fake-zero).
     let mut while_asserts: Vec<String> = Vec::new();
 
@@ -949,7 +949,7 @@ fn collect_block_asserts(
         // The literal element count of `<ident>` when it is a top-level local bound to a
         // literal array `[..]` / array-repeat `[x; N]`, optionally behind `&`/`&[..]`
         // slice coercion. None for a runtime collection (opaque) -> the bound stays
-        // unresolved -> the loop is left to the bin-2 refusal (safe).
+        // unresolved -> the loop is left to the bin-2 underivable classification (safe).
         fn literal_len(
             ident: &str,
             let_inits: &std::collections::BTreeMap<String, Expr>,
@@ -1130,7 +1130,7 @@ fn collect_block_asserts(
         // determinism check still guards the run.
         fn try_custom_macro(&mut self, m: &syn::Macro) {
             // Under a `while` body, do NOT collect a custom-macro invocation: leave it
-            // refused (terminal) rather than route a whole macro unit into the terminal
+            // underivable (terminal) rather than route a whole macro unit into the terminal
             // bucket. Safe under-claim (not dissolved), never a fake-zero.
             if self.while_depth > 0 {
                 return;
@@ -1183,7 +1183,7 @@ fn collect_block_asserts(
         //     closed point -- via the prefix-carrying `try_assert_static`.
         // A non-literal / runtime / opaque domain (`for x in v` with `v` not a known
         // literal local of known length) yields no domain -> nothing is unrolled; the
-        // loop is left to the bin-2 refusal (safe). Backstop: every point is closed +
+        // loop is left to the bin-2 underivable classification (safe). Backstop: every point is closed +
         // GATED, and the harness compile+run is the final fence -- a wrong substitution
         // or a non-sugar carried stmt can only fail to compile => not dissolved.
         fn unroll_loop(
@@ -1195,7 +1195,7 @@ fn collect_block_asserts(
             // Bound total emitted points per top-level loop site (nested literal domains
             // multiply); keep it finite and cheap. A loop that would exceed the cap is
             // left unrolled-only-partially is NOT acceptable (it would under/over claim
-            // unpredictably), so we refuse the whole loop above the cap (safe).
+            // unpredictably), so we mark underivable the whole loop above the cap (safe).
             const POINT_CAP: usize = 4096;
             let var = match f.pat.as_ref() {
                 syn::Pat::Ident(pi) if pi.subpat.is_none() => pi.ident.to_string(),
@@ -1348,7 +1348,7 @@ fn collect_block_asserts(
             scope: &std::collections::BTreeSet<String>,
             prefix: &str,
         ) {
-            // Under a `while` body, skip (leave refused) -- see try_custom_macro.
+            // Under a `while` body, skip (leave underivable) -- see try_custom_macro.
             if self.while_depth > 0 {
                 return;
             }
@@ -1709,7 +1709,7 @@ mod tests {
         // EXACT-PARTITION discrimination (the whole point): a closed assert inside a
         // `while` body is collected into an `under_while` unit (terminal disposition);
         // a top-level closed assert into a non-`under_while` unit (unclassified). The sweep
-        // then credits a while-body green to REFUSED and a top-level green to UNCLASSIFIED.
+        // then credits a while-body green to UNDERIVABLE and a top-level green to UNCLASSIFIED.
         // Because the two are NEVER conflated, a non-green unclassified sibling can never be
         // drawn down by a while-body green -- no fake-zero of unclassified.
         let file: syn::File = syn::parse_str(
@@ -1839,7 +1839,7 @@ mod tests {
         // TWIN: the SAME macro invoked with a FREE variable arg (`c`, not a let-local, not
         // a literal) is NOT closed (fence #3) -> not collected. (Even if it slipped past,
         // the free var would fail the harness compile => not dissolved; this asserts the
-        // gate refuses it up front.)
+        // gate marks it underivable up front.)
         let file: syn::File = syn::parse_str(
             "#[test] fn t() {\n             macro_rules! ae { ($a:expr, $b:expr) => {{ assert_eq!($a, $b); }}; }\n             ae!(c, \"a\");\n             }\n",
         )
@@ -2012,7 +2012,7 @@ mod tests {
         let d = collect_dissolvable(&file);
         assert!(
             d.iter().all(|u| u.asserts.is_empty()),
-            "a len()-bound over a RUNTIME local must NOT unroll (bin-2 stays refused): {:?}",
+            "a len()-bound over a RUNTIME local must NOT unroll (bin-2 stays underivable): {:?}",
             d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
         );
     }

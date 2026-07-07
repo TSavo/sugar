@@ -605,7 +605,7 @@ fn walk_expr_for_callsites(
     ) {
         return;
     }
-    panic!("sugar-walk WP walker refused unknown syn::Expr variant")
+    panic!("sugar-walk WP walker panicked on unknown syn::Expr variant")
 }
 
 /// If `stmt` is a `let pat = expr;` binding, return one or more
@@ -645,7 +645,7 @@ fn collect_pat_bindings(pat: &Pat, rhs: IrTerm) -> Option<Vec<(String, IrTerm)>>
 // #3027 S7: was a single 17-arm match over `syn::Pat` (the ladder-demolition
 // census's `patterns-types-call-edges` row). Now a sequential `if let` chain,
 // same relative order as the original arms. The closed
-// refuse-unsupported-pattern group and the trailing unknown-variant panic are
+// unsupported-pattern-panic group and the trailing unknown-variant panic are
 // unchanged verbatim.
 fn collect_into(pat: &Pat, term: IrTerm, out: &mut Vec<(String, IrTerm)>) -> Option<()> {
     if let Pat::Ident(p) = pat {
@@ -707,14 +707,14 @@ fn collect_into(pat: &Pat, term: IrTerm, out: &mut Vec<(String, IrTerm)>) -> Opt
             | Pat::Rest(_)
             | Pat::Verbatim(_)
     ) {
-        return refuse_unsupported_pattern(pat);
+        return panic_on_unsupported_pattern(pat);
     }
-    panic!("sugar-walk WP pattern collector refused unknown syn::Pat variant")
+    panic!("sugar-walk WP pattern collector panicked on unknown syn::Pat variant")
 }
 
-fn refuse_unsupported_pattern(pat: &Pat) -> ! {
+fn panic_on_unsupported_pattern(pat: &Pat) -> ! {
     panic!(
-        "sugar-walk WP pattern collector refused unsupported syn::Pat shape {}; \
+        "sugar-walk WP pattern collector panicked on unsupported syn::Pat shape {}; \
          route it through a catalog projection before accepting this binding",
         pat_kind(pat)
     )
@@ -825,7 +825,7 @@ mod tests {
 
     fn panic_text(result: std::thread::Result<Option<Vec<(String, IrTerm)>>>) -> String {
         match result {
-            Ok(value) => panic!("expected pattern collector to refuse, got {value:?}"),
+            Ok(value) => panic!("expected pattern collector to panic, got {value:?}"),
             Err(payload) => {
                 if let Some(text) = payload.downcast_ref::<&str>() {
                     (*text).to_string()
@@ -898,15 +898,15 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_pattern_shape_refuses_loudly() {
+    fn unsupported_pattern_shape_panics_loudly() {
         let pat: Pat = syn::parse_quote!([head, ..]);
         let rhs = IrTerm::Var { name: "arr".into() };
 
         let reason = panic_text(std::panic::catch_unwind(|| collect_pat_bindings(&pat, rhs)));
 
         assert!(
-            reason.contains("refused unsupported syn::Pat shape Rest"),
-            "unsupported pattern must be a loud refusal, got: {reason}"
+            reason.contains("panicked on unsupported syn::Pat shape Rest"),
+            "unsupported pattern must be a loud panic, got: {reason}"
         );
     }
 
