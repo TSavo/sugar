@@ -105,6 +105,13 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
                     }
                 }
             }
+            // Symbolic-variant guarded split (#3445 Part 1 slice 2): a
+            // `cf_ite(adt.is_*(r), cf_guarded(.., some/ok-arm), cf_guarded(..,
+            // none-arm))` value renders as a native `ite` over the datatype
+            // tester. See `emit_monadic_guarded_split`.
+            if let Some(rendered) = emit_monadic_guarded_split(term, expected_ret) {
+                return rendered;
+            }
             if name.starts_with("bv32.") {
                 let subst = std::collections::HashMap::new();
                 if let Some(rendered) = emit_bv32_term(term, &subst) {
@@ -2174,6 +2181,17 @@ fn collect_free_vars_term_ctx_adt(
                     return;
                 }
             }
+            // A monadic tester/selector (`adt.is_some(r)`, `opt:some#0(r)`) in
+            // TERM position (a guarded-split guard/branch, #3445 Part 1 slice 2)
+            // establishes its symbolic operand's ADT sort. Declare it here so the
+            // native tester `((_ is |opt:some|) r)` is well-sorted; the `Int`
+            // default from the generic recursion below would sort-mismatch it.
+            // ADT dominates Int (like Real), so an unconditional insert is safe.
+            if let Some((var, sort)) = monadic_operand_carrier_sort(term) {
+                if !bound.contains(var) {
+                    out.insert(var.to_string(), sort.to_string());
+                }
+            }
             // The ADT context applies ONLY to a var sitting DIRECTLY as an `=`
             // operand (`assert_eq!(A, Some(2))` -> `A: SugarOption`). It must NOT
             // propagate into ANY ctor's args: a monadic ctor's field is Int
@@ -2577,6 +2595,11 @@ fn is_builtin_term_operator(name: &str) -> bool {
             // emit_term_with_expected, never as declared uninterpreted functions.
             | "str.from_code"   // → (str.from_code <int>): SMT string theory builtin
             | "str.table-select" // → ite-chain codepoint lookup: emitted inline
+            // Symbolic-variant guarded split (#3445 Part 1 slice 2): the value
+            // control-flow wrappers are interpreted inline into a native `ite`
+            // (see emit_monadic_guarded_split), never declared uninterpreted.
+            | CF_ITE
+            | CF_GUARDED
     )
 }
 
@@ -2762,6 +2785,107 @@ fn emit_monadic_adt_tester_atomic(
     Ok(Some(format!("((_ is {}) {})", smt_quote(ctor), operand)))
 }
 
+// ── Symbolic-variant guarded split (#3445 Part 1 slice 2) ───────────────────
+//
+// The Rust kit lifts `symbolic_opt.unwrap_or(default)` (and `unwrap_or_default`)
+// over a SYMBOLIC Option/Result receiver `r` to a value-level guarded split
+//
+//     cf_ite(adt.is_some(r), cf_guarded(is_some, opt:some#0(r)),
+//                            cf_guarded(is_none, default))
+//
+// (T's Part-1 ruling: OptionAdaptorSugar stays a value producer whose produced
+// value is a control-flow term; the discriminant carrier is the reserved
+// `adt.is_*` tester family, NEVER a new Formula variant). This renders as a
+// NATIVE builtin `ite` whose guard is the native datatype tester
+// `((_ is |opt:some|) r)` and whose then-branch is the native selector
+// projection `(|opt:some#0| r)`. The tester's Bool result + same-sorted branches
+// are well-sorted, so z3 threads the datatype discriminant/projection laws --
+// THAT is the teeth. `cf_ite`/`cf_guarded` are interpreted inline here and never
+// declared as uninterpreted functions (that would strip the tester to a free
+// EUF Bool and collapse the sum). The `cf_guarded(guard, value)` marker carries
+// the path condition for the language-blind verifier; in the native `ite` the
+// condition is already threaded by the tester, so we render its VALUE operand.
+const CF_ITE: &str = "cf_ite";
+const CF_GUARDED: &str = "cf_guarded";
+
+/// The ADT sort a monadic FIELD ACCESSOR (`opt:some#0`, ...) establishes for its
+/// single operand. Mirrors the tester's `monadic_adt_tester_operand_sort` so a
+/// symbolic operand appearing ONLY under a selector/tester in TERM position
+/// (the guarded-split value) is still declared with the matching ADT sort.
+fn monadic_field_accessor_operand_sort(name: &str) -> Option<&'static str> {
+    match name {
+        "opt:some#0" => Some("SugarOption"),
+        "res:ok#0" | "res:err#0" => Some("SugarResult"),
+        "opt:some#option#0" => Some("SugarOptionOption"),
+        "res:ok#option#0" | "res:err#option#0" => Some("SugarResultOption"),
+        _ => None,
+    }
+}
+
+/// The ADT sort a monadic tester/selector Term::Ctor establishes for its operand
+/// var, or `None` if `term` is not such a single-operand carrier. Used by the
+/// free-var pass so `r` in `cf_ite(adt.is_some(r), .., opt:some#0(r))` is
+/// declared `SugarOption`, not the `Int` default (which would sort-mismatch the
+/// native tester `((_ is |opt:some|) r)`).
+fn monadic_operand_carrier_sort(term: &Term) -> Option<(&str, &'static str)> {
+    let Term::Ctor { name, args } = term else {
+        return None;
+    };
+    if args.len() != 1 {
+        return None;
+    }
+    let Term::Var { name: var, .. } = &args[0] else {
+        return None;
+    };
+    let sort = if is_monadic_adt_tester(name) {
+        monadic_adt_tester_operand_sort(name, args)?
+    } else {
+        monadic_field_accessor_operand_sort(name)?
+    };
+    Some((var.as_str(), sort))
+}
+
+/// Unwrap a `cf_guarded(guard, value)` branch marker to its VALUE operand. A
+/// non-`cf_guarded` branch (e.g. a bare default term) is returned unchanged.
+fn guarded_branch_value(term: &Term) -> &Term {
+    match term {
+        Term::Ctor { name, args } if name == CF_GUARDED && args.len() == 2 => &args[1],
+        other => other,
+    }
+}
+
+/// Render a symbolic-variant guarded split `cf_ite(adt.is_*(r), then, else)` as a
+/// native builtin `ite`, or `None` when `term` is not a monadic guarded split.
+/// An `adt.is_*` guard whose operand sort is unestablishable is a LOUD panic (the
+/// kit only ever builds establishable splits; a failure here is a kit bug, never
+/// a silent EUF fall-through). See the module comment above.
+fn emit_monadic_guarded_split(term: &Term, expected_ret: Option<&str>) -> Option<String> {
+    let Term::Ctor { name, args } = term else {
+        return None;
+    };
+    if name != CF_ITE || args.len() != 3 {
+        return None;
+    }
+    let Term::Ctor {
+        name: guard_name,
+        args: guard_args,
+    } = &args[0]
+    else {
+        return None;
+    };
+    if !is_monadic_adt_tester(guard_name) {
+        return None;
+    }
+    let tester = emit_monadic_adt_tester_atomic(guard_name, guard_args)
+        .unwrap_or_else(|e| {
+            panic!("smt-lib: guarded-split tester `{guard_name}` unestablishable: {e:?}")
+        })
+        .unwrap_or_else(|| panic!("smt-lib: `{guard_name}` is not a tester in a guarded split"));
+    let then_str = emit_term_with_expected(guarded_branch_value(&args[1]), expected_ret);
+    let else_str = emit_term_with_expected(guarded_branch_value(&args[2]), expected_ret);
+    Some(format!("(ite {tester} {then_str} {else_str})"))
+}
+
 /// Which monadic ADTs a formula references, so the preamble declares ONLY the
 /// datatypes actually used (no unused `declare-datatypes` churn).
 #[derive(Default, Clone, Copy)]
@@ -2819,6 +2943,14 @@ fn collect_monadic_adts_term(term: &Term, used: &mut MonadicAdtsUsed) {
                         mark_monadic_sort("SugarResultOption", used)
                     }
                     _ => {}
+                }
+            } else if is_monadic_adt_tester(name) {
+                // A tester (`adt.is_none(r)`) in TERM position (a guarded-split
+                // guard, #3445 Part 1) needs its datatype declared even when
+                // neither a constructor nor a selector appears in the term
+                // (e.g. a none-arm whose default is a bare literal).
+                if let Some(sort) = monadic_adt_tester_operand_sort(name, args) {
+                    mark_monadic_sort(sort, used);
                 }
             } else {
                 match name.as_str() {
@@ -2940,7 +3072,15 @@ fn collect_ctor_decls_term(
             // declared.
             let is_interpreted_builtin = is_builtin_term_operator(name)
                 || (is_bv32_ctor_name(name) && term_renders_as_bv32(term));
-            if !is_interpreted_builtin && !is_monadic_ctor(name) && !is_monadic_field_accessor(name)
+            // A monadic ADT tester (`adt.is_some`) can appear in TERM position as
+            // the guard of a guarded split (#3445 Part 1 slice 2). Like the ctors
+            // and selectors it is interpreted natively and must NEVER be declared
+            // as an uninterpreted `(declare-fun adt.is_some (SugarOption) Int)` --
+            // that shadows the datatype discriminant and collapses the sum.
+            if !is_interpreted_builtin
+                && !is_monadic_ctor(name)
+                && !is_monadic_field_accessor(name)
+                && !is_monadic_adt_tester(name)
             {
                 let decl_key = ctor_decl_key_for_signature(name, args.len(), &arg_sorts);
                 out.entry(decl_key).or_insert_with(|| CtorSignature {
