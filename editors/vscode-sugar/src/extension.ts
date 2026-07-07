@@ -13,46 +13,101 @@
 // / vacuous discharge); the solver-backed semantic adjudication that turns a
 // literal test assertion UNSAT is slice B/C (see README).
 
+import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
 import * as vscode from "vscode";
 import { LinkerdClient, kitIdForFile, LinkerDiagnostic } from "./linkerdClient";
+import { proveProject, mintProject, ProveDiagnostic, formatDetail } from "./proveClient";
+import { TimingLogger } from "./timing";
 
 let client: LinkerdClient | undefined;
 let diagnostics: vscode.DiagnosticCollection;
+let proveDiagnostics: vscode.DiagnosticCollection;
+let proveBinaryPath = "";
+let proveOnSave = true;
+let timing: TimingLogger | undefined;
 const timers = new Map<string, NodeJS.Timeout>();
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   diagnostics = vscode.languages.createDiagnosticCollection("sugar");
   context.subscriptions.push(diagnostics);
+  proveDiagnostics = vscode.languages.createDiagnosticCollection("sugar-prove");
+  context.subscriptions.push(proveDiagnostics);
 
   const cfg = vscode.workspace.getConfiguration("sugar");
+  proveBinaryPath = cfg.get<string>("prove.binaryPath") || "";
+  proveOnSave = cfg.get<boolean>("prove.onSave") ?? true;
+
+  // Timing log for the LSP prove path. Default: `<workspace>/.sugar/
+  // lsp-timing.jsonl` (durable, greppable) mirrored to the "Sugar Timing"
+  // OutputChannel (live). Override the path with `sugar.prove.timingLog`.
+  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.tmpdir();
+  const timingPath =
+    cfg.get<string>("prove.timingLog") || path.join(wsRoot, ".sugar", "lsp-timing.jsonl");
+  const timingChannel = vscode.window.createOutputChannel("Sugar Timing");
+  context.subscriptions.push(timingChannel);
+  timing = new TimingLogger(timingPath, timingChannel);
+  timingChannel.appendLine(`sugar: LSP timing -> ${timingPath}`);
   const socketPath = resolveSocketPath(cfg.get<string>("linkerd.socketPath") || "");
   const binaryPath = cfg.get<string>("linkerd.binaryPath") || undefined;
   const snapshotPath = socketPath + ".snapshot";
 
+  // The link() path (bridge obligations) needs the linkerd daemon. The PROVE
+  // path (native assertion vs a vendor .proof) does NOT — it shells `sugar
+  // prove` and is fully independent. A linkerd failure must therefore NOT kill
+  // the prove path: it is the actual red/green flip. Register linkerd's
+  // listeners only if the daemon comes up; register prove unconditionally.
+  const debounceMs = cfg.get<number>("debounceMs") ?? 250;
   client = new LinkerdClient(socketPath);
+  let linkerdUp = false;
   try {
     await client.ensureDaemon(binaryPath, snapshotPath);
+    linkerdUp = true;
   } catch (e) {
-    vscode.window.showWarningMessage(
-      `Sugar: could not reach sugar-linkerd — ${(e as Error).message}`
-    );
-    return;
+    client = undefined;
+    console.error(`sugar: linkerd unavailable (link() path off): ${(e as Error).message}`);
   }
 
-  const debounceMs = cfg.get<number>("debounceMs") ?? 250;
+  if (linkerdUp) {
+    context.subscriptions.push(
+      vscode.workspace.onDidOpenTextDocument((doc) => scheduleLink(doc, 0)),
+      vscode.workspace.onDidChangeTextDocument((e) => scheduleLink(e.document, debounceMs)),
+      vscode.workspace.onDidCloseTextDocument((doc) => diagnostics.delete(doc.uri))
+    );
+  }
 
-  context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument((doc) => scheduleLink(doc, 0)),
-    vscode.workspace.onDidChangeTextDocument((e) => scheduleLink(e.document, debounceMs)),
-    vscode.workspace.onDidCloseTextDocument((doc) => diagnostics.delete(doc.uri))
-  );
+  // The PROVE path (native assertion vs vendor .proof). A directory prove mints
+  // + solves, so it runs on OPEN and on SAVE (or on keystroke debounce only if
+  // the user opts out of on-save), never per-keystroke. This is the operation
+  // that flips a NATIVE `assert` red/green against a loaded vendor universe --
+  // distinct from link() above.
+  if (proveBinaryPath) {
+    context.subscriptions.push(
+      vscode.languages.registerCodeActionsProvider(
+        { language: "python", scheme: "file" },
+        new SugarProveFixProvider(),
+        { providedCodeActionKinds: SugarProveFixProvider.kinds }
+      ),
+      vscode.workspace.onDidSaveTextDocument((doc) => void runProve(doc)),
+      vscode.workspace.onDidOpenTextDocument((doc) => void runProve(doc)),
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        if (!proveOnSave) {
+          void runProve(e.document);
+        }
+      })
+    );
+  }
 
   // Prime any already-open documents.
   for (const doc of vscode.workspace.textDocuments) {
-    scheduleLink(doc, 0);
+    if (linkerdUp) {
+      scheduleLink(doc, 0);
+    }
+    if (proveBinaryPath) {
+      void runProve(doc);
+    }
   }
 }
 
@@ -97,6 +152,193 @@ async function linkDocument(doc: vscode.TextDocument, kitId: string): Promise<vo
     // A lifter-unavailable / kit-not-in-manifest error is not a proof failure;
     // surface it as an information diagnostic-free notice rather than a squiggle.
     console.error(`sugar: parseFile failed for ${doc.fileName}: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Run `sugar prove --json` on the consumer PROJECT containing `doc` and paint
+ * its `unsatisfied` rows as red squiggles at each row's source locus. Groups
+ * diagnostics by the file the row points at (a project prove can implicate any
+ * file in the project, not only the saved one). Cheap and side-effect-free
+ * except for the diagnostic collection.
+ */
+async function runProve(doc: vscode.TextDocument): Promise<void> {
+  if (!proveBinaryPath || doc.uri.scheme !== "file") {
+    return;
+  }
+  const kitId = kitIdForFile(doc.fileName);
+  if (kitId !== "python") {
+    // The demo lifter (native-assertion vs vendor .proof) is python today.
+    return;
+  }
+  const projectDir = resolveProjectDir(doc.uri);
+  if (!projectDir) {
+    return;
+  }
+  try {
+    // The lifter needs a Python env with the sugar kit importable. The editor's
+    // ambient env usually lacks it, so honor optional config: a bin dir prefixed
+    // onto PATH and a PYTHONPATH suffix. Without these, prove mints in the
+    // ambient env (works only if the kit is globally installed).
+    const cfg = vscode.workspace.getConfiguration("sugar");
+    const binDir = cfg.get<string>("prove.pythonBinDir") || "";
+    const pyPath = cfg.get<string>("prove.pythonPath") || "";
+    const env: NodeJS.ProcessEnv = {};
+    if (binDir) {
+      env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+    }
+    if (pyPath) {
+      env.PYTHONPATH = process.env.PYTHONPATH ? `${pyPath}:${process.env.PYTHONPATH}` : pyPath;
+    }
+    // Time each LSP step (mint -> prove -> paint) into the timing log.
+    const run = timing?.run(path.basename(projectDir) + "/" + path.basename(doc.fileName));
+    // On-save: re-mint the edited source first so prove reflects the current
+    // text (not a stale proof), then prove.
+    const mint = () => mintProject({ binaryPath: proveBinaryPath, projectDir, env });
+    if (run) {
+      await run.time("mint", mint, (ok) => ({ ok }));
+    } else {
+      await mint();
+    }
+    const prove = () => proveProject({ binaryPath: proveBinaryPath, projectDir, env });
+    const res = run
+      ? await run.time("prove", prove, (r) => ({
+          rows: r.rows.length,
+          diagnostics: r.diagnostics.length,
+          exitCode: r.exitCode,
+          subprocessMs: r.elapsedMs,
+        }))
+      : await prove();
+    const paintStart = Date.now();
+    // Rebuild the whole prove collection for this project from scratch so
+    // cleared rows (green now) drop their squiggles.
+    proveDiagnostics.clear();
+    const byFile = new Map<string, vscode.Diagnostic[]>();
+    // PROJECT-LOCAL SCOPING. A project prove can implicate any memento in the
+    // pool, including a VENDOR proof's own internal assertions (e.g. the pandas
+    // .proof carries 21 violations anchored at pandas' own test paths). Those
+    // rows are real for the vendor but are NOT the user's code -- painting them
+    // would squiggle files the user never wrote. Keep only rows whose resolved
+    // file is INSIDE projectDir AND exists on disk (the consumer's own sources).
+    const rootAbs = path.resolve(projectDir);
+    for (const d of res.diagnostics) {
+      const abs = path.resolve(
+        path.isAbsolute(d.file) ? d.file : path.join(projectDir, d.file)
+      );
+      const inProject =
+        abs === rootAbs || abs.startsWith(rootAbs + path.sep);
+      if (!inProject || !fs.existsSync(abs)) {
+        continue;
+      }
+      const list = byFile.get(abs) ?? [];
+      list.push(proveToVsDiagnostic(d));
+      byFile.set(abs, list);
+    }
+    for (const [file, list] of byFile) {
+      proveDiagnostics.set(vscode.Uri.file(file), list);
+    }
+    if (run) {
+      const painted = Array.from(byFile.values()).reduce((n, l) => n + l.length, 0);
+      run.step("paint", Date.now() - paintStart, { files: byFile.size, painted });
+      run.end({ projectDir, file: doc.fileName });
+    }
+  } catch (e) {
+    console.error(`sugar: prove failed for ${projectDir}: ${(e as Error).message}`);
+  }
+}
+
+/** The nearest workspace folder for a document (its consumer project root). */
+function resolveProjectDir(uri: vscode.Uri): string | undefined {
+  const folder = vscode.workspace.getWorkspaceFolder(uri);
+  if (folder) {
+    return folder.uri.fsPath;
+  }
+  return path.dirname(uri.fsPath);
+}
+
+/** Turn one prove diagnostic into a VS Code diagnostic anchored at its locus. */
+function proveToVsDiagnostic(d: ProveDiagnostic): vscode.Diagnostic {
+  const line0 = Math.max(0, d.line - 1);
+  const col = typeof d.column === "number" ? d.column : 0;
+  // Anchor at the locus; span the rest of the line so the squiggle is visible.
+  const range = new vscode.Range(line0, col, line0, Number.MAX_SAFE_INTEGER);
+  const diag = new vscode.Diagnostic(
+    range,
+    formatDetail(d),
+    vscode.DiagnosticSeverity.Error
+  );
+  diag.source = "sugar-prove";
+  diag.code = d.status;
+  // Stash the PROVEN value (the vendor's fact for this callsite) so a Quick Fix
+  // can offer to replace the asserted RHS with it. Case 2 (universe): the
+  // z3-derived value; case 1 (sworn vector): the vendor's own value -- both
+  // arrive as the RHS of `vendorFactFol` (`... = <value>`). No extra solve here.
+  const proven = provenValueOf(d.vendorFactFol);
+  if (proven !== undefined) {
+    (diag as unknown as { sugarFixValue: string }).sugarFixValue = proven;
+  }
+  return diag;
+}
+
+/**
+ * Extract the proven right-hand value from a `vendorFactFol` string such as
+ * `⊢ call:encodeBase64("xyz") = "eHl6"` (-> `"eHl6"`) or `... = 0` (-> `0`).
+ * Returns the literal verbatim (quotes preserved for strings), or undefined.
+ */
+function provenValueOf(vendorFactFol?: string): string | undefined {
+  if (!vendorFactFol) {
+    return undefined;
+  }
+  const idx = vendorFactFol.lastIndexOf(" = ");
+  if (idx < 0) {
+    return undefined;
+  }
+  const rhs = vendorFactFol.slice(idx + 3).trim();
+  return rhs.length > 0 ? rhs : undefined;
+}
+
+/**
+ * The Quick Fix: on a red prove diagnostic that carries a proven value, offer
+ * to rewrite the assertion's RHS (everything after `==`) to that value. This is
+ * "replace with proven value" -- the vendor's fact the consumer contradicted.
+ */
+class SugarProveFixProvider implements vscode.CodeActionProvider {
+  static readonly kinds = [vscode.CodeActionKind.QuickFix];
+
+  provideCodeActions(
+    document: vscode.TextDocument,
+    _range: vscode.Range | vscode.Selection,
+    context: vscode.CodeActionContext
+  ): vscode.CodeAction[] {
+    const actions: vscode.CodeAction[] = [];
+    for (const diag of context.diagnostics) {
+      if (diag.source !== "sugar-prove") {
+        continue;
+      }
+      const proven = (diag as unknown as { sugarFixValue?: string }).sugarFixValue;
+      if (proven === undefined) {
+        continue;
+      }
+      const line0 = diag.range.start.line;
+      const lineText = document.lineAt(line0).text;
+      const eq = lineText.indexOf("==");
+      if (eq < 0) {
+        continue;
+      }
+      // Replace everything after `==` (the asserted RHS) with the proven value.
+      const rhsStart = new vscode.Position(line0, eq + 2);
+      const rhsEnd = new vscode.Position(line0, lineText.length);
+      const fix = new vscode.CodeAction(
+        `Replace with proven value: ${proven}`,
+        vscode.CodeActionKind.QuickFix
+      );
+      fix.diagnostics = [diag];
+      fix.isPreferred = true;
+      fix.edit = new vscode.WorkspaceEdit();
+      fix.edit.replace(document.uri, new vscode.Range(rhsStart, rhsEnd), ` ${proven}`);
+      actions.push(fix);
+    }
+    return actions;
   }
 }
 

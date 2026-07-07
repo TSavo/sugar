@@ -1699,11 +1699,9 @@ fn source_report_from_lift_response(
         .cloned()
         .unwrap_or_default();
     trace_lift_collection_checkpoint("source_report.diagnostics", diagnostics.len());
-    if let Some(condition) = no_vendor_test_corpus_condition(
-        &ledger,
-        &assertion_surface_audits,
-        &contracts,
-    ) {
+    if let Some(condition) =
+        no_vendor_test_corpus_condition(&ledger, &assertion_surface_audits, &contracts)
+    {
         diagnostics.push(condition);
     }
 
@@ -4874,7 +4872,9 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
     for diagnostic in &report.diagnostics {
         if diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus") {
             if let Some(message) = diagnostic.get("message").and_then(Value::as_str) {
-                out.push_str(&format!("NAMED CONDITION [no-vendor-test-corpus]: {message}\n"));
+                out.push_str(&format!(
+                    "NAMED CONDITION [no-vendor-test-corpus]: {message}\n"
+                ));
             }
         }
     }
@@ -5603,10 +5603,9 @@ fn source_report_has_hard_failures(report: &LiftSourceReport) -> bool {
         .vendor_conjoins
         .iter()
         .any(|row| matches!(row.vendor_source, Some(VendorSourceResolution::Drifted(_))))
-        || report
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus"))
+        || report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus")
+        })
 }
 
 fn vendor_conjoins_from_lift_response(
@@ -7323,7 +7322,7 @@ fn generalized_base64_block_formula(formula: &Value) -> Option<String> {
     Some(format!("{quantifiers}str.eq-bv-blocks({output}, {blocks})"))
 }
 
-fn proofir_formula_to_fol_with_instances(formula: &Value) -> String {
+pub(crate) fn proofir_formula_to_fol_with_instances(formula: &Value) -> String {
     if let Some(rendered) = instantiated_base64_block_formula(formula) {
         return rendered;
     }
@@ -7595,7 +7594,10 @@ fn proofir_term_to_fol(term: &Value) -> String {
                 // as a call rather than a bare symbol. Nullary data ctors
                 // (unit variants like `None`) keep their bare form.
                 if name.starts_with("call:") {
-                    return format!("{name}()");
+                    // Strip the `call:` provenance prefix for display -- a human
+                    // reading the squiggle wants `encodeBase64()`, not
+                    // `call:encodeBase64()`. The prefix is an internal tag.
+                    return format!("{}()", name.strip_prefix("call:").unwrap_or(name));
                 }
                 return name.to_string();
             }
@@ -7607,7 +7609,9 @@ fn proofir_term_to_fol(term: &Value) -> String {
                 .map(proofir_term_to_fol)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("{name}({rendered_args})")
+            // Strip the `call:` provenance prefix for display (internal tag).
+            let display = name.strip_prefix("call:").unwrap_or(name);
+            format!("{display}({rendered_args})")
         }
         "let" | "Let" => proofir_let_term_to_fol(term),
         other => {
@@ -9042,7 +9046,7 @@ mod tests {
 
         assert_eq!(
             proofir_formula_to_fol(&formula),
-            "∀ x:Int. (x ≥ 0 ∧ x < 10) ⇒ call:encode(x) = \"baz\""
+            "∀ x:Int. (x ≥ 0 ∧ x < 10) ⇒ encode(x) = \"baz\""
         );
     }
 
@@ -9137,7 +9141,7 @@ mod tests {
 
         assert_eq!(
             proofir_formula_to_fol(&formula),
-            "str.eq-bv-blocks(call:encodeBase64String(\"foo\"), base64.blocks(input=[102, 111, 111], chars=[((bits >>> 18) & 63)], table=\"ABC+/\"))"
+            "str.eq-bv-blocks(encodeBase64String(\"foo\"), base64.blocks(input=[102, 111, 111], chars=[((bits >>> 18) & 63)], table=\"ABC+/\"))"
         );
     }
 
@@ -9244,10 +9248,10 @@ mod tests {
 
         assert!(human.contains("generalized FOL:"));
         assert!(human.contains("∀ b0:Int. ∀ b1:Int. ∀ b2:Int."));
-        assert!(human.contains("call:encodeBase64String(bytes(b0, b1, b2))"));
+        assert!(human.contains("encodeBase64String(bytes(b0, b1, b2))"));
         assert!(human.contains("instantiated FOL:"));
         assert!(human.contains(
-            "b0=102, b1=111, b2=111 ⊢ str.eq-bv-blocks(call:encodeBase64String(\"foo\")"
+            "b0=102, b1=111, b2=111 ⊢ str.eq-bv-blocks(encodeBase64String(\"foo\")"
         ));
     }
 
@@ -9573,7 +9577,7 @@ mod tests {
         );
         assert!(human.contains("known callers of this function:"), "{human}");
         assert!(
-            human.contains("src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len::assertion :: 3 = call:encoded_len(2, false)"),
+            human.contains("src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len::assertion :: 3 = encoded_len(2, false)"),
             "{human}"
         );
     }
@@ -9679,7 +9683,7 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(
-            human.contains("callsite preconditions depending on this post:\n  - callee.post [post: result = Some(value)] -> method:unwrap.pre via method:unwrap [pre: is_some(call:callee(7))]"),
+            human.contains("callsite preconditions depending on this post:\n  - callee.post [post: result = Some(value)] -> method:unwrap.pre via method:unwrap [pre: is_some(callee(7))]"),
             "{human}"
         );
     }
@@ -9827,7 +9831,7 @@ mod tests {
 
         assert!(
             human.contains(
-                "    assert_eq!(3, encoded_len(2, false).unwrap());  FACT ⊢ ¬panic(call:encoded_len#panic_callsite(2, false))"
+                "    assert_eq!(3, encoded_len(2, false).unwrap());  FACT ⊢ ¬panic(encoded_len#panic_callsite(2, false))"
             ),
             "{human}"
         );
@@ -9964,7 +9968,7 @@ mod tests {
         );
         assert!(
             human.contains(
-                "walk warranted by observed facts:\n  - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(call:encoded_len#panic_callsite(2, false))"
+                "walk warranted by observed facts:\n  - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(encoded_len#panic_callsite(2, false))"
             ),
             "{human}"
         );
@@ -10009,7 +10013,7 @@ mod tests {
         let visual = render_report_visual(&report, None);
         assert!(
             visual.contains(
-                "    walk warranted by observed facts:\n      - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(call:encoded_len#panic_callsite(2, false))"
+                "    walk warranted by observed facts:\n      - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(encoded_len#panic_callsite(2, false))"
             ),
             "{visual}"
         );
@@ -10408,7 +10412,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
             "the `::callable` contract marker must not attach unrelated call:callable facts:\n{visual}"
         );
         assert!(
-            !section.contains("call:callable(method)"),
+            !section.contains("callable(method)"),
             "callable builtin facts are not _as_dict callsite evidence:\n{visual}"
         );
     }
@@ -12281,7 +12285,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
         assert!(
             human.contains(
-                "facts observed:\n  - src/lib.rs::tests::enc_asserts :: call:enc(\"abc\") = \"def\" @ src/lib.rs:12-14 enc_asserts() source_cid=blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "facts observed:\n  - src/lib.rs::tests::enc_asserts :: enc(\"abc\") = \"def\" @ src/lib.rs:12-14 enc_asserts() source_cid=blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             ),
             "{human}"
         );
@@ -12414,7 +12418,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         );
         assert!(
             human.contains(
-                "src/lib.rs::tests::support_only::panic-free::answer :: panic-free(call:answer())"
+                "src/lib.rs::tests::support_only::panic-free::answer :: panic-free(answer())"
             ),
             "{human}"
         );
@@ -12602,12 +12606,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             no_vendor_test_corpus_condition(&serde_json::json!({ "source_loci": 42 }), &[], &[]);
         let condition = condition.expect("zero-assertion source tree must name the condition");
         assert_eq!(condition["kind"], "no-vendor-test-corpus");
-        assert!(
-            condition["message"]
-                .as_str()
-                .unwrap()
-                .contains("no vendor test corpus in workspace")
-        );
+        assert!(condition["message"]
+            .as_str()
+            .unwrap()
+            .contains("no vendor test corpus in workspace"));
     }
 
     #[test]
@@ -12615,8 +12617,11 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let contracts = vec![serde_json::json!({
             "name": "test_mod::tests::test_thing::assert:1:1::assertion"
         })];
-        let condition =
-            no_vendor_test_corpus_condition(&serde_json::json!({ "source_loci": 42 }), &[], &contracts);
+        let condition = no_vendor_test_corpus_condition(
+            &serde_json::json!({ "source_loci": 42 }),
+            &[],
+            &contracts,
+        );
         assert!(
             condition.is_none(),
             "a workspace with observed test facts must not carry the empty-corpus terminal"
@@ -12636,9 +12641,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     fn no_vendor_test_corpus_condition_is_a_hard_report_failure() {
         let mut report = minimal_source_report();
         report.ledger = serde_json::json!({ "source_loci": 42, "source_unresolved": 0 });
-        report.diagnostics = vec![
-            no_vendor_test_corpus_condition(&report.ledger, &[], &[]).expect("condition")
-        ];
+        report.diagnostics =
+            vec![no_vendor_test_corpus_condition(&report.ledger, &[], &[]).expect("condition")];
         assert!(source_report_has_hard_failures(&report));
         let human = render_source_report_human(&report);
         assert!(

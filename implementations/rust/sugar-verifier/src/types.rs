@@ -1467,6 +1467,18 @@ impl<'de> Deserialize<'de> for BridgePin {
     }
 }
 
+/// The source locus of a lifted assertion, recovered from the contract
+/// memento's own `file` + `span` fields. Threaded through the consistency
+/// verdict so an `unsatisfied` row says WHERE the offending assertion is,
+/// letting the IDE anchor a red squiggle at the exact line/column instead of
+/// dropping the source the way a directory-prove otherwise does (#3462 family).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SourceLocus {
+    pub file: String,
+    pub line: usize,
+    pub column: Option<usize>,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct CallSite {
     pub bridge_ir_name: String,
@@ -1542,6 +1554,10 @@ pub struct CallSite {
     pub file: Option<String>,
     /// Opaque kit-provided source line for observability.
     pub line: Option<usize>,
+    /// Opaque kit-provided source column (0-based) for observability. Carried
+    /// alongside `file`/`line` so a consistency verdict can anchor an IDE
+    /// diagnostic at the exact assertion, not merely the file/line.
+    pub source_column: Option<usize>,
     /// Opaque kit-provided callee label for observability.
     pub callee: Option<String>,
     /// True when the kit classified this callsite as panic-relevant. The

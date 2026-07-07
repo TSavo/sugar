@@ -33,6 +33,14 @@ fn json_to_value(j: &serde_json::Value, path: &str) -> Result<Arc<Value>, Canoni
                 Ok(Value::integer(i128::from(i)))
             } else if let Some(u) = n.as_u64() {
                 Ok(Value::integer(i128::from(u)))
+            } else if let Ok(i) = n.to_string().parse::<i128>() {
+                // Big integers beyond i64/u64 (e.g. i128::MAX = 2^127-1, sworn
+                // by real vendor proofs such as pandas') widen losslessly into
+                // the i128 carrier. With serde_json's arbitrary_precision the
+                // exact digits survive to here so the parse is exact -- the
+                // same fallback proof_graph's canonical bridge uses. A true
+                // float still refuses below.
+                Ok(Value::integer(i))
             } else {
                 Err(CanonicalizerError::Other(format!(
                     "non-integer JSON number at {path}: {n}"

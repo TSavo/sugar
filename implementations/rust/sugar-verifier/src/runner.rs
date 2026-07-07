@@ -475,6 +475,7 @@ impl Runner {
             &self.plan,
             &self.registry,
             &self.compilers,
+            &self.cfg.project_root,
         );
         for cr in &consistency_results {
             match cr.verdict {
@@ -492,6 +493,7 @@ impl Runner {
                 cr.verdict,
                 &cr.reason,
                 cr.verification.clone(),
+                cr.locus.clone(),
                 &mut report,
             );
         }
@@ -780,8 +782,13 @@ impl Runner {
 
         // Receipt 1: test-assertion consistency pass (see the matching block
         // in the primary run path).
-        let consistency_results =
-            crate::consistency::verify_consistency(&pool, plan, registry, compilers);
+        let consistency_results = crate::consistency::verify_consistency(
+            &pool,
+            plan,
+            registry,
+            compilers,
+            &self.cfg.project_root,
+        );
         for cr in &consistency_results {
             match cr.verdict {
                 ObligationVerdict::Discharged => {
@@ -798,6 +805,7 @@ impl Runner {
                 cr.verdict,
                 &cr.reason,
                 cr.verification.clone(),
+                cr.locus.clone(),
                 &mut report,
             );
         }

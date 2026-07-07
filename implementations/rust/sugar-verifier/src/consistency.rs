@@ -72,7 +72,7 @@ use crate::effects::{VerifyEffect, WitnessDischargeGround};
 use crate::solvers::{
     run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan, SolverSeat,
 };
-use crate::types::{MementoCid, MementoPool, ObligationVerdict, StoredMember};
+use crate::types::{MementoCid, MementoPool, ObligationVerdict, SourceLocus, StoredMember};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_ir_compiler::CompilerInput;
@@ -92,6 +92,34 @@ pub struct ConsistencyResult {
     /// report never reads witnessed-by-execution as proven-by-solver.
     pub witnessed: bool,
     pub verification: Option<Json>,
+    /// The source locus (file/line/column) of the assertion this result is
+    /// about, recovered from the contract memento's own `file`+`span`. Stamped
+    /// by `verify_consistency` and threaded to the report row so an
+    /// `unsatisfied` verdict can anchor an IDE diagnostic at the exact
+    /// assertion instead of dropping the source. `None` when the contract
+    /// memento carries no readable locus (fail-open: no false anchor).
+    pub locus: Option<SourceLocus>,
+}
+
+/// Recover the assertion's source locus from a contract memento body. The
+/// python literal-call lifter emits a top-level `file` plus a `span` object
+/// (`start_line`/`start_col`); we read those directly rather than re-deriving
+/// anything. Returns `None` if no usable `file`+line is present.
+fn locus_from_body(body: &Json) -> Option<SourceLocus> {
+    let file = body.get("file").and_then(|v| v.as_str())?.to_string();
+    if file.is_empty() {
+        return None;
+    }
+    let span = body.get("span");
+    let line = span
+        .and_then(|s| s.get("start_line"))
+        .or_else(|| body.get("line"))
+        .and_then(|v| v.as_u64())? as usize;
+    let column = span
+        .and_then(|s| s.get("start_col"))
+        .and_then(|v| v.as_u64())
+        .map(|c| c as usize);
+    Some(SourceLocus { file, line, column })
 }
 
 const CONSISTENT_REASON: &str = "test assertions mutually consistent about callsite";
@@ -592,6 +620,7 @@ fn try_witness_discharge(
         reason: reason.clone(),
         effect: None,
         witnessed: false,
+        locus: None,
         verification: Some(json!({
             "kind": "witness",
             "witnessed": false,
@@ -641,6 +670,7 @@ fn try_witness_discharge(
                 reason: boundary.reason,
                 effect: Some(effect),
                 witnessed: false,
+                locus: None,
                 verification: boundary.verification,
             });
         }
@@ -657,6 +687,7 @@ fn try_witness_discharge(
             reason: reason.clone(),
             effect: None,
             witnessed: true,
+            locus: None,
             verification: Some(json!({
                 "kind": "witness",
                 "witnessed": true,
@@ -693,6 +724,7 @@ fn try_witness_discharge(
             reason: boundary.reason,
             effect: Some(effect),
             witnessed: false,
+            locus: None,
             verification: boundary.verification,
         }
     })
@@ -1117,6 +1149,7 @@ fn provenance_kind_refusal(cid: String, body: &Json, reason: String) -> Consiste
         reason: boundary.reason,
         effect: Some(effect),
         witnessed: false,
+        locus: None,
         verification: boundary.verification,
     }
 }
@@ -1239,6 +1272,51 @@ fn solver_invocations_to_json(invs: &[SolverInvocation]) -> Json {
             })
             .collect(),
     )
+}
+
+/// Stamp the two pool-resolved ProofIR facts onto a consistency result's
+/// verification detail so the CLI report can render them to human-readable FOL
+/// (the `sugar lift --report --visual` rendering) for the IDE squiggle:
+///   - `clientFactIr`: the consumer's OWN asserted fact (pre-vendor-conjoin) --
+///     the YOUR-FACT half of the flip.
+///   - `vendorFactIr`: the vendor's own sworn ground vectors that were conjoined
+///     from the staged .proof -- the VENDOR-FACT half.
+/// The VENDOR-UNIVERSE half is already inline as `linkedPosts[].vendorPost`.
+/// These are small single-equality formulas (NOT the ~MB conjoined universe,
+/// which stays externalized by CID), so inlining them is memory-safe.
+/// Fail-open: a result with no verification object is left untouched.
+/// Union two ProofIR fact lists, de-duplicating by canonical JCS so a vector
+/// captured by both the ambient-conjoin path and the sworn-vector scan appears
+/// once.
+fn union_facts(mut a: Vec<Json>, b: Vec<Json>) -> Vec<Json> {
+    let mut seen: std::collections::BTreeSet<String> = a
+        .iter()
+        .filter_map(|f| libsugar::canonical::json_jcs(f).ok())
+        .collect();
+    for f in b {
+        let key = libsugar::canonical::json_jcs(&f).unwrap_or_default();
+        if seen.insert(key) {
+            a.push(f);
+        }
+    }
+    a
+}
+
+fn attach_conjoined_facts(
+    result: &mut ConsistencyResult,
+    client_fact: &Json,
+    vendor_facts: &[Json],
+) {
+    let Some(Json::Object(v)) = result.verification.as_mut() else {
+        return;
+    };
+    v.insert("clientFactIr".to_string(), client_fact.clone());
+    if !vendor_facts.is_empty() {
+        v.insert(
+            "vendorFactIr".to_string(),
+            Json::Array(vendor_facts.to_vec()),
+        );
+    }
 }
 
 fn consistency_verification_detail(
@@ -1443,6 +1521,7 @@ fn check_inv_consistency_with_vacuity_reason(
             reason: boundary.reason,
             effect: Some(effect),
             witnessed: false,
+            locus: None,
             verification: Some(consistency_verification_detail(
                 property_name,
                 &inv,
@@ -1463,6 +1542,7 @@ fn check_inv_consistency_with_vacuity_reason(
             reason: format!("{CONTRADICTORY_REASON} `{property_name}` [structural: {reason}]"),
             effect: None,
             witnessed: false,
+            locus: None,
             verification: Some(consistency_verification_detail(
                 property_name,
                 &inv,
@@ -1515,6 +1595,7 @@ fn check_inv_consistency_with_vacuity_reason(
         reason,
         effect,
         witnessed: false,
+        locus: None,
         verification: Some(consistency_verification_detail(
             property_name,
             &inv,
@@ -1706,6 +1787,80 @@ fn is_callsite_ctor_term(term: &Json) -> bool {
             .get("name")
             .and_then(|n| n.as_str())
             .is_some_and(|name| name.starts_with("call:"))
+}
+
+/// The ctor NAME (`call:encodeBase64`) of a ground callsite equality's subject,
+/// used to pair a consumer's fact with the vendor's own sworn vectors about the
+/// SAME callee (a different argument, e.g. the vendor's `encodeBase64("abc")`).
+fn ground_fact_subject_name(fact: &Json) -> Option<String> {
+    let args = fact.get("args").and_then(|v| v.as_array())?;
+    let subject = args.first()?;
+    subject
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+/// Collect the vendor's OWN sworn ground vectors (e.g.
+/// `encodeBase64("abc") == "YWJj"`) that share the consumer obligation's callee
+/// but were sworn by a DIFFERENT memento (the staged .proof). These are the
+/// VENDOR-FACT half of the three-part IDE FOL. Display-only: they are surfaced
+/// on the report row, never conjoined into the solved obligation, so they carry
+/// no soundness weight on the verdict. Excludes the obligation's own source cids
+/// (a row is not its own vendor) and honors ambient scope.
+fn collect_vendor_sworn_facts(
+    client_fact: &Json,
+    ambient: &[AmbientGroundCallsiteFact],
+    excluded_source_cids: &[String],
+) -> Vec<Json> {
+    let mut client_callees: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut client_facts = Vec::new();
+    collect_ambient_ground_callsite_facts(
+        client_fact,
+        "<client>",
+        &None,
+        ProofIrProvenanceKind::Stated,
+        &mut client_facts,
+    );
+    for f in &client_facts {
+        if let Some(name) = ground_fact_subject_name(&f.fact) {
+            client_callees.insert(name);
+        }
+    }
+    if client_callees.is_empty() {
+        return Vec::new();
+    }
+    let client_term_keys: std::collections::BTreeSet<&str> =
+        client_facts.iter().map(|f| f.term_key.as_str()).collect();
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for fact in ambient {
+        if excluded_source_cids.iter().any(|c| c == &fact.source_cid) {
+            continue;
+        }
+        // NOTE: no `scope` filter here (unlike the solver-conjoin path). This
+        // surfacing is DISPLAY-ONLY -- the vendor's vector is never conjoined
+        // into the solved obligation -- so it carries no soundness weight, and
+        // the federation's whole point is that a vendor vector sworn in ITS OWN
+        // scope is exactly what should appear next to the consumer's fact.
+        // Same callee as the consumer's fact, but a DIFFERENT sworn callsite
+        // (its own distinct argument vector), so we surface the vendor's proof
+        // vector rather than echoing the consumer's own claim.
+        if client_term_keys.contains(fact.term_key.as_str()) {
+            continue;
+        }
+        let Some(name) = ground_fact_subject_name(&fact.fact) else {
+            continue;
+        };
+        if !client_callees.contains(&name) {
+            continue;
+        }
+        if seen.insert(fact.term_key.clone()) {
+            out.push(fact.fact.clone());
+        }
+    }
+    out
 }
 
 fn ground_callsite_term_key(term: &Json) -> Option<String> {
@@ -2087,9 +2242,9 @@ fn with_ambient_ground_callsite_facts(
     ambient: &[AmbientGroundCallsiteFact],
     excluded_source_cids: &[String],
     current_ground_witnesses: &std::collections::BTreeSet<AmbientFactWitnessKey>,
-) -> (Json, bool) {
+) -> (Json, bool, Vec<Json>) {
     if ambient.is_empty() || !property_name.contains("#euf#") {
-        return (inv, false);
+        return (inv, false, Vec::new());
     }
 
     let mut callsites = Vec::new();
@@ -2099,7 +2254,7 @@ fn with_ambient_ground_callsite_facts(
         .filter_map(ground_callsite_term_key)
         .collect();
     if wanted.is_empty() {
-        return (inv, false);
+        return (inv, false, Vec::new());
     }
     let obligation_scope = ambient_ground_callsite_scope(property_name);
 
@@ -2134,15 +2289,20 @@ fn with_ambient_ground_callsite_facts(
         }
     }
     if facts.is_empty() {
-        return (inv, skipped_same_kind_duplicate);
+        return (inv, skipped_same_kind_duplicate, Vec::new());
     }
 
+    // The conjoined `facts` ARE the vendor's own sworn ground vectors (e.g.
+    // `encodeBase64("abc") == "YWJj"`) imported from the staged .proof; return
+    // them so the report can render the VENDOR FACT half of the three-part FOL.
+    let vendor_facts = facts.clone();
     let mut operands = Vec::with_capacity(facts.len() + 1);
     operands.push(inv);
     operands.extend(facts);
     (
         serde_json::json!({ "kind": "and", "operands": operands }),
         skipped_same_kind_duplicate,
+        vendor_facts,
     )
 }
 
@@ -2372,6 +2532,7 @@ pub fn verify_consistency(
     plan: &SolverPlan,
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
+    project_root: &Path,
 ) -> Vec<ConsistencyResult> {
     let mut candidates: Vec<ConsistencyCandidate> = Vec::new();
     let mut provenance_refusals: Vec<ConsistencyResult> = Vec::new();
@@ -2499,6 +2660,51 @@ pub fn verify_consistency(
     }
     let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name.into_iter().collect();
 
+    // Pool-wide assertion-locus index, keyed by contract/property name. The
+    // callsite-keyed consistency candidate is a coalesced claim whose OWN body
+    // carries no `file`/`span`; the assertion's source locus lives on the
+    // sibling SOURCE-MEMENTO member the lifter emitted for that same assertion
+    // (its `contractName` == the property name). We read `file`+`span` straight
+    // off that member -- no re-derivation -- so an `unsatisfied` verdict can be
+    // anchored back to the exact `assert` line/column in the editor.
+    let mut locus_by_name: HashMap<String, SourceLocus> = HashMap::new();
+    for (_cid, member) in pool.source_memento_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if let Some(l) = locus_from_body(&body) {
+            let name = contract_property_name(&body).to_string();
+            match locus_by_name.entry(name) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(l);
+                }
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    // PROJECT-LOCAL PREFERENCE. When two source mementos share a
+                    // contractName (a consumer asserting the EXACT sworn fact ->
+                    // case-1 congruence, e.g. `len(pd.DataFrame()) == 1`
+                    // contradicting pandas' sworn `== 0`), the consumer's
+                    // assertion and the vendor's sworn assertion collide on the
+                    // same euf coordinate. First-write-wins would anchor the
+                    // squiggle at the VENDOR's source file (pandas' internal
+                    // `tests/frame/test_constructors.py`) instead of the user's
+                    // line. Overwrite only when the NEW locus's file EXISTS under
+                    // project_root on disk and the CURRENT one does not -- the
+                    // consumer's `test_consumer.py` lives under the project; the
+                    // vendor's path does not. Fail-open: if neither or both
+                    // exist, keep first-write (no worse than before).
+                    let new_local = project_root.join(&l.file).exists();
+                    let cur_local = project_root.join(&e.get().file).exists();
+                    if new_local && !cur_local {
+                        e.insert(l);
+                    }
+                }
+            }
+        }
+    }
+
     let mut results: Vec<ConsistencyResult> = groups
         .par_iter()
         .flat_map(|(property_name, members)| {
@@ -2546,6 +2752,9 @@ pub fn verify_consistency(
                     .collect();
                 let (inv, collapsed_same_kind_duplicate) =
                     conjoin_distinct_provenance_witnesses(invs);
+                // The consumer's OWN fact, before any vendor universe/vector is
+                // conjoined -- this is the YOUR-FACT half of the three-part FOL.
+                let client_fact = inv.clone();
                 let current_ground_witnesses: std::collections::BTreeSet<_> = inv_candidates
                     .iter()
                     .flat_map(|candidate| {
@@ -2557,16 +2766,17 @@ pub fn verify_consistency(
                     })
                     .collect();
                 let (inv, linked_posts) = with_ambient_posts_with_instances(inv, &ambient_posts);
-                let (inv, skipped_same_kind_duplicate) = with_ambient_ground_callsite_facts(
-                    inv,
-                    property_name,
-                    &ambient_ground_callsite_facts,
-                    &inv_cids,
-                    &current_ground_witnesses,
-                );
+                let (inv, skipped_same_kind_duplicate, vendor_facts) =
+                    with_ambient_ground_callsite_facts(
+                        inv,
+                        property_name,
+                        &ambient_ground_callsite_facts,
+                        &inv_cids,
+                        &current_ground_witnesses,
+                    );
                 let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
-                if collapsed_same_kind_duplicate || skipped_same_kind_duplicate {
-                    out.push(check_inv_consistency_with_vacuity_reason(
+                let mut result = if collapsed_same_kind_duplicate || skipped_same_kind_duplicate {
+                    check_inv_consistency_with_vacuity_reason(
                         inv_cids[0].clone(),
                         property_name,
                         inv,
@@ -2575,9 +2785,9 @@ pub fn verify_consistency(
                         registry,
                         compilers,
                         VacuityRefusalKind::MissingIndependentKindWitness,
-                    ));
+                    )
                 } else {
-                    out.push(check_inv_consistency(
+                    check_inv_consistency(
                         inv_cids[0].clone(),
                         property_name,
                         inv,
@@ -2585,8 +2795,19 @@ pub fn verify_consistency(
                         plan,
                         registry,
                         compilers,
-                    ));
-                }
+                    )
+                };
+                let sworn = collect_vendor_sworn_facts(
+                    &client_fact,
+                    &ambient_ground_callsite_facts,
+                    &inv_cids,
+                );
+                attach_conjoined_facts(
+                    &mut result,
+                    &client_fact,
+                    &union_facts(vendor_facts, sworn),
+                );
+                out.push(result);
             } else {
                 for candidate in &inv_candidates {
                     let original_inv =
@@ -2599,15 +2820,16 @@ pub fn verify_consistency(
                     );
                     let (inv, linked_posts) =
                         with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
-                    let (inv, skipped_same_kind_duplicate) = with_ambient_ground_callsite_facts(
-                        inv,
-                        property_name,
-                        &ambient_ground_callsite_facts,
-                        std::slice::from_ref(&candidate.cid),
-                        &current_ground_witnesses,
-                    );
+                    let (inv, skipped_same_kind_duplicate, vendor_facts) =
+                        with_ambient_ground_callsite_facts(
+                            inv,
+                            property_name,
+                            &ambient_ground_callsite_facts,
+                            std::slice::from_ref(&candidate.cid),
+                            &current_ground_witnesses,
+                        );
                     let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
-                    let result = if skipped_same_kind_duplicate {
+                    let mut result = if skipped_same_kind_duplicate {
                         check_inv_consistency_with_vacuity_reason(
                             candidate.cid.clone(),
                             property_name,
@@ -2629,6 +2851,16 @@ pub fn verify_consistency(
                             compilers,
                         )
                     };
+                    let sworn = collect_vendor_sworn_facts(
+                        &original_inv,
+                        &ambient_ground_callsite_facts,
+                        std::slice::from_ref(&candidate.cid),
+                    );
+                    attach_conjoined_facts(
+                        &mut result,
+                        &original_inv,
+                        &union_facts(vendor_facts, sworn),
+                    );
                     if !suppress_standalone_support_vacuity(
                         property_name,
                         candidate,
@@ -2636,6 +2868,22 @@ pub fn verify_consistency(
                         &result,
                     ) {
                         out.push(result);
+                    }
+                }
+            }
+            // Stamp the group's source locus onto every result so an
+            // `unsatisfied` verdict says WHERE. All members of a group share
+            // one property_name (one call site / one assertion), so the first
+            // member with a readable `file`+`span` is the right anchor. Only
+            // fills a locus we do not already have (fail-open, never overwrite).
+            let group_locus = members
+                .iter()
+                .find_map(|c| locus_from_body(&c.body))
+                .or_else(|| locus_by_name.get(property_name).cloned());
+            if group_locus.is_some() {
+                for r in out.iter_mut() {
+                    if r.locus.is_none() {
+                        r.locus = group_locus.clone();
                     }
                 }
             }
@@ -2947,7 +3195,13 @@ mod tests {
             eqf(var("r"), int(6)),
         );
         insert_contract(&mut pool, "blake3-512:numpy5", name, eqf(var("r"), int(5)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -2963,7 +3217,13 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:a", name, eqf(var("r"), int(5)));
         insert_contract(&mut pool, "blake3-512:b", name, gt(var("r"), int(0)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -2974,7 +3234,13 @@ mod tests {
         // a LONE contract has no sibling to contradict -> REFUSED (vacuous)
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:solo", name, eqf(var("r"), int(5)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -3011,7 +3277,13 @@ mod tests {
             "make_value#euf#c:callresult_make_value_a0()::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3045,7 +3317,13 @@ mod tests {
             "tokio_await_scalar_contradiction",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3077,7 +3355,13 @@ mod tests {
             "width_refine#euf#c:callresult_x::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_ne!(
             res[0].verdict,
@@ -3107,7 +3391,13 @@ mod tests {
             "width_value#euf#c:callresult_x::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3139,7 +3429,13 @@ mod tests {
             "two_distinct_calls#euf#c:callresult_x::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3179,7 +3475,13 @@ mod tests {
             name,
             lt(callg.clone(), int(5)),
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3213,7 +3515,13 @@ mod tests {
             name,
             lt(callg.clone(), int(5)),
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "still ONE contract: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3281,7 +3589,13 @@ mod tests {
             eqf(call_enc(string_const("def")), string_const("zzz")),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two fresh consumer assertions: {res:?}");
         let good = res
             .iter()
@@ -3402,7 +3716,13 @@ mod tests {
             eqf(call_enc(string_const("def")), string_const("zzz")),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two consumer assertions: {res:?}");
         let good = res
             .iter()
@@ -3450,7 +3770,13 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:strrow", name, universe);
         insert_contract(&mut pool, "blake3-512:introw", name, eqf(callf, int(7)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3493,7 +3819,13 @@ mod tests {
         let inv = str_in_regex(str_const("alice_01"), "^[a-z][a-z0-9_]{2,15}$");
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:regexgood", name, inv);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one membership row: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3514,7 +3846,13 @@ mod tests {
         let inv = str_in_regex(str_const("Alice!"), "^[a-z][a-z0-9_]{2,15}$");
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:regexbad", name, inv);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one membership row: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3536,7 +3874,13 @@ mod tests {
         let inv = str_in_regex(opaque_subject, "^[a-z][a-z0-9_]{2,15}$");
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:regexopaque", name, inv);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one membership row: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3566,7 +3910,13 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:enclt", name, lt10);
         insert_contract(&mut pool, "blake3-512:encgt", name, gt20);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3593,7 +3943,13 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:enclt10", name, lt10);
         insert_contract(&mut pool, "blake3-512:enclt15", name, lt15);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3632,7 +3988,13 @@ mod tests {
         // The universal alone has no sibling to contradict -> REFUSED (vacuous).
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:fa", name, forall.clone());
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -3647,7 +4009,13 @@ mod tests {
         ]});
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:fc", name, contradiction);
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -3695,7 +4063,13 @@ mod tests {
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             point_inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         // Pin WHICH row refutes: the point-claim must be the Unsatisfied one and
         // the loop universal itself must stay internally consistent. An any()
@@ -3748,7 +4122,13 @@ mod tests {
             "src/lib.rs::tests::t::g#euf#c:callresult_g_a1(i:2)::assertion",
             point_inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         let point = res
             .iter()
@@ -3784,7 +4164,13 @@ mod tests {
             stated_inv,
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 1, "one stated-only obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -3815,7 +4201,13 @@ mod tests {
         );
         insert_contract(&mut pool, "blake3-512:stated-lie-copy-b", name, stated_inv);
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3854,7 +4246,13 @@ mod tests {
             stated_inv,
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "distinct names stay distinct rows: {res:?}");
         for row in &res {
             assert_eq!(
@@ -3890,7 +4288,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(calla, int(11))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -3927,7 +4331,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(calla, int(10))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             2,
@@ -3965,7 +4375,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(calla, int(11))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -4010,7 +4426,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(calla, int(20))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             res.len(),
             1,
@@ -4051,7 +4473,13 @@ mod tests {
             json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]}),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 3, "three separate obligations: {res:?}");
         let consumer_a = res
             .iter()
@@ -4444,7 +4872,13 @@ mod tests {
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             point_inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         let point = res
             .iter()
@@ -4492,7 +4926,13 @@ mod tests {
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]}),
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         let point = res
             .iter()
             .find(|r| r.contract_cid == test_cid_string("blake3-512:wpoint"))
@@ -4528,7 +4968,13 @@ mod tests {
         pool.insert_unanchored_for_tests(test_cid("witnessmember"), witness);
         insert_contract(&mut pool, "blake3-512:c5", name, eqf(var("r"), int(5)));
         insert_contract(&mut pool, "blake3-512:c6", name, eqf(var("r"), int(6)));
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert!(
             res.iter()
                 .any(|r| r.verdict == ObligationVerdict::Unsatisfied),
@@ -4557,7 +5003,13 @@ mod tests {
             "test_add",
             eqf(var("r"), int(6)),
         );
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         // per-contract: each is a lone constraint (vacuous) -> both Refused, none Discharged.
         // The key guarantee: bare names are NOT conjoined — the two rows stay separate and
         // do NOT combine into one obligation that could falsely refuse.
@@ -4657,7 +5109,13 @@ mod tests {
             body,
         );
         let (plan, reg) = z3_plan_and_registry();
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
 
         assert_eq!(res.len(), 1, "one witness-package obligation: {res:?}");
         assert_eq!(
@@ -4692,7 +5150,13 @@ mod tests {
             "Stated",
         );
         let (plan, reg) = z3_plan_and_registry();
-        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
 
         assert_eq!(res.len(), 1, "one panic-callsite obligation: {res:?}");
         assert_eq!(

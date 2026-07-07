@@ -334,6 +334,10 @@ sync_dir examples
 sync_fixture_dir examples/serde-json-showcase/bad/.sugar/runs
 sync_fixture_dir examples/serde-json-showcase/good/.sugar/runs
 remove_remote_dir menagerie
+# The vscode-sugar extension's committed lift fixtures: sugar-cli's bcargo
+# sync-contract test walks live test artifact classes and demands these
+# travel to the remote copy like every other checked-in fixture dir.
+sync_dir editors/vscode-sugar/test/fixtures
 sync_dir menagerie/csharp-language-signature/specs
 sync_dir menagerie/python-language-signature/specs
 sync_dir tools

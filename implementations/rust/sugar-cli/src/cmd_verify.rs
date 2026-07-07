@@ -1941,6 +1941,7 @@ mod tests {
             guard_facts: Vec::new(),
             file: None,
             line: None,
+            source_column: None,
             callee: None,
             panic_site: false,
             attribute_safety: None,
@@ -2053,6 +2054,7 @@ mod tests {
             guard_facts,
             file: None,
             line: None,
+            source_column: None,
             callee: None,
             // This fixture is a panic trap (`opt.unwrap()`); the guarded vs
             // unguarded split keys off `panic_site` to demand the `panic-safe`
