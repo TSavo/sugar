@@ -1481,18 +1481,20 @@ fn value_arc_to_json(v: &std::sync::Arc<sugar_canonicalizer::Value>) -> Json {
 /// no `inv`, no `proofirProvenance`/`sourceWarrants`). This handler no
 /// longer bridges from `LinkerContract`. Instead it calls
 /// `sugar_cli::cmd_mint::mint_project_scratch_proof`, the SAME
-/// `dispatch_multi`/`mint_lift_plugins_for_report` plugin-dispatch path
+/// `dispatch_multi` plugin-dispatch path
 /// `sugar mint`'s CLI uses for a project's declared `[[plugins]]`, in
 /// process, against a scratch `out_dir` under the project's `.sugar/`
 /// tree. That path already emits `inv`/provenance-bearing contract bodies
-/// (pure reuse -- no reshaping). The resulting scratch `.proof` is loaded
-/// (via `sugar_verifier::load_all_proofs::load_files_into_pool`, the SAME
-/// loader `load_pool` uses for every on-disk `.proof`) into a CLONE of the
-/// resident vendor-only pool (`ctx.pool`, loaded once at startup / manifest-
-/// drift rebuild from `.sugar/imports` and the project root); the base pool
-/// is never mutated in place, so subsequent requests always overlay onto
-/// the same vendor-only base. `verify_consistency_scoped` runs against the
-/// per-request overlay. `degraded` is `false` on this path; a lift failure
+/// (pure reuse -- no reshaping). The resulting scratch proof is a VALUE
+/// (#3810): catalog bytes + CID in memory, staged via
+/// `sugar_verifier::load_all_proofs::load_proof_bytes_into_pool` -- the
+/// SAME catalog-loading core `load_pool` funnels every on-disk `.proof`
+/// through -- into a fresh overlay pool; the resident vendor-only pool
+/// (`ctx.pool`, loaded once at startup / manifest-drift rebuild from
+/// `.sugar/imports` and the project root) is never mutated in place, so
+/// subsequent requests always overlay onto the same vendor-only base. No
+/// scratch `.proof` file is ever written or re-read.
+/// `verify_consistency_scoped` runs against the per-request overlay. `degraded` is `false` on this path; a lift failure
 /// (mint error, missing lift kit, no `[[plugins]]` declared) falls back to
 /// the v1 disk-pool answer with `degraded: true` and a reason, exactly as
 /// before -- never a silently different (unfaithful) scratch member.
@@ -1606,17 +1608,18 @@ pub async fn handle_prove_consistency(
     // pool. `ctx.pool` itself is never mutated, so every request overlays
     // freshly onto the same base.
     let project_root_for_lift = ctx.project_root.clone();
-    // Scratch output MUST live OUTSIDE `project_root`: `scan_proof_manifest`
-    // (the coarse-invalidation re-stat above) walks the whole project tree
-    // for `.proof` files, so a scratch `.proof` written INSIDE the project
-    // would drift the manifest on every call and force a full
-    // `build_prove_context_for` disk reload (the very cold path this daemon
-    // exists to avoid) on the NEXT request -- a self-inflicted invalidation
-    // storm discovered while measuring this slice's steady-state timing.
-    // A stable per-project temp directory (hashed from `project_root`)
-    // keeps scratch output out of the manifest walk while still letting
-    // Real disk-backed `.proof` loading (`load_files_into_pool`) reuse the
-    // SAME loader every on-disk proof uses.
+    // #3810: the FINAL scratch catalog never touches disk anymore (it comes
+    // back as bytes). `scratch_dir` remains as the mint pipeline's
+    // INTERMEDIATE out_dir (ORP witness emission writes `.proof` artifacts
+    // there), and it MUST still live OUTSIDE `project_root`:
+    // `scan_proof_manifest` (the coarse-invalidation re-stat above) walks
+    // the whole project tree for `.proof` files, so intermediates written
+    // INSIDE the project would drift the manifest on every call and force a
+    // full `build_prove_context_for` disk reload (the very cold path this
+    // daemon exists to avoid) on the NEXT request -- a self-inflicted
+    // invalidation storm discovered while measuring this slice's
+    // steady-state timing. A stable per-project temp directory (hashed from
+    // `project_root`) keeps those intermediates out of the manifest walk.
     let scratch_dir = std::env::temp_dir().join("sugar-linkerd-lift-scratch").join(
         sugar_canonicalizer::blake3_512_hex(project_root_for_lift.display().to_string().as_bytes()),
     );
@@ -1656,13 +1659,15 @@ pub async fn handle_prove_consistency(
     let lift_result = task::spawn_blocking(move || {
         // Wipe the scratch dir before every mint. `dispatch_multi`'s mint
         // step accumulates content-addressed witness members onto whatever
-        // catalog already exists in `out_dir`; a reused scratch dir would
-        // keep EVERY prior edit's assertion members alongside the current
-        // one (discovered while flip-testing this slice: a corrected source
-        // still read back "contradictory" because the stale pre-edit
-        // member was still sitting in the catalog). A fresh directory per
-        // call guarantees the overlay reflects ONLY the current on-disk
-        // source, never accumulated history.
+        // artifacts already exist in `out_dir` (ORP witness emission writes
+        // there); a reused scratch dir would keep EVERY prior edit's
+        // assertion members alongside the current one (discovered while
+        // flip-testing this slice: a corrected source still read back
+        // "contradictory" because the stale pre-edit member was still
+        // sitting in the catalog). A fresh directory per call guarantees
+        // the overlay reflects ONLY the current source, never accumulated
+        // history. (#3810: the FINAL catalog itself no longer lands here --
+        // it comes back as bytes -- but the emission intermediates do.)
         let _ = std::fs::remove_dir_all(&scratch_dir);
         if let Err(err) = std::fs::create_dir_all(&scratch_dir) {
             return Err(format!(
@@ -1674,10 +1679,10 @@ pub async fn handle_prove_consistency(
             .as_deref()
             .unwrap_or(&project_root_for_lift);
         let mint_started = std::time::Instant::now();
-        let proof_file =
+        let scratch =
             sugar_cli::cmd_mint::mint_project_scratch_proof(lift_root, &scratch_dir, false)?;
         let mint_ms = mint_started.elapsed().as_millis();
-        let Some(proof_file) = proof_file else {
+        let Some(scratch) = scratch else {
             return Ok(None);
         };
         // #3774 daemonSolve trim: the scratch proof loads into an EMPTY
@@ -1686,9 +1691,23 @@ pub async fn handle_prove_consistency(
         // prebuilt-index-shaped view onto the cached base index
         // (`verify_consistency_scoped_with_base_index`), which is
         // differential-tested equal to the old merged-pool scoped run.
+        //
+        // #3810 scratch-proof-as-value: the mint primitive returns the
+        // catalog BYTES + CID in memory; stage them through the SAME
+        // catalog-loading core (`load_proof_bytes_into_pool` ->
+        // `load_catalog_bytes`) every on-disk `.proof` goes through -- the
+        // trust-root recomputation against `scratch.cid` replaces the old
+        // filename-CID check, and member validation/origin semantics are
+        // byte-identical to the deleted write-then-reread path.
         let load_started = std::time::Instant::now();
         let mut overlay_pool = sugar_verifier::types::MementoPool::default();
-        sugar_verifier::load_all_proofs::load_files_into_pool(&[proof_file], &mut overlay_pool);
+        let staged = sugar_verifier::load_all_proofs::ProofBytes::try_from_parts(
+            "daemon-lift-scratch",
+            scratch.cid,
+            scratch.bytes,
+        )
+        .map_err(|e| format!("stage scratch proof bytes: {e}"))?;
+        sugar_verifier::load_all_proofs::load_proof_bytes_into_pool(&[staged], &mut overlay_pool);
         let load_ms = load_started.elapsed().as_millis();
         // SOUNDNESS (#3802): a lift whose RPC binary is unreachable, or whose
         // kit silently emits an empty ir-document, exits `Ok` with a

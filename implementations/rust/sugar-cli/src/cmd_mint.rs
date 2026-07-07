@@ -205,13 +205,47 @@ fn kit_resolution_from_entry(config_root: &Path, entry: &KitAliasEntry) -> KitRe
 }
 
 /// Result of a successful mint transform.
+///
+/// #3810 (scratch proofs as values): the mint terminal never writes the
+/// final `.proof` catalog to disk. `proof_bytes` carries the minted
+/// catalog in memory and `proof_file` is the CANONICAL destination path
+/// (`out_dir/proof_filename(filename_cid)`) -- callers that genuinely
+/// need a file on disk persist via `persist_proof_file` at their edge
+/// (the CLI `run`, `mint_lift_plugins_for_report`). The daemon scratch
+/// path (`mint_project_scratch_proof`) loads the bytes straight into its
+/// overlay pool and never touches disk for output.
 #[derive(Debug, Clone)]
 struct DispatchResult {
     filename_cid: String,
     contract_set_cid: String,
-    bytes_written: usize,
     proof_file: Option<PathBuf>,
+    proof_bytes: Option<Vec<u8>>,
     lift_result: Value,
+}
+
+impl DispatchResult {
+    /// Byte length of the minted catalog (0 when no catalog was minted,
+    /// e.g. the lifter-missing empty-set attestation). Serialized as
+    /// `bytesWritten` in the mint-result value for claim/CLI shape
+    /// stability.
+    fn proof_byte_len(&self) -> usize {
+        self.proof_bytes.as_ref().map_or(0, Vec::len)
+    }
+}
+
+/// Edge write (#3810): persist the minted catalog bytes to their canonical
+/// `.proof` path. Returns `Ok(None)` when there is nothing to persist (the
+/// empty-set attestation carries no catalog).
+fn persist_proof_file(result: &DispatchResult) -> Result<Option<PathBuf>, String> {
+    let (Some(out_path), Some(bytes)) = (result.proof_file.as_ref(), result.proof_bytes.as_ref())
+    else {
+        return Ok(None);
+    };
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    std::fs::write(out_path, bytes).map_err(|e| format!("write {}: {e}", out_path.display()))?;
+    Ok(Some(out_path.clone()))
 }
 
 /// One per-plugin response collected during multi-plugin dispatch. The
@@ -927,8 +961,8 @@ impl MintKit {
                     let result = DispatchResult {
                         filename_cid: String::new(),
                         contract_set_cid: empty_cid,
-                        bytes_written: 0,
                         proof_file: None,
+                        proof_bytes: None,
                         lift_result: json!({
                             "kind": "empty-set",
                             "reason": "lifter binary not found",
@@ -1017,8 +1051,8 @@ impl MintKit {
                     let result = DispatchResult {
                         filename_cid: String::new(),
                         contract_set_cid: empty_cid,
-                        bytes_written: 0,
                         proof_file: None,
+                        proof_bytes: None,
                         lift_result: json!({
                             "kind": "empty-set",
                             "reason": "lifter binary not found",
@@ -1085,8 +1119,8 @@ impl MintKit {
                     let result = DispatchResult {
                         filename_cid: String::new(),
                         contract_set_cid: empty_cid,
-                        bytes_written: 0,
                         proof_file: None,
+                        proof_bytes: None,
                         lift_result: json!({
                             "kind": "empty-set",
                             "reason": "lifter binary not found",
@@ -1802,12 +1836,27 @@ pub fn mint_lift_plugins_for_report(
     library_bindings: bool,
 ) -> Result<Option<PathBuf>, String> {
     let session = dispatch_multi(project_root, plugins, out_dir, true, library_bindings)?;
-    Ok(session.result.proof_file)
+    // Edge write (#3810): the lift-report callers (cmd_lift) genuinely
+    // consume a `.proof` file on disk, so THIS caller persists the bytes.
+    persist_proof_file(&session.result)
 }
 
-/// Daemon-facing seam (#3774 v2): mint a project's `.sugar/config.toml`
-/// `[[plugins]]` lift set into a scratch `.proof` under `out_dir`, reusing
-/// the SAME `dispatch_multi` path `sugar mint`'s CLI `run()` uses for the
+/// A freshly-minted scratch proof held as a VALUE (#3810): the catalog
+/// bytes plus their content CID (the same blake3-512 trust root a `.proof`
+/// filename would carry). Consumers stage it via
+/// `sugar_verifier::load_all_proofs::ProofBytes` /
+/// `load_proof_bytes_into_pool` -- the SAME catalog-loading core every
+/// on-disk `.proof` goes through, so member validation and origin
+/// semantics are identical to a disk load.
+pub struct ScratchProof {
+    pub cid: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Daemon-facing seam (#3774 v2, #3810 bytes-in-memory): mint a project's
+/// `.sugar/config.toml` `[[plugins]]` lift set and return the minted
+/// catalog as an in-memory `ScratchProof`, reusing the SAME
+/// `dispatch_multi` path `sugar mint`'s CLI `run()` uses for the
 /// config-declared multi-plugin case (see the `project_cfg.plugins...
 /// is_lift_plugin()` branch above). Pure reuse: no reshaping of the
 /// ir-document/witness-discharge output, so members minted this way carry
@@ -1815,13 +1864,20 @@ pub fn mint_lift_plugins_for_report(
 /// `is_consistency_candidate` requires, unlike the LSP `parse` shape (see
 /// `sugar-linkerd::methods::handle_prove_consistency`'s doc comment).
 ///
-/// Returns `Ok(None)` when the project declares no lift plugins (nothing to
-/// mint here; callers should treat this as "not applicable", not an error).
+/// This primitive never writes the catalog to disk. `out_dir` still
+/// receives the mint pipeline's INTERMEDIATE outputs (ORP witness
+/// emission via `emit_witnesses_by_contract`), never the final `.proof`.
+/// A caller that genuinely needs a file writes `ScratchProof::bytes`
+/// itself at its edge.
+///
+/// Returns `Ok(None)` when the project declares no lift plugins, or when
+/// the mint produced no catalog (lifter-missing empty-set attestation) --
+/// callers should treat this as "not applicable", not an error.
 pub fn mint_project_scratch_proof(
     project_root: &Path,
     out_dir: &Path,
     library_bindings: bool,
-) -> Result<Option<PathBuf>, String> {
+) -> Result<Option<ScratchProof>, String> {
     let project_cfg = read_project_config(project_root);
     let lift_plugins = project_cfg
         .plugins
@@ -1832,7 +1888,15 @@ pub fn mint_project_scratch_proof(
     if lift_plugins.is_empty() {
         return Ok(None);
     }
-    mint_lift_plugins_for_report(project_root, &lift_plugins, out_dir, library_bindings)
+    let session = dispatch_multi(project_root, &lift_plugins, out_dir, true, library_bindings)?;
+    let result = session.result;
+    match result.proof_bytes {
+        Some(bytes) => Ok(Some(ScratchProof {
+            cid: result.filename_cid,
+            bytes,
+        })),
+        None => Ok(None),
+    }
 }
 
 pub(crate) fn lift_plugins_response_for_report(
@@ -2645,19 +2709,17 @@ fn mint_lift_response(
                 .decode(bytes_b64)
                 .map_err(|e| format!("decode bytes_base64: {e}"))?;
 
-            std::fs::create_dir_all(out_dir)
-                .map_err(|e| format!("mkdir {}: {e}", out_dir.display()))?;
+            // #3810: no disk write here. The catalog bytes stay in memory;
+            // `proof_file` is the canonical destination edges persist to.
             let out_path = out_dir.join(proof_filename(&filename_cid));
-            std::fs::write(&out_path, &bytes)
-                .map_err(|e| format!("write {}: {e}", out_path.display()))?;
 
             print_lift_diagnostics(&lift_resp, quiet);
 
             Ok(DispatchResult {
                 filename_cid,
                 contract_set_cid,
-                bytes_written: bytes.len(),
                 proof_file: Some(out_path),
+                proof_bytes: Some(bytes),
                 lift_result: redact_lift_result(lift_resp),
             })
         }
@@ -2722,20 +2784,17 @@ fn mint_lift_response(
                 bytes = minted.bytes.len(),
                 "mint: .proof bundle minted"
             );
-            std::fs::create_dir_all(out_dir)
-                .map_err(|e| format!("mkdir {}: {e}", out_dir.display()))?;
+            // #3810: no disk write here. The catalog bytes stay in memory;
+            // `proof_file` is the canonical destination edges persist to.
             let out_path = out_dir.join(proof_filename(&minted.filename_cid));
-            std::fs::write(&out_path, &minted.bytes)
-                .map_err(|e| format!("write {}: {e}", out_path.display()))?;
-            debug!(out_path = %out_path.display(), "mint: .proof file written");
 
             print_lift_diagnostics(&lift_resp, quiet);
 
             Ok(DispatchResult {
                 filename_cid: minted.filename_cid,
                 contract_set_cid: minted.contract_set_cid,
-                bytes_written: minted.bytes.len(),
                 proof_file: Some(out_path),
+                proof_bytes: Some(minted.bytes),
                 lift_result: lift_resp,
             })
         }
@@ -2855,7 +2914,7 @@ fn dispatch_result_to_value(result: &DispatchResult) -> Value {
         "kind": "mint-result",
         "filenameCid": result.filename_cid,
         "contractSetCid": result.contract_set_cid,
-        "bytesWritten": result.bytes_written,
+        "bytesWritten": result.proof_byte_len(),
         "proofFile": result.proof_file.as_ref().map(|path| path.display().to_string()),
         "oracle": {
             "requested": oracle.requested,
@@ -5209,6 +5268,12 @@ pub fn run(args: MintArgs) -> u8 {
     match session {
         Ok(session) => {
             let result = session.result;
+            // Edge write (#3810): the CLI's product IS the on-disk `.proof`;
+            // persist the in-memory catalog bytes here, at the edge.
+            if let Err(e) = persist_proof_file(&result) {
+                eprintln!("{}: {e}", "error".red().bold());
+                return EXIT_VERIFY_FAIL;
+            }
             let contract_set_cid = if result.contract_set_cid.is_empty() {
                 compute_contract_set_cid(vec![])
             } else {
@@ -5224,7 +5289,7 @@ pub fn run(args: MintArgs) -> u8 {
                         "surface": &session.surface,
                         "filenameCid": &result.filename_cid,
                         "contractSetCid": &contract_set_cid,
-                        "bytesWritten": result.bytes_written,
+                        "bytesWritten": result.proof_byte_len(),
                         "proofFile": &result.proof_file,
                         "lift": &result.lift_result,
                     }))
@@ -5236,8 +5301,8 @@ pub fn run(args: MintArgs) -> u8 {
                     println!("  catalog CID:        {}", result.filename_cid);
                 }
                 println!("  contractSetCid:     {contract_set_cid}");
-                if result.bytes_written > 0 {
-                    println!("  proof bytes:        {}", result.bytes_written);
+                if result.proof_byte_len() > 0 {
+                    println!("  proof bytes:        {}", result.proof_byte_len());
                     if let Some(proof_file) = &result.proof_file {
                         println!("  .proof file:        {}", proof_file.display());
                     } else {
@@ -6389,8 +6454,8 @@ mod tests {
         let result = DispatchResult {
             filename_cid: "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
             contract_set_cid: "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-            bytes_written: 42,
             proof_file: None,
+            proof_bytes: None,
             lift_result: json!({
                 "kind": "ir-document",
                 "ir": [],
@@ -7165,8 +7230,18 @@ mod tests {
 
         let result =
             mint_lift_response(&root, &out_dir, true, lift_response).expect("mint lift response");
-        let proof_file = result.proof_file.expect("proof path");
-        let proof_bytes = std::fs::read(&proof_file).expect("read proof");
+        // #3810: the mint terminal returns the catalog bytes in memory and
+        // never writes the final `.proof` itself (edges persist).
+        let out_path = result
+            .proof_file
+            .as_ref()
+            .expect("canonical proof path computed");
+        assert!(
+            !out_path.exists(),
+            "mint terminal must not write the canonical .proof to disk (edges persist): {}",
+            out_path.display()
+        );
+        let proof_bytes = result.proof_bytes.expect("proof bytes in memory");
         let graph = ProofGraph::read(&proof_bytes).expect("decode proof");
         let mementos = factory_walk_memento_members(&graph);
 
