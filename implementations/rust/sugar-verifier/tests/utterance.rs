@@ -54,7 +54,11 @@ fn fixture_proof_bytes(name: &str) -> ProofBytes {
     let bytes =
         std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
     let cid = sugar_canonicalizer::blake3_512_of(&bytes);
-    ProofBytes::try_from_parts(name, cid, bytes).expect("fixture bytes stage into ProofBytes")
+    // The verbs speak an envelope AS their explicit `speaker` argument; the
+    // staging speaker below is only the ProofBytes-carried attribution the
+    // BULK intake (`load_proof_bytes_into_pool`) would use.
+    ProofBytes::try_from_parts(name, cid, bytes, Speaker::consumer(name))
+        .expect("fixture bytes stage into ProofBytes")
 }
 
 fn z3_plan_and_registry() -> (

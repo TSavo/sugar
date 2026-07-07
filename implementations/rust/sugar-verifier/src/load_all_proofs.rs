@@ -78,6 +78,13 @@ pub struct ProofBytes {
     pub label: String,
     pub expected_cid: MementoCid,
     pub bytes: Vec<u8>,
+    /// WHO speaks these bytes (#3812/#3813). The Speaker travels WITH the
+    /// ProofBytes from the point that KNOWS it -- the constructor site -- so
+    /// no downstream loader ever guesses (or hardcodes) a role.
+    /// `dependency_proofs_via_rpc` stamps `Speaker::vendor` (a package
+    /// manager's dependency catalog IS vendor testimony); a caller staging
+    /// its own project's bytes stamps `Speaker::consumer`.
+    pub speaker: Speaker,
 }
 
 impl ProofBytes {
@@ -85,6 +92,7 @@ impl ProofBytes {
         label: impl Into<String>,
         expected_cid: impl Into<String>,
         bytes: Vec<u8>,
+        speaker: Speaker,
     ) -> Result<Self, String> {
         let raw = expected_cid.into();
         let expected_cid = MementoCid::try_parse(raw.clone()).map_err(|_| {
@@ -94,6 +102,7 @@ impl ProofBytes {
             label: label.into(),
             expected_cid,
             bytes,
+            speaker,
         })
     }
 }
@@ -157,18 +166,19 @@ pub fn load_proof_bytes_into_pool(proofs: &[ProofBytes], pool: &mut MementoPool)
     });
     proofs.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
     for proof in proofs {
-        // Same reasoning as `load_files_into_pool`: every current caller
-        // (cmd_mint's applied-proof merge, self_check/doctor fixtures)
-        // supplies its OWN bundle bytes, never a staged vendor import, so
-        // the members are attributed to a Consumer-role speaker labeled by
-        // the proof's own label. Callers who need a different speaker (a
-        // vendor handing over an envelope) go through the utterance verbs
-        // (`crate::utterance::speak_*`), which pass their Speaker here.
-        let speaker = Speaker {
-            id: proof.label.clone(),
-            role: SpeakerRole::Consumer,
-        };
-        load_bytes_into_pool(&proof.label, &proof.expected_cid, &proof.bytes, pool, &speaker);
+        // #3813: the Speaker is CONSTRUCTED into each ProofBytes at the
+        // point that knows it (cmd_mint's applied-proof merge and the
+        // self_check/doctor fixtures stamp Consumer; the kit-RPC dependency
+        // catalog intake stamps Vendor). This loader never re-derives or
+        // hardcodes a role -- it honors the constructed attribution, the
+        // same way `load_files_into_pool` honors the path-derived one.
+        load_bytes_into_pool(
+            &proof.label,
+            &proof.expected_cid,
+            &proof.bytes,
+            pool,
+            &proof.speaker,
+        );
     }
 }
 
@@ -752,8 +762,13 @@ mod tests {
             declared_at: "2026-06-01T00:00:00Z".to_string(),
             manifest: None,
         });
-        ProofBytes::try_from_parts("annotation-test.proof".to_string(), proof.cid, proof.bytes)
-            .expect("built proof CID must parse")
+        ProofBytes::try_from_parts(
+            "annotation-test.proof".to_string(),
+            proof.cid,
+            proof.bytes,
+            Speaker::consumer("annotation-test.proof"),
+        )
+        .expect("built proof CID must parse")
     }
 
     #[test]
@@ -762,6 +777,7 @@ mod tests {
             "bad-rpc-proof.proof",
             "sha256:not-a-blake3-proof-cid",
             b"not a proof catalog".to_vec(),
+            Speaker::vendor("bad-rpc-proof.proof"),
         )
         .expect_err("bad expected proof CID must fail before loader lookup");
 
@@ -778,6 +794,7 @@ mod tests {
             "bad-rpc-proof.proof",
             "blake3-512:not-hex",
             b"not a proof catalog".to_vec(),
+            Speaker::vendor("bad-rpc-proof.proof"),
         )
         .expect_err("bad expected proof CID hex must fail before loader lookup");
 

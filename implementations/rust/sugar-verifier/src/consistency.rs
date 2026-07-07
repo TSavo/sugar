@@ -3502,14 +3502,28 @@ fn process_consistency_group(
                 // attaches nothing new, matching pre-#3774 behavior.
                 let (own_candidates, vendor_candidates): (Vec<_>, Vec<_>) =
                     inv_candidates.iter().partition(|c| !c.spoken_by_vendor);
-                let own_formulas: Vec<Json> = own_candidates
-                    .iter()
-                    .map(|c| canonicalize_formula_json(&axiom_context_formula(&c.body)))
-                    .collect();
-                let client_fact_partitioned: Option<Json> = match own_formulas.len() {
-                    0 => None,
-                    1 => own_formulas.into_iter().next(),
-                    _ => Some(json!({ "kind": "and", "operands": own_formulas })),
+                // ONE construction (#3813 review): the client fact is built
+                // by the SAME conjoin/flatten/dedup helper that builds the
+                // solver input, restricted to the consumer-spoken
+                // candidates. For an all-consumer group this is
+                // byte-identical to the pre-partition `clientFactIr` (the
+                // whole group's flattened, provenance-deduped conjunction);
+                // for a mixed group it is that same construction minus the
+                // vendor's conjuncts.
+                let client_fact_partitioned: Option<Json> = if own_candidates.is_empty() {
+                    None
+                } else {
+                    let own_invs: Vec<(Json, ProofIrProvenanceKind)> = own_candidates
+                        .iter()
+                        .map(|candidate| {
+                            (
+                                canonicalize_formula_json(&axiom_context_formula(&candidate.body)),
+                                candidate.provenance_kind,
+                            )
+                        })
+                        .collect();
+                    let (client_fact, _) = conjoin_distinct_provenance_witnesses(own_invs);
+                    Some(client_fact)
                 };
                 let vendor_spoken_equalities: Vec<Json> = vendor_candidates
                     .iter()

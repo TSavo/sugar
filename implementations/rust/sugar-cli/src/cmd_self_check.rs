@@ -2074,6 +2074,7 @@ mod tests {
                     source_path_label.display().to_string(),
                     cid.clone(),
                     bytes.clone(),
+                    sugar_verifier::Speaker::vendor(source_path_label.display().to_string()),
                 )
                 .expect("test proof CID must parse"),
             ])

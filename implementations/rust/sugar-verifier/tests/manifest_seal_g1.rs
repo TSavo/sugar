@@ -67,8 +67,13 @@ fn load_fixture_pool(bytes: &[u8]) -> MementoPool {
     // hash here does not weaken the check: `load_proof_bytes_into_pool` still
     // independently recomputes and verifies it against these actual bytes.
     let expected_cid = sugar_canonicalizer::blake3_512_of(bytes);
-    let proof_bytes = ProofBytes::try_from_parts("g1-fixture", expected_cid, bytes.to_vec())
-        .expect("fixture bytes stage into ProofBytes");
+    let proof_bytes = ProofBytes::try_from_parts(
+        "g1-fixture",
+        expected_cid,
+        bytes.to_vec(),
+        sugar_verifier::Speaker::consumer("g1-fixture"),
+    )
+    .expect("fixture bytes stage into ProofBytes");
     load_proof_bytes_into_pool(&[proof_bytes], &mut pool);
     pool
 }

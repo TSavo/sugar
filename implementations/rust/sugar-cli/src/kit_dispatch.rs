@@ -491,7 +491,14 @@ fn decode_dependency_proof_entry(
     };
     let label = label_field.unwrap_or_else(|| expected_cid.clone());
 
-    match ProofBytes::try_from_parts(label, expected_cid, bytes) {
+    // #3813: a kit's package-manager dependency catalog IS vendor testimony.
+    // Stamp the Vendor role INTO the ProofBytes here, at the one point that
+    // knows where these bytes came from, so the pool intake downstream never
+    // has to guess (the loader honors `ProofBytes::speaker`; it no longer
+    // hardcodes Consumer). The speaker id is the kit/package label the
+    // entry already carries.
+    let speaker = sugar_verifier::Speaker::vendor(label.clone());
+    match ProofBytes::try_from_parts(label, expected_cid, bytes, speaker) {
         Ok(proof) => Ok(Some(proof)),
         Err(error) => {
             record_dependency_proof_diagnostic(format!(
