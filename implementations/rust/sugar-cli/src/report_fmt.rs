@@ -158,18 +158,15 @@ fn verification_with_fol(verification: Option<&Json>) -> Json {
         obj.insert("clientFactFol".to_string(), json!(fol_line(&fol)));
     }
 
-    // VENDOR FACT: the vendor's own sworn ground vector(s).
-    if let Some(facts) = v.get("vendorFactIr").and_then(|x| x.as_array()) {
-        let readings: Vec<String> = facts
-            .iter()
-            .map(crate::cmd_lift::proofir_formula_to_fol_with_instances)
-            .collect();
-        if !readings.is_empty() {
-            obj.insert(
-                "vendorFactFol".to_string(),
-                json!(fol_line(&readings.join(" ∧ "))),
-            );
-        }
+    // VENDOR FACT: the vendor's sworn value FOR THIS CALLSITE. The pool conjoins
+    // EVERY sworn fact sharing the callee symbol (`len(array)=0`, `len(x)=2`,
+    // `len(y)=20`, ...), so joining them all would show a wall of unrelated
+    // vectors and a Quick Fix would grab an arbitrary one. Keep only the fact
+    // whose LHS matches the consumer's OWN asserted callsite -- the value that
+    // actually contradicts the assertion (`len(pd.DataFrame()) = 0`).
+    if let Some(fact) = matching_vendor_fact(v) {
+        let fol = crate::cmd_lift::proofir_formula_to_fol_with_instances(&fact);
+        obj.insert("vendorFactFol".to_string(), json!(fol_line(&fol)));
     }
 
     // VENDOR FACT (derived case). A base64-style universe carries NO sworn
@@ -193,6 +190,66 @@ fn verification_with_fol(verification: Option<&Json>) -> Json {
     }
 
     out
+}
+
+/// The vendor's sworn fact for the consumer's OWN callsite: an `=(lhs, value)`
+/// atom whose `lhs` matches the consumer's asserted call term and whose value
+/// differs from what the consumer asserted (the contradicting vendor value).
+/// The pool conjoins every fact sharing the callee symbol, so we match by LHS.
+/// None if the consumer has no equality or nothing contradicts it.
+fn matching_vendor_fact(v: &Json) -> Option<Json> {
+    let client_eqs = collect_equalities(v.get("clientFactIr")?);
+    // The consumer's own assertion is the first equality; its LHS is the
+    // callsite, its RHS is the (possibly wrong) asserted value.
+    let (lhs, asserted_rhs) = client_eqs.first()?;
+    // Search the consumer's own conjuncts AND the vendor's sworn vectors for the
+    // SAME callsite with a DIFFERENT value -- that value is the vendor's fact.
+    let mut candidates = client_eqs.clone();
+    if let Some(vf) = v.get("vendorFactIr").and_then(|x| x.as_array()) {
+        for f in vf {
+            candidates.extend(collect_equalities(f));
+        }
+    }
+    for (l, r) in &candidates {
+        if l == lhs && r != asserted_rhs {
+            return Some(json!({ "kind": "atomic", "name": "=", "args": [l, r] }));
+        }
+    }
+    None
+}
+
+/// Collect every `=(lhs, rhs)` equality atom in a formula (descending through
+/// `and`), as `(lhs, rhs)` ProofIR term pairs.
+fn collect_equalities(formula: &Json) -> Vec<(Json, Json)> {
+    let mut out = Vec::new();
+    collect_equalities_into(formula, &mut out);
+    out
+}
+
+fn collect_equalities_into(node: &Json, out: &mut Vec<(Json, Json)>) {
+    if node.get("kind").and_then(|k| k.as_str()) == Some("atomic")
+        && node.get("name").and_then(|n| n.as_str()) == Some("=")
+    {
+        if let Some(args) = node.get("args").and_then(|a| a.as_array()) {
+            if args.len() == 2 {
+                out.push((args[0].clone(), args[1].clone()));
+                return;
+            }
+        }
+    }
+    match node {
+        Json::Object(map) => {
+            for child in map.values() {
+                collect_equalities_into(child, out);
+            }
+        }
+        Json::Array(arr) => {
+            for child in arr {
+                collect_equalities_into(child, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Locate the vendor universe's `str.eq-bv-blocks` atom for this callsite
