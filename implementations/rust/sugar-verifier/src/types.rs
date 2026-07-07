@@ -767,7 +767,12 @@ impl MementoPool {
         Ok(Some(value))
     }
 
-    #[cfg(test)]
+    /// Test-only fixture helper: insert a raw envelope without signature
+    /// anchoring. Not `#[cfg(test)]` (part of #3774 warm-daemon slice) so
+    /// sugar-linkerd's `tests/prove_consistency.rs` integration test can build
+    /// the identical fixture shape this crate's own consistency tests use,
+    /// rather than duplicating envelope-shape knowledge in a second crate.
+    #[doc(hidden)]
     pub fn insert_unanchored_for_tests(&mut self, memento_cid: MementoCid, envelope: Json) {
         let member = StoredMember::from_envelope(memento_cid.clone(), &envelope)
             .expect("test member must carry a known member kind");

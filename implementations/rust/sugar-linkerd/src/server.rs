@@ -29,8 +29,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::methods::{
     handle_flush_cache, handle_get_diagnostics, handle_parse_file, handle_project_status,
-    handle_resolve_receiver_crate, handle_rust_analyzer_ready, rpc_error, shutdown_response,
-    ERR_METHOD_NOT_FOUND,
+    handle_prove_consistency, handle_resolve_receiver_crate, handle_rust_analyzer_ready,
+    rpc_error, shutdown_response, ERR_METHOD_NOT_FOUND,
 };
 use crate::ra_host::RaHost;
 use crate::resolve_cache::ResolveCache;
@@ -113,6 +113,78 @@ fn build_solver_context(config: &ServerConfig) -> Option<crate::state::SolverCon
 
     info!("no solver resolvable (no SolversConfig, no z3 on PATH): structural (degraded) mode");
     None
+}
+
+/// Build the resident `ProveContext` once at startup: same construction
+/// `sugar-verifier::runner::Runner::new`/`cmd_prove` use (`load_pool` +
+/// `build_plan_and_registry_pub` + `compiler_registry::build`), never a
+/// reimplementation. Returns `None` (loudly logged by the caller) rather than
+/// panicking if the project has no `.proof` catalog yet -- an empty/missing
+/// pool is a legitimate degraded-mode input to `verify_consistency` (it will
+/// just return no candidates), but a genuine failure to construct the solver
+/// registry surfaces as `ERR_PROVE_CONTEXT_UNAVAILABLE` to callers rather than
+/// silently running with a wrong registry.
+fn build_prove_context(config: &ServerConfig) -> Option<crate::state::ProveContext> {
+    build_prove_context_for(&config.project_root)
+}
+
+/// Build (or rebuild) a `ProveContext` for `project_root` alone -- the part of
+/// `build_prove_context` that does not need the rest of `ServerConfig` -- so
+/// `handle_prove_consistency` can rebuild the resident context in place when
+/// its `.proof` manifest drifts (see `ProveContext::proof_manifest`), without
+/// threading the whole `ServerConfig` through the RPC layer.
+pub(crate) fn build_prove_context_for(
+    project_root: &std::path::Path,
+) -> Option<crate::state::ProveContext> {
+    let cfg = sugar_verifier::runner::RunnerConfig {
+        project_root: project_root.to_path_buf(),
+        ..Default::default()
+    };
+    let pool = sugar_verifier::runner::load_pool(&cfg);
+    let (plan, registry) = sugar_verifier::runner::build_plan_and_registry_pub(&cfg);
+    let compilers = sugar_verifier::compiler_registry::build(project_root);
+    let proof_manifest = scan_proof_manifest(project_root);
+    Some(crate::state::ProveContext {
+        pool,
+        plan,
+        registry,
+        compilers,
+        project_root: project_root.to_path_buf(),
+        proof_manifest,
+    })
+}
+
+/// Coarse `.proof` manifest: every `*.proof` file under `project_root` mapped
+/// to its mtime. Cheap (a `walkdir` pass with no file reads) re-stat used to
+/// decide whether the resident `ProveContext` has gone stale. Mirrors the
+/// file-selection rule `load_all_proofs::enumerate_proof_files` uses
+/// (extension == "proof"), duplicated here only because that function is
+/// private to `sugar-verifier` -- never a divergent reimplementation of the
+/// LOADING logic itself, just the same filter applied to build a manifest.
+pub(crate) fn scan_proof_manifest(
+    project_root: &std::path::Path,
+) -> std::collections::BTreeMap<std::path::PathBuf, std::time::SystemTime> {
+    let mut out = std::collections::BTreeMap::new();
+    if !project_root.exists() {
+        return out;
+    }
+    for entry in walkdir::WalkDir::new(project_root)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if entry.path().extension().map(|e| e == "proof").unwrap_or(false) {
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(mtime) = meta.modified() {
+                    out.insert(entry.path().to_path_buf(), mtime);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Minimal PATH scan for an executable, so we can report an HONEST capability
@@ -199,6 +271,24 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     // Build the solver context once at startup (semantic vs structural mode).
     let solver_ctx = build_solver_context(&config);
 
+    // Build the resident prove context once at startup (#3774 warm-daemon
+    // slice): loads the full memento pool + builds plan/registry/compilers
+    // via the SAME construction `sugar prove` uses (sugar_verifier::runner),
+    // so every `proveConsistency` request amortizes the pool-load cost across
+    // saves instead of re-paying it per request.
+    let prove_load_start = std::time::Instant::now();
+    let prove_ctx = build_prove_context(&config);
+    match &prove_ctx {
+        Some(ctx) => info!(
+            members = ctx.pool.mementos.len(),
+            elapsed_ms = prove_load_start.elapsed().as_millis(),
+            "resident prove context: pool + plan + registry loaded once"
+        ),
+        None => warn!(
+            "resident prove context unavailable at startup; proveConsistency will report ERR_PROVE_CONTEXT_UNAVAILABLE"
+        ),
+    }
+
     // Load snapshot if available (R14).
     let mut base = match snapshot::load(&config.snapshot_path) {
         Ok(Some(s)) => {
@@ -219,6 +309,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     };
     // Attach the solver wiring (re-derives any restored streams under the mode).
     base.attach_solvers(solver_ctx);
+    base.prove_ctx = prove_ctx.map(std::sync::Arc::new);
     let state = Arc::new(Mutex::new(base));
 
     // Resident rust-analyzer host: one warm session per workspace root, shared
@@ -393,6 +484,7 @@ async fn handle_client(
 
         let response = match method.as_str() {
             "parseFile" => handle_parse_file(state.clone(), &params, &id).await,
+            "proveConsistency" => handle_prove_consistency(state.clone(), &params, &id).await,
             "getDiagnostics" => handle_get_diagnostics(state.clone(), &params, &id).await,
             "projectStatus" => handle_project_status(state.clone(), &params, &id).await,
             "rustAnalyzerReady" => handle_rust_analyzer_ready(ra_host.clone(), &params, &id).await,
@@ -452,3 +544,85 @@ use serde_json::Value as Json;
 
 #[cfg(unix)]
 extern crate libc;
+
+#[cfg(test)]
+mod prove_context_invalidation_tests {
+    use super::*;
+
+    /// The `.proof` manifest scan is the whole basis of the coarse
+    /// invalidation check in `handle_prove_consistency`: it must notice a
+    /// touched (mtime-changed) `.proof` file and a newly-added `.proof` file,
+    /// and must NOT flag drift on an unrelated file. Without this the warm
+    /// daemon would keep proving a stale consumer `.proof` after every
+    /// mint-on-save and the green/red flip would never flip.
+    #[test]
+    fn scan_proof_manifest_detects_touch_and_add() {
+        let dir = tempdir();
+        let proof_path = dir.join("consumer.proof");
+        std::fs::write(&proof_path, b"v1").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"ignored").unwrap();
+
+        let m1 = scan_proof_manifest(&dir);
+        assert_eq!(m1.len(), 1, "only .proof files are tracked: {m1:?}");
+        assert!(m1.contains_key(&proof_path));
+
+        // Re-scanning an untouched tree must be identical (no false drift).
+        let m1b = scan_proof_manifest(&dir);
+        assert_eq!(m1, m1b, "no on-disk change must mean no manifest drift");
+
+        // Touch the existing .proof with a new mtime (simulates a re-mint).
+        bump_mtime(&proof_path);
+        let m2 = scan_proof_manifest(&dir);
+        assert_ne!(m1, m2, "an mtime change on an existing .proof must drift the manifest");
+
+        // Add a second .proof (a new consumer file surfacing after mint).
+        let second = dir.join("second.proof");
+        std::fs::write(&second, b"v1").unwrap();
+        let m3 = scan_proof_manifest(&dir);
+        assert_ne!(m2, m3, "a newly-added .proof must drift the manifest");
+        assert_eq!(m3.len(), 2);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `build_prove_context_for` stamps the manifest it captured at build time
+    /// onto the returned `ProveContext`, so a later `scan_proof_manifest` call
+    /// against the SAME root can be diffed against it directly (this is
+    /// exactly what `handle_prove_consistency` does before every call).
+    #[test]
+    fn build_prove_context_for_stamps_matching_manifest() {
+        let dir = tempdir();
+        std::fs::write(dir.join("consumer.proof"), b"v1").unwrap();
+
+        let ctx = build_prove_context_for(&dir).expect("context should build even with a minimal pool");
+        let rescanned = scan_proof_manifest(&dir);
+        assert_eq!(
+            ctx.proof_manifest, rescanned,
+            "a freshly-built context's manifest must equal an immediate re-scan"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn tempdir() -> std::path::PathBuf {
+        let mut dir = std::env::temp_dir();
+        let unique = format!(
+            "sugar-linkerd-prove-ctx-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        dir.push(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Force a distinguishable mtime bump: some filesystems have coarse mtime
+    /// resolution, so sleep past it rather than trusting a bare re-write.
+    fn bump_mtime(path: &std::path::Path) {
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(path, b"v2").unwrap();
+    }
+}
