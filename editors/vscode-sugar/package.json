@@ -35,6 +35,16 @@
           "type": "number",
           "default": 250,
           "description": "Debounce window for re-linking on keystrokes."
+        },
+        "sugar.prove.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the `sugar` binary used to run `sugar prove --json` on a consumer project and paint UNSAT assertions as red squiggles. Resolve it with `bin/sugarbin`. If empty, the prove-path (native-assertion-vs-vendor-proof) is disabled."
+        },
+        "sugar.prove.onSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the PROVE path (full `sugar prove` on the consumer project) on save rather than on every keystroke. A directory prove mints + solves, so per-keystroke is too slow; on-save keeps the flip live without thrashing."
         }
       }
     }
@@ -42,7 +52,8 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "e2e": "node ./test/e2e.test.js"
+    "e2e": "node ./test/e2e.test.js",
+    "prove-e2e": "node ./test/prove-e2e.test.js"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",

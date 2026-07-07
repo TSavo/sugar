@@ -492,6 +492,7 @@ impl Runner {
                 cr.verdict,
                 &cr.reason,
                 cr.verification.clone(),
+                cr.locus.clone(),
                 &mut report,
             );
         }
@@ -798,6 +799,7 @@ impl Runner {
                 cr.verdict,
                 &cr.reason,
                 cr.verification.clone(),
+                cr.locus.clone(),
                 &mut report,
             );
         }

@@ -7,7 +7,7 @@ use serde_json::Value as Json;
 
 use crate::types::{
     CallSite, LoadError, MementoCid, MementoPool, ObligationVerdict, Report, ReportRow,
-    ToolchainPlanReport,
+    SourceLocus, ToolchainPlanReport,
 };
 
 pub fn add_callsite(cs: &CallSite, verdict: ObligationVerdict, reason: &str, r: &mut Report) {
@@ -120,20 +120,33 @@ pub fn add_consistency(
     reason: &str,
     r: &mut Report,
 ) {
-    add_consistency_with_verification(contract_cid, property_name, verdict, reason, None, r);
+    add_consistency_with_verification(contract_cid, property_name, verdict, reason, None, None, r);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn add_consistency_with_verification(
     contract_cid: &str,
     property_name: &str,
     verdict: ObligationVerdict,
     reason: &str,
     verification: Option<Json>,
+    locus: Option<SourceLocus>,
     r: &mut Report,
 ) {
+    // Carry the assertion's own source locus (file/line/column, recovered from
+    // the contract memento's `file`+`span`) onto the row so an `unsatisfied`
+    // verdict says WHERE. Without this, directory-prove drops the source and an
+    // IDE has nothing to anchor a squiggle to.
+    let (file, line, source_column) = match locus {
+        Some(l) => (Some(l.file), Some(l.line), l.column),
+        None => (None, None, None),
+    };
     let cs = CallSite {
         property_name: format!("consistency:{property_name}"),
         property_cid: MementoCid::try_parse(contract_cid.to_string()).ok(),
+        file,
+        line,
+        source_column,
         ..CallSite::default()
     };
     r.rows.push(ReportRow {
@@ -331,6 +344,51 @@ mod tests {
 
     fn cid_string(seed: &str) -> String {
         cid(seed).to_string()
+    }
+
+    #[test]
+    fn consistency_row_carries_the_assertion_source_locus() {
+        // An `unsatisfied` consistency verdict must say WHERE: the assertion's
+        // own source locus (file/line/column) has to survive onto the row so an
+        // IDE can anchor a red squiggle at the exact `assert` instead of the
+        // top of the file. Regression guard for the #3462-family seam.
+        let mut r = Report::default();
+        add_consistency_with_verification(
+            &cid_string("c"),
+            "encodeBase64#euf#c:call:encodeBase64(s:'xyz')::assertion",
+            ObligationVerdict::Unsatisfied,
+            "test assertions contradictory about callsite",
+            None,
+            Some(SourceLocus {
+                file: "test_consumer.py".to_string(),
+                line: 9,
+                column: Some(4),
+            }),
+            &mut r,
+        );
+        assert_eq!(r.rows.len(), 1);
+        let cs = &r.rows[0].callsite;
+        assert_eq!(cs.file.as_deref(), Some("test_consumer.py"));
+        assert_eq!(cs.line, Some(9));
+        assert_eq!(cs.source_column, Some(4));
+        assert_eq!(r.rows[0].status, ObligationVerdict::Unsatisfied);
+    }
+
+    #[test]
+    fn consistency_row_without_locus_stays_unanchored() {
+        // No locus available (fail-open): the row must NOT invent a line.
+        let mut r = Report::default();
+        add_consistency(
+            &cid_string("c"),
+            "some::assertion",
+            ObligationVerdict::Discharged,
+            "consistent",
+            &mut r,
+        );
+        let cs = &r.rows[0].callsite;
+        assert_eq!(cs.file, None);
+        assert_eq!(cs.line, None);
+        assert_eq!(cs.source_column, None);
     }
 
     #[test]

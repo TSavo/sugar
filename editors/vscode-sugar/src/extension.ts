@@ -18,16 +18,24 @@ import * as path from "path";
 import * as crypto from "crypto";
 import * as vscode from "vscode";
 import { LinkerdClient, kitIdForFile, LinkerDiagnostic } from "./linkerdClient";
+import { proveProject, ProveDiagnostic } from "./proveClient";
 
 let client: LinkerdClient | undefined;
 let diagnostics: vscode.DiagnosticCollection;
+let proveDiagnostics: vscode.DiagnosticCollection;
+let proveBinaryPath = "";
+let proveOnSave = true;
 const timers = new Map<string, NodeJS.Timeout>();
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   diagnostics = vscode.languages.createDiagnosticCollection("sugar");
   context.subscriptions.push(diagnostics);
+  proveDiagnostics = vscode.languages.createDiagnosticCollection("sugar-prove");
+  context.subscriptions.push(proveDiagnostics);
 
   const cfg = vscode.workspace.getConfiguration("sugar");
+  proveBinaryPath = cfg.get<string>("prove.binaryPath") || "";
+  proveOnSave = cfg.get<boolean>("prove.onSave") ?? true;
   const socketPath = resolveSocketPath(cfg.get<string>("linkerd.socketPath") || "");
   const binaryPath = cfg.get<string>("linkerd.binaryPath") || undefined;
   const snapshotPath = socketPath + ".snapshot";
@@ -50,9 +58,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.onDidCloseTextDocument((doc) => diagnostics.delete(doc.uri))
   );
 
+  // The PROVE path (native assertion vs vendor .proof). A directory prove mints
+  // + solves, so it runs on OPEN and on SAVE (or on keystroke debounce only if
+  // the user opts out of on-save), never per-keystroke. This is the operation
+  // that flips a NATIVE `assert` red/green against a loaded vendor universe --
+  // distinct from link() above.
+  if (proveBinaryPath) {
+    context.subscriptions.push(
+      vscode.workspace.onDidSaveTextDocument((doc) => void runProve(doc)),
+      vscode.workspace.onDidOpenTextDocument((doc) => void runProve(doc)),
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        if (!proveOnSave) {
+          void runProve(e.document);
+        }
+      })
+    );
+  }
+
   // Prime any already-open documents.
   for (const doc of vscode.workspace.textDocuments) {
     scheduleLink(doc, 0);
+    if (proveBinaryPath) {
+      void runProve(doc);
+    }
   }
 }
 
@@ -98,6 +126,71 @@ async function linkDocument(doc: vscode.TextDocument, kitId: string): Promise<vo
     // surface it as an information diagnostic-free notice rather than a squiggle.
     console.error(`sugar: parseFile failed for ${doc.fileName}: ${(e as Error).message}`);
   }
+}
+
+/**
+ * Run `sugar prove --json` on the consumer PROJECT containing `doc` and paint
+ * its `unsatisfied` rows as red squiggles at each row's source locus. Groups
+ * diagnostics by the file the row points at (a project prove can implicate any
+ * file in the project, not only the saved one). Cheap and side-effect-free
+ * except for the diagnostic collection.
+ */
+async function runProve(doc: vscode.TextDocument): Promise<void> {
+  if (!proveBinaryPath || doc.uri.scheme !== "file") {
+    return;
+  }
+  const kitId = kitIdForFile(doc.fileName);
+  if (kitId !== "python") {
+    // The demo lifter (native-assertion vs vendor .proof) is python today.
+    return;
+  }
+  const projectDir = resolveProjectDir(doc.uri);
+  if (!projectDir) {
+    return;
+  }
+  try {
+    const res = await proveProject({ binaryPath: proveBinaryPath, projectDir });
+    // Rebuild the whole prove collection for this project from scratch so
+    // cleared rows (green now) drop their squiggles.
+    proveDiagnostics.clear();
+    const byFile = new Map<string, vscode.Diagnostic[]>();
+    for (const d of res.diagnostics) {
+      const abs = path.isAbsolute(d.file) ? d.file : path.join(projectDir, d.file);
+      const list = byFile.get(abs) ?? [];
+      list.push(proveToVsDiagnostic(d));
+      byFile.set(abs, list);
+    }
+    for (const [file, list] of byFile) {
+      proveDiagnostics.set(vscode.Uri.file(file), list);
+    }
+  } catch (e) {
+    console.error(`sugar: prove failed for ${projectDir}: ${(e as Error).message}`);
+  }
+}
+
+/** The nearest workspace folder for a document (its consumer project root). */
+function resolveProjectDir(uri: vscode.Uri): string | undefined {
+  const folder = vscode.workspace.getWorkspaceFolder(uri);
+  if (folder) {
+    return folder.uri.fsPath;
+  }
+  return path.dirname(uri.fsPath);
+}
+
+/** Turn one prove diagnostic into a VS Code diagnostic anchored at its locus. */
+function proveToVsDiagnostic(d: ProveDiagnostic): vscode.Diagnostic {
+  const line0 = Math.max(0, d.line - 1);
+  const col = typeof d.column === "number" ? d.column : 0;
+  // Anchor at the locus; span the rest of the line so the squiggle is visible.
+  const range = new vscode.Range(line0, col, line0, Number.MAX_SAFE_INTEGER);
+  const diag = new vscode.Diagnostic(
+    range,
+    `${d.status}: ${d.reason}\n  property: ${d.property}`,
+    vscode.DiagnosticSeverity.Error
+  );
+  diag.source = "sugar-prove";
+  diag.code = d.status;
+  return diag;
 }
 
 /** Turn one linkerd diagnostic into a VS Code diagnostic anchored at its locus. */

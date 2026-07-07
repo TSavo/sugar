@@ -102,6 +102,7 @@ fn row_to_json(row: &ReportRow) -> Json {
         "verification": row.verification.clone(),
         "file": row.callsite.file,
         "line": row.callsite.line,
+        "column": row.callsite.source_column,
         "callee": row.callsite.callee,
         "callsiteBundleCid": row.callsite.callsite_bundle_cid,
         "panicSite": row.callsite.panic_site,

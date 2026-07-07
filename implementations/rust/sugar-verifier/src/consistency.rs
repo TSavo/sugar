@@ -72,7 +72,7 @@ use crate::effects::{VerifyEffect, WitnessDischargeGround};
 use crate::solvers::{
     run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan, SolverSeat,
 };
-use crate::types::{MementoCid, MementoPool, ObligationVerdict, StoredMember};
+use crate::types::{MementoCid, MementoPool, ObligationVerdict, SourceLocus, StoredMember};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_ir_compiler::CompilerInput;
@@ -92,6 +92,34 @@ pub struct ConsistencyResult {
     /// report never reads witnessed-by-execution as proven-by-solver.
     pub witnessed: bool,
     pub verification: Option<Json>,
+    /// The source locus (file/line/column) of the assertion this result is
+    /// about, recovered from the contract memento's own `file`+`span`. Stamped
+    /// by `verify_consistency` and threaded to the report row so an
+    /// `unsatisfied` verdict can anchor an IDE diagnostic at the exact
+    /// assertion instead of dropping the source. `None` when the contract
+    /// memento carries no readable locus (fail-open: no false anchor).
+    pub locus: Option<SourceLocus>,
+}
+
+/// Recover the assertion's source locus from a contract memento body. The
+/// python literal-call lifter emits a top-level `file` plus a `span` object
+/// (`start_line`/`start_col`); we read those directly rather than re-deriving
+/// anything. Returns `None` if no usable `file`+line is present.
+fn locus_from_body(body: &Json) -> Option<SourceLocus> {
+    let file = body.get("file").and_then(|v| v.as_str())?.to_string();
+    if file.is_empty() {
+        return None;
+    }
+    let span = body.get("span");
+    let line = span
+        .and_then(|s| s.get("start_line"))
+        .or_else(|| body.get("line"))
+        .and_then(|v| v.as_u64())? as usize;
+    let column = span
+        .and_then(|s| s.get("start_col"))
+        .and_then(|v| v.as_u64())
+        .map(|c| c as usize);
+    Some(SourceLocus { file, line, column })
 }
 
 const CONSISTENT_REASON: &str = "test assertions mutually consistent about callsite";
@@ -592,6 +620,7 @@ fn try_witness_discharge(
         reason: reason.clone(),
         effect: None,
         witnessed: false,
+        locus: None,
         verification: Some(json!({
             "kind": "witness",
             "witnessed": false,
@@ -641,6 +670,7 @@ fn try_witness_discharge(
                 reason: boundary.reason,
                 effect: Some(effect),
                 witnessed: false,
+                locus: None,
                 verification: boundary.verification,
             });
         }
@@ -657,6 +687,7 @@ fn try_witness_discharge(
             reason: reason.clone(),
             effect: None,
             witnessed: true,
+            locus: None,
             verification: Some(json!({
                 "kind": "witness",
                 "witnessed": true,
@@ -693,6 +724,7 @@ fn try_witness_discharge(
             reason: boundary.reason,
             effect: Some(effect),
             witnessed: false,
+            locus: None,
             verification: boundary.verification,
         }
     })
@@ -1117,6 +1149,7 @@ fn provenance_kind_refusal(cid: String, body: &Json, reason: String) -> Consiste
         reason: boundary.reason,
         effect: Some(effect),
         witnessed: false,
+        locus: None,
         verification: boundary.verification,
     }
 }
@@ -1443,6 +1476,7 @@ fn check_inv_consistency_with_vacuity_reason(
             reason: boundary.reason,
             effect: Some(effect),
             witnessed: false,
+            locus: None,
             verification: Some(consistency_verification_detail(
                 property_name,
                 &inv,
@@ -1463,6 +1497,7 @@ fn check_inv_consistency_with_vacuity_reason(
             reason: format!("{CONTRADICTORY_REASON} `{property_name}` [structural: {reason}]"),
             effect: None,
             witnessed: false,
+            locus: None,
             verification: Some(consistency_verification_detail(
                 property_name,
                 &inv,
@@ -1515,6 +1550,7 @@ fn check_inv_consistency_with_vacuity_reason(
         reason,
         effect,
         witnessed: false,
+        locus: None,
         verification: Some(consistency_verification_detail(
             property_name,
             &inv,
@@ -2499,6 +2535,28 @@ pub fn verify_consistency(
     }
     let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name.into_iter().collect();
 
+    // Pool-wide assertion-locus index, keyed by contract/property name. The
+    // callsite-keyed consistency candidate is a coalesced claim whose OWN body
+    // carries no `file`/`span`; the assertion's source locus lives on the
+    // sibling SOURCE-MEMENTO member the lifter emitted for that same assertion
+    // (its `contractName` == the property name). We read `file`+`span` straight
+    // off that member -- no re-derivation -- so an `unsatisfied` verdict can be
+    // anchored back to the exact `assert` line/column in the editor.
+    let mut locus_by_name: HashMap<String, SourceLocus> = HashMap::new();
+    for (_cid, member) in pool.source_memento_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if let Some(l) = locus_from_body(&body) {
+            locus_by_name
+                .entry(contract_property_name(&body).to_string())
+                .or_insert(l);
+        }
+    }
+
     let mut results: Vec<ConsistencyResult> = groups
         .par_iter()
         .flat_map(|(property_name, members)| {
@@ -2636,6 +2694,22 @@ pub fn verify_consistency(
                         &result,
                     ) {
                         out.push(result);
+                    }
+                }
+            }
+            // Stamp the group's source locus onto every result so an
+            // `unsatisfied` verdict says WHERE. All members of a group share
+            // one property_name (one call site / one assertion), so the first
+            // member with a readable `file`+`span` is the right anchor. Only
+            // fills a locus we do not already have (fail-open, never overwrite).
+            let group_locus = members
+                .iter()
+                .find_map(|c| locus_from_body(&c.body))
+                .or_else(|| locus_by_name.get(property_name).cloned());
+            if group_locus.is_some() {
+                for r in out.iter_mut() {
+                    if r.locus.is_none() {
+                        r.locus = group_locus.clone();
                     }
                 }
             }
