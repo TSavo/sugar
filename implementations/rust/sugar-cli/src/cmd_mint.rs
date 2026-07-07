@@ -242,8 +242,7 @@ fn persist_proof_file(result: &DispatchResult) -> Result<Option<PathBuf>, String
         return Ok(None);
     };
     if let Some(parent) = out_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
     std::fs::write(out_path, bytes).map_err(|e| format!("write {}: {e}", out_path.display()))?;
     Ok(Some(out_path.clone()))
@@ -7233,7 +7232,15 @@ mod tests {
             mint_lift_response(&root, &out_dir, true, lift_response).expect("mint lift response");
         // #3810: the mint terminal returns the catalog bytes in memory and
         // never writes the final `.proof` itself (edges persist).
-        assert!(result.proof_file.is_some(), "canonical proof path computed");
+        let out_path = result
+            .proof_file
+            .as_ref()
+            .expect("canonical proof path computed");
+        assert!(
+            !out_path.exists(),
+            "mint terminal must not write the canonical .proof to disk (edges persist): {}",
+            out_path.display()
+        );
         let proof_bytes = result.proof_bytes.expect("proof bytes in memory");
         let graph = ProofGraph::read(&proof_bytes).expect("decode proof");
         let mementos = factory_walk_memento_members(&graph);
