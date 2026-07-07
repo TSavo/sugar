@@ -1282,7 +1282,9 @@ fn parse_call_edge(edge: &Json) -> Option<LinkerCallEdge> {
     Some(LinkerCallEdge {
         source_contract_cid: source_cid,
         target_contract_cid: target_cid,
-        target_symbol,
+        // `target_symbol` is the typed `Symbol` now; parse the wire string into
+        // it (byte-identical `<kit>:<name>` round-trip).
+        target_symbol: target_symbol.into(),
         call_site_locus_json: locus,
         evidence_term_json: evidence,
         ..Default::default()
@@ -1434,7 +1436,7 @@ async fn lift_rust_source(
             call_edges.push(LinkerEdge {
                 source_contract_cid: edge.source_contract_cid.clone(),
                 target_contract_cid: target_cid,
-                target_symbol: edge.target_symbol.clone(),
+                target_symbol: edge.target_symbol.clone().into(),
                 call_site_locus_json: serde_json::json!({
                     "file": file_for_locus,
                     "line": edge.call_site_locus.line,
