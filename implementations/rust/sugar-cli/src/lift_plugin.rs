@@ -268,6 +268,13 @@ pub(crate) fn dispatch_lift(
         "lift kit parsed surface={surface} elapsed={:?}",
         started.elapsed()
     ));
+    // #3774 daemonLift phase split: per-surface plugin dispatch wall time,
+    // visible in the daemon's tracing output (trace_log above is file-gated).
+    tracing::info!(
+        surface,
+        dispatch_ms = started.elapsed().as_millis() as u64,
+        "mint/lift: plugin dispatch complete"
+    );
     if !quiet {
         if let Some(name) = core_session
             .initialize_response

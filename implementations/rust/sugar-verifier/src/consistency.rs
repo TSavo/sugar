@@ -3018,7 +3018,77 @@ fn verify_consistency_inner(
     project_root: &Path,
     scope: Option<&Path>,
 ) -> Vec<ConsistencyResult> {
+    let index = build_consistency_index(pool);
+    verify_consistency_from_indexes(&index, None, plan, registry, compilers, project_root, scope)
+}
+
+/// Pool-derived consistency inputs, computed once per pool and reusable
+/// across solve calls (#3774 daemonSolve trim). Every field is a pure
+/// projection of `pool` -- field for field, the same construction
+/// `verify_consistency_inner` performed inline before this factoring (the
+/// stages MOVED into `build_consistency_index_filtered`; they were not
+/// reimplemented). The daemon caches the resident base (vendor) pool's index
+/// in its ProveContext and, per request, builds only the tiny scratch-proof
+/// overlay's index, merging the two in
+/// `verify_consistency_scoped_with_base_index` -- so the per-save cost is
+/// O(overlay members), not O(pool re-scan + pool clone).
+pub struct ConsistencyIndex {
+    candidates: Vec<ConsistencyCandidate>,
+    provenance_refusals: Vec<ConsistencyResult>,
+    ambient_foralls: Vec<Json>,
+    ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact>,
+    ambient_posts: Vec<AmbientPost>,
+    /// Raw (contract/property name, locus) pairs in pool iteration order.
+    /// The project-local preference merge (consumer file beats vendor file
+    /// for the squiggle anchor) happens at solve time in
+    /// `verify_consistency_from_indexes` because it needs `project_root`.
+    locus_entries: Vec<(String, SourceLocus)>,
+}
+
+impl ConsistencyIndex {
+    /// Number of consistency candidates the pool contributed. Exposed for
+    /// caller-side telemetry only; the solve path never re-derives from it.
+    pub fn candidate_count(&self) -> usize {
+        self.candidates.len()
+    }
+}
+
+/// Build the pool's [`ConsistencyIndex`]. This is stage 1 of
+/// `verify_consistency` factored out verbatim; callers that hold a stable
+/// pool (the daemon's resident vendor pool) build this once and pass it to
+/// `verify_consistency_scoped_with_base_index` per request.
+pub fn build_consistency_index(pool: &MementoPool) -> ConsistencyIndex {
+    build_consistency_index_filtered(pool, None)
+}
+
+/// Same construction as [`build_consistency_index`], but candidates and
+/// provenance refusals whose CID appears in `skip_cids` are dropped BEFORE
+/// ambient collection. Used for the overlay index in the merged (cached)
+/// path: when the same member CID exists in both the base pool and the
+/// overlay scratch proof, the merged-pool semantics are "one member" (the
+/// pool dedupes by CID on load), so the overlay index must not contribute a
+/// second copy -- a duplicate would flip an identical-assertion group from
+/// PROVEN to a same-kind-duplicate vacuity refusal the merged-pool run never
+/// raises.
+fn build_consistency_index_filtered(
+    pool: &MementoPool,
+    skip_cids: Option<&std::collections::HashSet<String>>,
+) -> ConsistencyIndex {
     let (candidates, provenance_refusals) = collect_consistency_candidates(pool);
+    let (candidates, provenance_refusals): (Vec<ConsistencyCandidate>, Vec<ConsistencyResult>) =
+        match skip_cids {
+            None => (candidates, provenance_refusals),
+            Some(skip) => (
+                candidates
+                    .into_iter()
+                    .filter(|c| !skip.contains(&c.cid))
+                    .collect(),
+                provenance_refusals
+                    .into_iter()
+                    .filter(|r| !skip.contains(&r.contract_cid))
+                    .collect(),
+            ),
+        };
 
     // AMBIENT UNIVERSALS: a forall invariant (a lifted bounded loop, memento
     // `<test>::loop::<var>`, from any language's lifter) constrains every claim
@@ -3067,13 +3137,155 @@ fn verify_consistency_inner(
             }
         }
     }
+    let ambient_posts = collect_ambient_posts(pool);
+
+    // Pool-wide assertion-locus entries, keyed by contract/property name. The
+    // callsite-keyed consistency candidate is a coalesced claim whose OWN body
+    // carries no `file`/`span`; the assertion's source locus lives on the
+    // sibling SOURCE-MEMENTO member the lifter emitted for that same assertion
+    // (its `contractName` == the property name). We read `file`+`span` straight
+    // off that member -- no re-derivation -- so an `unsatisfied` verdict can be
+    // anchored back to the exact `assert` line/column in the editor.
+    // #3802 root cause: locus carriers differ per lifter. The python lifter
+    // emits `source-memento` members; the RUST lifter emits
+    // `assertion-surface-memento` members carrying the same
+    // contractName+file+line payload. Reading only source mementos left the
+    // rust overlay's locus map EMPTY, so the editor-scope filter dropped
+    // every rust consumer group -- the daemon then answered 0 rows with
+    // degraded=false (the false green). Scan BOTH kinds; `locus_from_body`
+    // applies the identical field contract to each.
+    let mut locus_entries: Vec<(String, SourceLocus)> = Vec::new();
+    for (_cid, member) in pool.source_memento_members().chain(
+        pool.members_by_kind(sugar_proof_envelope::MemberKind::AssertionSurfaceMemento),
+    ) {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if let Some(l) = locus_from_body(&body) {
+            locus_entries.push((contract_property_name(&body).to_string(), l));
+        }
+    }
+
+    ConsistencyIndex {
+        candidates,
+        provenance_refusals,
+        ambient_foralls,
+        ambient_ground_callsite_facts,
+        ambient_posts,
+        locus_entries,
+    }
+}
+
+/// CACHED-BASE editor path (#3774 daemonSolve trim): identical semantics to
+/// loading `overlay_pool`'s members onto the base pool and running
+/// `verify_consistency_scoped` over the merged pool -- adjudicated by the
+/// differential test `cached_index_path_matches_merged_pool_scoped_run`
+/// (sugar-linkerd/tests/prove_consistency.rs) -- but the base pool's
+/// candidates/ambients/locus come from the prebuilt `base` index instead of
+/// an O(pool) re-scan, and the base pool itself is never cloned. Per-request
+/// work: index the (tiny) overlay pool, dedupe by CID against the base,
+/// merge, group, solve the in-scope groups.
+pub fn verify_consistency_scoped_with_base_index(
+    base: &ConsistencyIndex,
+    overlay_pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: &Path,
+) -> Vec<ConsistencyResult> {
+    let skip: std::collections::HashSet<String> = base
+        .candidates
+        .iter()
+        .map(|c| c.cid.clone())
+        .chain(
+            base.provenance_refusals
+                .iter()
+                .map(|r| r.contract_cid.clone()),
+        )
+        .collect();
+    let overlay = build_consistency_index_filtered(overlay_pool, Some(&skip));
+    verify_consistency_from_indexes(
+        base,
+        Some(&overlay),
+        plan,
+        registry,
+        compilers,
+        project_root,
+        Some(scope),
+    )
+}
+
+/// Stage 2 of `verify_consistency`: grouping, scoping, and the per-group
+/// solve, over the merged (base + optional overlay) index. Everything below
+/// is the former inline tail of `verify_consistency_inner`, operating on the
+/// chained candidate/ambient/locus sets instead of pool-derived locals.
+#[allow(clippy::too_many_arguments)]
+fn verify_consistency_from_indexes(
+    base: &ConsistencyIndex,
+    overlay: Option<&ConsistencyIndex>,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: Option<&Path>,
+) -> Vec<ConsistencyResult> {
+    let candidates: Vec<&ConsistencyCandidate> = base
+        .candidates
+        .iter()
+        .chain(overlay.iter().flat_map(|o| o.candidates.iter()))
+        .collect();
+    let provenance_refusals: Vec<ConsistencyResult> = base
+        .provenance_refusals
+        .iter()
+        .cloned()
+        .chain(
+            overlay
+                .iter()
+                .flat_map(|o| o.provenance_refusals.iter().cloned()),
+        )
+        .collect();
+    let ambient_foralls: Vec<Json> = base
+        .ambient_foralls
+        .iter()
+        .cloned()
+        .chain(overlay.iter().flat_map(|o| o.ambient_foralls.iter().cloned()))
+        .collect();
+    let ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact> = base
+        .ambient_ground_callsite_facts
+        .iter()
+        .cloned()
+        .chain(
+            overlay
+                .iter()
+                .flat_map(|o| o.ambient_ground_callsite_facts.iter().cloned()),
+        )
+        .collect();
+    // Ambient posts merge with (source_symbol, target_cid) dedupe: the
+    // merged-pool run sees one bridge member per CID, so an overlay proof
+    // re-declaring a base bridge must not conjoin the same post twice.
+    let mut ambient_posts: Vec<AmbientPost> = base.ambient_posts.clone();
+    if let Some(o) = overlay {
+        let seen: std::collections::HashSet<(String, String)> = ambient_posts
+            .iter()
+            .map(|p| (p.source_symbol.clone(), p.target_cid.clone()))
+            .collect();
+        for p in &o.ambient_posts {
+            if !seen.contains(&(p.source_symbol.clone(), p.target_cid.clone())) {
+                ambient_posts.push(p.clone());
+            }
+        }
+    }
+
     info!(
         candidates = candidates.len(),
         ambient_foralls = ambient_foralls.len(),
         ambient_ground_callsite_facts = ambient_ground_callsite_facts.len(),
         "verifier/ambient: universals will be conjoined into every obligation"
     );
-    let ambient_posts = collect_ambient_posts(pool);
     info!(
         candidates = candidates.len(),
         ambient_posts = ambient_posts.len(),
@@ -3089,54 +3301,39 @@ fn verify_consistency_inner(
     // assertions dedupe by CID (one member) and stay PROVEN. The contract NAME is
     // the content-keyed callsite, so same name == same callsite == sound to
     // conjoin -- the same invariant mint relies on.
-    let mut by_name: std::collections::BTreeMap<String, Vec<ConsistencyCandidate>> =
+    let mut by_name: std::collections::BTreeMap<String, Vec<&ConsistencyCandidate>> =
         std::collections::BTreeMap::new();
     for candidate in &candidates {
         let name = contract_property_name(&candidate.body).to_string();
-        by_name.entry(name).or_default().push(candidate.clone());
+        by_name.entry(name).or_default().push(*candidate);
     }
-    let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name.into_iter().collect();
 
-    // Pool-wide assertion-locus index, keyed by contract/property name. The
-    // callsite-keyed consistency candidate is a coalesced claim whose OWN body
-    // carries no `file`/`span`; the assertion's source locus lives on the
-    // sibling SOURCE-MEMENTO member the lifter emitted for that same assertion
-    // (its `contractName` == the property name). We read `file`+`span` straight
-    // off that member -- no re-derivation -- so an `unsatisfied` verdict can be
-    // anchored back to the exact `assert` line/column in the editor.
+    // Locus map with PROJECT-LOCAL PREFERENCE. When two source mementos share
+    // a contractName (a consumer asserting the EXACT sworn fact -> case-1
+    // congruence, e.g. `len(pd.DataFrame()) == 1` contradicting pandas' sworn
+    // `== 0`), the consumer's assertion and the vendor's sworn assertion
+    // collide on the same euf coordinate. First-write-wins would anchor the
+    // squiggle at the VENDOR's source file (pandas' internal
+    // `tests/frame/test_constructors.py`) instead of the user's line.
+    // Overwrite only when the NEW locus's file EXISTS under project_root on
+    // disk and the CURRENT one does not -- the consumer's `test_consumer.py`
+    // lives under the project; the vendor's path does not. Fail-open: if
+    // neither or both exist, keep first-write (no worse than before).
     let mut locus_by_name: HashMap<String, SourceLocus> = HashMap::new();
-    for (_cid, member) in pool.source_memento_members() {
-        let Some(body) = pool
-            .contract_body_for_member(member)
-            .filter(|v| v.is_object())
-        else {
-            continue;
-        };
-        if let Some(l) = locus_from_body(&body) {
-            let name = contract_property_name(&body).to_string();
-            match locus_by_name.entry(name) {
-                std::collections::hash_map::Entry::Vacant(e) => {
-                    e.insert(l);
-                }
-                std::collections::hash_map::Entry::Occupied(mut e) => {
-                    // PROJECT-LOCAL PREFERENCE. When two source mementos share a
-                    // contractName (a consumer asserting the EXACT sworn fact ->
-                    // case-1 congruence, e.g. `len(pd.DataFrame()) == 1`
-                    // contradicting pandas' sworn `== 0`), the consumer's
-                    // assertion and the vendor's sworn assertion collide on the
-                    // same euf coordinate. First-write-wins would anchor the
-                    // squiggle at the VENDOR's source file (pandas' internal
-                    // `tests/frame/test_constructors.py`) instead of the user's
-                    // line. Overwrite only when the NEW locus's file EXISTS under
-                    // project_root on disk and the CURRENT one does not -- the
-                    // consumer's `test_consumer.py` lives under the project; the
-                    // vendor's path does not. Fail-open: if neither or both
-                    // exist, keep first-write (no worse than before).
-                    let new_local = project_root.join(&l.file).exists();
-                    let cur_local = project_root.join(&e.get().file).exists();
-                    if new_local && !cur_local {
-                        e.insert(l);
-                    }
+    for (name, l) in base
+        .locus_entries
+        .iter()
+        .chain(overlay.iter().flat_map(|o| o.locus_entries.iter()))
+    {
+        match locus_by_name.entry(name.clone()) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(l.clone());
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let new_local = project_root.join(&l.file).exists();
+                let cur_local = project_root.join(&e.get().file).exists();
+                if new_local && !cur_local {
+                    e.insert(l.clone());
                 }
             }
         }
@@ -3147,11 +3344,13 @@ fn verify_consistency_inner(
     // dropped -- never individual members -- so a kept group's conjunct set
     // (vendor sworn facts included) is identical to the unscoped run's, and
     // its solved row is therefore identical too. Ambient sets stay pool-wide.
-    let groups: Vec<(String, Vec<ConsistencyCandidate>)> = match scope {
-        None => groups,
-        Some(scope_root) => groups
-            .into_iter()
-            .filter(|(property_name, members)| {
+    // Members are CLONED only for KEPT groups (post-filter), never for the
+    // vendor-internal thousands the editor never paints.
+    let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name
+        .into_iter()
+        .filter(|(property_name, members)| match scope {
+            None => true,
+            Some(scope_root) => {
                 let anchored_in_scope = |name: &str| {
                     locus_by_name
                         .get(name)
@@ -3159,12 +3358,13 @@ fn verify_consistency_inner(
                         .unwrap_or(false)
                 };
                 anchored_in_scope(property_name)
-                    || members.iter().any(|m| {
-                        anchored_in_scope(contract_property_name(&m.body).as_ref())
-                    })
-            })
-            .collect(),
-    };
+                    || members
+                        .iter()
+                        .any(|m| anchored_in_scope(contract_property_name(&m.body).as_ref()))
+            }
+        })
+        .map(|(name, members)| (name, members.into_iter().cloned().collect()))
+        .collect();
 
     let mut results: Vec<ConsistencyResult> = groups
         .par_iter()

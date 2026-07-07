@@ -99,21 +99,34 @@ fn build_source_overlay_project(
     }
 
     std::fs::create_dir_all(overlay_root).map_err(|e| e.to_string())?;
-    // Lift surface: config + lift manifests. (No imports/proofs/caches.)
-    let cfg = project_root.join(".sugar").join("config.toml");
-    if cfg.exists() {
-        std::fs::create_dir_all(overlay_root.join(".sugar")).map_err(|e| e.to_string())?;
-        std::fs::copy(&cfg, overlay_root.join(".sugar").join("config.toml"))
-            .map_err(|e| e.to_string())?;
-    }
-    let lift_dir = project_root.join(".sugar").join("lift");
-    if lift_dir.is_dir() {
-        copy_tree(&lift_dir, &overlay_root.join(".sugar").join("lift"))?;
-    }
-    let comps = project_root.join(".sugar").join("components");
-    if comps.is_dir() {
-        copy_tree(&comps, &overlay_root.join(".sugar").join("components"))?;
-    }
+    // INCREMENTAL COPY (perf, daemonLift trim): `overlay_root` is a STABLE
+    // per-project directory (hashed from `project_root`, see the caller's
+    // doc comment) that only needs the full config/lift/component/source
+    // tree copied ONCE per daemon session -- the tree is immutable across
+    // calls, only the single edited file changes. Measured re-copying the
+    // whole project tree on every keystroke-save was pure waste once the
+    // marker below confirms a prior populate. If the project's structural
+    // surface changes underneath a live daemon (rare mid-session), delete
+    // the marker (or the daemon process) to force a repopulate -- the same
+    // manual-invalidation shape the coarse `.proof`-manifest rebuild above
+    // already accepts for a much larger surface.
+    let populated_marker = overlay_root.join(".sugar-overlay-populated");
+    if !populated_marker.exists() {
+        // Lift surface: config + lift manifests. (No imports/proofs/caches.)
+        let cfg = project_root.join(".sugar").join("config.toml");
+        if cfg.exists() {
+            std::fs::create_dir_all(overlay_root.join(".sugar")).map_err(|e| e.to_string())?;
+            std::fs::copy(&cfg, overlay_root.join(".sugar").join("config.toml"))
+                .map_err(|e| e.to_string())?;
+        }
+        let lift_dir = project_root.join(".sugar").join("lift");
+        if lift_dir.is_dir() {
+            copy_tree(&lift_dir, &overlay_root.join(".sugar").join("lift"))?;
+        }
+        let comps = project_root.join(".sugar").join("components");
+        if comps.is_dir() {
+            copy_tree(&comps, &overlay_root.join(".sugar").join("components"))?;
+        }
     // Source files: top-level walk skipping generated/vendor surfaces.
     fn copy_sources(
         from: &std::path::Path,
@@ -149,7 +162,9 @@ fn build_source_overlay_project(
         }
         Ok(())
     }
-    copy_sources(project_root, overlay_root, 0)?;
+        copy_sources(project_root, overlay_root, 0)?;
+        std::fs::write(&populated_marker, "").map_err(|e| e.to_string())?;
+    }
 
     // Substitute the request buffer at the file's project-relative path.
     let rel = request_file
@@ -1637,7 +1652,6 @@ pub async fn handle_prove_consistency(
             }
         }
     };
-    let base_pool_for_lift = ctx.pool.clone();
     let lift_started = std::time::Instant::now();
     let lift_result = task::spawn_blocking(move || {
         // Wipe the scratch dir before every mint. `dispatch_multi`'s mint
@@ -1659,19 +1673,52 @@ pub async fn handle_prove_consistency(
         let lift_root = lift_root_override
             .as_deref()
             .unwrap_or(&project_root_for_lift);
+        let mint_started = std::time::Instant::now();
         let proof_file =
             sugar_cli::cmd_mint::mint_project_scratch_proof(lift_root, &scratch_dir, false)?;
+        let mint_ms = mint_started.elapsed().as_millis();
         let Some(proof_file) = proof_file else {
             return Ok(None);
         };
-        let mut overlay_pool = base_pool_for_lift;
+        // #3774 daemonSolve trim: the scratch proof loads into an EMPTY
+        // overlay pool -- the resident 44k-member base pool is NEVER cloned
+        // per request anymore. The solve below merges this small pool's
+        // prebuilt-index-shaped view onto the cached base index
+        // (`verify_consistency_scoped_with_base_index`), which is
+        // differential-tested equal to the old merged-pool scoped run.
+        let load_started = std::time::Instant::now();
+        let mut overlay_pool = sugar_verifier::types::MementoPool::default();
         sugar_verifier::load_all_proofs::load_files_into_pool(&[proof_file], &mut overlay_pool);
+        let load_ms = load_started.elapsed().as_millis();
+        // SOUNDNESS (#3802): a lift whose RPC binary is unreachable, or whose
+        // kit silently emits an empty ir-document, exits `Ok` with a
+        // `proof_file` that loads ZERO testimony members -- exactly the
+        // rust-overlay false green witnessed on the serde consumer (0 rows,
+        // 0 diagnostics, degraded reported false). Never report such a mint
+        // as a live overlay: return the degraded marker so the extension
+        // falls back cold instead of painting a false green.
+        use sugar_verifier::types::MemberKind;
+        let overlay_contracts = overlay_pool.member_count_by_kind(MemberKind::Contract);
+        let overlay_sources = overlay_pool.member_count_by_kind(MemberKind::SourceMemento);
+        tracing::info!(
+            mint_ms,
+            load_ms,
+            overlay_contracts,
+            overlay_sources,
+            "proveConsistency: overlay scratch mint phase split"
+        );
+        if overlay_contracts == 0 && overlay_sources == 0 {
+            return Ok(None);
+        }
         Ok(Some(overlay_pool))
     })
     .await;
     let lift_ms = lift_started.elapsed().as_millis();
 
-    let (pool_for_solve, degraded, degraded_reason): (
+    // `overlay_for_solve` is the SMALL per-request scratch pool (or empty on
+    // the degraded fallbacks, which then solve exactly the resident base
+    // index alone -- the same rows the old ctx.pool.clone() fallback gave).
+    let (overlay_for_solve, degraded, degraded_reason): (
         sugar_verifier::types::MementoPool,
         bool,
         Option<String>,
@@ -1681,10 +1728,10 @@ pub async fn handle_prove_consistency(
             (overlay_pool, false, None)
         }
         Ok(Ok(None)) => (
-            ctx.pool.clone(),
+            sugar_verifier::types::MementoPool::default(),
             true,
             Some(
-                "project declares no [[plugins]] lift entries; nothing to lift-and-merge -- resident disk-pool only"
+                "overlay produced no consumer testimony (either no [[plugins]] lift entries declared, or the mint ran but contributed zero project-anchored contract/source-memento members -- see #3802); falling back to resident disk-pool"
                     .to_string(),
             ),
         ),
@@ -1694,7 +1741,7 @@ pub async fn handle_prove_consistency(
                 "proveConsistency: daemon lift failed, falling back to resident disk-pool"
             );
             (
-                ctx.pool.clone(),
+                sugar_verifier::types::MementoPool::default(),
                 true,
                 Some(format!("daemon lift-and-merge failed, falling back to resident disk-pool: {err}")),
             )
@@ -1705,7 +1752,7 @@ pub async fn handle_prove_consistency(
                 "proveConsistency: daemon lift panicked, falling back to resident disk-pool"
             );
             (
-                ctx.pool.clone(),
+                sugar_verifier::types::MementoPool::default(),
                 true,
                 Some(format!("daemon lift-and-merge panicked, falling back to resident disk-pool: {join_err}")),
             )
@@ -1720,8 +1767,9 @@ pub async fn handle_prove_consistency(
     // (milliseconds). The CLI's full `sugar prove` remains the unscoped door.
     let solve_started = std::time::Instant::now();
     let results = task::spawn_blocking(move || {
-        sugar_verifier::consistency::verify_consistency_scoped(
-            &pool_for_solve,
+        sugar_verifier::consistency::verify_consistency_scoped_with_base_index(
+            &ctx.consistency_index,
+            &overlay_for_solve,
             &ctx.plan,
             &ctx.registry,
             &ctx.compilers,

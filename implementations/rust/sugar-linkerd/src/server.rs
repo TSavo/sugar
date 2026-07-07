@@ -156,6 +156,10 @@ pub(crate) fn build_prove_context_for(
     let (plan, registry) = sugar_verifier::runner::build_plan_and_registry_pub(&cfg);
     let compilers = sugar_verifier::compiler_registry::build(project_root);
     let proof_manifest = scan_proof_manifest(&imports_root);
+    // #3774 daemonSolve trim: precompute the pool's consistency index (the
+    // candidates/ambients/locus scan verify_consistency runs per call) ONCE
+    // here; per-request solves index only the tiny overlay proof and merge.
+    let consistency_index = sugar_verifier::consistency::build_consistency_index(&pool);
     Some(crate::state::ProveContext {
         pool,
         plan,
@@ -163,6 +167,7 @@ pub(crate) fn build_prove_context_for(
         compilers,
         project_root: project_root.to_path_buf(),
         proof_manifest,
+        consistency_index,
     })
 }
 
