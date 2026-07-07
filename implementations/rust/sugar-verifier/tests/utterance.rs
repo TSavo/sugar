@@ -16,12 +16,14 @@
 //      `solve` returns identical rows (same properties, same verdicts, same
 //      client/vendor fact labels).
 //
-//   3. ATTRIBUTION IS THE LABEL: with vendor/consumer spoken normally, the
-//      contradiction row's `clientFactIr` is the consumer's fact; speak the
-//      SAME two envelopes with the roles FLIPPED and the labels flip while
-//      every verdict stays identical -- because the solver input is
-//      byte-identical and ONLY the attribution map changed. Labels are
-//      constructed from attribution, not inferred from position.
+//   3. ATTRIBUTION IS THE LABEL: speak the SAME two envelopes with the
+//      roles FLIPPED and the set of rows carrying a client-fact label moves
+//      wholesale to the other bundle's groups while every verdict stays
+//      identical -- because the solver input is byte-identical and ONLY the
+//      attribution map changed. Labels are constructed from attribution,
+//      not inferred from position. (The contradiction-row labeling receipt
+//      lives in consistency.rs's lib tests, where a same-named cross-proof
+//      pair can be constructed directly.)
 //
 //   4. VERB DISCRIMINATION: speak_implication refuses an envelope carrying
 //      no implication member, atomically (pool untouched).
@@ -34,7 +36,7 @@ use sugar_verifier::consistency::ConsistencyResult;
 use sugar_verifier::load_all_proofs::{self, ProofBytes};
 use sugar_verifier::solvers::registry::build_default_z3;
 use sugar_verifier::solvers::{SolverPlan, SolverSeat};
-use sugar_verifier::types::{MementoPool, ObligationVerdict, Speaker, SpeakerRole};
+use sugar_verifier::types::{MementoPool, Speaker, SpeakerRole};
 use sugar_verifier::utterance::{
     attribution, solve, speak_fact, speak_implication, speak_universe,
 };
@@ -297,31 +299,24 @@ fn labels_come_from_attribution_not_position() {
     let normal_labels = client_labels(&normal);
     let flipped_labels = client_labels(&flipped);
     assert!(
-        !normal_labels.is_empty(),
-        "the base64 pair must produce at least one labeled row"
+        !normal_labels.is_empty() && !flipped_labels.is_empty(),
+        "each direction must label at least one row (normal: {normal_labels:?}, flipped: {flipped_labels:?})"
     );
-    assert_ne!(
-        normal_labels, flipped_labels,
-        "flipping who spoke which envelope must flip the fact labels -- labels are \
-         constructed from attribution, not re-derived from position or source text"
-    );
-
-    // And the contradiction itself must be present and REFUSED with labels
-    // attached in the normal direction (the pandas-demo shape: your fact vs
-    // vendor fact).
-    let contradiction = normal.iter().find(|r| {
-        r.verdict == ObligationVerdict::Unsatisfied
-            && r.verification
-                .as_ref()
-                .is_some_and(|v| v.get("clientFactIr").is_some() && v.get("vendorFactIr").is_some())
-    });
+    // The two base64 fixtures form DISJOINT #euf# groups (no shared
+    // callsite), so every labeled group is spoken entirely by ONE party: a
+    // group gets a client-fact label exactly when its speaker holds the
+    // Consumer role. Flip the roles and the labeled set must move wholesale
+    // to the other bundle's groups -- zero overlap. A positional or
+    // source-text heuristic would label the SAME rows in both runs.
+    let normal_props: std::collections::BTreeSet<_> =
+        normal_labels.iter().map(|(p, _)| p.clone()).collect();
+    let flipped_props: std::collections::BTreeSet<_> =
+        flipped_labels.iter().map(|(p, _)| p.clone()).collect();
     assert!(
-        contradiction.is_some(),
-        "vendor+consumer base64 fixtures must yield a refused row carrying BOTH fact labels; rows: {:?}",
-        normal
-            .iter()
-            .map(|r| (r.property_name.clone(), format!("{:?}", r.verdict)))
-            .collect::<Vec<_>>()
+        normal_props.is_disjoint(&flipped_props),
+        "flipping who spoke which envelope must flip WHICH rows carry the client fact -- \
+         labels are constructed from attribution, not re-derived from position or source \
+         text (normal: {normal_props:?}, flipped: {flipped_props:?})"
     );
 }
 

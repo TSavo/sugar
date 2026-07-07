@@ -4000,6 +4000,92 @@ mod tests {
         );
     }
 
+    /// #3812 ATTRIBUTION LABELS on the cross-proof contradiction: the row's
+    /// `clientFactIr` must be EXACTLY the CONSUMER-spoken conjunct and
+    /// `vendorFactIr` must carry the VENDOR-spoken conjunct, read from the
+    /// pool's Speaker attribution -- and FLIPPING the attribution flips the
+    /// labels while the verdict stays REFUSED, because attribution never
+    /// touches the solver input. This is the pandas-demo row shape ("Your
+    /// fact = 6 / Vendor fact = 5") as a constructed fact, with the
+    /// discrimination arm (flip) that a positional heuristic would fail.
+    #[test]
+    fn attribution_constructs_fact_labels_and_flipping_attribution_flips_them() {
+        use crate::types::SpeakerRole;
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "numpy.add#euf#callresult_numpy_add_a2(2,3)::assertion";
+
+        let solve_with = |consumer_speaks_6: bool| -> ConsistencyResult {
+            let mut pool = MementoPool::default();
+            insert_contract(&mut pool, "speaker-c6", name, eqf(var("r"), int(6)));
+            insert_contract(&mut pool, "speaker-v5", name, eqf(var("r"), int(5)));
+            let (consumer_cid, vendor_cid) = if consumer_speaks_6 {
+                ("speaker-c6", "speaker-v5")
+            } else {
+                ("speaker-v5", "speaker-c6")
+            };
+            pool.attribute_member_for_tests(
+                &test_cid_string(consumer_cid),
+                SpeakerRole::Consumer,
+                "me",
+            );
+            pool.attribute_member_for_tests(
+                &test_cid_string(vendor_cid),
+                SpeakerRole::Vendor,
+                "the-vendor",
+            );
+            let mut res = verify_consistency(
+                &pool,
+                &plan,
+                &reg,
+                &test_compilers(),
+                std::path::Path::new("."),
+            );
+            assert_eq!(res.len(), 1, "one conjoined group: {res:?}");
+            res.remove(0)
+        };
+
+        let labels = |r: &ConsistencyResult| -> (String, String) {
+            let v = r.verification.as_ref().expect("verification detail");
+            let client = v.get("clientFactIr").expect("client fact label").to_string();
+            let vendor = v
+                .get("vendorFactIr")
+                .expect("vendor fact label")
+                .to_string();
+            (client, vendor)
+        };
+
+        // Consumer speaks ==6, vendor speaks ==5.
+        let normal = solve_with(true);
+        assert_eq!(normal.verdict, ObligationVerdict::Unsatisfied);
+        let (client, vendor) = labels(&normal);
+        assert!(
+            client.contains("\"value\":6") && !client.contains("\"value\":5"),
+            "clientFactIr must be the consumer's ==6 conjunct ONLY: {client}"
+        );
+        assert!(
+            vendor.contains("\"value\":5") && !vendor.contains("\"value\":6"),
+            "vendorFactIr must carry the vendor's ==5 conjunct: {vendor}"
+        );
+
+        // FLIP the speakers over the SAME two contracts: labels flip,
+        // verdict does not.
+        let flipped = solve_with(false);
+        assert_eq!(
+            flipped.verdict,
+            ObligationVerdict::Unsatisfied,
+            "attribution must never change the verdict (solver input is byte-identical)"
+        );
+        let (client, vendor) = labels(&flipped);
+        assert!(
+            client.contains("\"value\":5") && !client.contains("\"value\":6"),
+            "flipped clientFactIr must be the (now consumer-spoken) ==5 conjunct: {client}"
+        );
+        assert!(
+            vendor.contains("\"value\":6") && !vendor.contains("\"value\":5"),
+            "flipped vendorFactIr must carry the (now vendor-spoken) ==6 conjunct: {vendor}"
+        );
+    }
+
     /// CONGRUENCE TEETH on a PURE nullary callsite (the cardinal-sin guard).
     ///
     /// This is the exact FOL shape the rust/tokio/polars consistency showcases
