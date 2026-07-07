@@ -66,13 +66,19 @@ pub struct SpeakReceipt {
     pub load_errors: Vec<LoadError>,
 }
 
-/// A refused utterance. The pool is left UNTOUCHED: refusal is atomic.
+/// A refused utterance. Atomic in the sense that MATTERS for soundness: no
+/// memento and no `member_speaker` attribution is added, so the pool's solver
+/// input is byte-identical to before the call. The decode's `load_errors` ARE
+/// recorded into `pool.load_errors` (like every other intake, and like the
+/// success path's `merge`), so the pool keeps a durable record of the failed
+/// decode -- a diagnostic that never enters the solver encoding.
 #[derive(Debug, Clone)]
 pub struct UtteranceRefusal {
     pub kind: UtteranceKind,
     pub speaker: Speaker,
     pub reason: String,
-    /// Load errors from the scratch decode that justified the refusal.
+    /// Load errors from the scratch decode that justified the refusal. Also
+    /// appended to `pool.load_errors` before the refusal returns.
     pub load_errors: Vec<LoadError>,
 }
 
@@ -123,8 +129,9 @@ pub fn speak_implication(
 /// what actually decoded, then `merge` the scratch into the caller's pool --
 /// the SAME merge the runner uses for extra pools, so a spoken pool is
 /// index-for-index the pool a direct load would have built. Refusal happens
-/// before the merge, so a refused utterance leaves the caller's pool
-/// untouched.
+/// before the merge, so a refused utterance adds no member or attribution to
+/// the caller's pool (the solver input is untouched); it does record the
+/// decode's `load_errors` into `pool.load_errors` as a diagnostic.
 fn speak(
     pool: &mut MementoPool,
     speaker: &Speaker,
@@ -141,6 +148,15 @@ fn speak(
     );
     let load_errors = scratch.load_errors.clone();
     if scratch.mementos.is_empty() {
+        // #3813 (finding 3): record the decode's load_errors in the caller's
+        // pool even on refusal, so `pool.load_errors` is the durable record of
+        // every intake's errors -- exactly what the `SpeakReceipt.load_errors`
+        // doc promises for the success path (where `merge` appends them). The
+        // atomicity contract (see `UtteranceRefusal`) is about MEMBERS and
+        // ATTRIBUTION, not diagnostics: no memento or `member_speaker` entry is
+        // added on refusal, so the solver input is byte-identical; only the
+        // (input-independent) error log grows.
+        pool.load_errors.extend(load_errors.clone());
         return Err(UtteranceRefusal {
             kind,
             speaker: speaker.clone(),
@@ -164,6 +180,9 @@ fn speak(
     if let Some(required) = required_kind {
         let carries = scratch.mementos.values().any(|m| m.kind() == required);
         if !carries {
+            // Same as the zero-members branch: record decode diagnostics in
+            // the pool on refusal (members/attribution stay untouched).
+            pool.load_errors.extend(load_errors.clone());
             return Err(UtteranceRefusal {
                 kind,
                 speaker: speaker.clone(),

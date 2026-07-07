@@ -355,3 +355,54 @@ fn speak_implication_refuses_envelope_without_implication_members() {
         "accepted utterance stamps the speaker's role"
     );
 }
+
+// ---------------------------------------------------------------------
+// #3813 (finding 3): a refusal whose scratch decode raised load errors
+// RECORDS those errors into `pool.load_errors` (the durable log every other
+// intake keeps), while still adding NO member or attribution. The
+// `SpeakReceipt`/`UtteranceRefusal` docs promise exactly this.
+// ---------------------------------------------------------------------
+
+#[test]
+fn refusal_records_decode_load_errors_in_the_pool() {
+    // Valid-FORMAT expected CID that deliberately does NOT match the bytes,
+    // so `load_catalog_bytes` trips rule 1 (trust root) -> the scratch decodes
+    // to zero members with a load error -> `speak_universe` refuses.
+    let bytes = b"not a proof catalog".to_vec();
+    let wrong_cid = sugar_canonicalizer::blake3_512_of(b"some other content");
+    let proof = ProofBytes::try_from_parts(
+        "mismatched.proof",
+        wrong_cid,
+        bytes,
+        Speaker::vendor("v"),
+    )
+    .expect("valid CID format stages into ProofBytes");
+
+    let mut pool = MementoPool::default();
+    let refusal = speak_universe(&mut pool, &Speaker::vendor("v"), &proof)
+        .expect_err("a byte/CID mismatch decodes to zero members and refuses");
+
+    assert!(
+        !refusal.load_errors.is_empty(),
+        "the refusal must carry the decode error"
+    );
+    // The soundness-relevant half of atomicity: no member, no attribution.
+    assert!(
+        pool.mementos.is_empty() && attribution(&pool).is_empty(),
+        "refusal adds no member or attribution"
+    );
+    // The diagnostic half: the pool now records the decode error, matching the
+    // success path's `merge` and every other intake.
+    assert_eq!(
+        pool.load_errors.len(),
+        refusal.load_errors.len(),
+        "pool must record the same decode errors the refusal reported"
+    );
+    assert!(
+        pool.load_errors
+            .iter()
+            .any(|e| e.reason.contains("trust root")),
+        "recorded error should be the rule-1 trust-root mismatch: {:#?}",
+        pool.load_errors
+    );
+}
