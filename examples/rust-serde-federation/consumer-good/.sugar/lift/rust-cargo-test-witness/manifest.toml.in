@@ -1,0 +1,13 @@
+name = "rust-cargo-test-witness-lift"
+version = "0.1.0-draft"
+protocol_version = "pep/1.7.0"
+kind = "lift"
+command = ["@BIN_DIR@/witness_rpc"]
+discharge_command = ["@BIN_DIR@/discharge_cli"]
+witness_tool = "cargo-test"
+resolve_witness_command = ["@BIN_DIR@/witness_rpc"]
+resolve_witness_method = "sugar.plugin.resolve_witness"
+working_dir = "."
+
+[capabilities]
+authoring_surfaces = ["rust-cargo-test-witness"]

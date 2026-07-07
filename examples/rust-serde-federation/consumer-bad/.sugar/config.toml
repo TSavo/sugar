@@ -1,0 +1,26 @@
+[[plugins]]
+name = "rust-test-assertions-lift"
+kind = "lift"
+surface = "rust-test-assertions"
+emit = "ir-document"
+
+[[plugins]]
+name = "rust-cargo-test-witness-lift"
+kind = "lift"
+surface = "rust-cargo-test-witness"
+
+[solvers]
+default = "z3"
+
+[solvers.dispatch]
+linear_arithmetic = "z3"
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+flags = ["-smt2", "-in"]
+
+[platform_profile]
+language = "rust"
+library = "serde_json"
+version = "1.0.150"

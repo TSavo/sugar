@@ -1,0 +1,40 @@
+{
+  "envelope": {
+    "declaredAt": "1970-01-01T00:00:00.000Z",
+    "signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "signer": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  },
+  "header": {
+    "built_in_count": 0,
+    "cid": "blake3-512:89708122d7dc6e6bd95c3fec829b611e9ddf1a2d795238fc9c978614c2281a6bf6b9ded4f901e437d0399a09283b3babb8e48ad3eb5828f475b4934414213ec5",
+    "failures": [],
+    "kind": "plugin-registry",
+    "load_order": [
+      {
+        "cid": "blake3-512:0becd55c3b08b7dc7b8b44d089f6a6be6b2b5e1371f5131a8d3be0d93e687c23a90ff03a2facefeb64ace4bdba49578986d27a983d82d3ad8a923c934f8894bb",
+        "kind": "lift",
+        "source": ".sugar/lift/rust-cargo-test-witness/manifest.toml"
+      },
+      {
+        "cid": "blake3-512:71bdeadd502da1f70888620011442eb26ae355e7a4a2fac365a9e69b5a629d8c37cca755b145a3e3ed10d76d0581c649c346016a9dedc32247310dafdbd6e25f",
+        "kind": "lift",
+        "source": ".sugar/lift/rust-test-assertions/manifest.toml"
+      }
+    ],
+    "loaded": [
+      {
+        "cid": "blake3-512:0becd55c3b08b7dc7b8b44d089f6a6be6b2b5e1371f5131a8d3be0d93e687c23a90ff03a2facefeb64ace4bdba49578986d27a983d82d3ad8a923c934f8894bb",
+        "kind": "lift"
+      },
+      {
+        "cid": "blake3-512:71bdeadd502da1f70888620011442eb26ae355e7a4a2fac365a9e69b5a629d8c37cca755b145a3e3ed10d76d0581c649c346016a9dedc32247310dafdbd6e25f",
+        "kind": "lift"
+      }
+    ],
+    "runtime_protocol_versions": [
+      "pep/1.7.0"
+    ],
+    "schemaVersion": "1",
+    "sealed_at": "1970-01-01T00:00:00.000Z"
+  }
+}
