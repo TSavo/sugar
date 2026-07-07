@@ -1705,6 +1705,7 @@ pub async fn handle_prove_consistency(
             "daemon-lift-scratch",
             scratch.cid,
             scratch.bytes,
+            sugar_verifier::Speaker::consumer("daemon-lift-scratch"),
         )
         .map_err(|e| format!("stage scratch proof bytes: {e}"))?;
         sugar_verifier::load_all_proofs::load_proof_bytes_into_pool(&[staged], &mut overlay_pool);
