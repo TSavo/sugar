@@ -13,6 +13,7 @@
 // / vacuous discharge); the solver-backed semantic adjudication that turns a
 // literal test assertion UNSAT is slice B/C (see README).
 
+import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
@@ -176,8 +177,22 @@ async function runProve(doc: vscode.TextDocument): Promise<void> {
     // cleared rows (green now) drop their squiggles.
     proveDiagnostics.clear();
     const byFile = new Map<string, vscode.Diagnostic[]>();
+    // PROJECT-LOCAL SCOPING. A project prove can implicate any memento in the
+    // pool, including a VENDOR proof's own internal assertions (e.g. the pandas
+    // .proof carries 21 violations anchored at pandas' own test paths). Those
+    // rows are real for the vendor but are NOT the user's code -- painting them
+    // would squiggle files the user never wrote. Keep only rows whose resolved
+    // file is INSIDE projectDir AND exists on disk (the consumer's own sources).
+    const rootAbs = path.resolve(projectDir);
     for (const d of res.diagnostics) {
-      const abs = path.isAbsolute(d.file) ? d.file : path.join(projectDir, d.file);
+      const abs = path.resolve(
+        path.isAbsolute(d.file) ? d.file : path.join(projectDir, d.file)
+      );
+      const inProject =
+        abs === rootAbs || abs.startsWith(rootAbs + path.sep);
+      if (!inProject || !fs.existsSync(abs)) {
+        continue;
+      }
       const list = byFile.get(abs) ?? [];
       list.push(proveToVsDiagnostic(d));
       byFile.set(abs, list);
