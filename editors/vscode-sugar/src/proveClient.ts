@@ -166,10 +166,15 @@ export function prettyFol(fol: string, indent = "    "): string {
         const tail = s.slice(j); // starts with close
         const args = splitTop(body, ", ");
         if (args.length < 2) {
-          // no comma at this level: descend -- a comma may hide deeper
-          const innerOne = breakCall(body, pad + indent);
-          if (innerOne.trim() === body.trim()) return pad + s;
-          return pad + head + "\n" + innerOne + "\n" + pad + tail;
+          // No comma at this level: descend, but GLUE -- the wrapper paren
+          // stays on the same line as what it wraps (never a lone "(" line;
+          // the ∧ line carries the start of its conjunct).
+          const innerOne = breakCall(body, pad);
+          const innerLines = innerOne.split("\n");
+          if (innerLines.length === 1) return pad + s;
+          innerLines[0] = pad + head + innerLines[0].trimStart();
+          innerLines[innerLines.length - 1] = innerLines[innerLines.length - 1] + tail;
+          return innerLines.join("\n");
         }
         const inner = args
           .map((a) => breakCall(a, pad + indent))
@@ -219,8 +224,29 @@ export function formatDetail(d: ProveDiagnostic): string {
     // The Conjoined section IS the parts conjoined -> the solver's verdict:
     // each conjunct pretty-printed on its own block, verdict on the last line.
     lines.push("Conjoined:");
-    lines.push(parts.map((p) => prettyFol("(" + p + ")")).join("\n∧\n"));
+    // ONE call: the whole conjunction goes through prettyFol so the ∧ rule
+    // (line start, indented, conjunct opening on the same line) applies.
+    lines.push(prettyFol(parts.map((p) => "(" + p + ")").join(" ∧ ")));
     lines.push(`  →  ${verdict}`);
+    // THE FIX: the model's answer. Case 2 (universe): z3.model DERIVED the
+    // value from the vendor's law; case 1: it is the vendor's sworn value.
+    // Either way the proven value rides vendorFactFol -- show the edit the
+    // Quick Fix (⌘.) will apply.
+    const rhsOf = (fol: string): string | undefined => {
+      const i = fol.lastIndexOf(" = ");
+      return i >= 0 ? fol.slice(i + 3).trim() : undefined;
+    };
+    const vendorVal = d.vendorFactFol ? rhsOf(d.vendorFactFol) : undefined;
+    if (vendorVal !== undefined && d.clientFactFol) {
+      const yours = strip(d.clientFactFol)
+        .split(" ∧ ")
+        .map((c) => rhsOf(c.trim()))
+        .find((v) => v !== undefined && v !== vendorVal);
+      if (yours !== undefined) {
+        lines.push("The fix (z3.model):");
+        lines.push(`    replace ${yours} with ${vendorVal}   — Quick Fix (⌘.) applies it`);
+      }
+    }
   } else {
     lines.push(`z3: ${d.status} — ${d.reason}`);
   }
