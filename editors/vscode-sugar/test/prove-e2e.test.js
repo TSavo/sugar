@@ -171,7 +171,7 @@ function consistencyDiag(res, consumerFile) {
       check(
         "bad: YOUR FACT renders the consumer's own equality with its literal",
         typeof d.clientFactFol === "string" &&
-          /call:(?:[\w.]+\.)?encodeBase64\("xyz"\)/.test(d.clientFactFol) &&
+          /(?:call:)?(?:[\w.]+\.)?encodeBase64\("xyz"\)/.test(d.clientFactFol) &&
           d.clientFactFol.includes('"AAAA"'),
         d.clientFactFol
       );
@@ -181,7 +181,7 @@ function consistencyDiag(res, consumerFile) {
       check(
         "bad: VENDOR FACT renders the DERIVED vendor value (eHl6), not the lie",
         typeof d.vendorFactFol === "string" &&
-          /call:(?:[\w.]+\.)?encodeBase64\("xyz"\)/.test(d.vendorFactFol) &&
+          /(?:call:)?(?:[\w.]+\.)?encodeBase64\("xyz"\)/.test(d.vendorFactFol) &&
           d.vendorFactFol.includes('"eHl6"') &&
           !d.vendorFactFol.includes('"AAAA"'),
         d.vendorFactFol

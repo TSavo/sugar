@@ -7594,7 +7594,10 @@ fn proofir_term_to_fol(term: &Value) -> String {
                 // as a call rather than a bare symbol. Nullary data ctors
                 // (unit variants like `None`) keep their bare form.
                 if name.starts_with("call:") {
-                    return format!("{name}()");
+                    // Strip the `call:` provenance prefix for display -- a human
+                    // reading the squiggle wants `encodeBase64()`, not
+                    // `call:encodeBase64()`. The prefix is an internal tag.
+                    return format!("{}()", name.strip_prefix("call:").unwrap_or(name));
                 }
                 return name.to_string();
             }
@@ -7606,7 +7609,9 @@ fn proofir_term_to_fol(term: &Value) -> String {
                 .map(proofir_term_to_fol)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("{name}({rendered_args})")
+            // Strip the `call:` provenance prefix for display (internal tag).
+            let display = name.strip_prefix("call:").unwrap_or(name);
+            format!("{display}({rendered_args})")
         }
         "let" | "Let" => proofir_let_term_to_fol(term),
         other => {
