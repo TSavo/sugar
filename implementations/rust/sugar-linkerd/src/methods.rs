@@ -1177,8 +1177,8 @@ fn parse_declaration_to_contract(decl: &Json, kit_label: &str) -> Option<LinkerC
         return None;
     }
 
-    let pre_json = decl.get("pre").cloned();
-    let post_json = decl.get("post").cloned();
+    let pre_raw = decl.get("pre").cloned();
+    let post_raw = decl.get("post").cloned();
     let inv_json = decl.get("inv").cloned();
     let out_binding = decl
         .get("outBinding")
@@ -1187,13 +1187,22 @@ fn parse_declaration_to_contract(decl: &Json, kit_label: &str) -> Option<LinkerC
         .to_string();
 
     // Compute a stable content CID: BLAKE3-512(JCS({name, outBinding, pre?, post?, inv?})).
+    // Computed from the RAW decl JSON (the CID canonicalizes via JCS, so it is
+    // independent of formula field order and byte-identical across this seam).
     let contract_cid = compute_contract_cid_from_json(
         &name,
         &out_binding,
-        pre_json.as_ref(),
-        post_json.as_ref(),
+        pre_raw.as_ref(),
+        post_raw.as_ref(),
         inv_json.as_ref(),
     );
+
+    // Type the pre/post as `IrFormula`. Every kit lifter emits these via
+    // `IrFormula` serialization (see `libsugar::core::bind`), so parse is
+    // total for real declarations; `json_to_formula` returns `None` only for
+    // an absent field.
+    let pre_json = json_to_formula(pre_raw);
+    let post_json = json_to_formula(post_raw);
 
     Some(LinkerContract {
         name,
@@ -1399,8 +1408,8 @@ async fn lift_rust_source(
             };
             let cid = compute_contract_cid(&args);
 
-            let pre_json = pre_v.map(|v| value_arc_to_json(&v));
-            let post_json = post_v.map(|v| value_arc_to_json(&v));
+            let pre_json = json_to_formula(pre_v.map(|v| value_arc_to_json(&v)));
+            let post_json = json_to_formula(post_v.map(|v| value_arc_to_json(&v)));
 
             contracts.push(LinkerContract {
                 name: decl.name.clone(),
@@ -1457,6 +1466,16 @@ async fn lift_rust_source(
 
 fn value_arc_to_json(v: &std::sync::Arc<sugar_canonicalizer::Value>) -> Json {
     value_to_json(v)
+}
+
+/// Type a raw pre/post declaration formula as an [`IrFormula`] for the
+/// `LinkerContract` formula fields. `None` (absent field) maps to `None`.
+/// Every kit lifter emits pre/post via `IrFormula` serialization, so the
+/// deserialize is total for real declarations; a value IrFormula cannot
+/// represent maps to `None` (treated downstream as an absent formula) rather
+/// than being smuggled through untyped.
+fn json_to_formula(raw: Option<Json>) -> Option<sugar_ir_types::IrFormula> {
+    raw.and_then(|v| serde_json::from_value(v).ok())
 }
 
 // -------------------------------------------------------------------

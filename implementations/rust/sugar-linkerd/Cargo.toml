@@ -17,6 +17,7 @@ sugar-lift = { path = "../sugar-lift" }
 # verify_consistency construction `sugar prove` uses, never a reimplementation.
 sugar-verifier = { path = "../sugar-verifier" }
 sugar-ir-compiler = { path = "../sugar-ir-compiler" }
+sugar-ir-types = { path = "../sugar-ir-types" }
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-ir-symbolic = { path = "../sugar-ir-symbolic" }
 sugar-claim-envelope = { path = "../sugar-claim-envelope" }

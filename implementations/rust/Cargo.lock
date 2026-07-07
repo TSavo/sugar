@@ -1712,6 +1712,7 @@ dependencies = [
  "sugar-canonicalizer",
  "sugar-ir-compiler",
  "sugar-ir-compiler-smt-lib",
+ "sugar-ir-types",
  "sugar-verifier",
 ]
 
@@ -1729,6 +1730,7 @@ dependencies = [
  "sugar-ir-compiler",
  "sugar-ir-compiler-smt-lib",
  "sugar-ir-symbolic",
+ "sugar-ir-types",
  "sugar-lift",
  "sugar-linker",
  "sugar-verifier",

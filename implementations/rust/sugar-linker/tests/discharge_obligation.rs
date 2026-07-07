@@ -64,13 +64,17 @@ fn and_of(a: Json, b: Json) -> Json {
     json!({"kind": "and", "operands": [a, b]})
 }
 
+fn to_formula(v: Json) -> sugar_ir_types::IrFormula {
+    serde_json::from_value(v).expect("test formula must be a valid IrFormula")
+}
+
 fn caller(post: Option<Json>) -> LinkerContract {
     LinkerContract {
         name: "caller".into(),
         kit: "rust-kit".into(),
         contract_cid: CALLER_CID.into(),
         pre_json: None,
-        post_json: post,
+        post_json: post.map(to_formula),
         ..Default::default()
     }
 }
@@ -80,7 +84,7 @@ fn callee(pre: Option<Json>) -> LinkerContract {
         name: "callee".into(),
         kit: "rust-kit".into(),
         contract_cid: CALLEE_CID.into(),
-        pre_json: pre,
+        pre_json: pre.map(to_formula),
         post_json: None,
         ..Default::default()
     }

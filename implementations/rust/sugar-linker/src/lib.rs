@@ -47,6 +47,7 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CanonValue};
 use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT as SMT_DIALECT};
+use sugar_ir_types::IrFormula;
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
 
@@ -81,12 +82,17 @@ pub struct LinkerContract {
     pub kit: String,
     /// Content-addressed contract CID, `blake3-512:<hex>`.
     pub contract_cid: String,
-    /// Pre-condition formula as a `serde_json::Value` (ProofIR term).
-    /// `None` if the function has no pre-condition annotation.
-    pub pre_json: Option<Json>,
-    /// Post-condition formula as a `serde_json::Value` (ProofIR term).
-    /// `None` if the function has no post-condition annotation.
-    pub post_json: Option<Json>,
+    /// Pre-condition formula as a strongly-typed [`IrFormula`] (ProofIR
+    /// formula). `None` if the function has no pre-condition annotation.
+    /// Retyped from `serde_json::Value` in the formula-typeify seam: the
+    /// `{"kind":...}` wire JSON is unchanged (IrFormula is `#[serde(tag =
+    /// "kind")]` and serializes to the identical tagged object), so contract
+    /// CIDs and snapshot bytes are byte-for-byte preserved.
+    pub pre_json: Option<IrFormula>,
+    /// Post-condition formula as a strongly-typed [`IrFormula`] (ProofIR
+    /// formula). `None` if the function has no post-condition annotation.
+    /// See [`LinkerContract::pre_json`] for the byte-identity contract.
+    pub post_json: Option<IrFormula>,
     /// Declared formal parameter names, in order. Part of the contract's
     /// exported signature: an importing call edge whose [`ImportSignature`]
     /// disagrees with these is rejected by [`bind`] as `signature-mismatch`.
@@ -784,17 +790,19 @@ fn derive_bridge(
 ///      * `Undecidable` / `Disagreement` / no solver registered:
 ///        `implication-undecidable` (do NOT silently discharge).
 fn discharge_obligation(
-    source_post: Option<&Json>,
-    target_pre: Option<&Json>,
+    source_post: Option<&IrFormula>,
+    target_pre: Option<&IrFormula>,
     source_contract_cid: &str,
     target_cid: &str,
     target_symbol: &str,
     registry: &Registry,
     plan: &SolverPlan,
 ) -> Option<LinkerError> {
-    // (1) Caller post absent: cannot discharge.
+    // (1) Caller post absent: cannot discharge. (A wire `null` deserializes to
+    // `None` under `Option<IrFormula>`, so the old `Some(Json::Null)` arm is
+    // now folded into `None` with identical behavior.)
     let post = match source_post {
-        None | Some(Json::Null) => {
+        None => {
             return Some(LinkerError {
                 kind: LinkerErrorKind::UnprovableObligation,
                 target_symbol: target_symbol.to_string(),
@@ -811,13 +819,15 @@ fn discharge_obligation(
 
     // (2) Callee pre absent: vacuously discharged.
     let pre = match target_pre {
-        None | Some(Json::Null) => return None,
+        None => return None,
         Some(p) => p,
     };
 
-    // (3) JCS-canonical equality: P -> P trivially.
-    let post_jcs = jcs_of_json(post);
-    let pre_jcs = jcs_of_json(pre);
+    // (3) JCS-canonical equality: P -> P trivially. JCS sorts keys, so the
+    // comparison is insensitive to formula field order; typing the formulas
+    // does not change any verdict here.
+    let post_jcs = jcs_of_formula(post);
+    let pre_jcs = jcs_of_formula(pre);
     if post_jcs == pre_jcs {
         return None;
     }
@@ -828,10 +838,15 @@ fn discharge_obligation(
     // plan are external to the linker (the architect's "use whatever
     // Cargo.toml says" rule); we never reach for a hardcoded solver
     // name.
-    let implication = serde_json::json!({
-        "kind": "implies",
-        "operands": [post.clone(), pre.clone()],
-    });
+    let implication_formula = IrFormula::Implies {
+        operands: vec![post.clone(), pre.clone()],
+    };
+    // Lower the typed formula back to the same `{"kind":"implies","operands":
+    // [post, pre]}` JSON the compiler consumed before this seam. `to_value`
+    // on an `IrFormula` is infallible (derived Serialize over owned data);
+    // the SMT script it feeds is a derived intermediate, never a wire artifact.
+    let implication = serde_json::to_value(&implication_formula)
+        .expect("IrFormula::Implies always serializes to JSON");
 
     let implication_input = match CompilerInput::decode_json(implication.clone()) {
         Ok(input) => input,
@@ -939,6 +954,15 @@ fn jcs_of_json(v: &Json) -> Vec<u8> {
     encode_jcs(&json_to_canon_value(v)).into_bytes()
 }
 
+/// JCS-canonical bytes of a typed formula. Lowers the `IrFormula` to its
+/// `{"kind":...}` JSON (byte-identical to the pre-typeify wire value) and runs
+/// the same JCS canonicalizer, so equality checks against the old `Json` path
+/// are bit-for-bit identical.
+fn jcs_of_formula(f: &IrFormula) -> Vec<u8> {
+    let json = serde_json::to_value(f).expect("IrFormula always serializes to JSON");
+    jcs_of_json(&json)
+}
+
 fn json_to_canon_value(j: &Json) -> CanonValue {
     match j {
         Json::Null => CanonValue::Null,
@@ -976,18 +1000,68 @@ fn json_to_canon_value(j: &Json) -> CanonValue {
 mod tests {
     use super::*;
 
+    /// BYTE-IDENTITY GATE for the formula-typeify seam.
+    ///
+    /// Every `pre`/`post` formula reaching the linker is produced by
+    /// `serde_json::to_value(&IrFormula)` upstream (e.g.
+    /// `libsugar::core::bind::bind_function_bridge`), so its wire key order is
+    /// the `IrFormula` declaration order. This test pins that round-tripping a
+    /// representative set of those exact wire values through `Option<IrFormula>`
+    /// (deserialize -> re-serialize) reproduces the bytes exactly. If a producer
+    /// ever emits a formula IrFormula cannot represent, `from_value` fails here
+    /// and the seam is reported as a mismatch rather than silently green.
+    #[test]
+    fn formula_typeify_is_byte_identical_on_the_wire() {
+        // Exact `{"kind":...}` wire strings in IrFormula declaration order.
+        let wire_forms = [
+            r#"{"kind":"atomic","name":"true","args":[]}"#,
+            r#"{"kind":"atomic","name":">","args":[{"kind":"var","name":"n"},{"kind":"const","value":0,"sort":{"kind":"primitive","name":"Int"}}]}"#,
+            r#"{"kind":"and","operands":[{"kind":"atomic","name":">=","args":[{"kind":"var","name":"x"},{"kind":"const","value":1,"sort":{"kind":"primitive","name":"Int"}}]},{"kind":"atomic","name":"<","args":[{"kind":"var","name":"x"},{"kind":"const","value":9,"sort":{"kind":"primitive","name":"Int"}}]}]}"#,
+            r#"{"kind":"implies","operands":[{"kind":"atomic","name":"true","args":[]},{"kind":"atomic","name":"true","args":[]}]}"#,
+        ];
+        for wire in wire_forms {
+            let parsed: IrFormula =
+                serde_json::from_str(wire).expect("wire formula must parse as IrFormula");
+            let reserialized = serde_json::to_string(&parsed).expect("IrFormula serializes");
+            assert_eq!(reserialized, wire, "IrFormula round-trip must be byte-identical");
+        }
+    }
+
+    /// The `Option<IrFormula>` field itself must serialize/deserialize
+    /// byte-identically inside a `LinkerContract` (the shape the linkerd R14
+    /// snapshot persists), including the `None -> null` and present-formula
+    /// cases.
+    #[test]
+    fn contract_formula_fields_roundtrip_in_snapshot_shape() {
+        let contract = make_process_contract(); // pre: `n > 0`, post: None
+        let bytes = serde_json::to_vec(&contract).expect("serialize contract");
+        let restored: LinkerContract = serde_json::from_slice(&bytes).expect("deserialize contract");
+        let rebytes = serde_json::to_vec(&restored).expect("re-serialize contract");
+        assert_eq!(bytes, rebytes, "LinkerContract formula fields must round-trip byte-identically");
+        assert_eq!(restored.pre_json, contract.pre_json);
+        assert_eq!(restored.post_json, contract.post_json);
+    }
+
     fn make_process_contract() -> LinkerContract {
         LinkerContract {
             name: "process".into(),
             kit: "rust-kit".into(),
             contract_cid: "blake3-512:aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001".into(),
-            pre_json: Some(serde_json::json!({
-                "kind": "Gt",
-                "args": [
-                    {"kind": "Var", "name": "n", "sort": "Int"},
-                    {"kind": "Num", "value": 0}
-                ]
-            })),
+            // A valid IrFormula pre (`n > 0`). It is inert in every test that
+            // uses this fixture (each hits `unprovable-obligation` because the
+            // caller post is absent, so this pre is never decoded, and the
+            // pinned linkBundleCid derives from bridges, not contract formulas).
+            pre_json: Some(
+                serde_json::from_value(serde_json::json!({
+                    "kind": "atomic",
+                    "name": ">",
+                    "args": [
+                        {"kind": "var", "name": "n"},
+                        {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
+                    ]
+                }))
+                .expect("valid IrFormula"),
+            ),
             post_json: None,
             ..Default::default()
         }
@@ -1184,7 +1258,10 @@ mod tests {
             name: "frame_pipeline".into(),
             kit: "polars-kit".into(),
             contract_cid: "blake3-512:1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111".into(),
-            post_json: Some(serde_json::json!({"kind": "atomic", "name": "true", "args": []})),
+            post_json: Some(
+                serde_json::from_value(serde_json::json!({"kind": "atomic", "name": "true", "args": []}))
+                    .expect("valid IrFormula"),
+            ),
             ..Default::default()
         };
         let edge = LinkerCallEdge {
