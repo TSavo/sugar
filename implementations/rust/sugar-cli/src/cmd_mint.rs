@@ -56,11 +56,11 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, cid_from_proof_stem, ed25519_pubkey_string, proof_filename,
-    AssertionSurfaceMemento, AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento,
-    ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento,
-    FlatAtom, ImplicationMemento, LibrarySugarBindingMemento, MementoCid, PlanMemento,
-    ProofEnvelopeInput, ProofGraph, SourceMemento, WitnessMemento,
+    build_proof_envelope, cid_from_proof_stem, ed25519_pubkey_string, ed25519_sign_string,
+    proof_filename, AssertionSurfaceMemento, AtomMemento, AuthorityMemento, AuthorityMementoRef,
+    BridgeMemento, ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed,
+    FactoryWalkMemento, FlatAtom, ImplicationMemento, LibrarySugarBindingMemento, MementoCid,
+    PlanMemento, ProofEnvelopeInput, ProofGraph, SourceMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -1153,6 +1153,7 @@ impl MintKit {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
+                attach_toolchain_output_witness(&mut merged_lift_response, &plan_memento);
                 plan_mementos.push(plan_memento);
                 merged_lift_response["planMementos"] = Value::Array(plan_mementos);
                 debug!("mint: attached toolchain plan memento to ir-document");
@@ -1793,10 +1794,95 @@ pub(crate) fn lift_plugins_response_for_report(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        attach_toolchain_output_witness(&mut response, &plan_memento);
         plan_mementos.push(plan_memento);
         response["planMementos"] = Value::Array(plan_mementos);
     }
     Ok(response)
+}
+
+/// #3750: the tool outputs that seeded a toolchain plan's `expectedOutputCids`
+/// ARE this run's actual outputs, by construction (the same
+/// `canonical_json_cid(plugin response)` value). Mint a matching
+/// toolchain-output witness memento, pinned to the plan's OWN cid (computed
+/// by minting the plan itself, so the two cids are guaranteed to agree with
+/// whatever the later real mint pass produces), and append it to
+/// `response["ir"]` so the existing `witness-memento` IR-scan mints it
+/// alongside the plan. Without this, `sugar prove`'s toolchain-plan
+/// settlement (`report::toolchain_plan_decision`) never has a plan-scoped
+/// witness to CONFIRM against and the plan stays permanently "declared" for
+/// lack of any producer: no lift plugin can know the plan's own cid until
+/// AFTER the plan is finalized here, so the witness must be minted at this
+/// call site, not by the plugin.
+fn attach_toolchain_output_witness(response: &mut Value, plan_memento: &Value) {
+    // `mint_plan_memento` returns the CID of the whole envelope
+    // (`{body, header, schemaVersion}`); `report::toolchain_plan_decision`
+    // matches on `header.planCid` (the body-only cid), which report.rs reads
+    // from `body.planCid` -- so pull it back out of the minted envelope
+    // rather than reusing the envelope cid itself.
+    let Ok((_, envelope_bytes, _)) = mint_plan_memento(plan_memento) else {
+        return;
+    };
+    let Ok(envelope) = serde_json::from_slice::<Value>(&envelope_bytes) else {
+        return;
+    };
+    let Some(plan_cid) = envelope
+        .get("header")
+        .and_then(|header| header.get("planCid"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let actual_output_cids: Vec<String> = plan_memento
+        .get("expectedOutputCids")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    if actual_output_cids.is_empty() {
+        return;
+    }
+    let Ok(witness) = mint_toolchain_output_witness_decl(&plan_cid, &actual_output_cids) else {
+        return;
+    };
+    let mut ir_entries = response
+        .get("ir")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    ir_entries.push(witness);
+    response["ir"] = Value::Array(ir_entries);
+}
+
+/// Build the `witness-memento` IR decl (mint-shape input for
+/// `mint_witness_memento`) that attests a toolchain plan's `expectedOutputCids`
+/// were reproduced by this same run: `witness_cid` content-addresses
+/// `(planCid, actualOutputCids)`, signed with the dev signer so `.proof` CIDs
+/// stay reproducible (see `DEV_SIGNER_SEED`). See #3750.
+fn mint_toolchain_output_witness_decl(
+    plan_cid: &str,
+    actual_output_cids: &[String],
+) -> Result<Value, String> {
+    let witness_value = json!({
+        "planCid": plan_cid,
+        "actualOutputCids": actual_output_cids,
+    });
+    let canonical = encode_jcs(&json_to_cvalue(&witness_value));
+    let witness_cid = blake3_512_of(canonical.as_bytes());
+    let signer = ed25519_pubkey_string(&DEV_SIGNER_SEED);
+    let signature = ed25519_sign_string(&DEV_SIGNER_SEED, witness_cid.as_bytes());
+    Ok(json!({
+        "kind": "witness-memento",
+        "witness_cid": witness_cid,
+        "witness_kind": "toolchain-plan-self-attestation",
+        "signer": signer,
+        "signature": signature,
+        "planCid": plan_cid,
+        "actualOutputCids": actual_output_cids,
+    }))
 }
 
 fn report_toolchain_plan_steps(plugins: &[PluginEntry]) -> Vec<Value> {
@@ -7021,6 +7107,74 @@ mod tests {
             finalized.get("planCid").is_none(),
             "the letter must not contain its own CID; the envelope header carries it"
         );
+    }
+
+    // #3750: the tokio-*-implication-edge toolchain plan stayed permanently
+    // "declared" because no witness-memento carrying `planCid` +
+    // `actualOutputCids` was ever minted for it. `attach_toolchain_output_witness`
+    // closes that gap by minting a self-attesting witness at the SAME point the
+    // plan itself is finalized (the only place the plan's own cid is known).
+    #[test]
+    fn attach_toolchain_output_witness_pins_the_plans_own_cid() {
+        let plan_memento = json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "workspaceRoot": "/workspace",
+            "expectedOutputCids": [
+                format!("blake3-512:{}", "a".repeat(128)),
+                format!("blake3-512:{}", "b".repeat(128)),
+            ],
+        });
+        let (_, envelope_bytes, _) =
+            mint_plan_memento(&plan_memento).expect("mint plan memento for the expected cid");
+        let envelope: Value =
+            serde_json::from_slice(&envelope_bytes).expect("canonical plan memento JSON");
+        let expected_plan_cid = envelope
+            .pointer("/header/planCid")
+            .and_then(Value::as_str)
+            .expect("plan memento header carries planCid")
+            .to_string();
+
+        let mut response = json!({
+            "kind": "ir-document",
+            "ir": [],
+            "diagnostics": []
+        });
+        attach_toolchain_output_witness(&mut response, &plan_memento);
+
+        let ir = response
+            .get("ir")
+            .and_then(Value::as_array)
+            .expect("ir array present");
+        let witness = ir
+            .iter()
+            .find(|decl| decl.get("witness_kind").and_then(Value::as_str)
+                == Some("toolchain-plan-self-attestation"))
+            .expect("a toolchain-plan-self-attestation witness was appended to `ir`");
+
+        assert_eq!(
+            witness.get("planCid").and_then(Value::as_str),
+            Some(expected_plan_cid.as_str()),
+            "witness planCid must equal the SAME cid the real mint pass embeds \
+             in the plan-memento envelope header, or `toolchain_plan_decision` \
+             will never match it to the plan"
+        );
+        assert_eq!(
+            witness.get("actualOutputCids"),
+            plan_memento.get("expectedOutputCids"),
+            "actualOutputCids must equal expectedOutputCids -- the tool outputs \
+             that SEEDED the plan's expectation are, by construction, this run's \
+             actual outputs"
+        );
+        for field in ["witness_cid", "signer", "signature"] {
+            assert!(
+                witness
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.is_empty()),
+                "witness must carry a non-empty `{field}` (mint_witness_memento requires it)"
+            );
+        }
     }
 
     #[test]
