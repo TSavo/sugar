@@ -9,7 +9,8 @@ RUST="$REPO/implementations/rust"
 
 echo "SCOPE: serde_json 1.0.150 exact vendor rows from tests/test.rs."
 echo "SCOPE: GOOD claims are point-wise exact serialization rows; BAD is a contradiction twin."
-echo "SCOPE: current discharge law refuses singleton/ambient testimony; load replay must stay clean."
+echo "SCOPE: current discharge law refuses singleton/ambient testimony (consistency rows); load replay must stay clean."
+echo "SCOPE: the witness-package axis is orthogonal to consistency -- it settles purely on cargo test pass/fail (mirrors python discharge_from_proof), so GOOD's genuinely-passing suite discharges its witness even while its consistency rows refuse."
 echo "SCOPE: residuals = helper-loop structure, format-macro debug rows, cfg-dependent map ordering rows, and nonfinite-float rows."
 
 echo "== resolve the CLI, component planners, Rust assertion lifter, and cargo-test witness lifter via sugarbin =="
@@ -253,7 +254,7 @@ print("   durable witness dimension: verified")
 PY
 }
 
-run_suite good REFUSE REFUSE
+run_suite good REFUSE DISCHARGE
 run_suite bad UNSAT REFUSE
 
 echo
