@@ -20,16 +20,13 @@ lifecycle, kit-side, with the `.proof` as the transport and rust proof-blind.
 - `test_numpy_rot90.py` — numpy's **own** testing vocabulary (`numpy.testing`).
   Two lifters read it: the **consistency** seat (numpy.testing) and the
   **witness** seat (pytest-witness, which *runs* it).
-- `boundary.py` — a `@boundary(library="numpy", call="rot90")` stub for materialize.
-- `app.py` — production `np.rot90` (aliased) for recognize.
+- `app.py` — production `np.rot90` (aliased) callsite, lifted with the project.
 
 ## The showdown
 
 | verb | what it does | result |
 |---|---|---|
 | **sugar-lift** | numpy's installed source → a lean sugar `.proof` for `numpy.rot90` | one `.proof` in `imports/` |
-| **materialize** | `@boundary(numpy.rot90)` body ← rot90's **real** body, resolved by the oracle | the full `rot90` implementation |
-| **recognize** | `np.rot90` in `app.py` found from the sugar `.proof` by **public symbol**, alias-resolved, anywhere | tag `numpy.rot90` |
 | **prove** | the good contract discharges **two ways** | **consistent** (z3) AND **witnessed** (recompute) |
 
 ## The degenerate case (contracts contradict)

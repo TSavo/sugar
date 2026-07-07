@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Project / user configuration for lift-plugin, solver, and
-// materialization routing.
+// Project / user configuration for lift-plugin and solver routing.
 //
 // Sugar does not auto-detect the authoring surface. Projects and
 // users can set a default `[authoring] surface = ...`, and commands can
-// override it with sections such as `[authoring.lift] surface = ...` or
-// `[authoring.recognize] surface = ...`.
+// override it with sections such as `[authoring.lift] surface = ...`.
 //
 // Same shape as `.npmrc` / `.cargo/config.toml`: declarative files
 // at known paths. The user is in charge.
@@ -103,7 +101,7 @@ impl PluginEntry {
 /// version) plus the concept-level binding the shim's @sugar / @boundary
 /// annotations declare on a per-function basis. Any axis may be absent
 /// (None) — absent means the axis FLOATS and resolves against the
-/// consumer's profile at materialize time (per #1355 dispatch model).
+/// consumer's profile at realization time (per #1355 dispatch model).
 ///
 /// Declared inline in `.sugar/config.toml`:
 /// ```toml
@@ -135,7 +133,6 @@ pub struct ProjectConfig {
 
     pub surface_default: Option<String>,
     pub surface_lift: Option<String>,
-    pub surface_recognize: Option<String>,
 
     /// Solver configuration. v1 captures the shape; the verifier
     /// itself still runs Z3 only. Future work routes through this.
@@ -153,8 +150,7 @@ pub struct ProjectConfig {
     pub path_mint: Option<String>,
 
     /// #1358 / #1355: realization tuple for this project. Used by
-    /// `cmd_mint` to stamp every emitted memento and by `cmd_materialize`
-    /// to resolve floating axes against the consumer's profile.
+    /// `cmd_mint` to stamp every emitted memento.
     pub platform_profile: Option<PlatformProfile>,
 
     /// Configured witness sources consumed by `sugar prove --emit-witnesses`.
@@ -169,7 +165,6 @@ impl ProjectConfig {
     pub fn surface_for(&self, cmd: &str) -> Option<String> {
         let per_cmd = match cmd {
             "lift" => self.surface_lift.clone(),
-            "recognize" => self.surface_recognize.clone(),
             _ => None,
         };
         per_cmd.or_else(|| self.surface_default.clone())
@@ -297,7 +292,6 @@ fn parse_config(text: &str) -> ProjectConfig {
         match (section.as_deref(), key) {
             (Some("authoring"), "surface") => cfg.surface_default = Some(val),
             (Some("authoring.lift"), "surface") => cfg.surface_lift = Some(val),
-            (Some("authoring.recognize"), "surface") => cfg.surface_recognize = Some(val),
             (Some("solvers"), "default") => cfg.solver_default = Some(val),
             (Some("solvers"), "chain") => {
                 cfg.solver_chain = parse_string_array(&val);
@@ -560,15 +554,6 @@ family = "concept:family:hash"
         let cfg = parse_config(
             "[authoring]\nsurface = \"python-source\"\n[authoring.lift]\nsurface = \"rust\"",
         );
-        assert_eq!(cfg.surface_for("lift").as_deref(), Some("rust"));
-    }
-
-    #[test]
-    fn recognize_surface_overrides_default() {
-        let cfg = parse_config(
-            "[authoring]\nsurface = \"rust\"\n[authoring.recognize]\nsurface = \"go-bind\"",
-        );
-        assert_eq!(cfg.surface_for("recognize").as_deref(), Some("go-bind"));
         assert_eq!(cfg.surface_for("lift").as_deref(), Some("rust"));
     }
 
