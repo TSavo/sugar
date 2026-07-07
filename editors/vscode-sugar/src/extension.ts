@@ -98,6 +98,27 @@ async function linkDocument(doc: vscode.TextDocument, kitId: string): Promise<vo
     // surface it as an information diagnostic-free notice rather than a squiggle.
     console.error(`sugar: parseFile failed for ${doc.fileName}: ${(e as Error).message}`);
   }
+
+  // Warm consistency prove (#3774 warm-daemon slice): ask the resident daemon
+  // to run verify_consistency against its already-loaded pool. There is no
+  // cold `sugar prove` shell wired into this extension yet (that path does
+  // not exist in this tree), so today there is nothing to "fall back to" —
+  // failure here is just logged and the parseFile diagnostics above stand
+  // alone, same as before this change. `daemon-prove-start`/`-end` markers
+  // are the timing receipt until a real timing.jsonl channel exists.
+  const proveStart = Date.now();
+  try {
+    const rows = await client.proveConsistency(kitId, doc.fileName, doc.getText());
+    console.log(
+      `sugar: daemon-prove-end file=${doc.fileName} rows=${rows.length} ` +
+        `elapsedMs=${Date.now() - proveStart}`
+    );
+  } catch (e) {
+    console.log(
+      `sugar: daemon-prove-end (unavailable) file=${doc.fileName} ` +
+        `elapsedMs=${Date.now() - proveStart} error=${(e as Error).message}`
+    );
+  }
 }
 
 /** Turn one linkerd diagnostic into a VS Code diagnostic anchored at its locus. */

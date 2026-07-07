@@ -31,6 +31,28 @@ export interface LinkerDiagnostic {
   } | null;
 }
 
+/**
+ * One row as returned by sugar-linkerd's `proveConsistency` (#3774
+ * warm-daemon slice), the SAME JSON shape `sugar prove --json` renders (both
+ * go through `sugar_verifier::report::row_to_json`).
+ */
+export interface ProveRow {
+  bridge: string | null;
+  property: string | null;
+  propertyCid: string | null;
+  status: string;
+  reason: string;
+  dischargeMethod: string | null;
+  bodyDischargeTier: string | null;
+  verification: unknown;
+  file: string | null;
+  line: number | null;
+}
+
+/** Error codes the daemon can return for `proveConsistency`. */
+export const ERR_PROVE_CONTEXT_UNAVAILABLE = -33004;
+export const ERR_METHOD_NOT_FOUND = -32601;
+
 /** Map a source file extension to the kitId sugar-linkerd dispatches on. */
 export function kitIdForFile(file: string): string | undefined {
   const dot = file.lastIndexOf(".");
@@ -150,6 +172,34 @@ export class LinkerdClient {
     }
     const diags = res.result?.diagnostics;
     return Array.isArray(diags) ? (diags as LinkerDiagnostic[]) : [];
+  }
+
+  /**
+   * Send a `proveConsistency` request and return the rows. This is the warm
+   * path (#3774 warm-daemon slice): the daemon runs `verify_consistency`
+   * against its resident pool/plan/registry (built once at startup), instead
+   * of a cold `sugar prove` shell re-loading the whole proof catalog per
+   * save. Throws `LinkerdRpcError` (code `ERR_PROVE_CONTEXT_UNAVAILABLE` or
+   * `ERR_METHOD_NOT_FOUND` for an older daemon) on failure — callers should
+   * treat that identically to "daemon down" and fall back to a cold path.
+   *
+   * NAMED GAP: as of this slice the daemon verifies its resident on-disk
+   * pool, not `source` (the unsaved buffer) — see
+   * `sugar-linkerd/src/methods.rs::handle_prove_consistency` doc comment.
+   * `source` is still sent so the wire shape matches `parseFile` and no
+   * second RPC shape is needed once lift-and-merge lands.
+   */
+  async proveConsistency(
+    kitId: string,
+    file: string,
+    source: string
+  ): Promise<ProveRow[]> {
+    const res = await this.rpc("proveConsistency", { kitId, file, source });
+    if (res.error) {
+      throw new LinkerdRpcError(res.error.code, res.error.message);
+    }
+    const rows = res.result?.rows;
+    return Array.isArray(rows) ? (rows as ProveRow[]) : [];
   }
 
   /** Best-effort daemon shutdown (used by tests). */

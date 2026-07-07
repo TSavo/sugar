@@ -60,6 +60,11 @@ pub const ERR_KIT_NOT_IN_MANIFEST: i64 = -33001;
 pub const ERR_LIFTER_UNAVAILABLE: i64 = -33002;
 #[allow(dead_code)]
 pub const ERR_LINKER_DISCHARGE_FAILURE: i64 = -33003;
+/// Resident prove context (pool/plan/registry) failed to build at startup, or
+/// this daemon binary predates the `proveConsistency` RPC. The extension
+/// treats this identically to "daemon down" and falls back to the cold
+/// `sugar prove` shell path for that one request.
+pub const ERR_PROVE_CONTEXT_UNAVAILABLE: i64 = -33004;
 
 pub fn rpc_error(code: i64, message: &str, id: &Json) -> Json {
     serde_json::json!({
@@ -1340,6 +1345,107 @@ async fn lift_rust_source(
 
 fn value_arc_to_json(v: &std::sync::Arc<sugar_canonicalizer::Value>) -> Json {
     value_to_json(v)
+}
+
+// -------------------------------------------------------------------
+// proveConsistency (#3774 warm-daemon slice)
+// -------------------------------------------------------------------
+
+/// Handle a `proveConsistency` request.
+///
+/// Params: `{ "kitId": <str>, "file": <absolute path>, "source": <str> }` --
+/// same shape as `parseFile`.
+/// Returns: `{ "rows": [ReportRow-json, ...] }`, the SAME per-row JSON shape
+/// `sugar prove --json` produces (via the shared `sugar_verifier::report::row_to_json`
+/// renderer moved out of sugar-cli for exactly this reuse).
+///
+/// Calls `sugar_verifier::consistency::verify_consistency` directly against
+/// the daemon's resident pool/plan/registry/compilers -- the exact function
+/// `sugar-verifier::runner::Runner` calls for the "test-assertion consistency"
+/// receipt. No shadow verifier.
+///
+/// NAMED SCOPE GAP (not silently assumed done): this handler does not yet
+/// lift `source` and merge it into a scratch overlay of the resident pool --
+/// unlike `parseFile`, `LinkerContract` (what `lift_source` returns) is not
+/// yet bridged into `sugar_verifier::types::AnchoredMember`/`MementoPool`
+/// insertion. Today `proveConsistency` verifies the resident pool as loaded
+/// from disk (the project's `.proof` catalog as of daemon startup / last
+/// resident-pool rebuild), not the unsaved editor buffer. `kitId`/`file`/
+/// `source` are accepted and logged so the wire contract matches `parseFile`
+/// and the extension's call site does not need a second RPC shape once the
+/// lift-and-merge bridge lands; `source` is otherwise unused in this slice.
+#[instrument(skip(state, params))]
+pub async fn handle_prove_consistency(
+    state: Arc<Mutex<ProjectState>>,
+    params: &Json,
+    id: &Json,
+) -> Json {
+    let kit_id = params
+        .get("kitId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let file = match params.get("file").and_then(|v| v.as_str()) {
+        Some(f) => f.to_string(),
+        None => return rpc_error(ERR_INVALID_PARAMS, "missing 'file'", id),
+    };
+    // Accepted for wire-shape parity with parseFile; not yet consumed (see
+    // the NAMED SCOPE GAP doc comment above).
+    let _source = params.get("source").and_then(|v| v.as_str());
+
+    let ctx = {
+        let st = state.lock().await;
+        st.prove_ctx.clone()
+    };
+    let Some(ctx) = ctx else {
+        return rpc_error(
+            ERR_PROVE_CONTEXT_UNAVAILABLE,
+            "resident prove context unavailable; fall back to cold `sugar prove`",
+            id,
+        );
+    };
+
+    tracing::debug!(kit_id, file, "proveConsistency: resident-pool verify_consistency");
+
+    let results = task::spawn_blocking(move || {
+        sugar_verifier::consistency::verify_consistency(
+            &ctx.pool,
+            &ctx.plan,
+            &ctx.registry,
+            &ctx.compilers,
+        )
+    })
+    .await;
+
+    let results = match results {
+        Ok(r) => r,
+        Err(join_err) => {
+            return rpc_error(
+                ERR_PROVE_CONTEXT_UNAVAILABLE,
+                &format!("proveConsistency panicked: {join_err}"),
+                id,
+            )
+        }
+    };
+
+    let rows: Vec<Json> = results
+        .iter()
+        .map(|cr| {
+            let mut report = sugar_verifier::types::Report::default();
+            sugar_verifier::report::add_consistency_with_verification(
+                &cr.contract_cid,
+                &cr.property_name,
+                cr.verdict,
+                &cr.reason,
+                cr.verification.clone(),
+                &mut report,
+            );
+            // `add_consistency_with_verification` pushes exactly one row.
+            sugar_verifier::report::row_to_json(&report.rows[0])
+        })
+        .collect();
+
+    rpc_result(serde_json::json!({ "rows": rows }), id)
 }
 
 fn value_to_json(v: &sugar_canonicalizer::Value) -> Json {

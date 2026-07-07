@@ -87,26 +87,12 @@ fn superposition_report_to_json(s: &SuperpositionReport) -> Json {
     })
 }
 
-fn row_to_json(row: &ReportRow) -> Json {
-    json!({
-        "bridge": row.callsite.bridge_ir_name,
-        "targetCid": row.callsite.bridge_target_cid,
-        "sourceLayer": row.callsite.bridge_source_layer,
-        "targetLayer": row.callsite.bridge_target_layer,
-        "property": row.callsite.property_name,
-        "propertyCid": row.callsite.property_cid,
-        "status": row.status.as_str(),
-        "reason": row.reason,
-        "dischargeMethod": row.discharge_method,
-        "bodyDischargeTier": row.body_discharge_tier,
-        "verification": row.verification.clone(),
-        "file": row.callsite.file,
-        "line": row.callsite.line,
-        "callee": row.callsite.callee,
-        "callsiteBundleCid": row.callsite.callsite_bundle_cid,
-        "panicSite": row.callsite.panic_site,
-    })
-}
+// Moved to `sugar_verifier::report::row_to_json` (part of #3774 warm-daemon
+// slice, pure move, no logic change) so the sugar-linkerd `proveConsistency`
+// RPC renders byte-identical JSON rows via the same function, never a
+// reimplementation. Re-imported under the old name so call sites below are
+// unchanged.
+use sugar_verifier::report::row_to_json;
 
 fn discharge_split_to_json(r: &Report) -> Json {
     let mut panic_safe = 0usize;

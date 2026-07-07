@@ -29,8 +29,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::methods::{
     handle_flush_cache, handle_get_diagnostics, handle_parse_file, handle_project_status,
-    handle_resolve_receiver_crate, handle_rust_analyzer_ready, rpc_error, shutdown_response,
-    ERR_METHOD_NOT_FOUND,
+    handle_prove_consistency, handle_resolve_receiver_crate, handle_rust_analyzer_ready,
+    rpc_error, shutdown_response, ERR_METHOD_NOT_FOUND,
 };
 use crate::ra_host::RaHost;
 use crate::resolve_cache::ResolveCache;
@@ -113,6 +113,32 @@ fn build_solver_context(config: &ServerConfig) -> Option<crate::state::SolverCon
 
     info!("no solver resolvable (no SolversConfig, no z3 on PATH): structural (degraded) mode");
     None
+}
+
+/// Build the resident `ProveContext` once at startup: same construction
+/// `sugar-verifier::runner::Runner::new`/`cmd_prove` use (`load_pool` +
+/// `build_plan_and_registry_pub` + `compiler_registry::build`), never a
+/// reimplementation. Returns `None` (loudly logged by the caller) rather than
+/// panicking if the project has no `.proof` catalog yet -- an empty/missing
+/// pool is a legitimate degraded-mode input to `verify_consistency` (it will
+/// just return no candidates), but a genuine failure to construct the solver
+/// registry surfaces as `ERR_PROVE_CONTEXT_UNAVAILABLE` to callers rather than
+/// silently running with a wrong registry.
+fn build_prove_context(config: &ServerConfig) -> Option<crate::state::ProveContext> {
+    let cfg = sugar_verifier::runner::RunnerConfig {
+        project_root: config.project_root.clone(),
+        ..Default::default()
+    };
+    let pool = sugar_verifier::runner::load_pool(&cfg);
+    let (plan, registry) = sugar_verifier::runner::build_plan_and_registry_pub(&cfg);
+    let compilers = sugar_verifier::compiler_registry::build(&config.project_root);
+    Some(crate::state::ProveContext {
+        pool,
+        plan,
+        registry,
+        compilers,
+        project_root: config.project_root.clone(),
+    })
 }
 
 /// Minimal PATH scan for an executable, so we can report an HONEST capability
@@ -199,6 +225,24 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     // Build the solver context once at startup (semantic vs structural mode).
     let solver_ctx = build_solver_context(&config);
 
+    // Build the resident prove context once at startup (#3774 warm-daemon
+    // slice): loads the full memento pool + builds plan/registry/compilers
+    // via the SAME construction `sugar prove` uses (sugar_verifier::runner),
+    // so every `proveConsistency` request amortizes the pool-load cost across
+    // saves instead of re-paying it per request.
+    let prove_load_start = std::time::Instant::now();
+    let prove_ctx = build_prove_context(&config);
+    match &prove_ctx {
+        Some(ctx) => info!(
+            members = ctx.pool.mementos.len(),
+            elapsed_ms = prove_load_start.elapsed().as_millis(),
+            "resident prove context: pool + plan + registry loaded once"
+        ),
+        None => warn!(
+            "resident prove context unavailable at startup; proveConsistency will report ERR_PROVE_CONTEXT_UNAVAILABLE"
+        ),
+    }
+
     // Load snapshot if available (R14).
     let mut base = match snapshot::load(&config.snapshot_path) {
         Ok(Some(s)) => {
@@ -219,6 +263,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     };
     // Attach the solver wiring (re-derives any restored streams under the mode).
     base.attach_solvers(solver_ctx);
+    base.prove_ctx = prove_ctx.map(std::sync::Arc::new);
     let state = Arc::new(Mutex::new(base));
 
     // Resident rust-analyzer host: one warm session per workspace root, shared
@@ -393,6 +438,7 @@ async fn handle_client(
 
         let response = match method.as_str() {
             "parseFile" => handle_parse_file(state.clone(), &params, &id).await,
+            "proveConsistency" => handle_prove_consistency(state.clone(), &params, &id).await,
             "getDiagnostics" => handle_get_diagnostics(state.clone(), &params, &id).await,
             "projectStatus" => handle_project_status(state.clone(), &params, &id).await,
             "rustAnalyzerReady" => handle_rust_analyzer_ready(ra_host.clone(), &params, &id).await,

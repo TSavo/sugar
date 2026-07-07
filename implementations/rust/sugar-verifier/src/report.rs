@@ -3,12 +3,39 @@
 // Stage 7: report. Aggregate per-callsite verdicts plus load-error
 // rows. Mirrors .../verifier/report.cpp.
 
-use serde_json::Value as Json;
+use serde_json::{json, Value as Json};
 
 use crate::types::{
     CallSite, LoadError, MementoCid, MementoPool, ObligationVerdict, Report, ReportRow,
     ToolchainPlanReport,
 };
+
+/// Wire-shape for one `ReportRow`, as consumed by `sugar prove --json` and,
+/// via this same function, by the sugar-linkerd `proveConsistency` RPC.
+/// Pure move from `sugar-cli/src/report_fmt.rs::row_to_json` (2026-07-06,
+/// part of #3774 warm-daemon slice): identical JSON, one renderer, two
+/// producers (CLI cold path and daemon RPC path) so the wire format never
+/// silently diverges.
+pub fn row_to_json(row: &ReportRow) -> Json {
+    json!({
+        "bridge": row.callsite.bridge_ir_name,
+        "targetCid": row.callsite.bridge_target_cid,
+        "sourceLayer": row.callsite.bridge_source_layer,
+        "targetLayer": row.callsite.bridge_target_layer,
+        "property": row.callsite.property_name,
+        "propertyCid": row.callsite.property_cid,
+        "status": row.status.as_str(),
+        "reason": row.reason,
+        "dischargeMethod": row.discharge_method,
+        "bodyDischargeTier": row.body_discharge_tier,
+        "verification": row.verification.clone(),
+        "file": row.callsite.file,
+        "line": row.callsite.line,
+        "callee": row.callsite.callee,
+        "callsiteBundleCid": row.callsite.callsite_bundle_cid,
+        "panicSite": row.callsite.panic_site,
+    })
+}
 
 pub fn add_callsite(cs: &CallSite, verdict: ObligationVerdict, reason: &str, r: &mut Report) {
     add_callsite_with_discharge(cs.clone(), verdict, reason, None, None, r);
