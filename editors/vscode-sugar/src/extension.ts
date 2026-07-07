@@ -18,7 +18,7 @@ import * as path from "path";
 import * as crypto from "crypto";
 import * as vscode from "vscode";
 import { LinkerdClient, kitIdForFile, LinkerDiagnostic } from "./linkerdClient";
-import { proveProject, ProveDiagnostic } from "./proveClient";
+import { proveProject, ProveDiagnostic, formatDetail } from "./proveClient";
 
 let client: LinkerdClient | undefined;
 let diagnostics: vscode.DiagnosticCollection;
@@ -207,7 +207,7 @@ function proveToVsDiagnostic(d: ProveDiagnostic): vscode.Diagnostic {
   const range = new vscode.Range(line0, col, line0, Number.MAX_SAFE_INTEGER);
   const diag = new vscode.Diagnostic(
     range,
-    `${d.status}: ${d.reason}\n  property: ${d.property}`,
+    formatDetail(d),
     vscode.DiagnosticSeverity.Error
   );
   diag.source = "sugar-prove";

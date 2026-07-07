@@ -27,7 +27,7 @@ const path = require("path");
 const fs = require("fs");
 const cp = require("child_process");
 
-const { proveProject } = require("../out/proveClient.js");
+const { proveProject, formatDetail } = require("../out/proveClient.js");
 
 const BIN = process.env.SUGAR_BIN;
 const EXAMPLE_DIR = process.env.SUGAR_EXAMPLE_DIR;
@@ -158,6 +158,31 @@ function consistencyDiag(res, consumerFile) {
         "bad: reason names the contradiction",
         /contradictory|unsat/i.test(d.reason),
         d.reason
+      );
+      // The squiggle message T's demo wants: the three conjoined facts as the
+      // SAME human-readable FOL `sugar lift --report --visual` renders.
+      const detail = formatDetail(d);
+      console.log("  [bad] squiggle message:\n" + detail.replace(/^/gm, "    "));
+      check(
+        "bad: VENDOR UNIVERSE renders the str.eq-bv-blocks universe FOL",
+        typeof d.vendorUniverseFol === "string" && d.vendorUniverseFol.includes("str.eq-bv-blocks"),
+        d.vendorUniverseFol
+      );
+      check(
+        "bad: YOUR FACT renders the consumer's own equality with its literal",
+        typeof d.clientFactFol === "string" &&
+          /call:(?:[\w.]+\.)?encodeBase64\("xyz"\)/.test(d.clientFactFol) &&
+          d.clientFactFol.includes('"AAAA"'),
+        d.clientFactFol
+      );
+      check(
+        "bad: the squiggle message carries all rendered facts + the z3 verdict",
+        detail.includes("VENDOR UNIVERSE") &&
+          detail.includes("str.eq-bv-blocks") &&
+          detail.includes("YOUR FACT") &&
+          detail.includes('"AAAA"') &&
+          detail.includes("z3:"),
+        detail
       );
     }
     check("bad: red gate exit code", res.exitCode !== 0, `exit ${res.exitCode}`);

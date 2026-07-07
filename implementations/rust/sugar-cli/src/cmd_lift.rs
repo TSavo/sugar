@@ -1699,11 +1699,9 @@ fn source_report_from_lift_response(
         .cloned()
         .unwrap_or_default();
     trace_lift_collection_checkpoint("source_report.diagnostics", diagnostics.len());
-    if let Some(condition) = no_vendor_test_corpus_condition(
-        &ledger,
-        &assertion_surface_audits,
-        &contracts,
-    ) {
+    if let Some(condition) =
+        no_vendor_test_corpus_condition(&ledger, &assertion_surface_audits, &contracts)
+    {
         diagnostics.push(condition);
     }
 
@@ -4874,7 +4872,9 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
     for diagnostic in &report.diagnostics {
         if diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus") {
             if let Some(message) = diagnostic.get("message").and_then(Value::as_str) {
-                out.push_str(&format!("NAMED CONDITION [no-vendor-test-corpus]: {message}\n"));
+                out.push_str(&format!(
+                    "NAMED CONDITION [no-vendor-test-corpus]: {message}\n"
+                ));
             }
         }
     }
@@ -5603,10 +5603,9 @@ fn source_report_has_hard_failures(report: &LiftSourceReport) -> bool {
         .vendor_conjoins
         .iter()
         .any(|row| matches!(row.vendor_source, Some(VendorSourceResolution::Drifted(_))))
-        || report
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus"))
+        || report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus")
+        })
 }
 
 fn vendor_conjoins_from_lift_response(
@@ -7323,7 +7322,7 @@ fn generalized_base64_block_formula(formula: &Value) -> Option<String> {
     Some(format!("{quantifiers}str.eq-bv-blocks({output}, {blocks})"))
 }
 
-fn proofir_formula_to_fol_with_instances(formula: &Value) -> String {
+pub(crate) fn proofir_formula_to_fol_with_instances(formula: &Value) -> String {
     if let Some(rendered) = instantiated_base64_block_formula(formula) {
         return rendered;
     }
@@ -12602,12 +12601,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             no_vendor_test_corpus_condition(&serde_json::json!({ "source_loci": 42 }), &[], &[]);
         let condition = condition.expect("zero-assertion source tree must name the condition");
         assert_eq!(condition["kind"], "no-vendor-test-corpus");
-        assert!(
-            condition["message"]
-                .as_str()
-                .unwrap()
-                .contains("no vendor test corpus in workspace")
-        );
+        assert!(condition["message"]
+            .as_str()
+            .unwrap()
+            .contains("no vendor test corpus in workspace"));
     }
 
     #[test]
@@ -12615,8 +12612,11 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let contracts = vec![serde_json::json!({
             "name": "test_mod::tests::test_thing::assert:1:1::assertion"
         })];
-        let condition =
-            no_vendor_test_corpus_condition(&serde_json::json!({ "source_loci": 42 }), &[], &contracts);
+        let condition = no_vendor_test_corpus_condition(
+            &serde_json::json!({ "source_loci": 42 }),
+            &[],
+            &contracts,
+        );
         assert!(
             condition.is_none(),
             "a workspace with observed test facts must not carry the empty-corpus terminal"
@@ -12636,9 +12636,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     fn no_vendor_test_corpus_condition_is_a_hard_report_failure() {
         let mut report = minimal_source_report();
         report.ledger = serde_json::json!({ "source_loci": 42, "source_unresolved": 0 });
-        report.diagnostics = vec![
-            no_vendor_test_corpus_condition(&report.ledger, &[], &[]).expect("condition")
-        ];
+        report.diagnostics =
+            vec![no_vendor_test_corpus_condition(&report.ledger, &[], &[]).expect("condition")];
         assert!(source_report_has_hard_failures(&report));
         let human = render_source_report_human(&report);
         assert!(

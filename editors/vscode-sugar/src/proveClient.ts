@@ -21,6 +21,22 @@
 
 import * as cp from "child_process";
 
+/**
+ * The three conjoined facts, rendered as human-readable FOL by the SAME renderer
+ * `sugar lift --report --visual` uses (`proofir_formula_to_fol_with_instances`).
+ * The verifier stamps these onto an `unsatisfied` consistency row's
+ * `verification`; they are what the IDE squiggle shows. Any field is absent when
+ * its ProofIR was not reachable at prove-emission (fail-open; never faked).
+ */
+export interface ConjoinedFactsFol {
+  /** The vendor's proved universe, e.g. `⊢ str.eq-bv-blocks(out, base64.blocks(...))`. */
+  vendorUniverseFol?: string;
+  /** The consumer's OWN sworn fact, e.g. `⊢ call:encodeBase64("xyz") = "AAAA"`. */
+  clientFactFol?: string;
+  /** The vendor's OWN sworn vector, when reachable on the row. */
+  vendorFactFol?: string;
+}
+
 /** One prove receipt row (the subset the editor path reads). */
 export interface ProveRow {
   property: string;
@@ -30,6 +46,8 @@ export interface ProveRow {
   line: number | null;
   column: number | null;
   dischargeMethod?: string | null;
+  /** The row's verification detail, carrying the three FOL strings. */
+  verification?: ConjoinedFactsFol | null;
 }
 
 /** A diagnostic derived from a non-discharged consistency row. */
@@ -46,6 +64,36 @@ export interface ProveDiagnostic {
   property: string;
   /** The verifier's reason string (solver verdict, contradiction, etc.). */
   reason: string;
+  /** The vendor's proved universe, rendered as FOL (when reachable). */
+  vendorUniverseFol?: string;
+  /** The consumer's own sworn fact, rendered as FOL (when reachable). */
+  clientFactFol?: string;
+  /** The vendor's own sworn vector, rendered as FOL (when reachable). */
+  vendorFactFol?: string;
+}
+
+/**
+ * Build the IDE hover/diagnostic message for a prove diagnostic as the three
+ * conjoined facts in human-readable FOL -- the SAME rendering
+ * `sugar lift --report --visual` produces -- under VENDOR FACT / VENDOR UNIVERSE
+ * / YOUR FACT headings, followed by the z3 verdict. Facts whose ProofIR was not
+ * reachable at prove-emission are simply omitted (fail-open). YOUR FACT is
+ * listed last as the most familiar line (the same equality the source asserts).
+ */
+export function formatDetail(d: ProveDiagnostic): string {
+  const lines: string[] = [];
+  if (d.vendorFactFol) {
+    lines.push(`VENDOR FACT     ${d.vendorFactFol}`);
+  }
+  if (d.vendorUniverseFol) {
+    lines.push(`VENDOR UNIVERSE ${d.vendorUniverseFol}`);
+  }
+  if (d.clientFactFol) {
+    lines.push(`YOUR FACT       ${d.clientFactFol}`);
+  }
+  lines.push(`z3: ${d.status} — ${d.reason}`);
+  lines.push(`property: ${d.property}`);
+  return lines.join("\n");
 }
 
 export interface ProveResult {
@@ -154,6 +202,7 @@ export function diagnosticsFromRows(rows: ProveRow[]): ProveDiagnostic[] {
       // No locus on this row: we refuse to guess a line (no fake anchoring).
       continue;
     }
+    const v = row.verification ?? undefined;
     out.push({
       file: row.file,
       line: row.line,
@@ -161,6 +210,9 @@ export function diagnosticsFromRows(rows: ProveRow[]): ProveDiagnostic[] {
       status: row.status,
       property: row.property,
       reason: row.reason,
+      vendorUniverseFol: v?.vendorUniverseFol,
+      clientFactFol: v?.clientFactFol,
+      vendorFactFol: v?.vendorFactFol,
     });
   }
   return out;

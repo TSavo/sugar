@@ -1274,6 +1274,51 @@ fn solver_invocations_to_json(invs: &[SolverInvocation]) -> Json {
     )
 }
 
+/// Stamp the two pool-resolved ProofIR facts onto a consistency result's
+/// verification detail so the CLI report can render them to human-readable FOL
+/// (the `sugar lift --report --visual` rendering) for the IDE squiggle:
+///   - `clientFactIr`: the consumer's OWN asserted fact (pre-vendor-conjoin) --
+///     the YOUR-FACT half of the flip.
+///   - `vendorFactIr`: the vendor's own sworn ground vectors that were conjoined
+///     from the staged .proof -- the VENDOR-FACT half.
+/// The VENDOR-UNIVERSE half is already inline as `linkedPosts[].vendorPost`.
+/// These are small single-equality formulas (NOT the ~MB conjoined universe,
+/// which stays externalized by CID), so inlining them is memory-safe.
+/// Fail-open: a result with no verification object is left untouched.
+/// Union two ProofIR fact lists, de-duplicating by canonical JCS so a vector
+/// captured by both the ambient-conjoin path and the sworn-vector scan appears
+/// once.
+fn union_facts(mut a: Vec<Json>, b: Vec<Json>) -> Vec<Json> {
+    let mut seen: std::collections::BTreeSet<String> = a
+        .iter()
+        .filter_map(|f| libsugar::canonical::json_jcs(f).ok())
+        .collect();
+    for f in b {
+        let key = libsugar::canonical::json_jcs(&f).unwrap_or_default();
+        if seen.insert(key) {
+            a.push(f);
+        }
+    }
+    a
+}
+
+fn attach_conjoined_facts(
+    result: &mut ConsistencyResult,
+    client_fact: &Json,
+    vendor_facts: &[Json],
+) {
+    let Some(Json::Object(v)) = result.verification.as_mut() else {
+        return;
+    };
+    v.insert("clientFactIr".to_string(), client_fact.clone());
+    if !vendor_facts.is_empty() {
+        v.insert(
+            "vendorFactIr".to_string(),
+            Json::Array(vendor_facts.to_vec()),
+        );
+    }
+}
+
 fn consistency_verification_detail(
     property_name: &str,
     checked_formula: &Json,
@@ -1744,6 +1789,80 @@ fn is_callsite_ctor_term(term: &Json) -> bool {
             .is_some_and(|name| name.starts_with("call:"))
 }
 
+/// The ctor NAME (`call:encodeBase64`) of a ground callsite equality's subject,
+/// used to pair a consumer's fact with the vendor's own sworn vectors about the
+/// SAME callee (a different argument, e.g. the vendor's `encodeBase64("abc")`).
+fn ground_fact_subject_name(fact: &Json) -> Option<String> {
+    let args = fact.get("args").and_then(|v| v.as_array())?;
+    let subject = args.first()?;
+    subject
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+/// Collect the vendor's OWN sworn ground vectors (e.g.
+/// `encodeBase64("abc") == "YWJj"`) that share the consumer obligation's callee
+/// but were sworn by a DIFFERENT memento (the staged .proof). These are the
+/// VENDOR-FACT half of the three-part IDE FOL. Display-only: they are surfaced
+/// on the report row, never conjoined into the solved obligation, so they carry
+/// no soundness weight on the verdict. Excludes the obligation's own source cids
+/// (a row is not its own vendor) and honors ambient scope.
+fn collect_vendor_sworn_facts(
+    client_fact: &Json,
+    ambient: &[AmbientGroundCallsiteFact],
+    excluded_source_cids: &[String],
+) -> Vec<Json> {
+    let mut client_callees: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut client_facts = Vec::new();
+    collect_ambient_ground_callsite_facts(
+        client_fact,
+        "<client>",
+        &None,
+        ProofIrProvenanceKind::Stated,
+        &mut client_facts,
+    );
+    for f in &client_facts {
+        if let Some(name) = ground_fact_subject_name(&f.fact) {
+            client_callees.insert(name);
+        }
+    }
+    if client_callees.is_empty() {
+        return Vec::new();
+    }
+    let client_term_keys: std::collections::BTreeSet<&str> =
+        client_facts.iter().map(|f| f.term_key.as_str()).collect();
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for fact in ambient {
+        if excluded_source_cids.iter().any(|c| c == &fact.source_cid) {
+            continue;
+        }
+        // NOTE: no `scope` filter here (unlike the solver-conjoin path). This
+        // surfacing is DISPLAY-ONLY -- the vendor's vector is never conjoined
+        // into the solved obligation -- so it carries no soundness weight, and
+        // the federation's whole point is that a vendor vector sworn in ITS OWN
+        // scope is exactly what should appear next to the consumer's fact.
+        // Same callee as the consumer's fact, but a DIFFERENT sworn callsite
+        // (its own distinct argument vector), so we surface the vendor's proof
+        // vector rather than echoing the consumer's own claim.
+        if client_term_keys.contains(fact.term_key.as_str()) {
+            continue;
+        }
+        let Some(name) = ground_fact_subject_name(&fact.fact) else {
+            continue;
+        };
+        if !client_callees.contains(&name) {
+            continue;
+        }
+        if seen.insert(fact.term_key.clone()) {
+            out.push(fact.fact.clone());
+        }
+    }
+    out
+}
+
 fn ground_callsite_term_key(term: &Json) -> Option<String> {
     if !is_callsite_ctor_term(term) {
         return None;
@@ -2123,9 +2242,9 @@ fn with_ambient_ground_callsite_facts(
     ambient: &[AmbientGroundCallsiteFact],
     excluded_source_cids: &[String],
     current_ground_witnesses: &std::collections::BTreeSet<AmbientFactWitnessKey>,
-) -> (Json, bool) {
+) -> (Json, bool, Vec<Json>) {
     if ambient.is_empty() || !property_name.contains("#euf#") {
-        return (inv, false);
+        return (inv, false, Vec::new());
     }
 
     let mut callsites = Vec::new();
@@ -2135,7 +2254,7 @@ fn with_ambient_ground_callsite_facts(
         .filter_map(ground_callsite_term_key)
         .collect();
     if wanted.is_empty() {
-        return (inv, false);
+        return (inv, false, Vec::new());
     }
     let obligation_scope = ambient_ground_callsite_scope(property_name);
 
@@ -2170,15 +2289,20 @@ fn with_ambient_ground_callsite_facts(
         }
     }
     if facts.is_empty() {
-        return (inv, skipped_same_kind_duplicate);
+        return (inv, skipped_same_kind_duplicate, Vec::new());
     }
 
+    // The conjoined `facts` ARE the vendor's own sworn ground vectors (e.g.
+    // `encodeBase64("abc") == "YWJj"`) imported from the staged .proof; return
+    // them so the report can render the VENDOR FACT half of the three-part FOL.
+    let vendor_facts = facts.clone();
     let mut operands = Vec::with_capacity(facts.len() + 1);
     operands.push(inv);
     operands.extend(facts);
     (
         serde_json::json!({ "kind": "and", "operands": operands }),
         skipped_same_kind_duplicate,
+        vendor_facts,
     )
 }
 
@@ -2604,6 +2728,9 @@ pub fn verify_consistency(
                     .collect();
                 let (inv, collapsed_same_kind_duplicate) =
                     conjoin_distinct_provenance_witnesses(invs);
+                // The consumer's OWN fact, before any vendor universe/vector is
+                // conjoined -- this is the YOUR-FACT half of the three-part FOL.
+                let client_fact = inv.clone();
                 let current_ground_witnesses: std::collections::BTreeSet<_> = inv_candidates
                     .iter()
                     .flat_map(|candidate| {
@@ -2615,16 +2742,17 @@ pub fn verify_consistency(
                     })
                     .collect();
                 let (inv, linked_posts) = with_ambient_posts_with_instances(inv, &ambient_posts);
-                let (inv, skipped_same_kind_duplicate) = with_ambient_ground_callsite_facts(
-                    inv,
-                    property_name,
-                    &ambient_ground_callsite_facts,
-                    &inv_cids,
-                    &current_ground_witnesses,
-                );
+                let (inv, skipped_same_kind_duplicate, vendor_facts) =
+                    with_ambient_ground_callsite_facts(
+                        inv,
+                        property_name,
+                        &ambient_ground_callsite_facts,
+                        &inv_cids,
+                        &current_ground_witnesses,
+                    );
                 let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
-                if collapsed_same_kind_duplicate || skipped_same_kind_duplicate {
-                    out.push(check_inv_consistency_with_vacuity_reason(
+                let mut result = if collapsed_same_kind_duplicate || skipped_same_kind_duplicate {
+                    check_inv_consistency_with_vacuity_reason(
                         inv_cids[0].clone(),
                         property_name,
                         inv,
@@ -2633,9 +2761,9 @@ pub fn verify_consistency(
                         registry,
                         compilers,
                         VacuityRefusalKind::MissingIndependentKindWitness,
-                    ));
+                    )
                 } else {
-                    out.push(check_inv_consistency(
+                    check_inv_consistency(
                         inv_cids[0].clone(),
                         property_name,
                         inv,
@@ -2643,8 +2771,19 @@ pub fn verify_consistency(
                         plan,
                         registry,
                         compilers,
-                    ));
-                }
+                    )
+                };
+                let sworn = collect_vendor_sworn_facts(
+                    &client_fact,
+                    &ambient_ground_callsite_facts,
+                    &inv_cids,
+                );
+                attach_conjoined_facts(
+                    &mut result,
+                    &client_fact,
+                    &union_facts(vendor_facts, sworn),
+                );
+                out.push(result);
             } else {
                 for candidate in &inv_candidates {
                     let original_inv =
@@ -2657,15 +2796,16 @@ pub fn verify_consistency(
                     );
                     let (inv, linked_posts) =
                         with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
-                    let (inv, skipped_same_kind_duplicate) = with_ambient_ground_callsite_facts(
-                        inv,
-                        property_name,
-                        &ambient_ground_callsite_facts,
-                        std::slice::from_ref(&candidate.cid),
-                        &current_ground_witnesses,
-                    );
+                    let (inv, skipped_same_kind_duplicate, vendor_facts) =
+                        with_ambient_ground_callsite_facts(
+                            inv,
+                            property_name,
+                            &ambient_ground_callsite_facts,
+                            std::slice::from_ref(&candidate.cid),
+                            &current_ground_witnesses,
+                        );
                     let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
-                    let result = if skipped_same_kind_duplicate {
+                    let mut result = if skipped_same_kind_duplicate {
                         check_inv_consistency_with_vacuity_reason(
                             candidate.cid.clone(),
                             property_name,
@@ -2687,6 +2827,16 @@ pub fn verify_consistency(
                             compilers,
                         )
                     };
+                    let sworn = collect_vendor_sworn_facts(
+                        &original_inv,
+                        &ambient_ground_callsite_facts,
+                        std::slice::from_ref(&candidate.cid),
+                    );
+                    attach_conjoined_facts(
+                        &mut result,
+                        &original_inv,
+                        &union_facts(vendor_facts, sworn),
+                    );
                     if !suppress_standalone_support_vacuity(
                         property_name,
                         candidate,
