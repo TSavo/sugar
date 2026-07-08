@@ -737,6 +737,7 @@ fn derive_link_bundle_inner(
         );
         contracts_by_cid.insert(c.contract_cid.as_str(), c);
     }
+    let symbol_table = SymbolTable::new(&name_kit_index, &contracts_by_cid);
 
     // contractSetCid
     let mut all_contract_cids: Vec<String> = all_contracts
@@ -777,7 +778,7 @@ fn derive_link_bundle_inner(
         // signature-mismatch). This is the migrated resolve_target join: the
         // string join and the member check that verify used to re-derive now
         // live in one constructor signature.
-        let bound = match bind(edge, &name_kit_index, &contracts_by_cid) {
+        let bound = match bind(edge, &symbol_table) {
             Ok(bound) => bound,
             Err(mut err) => {
                 err.file = locus_file;
@@ -970,6 +971,126 @@ impl LinkerCallEdge {
     }
 }
 
+/// Symbol/CID resolution as a construction, not a trust-the-string lookup.
+///
+/// [`Resolved`]'s inner field is private *to this module*, and nothing outside
+/// [`SymbolTable::resolve`] sits inside it — so no code elsewhere in the crate
+/// can construct a `Resolved` by hand. Rust's privacy rules make this an
+/// enforced invariant, not a documented convention: holding a `Resolved` is
+/// compiler-checked proof that a `SymbolTable::resolve` call already
+/// succeeded (symbol match *and* [`ImportSignature`] check both passed) —
+/// see `test_resolved_is_unforgeable_outside_symbol_table_module` in the test
+/// module for the compile-time argument.
+mod symbol_table {
+    use super::{BTreeMap, LinkerCallEdge, LinkerContract, Symbol};
+    use crate::EdgeTarget;
+
+    /// The typed failure a [`SymbolTable::resolve`] construction can refuse
+    /// with, before the caller's `target_symbol` / `source_contract_cid`
+    /// context is stitched in to build the wire `LinkerError`. Carries the
+    /// same reasoning `bind` used to inline: no member answered, or one did
+    /// but disagreed.
+    pub(crate) enum ResolveError {
+        /// No contract in the union answers the edge's candidate CID
+        /// (whether that candidate came from a kit's own claim or the
+        /// cross-kit symbol join).
+        UnresolvedSymbol,
+        /// A member answered at `cid`, but its exported signature disagreed
+        /// with the call site's declared [`ImportSignature`]; `reason` names
+        /// the first disagreement (see `Signature::check`).
+        SignatureMismatch { cid: String, reason: String },
+    }
+
+    /// The symbol/CID resolution index, built once from a contract union,
+    /// whose only resolution door is [`SymbolTable::resolve`].
+    ///
+    /// This is the construction half of the migrated `resolve_target` join:
+    /// where `bind` used to reach into a bare `name_kit_index.get(...)` (a
+    /// trust-the-string lookup) and separately call
+    /// `ImportSignature::check`, the two steps are now one constructor.
+    /// Holding a [`Resolved`] is proof both steps already happened.
+    pub(crate) struct SymbolTable<'a> {
+        /// `Symbol -> contract_cid` (cross-kit symbol join).
+        name_kit_index: &'a BTreeMap<Symbol, String>,
+        /// `cid -> &LinkerContract` (member lookup).
+        contracts_by_cid: &'a BTreeMap<&'a str, &'a LinkerContract>,
+    }
+
+    impl<'a> SymbolTable<'a> {
+        /// Wrap the two resolution indices the derivation core already
+        /// builds once per `link()` call. Borrowing rather than rebuilding
+        /// keeps this a zero-cost view over the existing maps.
+        pub(crate) fn new(
+            name_kit_index: &'a BTreeMap<Symbol, String>,
+            contracts_by_cid: &'a BTreeMap<&'a str, &'a LinkerContract>,
+        ) -> Self {
+            SymbolTable {
+                name_kit_index,
+                contracts_by_cid,
+            }
+        }
+
+        /// Resolve a call edge's declared target to a [`Resolved`] proof, or
+        /// the typed failure. Does both the symbol match *and* the
+        /// `ImportSignature::check` in one move — the split
+        /// lookup-then-check `bind` used to perform is now this single
+        /// constructor.
+        pub(crate) fn resolve(&self, edge: &LinkerCallEdge) -> Result<Resolved, ResolveError> {
+            // Resolve to a candidate CID: the kit's claim, else the
+            // cross-kit symbol join — a single `Symbol` lookup (the
+            // split-on-`':'` lives in `Symbol::from_wire`). A symbol that
+            // resolves to nothing is undefined, including any unqualified or
+            // empty-part symbol, which never keys a contract-derived entry.
+            let cid: String = match edge.edge_target() {
+                EdgeTarget::Bound(cid) => cid.to_string(),
+                EdgeTarget::Unbound(sig) => self
+                    .name_kit_index
+                    .get(&sig.symbol)
+                    .cloned()
+                    .ok_or(ResolveError::UnresolvedSymbol)?,
+            };
+
+            // The member must answer: a CID with no contract behind it is
+            // undefined.
+            let target = self
+                .contracts_by_cid
+                .get(cid.as_str())
+                .ok_or(ResolveError::UnresolvedSymbol)?;
+
+            // Signature match: the declared import must agree with the
+            // exported contract on formals / sorts / EUF coordinate.
+            if let Some(sig) = &edge.import_signature {
+                if let Err(reason) = sig.check(target) {
+                    return Err(ResolveError::SignatureMismatch { cid, reason });
+                }
+            }
+
+            Ok(Resolved(cid))
+        }
+    }
+
+    /// Proof that a call edge's target resolved: its symbol (or kit-claimed
+    /// CID) answered a member of the contract union, *and* — if the edge
+    /// declared an [`ImportSignature`] — that member's exported signature
+    /// agreed with it.
+    ///
+    /// The inner field is private to this module and there is no public
+    /// constructor, so a `Resolved` can only be produced by
+    /// [`SymbolTable::resolve`]: holding one is proof both the symbol match
+    /// and the signature check already happened, in that one constructor,
+    /// rather than trusted from two separate call sites.
+    pub(crate) struct Resolved(String);
+
+    impl Resolved {
+        /// Borrow the resolved CID string.
+        pub(crate) fn contract_cid(&self) -> &str {
+            &self.0
+        }
+    }
+}
+
+use symbol_table::{ResolveError, SymbolTable};
+
 /// Mint a [`BoundContractCid`] from an unbound call edge, or return the typed
 /// failure. The migrated `resolve_target` join, expressed as a constructor with
 /// exactly two outcomes:
@@ -984,44 +1105,25 @@ impl LinkerCallEdge {
 /// edge in a `LinkBundle` was minted here from a contract that exists in the
 /// union. A kit-supplied `target_contract_cid` is re-checked against the member
 /// index, so a kit cannot forge a bound edge to a CID with no contract behind
-/// it.
-fn bind(
-    edge: &LinkerCallEdge,
-    name_kit_index: &BTreeMap<Symbol, String>,
-    contracts_by_cid: &BTreeMap<&str, &LinkerContract>,
-) -> Result<BoundContractCid, LinkerError> {
-    let undefined = || LinkerError {
-        kind: LinkerErrorKind::UnresolvedSymbol,
-        target_symbol: edge.target_symbol.to_wire(),
-        source_contract_cid: edge.source_contract_cid.as_str().to_string(),
-        reason: format!(
-            "targetSymbol `{}` did not resolve to any contract in the union",
-            edge.target_symbol
-        ),
-        file: None,
-        call_site_locus: None,
-    };
-
-    // Resolve to a candidate CID: the kit's claim, else the cross-kit symbol
-    // join — now a single `Symbol` lookup (the split-on-`':'` lives in
-    // [`Symbol::from_wire`]). A symbol that resolves to nothing is undefined,
-    // including any unqualified or empty-part symbol, which never keys a
-    // contract-derived entry.
-    let cid: String = match edge.edge_target() {
-        EdgeTarget::Bound(cid) => cid.to_string(),
-        EdgeTarget::Unbound(sig) => {
-            name_kit_index.get(&sig.symbol).cloned().ok_or_else(undefined)?
-        }
-    };
-
-    // The member must answer: a CID with no contract behind it is undefined.
-    let target = contracts_by_cid.get(cid.as_str()).ok_or_else(undefined)?;
-
-    // Signature match: the declared import must agree with the exported
-    // contract on formals / sorts / EUF coordinate.
-    if let Some(sig) = &edge.import_signature {
-        if let Err(reason) = sig.check(target) {
-            return Err(LinkerError {
+/// it. The resolution logic itself now lives in [`SymbolTable::resolve`]; this
+/// function is the wire-error-context adapter over it.
+fn bind(edge: &LinkerCallEdge, symbol_table: &SymbolTable) -> Result<BoundContractCid, LinkerError> {
+    symbol_table
+        .resolve(edge)
+        .map(|resolved| BoundContractCid(resolved.contract_cid().to_string()))
+        .map_err(|err| match err {
+            ResolveError::UnresolvedSymbol => LinkerError {
+                kind: LinkerErrorKind::UnresolvedSymbol,
+                target_symbol: edge.target_symbol.to_wire(),
+                source_contract_cid: edge.source_contract_cid.as_str().to_string(),
+                reason: format!(
+                    "targetSymbol `{}` did not resolve to any contract in the union",
+                    edge.target_symbol
+                ),
+                file: None,
+                call_site_locus: None,
+            },
+            ResolveError::SignatureMismatch { cid, reason } => LinkerError {
                 kind: LinkerErrorKind::SignatureMismatch,
                 target_symbol: edge.target_symbol.to_wire(),
                 source_contract_cid: edge.source_contract_cid.as_str().to_string(),
@@ -1031,11 +1133,8 @@ fn bind(
                 ),
                 file: None,
                 call_site_locus: None,
-            });
-        }
-    }
-
-    Ok(BoundContractCid(cid))
+            },
+        })
 }
 
 // -------------------------------------------------------------------
@@ -1043,10 +1142,10 @@ fn bind(
 // -------------------------------------------------------------------
 //
 // Resolution is now a single `name_kit_index.get(&Symbol)` lookup inside
-// [`bind`]; the former `resolve_target_symbol` split-on-`':'` string surgery
-// moved into [`Symbol::from_wire`], the sole place a wire `targetSymbol` is
-// parsed. An unqualified (`kit = None`) or empty-part symbol keys no
-// contract-derived entry, so it resolves to `unresolved-symbol` exactly as the
+// [`SymbolTable::resolve`]; the former `resolve_target_symbol` split-on-`':'`
+// string surgery moved into [`Symbol::from_wire`], the sole place a wire
+// `targetSymbol` is parsed. An unqualified (`kit = None`) or empty-part symbol
+// keys no contract-derived entry, so it resolves to `unresolved-symbol` exactly as the
 // old `find(':')` / non-empty guard did.
 
 // -------------------------------------------------------------------
@@ -2217,13 +2316,48 @@ mod tests {
         );
         let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();
         contracts_by_cid.insert(process.contract_cid.as_str(), &process);
+        let symbol_table = SymbolTable::new(&name_kit_index, &contracts_by_cid);
 
         let go = make_go_caller_fail_contract();
         let edge = make_cgo_call_edge(&go);
-        let bound = bind(&edge, &name_kit_index, &contracts_by_cid)
-            .expect("resolvable edge binds to a contract");
+        let bound =
+            bind(&edge, &symbol_table).expect("resolvable edge binds to a contract");
         // The minted CID is exactly the resolved contract's — never null.
         assert_eq!(bound.as_str(), process.contract_cid.as_str());
         assert!(!bound.as_str().is_empty());
+    }
+
+    /// INVARIANT: a `Resolved` is unforgeable outside `symbol_table::SymbolTable::resolve`.
+    ///
+    /// `Resolved`'s inner field (`symbol_table::Resolved(String)`) is private
+    /// *to the `symbol_table` module*. This test module is a sibling, not a
+    /// descendant, of `symbol_table`, so writing `symbol_table::Resolved("x".into())`
+    /// anywhere in this file outside that module is a compiler error
+    /// (`field \`0\` of struct \`symbol_table::Resolved\` is private`) — that
+    /// line is intentionally absent from this test, because adding it would
+    /// stop the crate from compiling at all. The only way to obtain a
+    /// `Resolved` value from outside `symbol_table` is the return of
+    /// `SymbolTable::resolve`, exercised below.
+    #[test]
+    fn test_resolved_is_unforgeable_outside_symbol_table_module() {
+        let mut name_kit_index: BTreeMap<Symbol, String> = BTreeMap::new();
+        let process = make_process_contract();
+        name_kit_index.insert(
+            Symbol::qualified("rust-kit", "process"),
+            process.contract_cid.as_str().to_string(),
+        );
+        let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();
+        contracts_by_cid.insert(process.contract_cid.as_str(), &process);
+        let symbol_table = SymbolTable::new(&name_kit_index, &contracts_by_cid);
+
+        let go = make_go_caller_fail_contract();
+        let edge = make_cgo_call_edge(&go);
+        // The only door: `SymbolTable::resolve`. `Resolved("...".into())`
+        // does not typecheck here — the tuple field is private to the
+        // `symbol_table` module, and this test lives outside it.
+        let resolved = symbol_table
+            .resolve(&edge)
+            .unwrap_or_else(|_| panic!("resolvable edge must resolve"));
+        assert_eq!(resolved.contract_cid(), process.contract_cid.as_str());
     }
 }
