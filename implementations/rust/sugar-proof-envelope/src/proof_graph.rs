@@ -1308,6 +1308,32 @@ impl ProofGraph {
         Ok(graph)
     }
 
+    /// Merge `other` into `self` and return the combined graph -- the graph
+    /// MERGE (SEAM 2). `empty()` is the identity; every map here is keyed by
+    /// content CID, so two graphs describing the SAME atom/body/member agree
+    /// bit-for-bit on that entry (the CID recomputation in `read` already
+    /// proved it), which is exactly what makes the union commutative and
+    /// associative regardless of feed order: `a.feed(b) == b.feed(a)` and
+    /// `a.feed(b).feed(c) == a.feed(b.feed(c))` for any partition of the same
+    /// input set. On a same-CID collision the existing entry is kept (the
+    /// two are equal content, so it does not matter which "wins"); this
+    /// mirrors the `entry(..).or_insert_with(..)` behavior `load_all_proofs`
+    /// already used before this seam absorbed it. The lazy typed-member cache
+    /// is NOT merged -- it is a pure memoization of `self.members`/`other.members`
+    /// and is safe to drop; a fresh graph re-parses on first access.
+    pub fn feed(mut self, other: ProofGraph) -> ProofGraph {
+        for (cid, atom) in other.atoms {
+            self.atoms.entry(cid).or_insert(atom);
+        }
+        for (cid, body) in other.bodies {
+            self.bodies.entry(cid).or_insert(body);
+        }
+        for (cid, member) in other.members {
+            self.members.entry(cid).or_insert(member);
+        }
+        self
+    }
+
     /// Resolve a contract member's body by following its `bodyCid` into the
     /// graph's body map. The member stores the reference, never the body.
     pub fn contract_body_of(&self, member: &MementoCid) -> Option<&ContractBody> {
