@@ -47,9 +47,48 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CanonValue};
 use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT as SMT_DIALECT};
-use sugar_ir_types::IrFormula;
+use sugar_ir_types::{IrFormula, Sort};
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
+
+/// The typed locus of a call site, per `ir-formal-grammar.md` (`Locus`).
+///
+/// Replaces the free-form `serde_json::Value` that the call-site slot used to
+/// carry on [`LinkerCallEdge`] and [`LinkerError`]. The seam is byte-identical:
+/// the linker embeds this locus into every bridge memento (see [`derive_bridge`])
+/// and hashes it into `bridgeSetCid` / `linkBundleCid`, so its serialized shape
+/// must reproduce the exact `{file, line, column}` object the linker previously
+/// threaded through as raw JSON.
+///
+/// # Why a dedicated struct rather than the verifier's `SourceLocus`
+///
+/// The verifier's [`sugar_verifier::SourceLocus`] types `line` as a bare `usize`
+/// and omits `column` when absent. The linker's callSiteLocus, however, carries
+/// `line` and `col` straight from a lift memento where both are `Option` (see
+/// `sugar_lift::CallSiteLocus`), and the daemon (`spawn_kit_lifter`) has always
+/// serialized an absent line/column as an explicit `null` — a shape `SourceLocus`
+/// cannot reproduce without changing bytes. `line`/`column` are therefore
+/// `Option<usize>` here and serialize `None` as `null` (never skipped), matching
+/// the pre-seam `serde_json::json!` output field-for-field.
+///
+/// # Field order is load-bearing
+///
+/// `bridgeSetCid` hashes each bridge memento via a non-canonical
+/// `serde_json::to_string` (the `preserve_order` build keeps insertion order),
+/// so the serialized key order of the embedded `callSite` object feeds a pinned
+/// CID. Fields are declared in JCS-canonical (alphabetical) order —
+/// `column, file, line` — the order the pinned baseline was minted with;
+/// reordering them changes `linkBundleCid`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallSiteLocus {
+    /// 1-based column, or `null` when the lifter had no span location. Named
+    /// `column` (not `col`) to match the linker-side grammar object.
+    pub column: Option<usize>,
+    /// Source file the call site lives in.
+    pub file: String,
+    /// 1-based line, or `null` when the lifter had no span location.
+    pub line: Option<usize>,
+}
 
 /// Re-exports from `sugar-verifier` so callers do not need a direct
 /// dependency on the verifier crate to construct a registry / plan.
@@ -169,6 +208,61 @@ impl<'de> Deserialize<'de> for Symbol {
     }
 }
 
+/// A content-addressed identifier — the `"blake3-512:<hex>"` string, as a type.
+///
+/// Replaces the bare `String` that stood for a CID on every linker boundary:
+/// [`LinkerContract::contract_cid`], the two [`LinkerCallEdge`] endpoints, and
+/// the four [`LinkerOutput`] set-CIDs. It carries no derivation logic — the CID
+/// is still computed as a `String` inside the derivation core and wrapped into a
+/// `Cid` only at the [`LinkerOutput`] boundary — its job is to make "this string
+/// is a CID" unforgeable at the type level so a raw symbol, kit name, or locus
+/// string cannot land in a CID slot.
+///
+/// ## Wire byte-identity
+///
+/// `#[serde(transparent)]` means a `Cid` serializes to / deserializes from the
+/// bare `"blake3-512:<hex>"` JSON string it replaced — no wrapper object, no key.
+/// Every `contractCid` / `sourceContractCid` / `targetContractCid` /
+/// `contractSetCid` / `callEdgeSetCid` / `bridgeSetCid` / `linkBundleCid` on the
+/// wire (and thus every set-CID and `linkBundleCid` hash) is byte-for-byte
+/// preserved. `Ord` is the inner-string order, so sorting call edges by
+/// `source_contract_cid` produces the identical deterministic order the `String`
+/// field did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Cid(String);
+
+impl Cid {
+    /// Borrow the underlying `"blake3-512:<hex>"` string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Cid {
+    fn from(s: String) -> Self {
+        Cid(s)
+    }
+}
+
+impl From<&str> for Cid {
+    fn from(s: &str) -> Self {
+        Cid(s.to_string())
+    }
+}
+
+impl std::fmt::Display for Cid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for Cid {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 /// The formals / sorts / EUF-coordinate triple a contract *exports* or a call
 /// site *imports* — one type in two roles.
 ///
@@ -184,9 +278,13 @@ pub struct Signature {
     /// Formal parameter names, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub formals: Vec<String>,
-    /// Formal sorts, positionally aligned with `formals`.
+    /// Formal sorts, positionally aligned with `formals`, as strongly-typed
+    /// [`Sort`]s. Retyped from `serde_json::Value` in the sort-typeify seam: the
+    /// `{"kind":"primitive","name":...}` wire JSON is unchanged (`Sort` is
+    /// `#[serde(tag = "kind")]` and serializes to the identical tagged object),
+    /// so signature bytes and the linkBundleCid are byte-for-byte preserved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sorts: Vec<Json>,
+    pub sorts: Vec<Sort>,
     /// EUF coordinate this signature answers to, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub euf_coordinate: Option<String>,
@@ -236,8 +334,10 @@ pub struct LinkerContract {
     pub name: String,
     /// Kit identifier, e.g. `"rust-kit"`, `"go-kit"`.
     pub kit: String,
-    /// Content-addressed contract CID, `blake3-512:<hex>`.
-    pub contract_cid: String,
+    /// Content-addressed contract CID, `blake3-512:<hex>`, as a typed [`Cid`].
+    /// `#[serde(transparent)]` keeps the wire value the bare CID string, so
+    /// contract-set CIDs and snapshot bytes are byte-for-byte preserved.
+    pub contract_cid: Cid,
     /// Pre-condition formula as a strongly-typed [`IrFormula`] (ProofIR
     /// formula). `None` if the function has no pre-condition annotation.
     /// Retyped from `serde_json::Value` in the formula-typeify seam: the
@@ -257,9 +357,14 @@ pub struct LinkerContract {
     /// cleanly and never trip the check.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub formals: Vec<String>,
-    /// Declared formal sorts, positionally aligned with `formals`.
+    /// Declared formal sorts, positionally aligned with `formals`, as
+    /// strongly-typed [`Sort`]s (adopted from `sugar-ir-types`). Retyped from
+    /// `serde_json::Value` in the sort-typeify seam: the `{"kind":"primitive",
+    /// "name":...}` wire JSON is unchanged (`Sort` is `#[serde(tag = "kind")]`
+    /// and serializes to the identical tagged object), so contract CIDs and
+    /// snapshot bytes are byte-for-byte preserved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub formal_sorts: Vec<Json>,
+    pub formal_sorts: Vec<Sort>,
     /// EUF coordinate (the `enc#euf#c:...` segment) this contract answers to,
     /// if it is an EUF-callsite contract. `None` for ordinary contracts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -290,17 +395,24 @@ impl LinkerContract {
 /// `"<kit>:<name>"` string for linker resolution.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LinkerCallEdge {
-    /// CID of the calling function's contract.
-    pub source_contract_cid: String,
+    /// CID of the calling function's contract, as a typed [`Cid`].
+    pub source_contract_cid: Cid,
     /// CID of the callee's contract if already known (same-kit call), or `None`
-    /// for cross-kit calls where the linker must resolve `target_symbol`.
-    pub target_contract_cid: Option<String>,
+    /// for cross-kit calls where the linker must resolve `target_symbol`. The
+    /// `Option` is the *unbound* null state (see [`BoundContractCid`]); when
+    /// present it is a typed [`Cid`] that serializes to the bare CID string.
+    pub target_contract_cid: Option<Cid>,
     /// Typed symbol for cross-kit resolution, e.g. `"rust-kit:process"`. Its
     /// `Ord` is the resolution join key; it serializes to / from the exact
     /// `"<kit>:<name>"` wire string (see [`Symbol`]).
     pub target_symbol: Symbol,
-    /// JCS-canonical locus of the call site.  Shape per `ir-formal-grammar.md`.
-    pub call_site_locus_json: Json,
+    /// Typed locus of the call site, per `ir-formal-grammar.md`. `None` when the
+    /// owning kit emitted no `callSiteLocus` (the pre-seam `Json::Null` state);
+    /// `skip_serializing_if` keeps that absence off the internal snapshot wire.
+    /// This slot never reaches a pinned CID directly — the linker embeds it into
+    /// each bridge memento (see [`derive_bridge`]) where JCS canonicalizes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_locus: Option<CallSiteLocus>,
     /// ProofIR evidence term encoding the satisfaction obligation `post_B ⊃ pre_A`.
     pub evidence_term_json: Json,
     /// The typed import signature the call site declares for its target: the
@@ -473,11 +585,13 @@ pub struct LinkerError {
     /// Human-readable explanation.
     pub reason: String,
     /// Source file where the call site is located.  Derived from
-    /// `call_site_locus_json.file`; `None` if the locus has no file field.
+    /// `call_site_locus.file`; `None` if the edge carried no locus.
     pub file: Option<String>,
-    /// Original call-site locus emitted by the owning kit. Used by linkerd/LSP
-    /// to place solver diagnostics at the source call expression.
-    pub call_site_locus_json: Option<Json>,
+    /// Original call-site locus emitted by the owning kit, as the typed
+    /// [`CallSiteLocus`]. Used by linkerd/LSP to place solver diagnostics at the
+    /// source call expression. `None` when the edge carried no locus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_locus: Option<CallSiteLocus>,
 }
 
 /// Input bundle for a single `link()` invocation.
@@ -494,26 +608,52 @@ pub struct LinkerInputs {
     pub call_edges: Vec<LinkerCallEdge>,
 }
 
+/// A content-addressed link bundle — the four set-CIDs plus the canonical
+/// serialized bundle object, grouped as one typed value.
+///
+/// This is the typed view that replaces the four loose `Cid` fields and the
+/// bare `bundle_json: Json` that previously sat flat on [`LinkerOutput`].
+///
+/// ## Wire byte-identity
+///
+/// [`link_bundle_cid`](LinkBundle::link_bundle_cid) is the `blake3-512` hash of
+/// the JCS canonicalization of [`json`](LinkBundle::json) sans its own
+/// `linkBundleCid` key, and the daemon / CLI serialize `json` verbatim to
+/// `link-bundle.json`. The bundle bytes must therefore stay byte-for-byte
+/// identical. That is why `json` is kept as the already-derived [`Json`] value
+/// rather than a fully-typed struct: the typing is the *in-memory view* over the
+/// bundle, and the hash / wire source stays the exact bytes the derivation core
+/// built. Typing `json` into a struct would risk reordering keys and changing
+/// the CID.
+#[derive(Debug, Clone)]
+pub struct LinkBundle {
+    /// `blake3-512` CID of the sorted contract set, as a typed [`Cid`].
+    pub contract_set_cid: Cid,
+    /// `blake3-512` CID of the sorted call-edge set, as a typed [`Cid`].
+    pub call_edge_set_cid: Cid,
+    /// `blake3-512` CID of the derived bridge set, as a typed [`Cid`].
+    pub bridge_set_cid: Cid,
+    /// `blake3-512` CID of the full link bundle object, as a typed [`Cid`].
+    pub link_bundle_cid: Cid,
+    /// The full `LinkBundle` JSON object per spec R5, including `linkBundleCid`.
+    /// Kept as the already-serialized value so the wire bytes (and thus every
+    /// set-CID and the `linkBundleCid` hash) are byte-for-byte preserved.
+    pub json: Json,
+}
+
 /// Output of a single `link()` invocation.
 ///
-/// The `bundle_json` field is a `serde_json::Value` ready to be serialised and
-/// written to disk (CLI) or returned as a `projectStatus` response (daemon).
-/// The scalar CID fields are extracted at the top level for convenience.
+/// The [`bundle`](LinkerOutput::bundle) is the typed [`LinkBundle`]: its `json`
+/// field is a `serde_json::Value` ready to be serialised and written to disk
+/// (CLI) or returned as a `projectStatus` response (daemon), and its four
+/// set-CIDs are the typed scalars extracted alongside it for convenience.
 #[derive(Debug, Clone)]
 pub struct LinkerOutput {
-    /// `blake3-512` CID of the sorted contract set.
-    pub contract_set_cid: String,
-    /// `blake3-512` CID of the sorted call-edge set.
-    pub call_edge_set_cid: String,
-    /// `blake3-512` CID of the derived bridge set.
-    pub bridge_set_cid: String,
-    /// `blake3-512` CID of the full link bundle object.
-    pub link_bundle_cid: String,
+    /// The typed link bundle: four set-CIDs + the canonical serialized object.
+    pub bundle: LinkBundle,
     /// Per-edge linker errors (unresolved symbols, unprovable obligations).
     /// Each error carries a `file` field for per-file LSP diagnostic mapping.
     pub linker_errors: Vec<LinkerError>,
-    /// The full `LinkBundle` JSON object per spec R5, including `linkBundleCid`.
-    pub bundle_json: Json,
 }
 
 // -------------------------------------------------------------------
@@ -595,7 +735,7 @@ fn derive_link_bundle_inner(
     for c in &all_contracts {
         name_kit_index.insert(
             Symbol::qualified(c.kit.clone(), c.name.clone()),
-            c.contract_cid.clone(),
+            c.contract_cid.as_str().to_string(),
         );
         contracts_by_cid.insert(c.contract_cid.as_str(), c);
     }
@@ -603,7 +743,7 @@ fn derive_link_bundle_inner(
     // contractSetCid
     let mut all_contract_cids: Vec<String> = all_contracts
         .iter()
-        .map(|c| c.contract_cid.clone())
+        .map(|c| c.contract_cid.as_str().to_string())
         .collect();
     all_contract_cids.sort();
     let contract_set_cid = compute_set_cid_sorted(&all_contract_cids);
@@ -617,19 +757,22 @@ fn derive_link_bundle_inner(
         a.source_contract_cid
             .cmp(&b.source_contract_cid)
             .then_with(|| {
-                a.call_site_locus_json
-                    .to_string()
-                    .cmp(&b.call_site_locus_json.to_string())
+                // Deterministic tiebreak over the typed locus. The struct
+                // serializes in a fixed field order, so this string is stable
+                // for identical loci; it only orders edges sharing a source CID
+                // and never enters a CID hash.
+                serde_json::to_string(&a.call_site_locus)
+                    .unwrap_or_default()
+                    .cmp(&serde_json::to_string(&b.call_site_locus).unwrap_or_default())
             })
     });
 
     for edge in &sorted_edges {
         // Extract file from call-site locus for per-file diagnostics
         let locus_file = edge
-            .call_site_locus_json
-            .get("file")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .call_site_locus
+            .as_ref()
+            .map(|l| l.file.clone());
 
         // bind: the sole minter of a `BoundContractCid`, with two outcomes —
         // the bound target, or the typed failure (undefined-symbol /
@@ -640,7 +783,7 @@ fn derive_link_bundle_inner(
             Ok(bound) => bound,
             Err(mut err) => {
                 err.file = locus_file;
-                err.call_site_locus_json = Some(edge.call_site_locus_json.clone());
+                err.call_site_locus = edge.call_site_locus.clone();
                 linker_errors_out.push(err);
                 continue;
             }
@@ -667,9 +810,9 @@ fn derive_link_bundle_inner(
         // changes call-edge / bridge CIDs — the emit-side follow-up). Only the
         // in-memory `obligation` field is new, and it is not serialized.
         let memento = derive_bridge(
-            &edge.source_contract_cid,
+            edge.source_contract_cid.as_str(),
             target_cid,
-            &edge.call_site_locus_json,
+            &edge.call_site_locus,
             &edge.evidence_term_json,
         );
         let bridge = DerivedBridge {
@@ -679,14 +822,14 @@ fn derive_link_bundle_inner(
 
         if let Some(mut err) = discharge_obligation(
             &bridge.obligation,
-            &edge.source_contract_cid,
+            edge.source_contract_cid.as_str(),
             target_cid,
             &edge.target_symbol,
             registry,
             plan,
         ) {
             err.file = locus_file;
-            err.call_site_locus_json = Some(edge.call_site_locus_json.clone());
+            err.call_site_locus = edge.call_site_locus.clone();
             linker_errors_out.push(err);
         }
 
@@ -695,23 +838,11 @@ fn derive_link_bundle_inner(
 
     // Sort bridges for determinism (over the wire memento only).
     bridges.sort_by(|a, b| {
-        let ak = a
-            .memento
-            .get("header")
-            .and_then(|h| h.get("target"))
-            .and_then(|t| t.get("cid"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let bk = b
-            .memento
-            .get("header")
-            .and_then(|h| h.get("target"))
-            .and_then(|t| t.get("cid"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        ak.cmp(&bk)
+        a.memento
+            .header
+            .target
+            .cid
+            .cmp(&b.memento.header.target.cid)
     });
 
     // callEdgeSetCid
@@ -733,8 +864,10 @@ fn derive_link_bundle_inner(
 
     // bridgeSetCid (over the wire memento only).
     let bridge_set_cid = {
-        let mut bridge_strs: Vec<String> =
-            bridges.iter().map(|b| b.memento.to_string()).collect();
+        let mut bridge_strs: Vec<String> = bridges
+            .iter()
+            .map(|b| serde_json::to_string(&b.memento).unwrap_or_default())
+            .collect();
         bridge_strs.sort();
         compute_set_cid_sorted(&bridge_strs)
     };
@@ -756,7 +889,10 @@ fn derive_link_bundle_inner(
     // Wire bridges: only the byte-identical mementos are serialized. The
     // in-memory `obligation` field on each [`DerivedBridge`] never reaches the
     // bundle, so the bundle bytes (and linkBundleCid) are unchanged.
-    let bridge_mementos: Vec<Json> = bridges.into_iter().map(|b| b.memento).collect();
+    let bridge_mementos: Vec<Json> = bridges
+        .into_iter()
+        .map(|b| serde_json::to_value(b.memento).unwrap_or(Json::Null))
+        .collect();
 
     // linkBundleCid is over JCS of the bundle sans the CID field itself
     let bundle_without_cid = serde_json::json!({
@@ -780,13 +916,18 @@ fn derive_link_bundle_inner(
         );
     }
 
+    // Wrap the internally-derived CID strings into typed `Cid`s at the output
+    // boundary. Derivation stays `String` (the JCS/hash inputs above are
+    // byte-identical); only the public field type strengthens.
     LinkerOutput {
-        contract_set_cid,
-        call_edge_set_cid,
-        bridge_set_cid,
-        link_bundle_cid,
+        bundle: LinkBundle {
+            contract_set_cid: contract_set_cid.into(),
+            call_edge_set_cid: call_edge_set_cid.into(),
+            bridge_set_cid: bridge_set_cid.into(),
+            link_bundle_cid: link_bundle_cid.into(),
+            json: bundle_json,
+        },
         linker_errors: linker_errors_out,
-        bundle_json,
     }
 }
 
@@ -815,7 +956,7 @@ impl LinkerCallEdge {
     /// symbol-only when the wire payload predates signatures).
     fn edge_target(&self) -> EdgeTarget<'_> {
         match &self.target_contract_cid {
-            Some(cid) => EdgeTarget::Bound(cid),
+            Some(cid) => EdgeTarget::Bound(cid.as_str()),
             None => EdgeTarget::Unbound(self.import_signature.clone().unwrap_or_else(|| {
                 ImportSignature {
                     symbol: self.target_symbol.clone(),
@@ -849,13 +990,13 @@ fn bind(
     let undefined = || LinkerError {
         kind: LinkerErrorKind::UnresolvedSymbol,
         target_symbol: edge.target_symbol.to_wire(),
-        source_contract_cid: edge.source_contract_cid.clone(),
+        source_contract_cid: edge.source_contract_cid.as_str().to_string(),
         reason: format!(
             "targetSymbol `{}` did not resolve to any contract in the union",
             edge.target_symbol
         ),
         file: None,
-        call_site_locus_json: None,
+        call_site_locus: None,
     };
 
     // Resolve to a candidate CID: the kit's claim, else the cross-kit symbol
@@ -880,13 +1021,13 @@ fn bind(
             return Err(LinkerError {
                 kind: LinkerErrorKind::SignatureMismatch,
                 target_symbol: edge.target_symbol.to_wire(),
-                source_contract_cid: edge.source_contract_cid.clone(),
+                source_contract_cid: edge.source_contract_cid.as_str().to_string(),
                 reason: format!(
                     "import signature for `{}` does not match contract {}: {reason}",
                     edge.target_symbol, cid
                 ),
                 file: None,
-                call_site_locus_json: None,
+                call_site_locus: None,
             });
         }
     }
@@ -909,33 +1050,98 @@ fn bind(
 // Bridge derivation (R2)
 // -------------------------------------------------------------------
 
+/// The typed product of the bridge memento `derive_bridge` mints (R2).
+///
+/// Replaces the free-form `serde_json::json!` object the linker used to build
+/// and thread through as a raw [`Json`]. Every field is declared in the exact
+/// insertion order the `json!` macro used, and every camelCase wire key is a
+/// `#[serde(rename)]`, so `serde_json::to_string(&Bridge)` reproduces the old
+/// `Value::to_string()` bytes character-for-character. Byte-identity is
+/// load-bearing: `bridgeSetCid` hashes each bridge via a non-canonical
+/// `to_string` (insertion order), and `linkBundleCid` JCS-canonicalizes the
+/// whole bundle, so any reordering or value drift changes a pinned CID (see
+/// `test_link_bundle_cid_byte_identity_gate`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct Bridge {
+    #[serde(rename = "schemaVersion")]
+    schema_version: &'static str,
+    kind: &'static str,
+    header: BridgeHeader,
+    metadata: BridgeMetadata,
+}
+
+/// The bridge memento header: the source contract CID and the resolved target.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct BridgeHeader {
+    kind: &'static str,
+    #[serde(rename = "sourceContractCid")]
+    source_contract_cid: String,
+    target: BridgeTarget,
+}
+
+/// The resolved target of a bridge: a contract, keyed by its CID.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct BridgeTarget {
+    kind: &'static str,
+    cid: String,
+}
+
+/// The bridge memento metadata: call site, derived relation, and provenance.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct BridgeMetadata {
+    /// The lowered call-site locus, or `null` when the lifter had no span.
+    #[serde(rename = "callSite")]
+    call_site: Json,
+    #[serde(rename = "derivedRelation")]
+    derived_relation: DerivedRelation,
+    #[serde(rename = "derivedBy")]
+    derived_by: &'static str,
+    #[serde(rename = "linkerVersion")]
+    linker_version: &'static str,
+}
+
+/// The relation the linker derived for this bridge: `post-implies-pre`, carrying
+/// the emit-side `evidenceTerm` placeholder (the in-memory obligation the
+/// verifier discharges lives on [`DerivedBridge::obligation`], not here).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct DerivedRelation {
+    kind: &'static str,
+    #[serde(rename = "evidenceTerm")]
+    evidence_term: Json,
+}
+
 fn derive_bridge(
     source_contract_cid: &str,
     target_contract_cid: &str,
-    call_site_locus: &Json,
+    call_site_locus: &Option<CallSiteLocus>,
     evidence_term: &Json,
-) -> Json {
-    serde_json::json!({
-        "schemaVersion": "2",
-        "kind": "bridge",
-        "header": {
-            "kind": "bridge",
-            "sourceContractCid": source_contract_cid,
-            "target": {
-                "kind": "contract",
-                "cid": target_contract_cid
-            }
-        },
-        "metadata": {
-            "callSite": call_site_locus,
-            "derivedRelation": {
-                "kind": "post-implies-pre",
-                "evidenceTerm": evidence_term
+) -> Bridge {
+    // Lower the typed locus back to the exact JSON it replaced: `None` -> `null`
+    // (the pre-seam `Json::Null`), `Some` -> the `{column,file,line}` object.
+    // The bridge is JCS-canonicalized for `bridgeSetCid` / `linkBundleCid`, so
+    // this embedding is byte-identical to the old free-form `Json` slot.
+    let call_site = serde_json::to_value(call_site_locus).unwrap_or(Json::Null);
+    Bridge {
+        schema_version: "2",
+        kind: "bridge",
+        header: BridgeHeader {
+            kind: "bridge",
+            source_contract_cid: source_contract_cid.to_string(),
+            target: BridgeTarget {
+                kind: "contract",
+                cid: target_contract_cid.to_string(),
             },
-            "derivedBy": "linker",
-            "linkerVersion": "0.1.0"
-        }
-    })
+        },
+        metadata: BridgeMetadata {
+            call_site,
+            derived_relation: DerivedRelation {
+                kind: "post-implies-pre",
+                evidence_term: evidence_term.clone(),
+            },
+            derived_by: "linker",
+            linker_version: "0.1.0",
+        },
+    }
 }
 
 // -------------------------------------------------------------------
@@ -1023,7 +1229,7 @@ impl ObligationState {
 /// is never serialized, keeping the bundle bytes and `linkBundleCid` identical.
 struct DerivedBridge {
     /// The wire-facing bridge memento (byte-identical to the pre-seam JSON).
-    memento: Json,
+    memento: Bridge,
     /// The in-memory obligation this bridge carries and the verifier discharges.
     obligation: ObligationState,
 }
@@ -1083,7 +1289,7 @@ fn discharge_obligation(
                     "caller post-condition is absent; cannot discharge `post_caller \u{2283} pre_callee` for target `{target_cid}`"
                 ),
                 file: None, // populated by caller from locus
-                call_site_locus_json: None, // populated by caller from locus
+                call_site_locus: None, // populated by caller from locus
             });
         }
         ObligationState::VacuousPreAbsent => return None,
@@ -1129,7 +1335,7 @@ fn discharge_obligation(
                     error.payload
                 ),
                 file: None,
-                call_site_locus_json: None,
+                call_site_locus: None,
             });
         }
     };
@@ -1149,7 +1355,7 @@ fn discharge_obligation(
                     "compile post-implies-pre to SMT-LIB failed for target `{target_cid}`: {e}"
                 ),
                 file: None,
-                call_site_locus_json: None,
+                call_site_locus: None,
             });
         }
     };
@@ -1166,7 +1372,7 @@ fn discharge_obligation(
                 "solver reports `post_caller \u{2283} pre_callee` is violated for target `{target_cid}`: {reason}"
             ),
             file: None,
-            call_site_locus_json: None,
+            call_site_locus: None,
         }),
         ObligationVerdict::Undecidable | ObligationVerdict::Disagreement => Some(LinkerError {
             kind: LinkerErrorKind::ImplicationUndecidable,
@@ -1176,7 +1382,7 @@ fn discharge_obligation(
                 "solver could not decide `post_caller \u{2283} pre_callee` for target `{target_cid}`: {reason}"
             ),
             file: None,
-            call_site_locus_json: None,
+            call_site_locus: None,
         }),
         ObligationVerdict::SolverTimeout => Some(LinkerError {
             kind: LinkerErrorKind::ImplicationSolverTimeout,
@@ -1186,7 +1392,7 @@ fn discharge_obligation(
                 "solver exceeded host timeout while checking `post_caller \u{2283} pre_callee` for target `{target_cid}`: {reason}"
             ),
             file: None,
-            call_site_locus_json: None,
+            call_site_locus: None,
         }),
         // A refusal is distinct from "undecidable": there is no sound discharger
         // for this bridge's obligation (the precondition lowers to a construct the
@@ -1200,7 +1406,7 @@ fn discharge_obligation(
                 "no sound discharger for `post_caller \u{2283} pre_callee` on target `{target_cid}`; refused, not guessed: {reason}"
             ),
             file: None,
-            call_site_locus_json: None,
+            call_site_locus: None,
         }),
     }
 }
@@ -1333,6 +1539,130 @@ mod tests {
         }
     }
 
+    /// BYTE-IDENTITY GATE for the `Cid` seam. A `Cid` (`#[serde(transparent)]`)
+    /// round-trips every CID wire string byte-for-byte as the bare JSON string it
+    /// replaced — standalone, inside `Option` (the `None -> null` / `Some -> string`
+    /// endpoint states), and flattened inside a `LinkerContract`/`LinkerCallEdge`
+    /// where the `contractCid` / `sourceContractCid` / `targetContractCid` keys
+    /// carry the raw CID with no wrapper object. If the newtype ever gained a
+    /// wrapper, this pins the drift rather than letting a set-CID silently shift.
+    #[test]
+    fn cid_wire_is_byte_identical_roundtrip() {
+        // Standalone: a `Cid` serializes to / from the bare CID string literal.
+        for wire in [
+            r#""blake3-512:aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001""#,
+            r#""blake3-512:0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000""#,
+        ] {
+            let cid: Cid = serde_json::from_str(wire).expect("Cid must parse from bare string");
+            let back = serde_json::to_string(&cid).expect("Cid serializes");
+            assert_eq!(back, wire, "Cid serde round-trip must be byte-identical on `{wire}`");
+        }
+
+        // Inside `Option`: both endpoint states are byte-identical to `Option<String>`.
+        let some_wire = r#""blake3-512:deadbeef""#;
+        let some: Option<Cid> = serde_json::from_str(some_wire).unwrap();
+        assert_eq!(serde_json::to_string(&some).unwrap(), some_wire);
+        let none: Option<Cid> = serde_json::from_str("null").unwrap();
+        assert_eq!(serde_json::to_string(&none).unwrap(), "null");
+
+        // Flattened in a `LinkerCallEdge`: `sourceContractCid` carries the raw CID
+        // string and `targetContractCid: null` stays a bare null, exactly as the
+        // pre-seam `String` / `Option<String>` fields serialized.
+        let edge = LinkerCallEdge {
+            source_contract_cid: "blake3-512:aaaa".into(),
+            target_contract_cid: None,
+            target_symbol: "rust-kit:process".into(),
+            ..Default::default()
+        };
+        let v = serde_json::to_value(&edge).unwrap();
+        assert_eq!(v["source_contract_cid"], serde_json::json!("blake3-512:aaaa"));
+        assert!(v["target_contract_cid"].is_null());
+        // And a round-trip through the struct reproduces the typed value.
+        let back: LinkerCallEdge = serde_json::from_value(v).unwrap();
+        assert_eq!(back.source_contract_cid.as_str(), "blake3-512:aaaa");
+        assert!(back.target_contract_cid.is_none());
+    }
+
+    /// Byte-identity gate for the [`CallSiteLocus`] seam: the typed locus must
+    /// produce the exact same JCS bytes the free-form `{column,file,line}` Json
+    /// object did, since that object is embedded into every bridge memento and
+    /// hashed into `bridgeSetCid` / `linkBundleCid`.
+    #[test]
+    fn call_site_locus_wire_is_byte_identical_roundtrip() {
+        // JCS of the typed locus == JCS of the raw grammar object.
+        let raw = serde_json::json!({
+            "column": 9,
+            "file": "examples/polyglot-rust-go/go-caller/caller_fail.go",
+            "line": 21
+        });
+        let typed = CallSiteLocus {
+            file: "examples/polyglot-rust-go/go-caller/caller_fail.go".into(),
+            line: Some(21),
+            column: Some(9),
+        };
+        let typed_json = serde_json::to_value(&typed).unwrap();
+        assert_eq!(
+            jcs_of_json(&typed_json),
+            jcs_of_json(&raw),
+            "typed locus must canonicalize to the same JCS bytes as the raw object"
+        );
+        // And it round-trips back through the struct unchanged.
+        let back: CallSiteLocus = serde_json::from_value(raw).unwrap();
+        assert_eq!(back, typed);
+
+        // An unlocated locus (the lifter's `line: None` / `col: None` state) keeps
+        // both keys as explicit `null` — never dropped — byte-matching the
+        // pre-seam `serde_json::json!` the daemon emitted from `Option<u32>`.
+        let unlocated = CallSiteLocus {
+            file: "pipeline.py".into(),
+            line: None,
+            column: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&unlocated).unwrap(),
+            serde_json::json!({"file": "pipeline.py", "line": null, "column": null})
+        );
+        let back_unlocated: CallSiteLocus =
+            serde_json::from_value(serde_json::json!({
+                "file": "pipeline.py",
+                "line": null,
+                "column": null
+            }))
+            .unwrap();
+        assert_eq!(back_unlocated, unlocated);
+
+        // Absence is preserved: `None` embeds as `null` (the pre-seam
+        // `Json::Null`), `Some` as the object, exactly as `derive_bridge` needs.
+        let none: Option<CallSiteLocus> = None;
+        assert!(serde_json::to_value(&none).unwrap().is_null());
+        let some = Some(typed.clone());
+        assert_eq!(serde_json::to_value(&some).unwrap(), typed_json);
+
+        // On a `LinkerCallEdge`, an absent locus stays off the wire (skip) and
+        // round-trips to `None`; a present one round-trips byte-for-byte.
+        let edge = LinkerCallEdge {
+            source_contract_cid: "blake3-512:aaaa".into(),
+            call_site_locus: Some(typed.clone()),
+            ..Default::default()
+        };
+        let ev = serde_json::to_value(&edge).unwrap();
+        assert_eq!(jcs_of_json(&ev["call_site_locus"]), jcs_of_json(&typed_json));
+        let back_edge: LinkerCallEdge = serde_json::from_value(ev).unwrap();
+        assert_eq!(back_edge.call_site_locus, Some(typed));
+
+        let bare = LinkerCallEdge {
+            source_contract_cid: "blake3-512:aaaa".into(),
+            ..Default::default()
+        };
+        let bv = serde_json::to_value(&bare).unwrap();
+        assert!(
+            bv.get("call_site_locus").is_none(),
+            "absent locus must be skipped, not serialized as null"
+        );
+        let back_bare: LinkerCallEdge = serde_json::from_value(bv).unwrap();
+        assert!(back_bare.call_site_locus.is_none());
+    }
+
     /// Unqualified / empty-part symbols resolve to nothing, exactly as the old
     /// `resolve_target_symbol` `find(':')` + non-empty guard did: they key no
     /// contract-derived entry in the `Symbol`-keyed index.
@@ -1375,6 +1705,57 @@ mod tests {
         assert_eq!(
             back_min, wire_min,
             "symbol-only ImportSignature must omit empty signature fields"
+        );
+    }
+
+    /// The sort-typeify seam: `formal_sorts` / `Signature::sorts` are typed
+    /// [`Sort`]s, but the element wire JSON is byte-identical to the pre-seam
+    /// `{"kind":"primitive","name":"Int"}` object, and the check compares
+    /// `Sort == Sort` rather than `Json == Json`.
+    #[test]
+    fn formal_sorts_typeify_is_byte_identical_on_the_wire() {
+        // A single Sort element round-trips to the exact tagged wire object.
+        let sort_wire = r#"{"kind":"primitive","name":"Int"}"#;
+        let parsed: Sort = serde_json::from_str(sort_wire).expect("Sort must parse");
+        assert_eq!(parsed, Sort::Primitive { name: "Int".into() });
+        let back = serde_json::to_string(&parsed).expect("Sort serializes");
+        assert_eq!(back, sort_wire, "Sort element wire must be byte-identical");
+
+        // A LinkerContract carrying formal_sorts round-trips byte-for-byte, and
+        // the empty-vector default is still omitted.
+        let contract_wire = r#"{"name":"process","kit":"rust-kit","contract_cid":"blake3-512:00","pre_json":null,"post_json":null,"formals":["n"],"formal_sorts":[{"kind":"primitive","name":"Int"}]}"#;
+        let contract: LinkerContract =
+            serde_json::from_str(contract_wire).expect("LinkerContract must parse");
+        assert_eq!(
+            contract.formal_sorts,
+            vec![Sort::Primitive { name: "Int".into() }]
+        );
+        let back = serde_json::to_string(&contract).expect("LinkerContract serializes");
+        assert_eq!(
+            back, contract_wire,
+            "LinkerContract formal_sorts wire must be byte-identical"
+        );
+
+        // The check compares typed Sorts: agreeing sorts pass, disagreeing fail.
+        let exported = Signature {
+            formals: vec!["n".into()],
+            sorts: vec![Sort::Primitive { name: "Int".into() }],
+            euf_coordinate: None,
+        };
+        let agree = Signature {
+            sorts: vec![Sort::Primitive { name: "Int".into() }],
+            ..Default::default()
+        };
+        assert!(agree.check(&exported).is_ok(), "matching Sorts must check");
+        let disagree = Signature {
+            sorts: vec![Sort::Primitive {
+                name: "String".into(),
+            }],
+            ..Default::default()
+        };
+        assert!(
+            disagree.check(&exported).is_err(),
+            "disagreeing Sorts must fail the check"
         );
     }
 
@@ -1492,10 +1873,10 @@ mod tests {
             source_contract_cid: go_contract.contract_cid.clone(),
             target_contract_cid: None,
             target_symbol: "rust-kit:process".into(),
-            call_site_locus_json: serde_json::json!({
-                "column": 9,
-                "file": "examples/polyglot-rust-go/go-caller/caller_fail.go",
-                "line": 21
+            call_site_locus: Some(CallSiteLocus {
+                file: "examples/polyglot-rust-go/go-caller/caller_fail.go".into(),
+                line: Some(21),
+                column: Some(9),
             }),
             evidence_term_json: serde_json::json!({
                 "kind": "Atomic",
@@ -1523,9 +1904,16 @@ mod tests {
             output.linker_errors[0].file.as_deref(),
             Some("examples/polyglot-rust-go/go-caller/caller_fail.go")
         );
-        assert!(output.link_bundle_cid.starts_with("blake3-512:"));
+        assert!(output
+            .bundle
+            .link_bundle_cid
+            .as_str()
+            .starts_with("blake3-512:"));
 
-        eprintln!("failure-case linkBundleCid = {}", output.link_bundle_cid);
+        eprintln!(
+            "failure-case linkBundleCid = {}",
+            output.bundle.link_bundle_cid
+        );
     }
 
     #[test]
@@ -1536,9 +1924,16 @@ mod tests {
         });
 
         assert!(output.linker_errors.is_empty());
-        assert!(output.link_bundle_cid.starts_with("blake3-512:"));
+        assert!(output
+            .bundle
+            .link_bundle_cid
+            .as_str()
+            .starts_with("blake3-512:"));
 
-        eprintln!("success-case linkBundleCid = {}", output.link_bundle_cid);
+        eprintln!(
+            "success-case linkBundleCid = {}",
+            output.bundle.link_bundle_cid
+        );
     }
 
     #[test]
@@ -1549,7 +1944,7 @@ mod tests {
         };
         let out1 = link(inputs.clone());
         let out2 = link(inputs);
-        assert_eq!(out1.link_bundle_cid, out2.link_bundle_cid);
+        assert_eq!(out1.bundle.link_bundle_cid, out2.bundle.link_bundle_cid);
     }
 
     #[test]
@@ -1562,7 +1957,10 @@ mod tests {
             contracts: vec![make_process_contract(), make_go_caller_ok_contract()],
             call_edges: vec![],
         });
-        assert_ne!(fail_out.link_bundle_cid, ok_out.link_bundle_cid);
+        assert_ne!(
+            fail_out.bundle.link_bundle_cid,
+            ok_out.bundle.link_bundle_cid
+        );
     }
 
     /// Byte-identity gate: linkBundleCid must match the values pinned by
@@ -1579,15 +1977,98 @@ mod tests {
         });
 
         assert_eq!(
-            fail_out.link_bundle_cid,
+            fail_out.bundle.link_bundle_cid.as_str(),
             "blake3-512:a0d04917ab46f58662b4f497a779cab8c2814df0bb40c8df0cb1b6abfe1eaabe7500f638249d423e4d74648add1ce5d47fd9502cd5481a9012807bba50aec584",
             "failure-case linkBundleCid must match baseline from PR #124 smoke test"
         );
         assert_eq!(
-            ok_out.link_bundle_cid,
+            ok_out.bundle.link_bundle_cid.as_str(),
             "blake3-512:31fab69f197f4b279594972e35de7844f954a98ddce44b35edd14b77f53bd2ddb8ce95511bbef00f15476cc2f75f998ac4e419e5fe2c2162c008ba1c7c925131",
             "success-case linkBundleCid must match baseline from PR #124 smoke test"
         );
+    }
+
+    /// Wire round-trip for the [`LinkBundle`] typed view: each of the four typed
+    /// `Cid` fields must equal, byte-for-byte, the corresponding string on the
+    /// serialized `json`, and the `json` must survive a serialize → parse round
+    /// trip unchanged. This pins that typing the four CIDs did NOT drift the view
+    /// off the wire bytes the `linkBundleCid` hashes — the typed scalars are a
+    /// faithful projection of the same object written to `link-bundle.json`.
+    #[test]
+    fn test_link_bundle_typed_view_matches_wire() {
+        let output = link(LinkerInputs {
+            contracts: vec![make_process_contract(), make_go_caller_fail_contract()],
+            call_edges: vec![make_cgo_call_edge(&make_go_caller_fail_contract())],
+        });
+        let bundle = &output.bundle;
+
+        // Each typed Cid is exactly the wire string on the serialized object.
+        let wire = |k: &str| bundle.json.get(k).and_then(|v| v.as_str()).unwrap();
+        assert_eq!(bundle.contract_set_cid.as_str(), wire("contractSetCid"));
+        assert_eq!(bundle.call_edge_set_cid.as_str(), wire("callEdgeSetCid"));
+        assert_eq!(bundle.bridge_set_cid.as_str(), wire("bridgeSetCid"));
+        assert_eq!(bundle.link_bundle_cid.as_str(), wire("linkBundleCid"));
+
+        // The bundle json survives a serialize -> parse round trip byte-identically.
+        let serialized = serde_json::to_string(&bundle.json).expect("serialize bundle json");
+        let reparsed: Json = serde_json::from_str(&serialized).expect("parse bundle json");
+        assert_eq!(reparsed, bundle.json, "bundle json must round-trip unchanged");
+    }
+
+    /// Per-type wire round-trip for the typed [`Bridge`] memento: the struct
+    /// `derive_bridge` mints must serialize byte-for-byte to the exact free-form
+    /// `json!` object it replaced (same key order, same values), and survive a
+    /// serialize -> parse -> re-serialize round trip unchanged. This pins that
+    /// the `Bridge`/`DerivedRelation` product is a faithful projection of the
+    /// wire bytes `bridgeSetCid` / `linkBundleCid` hash.
+    #[test]
+    fn test_bridge_typed_memento_matches_wire() {
+        let locus = Some(CallSiteLocus {
+            file: "caller.go".into(),
+            line: Some(7),
+            column: Some(3),
+        });
+        let evidence = serde_json::json!({"kind": "Atomic", "name": "obligation", "args": []});
+
+        // Case 1: present call-site locus, evidence term.
+        let bridge = derive_bridge("blake3-512:src", "blake3-512:tgt", &locus, &evidence);
+        let expected = serde_json::json!({
+            "schemaVersion": "2",
+            "kind": "bridge",
+            "header": {
+                "kind": "bridge",
+                "sourceContractCid": "blake3-512:src",
+                "target": { "kind": "contract", "cid": "blake3-512:tgt" }
+            },
+            "metadata": {
+                "callSite": { "column": 3, "file": "caller.go", "line": 7 },
+                "derivedRelation": {
+                    "kind": "post-implies-pre",
+                    "evidenceTerm": {"kind": "Atomic", "name": "obligation", "args": []}
+                },
+                "derivedBy": "linker",
+                "linkerVersion": "0.1.0"
+            }
+        });
+        assert_eq!(
+            serde_json::to_string(&bridge).unwrap(),
+            expected.to_string(),
+            "typed Bridge must serialize byte-identically to the pre-seam json! object"
+        );
+
+        // Case 2: absent locus lowers `callSite` to an explicit `null`.
+        let none_bridge = derive_bridge("blake3-512:src", "blake3-512:tgt", &None, &evidence);
+        assert_eq!(
+            serde_json::to_value(&none_bridge).unwrap()["metadata"]["callSite"],
+            Json::Null,
+            "absent locus must lower to a `null` callSite, not a skipped key"
+        );
+
+        // Round-trip: serialize -> parse -> the parsed value re-serializes stably.
+        let wire = serde_json::to_value(&bridge).unwrap();
+        let reparsed: Json =
+            serde_json::from_str(&serde_json::to_string(&bridge).unwrap()).unwrap();
+        assert_eq!(reparsed, wire, "bridge memento must round-trip unchanged");
     }
 
     // -----------------------------------------------------------------
@@ -1600,7 +2081,7 @@ mod tests {
     fn make_process_contract_with_signature() -> LinkerContract {
         LinkerContract {
             formals: vec!["n".into()],
-            formal_sorts: vec![serde_json::json!({"kind": "primitive", "name": "Int"})],
+            formal_sorts: vec![Sort::Primitive { name: "Int".into() }],
             ..make_process_contract()
         }
     }
@@ -1638,7 +2119,8 @@ mod tests {
         assert_eq!(mismatch.target_symbol, "rust-kit:process");
         // No bridge for a mismatched edge: bind refused before derivation.
         let bridges = output
-            .bundle_json
+            .bundle
+            .json
             .get("bridges")
             .unwrap()
             .as_array()
@@ -1669,7 +2151,11 @@ mod tests {
             target_contract_cid: None,
             // No `polars-kit:scalar_sum` contract is present in the union.
             target_symbol: "polars-kit:scalar_sum".into(),
-            call_site_locus_json: serde_json::json!({"file": "pipeline.py", "line": 3, "column": 5}),
+            call_site_locus: Some(CallSiteLocus {
+                file: "pipeline.py".into(),
+                line: Some(3),
+                column: Some(5),
+            }),
             evidence_term_json: serde_json::json!({"kind": "Atomic", "name": "obligation", "args": []}),
             ..Default::default()
         };
@@ -1698,7 +2184,7 @@ mod tests {
         let process = make_process_contract();
         name_kit_index.insert(
             Symbol::qualified("rust-kit", "process"),
-            process.contract_cid.clone(),
+            process.contract_cid.as_str().to_string(),
         );
         let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();
         contracts_by_cid.insert(process.contract_cid.as_str(), &process);
@@ -1708,7 +2194,7 @@ mod tests {
         let bound = bind(&edge, &name_kit_index, &contracts_by_cid)
             .expect("resolvable edge binds to a contract");
         // The minted CID is exactly the resolved contract's — never null.
-        assert_eq!(bound.as_str(), process.contract_cid);
+        assert_eq!(bound.as_str(), process.contract_cid.as_str());
         assert!(!bound.as_str().is_empty());
     }
 }

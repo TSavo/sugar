@@ -28,7 +28,7 @@ use sugar_linker::solver_api::{
     registry, ObligationVerdict, SolverHandle, SolverPlan, SolverSeat, SolversConfig, StubSolver,
 };
 use sugar_linker::{
-    link, link_with_solvers, LinkerCallEdge, LinkerContract, LinkerInputs, Registry,
+    link, link_with_solvers, CallSiteLocus, LinkerCallEdge, LinkerContract, LinkerInputs, Registry,
 };
 
 // -------------------------------------------------------------------
@@ -95,10 +95,10 @@ fn cgo_edge() -> LinkerCallEdge {
         source_contract_cid: CALLER_CID.into(),
         target_contract_cid: Some(CALLEE_CID.into()),
         target_symbol: "rust-kit:callee".into(),
-        call_site_locus_json: json!({
-            "file": "caller.rs",
-            "line": 1,
-            "column": 1
+        call_site_locus: Some(CallSiteLocus {
+            file: "caller.rs".into(),
+            line: Some(1),
+            column: Some(1),
         }),
         evidence_term_json: json!({"kind": "Atomic", "name": "obligation", "args": []}),
         ..Default::default()
@@ -237,12 +237,12 @@ fn logically_incompatible_emits_implication_unprovable() {
     assert_eq!(err.target_symbol, "rust-kit:callee");
     assert_eq!(err.file.as_deref(), Some("caller.rs"));
     assert_eq!(
-        err.call_site_locus_json.as_ref(),
-        Some(&json!({
-            "file": "caller.rs",
-            "line": 1,
-            "column": 1
-        })),
+        err.call_site_locus.as_ref(),
+        Some(&CallSiteLocus {
+            file: "caller.rs".into(),
+            line: Some(1),
+            column: Some(1),
+        }),
         "solver failure must preserve the callsite locus for LSP diagnostics"
     );
 }

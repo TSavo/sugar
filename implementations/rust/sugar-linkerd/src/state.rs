@@ -246,8 +246,8 @@ impl ProjectState {
 
         // Cache under the CID key.
         let key: CacheKey = (
-            output.contract_set_cid.clone(),
-            output.call_edge_set_cid.clone(),
+            output.bundle.contract_set_cid.as_str().to_string(),
+            output.bundle.call_edge_set_cid.as_str().to_string(),
         );
         self.cache.insert(key, output.clone());
         self.last_output = Some(output);
@@ -290,7 +290,7 @@ impl ProjectState {
                     "sourceContractCid": e.source_contract_cid,
                     "reason": e.reason,
                     "file": e.file,
-                    "callSiteLocus": e.call_site_locus_json,
+                    "callSiteLocus": e.call_site_locus,
                 })
             })
             .collect()
@@ -300,10 +300,10 @@ impl ProjectState {
     pub fn project_status(&self) -> Option<Json> {
         let output = self.last_output.as_ref()?;
         Some(serde_json::json!({
-            "contractSetCid": output.contract_set_cid,
-            "callEdgeSetCid": output.call_edge_set_cid,
-            "bridgeSetCid":   output.bridge_set_cid,
-            "linkBundleCid":  output.link_bundle_cid,
+            "contractSetCid": output.bundle.contract_set_cid,
+            "callEdgeSetCid": output.bundle.call_edge_set_cid,
+            "bridgeSetCid":   output.bundle.bridge_set_cid,
+            "linkBundleCid":  output.bundle.link_bundle_cid,
         }))
     }
 
@@ -377,12 +377,13 @@ impl ProjectState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sugar_linker::CallSiteLocus;
 
     fn make_contract(name: &str, kit: &str, cid: &str) -> LinkerContract {
         LinkerContract {
             name: name.to_string(),
             kit: kit.to_string(),
-            contract_cid: cid.to_string(),
+            contract_cid: cid.into(),
             pre_json: None,
             post_json: None,
             ..Default::default()
@@ -398,7 +399,7 @@ mod tests {
             "blake3-512:aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001",
         )];
         let output = state.update_and_link("rust-kit", "/tmp/foo.rs", contracts, vec![]);
-        assert!(output.link_bundle_cid.starts_with("blake3-512:"));
+        assert!(output.bundle.link_bundle_cid.as_str().starts_with("blake3-512:"));
     }
 
     #[test]
@@ -411,10 +412,12 @@ mod tests {
         )];
         let cid1 = state
             .update_and_link("go-kit", "/tmp/bar.go", contracts.clone(), vec![])
+            .bundle
             .link_bundle_cid
             .clone();
         let cid2 = state
             .update_and_link("go-kit", "/tmp/bar.go", contracts, vec![])
+            .bundle
             .link_bundle_cid
             .clone();
         assert_eq!(cid1, cid2, "idempotent: same inputs => same linkBundleCid");
@@ -472,7 +475,11 @@ mod tests {
                 source_contract_cid: source_cid.into(),
                 target_contract_cid: None,
                 target_symbol: "rust-kit:missing".into(),
-                call_site_locus_json: locus.clone(),
+                call_site_locus: Some(CallSiteLocus {
+                    file: "/tmp/caller.rs".into(),
+                    line: Some(7),
+                    column: Some(13),
+                }),
                 evidence_term_json: serde_json::json!({
                     "kind": "Atomic",
                     "name": "obligation",
@@ -497,8 +504,10 @@ mod tests {
         )];
         let original_cid = state
             .update_and_link("go-kit", "/tmp/baz.go", contracts, vec![])
+            .bundle
             .link_bundle_cid
-            .clone();
+            .as_str()
+            .to_string();
 
         let bytes = state.to_snapshot_bytes();
         let restored = ProjectState::from_snapshot_bytes(&bytes).expect("restore");

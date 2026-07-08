@@ -65,6 +65,7 @@ use std::process::{Command, Stdio};
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
@@ -91,7 +92,7 @@ pub struct ConsistencyResult {
     /// recompute (k(I)=t), NOT from a symbolic solver. Kept distinct so the
     /// report never reads witnessed-by-execution as proven-by-solver.
     pub witnessed: bool,
-    pub verification: Option<Json>,
+    pub verification: Option<VerificationDetail>,
     /// The source locus (file/line/column) of the assertion this result is
     /// about, recovered from the contract memento's own `file`+`span`. Stamped
     /// by `verify_consistency` and threaded to the report row so an
@@ -99,6 +100,115 @@ pub struct ConsistencyResult {
     /// assertion instead of dropping the source. `None` when the contract
     /// memento carries no readable locus (fail-open: no false anchor).
     pub locus: Option<SourceLocus>,
+}
+
+/// Typed replacement for the hand-rolled `verification` JSON on
+/// [`ConsistencyResult`]. Serde is internally-tagged on `kind`, so together with
+/// declaration-order fields and `skip_serializing_if` this serializes
+/// BYTE-IDENTICALLY to the JSON shapes this module (and the effects boundary,
+/// [`VerifyEffect::to_legacy_boundary`]) previously built by hand. That
+/// byte-identity is load-bearing: the linked-bundle CID is computed over this
+/// serialization. Each arm has a per-shape round-trip test
+/// (`test_verification_detail_*_round_trip`) that pins the exact wire bytes.
+///
+/// Variant / `kind` mapping:
+///   - [`VerificationDetail::Witness`]       -> `kind = "witness"`
+///   - [`VerificationDetail::Solver`]        -> `kind = "consistency"`
+///     (the symbolic consistency detail; the two conjoined-fact fields
+///     `clientFactIr`/`vendorFactIr` are attached later by
+///     [`attach_conjoined_facts`] and are omitted when absent)
+///   - [`VerificationDetail::ProvenanceKind`] -> `kind = "consistency-provenance-kind"`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum VerificationDetail {
+    /// Execution-witness recompute detail. `witnessed`/`verdict`/`reason` are
+    /// always present; `resolvedBy`/`outcomes`/`failed`/`failedTests` appear only
+    /// on the resolved-package shapes (omitted on the undecidable / recompute-error
+    /// shape), matching the three hand-rolled witness variants exactly.
+    #[serde(rename = "witness")]
+    Witness {
+        witnessed: bool,
+        verdict: String,
+        #[serde(
+            rename = "resolvedBy",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        resolved_by: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcomes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<u64>,
+        #[serde(
+            rename = "failedTests",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        failed_tests: Option<Vec<String>>,
+        reason: String,
+    },
+    /// Symbolic-solver consistency detail. `rawSolverVerdict`/`solverReason` are
+    /// nullable-but-always-present (serialized as JSON `null` when absent, never
+    /// dropped); `clientFactIr`/`vendorFactIr` are the appended conjoined facts and
+    /// ARE dropped when absent.
+    #[serde(rename = "consistency")]
+    Solver {
+        property: String,
+        #[serde(rename = "checkedFormulaCid")]
+        checked_formula_cid: String,
+        #[serde(rename = "linkedPosts")]
+        linked_posts: Json,
+        #[serde(rename = "rawSolverVerdict")]
+        raw_solver_verdict: Option<String>,
+        #[serde(rename = "finalVerdict")]
+        final_verdict: String,
+        #[serde(rename = "solverReason")]
+        solver_reason: Option<String>,
+        #[serde(rename = "solverInvocations")]
+        solver_invocations: Json,
+        #[serde(
+            rename = "clientFactIr",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        client_fact_ir: Option<Json>,
+        #[serde(
+            rename = "vendorFactIr",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        vendor_fact_ir: Option<Json>,
+    },
+    /// Provenance-KIND refusal detail (a custom-witness / panic-callsite contract
+    /// that carried the wrong `proofirProvenance.warrants[].kind`).
+    #[serde(rename = "consistency-provenance-kind")]
+    ProvenanceKind {
+        property: String,
+        #[serde(rename = "finalVerdict")]
+        final_verdict: String,
+        reason: String,
+    },
+}
+
+impl VerificationDetail {
+    /// Lower to the wire JSON. This is the boundary back to the report stage,
+    /// which still threads `Option<Json>`; the serialization is byte-identical to
+    /// the shape this type replaced.
+    pub fn to_json(&self) -> Json {
+        serde_json::to_value(self).expect("VerificationDetail serializes infallibly")
+    }
+}
+
+/// Lift the effects boundary's legacy JSON verification (still `Option<Json>` at
+/// [`VerifyEffect::to_legacy_boundary`]) into the typed detail. The boundary only
+/// ever emits the `witness` and `consistency-provenance-kind` shapes, both of
+/// which round-trip through this type; a schema drift panics LOUD rather than
+/// silently dropping the detail.
+fn verification_from_boundary(v: Option<Json>) -> Option<VerificationDetail> {
+    v.map(|j| {
+        serde_json::from_value(j)
+            .expect("effects boundary verification must match the VerificationDetail schema")
+    })
 }
 
 /// Recover the assertion's source locus from a contract memento body. The
@@ -710,12 +820,15 @@ fn try_witness_discharge(
         effect: None,
         witnessed: false,
         locus: None,
-        verification: Some(json!({
-            "kind": "witness",
-            "witnessed": false,
-            "verdict": ObligationVerdict::Undecidable.as_str(),
-            "reason": reason,
-        })),
+        verification: Some(VerificationDetail::Witness {
+            witnessed: false,
+            verdict: ObligationVerdict::Undecidable.as_str().to_string(),
+            resolved_by: None,
+            outcomes: None,
+            failed: None,
+            failed_tests: None,
+            reason,
+        }),
     };
     let tool = evidence
         .get("certificate")
@@ -760,7 +873,7 @@ fn try_witness_discharge(
                 effect: Some(effect),
                 witnessed: false,
                 locus: None,
-                verification: boundary.verification,
+                verification: verification_from_boundary(boundary.verification),
             });
         }
     };
@@ -777,15 +890,15 @@ fn try_witness_discharge(
             effect: None,
             witnessed: true,
             locus: None,
-            verification: Some(json!({
-                "kind": "witness",
-                "witnessed": true,
-                "verdict": ObligationVerdict::Discharged.as_str(),
-                "resolvedBy": outcome.resolved_by,
-                "outcomes": outcome.count,
-                "failed": outcome.failed,
-                "reason": reason,
-            })),
+            verification: Some(VerificationDetail::Witness {
+                witnessed: true,
+                verdict: ObligationVerdict::Discharged.as_str().to_string(),
+                resolved_by: Some(outcome.resolved_by.clone()),
+                outcomes: Some(outcome.count as u64),
+                failed: Some(outcome.failed as u64),
+                failed_tests: None,
+                reason,
+            }),
         }
     } else {
         let shown = outcome
@@ -814,7 +927,7 @@ fn try_witness_discharge(
             effect: Some(effect),
             witnessed: false,
             locus: None,
-            verification: boundary.verification,
+            verification: verification_from_boundary(boundary.verification),
         }
     })
 }
@@ -1297,7 +1410,7 @@ fn provenance_kind_refusal(cid: String, body: &Json, reason: String) -> Consiste
         effect: Some(effect),
         witnessed: false,
         locus: None,
-        verification: boundary.verification,
+        verification: verification_from_boundary(boundary.verification),
     }
 }
 
@@ -1354,11 +1467,11 @@ fn linked_posts_to_json(linked_posts: &[LinkedPostInstance]) -> Json {
             .iter()
             .map(|p| {
                 json!({
-                    "sourceSymbol": &p.source_symbol,
-                    "targetContractCid": &p.target_cid,
-                    "targetProofCid": &p.target_proof_cid,
-                    "formals": &p.formals,
-                    "outBinding": &p.out_binding,
+                    "sourceSymbol": &p.binding.source_symbol,
+                    "targetContractCid": &p.binding.target_cid,
+                    "targetProofCid": &p.binding.target_proof_cid,
+                    "formals": &p.binding.formals,
+                    "outBinding": &p.binding.out_binding,
                     "call": &p.call,
                     "vendorPost": &p.vendor_post,
                     "instantiatedPost": &p.instantiated_post,
@@ -1454,15 +1567,17 @@ fn attach_conjoined_facts(
     client_fact: &Json,
     vendor_facts: &[Json],
 ) {
-    let Some(Json::Object(v)) = result.verification.as_mut() else {
+    let Some(VerificationDetail::Solver {
+        client_fact_ir,
+        vendor_fact_ir,
+        ..
+    }) = result.verification.as_mut()
+    else {
         return;
     };
-    v.insert("clientFactIr".to_string(), client_fact.clone());
+    *client_fact_ir = Some(client_fact.clone());
     if !vendor_facts.is_empty() {
-        v.insert(
-            "vendorFactIr".to_string(),
-            Json::Array(vendor_facts.to_vec()),
-        );
+        *vendor_fact_ir = Some(Json::Array(vendor_facts.to_vec()));
     }
 }
 
@@ -1474,7 +1589,7 @@ fn consistency_verification_detail(
     final_verdict: ObligationVerdict,
     solver_reason: Option<&str>,
     invs: &[SolverInvocation],
-) -> Json {
+) -> VerificationDetail {
     // The checked formula is the conjoined universe -- on a real stdlib run that
     // is ~MB per obligation, and the report accumulates one verification detail
     // per obligation (10k+), so holding it INLINE OOMs (~43GB observed). Pin it
@@ -1486,16 +1601,17 @@ fn consistency_verification_detail(
     let checked_formula_cid = libsugar::canonical::json_jcs(checked_formula)
         .map(|jcs| blake3_512_of(jcs.as_bytes()))
         .unwrap_or_else(|_| "blake3-512:uncanonicalizable-checked-formula".to_string());
-    json!({
-        "kind": "consistency",
-        "property": property_name,
-        "checkedFormulaCid": checked_formula_cid,
-        "linkedPosts": linked_posts_to_json(linked_posts),
-        "rawSolverVerdict": raw_verdict.map(|v| v.as_str()),
-        "finalVerdict": final_verdict.as_str(),
-        "solverReason": solver_reason,
-        "solverInvocations": solver_invocations_to_json(invs),
-    })
+    VerificationDetail::Solver {
+        property: property_name.to_string(),
+        checked_formula_cid,
+        linked_posts: linked_posts_to_json(linked_posts),
+        raw_solver_verdict: raw_verdict.map(|v| v.as_str().to_string()),
+        final_verdict: final_verdict.as_str().to_string(),
+        solver_reason: solver_reason.map(|r| r.to_string()),
+        solver_invocations: solver_invocations_to_json(invs),
+        client_fact_ir: None,
+        vendor_fact_ir: None,
+    }
 }
 
 /// Count the number of independent top-level atomic constraints in `inv`.
@@ -1797,11 +1913,63 @@ fn collect_ambient_foralls(inv: &Json, out: &mut Vec<Json>) {
     }
 }
 
+/// Attribution of a collected ground callsite fact within the ambient pool.
+///
+/// A ground callsite equality either arrived from an IMPORTED pool member (a
+/// staged `.proof` / vendor-role utterance, identified by its source memento
+/// cid) or was extracted from the CONSUMER's OWN local formula -- its solved
+/// obligation, or its own asserted fact -- which carries no pool identity.
+/// This retires the `"<client>"` / `"<current-obligation>"` sentinel strings:
+/// an own-origin fact has no cid, so it can never be excluded as "its own
+/// vendor" and never collides with a real memento cid in the excluded set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Attribution {
+    /// The consumer's own locally-extracted fact -- no imported pool identity.
+    OwnOrigin,
+    /// An imported pool member, keyed by its source memento cid.
+    Imported(String),
+}
+
+impl Attribution {
+    /// The source memento cid when this fact was imported from the pool; `None`
+    /// for a consumer-own fact (which therefore never matches an excluded cid).
+    fn source_cid(&self) -> Option<&str> {
+        match self {
+            Attribution::OwnOrigin => None,
+            Attribution::Imported(cid) => Some(cid.as_str()),
+        }
+    }
+}
+
+/// The canonical join key for a ground callsite fact: the JCS canonicalization
+/// of a `call:*` ctor term. The cross-fact join -- a consumer obligation pooling
+/// a sibling's sworn vector about the SAME concrete call -- is EXACTLY `TermKey`
+/// equality, so the wrapper carries `Eq`/`Ord`/`Hash` and nothing else may be
+/// compared against it. `#[serde(transparent)]`: the wire form is the bare
+/// string, so no artifact byte changes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+struct TermKey(String);
+
+impl TermKey {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The ambient scope prefix of a callsite-keyed obligation (the segment before
+/// the final `::`, or the whole pre-`#euf#` segment). Finite-replay ground facts
+/// travel only within a matching scope, so the wrapper carries `Eq`/`Ord` for
+/// that guard. `#[serde(transparent)]`: the wire form is the bare string.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+struct Scope(String);
+
 #[derive(Debug, Clone)]
 struct AmbientGroundCallsiteFact {
-    source_cid: String,
-    scope: Option<String>,
-    term_key: String,
+    attribution: Attribution,
+    scope: Option<Scope>,
+    term_key: TermKey,
     witness_key: AmbientFactWitnessKey,
     fact: Json,
 }
@@ -1816,8 +1984,8 @@ struct AmbientGroundCallsiteFact {
 /// not pool across independent consumers that happen to name the same callsite.
 fn collect_ambient_ground_callsite_facts(
     inv: &Json,
-    source_cid: &str,
-    scope: &Option<String>,
+    source: &Attribution,
+    scope: &Option<Scope>,
     provenance_kind: ProofIrProvenanceKind,
     out: &mut Vec<AmbientGroundCallsiteFact>,
 ) {
@@ -1828,7 +1996,7 @@ fn collect_ambient_ground_callsite_facts(
                 for op in ops {
                     collect_ambient_ground_callsite_facts(
                         op,
-                        source_cid,
+                        source,
                         scope,
                         provenance_kind,
                         out,
@@ -1843,7 +2011,7 @@ fn collect_ambient_ground_callsite_facts(
             if ops.len() == 2 && eval_ground_bool(&ops[0]) == Some(true) {
                 collect_ambient_ground_callsite_facts(
                     &ops[1],
-                    source_cid,
+                    source,
                     scope,
                     provenance_kind,
                     out,
@@ -1858,7 +2026,7 @@ fn collect_ambient_ground_callsite_facts(
                 return;
             };
             out.push(AmbientGroundCallsiteFact {
-                source_cid: source_cid.to_string(),
+                attribution: source.clone(),
                 scope: scope.clone(),
                 term_key,
                 witness_key: AmbientFactWitnessKey {
@@ -1874,13 +2042,13 @@ fn collect_ambient_ground_callsite_facts(
 
 fn ground_callsite_witness_keys(
     inv: &Json,
-    scope: &Option<String>,
+    scope: &Option<Scope>,
     provenance_kind: ProofIrProvenanceKind,
 ) -> std::collections::BTreeSet<AmbientFactWitnessKey> {
     let mut facts = Vec::new();
     collect_ambient_ground_callsite_facts(
         inv,
-        "<current-obligation>",
+        &Attribution::OwnOrigin,
         scope,
         provenance_kind,
         &mut facts,
@@ -1964,7 +2132,7 @@ fn collect_vendor_sworn_facts(
     let mut client_facts = Vec::new();
     collect_ambient_ground_callsite_facts(
         client_fact,
-        "<client>",
+        &Attribution::OwnOrigin,
         &None,
         ProofIrProvenanceKind::Stated,
         &mut client_facts,
@@ -1983,7 +2151,11 @@ fn collect_vendor_sworn_facts(
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for fact in ambient {
-        if excluded_source_cids.iter().any(|c| c == &fact.source_cid) {
+        if fact
+            .attribution
+            .source_cid()
+            .is_some_and(|sc| excluded_source_cids.iter().any(|c| c == sc))
+        {
             continue;
         }
         // NOTE: no `scope` filter here (unlike the solver-conjoin path). This
@@ -2010,15 +2182,17 @@ fn collect_vendor_sworn_facts(
     out
 }
 
-fn ground_callsite_term_key(term: &Json) -> Option<String> {
+fn ground_callsite_term_key(term: &Json) -> Option<TermKey> {
     if !is_callsite_ctor_term(term) {
         return None;
     }
-    libsugar::canonical::json_jcs(&federate_primitive_sorts(term)).ok()
+    libsugar::canonical::json_jcs(&federate_primitive_sorts(term))
+        .ok()
+        .map(TermKey)
 }
 
-fn ambient_ground_callsite_scope(property_name: &str) -> Option<String> {
-    EufCoordinate::parse(property_name).scope()
+fn ambient_ground_callsite_scope(property_name: &str) -> Option<Scope> {
+    EufCoordinate::parse(property_name).scope().map(Scope)
 }
 
 /// True if every `var` occurrence in the formula/term tree is bound by an
@@ -2388,7 +2562,7 @@ fn with_ambient_ground_callsite_facts(
 
     let mut callsites = Vec::new();
     collect_unquantified_ctor_terms(&inv, &mut callsites);
-    let wanted: std::collections::BTreeSet<String> = callsites
+    let wanted: std::collections::BTreeSet<TermKey> = callsites
         .iter()
         .filter_map(ground_callsite_term_key)
         .collect();
@@ -2403,9 +2577,10 @@ fn with_ambient_ground_callsite_facts(
     for fact in ambient {
         // A stated row is not independent testimony for itself. The ambient
         // replay path may only add facts sourced from other mementos.
-        if excluded_source_cids
-            .iter()
-            .any(|source_cid| source_cid == &fact.source_cid)
+        if fact
+            .attribution
+            .source_cid()
+            .is_some_and(|sc| excluded_source_cids.iter().any(|source_cid| source_cid == sc))
         {
             continue;
         }
@@ -2445,23 +2620,31 @@ fn with_ambient_ground_callsite_facts(
     )
 }
 
+/// The shared binding head carried by both an [`AmbientPost`] (the vendor post
+/// gathered from one bridge) and every [`LinkedPostInstance`] it specializes
+/// into. These five fields were duplicated field-for-field across the two
+/// structs and always copied together at instantiation; naming the product once
+/// makes the copy a single `binding.clone()` and keeps the two shapes from
+/// drifting. Purely internal — no field is serialized via derive, so
+/// `linked_posts_to_json` still emits the same wire keys.
 #[derive(Debug, Clone)]
-struct AmbientPost {
+struct BridgeBinding {
     source_symbol: String,
     target_cid: String,
     target_proof_cid: Option<String>,
     formals: Vec<String>,
     out_binding: String,
+}
+
+#[derive(Debug, Clone)]
+struct AmbientPost {
+    binding: BridgeBinding,
     post: Json,
 }
 
 #[derive(Debug, Clone)]
 struct LinkedPostInstance {
-    source_symbol: String,
-    target_cid: String,
-    target_proof_cid: Option<String>,
-    formals: Vec<String>,
-    out_binding: String,
+    binding: BridgeBinding,
     call: Json,
     vendor_post: Json,
     instantiated_post: Json,
@@ -2527,11 +2710,13 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                     .map(|cid| cid.to_string())
             });
         posts.push(AmbientPost {
-            source_symbol,
-            target_cid: target_cid.to_string(),
-            target_proof_cid,
-            formals,
-            out_binding,
+            binding: BridgeBinding {
+                source_symbol,
+                target_cid: target_cid.to_string(),
+                target_proof_cid,
+                formals,
+                out_binding,
+            },
             post,
         });
     }
@@ -2581,19 +2766,22 @@ fn linked_ambient_post_instances_for_inv(
                 .strip_prefix("call:")
                 .or_else(|| name.strip_prefix("method:"))
                 .unwrap_or(name);
-            (post.source_symbol == name || post.source_symbol == bare)
-                && post.formals.len() == args.len()
+            (post.binding.source_symbol == name || post.binding.source_symbol == bare)
+                && post.binding.formals.len() == args.len()
         }) {
             let mut instance = post.post.clone();
-            for (formal, actual) in post.formals.iter().zip(args.iter()) {
+            for (formal, actual) in post.binding.formals.iter().zip(args.iter()) {
                 instance = crate::instantiate::substitute_formula_pub(&instance, formal, actual);
             }
-            instance =
-                crate::instantiate::substitute_formula_pub(&instance, &post.out_binding, callsite);
+            instance = crate::instantiate::substitute_formula_pub(
+                &instance,
+                &post.binding.out_binding,
+                callsite,
+            );
             if !formula_is_closed(&instance, &mut Vec::new()) {
                 debug!(
-                    source_symbol = %post.source_symbol,
-                    target_cid = %post.target_cid,
+                    source_symbol = %post.binding.source_symbol,
+                    target_cid = %post.binding.target_cid,
                     "verifier/linker: skipped open specialized post"
                 );
                 continue;
@@ -2602,11 +2790,7 @@ fn linked_ambient_post_instances_for_inv(
                 .unwrap_or_else(|_| serde_json::to_string(&instance).unwrap_or_default());
             if seen.insert(key) {
                 instances.push(LinkedPostInstance {
-                    source_symbol: post.source_symbol.clone(),
-                    target_cid: post.target_cid.clone(),
-                    target_proof_cid: post.target_proof_cid.clone(),
-                    formals: post.formals.clone(),
-                    out_binding: post.out_binding.clone(),
+                    binding: post.binding.clone(),
                     call: callsite.clone(),
                     vendor_post: post.post.clone(),
                     instantiated_post: canonicalize_formula_json(&instance),
@@ -2787,7 +2971,7 @@ pub fn build_manifest_from_pool(
         let mut facts: Vec<AmbientGroundCallsiteFact> = Vec::new();
         collect_ambient_ground_callsite_facts(
             &inv,
-            &candidate.cid,
+            &Attribution::Imported(candidate.cid.clone()),
             &ground_scope,
             candidate.provenance_kind,
             &mut facts,
@@ -2918,7 +3102,7 @@ fn build_consistency_index_filtered(
             let ground_scope = ambient_ground_callsite_scope(contract_name);
             collect_ambient_ground_callsite_facts(
                 &inv,
-                cid,
+                &Attribution::Imported(cid.clone()),
                 &ground_scope,
                 candidate.provenance_kind,
                 &mut ambient_ground_callsite_facts,
@@ -3072,10 +3256,10 @@ pub fn verify_consistency_from_indexes(
     if let Some(o) = overlay {
         let seen: std::collections::HashSet<(String, String)> = ambient_posts
             .iter()
-            .map(|p| (p.source_symbol.clone(), p.target_cid.clone()))
+            .map(|p| (p.binding.source_symbol.clone(), p.binding.target_cid.clone()))
             .collect();
         for p in &o.ambient_posts {
-            if !seen.contains(&(p.source_symbol.clone(), p.target_cid.clone())) {
+            if !seen.contains(&(p.binding.source_symbol.clone(), p.binding.target_cid.clone())) {
                 ambient_posts.push(p.clone());
             }
         }
@@ -3485,6 +3669,34 @@ mod tests {
             .unwrap()
     }
 
+    // Attribution is the strong type that retired the "<client>" /
+    // "<current-obligation>" sentinel strings. The soundness-load-bearing
+    // behavior is that a CONSUMER-own fact carries no pool cid, so it never
+    // matches an excluded (own-source) cid, whereas an IMPORTED pool member
+    // exposes exactly its source cid for the "not its own vendor" exclusion.
+    #[test]
+    fn attribution_own_origin_has_no_source_cid() {
+        assert_eq!(Attribution::OwnOrigin.source_cid(), None);
+        let cid = test_cid_string("attr-src");
+        assert_eq!(
+            Attribution::Imported(cid.clone()).source_cid(),
+            Some(cid.as_str())
+        );
+        // An own-origin fact is never excluded by any real cid set.
+        let excluded = [cid.clone()];
+        assert!(
+            !Attribution::OwnOrigin
+                .source_cid()
+                .is_some_and(|sc| excluded.iter().any(|c| c == sc))
+        );
+        // An imported fact IS excluded when its source cid is in the set.
+        assert!(
+            Attribution::Imported(cid.clone())
+                .source_cid()
+                .is_some_and(|sc| excluded.iter().any(|c| c == sc))
+        );
+    }
+
     fn test_cid(label: &str) -> MementoCid {
         MementoCid::try_parse(label.to_string()).unwrap_or_else(|_| {
             MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(label.as_bytes()))
@@ -3494,6 +3706,237 @@ mod tests {
 
     fn test_cid_string(label: &str) -> String {
         test_cid(label).to_string()
+    }
+
+    /// Byte-identity contract for [`VerificationDetail`]. For each arm, the typed
+    /// value must serialize to the EXACT bytes the hand-rolled `json!` shape it
+    /// replaced produced (compared as canonical wire strings under
+    /// `preserve_order`), and must round-trip back through `from_value`
+    /// unchanged. This is the seam's gate: the linked-bundle CID is taken over
+    /// these bytes.
+    fn assert_wire_identity(detail: &VerificationDetail, legacy: Json) {
+        let typed = serde_json::to_value(detail).expect("detail serializes");
+        assert_eq!(
+            serde_json::to_string(&typed).unwrap(),
+            serde_json::to_string(&legacy).unwrap(),
+            "typed VerificationDetail must serialize byte-identically to the legacy shape"
+        );
+        // to_json() is the production lowering used at the report handoff.
+        assert_eq!(detail.to_json(), legacy);
+        let back: VerificationDetail =
+            serde_json::from_value(legacy).expect("legacy shape deserializes into the typed detail");
+        assert_eq!(&back, detail, "round-trip must be lossless");
+    }
+
+    #[test]
+    fn test_verification_detail_witness_undecidable_round_trip() {
+        let detail = VerificationDetail::Witness {
+            witnessed: false,
+            verdict: ObligationVerdict::Undecidable.as_str().to_string(),
+            resolved_by: None,
+            outcomes: None,
+            failed: None,
+            failed_tests: None,
+            reason: "custom witness present but SUGAR_WITNESS_PROJECT_DIR unset".to_string(),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "witness",
+                "witnessed": false,
+                "verdict": ObligationVerdict::Undecidable.as_str(),
+                "reason": "custom witness present but SUGAR_WITNESS_PROJECT_DIR unset",
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_witness_resolved_round_trip() {
+        let detail = VerificationDetail::Witness {
+            witnessed: true,
+            verdict: ObligationVerdict::Discharged.as_str().to_string(),
+            resolved_by: Some("cargo-test".to_string()),
+            outcomes: Some(7),
+            failed: Some(0),
+            failed_tests: None,
+            reason: "witness package verified by rust".to_string(),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "witness",
+                "witnessed": true,
+                "verdict": ObligationVerdict::Discharged.as_str(),
+                "resolvedBy": "cargo-test",
+                "outcomes": 7,
+                "failed": 0,
+                "reason": "witness package verified by rust",
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_witness_package_body_round_trip() {
+        let detail = VerificationDetail::Witness {
+            witnessed: false,
+            verdict: ObligationVerdict::Unsatisfied.as_str().to_string(),
+            resolved_by: Some("cargo-test".to_string()),
+            outcomes: Some(9),
+            failed: Some(2),
+            failed_tests: Some(vec!["t_one".to_string(), "t_two".to_string()]),
+            reason: "witness package had failing outcomes".to_string(),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "witness",
+                "witnessed": false,
+                "verdict": ObligationVerdict::Unsatisfied.as_str(),
+                "resolvedBy": "cargo-test",
+                "outcomes": 9,
+                "failed": 2,
+                "failedTests": ["t_one", "t_two"],
+                "reason": "witness package had failing outcomes",
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_solver_bare_round_trip() {
+        // rawSolverVerdict / solverReason are nullable-but-present: they serialize
+        // as JSON null, never dropped.
+        let detail = VerificationDetail::Solver {
+            property: "prop".to_string(),
+            checked_formula_cid: "blake3-512:cf".to_string(),
+            linked_posts: json!([]),
+            raw_solver_verdict: None,
+            final_verdict: ObligationVerdict::Refused.as_str().to_string(),
+            solver_reason: None,
+            solver_invocations: json!([]),
+            client_fact_ir: None,
+            vendor_fact_ir: None,
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "consistency",
+                "property": "prop",
+                "checkedFormulaCid": "blake3-512:cf",
+                "linkedPosts": [],
+                "rawSolverVerdict": null,
+                "finalVerdict": ObligationVerdict::Refused.as_str(),
+                "solverReason": null,
+                "solverInvocations": [],
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_solver_with_conjoined_facts_round_trip() {
+        // The clientFactIr / vendorFactIr fields are appended by
+        // attach_conjoined_facts AFTER solverInvocations, and are dropped when
+        // absent -- exactly the insertion-order the mutate path produced.
+        let detail = VerificationDetail::Solver {
+            property: "prop".to_string(),
+            checked_formula_cid: "blake3-512:cf".to_string(),
+            linked_posts: json!([{"sourceSymbol": "enc"}]),
+            raw_solver_verdict: Some(ObligationVerdict::Unsatisfied.as_str().to_string()),
+            final_verdict: ObligationVerdict::Discharged.as_str().to_string(),
+            solver_reason: Some("unsat".to_string()),
+            solver_invocations: json!([{"compiler": "smt-lib-v2.6"}]),
+            client_fact_ir: Some(json!({"value": 6})),
+            vendor_fact_ir: Some(json!([{"value": 5}])),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "consistency",
+                "property": "prop",
+                "checkedFormulaCid": "blake3-512:cf",
+                "linkedPosts": [{"sourceSymbol": "enc"}],
+                "rawSolverVerdict": ObligationVerdict::Unsatisfied.as_str(),
+                "finalVerdict": ObligationVerdict::Discharged.as_str(),
+                "solverReason": "unsat",
+                "solverInvocations": [{"compiler": "smt-lib-v2.6"}],
+                "clientFactIr": {"value": 6},
+                "vendorFactIr": [{"value": 5}],
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_provenance_kind_round_trip() {
+        let detail = VerificationDetail::ProvenanceKind {
+            property: "prop".to_string(),
+            final_verdict: ObligationVerdict::Refused.as_str().to_string(),
+            reason: "wrong provenance KIND".to_string(),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "consistency-provenance-kind",
+                "property": "prop",
+                "finalVerdict": ObligationVerdict::Refused.as_str(),
+                "reason": "wrong provenance KIND",
+            }),
+        );
+    }
+
+    #[test]
+    fn test_attach_conjoined_facts_only_mutates_solver_variant() {
+        // A non-Solver detail is left untouched (fail-open), matching the prior
+        // "only mutate the consistency Object" behavior.
+        let mut witness = ConsistencyResult {
+            contract_cid: "c".to_string(),
+            property_name: "p".to_string(),
+            verdict: ObligationVerdict::Undecidable,
+            reason: "r".to_string(),
+            effect: None,
+            witnessed: false,
+            verification: Some(VerificationDetail::Witness {
+                witnessed: false,
+                verdict: ObligationVerdict::Undecidable.as_str().to_string(),
+                resolved_by: None,
+                outcomes: None,
+                failed: None,
+                failed_tests: None,
+                reason: "r".to_string(),
+            }),
+            locus: None,
+        };
+        let before = witness.verification.clone();
+        attach_conjoined_facts(&mut witness, &json!({"value": 6}), &[json!({"value": 5})]);
+        assert_eq!(witness.verification, before, "witness arm is not a facts sink");
+
+        let mut solver = ConsistencyResult {
+            contract_cid: "c".to_string(),
+            property_name: "p".to_string(),
+            verdict: ObligationVerdict::Discharged,
+            reason: "r".to_string(),
+            effect: None,
+            witnessed: false,
+            verification: Some(consistency_verification_detail(
+                "p",
+                &json!({"kind": "and", "operands": []}),
+                &[],
+                Some(ObligationVerdict::Unsatisfied),
+                ObligationVerdict::Discharged,
+                Some("unsat"),
+                &[],
+            )),
+            locus: None,
+        };
+        attach_conjoined_facts(&mut solver, &json!({"value": 6}), &[json!({"value": 5})]);
+        let Some(VerificationDetail::Solver {
+            client_fact_ir,
+            vendor_fact_ir,
+            ..
+        }) = &solver.verification
+        else {
+            panic!("solver detail expected");
+        };
+        assert_eq!(client_fact_ir.as_ref(), Some(&json!({"value": 6})));
+        assert_eq!(vendor_fact_ir.as_ref(), Some(&json!([{"value": 5}])));
     }
 
     fn pool_with_contract(name: &str, inv: Json) -> MementoPool {
@@ -3584,11 +4027,38 @@ mod tests {
                 name.contains("#euf#"),
             );
             assert_eq!(
-                EufCoordinate::parse(name).scope(),
+                EufCoordinate::parse(name).scope().map(Scope),
                 ambient_ground_callsite_scope(name),
             );
         }
     }
+
+    /// STRONG-TYPING SEAM: `TermKey`/`Scope` are `#[serde(transparent)]` newtypes
+    /// over the bare join/scope strings, so a value's wire form is byte-identical
+    /// to the raw string it wraps and survives a serde round-trip unchanged. This
+    /// is the artifact-invariance receipt for the seam: nothing that touches a
+    /// serialized memento observes a different shape.
+    #[test]
+    fn term_key_and_scope_serde_are_transparent_and_round_trip() {
+        let tk = TermKey("call:enc(s:\"abc\")".to_string());
+        let wire = serde_json::to_string(&tk).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::to_string("call:enc(s:\"abc\")").unwrap(),
+            "TermKey wire form must be the bare string (transparent)",
+        );
+        assert_eq!(serde_json::from_str::<TermKey>(&wire).unwrap(), tk);
+
+        let sc = Scope("src/lib.rs::tests::t".to_string());
+        let wire = serde_json::to_string(&sc).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::to_string("src/lib.rs::tests::t").unwrap(),
+            "Scope wire form must be the bare string (transparent)",
+        );
+        assert_eq!(serde_json::from_str::<Scope>(&wire).unwrap(), sc);
+    }
+
     fn gt(a: Json, b: Json) -> Json {
         json!({"kind":"atomic","name":">","args":[a,b]})
     }
@@ -3899,7 +4369,11 @@ mod tests {
         };
 
         let labels = |r: &ConsistencyResult| -> (String, String) {
-            let v = r.verification.as_ref().expect("verification detail");
+            let v = r
+                .verification
+                .as_ref()
+                .expect("verification detail")
+                .to_json();
             let client = v.get("clientFactIr").expect("client fact label").to_string();
             let vendor = v
                 .get("vendorFactIr")
@@ -4300,7 +4774,8 @@ mod tests {
         let good_verification = good
             .verification
             .as_ref()
-            .expect("good row carries verification detail");
+            .expect("good row carries verification detail")
+            .to_json();
         assert_eq!(good_verification["kind"], "consistency");
         assert_eq!(
             good_verification["linkedPosts"][0]["sourceSymbol"],

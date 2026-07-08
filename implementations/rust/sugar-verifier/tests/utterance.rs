@@ -81,13 +81,12 @@ fn test_compilers() -> CompilerRegistry {
 /// attribution-derived fact labels (canonical JCS so map ordering never
 /// aliases a real difference).
 fn row_projection(r: &ConsistencyResult) -> (String, String, Option<String>, Option<String>) {
-    let client = r
-        .verification
+    let vj = r.verification.as_ref().map(|v| v.to_json());
+    let client = vj
         .as_ref()
         .and_then(|v| v.get("clientFactIr"))
         .map(|v| libsugar::canonical::json_jcs(v).expect("clientFactIr canonicalizes"));
-    let vendor = r
-        .verification
+    let vendor = vj
         .as_ref()
         .and_then(|v| v.get("vendorFactIr"))
         .map(|v| libsugar::canonical::json_jcs(v).expect("vendorFactIr canonicalizes"));
@@ -290,7 +289,8 @@ fn labels_come_from_attribution_not_position() {
         let mut v: Vec<_> = rows
             .iter()
             .filter_map(|r| {
-                let client = r.verification.as_ref()?.get("clientFactIr")?;
+                let vj = r.verification.as_ref()?.to_json();
+                let client = vj.get("clientFactIr")?;
                 Some((
                     r.property_name.clone(),
                     libsugar::canonical::json_jcs(client).expect("canonicalizes"),

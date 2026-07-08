@@ -43,7 +43,7 @@ use std::sync::Arc;
 
 use serde_json::Value as Json;
 use sugar_canonicalizer::blake3_512_of;
-use sugar_linker::{LinkerCallEdge, LinkerContract};
+use sugar_linker::{CallSiteLocus, LinkerCallEdge, LinkerContract};
 use tokio::sync::Mutex;
 use tokio::task;
 use tracing::instrument;
@@ -247,7 +247,7 @@ pub async fn handle_parse_file(state: Arc<Mutex<ProjectState>>, params: &Json, i
                     "sourceContractCid": e.source_contract_cid,
                     "reason": e.reason,
                     "file": e.file,
-                    "callSiteLocus": e.call_site_locus_json,
+                    "callSiteLocus": e.call_site_locus,
                 })
             })
             .collect::<Vec<_>>()
@@ -1016,7 +1016,7 @@ fn find_binary(name: &str) -> Option<String> {
 ///   - `sourceContractCid` → `source_contract_cid`
 ///   - `targetContractCid` → `target_contract_cid`
 ///   - `targetSymbol`      → `target_symbol`
-///   - `callSiteLocus`     → `call_site_locus_json`
+///   - `callSiteLocus`     → `call_site_locus`
 ///   - `evidenceTerm`      → `evidence_term_json`
 ///
 /// CID strategy for declarations:
@@ -1207,7 +1207,7 @@ fn parse_declaration_to_contract(decl: &Json, kit_label: &str) -> Option<LinkerC
     Some(LinkerContract {
         name,
         kit: kit_label.to_string(),
-        contract_cid,
+        contract_cid: contract_cid.into(),
         pre_json,
         post_json,
         ..Default::default()
@@ -1276,16 +1276,22 @@ fn parse_call_edge(edge: &Json) -> Option<LinkerCallEdge> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let locus = edge.get("callSiteLocus").cloned().unwrap_or(Json::Null);
+    // Parse the free-form `callSiteLocus` object into the typed `CallSiteLocus`.
+    // Absent (or a non-grammar payload that cannot type) collapses to `None`,
+    // matching the pre-seam `Json::Null` slot: `derive_bridge` lowers `None`
+    // back to `null`, so the bridge bytes are unchanged.
+    let call_site_locus = edge
+        .get("callSiteLocus")
+        .and_then(|v| serde_json::from_value::<CallSiteLocus>(v.clone()).ok());
     let evidence = edge.get("evidenceTerm").cloned().unwrap_or(Json::Null);
 
     Some(LinkerCallEdge {
-        source_contract_cid: source_cid,
-        target_contract_cid: target_cid,
+        source_contract_cid: source_cid.into(),
+        target_contract_cid: target_cid.map(Into::into),
         // `target_symbol` is the typed `Symbol` now; parse the wire string into
         // it (byte-identical `<kit>:<name>` round-trip).
         target_symbol: target_symbol.into(),
-        call_site_locus_json: locus,
+        call_site_locus,
         evidence_term_json: evidence,
         ..Default::default()
     })
@@ -1416,7 +1422,7 @@ async fn lift_rust_source(
             contracts.push(LinkerContract {
                 name: decl.name.clone(),
                 kit: "rust-kit".into(),
-                contract_cid: cid,
+                contract_cid: cid.into(),
                 pre_json,
                 post_json,
                 ..Default::default()
@@ -1427,20 +1433,20 @@ async fn lift_rust_source(
         // Build name->cid index from this file's contracts for same-file resolution.
         let name_to_cid: std::collections::BTreeMap<String, String> = contracts
             .iter()
-            .map(|c| (c.name.clone(), c.contract_cid.clone()))
+            .map(|c| (c.name.clone(), c.contract_cid.as_str().to_string()))
             .collect();
 
         let mut call_edges: Vec<LinkerEdge> = Vec::new();
         for edge in &report.call_edges {
             let target_cid = name_to_cid.get(&edge.target_symbol).cloned();
             call_edges.push(LinkerEdge {
-                source_contract_cid: edge.source_contract_cid.clone(),
-                target_contract_cid: target_cid,
+                source_contract_cid: edge.source_contract_cid.clone().into(),
+                target_contract_cid: target_cid.map(Into::into),
                 target_symbol: edge.target_symbol.clone().into(),
-                call_site_locus_json: serde_json::json!({
-                    "file": file_for_locus,
-                    "line": edge.call_site_locus.line,
-                    "column": edge.call_site_locus.col,
+                call_site_locus: Some(CallSiteLocus {
+                    file: file_for_locus.clone(),
+                    line: edge.call_site_locus.line.map(|n| n as usize),
+                    column: edge.call_site_locus.col.map(|n| n as usize),
                 }),
                 evidence_term_json: serde_json::json!({
                     "kind": "Atomic",
@@ -1841,7 +1847,7 @@ pub async fn handle_prove_consistency(
                 &cr.property_name,
                 cr.verdict,
                 &cr.reason,
-                cr.verification.clone(),
+                cr.verification.as_ref().map(|v| v.to_json()),
                 cr.locus.clone(),
                 &mut report,
             );
