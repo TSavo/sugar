@@ -88,7 +88,7 @@ help:
 # --- Per-language builds -----------------------------------------------------
 
 # Build every kit's binaries. Useful before `make conformance` or before
-# spawning `sugar-linkerd` (which subprocesses kit lifters at lift
+# running `sugar lift`/`sugar mint` (which subprocess kit lifters at lift
 # time). Each kit's build target is independent; failures stay isolated.
 .PHONY: build-all
 build-all: build-rust build-python

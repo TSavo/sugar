@@ -26,37 +26,18 @@
 //   extensions = [".mylang"]
 //   plugin = "sugar-lsp-mylang"
 //
-// ### Daemon-client mode (opt-in)
-//
-// When a daemon socket path is supplied (via `--daemon-socket <path>` CLI flag
-// or `server.daemon_socket` in config.toml), `did_open` / `did_change` events
-// are forwarded to `sugar-linkerd` as `parseFile` JSON-RPC calls instead of
-// the per-plugin subprocess path.  The daemon owns the cross-kit cache; the LSP
-// server is a thin adapter that converts `LinterError` diagnostics returned by
-// the daemon to LSP `Diagnostic` objects and publishes them via
-// `client.publish_diagnostics`.
-//
-// Per-plugin mode and daemon-client mode are mutually exclusive per-file. When
-// daemon mode is active, the configured language name for the file is sent as
-// the daemon `kitId`; the LSP coordinator does not infer language semantics.
-//
-// Usage: sugar-lsp --daemon-socket /run/user/1000/sugar/linkerd-<cid>.sock
-//
-// The daemon is the `sugar-linkerd` binary (LSP+linker step 2).  All five
-// JSON-RPC methods (parseFile, getDiagnostics, projectStatus, flushCache,
-// shutdown) are defined in `protocol/specs/2026-05-04-linker-daemon-protocol.md`.
-//
-// ### In-process engine mode (opt-in, `--in-process`) -- THE TERMINUS
+// ### In-process engine mode (opt-in, `--in-process`) -- THE TERMINUS, now the
+// ### real editor path (the daemon this once routed through, `sugar-linkerd`,
+// ### is retired; see #3844 which flipped the VS Code extension to this mode
+// ### and the daemon-3-delete cut which removed the daemon crate entirely)
 //
 // `sugar-lsp --in-process` proves buffers IN-PROCESS by linking the engine
 // directly (`prove_engine.rs`): no daemon RPC, no subprocess solver. On
 // `initialize` the resident `ProveContext` (vendor-only base pool + solver
 // plan/registry + IR-compiler registry + consistency index) is built once
-// from the workspace root's `.sugar/imports`, mirroring
-// `sugar-linkerd::server::build_prove_context_for`'s construction exactly
-// (never an import -- that binary crate ships no `[lib]` target). On
-// `didOpen`/`didSave` (and `didChange`, debounced 250ms), the edited buffer
-// is minted as a SOURCE-OVERLAY scratch proof
+// from the workspace root's `.sugar/imports`. On `didOpen`/`didSave` (and
+// `didChange`, debounced 250ms), the edited buffer is minted as a
+// SOURCE-OVERLAY scratch proof
 // (`sugar_cli::cmd_mint::mint_project_scratch_proof`) and solved against the
 // resident base index via THE ONE DOOR
 // (`sugar_verifier::consistency::verify_consistency_scoped_with_base_index`).
@@ -67,20 +48,15 @@
 // Hover repeats the same block; `codeAction` offers the vendor-proven-value
 // Quick Fix (port of `extension.ts`'s `provenValueOf`/`SugarProveFixProvider`).
 //
-// This mode is mutually exclusive with per-plugin and daemon-client mode
-// (opted into by flag; the daemon and the VS Code extension stay UNTOUCHED
-// and continue to ride the existing paths).
+// This mode is mutually exclusive with per-plugin subprocess mode (opted
+// into by flag; the VS Code extension runs this mode via a
+// `LanguageClient` speaking stdio, per #3844).
 //
 // Usage: sugar-lsp --in-process [--config <path>]
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::process::{Command as ProcessCommand, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
@@ -100,287 +76,23 @@ use config::LspConfig;
 use parser::{Annotation, AnnotationKind, SourceAnnotations};
 use plugin::LanguagePlugin;
 
-static NEXT_DAEMON_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
-
 /// Per-language plugin handle.
 #[derive(Debug)]
 enum LanguageHandle {
     External(Arc<std::sync::Mutex<LanguagePlugin>>),
 }
 
-// ---------------------------------------------------------------------------
-// Daemon-client mode: wire types
-// ---------------------------------------------------------------------------
-
-/// A single diagnostic entry from the daemon's `parseFile` response.
-///
-/// Wire shape emitted by `sugar-linkerd` methods.rs:
-/// ```json
-/// {
-///   "kind":              "linker-error",
-///   "errorKind":         "unresolved-symbol" | "unprovable-obligation" | "implication-unprovable" | "implication-undecidable",
-///   "targetSymbol":      "<string>",
-///   "sourceContractCid": "<string>",
-///   "reason":            "<string>",
-///   "file":              "<string | null>",
-///   "callSiteLocus":     {"file": "<string>", "line": 1, "column": 0}
-/// }
-/// ```
-#[derive(Debug, serde::Deserialize)]
-struct DaemonDiagnostic {
-    /// Discriminator for the linker-error category; maps to LSP severity.
-    #[serde(rename = "errorKind", default)]
-    error_kind: String,
-    /// The unresolved or obligation-violating symbol name.
-    #[serde(rename = "targetSymbol", default)]
-    target_symbol: String,
-    /// Human-readable explanation from the linker.
-    #[serde(default)]
-    reason: String,
-    /// Original kit-owned callsite locus. The LSP adapter only translates
-    /// source coordinates; it does not interpret host-language syntax.
-    #[serde(rename = "callSiteLocus", default)]
-    call_site_locus: Option<serde_json::Value>,
-}
-
-/// Convert a single daemon `DaemonDiagnostic` into an LSP `Diagnostic`.
-fn daemon_diag_to_lsp(d: &DaemonDiagnostic) -> Diagnostic {
-    let range = locus_to_lsp_range(d.call_site_locus.as_ref());
-    let severity = match d.error_kind.as_str() {
-        "implication-unprovable" | "unprovable-obligation" => Some(DiagnosticSeverity::ERROR),
-        "unresolved-symbol" | "implication-undecidable" => Some(DiagnosticSeverity::WARNING),
-        _ => Some(DiagnosticSeverity::INFORMATION),
-    };
-    let message = match d.error_kind.as_str() {
-        "implication-unprovable" | "unprovable-obligation" => format!(
-            "cannot verify {}'s precondition; postcondition at call site does not establish it ({})",
-            d.target_symbol, d.reason
-        ),
-        "implication-undecidable" => format!(
-            "cannot prove {}'s precondition from this call site ({})",
-            d.target_symbol, d.reason
-        ),
-        "unresolved-symbol" => format!(
-            "cannot resolve {} against any kit in the project ({})",
-            d.target_symbol, d.reason
-        ),
-        _ => d.reason.clone(),
-    };
-    Diagnostic {
-        range,
-        severity,
-        code: Some(NumberOrString::String(
-            diagnostic_code(&d.error_kind).to_string(),
-        )),
-        source: Some("sugar".to_string()),
-        message,
-        ..Default::default()
-    }
-}
-
-fn file_start_range() -> Range {
-    Range {
-        start: Position {
-            line: 0,
-            character: 0,
-        },
-        end: Position {
-            line: 0,
-            character: 1,
-        },
-    }
-}
-
-fn locus_to_lsp_range(locus: Option<&serde_json::Value>) -> Range {
-    let Some(locus) = locus else {
-        return file_start_range();
-    };
-
-    let Some(line) = json_u32(locus, "line") else {
-        return file_start_range();
-    };
-    let Some(column) = json_u32(locus, "column").or_else(|| json_u32(locus, "col")) else {
-        return file_start_range();
-    };
-
-    let start_line = line.saturating_sub(1);
-    let start = Position {
-        line: start_line,
-        character: column,
-    };
-
-    let end_line = json_u32(locus, "endLine")
-        .map(|n| n.saturating_sub(1))
-        .unwrap_or(start_line);
-    let mut end_character = json_u32(locus, "endColumn")
-        .or_else(|| json_u32(locus, "endCol"))
-        .unwrap_or(column.saturating_add(1));
-    if end_line == start_line && end_character <= column {
-        end_character = column.saturating_add(1);
-    }
-
-    Range {
-        start,
-        end: Position {
-            line: end_line,
-            character: end_character,
-        },
-    }
-}
-
-fn json_u32(value: &serde_json::Value, key: &str) -> Option<u32> {
-    value.get(key)?.as_u64().and_then(|n| u32::try_from(n).ok())
-}
-
-fn diagnostic_code(error_kind: &str) -> &'static str {
-    match error_kind {
-        "implication-unprovable" | "unprovable-obligation" => "sugar.lsp.implication_failed",
-        "unresolved-symbol" => "sugar.lsp.unresolved_symbol",
-        "implication-undecidable" => "sugar.lsp.unprovable_obligation",
-        _ => "sugar.lsp.unprovable_obligation",
-    }
-}
-
-fn kit_id_for_uri(config: &LspConfig, uri: &Url) -> Option<String> {
-    let path = PathBuf::from(uri.path());
-    config.for_path(&path).map(|lang| lang.name.clone())
-}
-
-fn connect_or_spawn_daemon(
-    socket_path: &std::path::Path,
-    project_cid: &str,
-) -> std::io::Result<UnixStream> {
-    if let Ok(stream) = UnixStream::connect(socket_path) {
-        return Ok(stream);
-    }
-
-    let snap_path = {
-        let mut p = socket_path.to_path_buf();
-        let file_name = p
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "linkerd".to_string());
-        p.set_file_name(format!("{file_name}.snap"));
-        p
-    };
-
-    let _child = ProcessCommand::new("sugar-linkerd")
-        .args([
-            "--socket",
-            &socket_path.to_string_lossy(),
-            "--project-cid",
-            project_cid,
-            "--idle-timeout-ms",
-            "300000",
-            "--snapshot",
-            &snap_path.to_string_lossy(),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to spawn sugar-linkerd: {e}"),
-            )
-        })?;
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        std::thread::sleep(Duration::from_millis(50));
-        if let Ok(stream) = UnixStream::connect(socket_path) {
-            return Ok(stream);
-        }
-        if Instant::now() >= deadline {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                format!(
-                    "sugar-linkerd did not bind socket at {} within 5 s",
-                    socket_path.display()
-                ),
-            ));
-        }
-    }
-}
-
-fn send_parse_file_to_daemon(
-    stream: &mut UnixStream,
-    kit_id: &str,
-    file: &str,
-    source: &str,
-    request_id: u64,
-) -> std::io::Result<Vec<serde_json::Value>> {
-    let req = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "parseFile",
-        "params": {
-            "kitId": kit_id,
-            "file": file,
-            "source": source,
-        }
-    });
-
-    let line = serde_json::to_string(&req).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("json encode: {e}"))
-    })?;
-
-    writeln!(stream, "{line}")?;
-    stream.flush()?;
-
-    let mut buf_reader = BufReader::new(stream.try_clone()?);
-    let mut resp_line = String::new();
-    let n = buf_reader.read_line(&mut resp_line)?;
-    if n == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "daemon closed connection without responding",
-        ));
-    }
-
-    let resp: serde_json::Value = serde_json::from_str(resp_line.trim()).map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("json decode daemon response: {e}"),
-        )
-    })?;
-
-    if let Some(err_obj) = resp.get("error") {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("daemon returned error: {err_obj}"),
-        ));
-    }
-
-    let diagnostics = resp
-        .get("result")
-        .and_then(|r| r.get("diagnostics"))
-        .and_then(|d| d.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    Ok(diagnostics)
-}
-
 struct SugarLanguageServer {
     client: Client,
-    /// The JSON-RPC verification backend.  `Some` in per-plugin mode; `None`
-    /// in daemon-client mode (the daemon handles analysis; the backend is not
-    /// needed and is not spawned).
+    /// The JSON-RPC verification backend. `Some` in per-plugin mode; `None`
+    /// in in-process mode (the resident `ProveContext` handles analysis; the
+    /// backend is not needed and is not spawned).
     backend: Option<Arc<Mutex<JsonRpcBackend>>>,
     config: LspConfig,
     documents: Arc<Mutex<HashMap<Url, SourceAnnotations>>>,
     plugins: Arc<Mutex<HashMap<String, LanguageHandle>>>,
-    /// Path to the sugar-linkerd Unix domain socket, if daemon-client mode
-    /// is active.  `None` means per-plugin subprocess mode (the default).
-    daemon_socket: Option<PathBuf>,
-    /// Lazy-connected daemon stream, protected by a mutex so multiple async
-    /// tasks can share the single persistent connection.  `None` until the
-    /// first `did_open` / `did_change` event in daemon mode.
-    daemon_stream: Arc<Mutex<Option<std::os::unix::net::UnixStream>>>,
     /// THE TERMINUS: `--in-process` mode active. Mutually exclusive with
-    /// `daemon_socket`/per-plugin routing (see `update_document`'s dispatch).
+    /// per-plugin routing (see `update_document`'s dispatch).
     in_process: bool,
     /// Resident `ProveContext`, built once at `initialize` from the
     /// workspace root and refreshed in place when `.sugar/imports` drifts.
@@ -401,7 +113,7 @@ struct SugarLanguageServer {
     /// once, not once per keystroke.
     change_generation: Arc<Mutex<HashMap<Url, u64>>>,
     /// Mirror of the last `publishDiagnostics` payload sent per uri, across
-    /// all three modes (per-plugin, daemon-client, in-process). Exists so
+    /// both modes (per-plugin, in-process). Exists so
     /// `textDocument/diagnostic` (the LSP 3.17 pull counterpart to push
     /// `publishDiagnostics`) has something honest to answer with instead of
     /// falling through to tower-lsp's default `Err(method_not_found())`: this
@@ -443,8 +155,7 @@ impl LanguageServer for SugarLanguageServer {
             .unwrap_or_else(|| PathBuf::from("."));
 
         if self.in_process {
-            // THE TERMINUS: build the resident `ProveContext` once, in-process,
-            // the way `sugar-linkerd::server::build_prove_context_for` does
+            // THE TERMINUS: build the resident `ProveContext` once, in-process
             // (loads `.sugar/imports`, builds plan/registry/compilers, indexes
             // the consistency candidates). Warm because the LSP process lives.
             let build_root = root.clone();
@@ -468,7 +179,7 @@ impl LanguageServer for SugarLanguageServer {
             }
         } else {
             // Initialize plugins from config (per-plugin subprocess mode only;
-            // in-process and daemon-client modes route elsewhere).
+            // in-process mode routes elsewhere).
             self.init_plugins(&root).await;
         }
 
@@ -587,14 +298,13 @@ impl LanguageServer for SugarLanguageServer {
         }
         self.last_diagnostics.lock().await.remove(&uri);
         // Clear any published diagnostics for this file so the editor pane
-        // goes clean.  This applies to per-plugin, daemon-client, and
-        // in-process mode alike.
+        // goes clean.  This applies to per-plugin and in-process mode alike.
         self.client.publish_diagnostics(uri, vec![], None).await;
     }
 
     /// The LSP 3.17 pull counterpart to push `publishDiagnostics`. Answers
     /// from `last_diagnostics`, the mirror populated by every
-    /// `publish_and_cache` call site across all three modes. An empty vec is
+    /// `publish_and_cache` call site across both modes. An empty vec is
     /// an honest "nothing known yet for this uri" (e.g. queried before the
     /// first solve/parse completes), not a stub.
     async fn diagnostic(
@@ -885,26 +595,6 @@ impl SugarLanguageServer {
     }
 
     async fn update_document(&self, uri: Url, text: String, _lang_id: String) {
-        // --- Daemon-client mode: route through sugar-linkerd ---
-        if let Some(sock_path) = &self.daemon_socket {
-            match kit_id_for_uri(&self.config, &uri) {
-                Some(kit_id) => {
-                    self.daemon_routed_parse(uri, text, sock_path.clone(), kit_id)
-                        .await;
-                }
-                None => {
-                    self.client
-                        .log_message(
-                            MessageType::WARNING,
-                            format!("No configured LSP language kit for `{}`", uri.path()),
-                        )
-                        .await;
-                    publish_and_cache(&self.client, &self.last_diagnostics, uri, vec![]).await;
-                }
-            }
-            return;
-        }
-
         // --- Per-plugin subprocess mode (default) ---
 
         // Determine language from file extension
@@ -1008,85 +698,6 @@ impl SugarLanguageServer {
             }
         }
     }
-
-    /// Forward an open/change event to the sugar-linkerd daemon via
-    /// `parseFile` JSON-RPC, convert the returned diagnostics, and publish
-    /// them.  Lazily connects to the daemon socket on first call.
-    ///
-    /// Uses `tokio::task::spawn_blocking` because the daemon socket protocol
-    /// is synchronous std I/O.
-    async fn daemon_routed_parse(
-        &self,
-        uri: Url,
-        text: String,
-        sock_path: PathBuf,
-        kit_id: String,
-    ) {
-        let daemon_stream = self.daemon_stream.clone();
-        let client = self.client.clone();
-        let file_path = uri.path().to_string();
-
-        let result = tokio::task::spawn_blocking(move || {
-            let mut guard = daemon_stream.blocking_lock();
-
-            // Lazy connect / spawn.
-            if guard.is_none() {
-                match connect_or_spawn_daemon(&sock_path, "sugar-lsp") {
-                    Ok(stream) => {
-                        *guard = Some(stream);
-                    }
-                    Err(e) => {
-                        return Err(format!(
-                            "daemon-client: failed to connect to {}: {}",
-                            sock_path.display(),
-                            e
-                        ));
-                    }
-                }
-            }
-
-            let stream = guard.as_mut().unwrap();
-            let request_id = NEXT_DAEMON_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
-            send_parse_file_to_daemon(stream, &kit_id, &file_path, &text, request_id).map_err(|e| {
-                // Connection may have dropped; clear so we reconnect next time.
-                format!("daemon-client send_parse_file failed: {e}")
-            })
-        })
-        .await;
-
-        match result {
-            Ok(Ok(raw_diags)) => {
-                // Deserialize daemon JSON -> DaemonDiagnostic -> LSP Diagnostic.
-                let diagnostics: Vec<Diagnostic> = raw_diags
-                    .iter()
-                    .filter_map(|v| serde_json::from_value::<DaemonDiagnostic>(v.clone()).ok())
-                    .map(|d| daemon_diag_to_lsp(&d))
-                    .collect();
-
-                publish_and_cache(&client, &self.last_diagnostics, uri, diagnostics).await;
-            }
-            Ok(Err(e)) => {
-                // Clear the stale stream so the next call reconnects.
-                {
-                    let mut guard = self.daemon_stream.lock().await;
-                    *guard = None;
-                }
-                client
-                    .log_message(MessageType::WARNING, format!("sugar daemon: {}", e))
-                    .await;
-                // Publish empty diagnostics to clear any stale markers.
-                publish_and_cache(&client, &self.last_diagnostics, uri, vec![]).await;
-            }
-            Err(join_err) => {
-                client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("sugar daemon task panicked: {}", join_err),
-                    )
-                    .await;
-            }
-        }
-    }
 }
 
 fn is_in_range(position: Position, range: Range) -> bool {
@@ -1101,11 +712,10 @@ fn overlaps_range(a: Range, b: Range) -> bool {
 }
 
 /// Return the resident `ProveContext`, rebuilding it in place first if
-/// `.sugar/imports` has drifted since the last (re)build -- mirrors
-/// `sugar-linkerd::methods::handle_prove_consistency`'s coarse invalidation
-/// check. `None` means `initialize` never built one (no workspace root, or
-/// the build panicked). A rebuild failure keeps serving the stale-but-present
-/// context rather than regressing a working session, same as the daemon.
+/// `.sugar/imports` has drifted since the last (re)build. `None` means
+/// `initialize` never built one (no workspace root, or the build panicked).
+/// A rebuild failure keeps serving the stale-but-present context rather
+/// than regressing a working session.
 async fn get_or_refresh_prove_ctx(
     prove_ctx: &Arc<Mutex<Option<Arc<prove_engine::ProveContext>>>>,
 ) -> Option<Arc<prove_engine::ProveContext>> {
@@ -1231,179 +841,6 @@ fn format_hover(ann: &Annotation) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tower_lsp::lsp_types::{DiagnosticSeverity, NumberOrString};
-
-    fn make_diag(error_kind: &str, target_symbol: &str, reason: &str) -> DaemonDiagnostic {
-        DaemonDiagnostic {
-            error_kind: error_kind.to_string(),
-            target_symbol: target_symbol.to_string(),
-            reason: reason.to_string(),
-            call_site_locus: None,
-        }
-    }
-
-    fn make_diag_with_locus(
-        error_kind: &str,
-        target_symbol: &str,
-        reason: &str,
-        locus: serde_json::Value,
-    ) -> DaemonDiagnostic {
-        DaemonDiagnostic {
-            error_kind: error_kind.to_string(),
-            target_symbol: target_symbol.to_string(),
-            reason: reason.to_string(),
-            call_site_locus: Some(locus),
-        }
-    }
-
-    #[test]
-    fn callsite_locus_maps_to_lsp_range() {
-        let d = make_diag_with_locus(
-            "implication-unprovable",
-            "checkPositive",
-            "solver found a counterexample",
-            serde_json::json!({
-                "file": "/tmp/caller.rs",
-                "line": 20,
-                "column": 17,
-            }),
-        );
-        let lsp = daemon_diag_to_lsp(&d);
-
-        assert_eq!(lsp.severity, Some(DiagnosticSeverity::ERROR));
-        assert_eq!(lsp.range.start.line, 19);
-        assert_eq!(lsp.range.start.character, 17);
-        assert_eq!(lsp.range.end.line, 19);
-        assert_eq!(lsp.range.end.character, 18);
-        assert_eq!(
-            lsp.code,
-            Some(NumberOrString::String(
-                "sugar.lsp.implication_failed".to_string()
-            ))
-        );
-    }
-
-    #[test]
-    fn unprovable_obligation_maps_to_error() {
-        let d = make_diag(
-            "unprovable-obligation",
-            "MyTrait::verify",
-            "postcondition not met",
-        );
-        let lsp = daemon_diag_to_lsp(&d);
-
-        assert_eq!(lsp.severity, Some(DiagnosticSeverity::ERROR));
-        assert_eq!(
-            lsp.code,
-            Some(NumberOrString::String(
-                "sugar.lsp.implication_failed".to_string()
-            ))
-        );
-        assert_eq!(lsp.source, Some("sugar".to_string()));
-        assert!(
-            lsp.message.contains("cannot verify"),
-            "message should contain 'cannot verify', got: {}",
-            lsp.message
-        );
-        assert!(
-            lsp.message.contains("MyTrait::verify"),
-            "message should contain symbol name, got: {}",
-            lsp.message
-        );
-        assert!(
-            lsp.message.contains("postcondition not met"),
-            "message should contain reason, got: {}",
-            lsp.message
-        );
-    }
-
-    #[test]
-    fn unresolved_symbol_maps_to_warning() {
-        let d = make_diag("unresolved-symbol", "other::foo", "not found in any kit");
-        let lsp = daemon_diag_to_lsp(&d);
-
-        assert_eq!(lsp.severity, Some(DiagnosticSeverity::WARNING));
-        assert_eq!(
-            lsp.code,
-            Some(NumberOrString::String(
-                "sugar.lsp.unresolved_symbol".to_string()
-            ))
-        );
-        assert_eq!(lsp.source, Some("sugar".to_string()));
-        assert!(
-            lsp.message.contains("cannot resolve"),
-            "message should contain 'cannot resolve', got: {}",
-            lsp.message
-        );
-        assert!(
-            lsp.message.contains("other::foo"),
-            "message should contain symbol name, got: {}",
-            lsp.message
-        );
-    }
-
-    #[test]
-    fn unknown_error_kind_maps_to_information() {
-        let d = make_diag("some-future-kind", "anything", "some reason");
-        let lsp = daemon_diag_to_lsp(&d);
-
-        assert_eq!(lsp.severity, Some(DiagnosticSeverity::INFORMATION));
-        assert_eq!(
-            lsp.code,
-            Some(NumberOrString::String(
-                "sugar.lsp.unprovable_obligation".to_string()
-            ))
-        );
-        assert_eq!(lsp.source, Some("sugar".to_string()));
-        assert_eq!(lsp.message, "some reason");
-    }
-
-    #[test]
-    fn range_is_file_start_marker() {
-        let d = make_diag("unprovable-obligation", "x", "y");
-        let lsp = daemon_diag_to_lsp(&d);
-        assert_eq!(lsp.range.start.line, 0);
-        assert_eq!(lsp.range.start.character, 0);
-        assert_eq!(lsp.range.end.line, 0);
-        assert_eq!(lsp.range.end.character, 1);
-    }
-
-    #[test]
-    fn daemon_kit_id_resolves_from_language_config() {
-        let cfg = LspConfig {
-            language: vec![config::LanguagePluginConfig {
-                name: "go".to_string(),
-                extensions: vec![".go".to_string()],
-                plugin: None,
-                plugin_args: Vec::new(),
-            }],
-            ..LspConfig::default()
-        };
-
-        let uri = Url::parse("file:///tmp/main.go").expect("valid file uri");
-        assert_eq!(
-            kit_id_for_uri(&cfg, &uri),
-            Some("go".to_string()),
-            "daemon routing must use configured language names, not a built-in rust default"
-        );
-    }
-
-    #[test]
-    fn daemon_kit_id_has_no_extension_fallback() {
-        let cfg = LspConfig::default();
-        let uri = Url::parse("file:///tmp/lib.rs").expect("valid file uri");
-
-        assert_eq!(
-            kit_id_for_uri(&cfg, &uri),
-            None,
-            "without config, even .rs has no implicit kit"
-        );
-    }
-}
-
 fn build_diagnostics(result: &backend::VerifyResult, range: Range) -> Vec<Diagnostic> {
     match result.status.as_str() {
         "verified" => vec![Diagnostic {
@@ -1451,11 +888,9 @@ fn build_diagnostics(result: &backend::VerifyResult, range: Range) -> Vec<Diagno
 #[tokio::main]
 async fn main() {
     let mut config_path = ".sugar/config.toml".to_string();
-    // CLI flag `--daemon-socket <path>` overrides config.server.daemon_socket.
-    let mut daemon_socket_cli: Option<String> = None;
     // THE TERMINUS: `--in-process` opts into proving buffers in-process
-    // (see the module doc comment). Mutually exclusive with daemon-client
-    // mode; per-plugin subprocess mode is skipped entirely when active.
+    // (see the module doc comment). Per-plugin subprocess mode is skipped
+    // entirely when active.
     let mut in_process = false;
 
     let mut args = std::env::args().skip(1);
@@ -1464,11 +899,6 @@ async fn main() {
             "--config" => {
                 if let Some(path) = args.next() {
                     config_path = path;
-                }
-            }
-            "--daemon-socket" => {
-                if let Some(path) = args.next() {
-                    daemon_socket_cli = Some(path);
                 }
             }
             "--in-process" => {
@@ -1481,24 +911,12 @@ async fn main() {
     // Read config
     let config = config::load_config(&config_path).unwrap_or_default();
 
-    // Resolve daemon socket: CLI flag wins over config file entry.
-    let daemon_socket: Option<PathBuf> = daemon_socket_cli
-        .as_deref()
-        .or(config.server.daemon_socket.as_deref())
-        .map(PathBuf::from);
-
     let backend_path = config.server.backend.clone();
 
-    // Spawn backend in per-plugin mode.  In-process and daemon-client mode
-    // handle analysis themselves, so no backend binary is spawned.
+    // Spawn backend in per-plugin mode.  In-process mode handles analysis
+    // itself, so no backend binary is spawned.
     let backend: Option<Arc<Mutex<JsonRpcBackend>>> = if in_process {
-        eprintln!("sugar-lsp: in-process engine mode active (no daemon, no backend subprocess)");
-        None
-    } else if daemon_socket.is_some() {
-        eprintln!(
-            "sugar-lsp: daemon-client mode active (socket: {})",
-            daemon_socket.as_ref().unwrap().display()
-        );
+        eprintln!("sugar-lsp: in-process engine mode active (no backend subprocess)");
         None
     } else {
         match JsonRpcBackend::spawn(&backend_path, &config.server.backend_args).await {
@@ -1519,8 +937,6 @@ async fn main() {
         documents: Arc::new(Mutex::new(HashMap::new())),
         plugins: Arc::new(Mutex::new(HashMap::new())),
         // project_root removed (unused)
-        daemon_socket,
-        daemon_stream: Arc::new(Mutex::new(None)),
         in_process,
         prove_ctx: Arc::new(Mutex::new(None)),
         raw_documents: Arc::new(Mutex::new(HashMap::new())),

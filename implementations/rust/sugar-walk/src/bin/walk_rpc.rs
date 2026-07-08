@@ -55,14 +55,15 @@ const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
 
 // Tier 2b native semantic oracle (spec 2026-05-30-callee-resolution-tiers §2.T2b).
 // The RA LSP client now lives in the `sugar_walk::ra_oracle` library module so
-// BOTH this per-mint binary AND the resident `sugar-linkerd` daemon import the
+// BOTH this per-mint binary AND the resident `sugar-ra-oracle` daemon (daemon-2
+// repoint; previously `sugar-linkerd`, see daemon-1 extraction) import the
 // same framing/quiescence/resolve logic with no copy-paste. This binary no longer
-// COLD-SPAWNS rust-analyzer per mint; it asks the warm resident daemon via
+// COLD-SPAWNS rust-analyzer per mint; it asks the warm resident oracle via
 // `resolveReceiverCrate` (see `resolve_method_calls_via_oracle`). The oracle is
 // opt-in (SUGAR_RESOLVE_ORACLE=rust-analyzer) and refuses (leaves
-// callee_crate = None) when the daemon is unreachable or cannot reach readiness,
+// callee_crate = None) when the oracle is unreachable or cannot reach readiness,
 // so the fast path and CI are unaffected. The RA LSP client itself lives in
-// `sugar_walk::ra_oracle` and is imported by the daemon, not this binary.
+// `sugar_walk::ra_oracle` and is imported by the oracle daemon, not this binary.
 
 // The daemon client lives alongside this binary (std-only, synchronous NDJSON).
 #[path = "../ra_daemon_client.rs"]
@@ -5331,8 +5332,8 @@ fn resolve_method_calls_via_oracle(
         oracle_on,
         total_callsites = callsites.len(),
         total_method_calls,
-        linkerd_bin = %std::env::var("SUGAR_LINKERD_BIN").unwrap_or_else(|_| "<unset>".into()),
-        linkerd_socket = %std::env::var("SUGAR_LINKERD_SOCKET").unwrap_or_else(|_| "<unset>".into()),
+        oracle_bin = %std::env::var("SUGAR_RA_ORACLE_BIN").unwrap_or_else(|_| "<unset>".into()),
+        oracle_socket = %std::env::var("SUGAR_RA_ORACLE_SOCKET").unwrap_or_else(|_| "<unset>".into()),
         "ORACLE: resolve_method_calls_via_oracle ENTER"
     );
     let mut observation = OracleObservation {
@@ -5384,11 +5385,11 @@ fn resolve_method_calls_via_oracle(
     }
     info!(
         count = total_queries,
-        "ORACLE: asking resident daemon (sugar-linkerd) to resolve {total_queries} method calls -- spawning/indexing daemon now"
+        "ORACLE: asking resident daemon (sugar-ra-oracle) to resolve {total_queries} method calls -- spawning/indexing daemon now"
     );
     // The resident warm rust-analyzer indexes the workspace ONCE inside the
     // daemon and is reused across mints, fronted by a content-addressed cache.
-    // The daemon client waits on linkerd's readiness signal before resolving,
+    // The daemon client waits on the oracle's readiness signal before resolving,
     // so a cold proof mint does not bake a partially-indexed answer into proof.
     let batch = ra_daemon_client::resolve_receiver_crates(workspace_root, &queries);
     observation.reachable = batch.reachable;

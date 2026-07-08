@@ -17,12 +17,11 @@ tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "io-std", "
 tower-lsp = "0.20"
 toml = "0.8"
 # THE TERMINUS (lsp-links-engine lane): prove buffers IN-PROCESS by linking
-# the engine directly -- no daemon RPC, no subprocess solver. These are the
-# SAME crates sugar-linkerd/src/server.rs + methods.rs compose (never a
-# reimplementation): sugar-verifier owns the resident pool / consistency
-# index / solve door; sugar-cli's lib target owns the source-overlay scratch
-# mint (`cmd_mint::mint_project_scratch_proof`). sugar-linkerd itself is
-# never a dependency -- it ships no `[lib]` target and stays untouched.
+# the engine directly -- no daemon RPC, no subprocess solver (the daemon this
+# once routed through, sugar-linkerd, is retired; see #3844 + daemon-3-delete):
+# sugar-verifier owns the resident pool / consistency index / solve door;
+# sugar-cli's lib target owns the source-overlay scratch mint
+# (`cmd_mint::mint_project_scratch_proof`).
 sugar-verifier = { path = "../sugar-verifier" }
 sugar-cli = { path = "../sugar-cli" }
 sugar-ir-compiler = { path = "../sugar-ir-compiler" }

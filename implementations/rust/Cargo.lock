@@ -1725,31 +1725,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sugar-linkerd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "libc",
- "serde",
- "serde_json",
- "sugar-canonicalizer",
- "sugar-claim-envelope",
- "sugar-cli",
- "sugar-ir-compiler",
- "sugar-ir-compiler-smt-lib",
- "sugar-ir-symbolic",
- "sugar-ir-types",
- "sugar-lift",
- "sugar-linker",
- "sugar-verifier",
- "sugar-walk",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "walkdir",
-]
-
-[[package]]
 name = "sugar-lsp"
 version = "0.1.0"
 dependencies = [
@@ -1802,6 +1777,22 @@ dependencies = [
  "serde_json",
  "sugar-canonicalizer",
  "thiserror",
+]
+
+[[package]]
+name = "sugar-ra-oracle"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
+ "sugar-canonicalizer",
+ "sugar-walk",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]

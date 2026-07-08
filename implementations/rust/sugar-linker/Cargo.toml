@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Pure linker algebra for Sugar: derives bridges from (contracts ∪ call-edges) per spec 2026-05-03-bridge-linkage-protocol.md. Used by both `sugar link` (CLI) and `sugar-linkerd` (daemon, LSP+linker step 2)."
+description = "Pure linker algebra for Sugar: derives bridges from (contracts ∪ call-edges) per spec 2026-05-03-bridge-linkage-protocol.md. Used by `sugar link` (CLI) and the in-process LSP prove path."
 
 [lib]
 name = "sugar_linker"

@@ -83,13 +83,13 @@ impl OracleHostAdapter for RustAnalyzerOracleAdapter {
         }
 
         let rust_analyzer = locate_rust_analyzer();
-        let linkerd = locate_linkerd();
+        let ra_oracle = locate_ra_oracle();
         let mut missing = Vec::new();
         if rust_analyzer.path.is_none() {
             missing.push("rust-analyzer".to_string());
         }
-        if linkerd.path.is_none() {
-            missing.push("sugar-linkerd".to_string());
+        if ra_oracle.path.is_none() {
+            missing.push("sugar-ra-oracle".to_string());
         }
 
         if !missing.is_empty() {
@@ -115,13 +115,13 @@ impl OracleHostAdapter for RustAnalyzerOracleAdapter {
             };
         }
 
-        let linkerd_path = linkerd.path.expect("linkerd path checked above");
-        let readiness = probe_linkerd_readiness(&linkerd_path);
+        let ra_oracle_path = ra_oracle.path.expect("ra_oracle path checked above");
+        let readiness = probe_ra_oracle_readiness(&ra_oracle_path);
         let convergence = match &readiness {
             OracleHostReadiness::Ready { .. } | OracleHostReadiness::Degraded { .. } => {
                 OracleResolutionConvergence::Converged {
                     detail:
-                        "resolution readiness is gated by linkerd rustAnalyzerReady; convergence harness removed"
+                        "resolution readiness is gated by the ra-oracle's rustAnalyzerReady; convergence harness removed"
                             .to_string(),
                 }
             }
@@ -134,9 +134,9 @@ impl OracleHostAdapter for RustAnalyzerOracleAdapter {
         OracleHostObservation {
             host: "rust-analyzer".to_string(),
             locatability: OracleHostLocatability::Found {
-                host_binary: linkerd_path.display().to_string(),
+                host_binary: ra_oracle_path.display().to_string(),
                 rust_analyzer_binary: rust_analyzer.path.map(|p| p.display().to_string()),
-                discovery: linkerd.discovery,
+                discovery: ra_oracle.discovery,
             },
             readiness,
             engagement: OracleHostEngagement::Unknown {
@@ -189,14 +189,14 @@ fn locate_rust_analyzer() -> LocatedBinary {
     }
 }
 
-fn locate_linkerd() -> LocatedBinary {
-    if let Some(path) = env_binary("SUGAR_LINKERD_BIN") {
+fn locate_ra_oracle() -> LocatedBinary {
+    if let Some(path) = env_binary("SUGAR_RA_ORACLE_BIN") {
         return LocatedBinary {
             path: Some(path),
             discovery: "env".to_string(),
         };
     }
-    match which_binary("sugar-linkerd") {
+    match which_binary("sugar-ra-oracle") {
         Some(path) => LocatedBinary {
             path: Some(path),
             discovery: "path".to_string(),
@@ -247,13 +247,13 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
-fn probe_linkerd_readiness(binary: &Path) -> OracleHostReadiness {
+fn probe_ra_oracle_readiness(binary: &Path) -> OracleHostReadiness {
     #[cfg(unix)]
     {
-        match probe_linkerd_rust_analyzer_ready(binary) {
+        match probe_ra_oracle_rust_analyzer_ready(binary) {
             Ok(detail) => OracleHostReadiness::Ready { detail },
             Err(error) => OracleHostReadiness::NotReady {
-                detail: format!("sugar-linkerd did not report rust-analyzer ready: {error}"),
+                detail: format!("sugar-ra-oracle did not report rust-analyzer ready: {error}"),
             },
         }
     }
@@ -261,14 +261,14 @@ fn probe_linkerd_readiness(binary: &Path) -> OracleHostReadiness {
     {
         let _ = binary;
         OracleHostReadiness::Degraded {
-            detail: "sugar-linkerd readiness probing uses Unix sockets on this platform"
+            detail: "sugar-ra-oracle readiness probing uses Unix sockets on this platform"
                 .to_string(),
         }
     }
 }
 
 #[cfg(unix)]
-fn probe_linkerd_rust_analyzer_ready(binary: &Path) -> Result<String, String> {
+fn probe_ra_oracle_rust_analyzer_ready(binary: &Path) -> Result<String, String> {
     use serde_json::json;
     use std::os::unix::net::UnixStream;
     use std::process::{Command, Stdio};
@@ -280,7 +280,7 @@ fn probe_linkerd_rust_analyzer_ready(binary: &Path) -> Result<String, String> {
         .as_nanos();
     let dir = std::env::temp_dir().join(format!("sugar-doctor-oracle-{stamp}"));
     std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
-    let socket = dir.join("linkerd.sock");
+    let socket = dir.join("ra-oracle.sock");
     let snapshot = dir.join("snapshot.bin");
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("resolve current workspace: {e}"))?;
@@ -352,7 +352,7 @@ fn probe_linkerd_rust_analyzer_ready(binary: &Path) -> Result<String, String> {
             .unwrap_or("no detail");
         if ready {
             Ok(format!(
-                "sugar-linkerd spawned and reported rust-analyzer ready ({phase}: {detail})"
+                "sugar-ra-oracle spawned and reported rust-analyzer ready ({phase}: {detail})"
             ))
         } else {
             Err(format!("phase={phase}; {detail}"))

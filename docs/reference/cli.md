@@ -92,6 +92,6 @@ Subcommands that participate in the plugin registry accept:
 
 *Not a `sugar` subcommand:* the IR-compiler backends (`sugar-ir-smt-lib`,
 `sugar-ir-coq`, `sugar-ir-lean`, `sugar-ir-maude`), the RPC services
-(`sugar-walk-rpc`, `contracts_rpc`, `witness_rpc`, `sugar-linkerd`, …), `cargo
+(`sugar-walk-rpc`, `contracts_rpc`, `witness_rpc`, `sugar-ra-oracle`, …), `cargo
 sugar` / `cargo sugar-lift`, and the `bcargo` build wrapper are separate binaries
 — see the repository's `[[bin]]` targets, not `sugar --help`.
