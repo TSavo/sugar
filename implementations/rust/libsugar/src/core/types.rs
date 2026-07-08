@@ -725,10 +725,12 @@ pub enum Witness {
     /// Solver/checker transcript for an unknown result.
     #[serde(rename = "unknown")]
     Unknown { transcript: JsonValue },
-    /// Chain-integrity evidence produced by ProveKit.
+    /// Chain-integrity evidence produced by a chain-integrity discharge kit
+    /// (e.g. the now-deleted `ProveKit`, per #evict-3-provekit).
     #[serde(rename = "chain-integrity")]
     ChainIntegrity(ChainIntegrityWitness),
-    /// Chain-integrity failure evidence produced by ProveKit.
+    /// Chain-integrity failure evidence produced by a chain-integrity
+    /// discharge kit (e.g. the now-deleted `ProveKit`, per #evict-3-provekit).
     #[serde(rename = "chain-integrity-failure")]
     ChainIntegrityFailure(ChainIntegrityFailureWitness),
 }
@@ -1858,14 +1860,20 @@ pub(crate) fn contract_to_cvalue(contract: &Contract) -> Arc<CValue> {
     }
 }
 
-pub(crate) fn formula_true() -> IrFormula {
+/// Widened from `pub(crate)` to `pub` for #evict-2-liftplugin-pathexec:
+/// `path_executor.rs`'s test module relocates to `sugar-cli` and needs this
+/// fixture helper from outside the crate. Behavior is unchanged; only
+/// accessibility grew.
+pub fn formula_true() -> IrFormula {
     IrFormula::Atomic {
         name: "true".to_string(),
         args: vec![],
     }
 }
 
-pub(crate) fn any_sort() -> Sort {
+/// Widened from `pub(crate)` to `pub` for #evict-2-liftplugin-pathexec: see
+/// `formula_true` above.
+pub fn any_sort() -> Sort {
     Sort::Primitive {
         name: "Any".to_string(),
     }
