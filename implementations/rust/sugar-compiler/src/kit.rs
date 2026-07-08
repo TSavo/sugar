@@ -41,7 +41,7 @@
 // plugin command. The full component_plan.rs mechanism move into libsugar
 // (SEAM 3b-i in the brief) is NOT done in this pass -- flagged, not hidden.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use libsugar::core::{
     address, ConformanceDeclaration, Dialect, HashMapInputCatalog, Input, Path as CorePath,
@@ -52,6 +52,11 @@ use sugar_claim_envelope::KitDeclaration;
 
 use crate::kit_declaration::{load_kit_declaration_with_command, KitDeclarationLoadError};
 use crate::kit_path::{execute_path, KitRegistry, LiftKit, PathExecutionError};
+use crate::resolve::{
+    resolve_source, resolve_testimony, ResolvedSource, SourceRefusal, TestimonyError,
+    TestimonyResolution,
+};
+use sugar_walk::source_oracle::SourceMemento;
 
 /// The census's resolved answer to "what plugin command answers this
 /// surface." Produced by the CLI's selection policy
@@ -221,6 +226,44 @@ impl Kit {
 
     pub fn surface(&self) -> &str {
         &self.manifest.surface
+    }
+
+    /// SEAM 4 -- the testimony verb. Asks THIS kit (the one this handle
+    /// rendezvous'd with) for its vendor dependency-proof catalog over
+    /// `sugar.plugin.resolve_dependency_proofs`, decoded into typed,
+    /// speaker-stamped `ProofBytes`. A kit that doesn't implement the
+    /// method (or never answers) is `TestimonyOutcome::Unavailable` -- a
+    /// LINK-class absence, not an error -- per `resolve::resolve_testimony`.
+    ///
+    /// `workspace_root` is the project being scanned for dependency proofs
+    /// (the RPC's `project_root` param) -- distinct from `manifest.working_dir`
+    /// (the spawned kit process's cwd), the same distinction
+    /// `kit_dispatch::dependency_proofs_for_command` preserved.
+    pub fn testimony(&self, workspace_root: &Path) -> Result<TestimonyResolution, TestimonyError> {
+        resolve_testimony(
+            &self.manifest.surface,
+            &self.manifest.command,
+            self.manifest.working_dir.as_deref(),
+            workspace_root,
+        )
+    }
+
+    /// SEAM 4 -- the source verb. Asks THIS kit to resolve a `SourceMemento`
+    /// over `sugar.plugin.resolve_source_memento`, exact-or-refuse: CID
+    /// drift on the kit's side of the membrane comes back as
+    /// `SourceRefusal::Refused`, never a silently-empty answer.
+    pub fn source(
+        &self,
+        workspace_root: &Path,
+        memento: &SourceMemento,
+    ) -> Result<ResolvedSource, SourceRefusal> {
+        resolve_source(
+            &self.manifest.surface,
+            &self.manifest.command,
+            self.manifest.working_dir.as_deref(),
+            workspace_root,
+            memento,
+        )
     }
 }
 
