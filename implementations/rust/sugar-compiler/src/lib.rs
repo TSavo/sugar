@@ -35,6 +35,13 @@ pub mod kit_declaration;
 /// The unforgeable `Kit` frontend handle. See `kit::Kit::rendezvous`.
 pub mod kit;
 
+/// The two-reds typed solve outcome. See `outcome::Outcome`.
+pub mod outcome;
+
+/// `ProofGraph::solve`, the `Orchestrate` extension trait. See
+/// `orchestrate::Orchestrate`.
+pub mod orchestrate;
+
 /// The resolve verbs (SEAM 4): `Kit::testimony` (vendor dependency proofs)
 /// and `Kit::source` (source-oracle lookup). See `resolve` module docs.
 pub mod resolve;
