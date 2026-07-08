@@ -10,9 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use libsugar::core::{
-    address, execute_path, ConformanceDeclaration, Dialect, DomainClaim, HashMapInputCatalog,
-    Input, KitRegistry, LiftKit, LiftPluginKit, LiftPluginKitError, Path as CorePath, PathAlgebra,
-    PathExecutionError, Term, Verb,
+    address, ConformanceDeclaration, Dialect, DomainClaim, HashMapInputCatalog, Input,
+    Path as CorePath, PathAlgebra, Term, Verb,
 };
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
@@ -20,6 +19,9 @@ use serde_json::{json, Value};
 use sugar_ir_types::CompositionBoundaryMemento;
 
 use crate::component_plan::PlannedLiftManifest;
+use crate::kit_path::{
+    execute_path, KitRegistry, LiftKit, LiftPluginKit, LiftPluginKitError, PathExecutionError,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiftPluginSession {

@@ -46,6 +46,7 @@ mod doctor;
 mod doctor_oracle;
 pub mod floor_runtime_check;
 mod kit_dispatch;
+mod kit_path;
 mod lift_plugin;
 pub mod panic_annotations_runtime;
 mod project_config;

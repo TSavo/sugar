@@ -6,8 +6,10 @@
 //! DomainClaims) plus the `Catalog` trait. It explicitly avoids the Kit /
 //! Domain / Solver / Verbs dispatch layer so it can be consumed by:
 //!
-//! - `core::prove_kit::ProveKit` for chain-integrity discharge
-//! - `core::bind` for concept-tier hub assertions
+//! - `sugar_cli::kit_path::prove_kit::ProveKit` for chain-integrity discharge
+//!   (relocated from `core::prove_kit` by #evict-2-liftplugin-pathexec)
+//! - `sugar_walk::bind` for concept-tier hub assertions (relocated from
+//!   `core::bind` by #evict-1-bind)
 //! - downstream lifters and verifiers that need to traverse premise chains
 //!   without inheriting the full Kit dispatcher boundary
 //!

@@ -1858,14 +1858,20 @@ pub(crate) fn contract_to_cvalue(contract: &Contract) -> Arc<CValue> {
     }
 }
 
-pub(crate) fn formula_true() -> IrFormula {
+/// Widened from `pub(crate)` to `pub` for #evict-2-liftplugin-pathexec:
+/// `path_executor.rs`'s test module relocates to `sugar-cli` and needs this
+/// fixture helper from outside the crate. Behavior is unchanged; only
+/// accessibility grew.
+pub fn formula_true() -> IrFormula {
     IrFormula::Atomic {
         name: "true".to_string(),
         args: vec![],
     }
 }
 
-pub(crate) fn any_sort() -> Sort {
+/// Widened from `pub(crate)` to `pub` for #evict-2-liftplugin-pathexec: see
+/// `formula_true` above.
+pub fn any_sort() -> Sort {
     Sort::Primitive {
         name: "Any".to_string(),
     }

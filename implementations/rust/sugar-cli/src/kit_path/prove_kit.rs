@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use super::traits::{Catalog, Kit, KitError};
-use super::types::{
+use libsugar::core::traits::{Catalog, Kit, KitError};
+use libsugar::core::types::{
     ChainIntegrityFailureWitness, ChainIntegrityWitness, Cid, ConformanceDeclaration, Dialect,
     DomainClaim, Input, Term, Verdict, Witness,
 };
-use super::walks::walk_premises_to_root_with_failure_steps;
+use libsugar::core::walks::walk_premises_to_root_with_failure_steps;
 
 const CHAIN_INTEGRITY_SCHEMA_VERSION: u32 = 1;
 const SUGAR_CONFORMANCE_REASON: &str =

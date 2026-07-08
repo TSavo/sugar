@@ -18,20 +18,14 @@
 //! composition obligations. `commit` is `compose(parent, change)` followed by
 //! `sign`.
 
-pub mod lift_plugin;
-pub mod path_executor;
 pub mod primitives;
-pub mod prove_kit;
 pub mod stubs;
 pub mod traits;
 pub mod types;
 pub mod verbs;
 pub mod walks;
 
-pub use lift_plugin::{LiftKit, LiftPluginKit, LiftPluginKitError, LiftPluginKitSession};
-pub use path_executor::{execute_path, KitRegistry, PathExecutionChain, PathExecutionError};
 pub use primitives::{address, compose, resolve, sign, verify_sig, ComposeError, SigningKey};
-pub use prove_kit::ProveKit;
 pub use stubs::{CKit, FunctionContractDomain, NoopPortfolio, RustKit};
 pub use traits::{
     Canonical, Catalog, CoreError, Domain, DomainError, HashMapCatalog, HashMapInputCatalog,

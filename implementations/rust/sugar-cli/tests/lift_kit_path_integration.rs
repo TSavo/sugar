@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use libsugar::core::{
-    address, execute_path, ConformanceDeclaration, Dialect, DomainClaim, HashMapInputCatalog,
-    Input, Kit, KitError, KitRegistry, LiftKit, LiftPluginKit, Path as CorePath, PathAlgebra, Term,
-    Verb, Verdict, Witness,
+    address, ConformanceDeclaration, Dialect, DomainClaim, HashMapInputCatalog, Input, Kit,
+    KitError, Path as CorePath, PathAlgebra, Term, Verb, Verdict, Witness,
 };
+use sugar_cli::kit_path::{execute_path, KitRegistry, LiftKit, LiftPluginKit};
 use serde_json::json;
 use sugar_ir_types::Sort;
 

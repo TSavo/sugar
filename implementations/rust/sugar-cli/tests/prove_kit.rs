@@ -7,10 +7,11 @@ use libsugar::compose::{
     build_value, cid_of_value, jcs_bytes_of_value, EffectSet, FunctionContractMemento, Locus,
 };
 use libsugar::core::{
-    address, execute_path, ChainIntegrityFailureWitness, ChainIntegrityWitness, Cid,
-    ConformanceDeclaration, Dialect, DomainClaim, DomainKind, HashMapCatalog, HashMapInputCatalog,
-    Input, Kit, KitError, KitRegistry, Path, PathAlgebra, ProveKit, Term, Verb, Verdict, Witness,
+    address, ChainIntegrityFailureWitness, ChainIntegrityWitness, Cid, ConformanceDeclaration,
+    Dialect, DomainClaim, DomainKind, HashMapCatalog, HashMapInputCatalog, Input, Kit, KitError,
+    Path, PathAlgebra, Term, Verb, Verdict, Witness,
 };
+use sugar_cli::kit_path::{execute_path, KitRegistry, ProveKit};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::json;

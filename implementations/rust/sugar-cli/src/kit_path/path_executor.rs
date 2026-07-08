@@ -7,7 +7,7 @@
 //! `transform` produces target source; they declare `Carrier { target_language,
 //! fixtures_path }` so their emit-compile-run fixtures are addressable from
 //! the registry. Non-carrier kits are kits whose `transform` produces a
-//! [`DomainClaim`](super::types::DomainClaim) without emitting target source;
+//! [`DomainClaim`](libsugar::core::types::DomainClaim) without emitting target source;
 //! they declare `NonCarrier { reason }`. The `reason` string is audit evidence
 //! and is content-addressed through the surrounding run provenance chain.
 //!
@@ -32,14 +32,14 @@ use sugar_ir_types::{
 };
 use thiserror::Error;
 
-use crate::compose::CCP_VERSION;
-
-use super::primitives::address;
-use super::prove_kit::ProveKit;
-use super::traits::{Catalog, InputCatalog, Kit, KitError};
-use super::types::{
+use libsugar::compose::CCP_VERSION;
+use libsugar::core::primitives::address;
+use libsugar::core::traits::{Catalog, InputCatalog, Kit, KitError};
+use libsugar::core::types::{
     Cid, ConformanceDeclaration, DomainClaim, Input, PathAlgebra, PathError, Term, Verb,
 };
+
+use super::prove_kit::ProveKit;
 
 struct RegisteredKit {
     kit: Box<dyn Kit>,
@@ -409,8 +409,8 @@ mod tests {
 
     use serde_json::json;
 
-    use super::super::traits::HashMapInputCatalog;
-    use super::super::types::{
+    use libsugar::core::traits::HashMapInputCatalog;
+    use libsugar::core::types::{
         any_sort, formula_true, memento_from_parts, Dialect, DomainKind, Term, Verdict, Witness,
     };
 
@@ -563,7 +563,7 @@ mod tests {
     }
 
     fn three_step_path(source_cid: Cid, lift_term: &Term, bind_term: &Term) -> Input {
-        Input::Path(Box::new(super::super::types::Path {
+        Input::Path(Box::new(libsugar::core::types::Path {
             algebra: vec![
                 PathAlgebra {
                     name: "lift".to_string(),
@@ -596,7 +596,7 @@ mod tests {
         bind_term: &Term,
         lower_claim_input_cid: Cid,
     ) -> Input {
-        Input::Path(Box::new(super::super::types::Path {
+        Input::Path(Box::new(libsugar::core::types::Path {
             algebra: vec![
                 PathAlgebra {
                     name: "lift".to_string(),
