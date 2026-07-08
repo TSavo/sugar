@@ -277,6 +277,34 @@ fn build_consumer_fixture(label: &str) -> PathBuf {
     consumer_dir
 }
 
+/// Same as `build_consumer_fixture`, but WITHOUT staging the vendor proof --
+/// used by the proof-watcher test, which stages the vendor proof itself
+/// later, as the event under test.
+fn build_consumer_fixture_no_vendor(label: &str) -> PathBuf {
+    let consumer_dir = unique_dir(label);
+    fs::create_dir_all(consumer_dir.join("src")).expect("mkdir src");
+    fs::write(
+        consumer_dir.join("src").join("lib.rs"),
+        "// BAD_MARKER placeholder\n",
+    )
+    .expect("write initial src/lib.rs");
+    fs::create_dir_all(consumer_dir.join(".sugar")).expect("mkdir .sugar");
+    fs::write(
+        consumer_dir.join(".sugar").join("config.toml"),
+        "[[plugins]]\nsurface = \"mockconsumer\"\n",
+    )
+    .expect("write consumer config.toml");
+
+    write_dynamic_mock_lifter(
+        &consumer_dir,
+        "mockconsumer",
+        &contract_ir_document(CONTRACT_NAME, "src/lib.rs", 5),
+        &contract_ir_document(CONTRACT_NAME, "src/lib.rs", 6),
+    );
+
+    consumer_dir
+}
+
 // ---------------------------------------------------------------------------
 // LSP process wrapper (Content-Length framed JSON-RPC).
 // ---------------------------------------------------------------------------
@@ -533,6 +561,100 @@ fn in_process_did_change_to_good_twin_clears_diagnostics() {
         changed_diags.is_empty(),
         "good twin must clear the contradiction diagnostic: {changed_diags:?}"
     );
+
+    lsp.kill();
+    fs::remove_dir_all(&project).ok();
+}
+
+// ---------------------------------------------------------------------------
+// Test 3: the proof-watcher event path. Symmetry gate for the re-plumb: a
+// `.proof` LANDING (not a buffer edit) must drive the SAME one function
+// (fold `proofs` + `lifted` -> discharge -> publish) that `didChange` drives.
+// The buffer is opened with its BAD text (asserts == 6) while NO vendor
+// proof is staged yet, so there is nothing to contradict and the open
+// stays green. The vendor proof is then staged on disk and a
+// `workspace/didChangeWatchedFiles` notification fired for it (the fixture
+// drives the notification directly, standing in for a real client's
+// filesystem watcher) -- with the buffer text UNCHANGED, the same
+// three-fact contradiction must now appear, proving the proof-watcher path
+// re-folds `lifted[uri]` against the refreshed `proofs` map through the
+// identical function `did_change` uses.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn in_process_proof_watcher_event_reflects_through_the_same_one_function() {
+    if !z3_available() {
+        eprintln!("SKIP: z3 not on PATH; in-process solve needs a real discharge to refute");
+        return;
+    }
+
+    let project = build_consumer_fixture_no_vendor("proof-watcher");
+    let root_uri = format!("file://{}", project.display());
+    let file_uri = format!("file://{}/src/lib.rs", project.display());
+
+    let mut lsp = LspServer::spawn_in_process(&missing_config_path("proof-watcher"));
+    let init_resp = lsp.initialize(&root_uri);
+    assert!(init_resp.get("result").is_some(), "initialize failed: {init_resp}");
+    lsp.initialized();
+
+    // didOpen the BAD twin (asserts == 6). No vendor proof is staged, so
+    // `proofs` is empty -- nothing to conjoin against, no diagnostic yet.
+    let bad_source = "// BAD_MARKER: fn check(a,b) asserted == 6\n";
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": file_uri,
+                "languageId": "rust",
+                "version": 1,
+                "text": bad_source,
+            }
+        }),
+    );
+    let opened = lsp
+        .wait_for_publish_diagnostics(&file_uri, Duration::from_secs(20))
+        .unwrap_or_else(|| panic!("no publishDiagnostics after didOpen (no vendor proof yet)"));
+    let opened_diags = opened.get("diagnostics").and_then(|d| d.as_array()).cloned().unwrap_or_default();
+    assert!(
+        opened_diags.is_empty(),
+        "no vendor proof staged yet: nothing to contradict: {opened_diags:?}"
+    );
+
+    // The `proofs` map's OWN event: a vendor `.proof` lands under
+    // `.sugar/imports`. The buffer's text (`lifted[uri]`) is NOT touched.
+    stage_vendor_proof(&project);
+    let imports_dir = project.join(".sugar").join("imports");
+    let staged_proof = fs::read_dir(&imports_dir)
+        .expect("read .sugar/imports")
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().map(|x| x == "proof").unwrap_or(false))
+        .expect("staged vendor .proof file")
+        .path();
+    let proof_uri = format!("file://{}", staged_proof.display());
+    lsp.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({"changes": [{"uri": proof_uri, "type": 1}]}),
+    );
+
+    let after_proof = lsp
+        .wait_for_publish_diagnostics(&file_uri, Duration::from_secs(20))
+        .unwrap_or_else(|| panic!("no publishDiagnostics after the proof-watcher event"));
+    let after_proof_diags = after_proof
+        .get("diagnostics")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        after_proof_diags.len(),
+        1,
+        "the SAME buffer text must now contradict the newly-landed vendor proof: {after_proof_diags:?}"
+    );
+    let message = after_proof_diags[0]
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("");
+    assert!(message.contains("Vendor fact:"), "message: {message}");
+    assert!(message.contains("UNSAT"), "message: {message}");
 
     lsp.kill();
     fs::remove_dir_all(&project).ok();
