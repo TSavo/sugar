@@ -410,11 +410,11 @@ impl LiftPluginKit {
     ) -> Result<(Value, Value), ResidentDispatchError> {
         let key = self.resident_key();
         let pool = resident_pool();
-        let mut guard = pool
-            .lock()
-            .map_err(|_| ResidentDispatchError::Fatal(LiftPluginKitError::Failed(
+        let mut guard = pool.lock().map_err(|_| {
+            ResidentDispatchError::Fatal(LiftPluginKitError::Failed(
                 "resident lifter pool poisoned".to_string(),
-            )))?;
+            ))
+        })?;
 
         let max_age = resident_max_age();
         let needs_fresh = match guard.get(&key) {
@@ -442,7 +442,9 @@ impl LiftPluginKit {
             );
         }
 
-        let entry = guard.get_mut(&key).expect("just inserted or already present");
+        let entry = guard
+            .get_mut(&key)
+            .expect("just inserted or already present");
         let initialize_response = entry.initialize_response.clone();
 
         // On a freshly spawned resident, `spawn_resident` already performed
@@ -585,7 +587,10 @@ enum ResidentDispatchError {
 
 impl ResidentDispatchError {
     fn retry_after(reason: String) -> Self {
-        info!(reason, "resident lifter connection lost, evicting and retrying one-shot");
+        info!(
+            reason,
+            "resident lifter connection lost, evicting and retrying one-shot"
+        );
         Self::Retry
     }
 }

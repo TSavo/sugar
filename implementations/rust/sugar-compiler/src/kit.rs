@@ -140,9 +140,9 @@ impl Kit {
         let declaration =
             load_kit_declaration_with_command(&manifest.command, manifest.working_dir.as_deref())
                 .map_err(|source| RendezvousError::Handshake {
-                    surface: manifest.surface.clone(),
-                    source,
-                })?;
+                surface: manifest.surface.clone(),
+                source,
+            })?;
         let kit_name = format!("lift-{}", manifest.surface);
         let mut registry = KitRegistry::default();
         registry.register(
@@ -200,5 +200,48 @@ impl Kit {
 
     pub fn surface(&self) -> &str {
         &self.manifest.surface
+    }
+}
+
+#[cfg(test)]
+mod rendezvous_tests {
+    use super::*;
+
+    /// The negative arm of unforgeability: a forged manifest pointing at a
+    /// command that is not a kit must FAIL the live handshake -- no Kit is
+    /// minted. This is the discrimination test for the doc's claim that
+    /// holding a Kit proves a real kit process answered its declaration RPC.
+    #[test]
+    fn rendezvous_refuses_a_forged_manifest_to_a_non_kit() {
+        let forged = LiftManifest {
+            surface: "forged".to_string(),
+            name: "forged".to_string(),
+            dialect: Dialect::Rust,
+            command: vec!["/bin/false".to_string()],
+            working_dir: None,
+        };
+        match Kit::rendezvous(forged) {
+            Err(RendezvousError::Handshake { surface, .. }) => {
+                assert_eq!(surface, "forged");
+            }
+            Err(other) => panic!("expected Handshake refusal, got: {other:?}"),
+            Ok(_) => panic!("a non-kit command must never mint a Kit"),
+        }
+    }
+
+    /// Empty command refuses before spawning anything.
+    #[test]
+    fn rendezvous_refuses_an_empty_command() {
+        let forged = LiftManifest {
+            surface: "empty".to_string(),
+            name: "empty".to_string(),
+            dialect: Dialect::Rust,
+            command: vec![],
+            working_dir: None,
+        };
+        assert!(matches!(
+            Kit::rendezvous(forged),
+            Err(RendezvousError::EmptyCommand(_))
+        ));
     }
 }
