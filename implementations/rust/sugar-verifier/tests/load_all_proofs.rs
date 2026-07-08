@@ -806,7 +806,7 @@ fn dependency_intake_rows_label_vendor_fact_as_vendor() {
             .filter(|r| {
                 r.verification
                     .as_ref()
-                    .is_some_and(|v| v.get("clientFactIr").is_some())
+                    .is_some_and(|v| v.to_json().get("clientFactIr").is_some())
             })
             .map(|r| r.property_name.clone())
             .collect();

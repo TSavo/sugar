@@ -1847,7 +1847,7 @@ pub async fn handle_prove_consistency(
                 &cr.property_name,
                 cr.verdict,
                 &cr.reason,
-                cr.verification.clone(),
+                cr.verification.as_ref().map(|v| v.to_json()),
                 cr.locus.clone(),
                 &mut report,
             );

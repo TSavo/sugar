@@ -65,6 +65,7 @@ use std::process::{Command, Stdio};
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
@@ -91,7 +92,7 @@ pub struct ConsistencyResult {
     /// recompute (k(I)=t), NOT from a symbolic solver. Kept distinct so the
     /// report never reads witnessed-by-execution as proven-by-solver.
     pub witnessed: bool,
-    pub verification: Option<Json>,
+    pub verification: Option<VerificationDetail>,
     /// The source locus (file/line/column) of the assertion this result is
     /// about, recovered from the contract memento's own `file`+`span`. Stamped
     /// by `verify_consistency` and threaded to the report row so an
@@ -99,6 +100,115 @@ pub struct ConsistencyResult {
     /// assertion instead of dropping the source. `None` when the contract
     /// memento carries no readable locus (fail-open: no false anchor).
     pub locus: Option<SourceLocus>,
+}
+
+/// Typed replacement for the hand-rolled `verification` JSON on
+/// [`ConsistencyResult`]. Serde is internally-tagged on `kind`, so together with
+/// declaration-order fields and `skip_serializing_if` this serializes
+/// BYTE-IDENTICALLY to the JSON shapes this module (and the effects boundary,
+/// [`VerifyEffect::to_legacy_boundary`]) previously built by hand. That
+/// byte-identity is load-bearing: the linked-bundle CID is computed over this
+/// serialization. Each arm has a per-shape round-trip test
+/// (`test_verification_detail_*_round_trip`) that pins the exact wire bytes.
+///
+/// Variant / `kind` mapping:
+///   - [`VerificationDetail::Witness`]       -> `kind = "witness"`
+///   - [`VerificationDetail::Solver`]        -> `kind = "consistency"`
+///     (the symbolic consistency detail; the two conjoined-fact fields
+///     `clientFactIr`/`vendorFactIr` are attached later by
+///     [`attach_conjoined_facts`] and are omitted when absent)
+///   - [`VerificationDetail::ProvenanceKind`] -> `kind = "consistency-provenance-kind"`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum VerificationDetail {
+    /// Execution-witness recompute detail. `witnessed`/`verdict`/`reason` are
+    /// always present; `resolvedBy`/`outcomes`/`failed`/`failedTests` appear only
+    /// on the resolved-package shapes (omitted on the undecidable / recompute-error
+    /// shape), matching the three hand-rolled witness variants exactly.
+    #[serde(rename = "witness")]
+    Witness {
+        witnessed: bool,
+        verdict: String,
+        #[serde(
+            rename = "resolvedBy",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        resolved_by: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcomes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<u64>,
+        #[serde(
+            rename = "failedTests",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        failed_tests: Option<Vec<String>>,
+        reason: String,
+    },
+    /// Symbolic-solver consistency detail. `rawSolverVerdict`/`solverReason` are
+    /// nullable-but-always-present (serialized as JSON `null` when absent, never
+    /// dropped); `clientFactIr`/`vendorFactIr` are the appended conjoined facts and
+    /// ARE dropped when absent.
+    #[serde(rename = "consistency")]
+    Solver {
+        property: String,
+        #[serde(rename = "checkedFormulaCid")]
+        checked_formula_cid: String,
+        #[serde(rename = "linkedPosts")]
+        linked_posts: Json,
+        #[serde(rename = "rawSolverVerdict")]
+        raw_solver_verdict: Option<String>,
+        #[serde(rename = "finalVerdict")]
+        final_verdict: String,
+        #[serde(rename = "solverReason")]
+        solver_reason: Option<String>,
+        #[serde(rename = "solverInvocations")]
+        solver_invocations: Json,
+        #[serde(
+            rename = "clientFactIr",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        client_fact_ir: Option<Json>,
+        #[serde(
+            rename = "vendorFactIr",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        vendor_fact_ir: Option<Json>,
+    },
+    /// Provenance-KIND refusal detail (a custom-witness / panic-callsite contract
+    /// that carried the wrong `proofirProvenance.warrants[].kind`).
+    #[serde(rename = "consistency-provenance-kind")]
+    ProvenanceKind {
+        property: String,
+        #[serde(rename = "finalVerdict")]
+        final_verdict: String,
+        reason: String,
+    },
+}
+
+impl VerificationDetail {
+    /// Lower to the wire JSON. This is the boundary back to the report stage,
+    /// which still threads `Option<Json>`; the serialization is byte-identical to
+    /// the shape this type replaced.
+    pub fn to_json(&self) -> Json {
+        serde_json::to_value(self).expect("VerificationDetail serializes infallibly")
+    }
+}
+
+/// Lift the effects boundary's legacy JSON verification (still `Option<Json>` at
+/// [`VerifyEffect::to_legacy_boundary`]) into the typed detail. The boundary only
+/// ever emits the `witness` and `consistency-provenance-kind` shapes, both of
+/// which round-trip through this type; a schema drift panics LOUD rather than
+/// silently dropping the detail.
+fn verification_from_boundary(v: Option<Json>) -> Option<VerificationDetail> {
+    v.map(|j| {
+        serde_json::from_value(j)
+            .expect("effects boundary verification must match the VerificationDetail schema")
+    })
 }
 
 /// Recover the assertion's source locus from a contract memento body. The
@@ -710,12 +820,15 @@ fn try_witness_discharge(
         effect: None,
         witnessed: false,
         locus: None,
-        verification: Some(json!({
-            "kind": "witness",
-            "witnessed": false,
-            "verdict": ObligationVerdict::Undecidable.as_str(),
-            "reason": reason,
-        })),
+        verification: Some(VerificationDetail::Witness {
+            witnessed: false,
+            verdict: ObligationVerdict::Undecidable.as_str().to_string(),
+            resolved_by: None,
+            outcomes: None,
+            failed: None,
+            failed_tests: None,
+            reason,
+        }),
     };
     let tool = evidence
         .get("certificate")
@@ -760,7 +873,7 @@ fn try_witness_discharge(
                 effect: Some(effect),
                 witnessed: false,
                 locus: None,
-                verification: boundary.verification,
+                verification: verification_from_boundary(boundary.verification),
             });
         }
     };
@@ -777,15 +890,15 @@ fn try_witness_discharge(
             effect: None,
             witnessed: true,
             locus: None,
-            verification: Some(json!({
-                "kind": "witness",
-                "witnessed": true,
-                "verdict": ObligationVerdict::Discharged.as_str(),
-                "resolvedBy": outcome.resolved_by,
-                "outcomes": outcome.count,
-                "failed": outcome.failed,
-                "reason": reason,
-            })),
+            verification: Some(VerificationDetail::Witness {
+                witnessed: true,
+                verdict: ObligationVerdict::Discharged.as_str().to_string(),
+                resolved_by: Some(outcome.resolved_by.clone()),
+                outcomes: Some(outcome.count as u64),
+                failed: Some(outcome.failed as u64),
+                failed_tests: None,
+                reason,
+            }),
         }
     } else {
         let shown = outcome
@@ -814,7 +927,7 @@ fn try_witness_discharge(
             effect: Some(effect),
             witnessed: false,
             locus: None,
-            verification: boundary.verification,
+            verification: verification_from_boundary(boundary.verification),
         }
     })
 }
@@ -1297,7 +1410,7 @@ fn provenance_kind_refusal(cid: String, body: &Json, reason: String) -> Consiste
         effect: Some(effect),
         witnessed: false,
         locus: None,
-        verification: boundary.verification,
+        verification: verification_from_boundary(boundary.verification),
     }
 }
 
@@ -1454,15 +1567,17 @@ fn attach_conjoined_facts(
     client_fact: &Json,
     vendor_facts: &[Json],
 ) {
-    let Some(Json::Object(v)) = result.verification.as_mut() else {
+    let Some(VerificationDetail::Solver {
+        client_fact_ir,
+        vendor_fact_ir,
+        ..
+    }) = result.verification.as_mut()
+    else {
         return;
     };
-    v.insert("clientFactIr".to_string(), client_fact.clone());
+    *client_fact_ir = Some(client_fact.clone());
     if !vendor_facts.is_empty() {
-        v.insert(
-            "vendorFactIr".to_string(),
-            Json::Array(vendor_facts.to_vec()),
-        );
+        *vendor_fact_ir = Some(Json::Array(vendor_facts.to_vec()));
     }
 }
 
@@ -1474,7 +1589,7 @@ fn consistency_verification_detail(
     final_verdict: ObligationVerdict,
     solver_reason: Option<&str>,
     invs: &[SolverInvocation],
-) -> Json {
+) -> VerificationDetail {
     // The checked formula is the conjoined universe -- on a real stdlib run that
     // is ~MB per obligation, and the report accumulates one verification detail
     // per obligation (10k+), so holding it INLINE OOMs (~43GB observed). Pin it
@@ -1486,16 +1601,17 @@ fn consistency_verification_detail(
     let checked_formula_cid = libsugar::canonical::json_jcs(checked_formula)
         .map(|jcs| blake3_512_of(jcs.as_bytes()))
         .unwrap_or_else(|_| "blake3-512:uncanonicalizable-checked-formula".to_string());
-    json!({
-        "kind": "consistency",
-        "property": property_name,
-        "checkedFormulaCid": checked_formula_cid,
-        "linkedPosts": linked_posts_to_json(linked_posts),
-        "rawSolverVerdict": raw_verdict.map(|v| v.as_str()),
-        "finalVerdict": final_verdict.as_str(),
-        "solverReason": solver_reason,
-        "solverInvocations": solver_invocations_to_json(invs),
-    })
+    VerificationDetail::Solver {
+        property: property_name.to_string(),
+        checked_formula_cid,
+        linked_posts: linked_posts_to_json(linked_posts),
+        raw_solver_verdict: raw_verdict.map(|v| v.as_str().to_string()),
+        final_verdict: final_verdict.as_str().to_string(),
+        solver_reason: solver_reason.map(|r| r.to_string()),
+        solver_invocations: solver_invocations_to_json(invs),
+        client_fact_ir: None,
+        vendor_fact_ir: None,
+    }
 }
 
 /// Count the number of independent top-level atomic constraints in `inv`.
@@ -3566,6 +3682,237 @@ mod tests {
         test_cid(label).to_string()
     }
 
+    /// Byte-identity contract for [`VerificationDetail`]. For each arm, the typed
+    /// value must serialize to the EXACT bytes the hand-rolled `json!` shape it
+    /// replaced produced (compared as canonical wire strings under
+    /// `preserve_order`), and must round-trip back through `from_value`
+    /// unchanged. This is the seam's gate: the linked-bundle CID is taken over
+    /// these bytes.
+    fn assert_wire_identity(detail: &VerificationDetail, legacy: Json) {
+        let typed = serde_json::to_value(detail).expect("detail serializes");
+        assert_eq!(
+            serde_json::to_string(&typed).unwrap(),
+            serde_json::to_string(&legacy).unwrap(),
+            "typed VerificationDetail must serialize byte-identically to the legacy shape"
+        );
+        // to_json() is the production lowering used at the report handoff.
+        assert_eq!(detail.to_json(), legacy);
+        let back: VerificationDetail =
+            serde_json::from_value(legacy).expect("legacy shape deserializes into the typed detail");
+        assert_eq!(&back, detail, "round-trip must be lossless");
+    }
+
+    #[test]
+    fn test_verification_detail_witness_undecidable_round_trip() {
+        let detail = VerificationDetail::Witness {
+            witnessed: false,
+            verdict: ObligationVerdict::Undecidable.as_str().to_string(),
+            resolved_by: None,
+            outcomes: None,
+            failed: None,
+            failed_tests: None,
+            reason: "custom witness present but SUGAR_WITNESS_PROJECT_DIR unset".to_string(),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "witness",
+                "witnessed": false,
+                "verdict": ObligationVerdict::Undecidable.as_str(),
+                "reason": "custom witness present but SUGAR_WITNESS_PROJECT_DIR unset",
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_witness_resolved_round_trip() {
+        let detail = VerificationDetail::Witness {
+            witnessed: true,
+            verdict: ObligationVerdict::Discharged.as_str().to_string(),
+            resolved_by: Some("cargo-test".to_string()),
+            outcomes: Some(7),
+            failed: Some(0),
+            failed_tests: None,
+            reason: "witness package verified by rust".to_string(),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "witness",
+                "witnessed": true,
+                "verdict": ObligationVerdict::Discharged.as_str(),
+                "resolvedBy": "cargo-test",
+                "outcomes": 7,
+                "failed": 0,
+                "reason": "witness package verified by rust",
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_witness_package_body_round_trip() {
+        let detail = VerificationDetail::Witness {
+            witnessed: false,
+            verdict: ObligationVerdict::Unsatisfied.as_str().to_string(),
+            resolved_by: Some("cargo-test".to_string()),
+            outcomes: Some(9),
+            failed: Some(2),
+            failed_tests: Some(vec!["t_one".to_string(), "t_two".to_string()]),
+            reason: "witness package had failing outcomes".to_string(),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "witness",
+                "witnessed": false,
+                "verdict": ObligationVerdict::Unsatisfied.as_str(),
+                "resolvedBy": "cargo-test",
+                "outcomes": 9,
+                "failed": 2,
+                "failedTests": ["t_one", "t_two"],
+                "reason": "witness package had failing outcomes",
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_solver_bare_round_trip() {
+        // rawSolverVerdict / solverReason are nullable-but-present: they serialize
+        // as JSON null, never dropped.
+        let detail = VerificationDetail::Solver {
+            property: "prop".to_string(),
+            checked_formula_cid: "blake3-512:cf".to_string(),
+            linked_posts: json!([]),
+            raw_solver_verdict: None,
+            final_verdict: ObligationVerdict::Refused.as_str().to_string(),
+            solver_reason: None,
+            solver_invocations: json!([]),
+            client_fact_ir: None,
+            vendor_fact_ir: None,
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "consistency",
+                "property": "prop",
+                "checkedFormulaCid": "blake3-512:cf",
+                "linkedPosts": [],
+                "rawSolverVerdict": null,
+                "finalVerdict": ObligationVerdict::Refused.as_str(),
+                "solverReason": null,
+                "solverInvocations": [],
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_solver_with_conjoined_facts_round_trip() {
+        // The clientFactIr / vendorFactIr fields are appended by
+        // attach_conjoined_facts AFTER solverInvocations, and are dropped when
+        // absent -- exactly the insertion-order the mutate path produced.
+        let detail = VerificationDetail::Solver {
+            property: "prop".to_string(),
+            checked_formula_cid: "blake3-512:cf".to_string(),
+            linked_posts: json!([{"sourceSymbol": "enc"}]),
+            raw_solver_verdict: Some(ObligationVerdict::Unsatisfied.as_str().to_string()),
+            final_verdict: ObligationVerdict::Discharged.as_str().to_string(),
+            solver_reason: Some("unsat".to_string()),
+            solver_invocations: json!([{"compiler": "smt-lib-v2.6"}]),
+            client_fact_ir: Some(json!({"value": 6})),
+            vendor_fact_ir: Some(json!([{"value": 5}])),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "consistency",
+                "property": "prop",
+                "checkedFormulaCid": "blake3-512:cf",
+                "linkedPosts": [{"sourceSymbol": "enc"}],
+                "rawSolverVerdict": ObligationVerdict::Unsatisfied.as_str(),
+                "finalVerdict": ObligationVerdict::Discharged.as_str(),
+                "solverReason": "unsat",
+                "solverInvocations": [{"compiler": "smt-lib-v2.6"}],
+                "clientFactIr": {"value": 6},
+                "vendorFactIr": [{"value": 5}],
+            }),
+        );
+    }
+
+    #[test]
+    fn test_verification_detail_provenance_kind_round_trip() {
+        let detail = VerificationDetail::ProvenanceKind {
+            property: "prop".to_string(),
+            final_verdict: ObligationVerdict::Refused.as_str().to_string(),
+            reason: "wrong provenance KIND".to_string(),
+        };
+        assert_wire_identity(
+            &detail,
+            json!({
+                "kind": "consistency-provenance-kind",
+                "property": "prop",
+                "finalVerdict": ObligationVerdict::Refused.as_str(),
+                "reason": "wrong provenance KIND",
+            }),
+        );
+    }
+
+    #[test]
+    fn test_attach_conjoined_facts_only_mutates_solver_variant() {
+        // A non-Solver detail is left untouched (fail-open), matching the prior
+        // "only mutate the consistency Object" behavior.
+        let mut witness = ConsistencyResult {
+            contract_cid: "c".to_string(),
+            property_name: "p".to_string(),
+            verdict: ObligationVerdict::Undecidable,
+            reason: "r".to_string(),
+            effect: None,
+            witnessed: false,
+            verification: Some(VerificationDetail::Witness {
+                witnessed: false,
+                verdict: ObligationVerdict::Undecidable.as_str().to_string(),
+                resolved_by: None,
+                outcomes: None,
+                failed: None,
+                failed_tests: None,
+                reason: "r".to_string(),
+            }),
+            locus: None,
+        };
+        let before = witness.verification.clone();
+        attach_conjoined_facts(&mut witness, &json!({"value": 6}), &[json!({"value": 5})]);
+        assert_eq!(witness.verification, before, "witness arm is not a facts sink");
+
+        let mut solver = ConsistencyResult {
+            contract_cid: "c".to_string(),
+            property_name: "p".to_string(),
+            verdict: ObligationVerdict::Discharged,
+            reason: "r".to_string(),
+            effect: None,
+            witnessed: false,
+            verification: Some(consistency_verification_detail(
+                "p",
+                &json!({"kind": "and", "operands": []}),
+                &[],
+                Some(ObligationVerdict::Unsatisfied),
+                ObligationVerdict::Discharged,
+                Some("unsat"),
+                &[],
+            )),
+            locus: None,
+        };
+        attach_conjoined_facts(&mut solver, &json!({"value": 6}), &[json!({"value": 5})]);
+        let Some(VerificationDetail::Solver {
+            client_fact_ir,
+            vendor_fact_ir,
+            ..
+        }) = &solver.verification
+        else {
+            panic!("solver detail expected");
+        };
+        assert_eq!(client_fact_ir.as_ref(), Some(&json!({"value": 6})));
+        assert_eq!(vendor_fact_ir.as_ref(), Some(&json!([{"value": 5}])));
+    }
+
     fn pool_with_contract(name: &str, inv: Json) -> MementoPool {
         let mut pool = MementoPool::default();
         let cid = test_cid(&format!("contract:{name}"));
@@ -3969,7 +4316,11 @@ mod tests {
         };
 
         let labels = |r: &ConsistencyResult| -> (String, String) {
-            let v = r.verification.as_ref().expect("verification detail");
+            let v = r
+                .verification
+                .as_ref()
+                .expect("verification detail")
+                .to_json();
             let client = v.get("clientFactIr").expect("client fact label").to_string();
             let vendor = v
                 .get("vendorFactIr")
@@ -4370,7 +4721,8 @@ mod tests {
         let good_verification = good
             .verification
             .as_ref()
-            .expect("good row carries verification detail");
+            .expect("good row carries verification detail")
+            .to_json();
         assert_eq!(good_verification["kind"], "consistency");
         assert_eq!(
             good_verification["linkedPosts"][0]["sourceSymbol"],
