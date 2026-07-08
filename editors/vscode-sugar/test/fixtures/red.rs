@@ -2,8 +2,8 @@
 //
 // `checked_index` is a contracted helper whose precondition `x > 0` is the
 // rule it needs its caller to establish. `test_index` calls it but its own
-// postcondition does not structurally establish that rule, so sugar-linkerd's
-// production `link()` cannot discharge `post_caller ⊃ pre_callee` and
+// postcondition does not structurally establish that rule, so
+// `sugar-lsp --in-process` cannot discharge `post_caller ⊃ pre_callee` and
 // refuses the obligation: a RED `implication-undecidable` diagnostic anchored
 // at the `checked_index(7)` call site.
 //

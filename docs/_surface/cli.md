@@ -499,15 +499,15 @@ cargo sugar-lift
 
 ## Symbol Resolution & Linking
 
-### sugar-linkerd
-**Binary name:** `sugar-linkerd`  
-**Package:** `sugar-linkerd`  
+### sugar-ra-oracle
+**Binary name:** `sugar-ra-oracle`  
+**Package:** `sugar-ra-oracle`  
 **Kind:** Daemon / RPC service  
 **Audience:** lifter backend, integrator  
 
-**Summary:** Rust symbol resolver and oracle service. Resolves method-call receiver/param mutability and other semantic queries over Rust AST.
+**Summary:** Resident rust-analyzer oracle for the Rust lift pipeline. Resolves method-call receiver/param mutability and other semantic queries over Rust AST via `sugar-walk::ra_daemon_client`. Extracted from the now-retired `sugar-linkerd` daemon (the editor's own prove/link path moved to `sugar-lsp --in-process`; this oracle is the one job that daemon did which still needs a resident process).
 
-**Typical use:** Spawned by lifter to answer semantic questions (mutability, ownership, lifetime)  
+**Typical use:** Spawned by `sugar-walk`'s `walk_rpc` Tier 2b resolver to answer semantic questions (mutability, ownership, lifetime)  
 **Example:** Queried from `sugar-lift-rust-tests` over RPC for call-site effect classification  
 **Documentation:** Oracle protocol in `protocol/specs/`
 

@@ -34,17 +34,6 @@ pub struct ServerConfig {
     #[serde(default)]
     pub backend_args: Vec<String>,
     // timeout_ms and cache_dir removed (unused)
-    /// Optional path to the sugar-linkerd Unix domain socket.
-    ///
-    /// When set, `did_open` / `did_change` route through the daemon instead
-    /// of the per-plugin subprocess mode.  The value may be overridden by
-    /// the `--daemon-socket <path>` CLI flag.
-    ///
-    /// Example config.toml:
-    ///   [server]
-    ///   daemon_socket = "/run/user/1000/sugar/linkerd-<projectCid>.sock"
-    #[serde(default)]
-    pub daemon_socket: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -89,7 +78,6 @@ fn default_server() -> ServerConfig {
     ServerConfig {
         backend: default_backend(),
         backend_args: Vec::new(),
-        daemon_socket: None,
     }
 }
 

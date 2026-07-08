@@ -26,7 +26,6 @@ members = [
     "sugar-linker",
     "sugar-lsp",
     "sugar-lsp-rust",
-    "sugar-linkerd",
     "sugar-ra-oracle",
 ]
 

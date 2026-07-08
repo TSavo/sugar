@@ -13,7 +13,6 @@ every published binary: change any Rust source and every binary rebuilds;
 change only Python and every binary stays cache-hot. --bin selects which
 published binary to resolve (default: sugar). Known names:
   sugar                       sugar-cli
-  sugar-linkerd                sugar-linkerd
   sugar-ra-oracle               sugar-ra-oracle
   sugar-lsp                    sugar-lsp
   sugar-walk-rpc               sugar-walk
@@ -76,7 +75,6 @@ esac
 package_for_bin() {
   case "$1" in
     sugar) printf 'sugar-cli\n' ;;
-    sugar-linkerd) printf 'sugar-linkerd\n' ;;
     sugar-ra-oracle) printf 'sugar-ra-oracle\n' ;;
     sugar-lsp) printf 'sugar-lsp\n' ;;
     sugar-walk-rpc) printf 'sugar-walk\n' ;;

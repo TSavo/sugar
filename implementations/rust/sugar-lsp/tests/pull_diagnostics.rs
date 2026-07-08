@@ -12,8 +12,8 @@
 // (`Err(Error::method_not_found())`) answered instead -- a real client that
 // honors the advertised capability and pulls gets `-32601` the moment it
 // asks. This test drives the REAL LSP stdio transport (same harness shape as
-// `in_process_prove.rs` / `daemon_routed.rs`) and asserts the fix: the
-// request now gets a real (non-error) `DocumentDiagnosticReportResult`.
+// `in_process_prove.rs`) and asserts the fix: the request now gets a real
+// (non-error) `DocumentDiagnosticReportResult`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};

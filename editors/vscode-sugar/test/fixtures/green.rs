@@ -2,8 +2,8 @@
 //
 // Identical to red.rs but with the `#[requires(x > 0)]` line removed from
 // `checked_index`. With no precondition there is no obligation to discharge:
-// sugar-linkerd's production `link()` discharges the bridge vacuously and
-// emits zero diagnostics. The editor squiggle clears.
+// `sugar-lsp --in-process` discharges the bridge vacuously and emits zero
+// diagnostics. The editor squiggle clears.
 #[ensures(result >= 0)]
 fn checked_index(x: i64) -> i64 { x }
 

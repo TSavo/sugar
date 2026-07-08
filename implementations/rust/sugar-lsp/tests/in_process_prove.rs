@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // in_process_prove.rs: THE TERMINUS's gate. Drives `sugar-lsp --in-process`
-// over REAL LSP stdio (Content-Length framed JSON-RPC, same harness shape as
-// `daemon_routed.rs`) against a self-contained fixture project:
+// over REAL LSP stdio (Content-Length framed JSON-RPC) against a
+// self-contained fixture project:
 //
 //   * a VENDOR proof staged at `.sugar/imports/` (minted in-process via
 //     `sugar_cli::cmd_mint::mint_project_scratch_proof` against a throwaway
@@ -10,7 +10,7 @@
 //     swearing `demo.check(2,3) == 5`.
 //   * a CONSUMER project with its own mock lift plugin that reads the
 //     CURRENTLY OPEN buffer's own source file (via the `workspace_root` the
-//     daemon-equivalent overlay passes at lift time) and asserts either
+//     in-process overlay passes at lift time) and asserts either
 //     `== 6` (contradicts the vendor -> RED) or `== 5` (agrees -> GREEN).
 //
 // `didOpen` the bad-shaped buffer -> expect `publishDiagnostics` carrying the
@@ -278,8 +278,7 @@ fn build_consumer_fixture(label: &str) -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// LSP process wrapper (Content-Length framed JSON-RPC), same shape as
-// `daemon_routed.rs`'s harness.
+// LSP process wrapper (Content-Length framed JSON-RPC).
 // ---------------------------------------------------------------------------
 
 struct LspServer {
