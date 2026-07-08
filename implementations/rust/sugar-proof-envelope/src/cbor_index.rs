@@ -237,13 +237,19 @@ pub(crate) fn new(
                 .ok_or_else(|| FetchError::Decode(format!("body {cid} has no `body` object")))?;
             let mut atom_mementos: Vec<(String, AtomMemento)> = Vec::with_capacity(slots.len());
             for (slot, slot_val) in slots {
-                let atom_cid = slot_val.get("atomCid").and_then(Json::as_str).ok_or_else(|| {
-                    FetchError::Decode(format!("body {cid} slot {slot} missing atomCid"))
-                })?;
-                let atom = atoms_so_far.get(atom_cid).ok_or_else(|| FetchError::UnknownAtomRef {
-                    body: cid.to_string(),
-                    atom: atom_cid.to_string(),
-                })?;
+                let atom_cid = slot_val
+                    .get("atomCid")
+                    .and_then(Json::as_str)
+                    .ok_or_else(|| {
+                        FetchError::Decode(format!("body {cid} slot {slot} missing atomCid"))
+                    })?;
+                let atom =
+                    atoms_so_far
+                        .get(atom_cid)
+                        .ok_or_else(|| FetchError::UnknownAtomRef {
+                            body: cid.to_string(),
+                            atom: atom_cid.to_string(),
+                        })?;
                 atom_mementos.push((slot.clone(), AtomMemento::new(atom)));
             }
             let body = ContractBody::from_slots(
@@ -628,8 +634,7 @@ mod tests {
         // major 2 (bstr), 8-byte length field = u64::MAX.
         out.push((2u8 << 5) | 27);
         out.extend_from_slice(&u64::MAX.to_be_bytes());
-        let err =
-            build_index(&out).expect_err("u64::MAX length must error, not panic or wrap");
+        let err = build_index(&out).expect_err("u64::MAX length must error, not panic or wrap");
         assert!(
             matches!(
                 err,
@@ -691,8 +696,7 @@ mod tests {
         let bytes = small_catalog(&[(cid.as_str(), atom_bytes.as_slice())], &[]);
         let index = build_index(&bytes).expect("indexes");
         let range = *index.atoms.get(cid.as_str()).expect("range present");
-        let fetched =
-            fetch_one(&bytes, EntryKind::Atom, &cid, range).expect("real atom verifies");
+        let fetched = fetch_one(&bytes, EntryKind::Atom, &cid, range).expect("real atom verifies");
         assert_eq!(fetched, atom_bytes);
     }
 
@@ -718,7 +722,10 @@ mod tests {
 
         let err = fetch_one(&bytes, EntryKind::Atom, &cid, flipped_range)
             .expect_err("bit-flipped entry must be rejected");
-        assert!(matches!(err, FetchError::CidMismatch { .. } | FetchError::NotJson(_)));
+        assert!(matches!(
+            err,
+            FetchError::CidMismatch { .. } | FetchError::NotJson(_)
+        ));
 
         // The untouched entry elsewhere in the same file must still verify.
         let fetched = fetch_one(&bytes, EntryKind::Atom, &other_cid, untouched_range)
@@ -875,7 +882,8 @@ mod tests {
     }
 
     #[test]
-    fn fetch_one_accepts_legacy_shape_member_with_no_signature_matching_eager_and_anchored_member() {
+    fn fetch_one_accepts_legacy_shape_member_with_no_signature_matching_eager_and_anchored_member()
+    {
         // Previously this gate unconditionally required a signature and
         // refused any member without one (the soundness review's flagged
         // gap: a legacy/flat-format member's CID hash strips `cid` and
@@ -1008,8 +1016,143 @@ mod tests {
             );
         }
         for (cid, bytes) in &new_members {
-            assert_eq!(bytes, eager_members.get(cid).unwrap(), "member {cid} bytes differ");
+            assert_eq!(
+                bytes,
+                eager_members.get(cid).unwrap(),
+                "member {cid} bytes differ"
+            );
         }
+    }
+
+    // ---- SEAM 2 gates: `ProofGraph::feed` (graph merge) -------------------
+
+    /// Gate A: extend the differential gate to `feed`. Feeding the real
+    /// fixture's eagerly-read graph with the monoid identity (`empty()`),
+    /// on either side, must reproduce a byte/member-identical graph -- the
+    /// same CID-set/byte-identity check `fold_new_matches_eager_read_byte_
+    /// and_member_identical` runs against the bespoke eager loop, now run
+    /// against `feed`.
+    #[test]
+    fn feed_with_empty_is_byte_and_member_identical_to_the_fed_graph() {
+        let (bytes, _expected_graph) = real_proof_fixture();
+        let eager = ProofGraph::read(&bytes).expect("eager read of the real fixture");
+
+        let fed_right = ProofGraph::read(&bytes)
+            .expect("second read")
+            .feed(ProofGraph::empty());
+        let fed_left = ProofGraph::empty().feed(ProofGraph::read(&bytes).expect("third read"));
+
+        assert_eq!(
+            fed_right.atoms_map(),
+            eager.atoms_map(),
+            "atoms differ after feed(empty)"
+        );
+        assert_eq!(
+            fed_right.body_map(),
+            eager.body_map(),
+            "bodies differ after feed(empty)"
+        );
+        assert_eq!(
+            fed_right.members_map(),
+            eager.members_map(),
+            "members differ after feed(empty)"
+        );
+        assert_eq!(
+            fed_left.atoms_map(),
+            eager.atoms_map(),
+            "atoms differ after empty.feed()"
+        );
+        assert_eq!(
+            fed_left.body_map(),
+            eager.body_map(),
+            "bodies differ after empty.feed()"
+        );
+        assert_eq!(
+            fed_left.members_map(),
+            eager.members_map(),
+            "members differ after empty.feed()"
+        );
+    }
+
+    /// Gate B: fold-order permutation test. Build a multi-member fixture as
+    /// two disjoint fragments (distinct atom/body/contract CIDs in each), then
+    /// feed them in both orders and via a 3-way split feeding in every
+    /// permutation. `empty()` is the identity and the CID-keyed union is
+    /// commutative/associative, so every order must land on the identical
+    /// resulting graph (member/atom/body maps compared by content, not just
+    /// by size).
+    #[test]
+    fn feed_fold_order_permutation_yields_identical_graph_and_indexes() {
+        fn fragment(seed: u8) -> ProofGraph {
+            let atom = FlatAtom::result_eq_int(seed as i64);
+            let atom_memento = AtomMemento::new(&atom);
+            let body = ContractBody::new(&atom_memento);
+            let metadata_atom = FlatAtom::empty_metadata();
+            let contract = ContractMemento::new(&format!("crate::f{seed}"), &body, [seed; 32]);
+            let (graph, _) = ProofGraph::empty().with_atom(atom);
+            let (graph, _) = graph.with_atom(metadata_atom);
+            let (graph, _) = graph.with_body(body);
+            graph.with_contract(contract)
+        }
+
+        let a = fragment(1);
+        let b = fragment(2);
+        let c = fragment(3);
+
+        let order_abc = a.clone().feed(b.clone()).feed(c.clone());
+        let order_cba = c.clone().feed(b.clone()).feed(a.clone());
+        let order_bac = b.clone().feed(a.clone()).feed(c.clone());
+        let order_a_bc = a.feed(b.feed(c));
+
+        for other in [&order_cba, &order_bac, &order_a_bc] {
+            assert_eq!(
+                order_abc.atoms_map(),
+                other.atoms_map(),
+                "atoms differ across fold order"
+            );
+            assert_eq!(
+                order_abc.body_map(),
+                other.body_map(),
+                "bodies differ across fold order"
+            );
+            assert_eq!(
+                order_abc.members_map(),
+                other.members_map(),
+                "members differ across fold order"
+            );
+        }
+
+        // The monoid's load-bearing property: two INDEPENDENTLY-BUILT graphs
+        // that happen to describe the SAME content (same CIDs throughout,
+        // because `fragment` is deterministic per seed -- same atom bytes,
+        // same body, same ed25519 signature for a fixed seed) must collapse
+        // to ONE entry per CID, byte-identical, regardless of feed order --
+        // not two, and not last-writer-wins on non-identical bytes (which
+        // would be unsound for a content-addressed store). This is the
+        // "collision on the SAME key means the SAME content" invariant that
+        // makes `feed`'s union commutative/associative in the first place.
+        let dup_first = fragment(1).feed(fragment(1));
+        let dup_second = fragment(1).feed(fragment(1));
+        assert_eq!(
+            dup_first.atoms_map(),
+            fragment(1).atoms_map(),
+            "feeding a duplicate atom set must not change the atom map"
+        );
+        assert_eq!(
+            dup_first.body_map(),
+            fragment(1).body_map(),
+            "feeding a duplicate body set must not change the body map"
+        );
+        assert_eq!(
+            dup_first.members_map(),
+            fragment(1).members_map(),
+            "feeding a duplicate member set must not change the member map (no duplicate entries, byte-identical)"
+        );
+        assert_eq!(
+            dup_first.members_map(),
+            dup_second.members_map(),
+            "the collision collapse must itself be order-independent"
+        );
     }
 
     /// A body referencing a nonexistent atom CID must be refused by `new`,
@@ -1080,8 +1223,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(name);
-        std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
+        std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
     }
 
     /// Runs `fold(new, index.keys())` against the unmodified
@@ -1136,8 +1278,16 @@ mod tests {
             }
         }
 
-        assert_eq!(new_atoms.len(), index.atoms.len(), "{label}: atom count == index.len()");
-        assert_eq!(new_bodies.len(), index.bodies.len(), "{label}: body count == index.len()");
+        assert_eq!(
+            new_atoms.len(),
+            index.atoms.len(),
+            "{label}: atom count == index.len()"
+        );
+        assert_eq!(
+            new_bodies.len(),
+            index.bodies.len(),
+            "{label}: body count == index.len()"
+        );
         assert_eq!(
             new_members.len(),
             index.members.len(),
@@ -1174,10 +1324,18 @@ mod tests {
         );
 
         for (cid, bytes) in &new_atom_bytes {
-            assert_eq!(bytes, eager_atoms.get(cid).unwrap(), "{label}: atom {cid} byte-identical");
+            assert_eq!(
+                bytes,
+                eager_atoms.get(cid).unwrap(),
+                "{label}: atom {cid} byte-identical"
+            );
         }
         for (cid, bytes) in &new_body_bytes {
-            assert_eq!(bytes, eager_bodies.get(cid).unwrap(), "{label}: body {cid} byte-identical");
+            assert_eq!(
+                bytes,
+                eager_bodies.get(cid).unwrap(),
+                "{label}: body {cid} byte-identical"
+            );
         }
         for (cid, bytes) in &new_members {
             assert_eq!(
@@ -1206,9 +1364,8 @@ mod tests {
     /// absent, the test skips rather than failing CI on missing local state.
     #[test]
     fn fold_new_matches_eager_read_on_real_pandas_proof_when_present() {
-        let dir = std::path::Path::new(
-            "/Users/tsavo/sugar-pandas-demo/consumer-bad/.sugar/imports",
-        );
+        let dir =
+            std::path::Path::new("/Users/tsavo/sugar-pandas-demo/consumer-bad/.sugar/imports");
         let Ok(entries) = std::fs::read_dir(dir) else {
             eprintln!("skipping: {} not present", dir.display());
             return;

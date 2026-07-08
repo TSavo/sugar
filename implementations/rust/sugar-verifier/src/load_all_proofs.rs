@@ -411,7 +411,16 @@ fn load_catalog_bytes(
         }
     };
 
-    // Atoms -> pool: CIDs already verified by ProofGraph::read().
+    // Atoms -> pool: CIDs already verified by ProofGraph::read(). NOTE
+    // (SEAM 2): this is exactly `ProofGraph::feed`'s atom-merge rule
+    // (CID-keyed, first-writer-per-CID, order-independent because
+    // content-addressed) expressed inline rather than by storing a
+    // `ProofGraph` on `MementoPool` -- `ProofGraph` carries a `RefCell`
+    // typed-member cache, which is not `Sync`, and `MementoPool` is shared
+    // across `rayon` parallel iteration in `runner.rs`. Making `MementoPool`
+    // hold a `ProofGraph` directly breaks that Sync bound; fixing it (e.g.
+    // swapping the cache to a `Sync`-safe cell) is a real design change, not
+    // a lift-and-shift, so it is out of scope for this seam.
     for atom in graph.atoms() {
         let atom_cid = computed_atom_cid(atom.cid().as_str().to_string());
         pool.atoms
@@ -419,7 +428,8 @@ fn load_catalog_bytes(
             .or_insert_with(|| atom.bytes().to_vec());
     }
 
-    // Bodies -> pool: CIDs already verified by ProofGraph::read().
+    // Bodies -> pool: CIDs already verified by ProofGraph::read(). Same note
+    // as atoms above.
     for body in graph.bodies() {
         let body_cid = computed_body_cid(body.cid().as_str().to_string());
         pool.body

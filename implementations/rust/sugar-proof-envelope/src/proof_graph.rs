@@ -1308,6 +1308,68 @@ impl ProofGraph {
         Ok(graph)
     }
 
+    /// Merge `other` into `self` and return the combined graph -- the graph
+    /// MERGE (SEAM 2). `empty()` is the identity; every map here is keyed by
+    /// content CID, so two graphs describing the SAME atom/body/member agree
+    /// bit-for-bit on that entry (the CID recomputation in `read` already
+    /// proved it), which is exactly what makes the union commutative and
+    /// associative regardless of feed order: `a.feed(b) == b.feed(a)` and
+    /// `a.feed(b).feed(c) == a.feed(b.feed(c))` for any partition of the same
+    /// input set. On a same-CID collision the existing entry is kept (the
+    /// two are equal content, so it does not matter which "wins"); this
+    /// mirrors the `entry(..).or_insert_with(..)` behavior `load_all_proofs`
+    /// already used before this seam absorbed it. The lazy typed-member cache
+    /// is NOT merged -- it is a pure memoization of `self.members`/`other.members`
+    /// and is safe to drop; a fresh graph re-parses on first access.
+    pub fn feed(mut self, other: ProofGraph) -> ProofGraph {
+        for (cid, atom) in other.atoms {
+            match self.atoms.entry(cid) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(atom);
+                }
+                std::collections::btree_map::Entry::Occupied(o) => {
+                    // Content-addressing invariant: same CID must mean the
+                    // SAME bytes. A mismatch is a soundness event -- refuse
+                    // loudly, never first-writer-wins over divergent content.
+                    assert!(
+                        o.get().bytes() == atom.bytes(),
+                        "feed: atom CID collision with divergent bytes at {}",
+                        o.key()
+                    );
+                }
+            }
+        }
+        for (cid, body) in other.bodies {
+            match self.bodies.entry(cid) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(body);
+                }
+                std::collections::btree_map::Entry::Occupied(o) => {
+                    assert!(
+                        o.get().bytes() == body.bytes(),
+                        "feed: body CID collision with divergent bytes at {}",
+                        o.key()
+                    );
+                }
+            }
+        }
+        for (cid, member) in other.members {
+            match self.members.entry(cid) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(member);
+                }
+                std::collections::btree_map::Entry::Occupied(o) => {
+                    assert!(
+                        o.get().bytes == member.bytes,
+                        "feed: member CID collision with divergent bytes at {}",
+                        o.key()
+                    );
+                }
+            }
+        }
+        self
+    }
+
     /// Resolve a contract member's body by following its `bodyCid` into the
     /// graph's body map. The member stores the reference, never the body.
     pub fn contract_body_of(&self, member: &MementoCid) -> Option<&ContractBody> {

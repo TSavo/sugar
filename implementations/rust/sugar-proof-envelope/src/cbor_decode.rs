@@ -70,7 +70,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<CborValue, CborDecodeError> {
 /// source so every caller -- eager `decode_value` and the lazy index scan in
 /// `cbor_index.rs` -- gets the fix for free).
 pub(crate) fn checked_end(idx: usize, len: usize, total: usize) -> Result<usize, CborDecodeError> {
-    let end = idx.checked_add(len).ok_or(CborDecodeError::LengthOverflow)?;
+    let end = idx
+        .checked_add(len)
+        .ok_or(CborDecodeError::LengthOverflow)?;
     if end > total {
         return Err(CborDecodeError::UnexpectedEof);
     }
