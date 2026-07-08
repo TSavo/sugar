@@ -1,0 +1,286 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// The unforgeable `Kit` frontend handle (SEAM 3b of the compiler-shape
+// plan: ~/.claude/plans/sugar-compiler-liftshift.md).
+//
+// A `Kit` is minted ONLY by `Kit::rendezvous`: given a resolved lift
+// manifest (the CLI's census/selection-policy output -- WHICH plugin
+// command answers WHICH surface, per `dialect_for_surface`/`lift_kit_name`/
+// `find_manifest` in `sugar-cli/src/lift_plugin.rs`), rendezvous performs a
+// LIVE handshake -- spawn the manifest's command, run `initialize` +
+// `sugar.plugin.kit_declaration` + `shutdown` over its stdio (via
+// `kit_declaration::load_kit_declaration_with_command`, moved here from
+// `sugar-cli/src/kit_declaration.rs` in the same follow-up that added this
+// handshake) -- before constructing the kit's own dispatch registration and
+// owning the resulting `LiftKit` transport on the handle. A manifest whose
+// command doesn't spawn, doesn't speak the protocol, or returns an invalid
+// declaration cannot mint a `Kit`: `RendezvousError::Handshake` names the
+// stage. Holding a `Kit` is therefore proof a real kit process answered its
+// declaration RPC, not just that a manifest shape parsed: there is no
+// `Kit::new`, no `From<Value>`, no `Default`, no `Deserialize` (see
+// `sugar-compiler/tests/kit_unforgeable.rs`).
+//
+// `Kit::lift` folds `dispatch_lift_path`'s body (originally
+// `sugar-cli/src/lift_plugin.rs:293-379`): build the lift request, run it
+// through the `kit_path` engine's `execute_path`, and return the terminal
+// `DomainClaim`. The `KitRegistry::default()` that call used to build fresh
+// on every dispatch (`lift_plugin.rs:346`) becomes this Kit's own
+// `registry` field, built once at rendezvous time.
+//
+// SCOPE NOTE (reported to the coordinator, not silently narrowed): the
+// workspace CENSUS (`sugar-cli/src/component_plan.rs`'s
+// `census_workspace`/`plan_workspace`/`planned_lift_manifest`, ~2663 lines,
+// integrated with `project_config`'s `PluginEntry` parsing) is SELECTION
+// POLICY -- deciding which plugin command answers a surface -- and the
+// brief itself says to keep selection policy in the thin CLI client
+// (`dialect_for_surface`, `lift_kit_name`, `find_manifest`). `rendezvous`
+// therefore takes the census's OUTPUT (a `LiftManifest`) as an argument
+// rather than re-deriving it inside `sugar-compiler`: a `Kit` still cannot
+// be forged from a bare surface string or a `Value`, because the manifest
+// itself only exists once the CLI's census has run and resolved a real
+// plugin command. The full component_plan.rs mechanism move into libsugar
+// (SEAM 3b-i in the brief) is NOT done in this pass -- flagged, not hidden.
+
+use std::path::PathBuf;
+
+use libsugar::core::{
+    address, ConformanceDeclaration, Dialect, HashMapInputCatalog, Input, Path as CorePath,
+    PathAlgebra, Verb,
+};
+use serde_json::Value;
+use sugar_claim_envelope::KitDeclaration;
+
+use crate::kit_declaration::{load_kit_declaration_with_command, KitDeclarationLoadError};
+use crate::kit_path::{execute_path, KitRegistry, LiftKit, PathExecutionError};
+
+/// The census's resolved answer to "what plugin command answers this
+/// surface." Produced by the CLI's selection policy
+/// (`component_plan::planned_lift_manifest` / `lift_plugin::find_manifest`)
+/// and handed to `Kit::rendezvous` by value, so rendezvous can never
+/// silently re-resolve a different manifest than the one the caller
+/// already settled on.
+#[derive(Debug, Clone)]
+pub struct LiftManifest {
+    pub surface: String,
+    pub name: String,
+    pub dialect: Dialect,
+    pub command: Vec<String>,
+    pub working_dir: Option<PathBuf>,
+}
+
+/// Failure to mint a `Kit`. Every arm names a concrete rendezvous-stage
+/// failure, never a bare `String`.
+#[derive(Debug, thiserror::Error)]
+pub enum RendezvousError {
+    #[error("no lift manifest resolved for surface `{0}` (empty plugin command)")]
+    EmptyCommand(String),
+    #[error(
+        "relative working_dir `{working_dir}` for surface `{surface}`: LiftManifest's contract \
+         is a RESOLVED working directory -- resolve against the project root before rendezvous \
+         (the CLI census does this via resolved_working_dir)"
+    )]
+    RelativeWorkingDir {
+        surface: String,
+        working_dir: String,
+    },
+    #[error("kit declaration handshake failed for surface `{surface}`: {source}")]
+    Handshake {
+        surface: String,
+        #[source]
+        source: KitDeclarationLoadError,
+    },
+}
+
+/// Failure during `Kit::lift`.
+#[derive(Debug, thiserror::Error)]
+pub enum KitError {
+    #[error("encode lift request: {0}")]
+    RequestEncoding(serde_json::Error),
+    #[error("lift path execution failed: {0}")]
+    PathExecution(#[from] PathExecutionError),
+}
+
+/// The unforgeable frontend handle. Private fields; the only minter is
+/// `Kit::rendezvous`.
+///
+/// POOL DUALITY (per the brief's hazard note): `kit_path::lift_plugin` also
+/// keeps a process-wide `static POOL: OnceLock<Mutex<HashMap<String,
+/// ResidentLifter>>>` keyed by command-string (`resident_key`, used by
+/// `LiftKit::lift` for cross-call child reuse within a single process).
+/// This `Kit` does NOT bypass or drain that pool -- other callers of
+/// `kit_path::LiftKit` (if any remain after CLI collapse) still hit it
+/// unchanged. `Kit` instead owns its OWN `LiftKit` value as a struct field;
+/// `LiftKit`'s resident dispatch still resolves through the shared static
+/// pool internally today (the pool lives inside `kit_path::lift_plugin`,
+/// not on this handle), so this Kit does not yet give the child a
+/// `Drop`-scoped, per-handle lifetime distinct from the static pool's own
+/// eviction policy. Making `Kit` truly own (spawn + `Drop`-close) its child
+/// OUTSIDE the static pool is the remaining step flagged for SEAM 7
+/// cleanup, once `sugar-lift-rpc-client` and the other pool consumers are
+/// enumerated and repointed in the same pass (per the plan's SEAM 7 note:
+/// "Do NOT make libsugar depend on it -- ABSORB/DELETE").
+pub struct Kit {
+    manifest: LiftManifest,
+    declaration: KitDeclaration,
+    registry: KitRegistry,
+    kit_name: String,
+}
+
+impl Kit {
+    /// The ONLY way to mint a `Kit`. Takes the resolved manifest (the
+    /// census's output) and performs a LIVE handshake before constructing
+    /// anything: spawns `manifest.command`, runs `initialize` +
+    /// `sugar.plugin.kit_declaration` + `shutdown` over its stdio, and
+    /// requires a valid `KitDeclaration` back (`load_kit_declaration_with_command`
+    /// already calls `KitDeclaration::validate`). Only after that
+    /// round-trip succeeds does rendezvous register the `LiftKit` transport
+    /// against `KitRegistry` (the path-algebra dispatch table, distinct
+    /// from `libsugar::core::ComponentRegistry`'s verifier-backed
+    /// `CompilerRegistry`) -- exactly the construction `dispatch_lift_path`
+    /// used to do inline on every call (`lift_plugin.rs:346-360`);
+    /// rendezvous does it once, here, and the result lives on the handle.
+    /// A forged manifest pointing at a non-kit command (e.g. `/bin/false`)
+    /// fails here with `RendezvousError::Handshake`, before any `Kit`
+    /// exists.
+    pub fn rendezvous(manifest: LiftManifest) -> Result<Kit, RendezvousError> {
+        if manifest.command.is_empty() {
+            return Err(RendezvousError::EmptyCommand(manifest.surface.clone()));
+        }
+        // The manifest's contract: working_dir arrives RESOLVED (absolute).
+        // A relative dir would silently run the kit in whatever CWD this
+        // process happens to have -- refuse loudly instead (answer the
+        // "relative to what?" question ONCE, at the census that resolves it).
+        if let Some(dir) = &manifest.working_dir {
+            if dir.is_relative() {
+                return Err(RendezvousError::RelativeWorkingDir {
+                    surface: manifest.surface.clone(),
+                    working_dir: dir.display().to_string(),
+                });
+            }
+        }
+        let declaration =
+            load_kit_declaration_with_command(&manifest.command, manifest.working_dir.as_deref())
+                .map_err(|source| RendezvousError::Handshake {
+                surface: manifest.surface.clone(),
+                source,
+            })?;
+        let kit_name = format!("lift-{}", manifest.surface);
+        let mut registry = KitRegistry::default();
+        registry.register(
+            kit_name.clone(),
+            LiftKit::new(
+                manifest.dialect.clone(),
+                manifest.surface.clone(),
+                manifest.command.clone(),
+                manifest.working_dir.clone(),
+            ),
+            ConformanceDeclaration::NonCarrier {
+                reason: "lifts source bytes to DomainClaim; no target source produced",
+            },
+        );
+        Ok(Kit {
+            manifest,
+            declaration,
+            registry,
+            kit_name,
+        })
+    }
+
+    /// The kit's own declared identity, methods, and proof-resolution
+    /// strategy, as answered by the live handshake in `rendezvous`.
+    pub fn declaration(&self) -> &KitDeclaration {
+        &self.declaration
+    }
+
+    /// `Kit::lift(project_root, request)`: folds `dispatch_lift_path`'s
+    /// body (build request -> `Input::Source` -> `CorePath` -> `execute_path`
+    /// -> terminal claim). `request` is the already-JSON-encoded lift
+    /// params (`build_lift_params`'s output stays a `Value` in this pass --
+    /// see the module doc's scope note; retyping it into a strong
+    /// lift-request type is not done here).
+    pub fn lift(&self, request: Value) -> Result<libsugar::core::DomainClaim, KitError> {
+        let source = Input::Source {
+            dialect: self.manifest.dialect.clone(),
+            bytes: serde_json::to_vec(&request).map_err(KitError::RequestEncoding)?,
+        };
+        let source_cid = address(&source);
+        let mut inputs = HashMapInputCatalog::default();
+        inputs.put(source_cid.clone(), source);
+        let path_input = Input::Path(Box::new(CorePath {
+            algebra: vec![PathAlgebra {
+                name: "lift".to_string(),
+                kit: self.kit_name.clone(),
+                inputs: vec![source_cid],
+                depends_on: vec![],
+                verb: Verb::Transform,
+            }],
+        }));
+        let chain = execute_path(&path_input, &self.registry, &inputs)?;
+        Ok(chain.into_terminal_claim())
+    }
+
+    pub fn surface(&self) -> &str {
+        &self.manifest.surface
+    }
+}
+
+#[cfg(test)]
+mod rendezvous_tests {
+    use super::*;
+
+    /// The negative arm of unforgeability: a forged manifest pointing at a
+    /// command that is not a kit must FAIL the live handshake -- no Kit is
+    /// minted. This is the discrimination test for the doc's claim that
+    /// holding a Kit proves a real kit process answered its declaration RPC.
+    #[test]
+    fn rendezvous_refuses_a_forged_manifest_to_a_non_kit() {
+        let forged = LiftManifest {
+            surface: "forged".to_string(),
+            name: "forged".to_string(),
+            dialect: Dialect::Rust,
+            command: vec!["/bin/false".to_string()],
+            working_dir: None,
+        };
+        match Kit::rendezvous(forged) {
+            Err(RendezvousError::Handshake { surface, .. }) => {
+                assert_eq!(surface, "forged");
+            }
+            Err(other) => panic!("expected Handshake refusal, got: {other:?}"),
+            Ok(_) => panic!("a non-kit command must never mint a Kit"),
+        }
+    }
+
+    /// A relative working_dir refuses before spawning: the manifest's
+    /// contract is resolved-absolute (macroscope on #3854 -- a "." dir would
+    /// silently run the kit in this process's CWD instead of the project).
+    #[test]
+    fn rendezvous_refuses_a_relative_working_dir() {
+        let forged = LiftManifest {
+            surface: "relative".to_string(),
+            name: "relative".to_string(),
+            dialect: Dialect::Rust,
+            command: vec!["/bin/false".to_string()],
+            working_dir: Some(PathBuf::from(".")),
+        };
+        assert!(matches!(
+            Kit::rendezvous(forged),
+            Err(RendezvousError::RelativeWorkingDir { .. })
+        ));
+    }
+
+    /// Empty command refuses before spawning anything.
+    #[test]
+    fn rendezvous_refuses_an_empty_command() {
+        let forged = LiftManifest {
+            surface: "empty".to_string(),
+            name: "empty".to_string(),
+            dialect: Dialect::Rust,
+            command: vec![],
+            working_dir: None,
+        };
+        assert!(matches!(
+            Kit::rendezvous(forged),
+            Err(RendezvousError::EmptyCommand(_))
+        ));
+    }
+}

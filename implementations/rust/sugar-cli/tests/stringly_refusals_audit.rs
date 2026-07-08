@@ -135,9 +135,9 @@ const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "coverage-panic-wording", path: "implementations/rust/sugar-walk/src/type_decl.rs", line: 665, needle: "_ => panic!(\"sugar-walk type_decl refused unknown syn::Item variant\"),", replacement: "coverage ICE/panic with typed frontier owner; do not encode as refused prose" },
     ExpectedSite { ground: "outlives-region-refusal-effect", path: "implementations/rust/sugar-verifier/src/outlives.rs", line: 70, needle: "DischargeOutcome::Refused {", replacement: "VerifyEffect::OutlivesNotProvable{longer,shorter}" },
     ExpectedSite { ground: "outlives-region-refusal-effect", path: "implementations/rust/sugar-verifier/src/outlives.rs", line: 133, needle: "if matches!(caller_graph.check(a, b), DischargeOutcome::Refused { .. }) {", replacement: "VerifyEffect::OutlivesNotProvable{longer,shorter}" },
-    ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/sugar-cli/src/kit_path/path_executor.rs", line: 154, needle: ".ok_or_else(|| PathExecutionError::Refused(Box::new(missing_kit_refusal(step))))?;", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
-    ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/sugar-cli/src/kit_path/path_executor.rs", line: 224, needle: "Err(PathExecutionError::Refused(Box::new(", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
-    ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/sugar-cli/src/kit_path/path_executor.rs", line: 332, needle: "PathExecutionError::Refused(Box::new(prove_not_supported_refusal(step)))", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
+    ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/sugar-compiler/src/kit_path/path_executor.rs", line: 154, needle: ".ok_or_else(|| PathExecutionError::Refused(Box::new(missing_kit_refusal(step))))?;", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
+    ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/sugar-compiler/src/kit_path/path_executor.rs", line: 224, needle: "Err(PathExecutionError::Refused(Box::new(", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
+    ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/sugar-compiler/src/kit_path/path_executor.rs", line: 332, needle: "PathExecutionError::Refused(Box::new(prove_not_supported_refusal(step)))", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
     ExpectedSite { ground: "python-unsupported-syntax-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/lifter.py", line: 757, needle: "raise _UnsupportedSyntax(", replacement: "PythonLiftEffect variant for the refused syntax ground" },
     ExpectedSite { ground: "python-unsupported-syntax-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/lifter.py", line: 780, needle: "raise _UnsupportedSyntax(", replacement: "PythonLiftEffect variant for the refused syntax ground" },
     ExpectedSite { ground: "python-unsupported-syntax-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/lifter.py", line: 785, needle: "raise _UnsupportedSyntax(", replacement: "PythonLiftEffect variant for the refused syntax ground" },
@@ -216,6 +216,7 @@ fn source_roots(root: &Path) -> Vec<PathBuf> {
     [
         "implementations/rust/sugar-verifier/src",
         "implementations/rust/sugar-cli/src",
+        "implementations/rust/sugar-compiler/src",
         "implementations/rust/sugar-lift-rust-tests/src",
         "implementations/rust/sugar-walk/src",
         "implementations/rust/libsugar/src",
@@ -433,7 +434,7 @@ fn classify_emission(path: &str, line: &str, context: &str) -> Option<&'static s
         return Some("solver-batch-refusal-effect");
     }
 
-    if path.contains("sugar-cli/src/kit_path/path_executor.rs")
+    if path.contains("sugar-compiler/src/kit_path/path_executor.rs")
         && line.contains("PathExecutionError::Refused")
     {
         return Some("path-composition-refusal-effect");

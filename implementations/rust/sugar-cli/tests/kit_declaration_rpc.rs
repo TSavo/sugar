@@ -97,7 +97,7 @@ done
     );
 
     let declaration: KitDeclaration =
-        sugar_cli::kit_declaration::load_kit_declaration_with_command(
+        sugar_compiler::kit_declaration::load_kit_declaration_with_command(
             &shell_stub_command(&stub),
             Some(td.path()),
         )
@@ -132,7 +132,7 @@ done
 "#,
     );
 
-    let err = sugar_cli::kit_declaration::load_kit_declaration_with_command(
+    let err = sugar_compiler::kit_declaration::load_kit_declaration_with_command(
         &shell_stub_command(&stub),
         Some(td.path()),
     )
@@ -169,7 +169,7 @@ done
     );
 
     let declaration: KitDeclaration =
-        sugar_cli::kit_declaration::load_kit_declaration_with_command(
+        sugar_compiler::kit_declaration::load_kit_declaration_with_command(
             &shell_stub_command(&stub),
             Some(td.path()),
         )
@@ -205,7 +205,7 @@ done
     );
 
     let declaration: KitDeclaration =
-        sugar_cli::kit_declaration::load_kit_declaration_with_command(
+        sugar_compiler::kit_declaration::load_kit_declaration_with_command(
             &shell_stub_command(&stub),
             Some(td.path()),
         )
@@ -241,7 +241,7 @@ done
 "#,
     );
 
-    let err = sugar_cli::kit_declaration::load_kit_declaration_with_command(
+    let err = sugar_compiler::kit_declaration::load_kit_declaration_with_command(
         &shell_stub_command(&stub),
         Some(td.path()),
     )

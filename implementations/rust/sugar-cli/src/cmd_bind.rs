@@ -21,7 +21,7 @@ use sugar_walk::{BindKit, BindOptions};
 use serde_json::Value as Json;
 use sugar_ir_types::{CompositionBoundaryMemento, Sort};
 
-use crate::kit_path::{execute_path, KitRegistry, PathExecutionError};
+use sugar_compiler::kit_path::{execute_path, KitRegistry, PathExecutionError};
 use crate::{EXIT_OK, EXIT_USER_ERROR};
 
 #[derive(Parser, Debug, Clone)]
