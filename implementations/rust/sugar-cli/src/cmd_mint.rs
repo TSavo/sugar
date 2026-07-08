@@ -942,7 +942,7 @@ impl MintKit {
 
         for step in &producer_steps {
             let lift_options = lift_options_from_request(&step.lift_request, Vec::new());
-            let session = match lift_plugin::dispatch_lift(
+            let session = match lift_plugin::dispatch_lift_path(
                 &project_root_for_manifests,
                 &step.surface,
                 lift_options,
@@ -1032,7 +1032,7 @@ impl MintKit {
                 contract_bindings = contract_bindings.len(),
                 "mint: dispatching implicit report implication pass"
             );
-            let session = match lift_plugin::dispatch_lift(
+            let session = match lift_plugin::dispatch_lift_path(
                 &project_root_for_manifests,
                 &step.surface,
                 lift_options,
@@ -1097,7 +1097,7 @@ impl MintKit {
                 contract_bindings = contract_bindings.len(),
                 "mint: dispatching lift to surface"
             );
-            let session = match lift_plugin::dispatch_lift(
+            let session = match lift_plugin::dispatch_lift_path(
                 &project_root_for_manifests,
                 &step.surface,
                 lift_options,

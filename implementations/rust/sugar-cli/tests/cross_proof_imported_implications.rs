@@ -172,6 +172,13 @@ for line in sys.stdin:
             "protocol_version": "pep/1.7.0",
             "capabilities": {{}},
         }}
+    elif method == "sugar.plugin.kit_declaration":
+        result = {{
+            "kit": {{"id": "static-vendor", "language": "python", "version": "0.0.0"}},
+            "rpc": {{"methods": [{{"name": "lift", "required": True}}]}},
+            "proofResolution": {{"strategy": "none"}},
+            "residueCategories": [],
+        }}
     elif method in ("lift", "sugar.plugin.lift"):
         result = {{"kind": "ir-document", "ir": IR, "diagnostics": []}}
     elif method == "shutdown":
