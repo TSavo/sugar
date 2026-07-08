@@ -137,10 +137,21 @@ fn resolve_signer_seed() -> Result<([u8; 32], bool), String> {
 /// override, `false` for the well-known dev seed (an integrity tag only,
 /// never an authority attestation). Flipping this silently would make
 /// dev-signed witnesses read as authoritative -- a security regression.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct SignerConfig {
     pub(crate) seed: [u8; 32],
     pub(crate) is_authoritative: bool,
+}
+
+/// Manual `Debug`: the 32-byte signing seed must never reach logs or test
+/// output, so it is redacted while `is_authoritative` stays visible.
+impl std::fmt::Debug for SignerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SignerConfig")
+            .field("seed", &"<redacted>")
+            .field("is_authoritative", &self.is_authoritative)
+            .finish()
+    }
 }
 
 impl SignerConfig {
@@ -1737,6 +1748,27 @@ fn short_cid(cid: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Discrimination pair for the redacting `Debug` impl: the seed bytes
+    /// must be absent (no hex, no decimal array), while `is_authoritative`
+    /// and the redaction marker must be present.
+    #[test]
+    fn signer_config_debug_redacts_seed() {
+        let seed = [0xABu8; 32];
+        let config = SignerConfig {
+            seed,
+            is_authoritative: true,
+        };
+        let rendered = format!("{config:?}");
+        // Positive arm: the safe field and the redaction marker are visible.
+        assert!(rendered.contains("is_authoritative"), "got: {rendered}");
+        assert!(rendered.contains("true"), "got: {rendered}");
+        assert!(rendered.contains("<redacted>"), "got: {rendered}");
+        // Negative arm: no seed bytes in any common rendering.
+        assert!(!rendered.contains("171"), "decimal seed byte leaked: {rendered}");
+        assert!(!rendered.to_lowercase().contains("ab"), "hex seed byte leaked: {rendered}");
+        assert!(!rendered.contains('['), "array rendering leaked: {rendered}");
+    }
 
     fn test_cid(label: &str) -> sugar_verifier::MementoCid {
         sugar_verifier::MementoCid::try_parse(label.to_string()).unwrap_or_else(|_| {
