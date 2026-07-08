@@ -103,26 +103,59 @@ def prim_sort(name: str) -> Json:
     return {"kind": "primitive", "name": name}
 
 
-def collect_int_signatures(source: str) -> dict[str, _Sorts]:
-    """Parse `source` and return, per bare function name, the SMT sorts of its
-    annotated formals + return. Only `int` / `bool` annotations are recorded;
-    others are omitted (the transform refuses when a needed sort is missing)."""
+def collect_int_signatures(source: str, module_path: str = "") -> dict[str, _Sorts]:
+    """Parse `source` and return, per QUALIFIED function name, the SMT sorts of
+    its annotated formals + return. Only `int` / `bool` annotations are
+    recorded; others are omitted (the transform refuses when a needed sort is
+    missing).
+
+    The key mirrors the lifter's `fnName` (`lifter._qualname` /
+    `_DefinitionCollector`): class scopes prepend the class name, nested
+    function scopes prepend `<name>.<locals>`, and -- when `module_path` is
+    given -- the whole qualname is prefixed with `module_path.`, matching
+    `f"{module_path}.{qualname}"` byte-for-byte. Two functions that share only
+    a bare leaf name (a method on another class, a nested helper shadowing a
+    module-level function of the same name, ...) get DISTINCT keys here; a
+    lookup by bare leaf name would collide them."""
     out: dict[str, _Sorts] = {}
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return out
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        formal_sorts: dict[str, str] = {}
-        for arg in node.args.args:
-            sort = _sort_for_annotation(arg.annotation)
-            if sort is not None:
-                formal_sorts[arg.arg] = sort
-        return_sort = _sort_for_annotation(node.returns)
-        out[node.name] = _Sorts(formal_sorts=formal_sorts, return_sort=return_sort)
+
+    def visit(node: ast.AST, scope: list[tuple[str, str]]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                visit(child, scope + [("class", child.name)])
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                qualname = _qualified_name(scope, child.name)
+                key = f"{module_path}.{qualname}" if module_path else qualname
+                formal_sorts: dict[str, str] = {}
+                for arg in child.args.args:
+                    sort = _sort_for_annotation(arg.annotation)
+                    if sort is not None:
+                        formal_sorts[arg.arg] = sort
+                return_sort = _sort_for_annotation(child.returns)
+                out[key] = _Sorts(formal_sorts=formal_sorts, return_sort=return_sort)
+                visit(child, scope + [("function", child.name)])
+            else:
+                visit(child, scope)
+
+    visit(tree, [])
     return out
+
+
+def _qualified_name(scope: list[tuple[str, str]], name: str) -> str:
+    """Mirrors `lifter._qualname`: class scopes contribute their bare name,
+    function scopes contribute `<name>.<locals>`."""
+    parts: list[str] = []
+    for kind, scope_name in scope:
+        if kind == "class":
+            parts.append(scope_name)
+        elif kind == "function":
+            parts.extend([scope_name, "<locals>"])
+    parts.append(name)
+    return ".".join(parts)
 
 
 def _sort_for_annotation(annotation: ast.expr | None) -> str | None:

@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from .leaf_assertions import harvest_source
-from .lifter import lift_source
+from .lifter import _module_path, lift_source
 from .verify_dialect import (
     VerifyDialectRefusal,
     collect_int_signatures,
@@ -185,8 +185,12 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
                 ir_items.append(decl)
             continue
 
-        # Body-derived function-contracts (verify-facing dialect).
-        sorts_by_fn = collect_int_signatures(source)
+        # Body-derived function-contracts (verify-facing dialect). Keyed by
+        # QUALIFIED fnName (module_path + qualname, mirroring the lifter's own
+        # `fnName` construction) end-to-end: two functions that share only a
+        # bare leaf name (a method on another class, a nested helper shadowing
+        # a module-level function, ...) must not collide (#3819).
+        sorts_by_fn = collect_int_signatures(source, _module_path(rel))
         lifted = lift_source(source, rel)
         diagnostics.extend(lifted.diagnostics)
         for refusal in lifted.refusals:
@@ -199,8 +203,7 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
                 continue
             if fn_name in seen_fn:
                 continue
-            bare = fn_name.rsplit(".", 1)[-1]
-            sorts = sorts_by_fn.get(bare)
+            sorts = sorts_by_fn.get(fn_name)
             if sorts is None:
                 diagnostics.append(
                     {"path": rel, "message": f"{fn_name}: no signature parsed"}
