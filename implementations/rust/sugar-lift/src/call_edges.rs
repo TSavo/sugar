@@ -12,10 +12,12 @@
 //   - Otherwise (callee in another crate, extern "C" import, or unresolvable
 //     path) set `target_contract_cid` to None and populate `target_symbol`.
 //
-// The `evidenceTerm` is a placeholder `{kind: "obligation", source: <cid_B>,
-// target: <cid_A or symbol>}` per the dispatch spec. The linker derives the
-// actual predicate-level check later; the lifter's job is to surface the call
-// edge as a content-addressable memento.
+// No `evidenceTerm` is emitted on the call-edge memento: the satisfaction
+// obligation `post_B ⊃ pre_A` is only knowable once both contracts are resolved
+// (link time), so the linker mints the live obligation term onto the bridge (see
+// sugar-linker `obligation_evidence_term`). The lifter's job is only to surface
+// the call edge as a content-addressable memento. The Python reference
+// (`CallEdgeDecl.to_declaration`) emits no `evidenceTerm` on the wire either.
 //
 // Locus shape (no prior definition in this codebase; defined here per spec):
 //   { "file": <source_path>, "line": <u32 | null>, "col": <u32 | null> }
@@ -102,25 +104,18 @@ pub fn mint_call_edge(
     locus: &CallSiteLocus,
     target_symbol: &str,
 ) -> CallEdgeMemento {
-    // evidenceTerm placeholder per dispatch spec.
-    let evidence_term = Value::object([
-        ("kind", Value::string("obligation")),
-        ("source", Value::string(source_contract_cid.to_string())),
-        (
-            "target",
-            Value::string(
-                target_contract_cid
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| target_symbol.to_string()),
-            ),
-        ),
-    ]);
-
     let target_cid_value: Arc<Value> = match target_contract_cid {
         Some(cid) => Value::string(cid.to_string()),
         None => Value::null(),
     };
 
+    // No `evidenceTerm` is minted here: the satisfaction obligation `post_B ⊃ pre_A`
+    // is only knowable once BOTH contracts are resolved, which happens at link
+    // time. The linker mints the bridge's live `evidenceTerm` from that resolved
+    // obligation (see sugar-linker `obligation_evidence_term`), so a lift-side
+    // placeholder would be a dead field the linker never reads. The Python
+    // reference (`CallEdgeDecl.to_declaration`) likewise emits no `evidenceTerm`
+    // on the call-edge wire.
     let memento = Value::object([
         ("schemaVersion", Value::string("1")),
         ("kind", Value::string("call-edge")),
@@ -131,7 +126,6 @@ pub fn mint_call_edge(
         ("targetContractCid", target_cid_value),
         ("callSiteLocus", locus.to_value()),
         ("targetSymbol", Value::string(target_symbol.to_string())),
-        ("evidenceTerm", evidence_term),
     ]);
 
     let canonical_bytes = encode_jcs(&memento).into_bytes();

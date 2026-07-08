@@ -68,7 +68,7 @@ use sugar_ir_types::{
     LossRecord, VerdictKind,
 };
 
-use crate::core::types::{Cid, SlotSort, Term};
+use crate::core::types::{Cid, OpCidProjection, SlotSort, Term};
 
 // ============================================================
 // Reserved meta-variable names (spec §1.1).
@@ -319,6 +319,21 @@ pub trait OpContractResolver {
     fn lookup(&self, op_name: &str) -> Option<OpContractInfo>;
 }
 
+/// The empty operation-contract resolver: it knows no contracts, so every
+/// [`lookup`](OpContractResolver::lookup) returns `None`. Lowering a [`Term`]
+/// against it is purely structural -- the degenerate case that
+/// `From<Term> for IrTerm` uses -- and is *total*: with no contract to find,
+/// neither [`Refusal::OpaqueCall`] nor [`WpError::ArityMismatch`] can ever
+/// fire.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EmptyOpResolver;
+
+impl OpContractResolver for EmptyOpResolver {
+    fn lookup(&self, _op_name: &str) -> Option<OpContractInfo> {
+        None
+    }
+}
+
 // ============================================================
 // The evaluator.
 // ============================================================
@@ -481,7 +496,7 @@ fn wp_op<R: OpContractResolver + ?Sized>(
         match slot.kind {
             SlotKind::Stmt => stmt_transformers.push((slot.name.clone(), arg)),
             SlotKind::Value => {
-                value_substs.push((slot.name.clone(), value_expr_of_term(arg, resolver)?));
+                value_substs.push((slot.name.clone(), lower_term(arg, resolver)?));
             }
         }
     }
@@ -499,19 +514,56 @@ fn wp_op<R: OpContractResolver + ?Sized>(
     reduce_formula(instantiated, q, &stmt_transformers, op_name, resolver)
 }
 
-/// Read the value expression a sub-term evaluates to, for substitution
-/// into a value-slot formal. A `var` is itself; a `const` is itself; an
-/// `op` whose contract is a value-op is its value expression (with the
-/// op's own value-slot args substituted in recursively), or the bare
-/// constructor `op(name, <recursed args>)` when the contract carries no
-/// usable `post`; a `unit` is the `unit` constructor.
+/// The single term-lowering seam: lower a faithful [`Term`] into the
+/// historical lossy [`IrTerm`], reading the value expression a sub-term
+/// evaluates to. A `var` is itself; a `const` is itself; an `op` whose
+/// contract is a value-op is its value expression (with the op's own
+/// value-slot args substituted in recursively), or the bare constructor
+/// `op(name, <recursed args>)` when the contract carries no usable `post`; a
+/// `unit` is the `unit` constructor.
+///
+/// This subsumes both the resolver-free `From<Term> for IrTerm` (which lowers
+/// against [`EmptyOpResolver`]) and the value-slot reducer it replaces. Every
+/// [`Term::Op`] carries a faithful op-CID that `IrTerm::Ctor` cannot hold, so
+/// the CID is projected away -- but *recorded*, not silently dropped: callers
+/// that want the audit trail use [`lower_term_projected`]; this convenience
+/// wrapper discards it at the one documented boundary below.
 ///
 /// `pub` so that `sugar-verifier`'s body-discharge spine can reduce
 /// nested-call terms in the NESTED-CALL tier (reduce-in-place). Treat
 /// this as verifier-internal infrastructure, not a stable public API.
-pub fn value_expr_of_term<R: OpContractResolver + ?Sized>(
+pub fn lower_term<R: OpContractResolver + ?Sized>(
     t: &Term,
     resolver: &R,
+) -> Result<IrTerm, WpError> {
+    // Loudly-lossy boundary: the op-CID projection is materialized in full
+    // and then dropped here, at this single named site, rather than swallowed
+    // by a `..` scattered through the recursion.
+    let (ir, _projected_op_cids) = lower_term_projected(t, resolver)?;
+    Ok(ir)
+}
+
+/// Lower a [`Term`] and return the [`IrTerm`] together with every
+/// [`OpCidProjection`] the lowering had to discard, in pre-order traversal
+/// order (outermost op first). This is the auditable form of [`lower_term`]:
+/// the faithful op-CID texture that has no home in `IrTerm` is surfaced here
+/// instead of vanishing.
+pub fn lower_term_projected<R: OpContractResolver + ?Sized>(
+    t: &Term,
+    resolver: &R,
+) -> Result<(IrTerm, Vec<OpCidProjection>), WpError> {
+    let mut projected = Vec::new();
+    let ir = lower_term_into(t, resolver, &mut projected)?;
+    Ok((ir, projected))
+}
+
+/// Recursive worker for [`lower_term_projected`]: lowers `t`, appending an
+/// [`OpCidProjection`] to `sink` for every [`Term::Op`] whose faithful op-CID
+/// is discarded on the way into `IrTerm`.
+fn lower_term_into<R: OpContractResolver + ?Sized>(
+    t: &Term,
+    resolver: &R,
+    sink: &mut Vec<OpCidProjection>,
 ) -> Result<IrTerm, WpError> {
     match t {
         Term::Var { name } => Ok(IrTerm::Var { name: name.clone() }),
@@ -523,7 +575,15 @@ pub fn value_expr_of_term<R: OpContractResolver + ?Sized>(
             name: "unit".to_string(),
             args: vec![],
         }),
-        Term::Op { name, args, .. } => {
+        Term::Op { name, args, op_cid } => {
+            // Record the faithful op-CID we are about to project away. This
+            // is the seam's whole point: `IrTerm::Ctor` carries only `name`,
+            // so `op_cid` is bound explicitly and logged into `sink` rather
+            // than silently discarded by a `..` pattern.
+            sink.push(OpCidProjection {
+                name: name.clone(),
+                op_cid: op_cid.clone(),
+            });
             let Some(contract) = resolver.lookup(name) else {
                 // No contract for this nested op. This is NOT a refusal in
                 // value position: an enum/struct constructor (`Ok`, `Err`,
@@ -541,7 +601,7 @@ pub fn value_expr_of_term<R: OpContractResolver + ?Sized>(
                 // reflexive discharge.
                 let recursed_args = args
                     .iter()
-                    .map(|a| value_expr_of_term(a, resolver))
+                    .map(|a| lower_term_into(a, resolver, sink))
                     .collect::<Result<Vec<_>, _>>()?;
                 return Ok(IrTerm::Ctor {
                     name: name.clone(),
@@ -570,7 +630,7 @@ pub fn value_expr_of_term<R: OpContractResolver + ?Sized>(
             let mut formal_substs: Vec<(String, IrTerm)> = Vec::new();
             let mut recursed_args: Vec<IrTerm> = Vec::with_capacity(args.len());
             for (slot, arg) in contract.slots.iter().zip(args) {
-                let v = value_expr_of_term(arg, resolver)?;
+                let v = lower_term_into(arg, resolver, sink)?;
                 if slot.kind == SlotKind::Value {
                     formal_substs.push((slot.name.clone(), v.clone()));
                 }

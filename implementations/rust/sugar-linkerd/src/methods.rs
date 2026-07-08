@@ -1017,7 +1017,9 @@ fn find_binary(name: &str) -> Option<String> {
 ///   - `targetContractCid` → `target_contract_cid`
 ///   - `targetSymbol`      → `target_symbol`
 ///   - `callSiteLocus`     → `call_site_locus`
-///   - `evidenceTerm`      → `evidence_term_json`
+///   (the wire `evidenceTerm` is not mapped: the linker mints the bridge's
+///    `evidenceTerm` from the resolved `post ⊃ pre` obligation, not from a
+///    lift-side placeholder)
 ///
 /// CID strategy for declarations:
 ///   The daemon computes a stable `contract_cid` from the declaration's
@@ -1283,7 +1285,6 @@ fn parse_call_edge(edge: &Json) -> Option<LinkerCallEdge> {
     let call_site_locus = edge
         .get("callSiteLocus")
         .and_then(|v| serde_json::from_value::<CallSiteLocus>(v.clone()).ok());
-    let evidence = edge.get("evidenceTerm").cloned().unwrap_or(Json::Null);
 
     Some(LinkerCallEdge {
         source_contract_cid: source_cid.into(),
@@ -1292,7 +1293,10 @@ fn parse_call_edge(edge: &Json) -> Option<LinkerCallEdge> {
         // it (byte-identical `<kit>:<name>` round-trip).
         target_symbol: target_symbol.into(),
         call_site_locus,
-        evidence_term_json: evidence,
+        // The lifter's `evidenceTerm` on the wire call edge is ignored: the linker
+        // mints the bridge's `evidenceTerm` from the resolved `post ⊃ pre`
+        // obligation itself (see `obligation_evidence_term`), so a lift-side
+        // placeholder is never threaded through.
         ..Default::default()
     })
 }
@@ -1447,11 +1451,6 @@ async fn lift_rust_source(
                     file: file_for_locus.clone(),
                     line: edge.call_site_locus.line.map(|n| n as usize),
                     column: edge.call_site_locus.col.map(|n| n as usize),
-                }),
-                evidence_term_json: serde_json::json!({
-                    "kind": "Atomic",
-                    "name": "call-site-obligation",
-                    "args": [],
                 }),
                 ..Default::default()
             });

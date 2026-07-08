@@ -480,11 +480,6 @@ mod tests {
                     line: Some(7),
                     column: Some(13),
                 }),
-                evidence_term_json: serde_json::json!({
-                    "kind": "Atomic",
-                    "name": "obligation",
-                    "args": []
-                }),
                 ..Default::default()
             }],
         );

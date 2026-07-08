@@ -115,8 +115,10 @@ pub enum CidError {
 /// `core::Term` instead of extending generated `IrTerm` because `IrTerm::Ctor`
 /// is generated from the protocol CDDL and still carries only a bare name.
 /// Conversions are provided: `From<IrTerm>` synthesizes a deterministic
-/// name-derived op CID for compatibility, while `From<Term> for IrTerm` drops
-/// the op CID when crossing back into the historical IR.
+/// name-derived op CID for compatibility, while `From<Term> for IrTerm`
+/// crosses back into the historical IR by delegating to the single lowering
+/// seam [`crate::wp::lower_term`], which *records* the discarded op CID as an
+/// [`OpCidProjection`] rather than silently dropping it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Term {
@@ -655,19 +657,34 @@ impl From<IrTerm> for Term {
 
 impl From<Term> for IrTerm {
     fn from(value: Term) -> Self {
-        match value {
-            Term::Op { name, args, .. } => IrTerm::Ctor {
-                name,
-                args: args.into_iter().map(IrTerm::from).collect(),
-            },
-            Term::Var { name } => IrTerm::Var { name },
-            Term::Const { value, sort } => IrTerm::Const { value, sort },
-            Term::Unit => IrTerm::Ctor {
-                name: "unit".to_string(),
-                args: vec![],
-            },
-        }
+        // Structural lowering is the degenerate case of the single
+        // term-lowering seam `wp::lower_term` run against a resolver that
+        // knows no contracts ([`crate::wp::EmptyOpResolver`]): every `Op`
+        // falls to the bare `Ctor` form, and the faithful op-CID texture is
+        // *recorded* as an `OpCidProjection` and then loudly projected away,
+        // never silently dropped via `..`. Because no contract can ever be
+        // found, neither `OpaqueCall` nor `ArityMismatch` can fire, so the
+        // lowering is total and the `expect` is unreachable.
+        crate::wp::lower_term(&value, &crate::wp::EmptyOpResolver)
+            .expect("structural lowering against the empty resolver is total")
     }
+}
+
+/// One recorded op-CID projection: the faithful operation content-ID that the
+/// single lowering seam [`crate::wp::lower_term`] discards when it lowers a
+/// [`Term::Op`] into the historical [`IrTerm::Ctor`], which carries only a
+/// bare name.
+///
+/// This is the paper-16 texture the paper-9 [`Boundary`] is licensed to drop.
+/// Materializing it here turns what used to be a silent `..` pattern-drop into
+/// an auditable record: [`crate::wp::lower_term_projected`] returns the full
+/// list of op CIDs a lowering had to project away.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpCidProjection {
+    /// The bare operation name that survives into [`IrTerm::Ctor`].
+    pub name: String,
+    /// The faithful operation content-ID that is projected away.
+    pub op_cid: Cid,
 }
 
 /// The lossy formula stratum reused from `sugar-ir-types`.

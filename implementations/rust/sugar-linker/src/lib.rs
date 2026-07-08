@@ -413,8 +413,6 @@ pub struct LinkerCallEdge {
     /// each bridge memento (see [`derive_bridge`]) where JCS canonicalizes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_site_locus: Option<CallSiteLocus>,
-    /// ProofIR evidence term encoding the satisfaction obligation `post_B ⊃ pre_A`.
-    pub evidence_term_json: Json,
     /// The typed import signature the call site declares for its target: the
     /// symbol plus the formals/sorts/EUF coordinate the caller expects the
     /// callee to export. When present, [`bind`] type-checks it against the
@@ -805,15 +803,20 @@ fn derive_link_bundle_inner(
         // discharged below. Carried == checked by construction.
         let obligation = ObligationState::derive(source_post, target_pre);
 
-        // The on-wire memento is byte-identical: `evidenceTerm` still carries
-        // the emit-side placeholder (replacing it with the live obligation
-        // changes call-edge / bridge CIDs — the emit-side follow-up). Only the
-        // in-memory `obligation` field is new, and it is not serialized.
+        // The on-wire `evidenceTerm` is now MINTED from the same obligation the
+        // verifier discharges — `Obligation::as_implies` lowered to JSON — instead
+        // of passing through the dead emit-side placeholder. So the term the wire
+        // bridge *carries* is byte-for-byte the `post ⊃ pre` term the linker
+        // *checks*: carried == checked on the wire, not just in memory. This
+        // migrates every bridge / linkBundle CID (the pinned gate re-pins below);
+        // no verdict changes, because the verifier discharges the in-memory
+        // `obligation`, never re-reading this projection.
+        let evidence_term = obligation_evidence_term(source_post, target_pre);
         let memento = derive_bridge(
             edge.source_contract_cid.as_str(),
             target_cid,
             &edge.call_site_locus,
-            &edge.evidence_term_json,
+            &evidence_term,
         );
         let bridge = DerivedBridge {
             memento,
@@ -1101,8 +1104,9 @@ struct BridgeMetadata {
 }
 
 /// The relation the linker derived for this bridge: `post-implies-pre`, carrying
-/// the emit-side `evidenceTerm` placeholder (the in-memory obligation the
-/// verifier discharges lives on [`DerivedBridge::obligation`], not here).
+/// the live obligation's `evidenceTerm` (the `post ⊃ pre` implication minted by
+/// [`obligation_evidence_term`]). The in-memory obligation the verifier discharges
+/// lives on [`DerivedBridge::obligation`]; this wire term is its projection.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct DerivedRelation {
     kind: &'static str,
@@ -1160,12 +1164,12 @@ fn derive_bridge(
 /// value to both the [`DerivedBridge`] and the discharge makes carried ==
 /// checked by construction.
 ///
-/// The bridge's on-wire `evidenceTerm` field still serializes the emit-side
-/// placeholder for byte-identity (replacing it changes call-edge / bridge CIDs
-/// and is the emit-side follow-up). The in-memory obligation carried on the
-/// [`DerivedBridge`] is the authoritative value the verifier discharges, and
-/// [`Obligation::as_implies`] already lowers to the exact JSON that future wire
-/// minting would use.
+/// The bridge's on-wire `evidenceTerm` field is now minted from this obligation
+/// via [`obligation_evidence_term`] ([`Obligation::as_implies`] lowered to JSON),
+/// so the term the wire carries IS the term the verifier discharges — carried ==
+/// checked on the wire, not just in memory. The in-memory obligation on the
+/// [`DerivedBridge`] remains the authoritative value the verifier discharges; the
+/// wire term is its faithful projection, never a second source of truth.
 #[derive(Debug, Clone, PartialEq)]
 struct Obligation {
     /// Caller post-condition `post_B`.
@@ -1187,6 +1191,34 @@ impl Obligation {
             operands: vec![self.post.clone(), self.pre.clone()],
         }
     }
+}
+
+/// Lower a bound edge's satisfaction obligation to the wire `evidenceTerm` its
+/// bridge carries: the `post ⊃ pre` implication the linker discharges, as JSON.
+///
+/// An absent operand lowers to the canonical `true` atomic — a caller that
+/// promises nothing has `post = ⊤`, a callee that requires nothing has
+/// `pre = ⊤` — so *every* bound edge carries the exact implication its
+/// obligation stands for. `⊤ ⊃ pre` for a caller-post-absent edge is precisely
+/// "establish `pre` unconditionally", which is why that obligation is
+/// unprovable; `post ⊃ ⊤` for a callee-pre-absent edge is a vacuous truth.
+///
+/// This is minted from the SAME `(source_post, target_pre)` pair
+/// [`ObligationState::derive`] consumes, so the term the wire bridge carries is
+/// the term the verifier discharges. The verifier never re-reads this JSON — it
+/// discharges the in-memory obligation — so this is a faithful projection, not a
+/// second source of truth: carried == checked by construction.
+fn obligation_evidence_term(post: Option<&IrFormula>, pre: Option<&IrFormula>) -> Json {
+    let top = || IrFormula::Atomic {
+        name: "true".to_string(),
+        args: Vec::new(),
+    };
+    let obligation = Obligation::new(
+        post.cloned().unwrap_or_else(top),
+        pre.cloned().unwrap_or_else(top),
+    );
+    serde_json::to_value(obligation.as_implies())
+        .expect("IrFormula::Implies always serializes to JSON")
 }
 
 /// The link-time obligation state for one bound edge: a concrete obligation to
@@ -1878,11 +1910,6 @@ mod tests {
                 line: Some(21),
                 column: Some(9),
             }),
-            evidence_term_json: serde_json::json!({
-                "kind": "Atomic",
-                "name": "call-site-obligation",
-                "args": [{"kind": "Var", "name": "GoCallerFail", "sort": "String"}]
-            }),
             ..Default::default()
         }
     }
@@ -1978,8 +2005,11 @@ mod tests {
 
         assert_eq!(
             fail_out.bundle.link_bundle_cid.as_str(),
-            "blake3-512:a0d04917ab46f58662b4f497a779cab8c2814df0bb40c8df0cb1b6abfe1eaabe7500f638249d423e4d74648add1ce5d47fd9502cd5481a9012807bba50aec584",
-            "failure-case linkBundleCid must match baseline from PR #124 smoke test"
+            "blake3-512:45efc10566c2106a0fdccecad9c316a70a0aaf00becca03cea21b6d61a5d2a05b7346ffc22b1ae2f73e418aedce852d905f86f29d49c9fd7a06286d055beca40",
+            "failure-case linkBundleCid: re-pinned when the bridge evidenceTerm \
+             migrated from the dead lift-side placeholder to the live obligation \
+             `post ⊃ pre` (`obligation_evidence_term`); success-case CID is \
+             unchanged (no call edges → no bridge)"
         );
         assert_eq!(
             ok_out.bundle.link_bundle_cid.as_str(),
@@ -2156,7 +2186,6 @@ mod tests {
                 line: Some(3),
                 column: Some(5),
             }),
-            evidence_term_json: serde_json::json!({"kind": "Atomic", "name": "obligation", "args": []}),
             ..Default::default()
         };
 

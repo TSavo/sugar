@@ -78,6 +78,71 @@ use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_ir_compiler::CompilerInput;
 
+/// Strong type for the boolean-connective formula intermediates this module
+/// BUILDS as solver goals and conjoined obligations. The operands are opaque IR
+/// `Json` leaves (atomics, foralls, ctor terms, ...) that originate in the
+/// lifter, not here; this enum only names the connective this module wraps them
+/// in. [`IrFormula::to_value`] is the ONLY crossing back into `Json`, and it
+/// reproduces the exact `{"kind":<c>,"operands":[..]}` shapes the module
+/// previously hand-built with `json!`, so every solver goal, conjoined formula,
+/// and report row is byte-identical (CIDs unchanged).
+enum IrFormula {
+    /// `{"kind":"and","operands":[..]}` -- conjunction of zero or more operands.
+    And(Vec<Json>),
+    /// `{"kind":"not","operands":[body]}` -- negation (the raw-sat solver goal).
+    Not(Json),
+}
+
+impl IrFormula {
+    /// Lower to the wire `Json` at the solver / report boundary. Byte-identical
+    /// to the previously hand-rolled `json!` shapes.
+    fn to_value(self) -> Json {
+        match self {
+            IrFormula::And(operands) => json!({ "kind": "and", "operands": operands }),
+            IrFormula::Not(body) => json!({ "kind": "not", "operands": [body] }),
+        }
+    }
+
+    /// Borrowing READ accessor: the top-level operands of an `and` node, or
+    /// `None` when `node` is not a conjunction (any other head, or a malformed
+    /// `and` without an operand array). Replaces the paired
+    /// `get("kind") == "and"` + `get("operands").as_array()` dig with one typed
+    /// read.
+    fn and_operands(node: &Json) -> Option<&Vec<Json>> {
+        if node.get("kind").and_then(|k| k.as_str()) != Some("and") {
+            return None;
+        }
+        node.get("operands").and_then(|v| v.as_array())
+    }
+}
+
+/// The boolean connective / quantifier at the head of an IR formula node, for
+/// the READ side: classify a node's `kind` ONCE into a typed head instead of
+/// re-stringly comparing `get("kind")` against connective spellings. Every
+/// non-connective head (atomics, ctor terms, consts, `var`, `primitive`, ...)
+/// is `None`, since this module treats those leaves opaquely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Connective {
+    And,
+    Implies,
+    Not,
+    Forall,
+    Exists,
+}
+
+impl Connective {
+    fn of(node: &Json) -> Option<Connective> {
+        match node.get("kind").and_then(|k| k.as_str())? {
+            "and" => Some(Connective::And),
+            "implies" => Some(Connective::Implies),
+            "not" => Some(Connective::Not),
+            "forall" => Some(Connective::Forall),
+            "exists" => Some(Connective::Exists),
+            _ => None,
+        }
+    }
+}
+
 /// Outcome of a single contract's consistency check.
 #[derive(Debug, Clone)]
 pub struct ConsistencyResult {
@@ -495,7 +560,7 @@ fn source_warrants_provenance_kind(warrants: &Json) -> Result<ProofIrProvenanceK
 fn axiom_context_formula(body: &Json) -> Json {
     let inv = body.get("inv").cloned().unwrap_or(Json::Null);
     match body.get("post").filter(|post| post.is_object()).cloned() {
-        Some(post) => json!({ "kind": "and", "operands": [inv, post] }),
+        Some(post) => IrFormula::And(vec![inv, post]).to_value(),
         None => inv,
     }
 }
@@ -1430,10 +1495,8 @@ fn formula_semantic_cid(formula: &Json) -> String {
 }
 
 fn top_level_conjuncts(formula: Json) -> Vec<Json> {
-    if formula.get("kind").and_then(|k| k.as_str()) == Some("and") {
-        if let Some(operands) = formula.get("operands").and_then(|v| v.as_array()) {
-            return operands.clone();
-        }
+    if let Some(operands) = IrFormula::and_operands(&formula) {
+        return operands.clone();
     }
     vec![formula]
 }
@@ -1456,7 +1519,7 @@ fn conjoin_distinct_provenance_witnesses(invs: Vec<(Json, ProofIrProvenanceKind)
         }
     }
     (
-        serde_json::json!({ "kind": "and", "operands": operands }),
+        IrFormula::And(operands).to_value(),
         collapsed_same_kind_duplicate,
     )
 }
@@ -1621,14 +1684,7 @@ fn consistency_verification_detail(
 /// is trivially satisfiable (any uninterpreted callsite satisfies it) and must
 /// NOT count as a substantive discharge — there is nothing to contradict it.
 fn count_top_level_constraints(inv: &Json) -> usize {
-    if inv.get("kind").and_then(|k| k.as_str()) == Some("and") {
-        inv.get("operands")
-            .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(1)
-    } else {
-        1
-    }
+    IrFormula::and_operands(inv).map(|a| a.len()).unwrap_or(1)
 }
 
 /// Does a LONE fact carry a COVERING DOMAIN UNIVERSE that genuinely decides it?
@@ -1817,7 +1873,7 @@ fn check_inv_consistency_with_vacuity_reason(
             )),
         };
     }
-    let raw_sat_goal = json!({ "kind": "not", "operands": [inv.clone()] });
+    let raw_sat_goal = IrFormula::Not(inv.clone()).to_value();
     let t_solve = std::time::Instant::now();
     let (raw, raw_reason, invs) = match CompilerInput::decode_json(raw_sat_goal.clone()) {
         Ok(input) => run_plan_with_compilers(plan, registry, compilers, &input),
@@ -1890,7 +1946,7 @@ fn check_inv_consistency_with_vacuity_reason(
 /// their open instances stay home.
 fn collect_ambient_foralls(inv: &Json, out: &mut Vec<Json>) {
     let mut consider = |op: &Json| {
-        if op.get("kind").and_then(|k| k.as_str()) != Some("forall") {
+        if Connective::of(op) != Some(Connective::Forall) {
             return;
         }
         if !formula_is_closed(op, &mut Vec::new()) {
@@ -1900,9 +1956,9 @@ fn collect_ambient_foralls(inv: &Json, out: &mut Vec<Json>) {
         }
         out.push(op.clone());
     };
-    match inv.get("kind").and_then(|k| k.as_str()) {
-        Some("forall") => consider(inv),
-        Some("and") => {
+    match Connective::of(inv) {
+        Some(Connective::Forall) => consider(inv),
+        Some(Connective::And) => {
             if let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) {
                 for op in ops {
                     collect_ambient_foralls(op, out);
@@ -2539,7 +2595,7 @@ fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Jso
     operands.push(inv);
     operands.extend(closed_templates);
     operands.extend(instances);
-    serde_json::json!({ "kind": "and", "operands": operands })
+    IrFormula::And(operands).to_value()
 }
 
 /// Conjoin closed ground callsite facts into matching callsite-keyed obligations.
@@ -2614,7 +2670,7 @@ fn with_ambient_ground_callsite_facts(
     operands.push(inv);
     operands.extend(facts);
     (
-        serde_json::json!({ "kind": "and", "operands": operands }),
+        IrFormula::And(operands).to_value(),
         skipped_same_kind_duplicate,
         vendor_facts,
     )
@@ -2821,7 +2877,7 @@ fn with_ambient_posts_with_instances(
     operands.push(inv);
     operands.extend(instances.iter().map(|p| p.instantiated_post.clone()));
     (
-        serde_json::json!({ "kind": "and", "operands": operands }),
+        IrFormula::And(operands).to_value(),
         instances,
     )
 }
@@ -2847,7 +2903,7 @@ fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
     let mut operands = Vec::with_capacity(instances.len() + 1);
     operands.push(inv);
     operands.extend(instances);
-    serde_json::json!({ "kind": "and", "operands": operands })
+    IrFormula::And(operands).to_value()
 }
 
 /// Walk every contract member in `pool`, apply the consistency-candidate
