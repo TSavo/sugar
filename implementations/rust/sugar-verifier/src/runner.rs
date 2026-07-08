@@ -470,15 +470,12 @@ impl Runner {
         // refuses their internal consistency. Discharged => PROVEN-consistent;
         // Unsatisfied => REFUSED-contradictory; Undecidable => encoding STOP
         // surfaced as a violation (never silently passed).
-        let consistency_index = crate::consistency::build_consistency_index(&pool);
-        let consistency_results = crate::consistency::verify_consistency_from_indexes(
-            &consistency_index,
-            None,
+        let consistency_results = crate::consistency::verify_consistency(
+            &pool,
             &self.plan,
             &self.registry,
             &self.compilers,
             &self.cfg.project_root,
-            None,
         );
         for cr in &consistency_results {
             match cr.verdict {
@@ -785,15 +782,12 @@ impl Runner {
 
         // Receipt 1: test-assertion consistency pass (see the matching block
         // in the primary run path).
-        let consistency_index = crate::consistency::build_consistency_index(&pool);
-        let consistency_results = crate::consistency::verify_consistency_from_indexes(
-            &consistency_index,
-            None,
+        let consistency_results = crate::consistency::verify_consistency(
+            &pool,
             plan,
             registry,
             compilers,
             &self.cfg.project_root,
-            None,
         );
         for cr in &consistency_results {
             match cr.verdict {
