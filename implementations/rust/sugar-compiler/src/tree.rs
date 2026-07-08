@@ -394,11 +394,13 @@ fn decode_memento(value: &Value) -> Result<SourceMemento, String> {
         .unwrap_or_default();
     let source_cid = value
         .get("source_cid")
+        .or_else(|| value.get("sourceCid"))
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
     let template_cid = value
         .get("template_cid")
+        .or_else(|| value.get("templateCid"))
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();

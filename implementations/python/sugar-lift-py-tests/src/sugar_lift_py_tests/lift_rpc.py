@@ -609,7 +609,12 @@ def _lift_file_for_enumeration(
     """
     full_path = (root / file_rel).resolve()
     source = full_path.read_text(encoding="utf-8")
-    result = lift_source(str(full_path), source, memento_file=file_rel)
+    try:
+        result = lift_source(str(full_path), source, memento_file=file_rel)
+    except ValueError as exc:
+        if "no source sites" in str(exc):
+            return []
+        raise
     return [to_rpc_value(item) for item in result.payload.ir]
 
 
@@ -694,6 +699,30 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
             full_path = root / file_rel
+            # SECURITY (macroscope on #3862): a forged memento with an
+            # absolute path (pathlib join discards root) or a ../ traversal
+            # could enumerate files OUTSIDE the workspace. Require the
+            # resolved path to stay under the resolved workspace root.
+            resolved_root = root.resolve()
+            resolved_full = full_path.resolve()
+            if not (
+                resolved_full == resolved_root
+                or resolved_root in resolved_full.parents
+            ):
+                _send_enumerate_result(
+                    msg_id,
+                    [],
+                    [
+                        {
+                            "memento": at,
+                            "reason": (
+                                "refused: memento file escapes the workspace root "
+                                f"({file_rel!r})"
+                            ),
+                        }
+                    ],
+                )
+                return
             if not full_path.is_file():
                 _send_enumerate_result(
                     msg_id,
@@ -782,7 +811,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # nested functions in one file would collide (flagged, not
                 # hidden; out of scope for this fixture-sized cut).
                 target_fn = (
-                    at.get("function_name") or at.get("sourceFunctionName")
+                    at.get("function_name")
+                    or at.get("sourceFunctionName")
+                    or at.get("source_function_name")
                     if at
                     else None
                 )
@@ -794,8 +825,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     if memento is None:
                         continue
                     if target_fn:
-                        item_fn = memento.get("source_function_name") or memento.get(
-                            "sourceFunctionName"
+                        item_fn = (
+                            memento.get("source_function_name")
+                            or memento.get("sourceFunctionName")
+                            or memento.get("function_name")
                         )
                         if item_fn != target_fn:
                             continue

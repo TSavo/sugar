@@ -184,3 +184,45 @@ def test_facts_on_a_missing_memento_is_a_gap_not_a_crash(project: Path) -> None:
     assert result["nodes"] == []
     assert len(result["gaps"]) == 1
     assert "reason" in result["gaps"][0]
+
+
+def _enumerate_raw(level: str, workspace_root, at=None, seek: bool = False):
+    """Like _enumerate but returns the raw response (for error/gap cases)."""
+    captured = []
+    original_send = lift_rpc._send
+    lift_rpc._send = captured.append
+    try:
+        lift_rpc._handle_enumerate(
+            1,
+            {
+                "level": level,
+                "workspace_root": str(workspace_root),
+                "at": at,
+                "seek": seek,
+            },
+        )
+    finally:
+        lift_rpc._send = original_send
+    assert len(captured) == 1, captured
+    return captured[0]
+
+
+def test_enumerate_refuses_path_traversal(project) -> None:
+    """SECURITY (macroscope on #3862): a forged memento whose file escapes
+    the workspace root is refused as a gap, never lifted."""
+    outside = project.parent / "outside_secret.py"
+    outside.write_text("def f():\n    assert 1 == 1\n", encoding="utf-8")
+    response = _enumerate_raw("call_sites", project, at={"file": "../outside_secret.py"})
+    assert "error" not in response, response
+    result = response["result"]
+    assert result["nodes"] == []
+    assert len(result["gaps"]) == 1
+    assert "escapes the workspace root" in result["gaps"][0]["reason"]
+
+
+def test_enumerate_empty_file_is_an_empty_level_not_an_error(project) -> None:
+    """A comments-only file has no source sites: empty level, not -32603."""
+    (project / "empty_mod.py").write_text("# nothing here\n", encoding="utf-8")
+    response = _enumerate_raw("assertions", project, at={"file": "empty_mod.py"})
+    assert "error" not in response, response
+    assert response["result"]["nodes"] == []
