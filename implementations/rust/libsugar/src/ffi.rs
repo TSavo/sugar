@@ -413,7 +413,9 @@ pub struct pk_composition_result {
 impl pk_composition_result {
     fn ok(cid: String, body_jcs: String) -> Self {
         Self {
+            // sugar-audit: default-ok(cid-text-is-hex-blake3-address-syntax-and-can-never-contain-a-raw-nul-byte)
             cid: CString::new(cid).ok(),
+            // sugar-audit: default-ok(jcs-canonical-json-text-always-escapes-control-bytes-so-body-jcs-can-never-contain-a-raw-nul-byte)
             body_jcs: CString::new(body_jcs).ok(),
             error: None,
         }
@@ -423,6 +425,7 @@ impl pk_composition_result {
         Self {
             cid: None,
             body_jcs: None,
+            // sugar-audit: default-ok(error-message-text-is-produced-by-this-crate-and-never-embeds-a-raw-nul-byte)
             error: CString::new(message).ok(),
         }
     }

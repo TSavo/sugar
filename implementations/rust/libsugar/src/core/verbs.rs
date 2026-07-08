@@ -134,6 +134,7 @@ fn link_by_shared_contract(claims: &[DomainClaim]) -> Result<DomainClaim, CoreEr
 fn shared_contract_cid(claims: &[DomainClaim]) -> Option<Cid> {
     let mut sets = claims.iter().map(|claim| {
         Cid::try_from(claim.contract.cid.clone())
+            // sugar-audit: default-ok(malformed-contract-cid-empties-that-claims-set-so-intersection-fails-closed-to-refusal-never-a-wrong-link)
             .ok()
             .into_iter()
             .collect::<BTreeSet<_>>()

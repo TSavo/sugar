@@ -654,6 +654,158 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
         "sugar-lift-contracts::lib",
         NOT_MINE_RETIREMENT
     ),
+    sanction!(
+        "implementations/rust/libsugar/src/canonical.rs",
+        51,
+        "default-ok",
+        "absent-legacy-concept-prefix-means-the-name-is-already-bare",
+        "libsugar::canonical",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/compose.rs",
+        1335,
+        "not-mine",
+        "non-atomic-non-and-formula-shape-carries-no-namespaced-result-binding",
+        "libsugar::compose",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/compose.rs",
+        1361,
+        "not-mine",
+        "non-atomic-non-and-formula-shape-carries-no-result-equation-callers-refuse-on-none",
+        "libsugar::compose",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/stubs.rs",
+        295,
+        "not-mine",
+        "non-var-op-argument-carries-no-formal-name-by-stub-project-design",
+        "libsugar::core::stubs",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1517,
+        "default-ok",
+        "cosmetic-cross-reference-string-defaults-to-absent-not-solver-input",
+        "libsugar::core::types",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1091,
+        "default-ok",
+        "cycle-diagnostic-step-name-defaults-to-empty-the-surrounding-err-cycle-refusal-is-unaffected",
+        "libsugar::core::types",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1732,
+        "default-ok",
+        "debug-only-source-column-defaults-to-zero-not-solver-input",
+        "libsugar::core::types",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1730,
+        "default-ok",
+        "debug-only-source-line-defaults-to-zero-not-solver-input",
+        "libsugar::core::types",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1535,
+        "default-ok",
+        "display-only-formal-name-list-defaults-to-empty-not-solver-input",
+        "libsugar::core::types",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1477,
+        "default-ok",
+        "display-only-function-name-defaults-to-empty-not-solver-input",
+        "libsugar::core::types",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1741,
+        "default-ok",
+        "fewer-aliasing-mementos-only-makes-check-aliasing-discharged-refuse-more-never-silently-accept",
+        "libsugar::core::types",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1766,
+        "default-ok",
+        "u64-to-usize-width-overflow-only-occurs-on-32-bit-targets-past-4-billion",
+        "libsugar::core::types",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1721,
+        "not-mine",
+        "unrecognized-atomic-kind-string-carries-no-typed-atomic-effect",
+        "libsugar::core::types",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/types.rs",
+        1710,
+        "not-mine",
+        "unrecognized-effect-kind-tag-carries-no-typed-effect-payload",
+        "libsugar::core::types",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/core/verbs.rs",
+        137,
+        "default-ok",
+        "malformed-contract-cid-empties-that-claims-set-so-intersection-fails-closed-to-refusal-never-a-wrong-link",
+        "libsugar::core::verbs",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/ffi.rs",
+        416,
+        "default-ok",
+        "cid-text-is-hex-blake3-address-syntax-and-can-never-contain-a-raw-nul-byte",
+        "libsugar::ffi",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/ffi.rs",
+        428,
+        "default-ok",
+        "error-message-text-is-produced-by-this-crate-and-never-embeds-a-raw-nul-byte",
+        "libsugar::ffi",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/ffi.rs",
+        418,
+        "default-ok",
+        "jcs-canonical-json-text-always-escapes-control-bytes-so-body-jcs-can-never-contain-a-raw-nul-byte",
+        "libsugar::ffi",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/libsugar/src/wp.rs",
+        824,
+        "not-mine",
+        "non-atomic-non-and-formula-shape-carries-no-result-equation-callers-refuse-on-none",
+        "libsugar::wp",
+        NOT_MINE_RETIREMENT
+    ),
 ];
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -781,6 +933,7 @@ fn collect_silent_drop_frontier(root: &Path) -> Result<Report, String> {
         root.join("implementations/rust/sugar-walk/src"),
         root.join("implementations/rust/sugar-lift/src"),
         root.join("implementations/rust/sugar-lift-contracts/src"),
+        root.join("implementations/rust/libsugar/src"),
     ];
     let mut offenders = Vec::new();
     for source_root in source_roots {
@@ -818,6 +971,7 @@ fn collect_sugar_audit_sanctions(root: &Path) -> Result<Vec<ObservedSanction>, S
         root.join("implementations/rust/sugar-walk/src"),
         root.join("implementations/rust/sugar-lift/src"),
         root.join("implementations/rust/sugar-lift-contracts/src"),
+        root.join("implementations/rust/libsugar/src"),
     ];
     let mut sanctions = Vec::new();
     for source_root in source_roots {

@@ -821,6 +821,7 @@ pub fn find_result_equation(formula: &IrFormula, var_name: &str) -> Option<IrTer
         IrFormula::And { operands } => operands
             .iter()
             .find_map(|f| find_result_equation(f, var_name)),
+        // sugar-audit: not-mine(non-atomic-non-and-formula-shape-carries-no-result-equation-callers-refuse-on-none)
         _ => None,
     }
 }
