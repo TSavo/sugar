@@ -35,7 +35,7 @@ mod state_conformance {
         LinkerContract {
             name: name.to_string(),
             kit: kit.to_string(),
-            contract_cid: cid.to_string(),
+            contract_cid: cid.into(),
             pre_json: None,
             post_json: None,
             ..Default::default()
@@ -147,10 +147,10 @@ mod state_conformance {
         );
 
         // projectStatus (R7): all CID fields present and have blake3-512: prefix.
-        assert!(out1.link_bundle_cid.starts_with("blake3-512:"));
-        assert!(out1.contract_set_cid.starts_with("blake3-512:"));
-        assert!(out1.call_edge_set_cid.starts_with("blake3-512:"));
-        assert!(out1.bridge_set_cid.starts_with("blake3-512:"));
+        assert!(out1.link_bundle_cid.as_str().starts_with("blake3-512:"));
+        assert!(out1.contract_set_cid.as_str().starts_with("blake3-512:"));
+        assert!(out1.call_edge_set_cid.as_str().starts_with("blake3-512:"));
+        assert!(out1.bridge_set_cid.as_str().starts_with("blake3-512:"));
 
         // flushCache (R8): after flush the next link produces identical output.
         // (Flush just means re-computing from cold: same inputs => same output.)

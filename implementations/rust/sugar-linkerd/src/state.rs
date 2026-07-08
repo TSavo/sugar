@@ -246,8 +246,8 @@ impl ProjectState {
 
         // Cache under the CID key.
         let key: CacheKey = (
-            output.contract_set_cid.clone(),
-            output.call_edge_set_cid.clone(),
+            output.contract_set_cid.as_str().to_string(),
+            output.call_edge_set_cid.as_str().to_string(),
         );
         self.cache.insert(key, output.clone());
         self.last_output = Some(output);
@@ -382,7 +382,7 @@ mod tests {
         LinkerContract {
             name: name.to_string(),
             kit: kit.to_string(),
-            contract_cid: cid.to_string(),
+            contract_cid: cid.into(),
             pre_json: None,
             post_json: None,
             ..Default::default()
@@ -398,7 +398,7 @@ mod tests {
             "blake3-512:aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001",
         )];
         let output = state.update_and_link("rust-kit", "/tmp/foo.rs", contracts, vec![]);
-        assert!(output.link_bundle_cid.starts_with("blake3-512:"));
+        assert!(output.link_bundle_cid.as_str().starts_with("blake3-512:"));
     }
 
     #[test]
@@ -498,7 +498,8 @@ mod tests {
         let original_cid = state
             .update_and_link("go-kit", "/tmp/baz.go", contracts, vec![])
             .link_bundle_cid
-            .clone();
+            .as_str()
+            .to_string();
 
         let bytes = state.to_snapshot_bytes();
         let restored = ProjectState::from_snapshot_bytes(&bytes).expect("restore");

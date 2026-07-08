@@ -169,6 +169,61 @@ impl<'de> Deserialize<'de> for Symbol {
     }
 }
 
+/// A content-addressed identifier — the `"blake3-512:<hex>"` string, as a type.
+///
+/// Replaces the bare `String` that stood for a CID on every linker boundary:
+/// [`LinkerContract::contract_cid`], the two [`LinkerCallEdge`] endpoints, and
+/// the four [`LinkerOutput`] set-CIDs. It carries no derivation logic — the CID
+/// is still computed as a `String` inside the derivation core and wrapped into a
+/// `Cid` only at the [`LinkerOutput`] boundary — its job is to make "this string
+/// is a CID" unforgeable at the type level so a raw symbol, kit name, or locus
+/// string cannot land in a CID slot.
+///
+/// ## Wire byte-identity
+///
+/// `#[serde(transparent)]` means a `Cid` serializes to / deserializes from the
+/// bare `"blake3-512:<hex>"` JSON string it replaced — no wrapper object, no key.
+/// Every `contractCid` / `sourceContractCid` / `targetContractCid` /
+/// `contractSetCid` / `callEdgeSetCid` / `bridgeSetCid` / `linkBundleCid` on the
+/// wire (and thus every set-CID and `linkBundleCid` hash) is byte-for-byte
+/// preserved. `Ord` is the inner-string order, so sorting call edges by
+/// `source_contract_cid` produces the identical deterministic order the `String`
+/// field did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Cid(String);
+
+impl Cid {
+    /// Borrow the underlying `"blake3-512:<hex>"` string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Cid {
+    fn from(s: String) -> Self {
+        Cid(s)
+    }
+}
+
+impl From<&str> for Cid {
+    fn from(s: &str) -> Self {
+        Cid(s.to_string())
+    }
+}
+
+impl std::fmt::Display for Cid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for Cid {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 /// The formals / sorts / EUF-coordinate triple a contract *exports* or a call
 /// site *imports* — one type in two roles.
 ///
@@ -236,8 +291,10 @@ pub struct LinkerContract {
     pub name: String,
     /// Kit identifier, e.g. `"rust-kit"`, `"go-kit"`.
     pub kit: String,
-    /// Content-addressed contract CID, `blake3-512:<hex>`.
-    pub contract_cid: String,
+    /// Content-addressed contract CID, `blake3-512:<hex>`, as a typed [`Cid`].
+    /// `#[serde(transparent)]` keeps the wire value the bare CID string, so
+    /// contract-set CIDs and snapshot bytes are byte-for-byte preserved.
+    pub contract_cid: Cid,
     /// Pre-condition formula as a strongly-typed [`IrFormula`] (ProofIR
     /// formula). `None` if the function has no pre-condition annotation.
     /// Retyped from `serde_json::Value` in the formula-typeify seam: the
@@ -290,11 +347,13 @@ impl LinkerContract {
 /// `"<kit>:<name>"` string for linker resolution.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LinkerCallEdge {
-    /// CID of the calling function's contract.
-    pub source_contract_cid: String,
+    /// CID of the calling function's contract, as a typed [`Cid`].
+    pub source_contract_cid: Cid,
     /// CID of the callee's contract if already known (same-kit call), or `None`
-    /// for cross-kit calls where the linker must resolve `target_symbol`.
-    pub target_contract_cid: Option<String>,
+    /// for cross-kit calls where the linker must resolve `target_symbol`. The
+    /// `Option` is the *unbound* null state (see [`BoundContractCid`]); when
+    /// present it is a typed [`Cid`] that serializes to the bare CID string.
+    pub target_contract_cid: Option<Cid>,
     /// Typed symbol for cross-kit resolution, e.g. `"rust-kit:process"`. Its
     /// `Ord` is the resolution join key; it serializes to / from the exact
     /// `"<kit>:<name>"` wire string (see [`Symbol`]).
@@ -501,14 +560,14 @@ pub struct LinkerInputs {
 /// The scalar CID fields are extracted at the top level for convenience.
 #[derive(Debug, Clone)]
 pub struct LinkerOutput {
-    /// `blake3-512` CID of the sorted contract set.
-    pub contract_set_cid: String,
-    /// `blake3-512` CID of the sorted call-edge set.
-    pub call_edge_set_cid: String,
-    /// `blake3-512` CID of the derived bridge set.
-    pub bridge_set_cid: String,
-    /// `blake3-512` CID of the full link bundle object.
-    pub link_bundle_cid: String,
+    /// `blake3-512` CID of the sorted contract set, as a typed [`Cid`].
+    pub contract_set_cid: Cid,
+    /// `blake3-512` CID of the sorted call-edge set, as a typed [`Cid`].
+    pub call_edge_set_cid: Cid,
+    /// `blake3-512` CID of the derived bridge set, as a typed [`Cid`].
+    pub bridge_set_cid: Cid,
+    /// `blake3-512` CID of the full link bundle object, as a typed [`Cid`].
+    pub link_bundle_cid: Cid,
     /// Per-edge linker errors (unresolved symbols, unprovable obligations).
     /// Each error carries a `file` field for per-file LSP diagnostic mapping.
     pub linker_errors: Vec<LinkerError>,
@@ -595,7 +654,7 @@ fn derive_link_bundle_inner(
     for c in &all_contracts {
         name_kit_index.insert(
             Symbol::qualified(c.kit.clone(), c.name.clone()),
-            c.contract_cid.clone(),
+            c.contract_cid.as_str().to_string(),
         );
         contracts_by_cid.insert(c.contract_cid.as_str(), c);
     }
@@ -603,7 +662,7 @@ fn derive_link_bundle_inner(
     // contractSetCid
     let mut all_contract_cids: Vec<String> = all_contracts
         .iter()
-        .map(|c| c.contract_cid.clone())
+        .map(|c| c.contract_cid.as_str().to_string())
         .collect();
     all_contract_cids.sort();
     let contract_set_cid = compute_set_cid_sorted(&all_contract_cids);
@@ -667,7 +726,7 @@ fn derive_link_bundle_inner(
         // changes call-edge / bridge CIDs — the emit-side follow-up). Only the
         // in-memory `obligation` field is new, and it is not serialized.
         let memento = derive_bridge(
-            &edge.source_contract_cid,
+            edge.source_contract_cid.as_str(),
             target_cid,
             &edge.call_site_locus_json,
             &edge.evidence_term_json,
@@ -679,7 +738,7 @@ fn derive_link_bundle_inner(
 
         if let Some(mut err) = discharge_obligation(
             &bridge.obligation,
-            &edge.source_contract_cid,
+            edge.source_contract_cid.as_str(),
             target_cid,
             &edge.target_symbol,
             registry,
@@ -780,11 +839,14 @@ fn derive_link_bundle_inner(
         );
     }
 
+    // Wrap the internally-derived CID strings into typed `Cid`s at the output
+    // boundary. Derivation stays `String` (the JCS/hash inputs above are
+    // byte-identical); only the public field type strengthens.
     LinkerOutput {
-        contract_set_cid,
-        call_edge_set_cid,
-        bridge_set_cid,
-        link_bundle_cid,
+        contract_set_cid: contract_set_cid.into(),
+        call_edge_set_cid: call_edge_set_cid.into(),
+        bridge_set_cid: bridge_set_cid.into(),
+        link_bundle_cid: link_bundle_cid.into(),
         linker_errors: linker_errors_out,
         bundle_json,
     }
@@ -815,7 +877,7 @@ impl LinkerCallEdge {
     /// symbol-only when the wire payload predates signatures).
     fn edge_target(&self) -> EdgeTarget<'_> {
         match &self.target_contract_cid {
-            Some(cid) => EdgeTarget::Bound(cid),
+            Some(cid) => EdgeTarget::Bound(cid.as_str()),
             None => EdgeTarget::Unbound(self.import_signature.clone().unwrap_or_else(|| {
                 ImportSignature {
                     symbol: self.target_symbol.clone(),
@@ -849,7 +911,7 @@ fn bind(
     let undefined = || LinkerError {
         kind: LinkerErrorKind::UnresolvedSymbol,
         target_symbol: edge.target_symbol.to_wire(),
-        source_contract_cid: edge.source_contract_cid.clone(),
+        source_contract_cid: edge.source_contract_cid.as_str().to_string(),
         reason: format!(
             "targetSymbol `{}` did not resolve to any contract in the union",
             edge.target_symbol
@@ -880,7 +942,7 @@ fn bind(
             return Err(LinkerError {
                 kind: LinkerErrorKind::SignatureMismatch,
                 target_symbol: edge.target_symbol.to_wire(),
-                source_contract_cid: edge.source_contract_cid.clone(),
+                source_contract_cid: edge.source_contract_cid.as_str().to_string(),
                 reason: format!(
                     "import signature for `{}` does not match contract {}: {reason}",
                     edge.target_symbol, cid
@@ -1333,6 +1395,50 @@ mod tests {
         }
     }
 
+    /// BYTE-IDENTITY GATE for the `Cid` seam. A `Cid` (`#[serde(transparent)]`)
+    /// round-trips every CID wire string byte-for-byte as the bare JSON string it
+    /// replaced — standalone, inside `Option` (the `None -> null` / `Some -> string`
+    /// endpoint states), and flattened inside a `LinkerContract`/`LinkerCallEdge`
+    /// where the `contractCid` / `sourceContractCid` / `targetContractCid` keys
+    /// carry the raw CID with no wrapper object. If the newtype ever gained a
+    /// wrapper, this pins the drift rather than letting a set-CID silently shift.
+    #[test]
+    fn cid_wire_is_byte_identical_roundtrip() {
+        // Standalone: a `Cid` serializes to / from the bare CID string literal.
+        for wire in [
+            r#""blake3-512:aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001""#,
+            r#""blake3-512:0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000""#,
+        ] {
+            let cid: Cid = serde_json::from_str(wire).expect("Cid must parse from bare string");
+            let back = serde_json::to_string(&cid).expect("Cid serializes");
+            assert_eq!(back, wire, "Cid serde round-trip must be byte-identical on `{wire}`");
+        }
+
+        // Inside `Option`: both endpoint states are byte-identical to `Option<String>`.
+        let some_wire = r#""blake3-512:deadbeef""#;
+        let some: Option<Cid> = serde_json::from_str(some_wire).unwrap();
+        assert_eq!(serde_json::to_string(&some).unwrap(), some_wire);
+        let none: Option<Cid> = serde_json::from_str("null").unwrap();
+        assert_eq!(serde_json::to_string(&none).unwrap(), "null");
+
+        // Flattened in a `LinkerCallEdge`: `sourceContractCid` carries the raw CID
+        // string and `targetContractCid: null` stays a bare null, exactly as the
+        // pre-seam `String` / `Option<String>` fields serialized.
+        let edge = LinkerCallEdge {
+            source_contract_cid: "blake3-512:aaaa".into(),
+            target_contract_cid: None,
+            target_symbol: "rust-kit:process".into(),
+            ..Default::default()
+        };
+        let v = serde_json::to_value(&edge).unwrap();
+        assert_eq!(v["source_contract_cid"], serde_json::json!("blake3-512:aaaa"));
+        assert!(v["target_contract_cid"].is_null());
+        // And a round-trip through the struct reproduces the typed value.
+        let back: LinkerCallEdge = serde_json::from_value(v).unwrap();
+        assert_eq!(back.source_contract_cid.as_str(), "blake3-512:aaaa");
+        assert!(back.target_contract_cid.is_none());
+    }
+
     /// Unqualified / empty-part symbols resolve to nothing, exactly as the old
     /// `resolve_target_symbol` `find(':')` + non-empty guard did: they key no
     /// contract-derived entry in the `Symbol`-keyed index.
@@ -1523,7 +1629,7 @@ mod tests {
             output.linker_errors[0].file.as_deref(),
             Some("examples/polyglot-rust-go/go-caller/caller_fail.go")
         );
-        assert!(output.link_bundle_cid.starts_with("blake3-512:"));
+        assert!(output.link_bundle_cid.as_str().starts_with("blake3-512:"));
 
         eprintln!("failure-case linkBundleCid = {}", output.link_bundle_cid);
     }
@@ -1536,7 +1642,7 @@ mod tests {
         });
 
         assert!(output.linker_errors.is_empty());
-        assert!(output.link_bundle_cid.starts_with("blake3-512:"));
+        assert!(output.link_bundle_cid.as_str().starts_with("blake3-512:"));
 
         eprintln!("success-case linkBundleCid = {}", output.link_bundle_cid);
     }
@@ -1579,12 +1685,12 @@ mod tests {
         });
 
         assert_eq!(
-            fail_out.link_bundle_cid,
+            fail_out.link_bundle_cid.as_str(),
             "blake3-512:a0d04917ab46f58662b4f497a779cab8c2814df0bb40c8df0cb1b6abfe1eaabe7500f638249d423e4d74648add1ce5d47fd9502cd5481a9012807bba50aec584",
             "failure-case linkBundleCid must match baseline from PR #124 smoke test"
         );
         assert_eq!(
-            ok_out.link_bundle_cid,
+            ok_out.link_bundle_cid.as_str(),
             "blake3-512:31fab69f197f4b279594972e35de7844f954a98ddce44b35edd14b77f53bd2ddb8ce95511bbef00f15476cc2f75f998ac4e419e5fe2c2162c008ba1c7c925131",
             "success-case linkBundleCid must match baseline from PR #124 smoke test"
         );
@@ -1698,7 +1804,7 @@ mod tests {
         let process = make_process_contract();
         name_kit_index.insert(
             Symbol::qualified("rust-kit", "process"),
-            process.contract_cid.clone(),
+            process.contract_cid.as_str().to_string(),
         );
         let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();
         contracts_by_cid.insert(process.contract_cid.as_str(), &process);
@@ -1708,7 +1814,7 @@ mod tests {
         let bound = bind(&edge, &name_kit_index, &contracts_by_cid)
             .expect("resolvable edge binds to a contract");
         // The minted CID is exactly the resolved contract's — never null.
-        assert_eq!(bound.as_str(), process.contract_cid);
+        assert_eq!(bound.as_str(), process.contract_cid.as_str());
         assert!(!bound.as_str().is_empty());
     }
 }

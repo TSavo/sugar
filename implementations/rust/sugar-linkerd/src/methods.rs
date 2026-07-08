@@ -1207,7 +1207,7 @@ fn parse_declaration_to_contract(decl: &Json, kit_label: &str) -> Option<LinkerC
     Some(LinkerContract {
         name,
         kit: kit_label.to_string(),
-        contract_cid,
+        contract_cid: contract_cid.into(),
         pre_json,
         post_json,
         ..Default::default()
@@ -1280,8 +1280,8 @@ fn parse_call_edge(edge: &Json) -> Option<LinkerCallEdge> {
     let evidence = edge.get("evidenceTerm").cloned().unwrap_or(Json::Null);
 
     Some(LinkerCallEdge {
-        source_contract_cid: source_cid,
-        target_contract_cid: target_cid,
+        source_contract_cid: source_cid.into(),
+        target_contract_cid: target_cid.map(Into::into),
         // `target_symbol` is the typed `Symbol` now; parse the wire string into
         // it (byte-identical `<kit>:<name>` round-trip).
         target_symbol: target_symbol.into(),
@@ -1416,7 +1416,7 @@ async fn lift_rust_source(
             contracts.push(LinkerContract {
                 name: decl.name.clone(),
                 kit: "rust-kit".into(),
-                contract_cid: cid,
+                contract_cid: cid.into(),
                 pre_json,
                 post_json,
                 ..Default::default()
@@ -1427,15 +1427,15 @@ async fn lift_rust_source(
         // Build name->cid index from this file's contracts for same-file resolution.
         let name_to_cid: std::collections::BTreeMap<String, String> = contracts
             .iter()
-            .map(|c| (c.name.clone(), c.contract_cid.clone()))
+            .map(|c| (c.name.clone(), c.contract_cid.as_str().to_string()))
             .collect();
 
         let mut call_edges: Vec<LinkerEdge> = Vec::new();
         for edge in &report.call_edges {
             let target_cid = name_to_cid.get(&edge.target_symbol).cloned();
             call_edges.push(LinkerEdge {
-                source_contract_cid: edge.source_contract_cid.clone(),
-                target_contract_cid: target_cid,
+                source_contract_cid: edge.source_contract_cid.clone().into(),
+                target_contract_cid: target_cid.map(Into::into),
                 target_symbol: edge.target_symbol.clone().into(),
                 call_site_locus_json: serde_json::json!({
                     "file": file_for_locus,
