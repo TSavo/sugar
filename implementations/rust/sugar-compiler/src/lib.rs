@@ -54,18 +54,22 @@ pub fn resolve_proof_signer(
     if let Some((cid, seed)) = authority {
         (cid, seed)
     } else {
-        (ed25519_pubkey_string(&default_signer_seed), default_signer_seed)
+        (
+            ed25519_pubkey_string(&default_signer_seed),
+            default_signer_seed,
+        )
     }
 }
 
 /// Hand-sign an arbitrary message with an ed25519 seed, returning
 /// `(signer_pubkey_string, signature_string)`.
 ///
-/// This is the single sign path both `resolve_proof_signer`'s callers and
-/// any ad hoc hand-rolled-signature `json!` site (e.g. `sugar-cli`'s
-/// `mint_toolchain_output_witness_decl`, originally `cmd_mint.rs:2068-2069`)
-/// must route through, so no second, drifted signing implementation grows
-/// elsewhere.
+/// The single sign path for the MINT pipeline: both `seal_proof_graph` and
+/// the formerly hand-rolled `json!` site in `sugar-cli`'s
+/// `mint_toolchain_output_witness_decl` (originally `cmd_mint.rs:2068-2069`)
+/// route through here. Other sugar-cli sign sites (report_witness,
+/// cmd_verify, witness_verify) are NOT yet consolidated -- they move in the
+/// later verify/report seams of the compiler-shape plan.
 pub fn hand_sign(seed: &Ed25519Seed, message: &[u8]) -> (String, String) {
     let signer = ed25519_pubkey_string(seed);
     let signature = ed25519_sign_string(seed, message);
