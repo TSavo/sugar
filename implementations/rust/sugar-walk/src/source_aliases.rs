@@ -175,15 +175,18 @@ pub fn rust_type_to_sort_cid(
     } else if let Some(stripped) = t.strip_prefix("Result<") {
         let mut depth = 0i32;
         let mut end = stripped.len();
+        // Walk the `Result<...>` payload to the first top-level comma (the
+        // Ok/Err boundary), tracking angle-bracket depth. Written as if/else so
+        // "any other char, keep scanning" is an explicit no-op rather than a
+        // silent wildcard arm.
         for (i, ch) in stripped.chars().enumerate() {
-            match ch {
-                '<' => depth += 1,
-                '>' => depth -= 1,
-                ',' if depth == 0 => {
-                    end = i;
-                    break;
-                }
-                _ => {}
+            if ch == '<' {
+                depth += 1;
+            } else if ch == '>' {
+                depth -= 1;
+            } else if ch == ',' && depth == 0 {
+                end = i;
+                break;
             }
         }
         stripped[..end].trim()
@@ -207,7 +210,13 @@ pub fn rust_type_to_sort_cid(
     }
 
     if let Some(rest) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        let inner_src = rest.split(';').next().unwrap_or(rest).trim();
+        // `split` always yields at least one segment, so `next()` is Some;
+        // the expect documents that invariant instead of a silent default.
+        let inner_src = rest
+            .split(';')
+            .next()
+            .expect("split always yields at least one segment")
+            .trim();
         if inner_src == "u8" {
             if let Some(entry) = aliases.get("[u8]") {
                 return resolve_alias_entry(entry, &[], aliases, expansions);

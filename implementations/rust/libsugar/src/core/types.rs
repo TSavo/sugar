@@ -37,7 +37,13 @@ impl Cid {
         Ok(Self(value))
     }
 
-    pub(crate) fn from_hash_output(value: String) -> Self {
+    /// Construct a CID from an already-hashed BLAKE3-512 value.
+    ///
+    /// Widened from `pub(crate)` to `pub` for #evict-1-bind: `bind.rs`
+    /// relocated to `sugar-walk` still needs this to mint CIDs from a
+    /// `blake3_512_of` digest. Behavior is unchanged (same debug-assert,
+    /// same construction); only accessibility grew.
+    pub fn from_hash_output(value: String) -> Self {
         debug_assert!(Self::parse(value.clone()).is_ok());
         Self(value)
     }
@@ -1865,7 +1871,12 @@ pub(crate) fn any_sort() -> Sort {
     }
 }
 
-pub(crate) fn memento_from_parts(
+/// Build a `Contract` (`FunctionContractMemento`) from its parts.
+///
+/// Widened from `pub(crate)` to `pub` for #evict-1-bind: `bind.rs`
+/// relocated to `sugar-walk` calls this to materialize the bind-result
+/// response contract. Behavior is unchanged; only accessibility grew.
+pub fn memento_from_parts(
     fn_name: String,
     formals: Vec<String>,
     formal_sorts: Vec<Sort>,

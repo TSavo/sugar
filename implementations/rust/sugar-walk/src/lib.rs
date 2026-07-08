@@ -11,6 +11,7 @@
 // Remaining growth is incremental signature and memento coverage for more
 // Rust syntax, library contracts, and solver-discharged opacity sites.
 
+pub mod bind;
 pub mod canonical;
 pub mod chain;
 pub mod contract;
@@ -31,6 +32,13 @@ pub mod type_decl;
 pub mod walk;
 pub mod wp;
 
+pub use bind::{
+    bind_result_payload, bind_term_document, concept_bind_result_cid, grammar_op_cid,
+    named_term_document_cid, named_term_document_from_bind_payload,
+    strip_realize_sidecar_from_lift_term, BindContractWitness, BindError, BindKit, BindLiftEntry,
+    BindOptions, CandidateCluster, CandidateClusterManifest, NamedTerm, NamedTermDocument,
+    NamedWitness,
+};
 pub use canonical::{
     cid_of_value, formula_to_canonical, jcs_bytes_of_value, serde_to_canonical, term_to_canonical,
 };
