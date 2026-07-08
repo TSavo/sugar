@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use sugar_ir_types::CompositionBoundaryMemento;
 
 use crate::component_plan::PlannedLiftManifest;
-use crate::kit_path::{
+use sugar_compiler::kit_path::{
     execute_path, KitRegistry, LiftKit, LiftPluginKit, LiftPluginKitError, PathExecutionError,
 };
 

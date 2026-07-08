@@ -1,0 +1,5 @@
+error[E0277]: the trait bound `sugar_compiler::kit::Kit: Default` is not satisfied
+ --> tests/kit_unforgeable_fail/no_default.rs:3:42
+  |
+3 |     let _kit: sugar_compiler::kit::Kit = Default::default();
+  |                                          ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `sugar_compiler::kit::Kit`

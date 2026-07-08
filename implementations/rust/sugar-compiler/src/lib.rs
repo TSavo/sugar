@@ -16,6 +16,17 @@
 
 use std::collections::BTreeMap;
 
+/// The kit rendezvous/dispatch engine (`KitRegistry`, `execute_path`,
+/// `PathAlgebra`, `LiftKit`, the resident child-process pool). Moved from
+/// `sugar-cli/src/kit_path/` in SEAM 3b: its imports (`sugar-walk`, which
+/// itself depends on `libsugar`) forbid a home in `libsugar` -- that would
+/// be a literal Cargo cycle (`libsugar -> sugar-walk -> libsugar`), not just
+/// a guard violation. `sugar-compiler` is the legal home the imports force.
+pub mod kit_path;
+
+/// The unforgeable `Kit` frontend handle. See `kit::Kit::rendezvous`.
+pub mod kit;
+
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed,
     ProofEnvelopeInput, ProofGraph,

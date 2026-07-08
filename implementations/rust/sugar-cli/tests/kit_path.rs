@@ -9,7 +9,7 @@ use libsugar::core::{
     address, ConformanceDeclaration, Dialect, DomainKind, HashMapInputCatalog, Input, Kit, Path,
     PathAlgebra, Term, Verb,
 };
-use sugar_cli::kit_path::{execute_path, KitRegistry, LiftKit, LiftPluginKit};
+use sugar_compiler::kit_path::{execute_path, KitRegistry, LiftKit, LiftPluginKit};
 use sugar_ir_types::Sort;
 
 #[test]

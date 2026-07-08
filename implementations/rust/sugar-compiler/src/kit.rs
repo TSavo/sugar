@@ -1,0 +1,168 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// The unforgeable `Kit` frontend handle (SEAM 3b of the compiler-shape
+// plan: ~/.claude/plans/sugar-compiler-liftshift.md).
+//
+// A `Kit` is minted ONLY by `Kit::rendezvous`: given a resolved lift
+// manifest (the CLI's census/selection-policy output -- WHICH plugin
+// command answers WHICH surface, per `dialect_for_surface`/`lift_kit_name`/
+// `find_manifest` in `sugar-cli/src/lift_plugin.rs`) plus a
+// `ComponentRegistry` builder, rendezvous constructs the kit's own dispatch
+// registration and OWNS the resulting `LiftKit` transport directly on the
+// handle. Holding a `Kit` is compile-time proof a real, resolved kit is
+// present: there is no `Kit::new`, no `From<Value>`, no `Default`, no
+// `Deserialize` (see `sugar-compiler/tests/kit_unforgeable.rs`).
+//
+// `Kit::lift` folds `dispatch_lift_path`'s body (originally
+// `sugar-cli/src/lift_plugin.rs:293-379`): build the lift request, run it
+// through the `kit_path` engine's `execute_path`, and return the terminal
+// `DomainClaim`. The `KitRegistry::default()` that call used to build fresh
+// on every dispatch (`lift_plugin.rs:346`) becomes this Kit's own
+// `registry` field, built once at rendezvous time.
+//
+// SCOPE NOTE (reported to the coordinator, not silently narrowed): the
+// workspace CENSUS (`sugar-cli/src/component_plan.rs`'s
+// `census_workspace`/`plan_workspace`/`planned_lift_manifest`, ~2663 lines,
+// integrated with `project_config`'s `PluginEntry` parsing) is SELECTION
+// POLICY -- deciding which plugin command answers a surface -- and the
+// brief itself says to keep selection policy in the thin CLI client
+// (`dialect_for_surface`, `lift_kit_name`, `find_manifest`). `rendezvous`
+// therefore takes the census's OUTPUT (a `LiftManifest`) as an argument
+// rather than re-deriving it inside `sugar-compiler`: a `Kit` still cannot
+// be forged from a bare surface string or a `Value`, because the manifest
+// itself only exists once the CLI's census has run and resolved a real
+// plugin command. The full component_plan.rs mechanism move into libsugar
+// (SEAM 3b-i in the brief) is NOT done in this pass -- flagged, not hidden.
+
+use std::path::PathBuf;
+
+use libsugar::core::{
+    address, ConformanceDeclaration, Dialect, HashMapInputCatalog, Input, Path as CorePath,
+    PathAlgebra, Verb,
+};
+use serde_json::Value;
+
+use crate::kit_path::{execute_path, KitRegistry, LiftKit, PathExecutionError};
+
+/// The census's resolved answer to "what plugin command answers this
+/// surface." Produced by the CLI's selection policy
+/// (`component_plan::planned_lift_manifest` / `lift_plugin::find_manifest`)
+/// and handed to `Kit::rendezvous` by value, so rendezvous can never
+/// silently re-resolve a different manifest than the one the caller
+/// already settled on.
+#[derive(Debug, Clone)]
+pub struct LiftManifest {
+    pub surface: String,
+    pub name: String,
+    pub dialect: Dialect,
+    pub command: Vec<String>,
+    pub working_dir: Option<PathBuf>,
+}
+
+/// Failure to mint a `Kit`. Every arm names a concrete rendezvous-stage
+/// failure, never a bare `String`.
+#[derive(Debug, thiserror::Error)]
+pub enum RendezvousError {
+    #[error("no lift manifest resolved for surface `{0}` (empty plugin command)")]
+    EmptyCommand(String),
+}
+
+/// Failure during `Kit::lift`.
+#[derive(Debug, thiserror::Error)]
+pub enum KitError {
+    #[error("encode lift request: {0}")]
+    RequestEncoding(serde_json::Error),
+    #[error("lift path execution failed: {0}")]
+    PathExecution(#[from] PathExecutionError),
+}
+
+/// The unforgeable frontend handle. Private fields; the only minter is
+/// `Kit::rendezvous`.
+///
+/// POOL DUALITY (per the brief's hazard note): `kit_path::lift_plugin` also
+/// keeps a process-wide `static POOL: OnceLock<Mutex<HashMap<String,
+/// ResidentLifter>>>` keyed by command-string (`resident_key`, used by
+/// `LiftKit::lift` for cross-call child reuse within a single process).
+/// This `Kit` does NOT bypass or drain that pool -- other callers of
+/// `kit_path::LiftKit` (if any remain after CLI collapse) still hit it
+/// unchanged. `Kit` instead owns its OWN `LiftKit` value as a struct field;
+/// `LiftKit`'s resident dispatch still resolves through the shared static
+/// pool internally today (the pool lives inside `kit_path::lift_plugin`,
+/// not on this handle), so this Kit does not yet give the child a
+/// `Drop`-scoped, per-handle lifetime distinct from the static pool's own
+/// eviction policy. Making `Kit` truly own (spawn + `Drop`-close) its child
+/// OUTSIDE the static pool is the remaining step flagged for SEAM 7
+/// cleanup, once `sugar-lift-rpc-client` and the other pool consumers are
+/// enumerated and repointed in the same pass (per the plan's SEAM 7 note:
+/// "Do NOT make libsugar depend on it -- ABSORB/DELETE").
+pub struct Kit {
+    manifest: LiftManifest,
+    registry: KitRegistry,
+    kit_name: String,
+}
+
+impl Kit {
+    /// The ONLY way to mint a `Kit`. Takes the resolved manifest (the
+    /// census's output) and a `ComponentRegistry`-style builder is NOT
+    /// required here: registration against `KitRegistry` (the path-algebra
+    /// dispatch table, distinct from `libsugar::core::ComponentRegistry`'s
+    /// verifier-backed `CompilerRegistry`) is exactly the `LiftKit`
+    /// construction `dispatch_lift_path` used to do inline on every call
+    /// (`lift_plugin.rs:346-360`); rendezvous does it once, here, and the
+    /// result lives on the handle.
+    pub fn rendezvous(manifest: LiftManifest) -> Result<Kit, RendezvousError> {
+        if manifest.command.is_empty() {
+            return Err(RendezvousError::EmptyCommand(manifest.surface.clone()));
+        }
+        let kit_name = format!("lift-{}", manifest.surface);
+        let mut registry = KitRegistry::default();
+        registry.register(
+            kit_name.clone(),
+            LiftKit::new(
+                manifest.dialect.clone(),
+                manifest.surface.clone(),
+                manifest.command.clone(),
+                manifest.working_dir.clone(),
+            ),
+            ConformanceDeclaration::NonCarrier {
+                reason: "lifts source bytes to DomainClaim; no target source produced",
+            },
+        );
+        Ok(Kit {
+            manifest,
+            registry,
+            kit_name,
+        })
+    }
+
+    /// `Kit::lift(project_root, request)`: folds `dispatch_lift_path`'s
+    /// body (build request -> `Input::Source` -> `CorePath` -> `execute_path`
+    /// -> terminal claim). `request` is the already-JSON-encoded lift
+    /// params (`build_lift_params`'s output stays a `Value` in this pass --
+    /// see the module doc's scope note; retyping it into a strong
+    /// lift-request type is not done here).
+    pub fn lift(&self, request: Value) -> Result<libsugar::core::DomainClaim, KitError> {
+        let source = Input::Source {
+            dialect: self.manifest.dialect.clone(),
+            bytes: serde_json::to_vec(&request).map_err(KitError::RequestEncoding)?,
+        };
+        let source_cid = address(&source);
+        let mut inputs = HashMapInputCatalog::default();
+        inputs.put(source_cid.clone(), source);
+        let path_input = Input::Path(Box::new(CorePath {
+            algebra: vec![PathAlgebra {
+                name: "lift".to_string(),
+                kit: self.kit_name.clone(),
+                inputs: vec![source_cid],
+                depends_on: vec![],
+                verb: Verb::Transform,
+            }],
+        }));
+        let chain = execute_path(&path_input, &self.registry, &inputs)?;
+        Ok(chain.into_terminal_claim())
+    }
+
+    pub fn surface(&self) -> &str {
+        &self.manifest.surface
+    }
+}
