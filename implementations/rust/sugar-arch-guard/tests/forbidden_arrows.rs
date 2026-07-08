@@ -29,7 +29,11 @@ use sugar_arch_guard::{closure, dependents_of, direct_graph};
 fn libsugar_closure_is_exactly_the_floor() {
     let graph = direct_graph();
     let reach = closure(&graph, "libsugar");
-    let allowed = ["sugar-canonicalizer", "sugar-proof-envelope", "sugar-ir-types"];
+    let allowed = [
+        "sugar-canonicalizer",
+        "sugar-proof-envelope",
+        "sugar-ir-types",
+    ];
     let violations: Vec<&String> = reach
         .iter()
         .filter(|c| !allowed.contains(&c.as_str()))
