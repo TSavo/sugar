@@ -15,6 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
+use libsugar::core::ComponentRegistry;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
@@ -390,8 +391,28 @@ pub(crate) fn planned_ir_compilers(project_root: &Path) -> Vec<PlannedIrCompiler
     plan_workspace(project_root, PlanIntent::Prove).ir_compilers
 }
 
-pub(crate) fn compiler_registry(project_root: &Path) -> CompilerRegistry {
-    let mut registry = sugar_verifier::compiler_registry::build(project_root);
+/// Verifier-backed [`ComponentRegistry`] implementation.
+///
+/// This is the concrete, injected implementation of the SEAM 3a inversion
+/// point defined in `libsugar::core::traits::ComponentRegistry`: it wraps
+/// `sugar_verifier::compiler_registry::build`, so the dependency on
+/// `sugar-verifier` lives here (in `sugar-cli`, above `libsugar`) rather
+/// than inside the census path calling the verifier crate directly.
+pub(crate) struct VerifierComponentRegistry;
+
+impl ComponentRegistry for VerifierComponentRegistry {
+    type Registry = CompilerRegistry;
+
+    fn build(&self, project_root: &Path) -> CompilerRegistry {
+        sugar_verifier::compiler_registry::build(project_root)
+    }
+}
+
+pub(crate) fn compiler_registry(
+    project_root: &Path,
+    registry_builder: &dyn ComponentRegistry<Registry = CompilerRegistry>,
+) -> CompilerRegistry {
+    let mut registry = registry_builder.build(project_root);
     register_planned_ir_compilers(
         &mut registry,
         project_root,
@@ -403,8 +424,9 @@ pub(crate) fn compiler_registry(project_root: &Path) -> CompilerRegistry {
 pub(crate) fn compiler_registry_from_plan(
     project_root: &Path,
     plan: &ComponentPlan,
+    registry_builder: &dyn ComponentRegistry<Registry = CompilerRegistry>,
 ) -> CompilerRegistry {
-    let mut registry = sugar_verifier::compiler_registry::build(project_root);
+    let mut registry = registry_builder.build(project_root);
     register_planned_ir_compilers(&mut registry, project_root, plan.ir_compilers.clone());
     registry
 }

@@ -423,8 +423,11 @@ pub fn run(args: VerifyArgs) -> u8 {
     if component_plan_options.allow_failed_components {
         emit_component_plan_warnings(&component_plan);
     }
-    let compiler_registry =
-        component_plan::compiler_registry_from_plan(&project_root, &component_plan);
+    let compiler_registry = component_plan::compiler_registry_from_plan(
+        &project_root,
+        &component_plan,
+        &component_plan::VerifierComponentRegistry,
+    );
 
     if !quiet && !json_out {
         let plan_label = match (&plan, plan_is_default) {
@@ -611,7 +614,11 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
         ..Default::default()
     };
-    let compilers = component_plan::compiler_registry_from_plan(project_root, &component_plan);
+    let compilers = component_plan::compiler_registry_from_plan(
+        project_root,
+        &component_plan,
+        &component_plan::VerifierComponentRegistry,
+    );
     let runner = Runner::new_with_compilers(cfg, compilers);
     let run_artifact = match runner.run_with_proof_run() {
         Ok(artifact) => artifact,

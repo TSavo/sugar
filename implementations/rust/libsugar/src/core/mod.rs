@@ -28,8 +28,8 @@ pub mod walks;
 pub use primitives::{address, compose, resolve, sign, verify_sig, ComposeError, SigningKey};
 pub use stubs::{CKit, FunctionContractDomain, NoopPortfolio, RustKit};
 pub use traits::{
-    Canonical, Catalog, CoreError, Domain, DomainError, HashMapCatalog, HashMapInputCatalog,
-    InputCatalog, Kit, KitError, Portfolio,
+    Canonical, Catalog, ComponentRegistry, CoreError, Domain, DomainError, HashMapCatalog,
+    HashMapInputCatalog, InputCatalog, Kit, KitError, Portfolio,
 };
 pub use types::{
     ArityShape, AritySlot, Attestation, Boundary, ChainIntegrityFailureWitness,

@@ -234,3 +234,28 @@ pub enum CoreError {
     #[error("link requires composable claims or a shared contract cid")]
     NoSharedContractLink,
 }
+
+/// SEAM 3a: inversion point for the census path's IR-compiler registry.
+///
+/// The concrete registry (`sugar_verifier::compiler_registry::build`) lives
+/// above `libsugar` in the compiler DAG (`verifier -> libsugar` is the
+/// allowed baseline edge; the reverse is the forbidden D4 cycle guarded by
+/// `sugar-arch-guard::libsugar_never_reaches_verifier_or_linker`). Rather
+/// than have the census path (`component_plan.rs`) call the verifier crate
+/// directly, it depends on this trait; the verifier-backed implementation is
+/// constructed above and injected in.
+///
+/// The registry's concrete type (`sugar_ir_compiler::registry::Registry`)
+/// is intentionally NOT named here: naming it would require `libsugar` to
+/// depend on `sugar-ir-compiler`, and this trait exists precisely so
+/// `libsugar` gains no new dependency to perform the inversion. The
+/// associated type lets each crate that implements this trait supply its
+/// own concrete registry type; `libsugar` only ever sees `Self::Registry`
+/// as an opaque, caller-chosen type.
+pub trait ComponentRegistry {
+    /// The concrete IR-compiler registry type this implementation builds.
+    type Registry;
+
+    /// Build a registry of IR compilers discovered for `project_root`.
+    fn build(&self, project_root: &std::path::Path) -> Self::Registry;
+}
