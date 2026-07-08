@@ -63,12 +63,9 @@ impl Default for ServerConfig {
     }
 }
 
-/// Compute the socket path for a given projectCid. Identical formula to
-/// The socket formula matches what sugar-walk::ra_daemon_client probes
-/// (`ra-oracle-<cid>.sock`) so a manually started oracle and (while it
-/// still exists) editor daemon do not collide on one socket namespace only by
-/// accident of a shared default -- callers key ordinarily by their own
-/// project_cid prefix (`ra_daemon_client` uses an `ra-`-prefixed cid).
+/// Compute the socket path for a given projectCid. The formula matches what
+/// sugar-walk::ra_daemon_client probes (`ra-oracle-<cid>.sock`), so an oracle
+/// started manually with defaults listens exactly where the client looks.
 pub fn default_socket_path(project_cid: &str) -> PathBuf {
     let base = std::env::var("XDG_RUNTIME_DIR")
         .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
@@ -77,8 +74,8 @@ pub fn default_socket_path(project_cid: &str) -> PathBuf {
         .join(format!("ra-oracle-{project_cid}.sock"))
 }
 
-/// Compute the snapshot path for a given projectCid. Identical formula to
-/// sugar-linkerd's `default_snapshot_path`.
+/// Compute the snapshot path for a given projectCid, under the oracle's own
+/// cache namespace (`.cache/sugar/ra-oracle/<cid>/snapshot.bin`).
 pub fn default_snapshot_path(project_cid: &str) -> PathBuf {
     let base = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| dirs_next_cache_home());
     PathBuf::from(base)
@@ -161,7 +158,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         std::fs::set_permissions(&config.socket_path, std::fs::Permissions::from_mode(0o600))?;
     }
 
-    info!("sugar-ra-oracle listening on {}", config.socket_path.display());
+    info!(
+        "sugar-ra-oracle listening on {}",
+        config.socket_path.display()
+    );
 
     let client_count = Arc::new(AtomicUsize::new(0));
     let shutdown_notify = Arc::new(Notify::new());
