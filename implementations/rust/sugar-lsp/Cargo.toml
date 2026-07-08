@@ -13,9 +13,23 @@ path = "src/main.rs"
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "io-std", "io-util", "process", "sync"] }
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "io-std", "io-util", "process", "sync", "time"] }
 tower-lsp = "0.20"
 toml = "0.8"
+# THE TERMINUS (lsp-links-engine lane): prove buffers IN-PROCESS by linking
+# the engine directly -- no daemon RPC, no subprocess solver. These are the
+# SAME crates sugar-linkerd/src/server.rs + methods.rs compose (never a
+# reimplementation): sugar-verifier owns the resident pool / consistency
+# index / solve door; sugar-cli's lib target owns the source-overlay scratch
+# mint (`cmd_mint::mint_project_scratch_proof`). sugar-linkerd itself is
+# never a dependency -- it ships no `[lib]` target and stays untouched.
+sugar-verifier = { path = "../sugar-verifier" }
+sugar-cli = { path = "../sugar-cli" }
+sugar-ir-compiler = { path = "../sugar-ir-compiler" }
+sugar-canonicalizer = { path = "../sugar-canonicalizer" }
+walkdir = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3.14"

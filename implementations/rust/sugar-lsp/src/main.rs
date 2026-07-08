@@ -45,6 +45,33 @@
 // The daemon is the `sugar-linkerd` binary (LSP+linker step 2).  All five
 // JSON-RPC methods (parseFile, getDiagnostics, projectStatus, flushCache,
 // shutdown) are defined in `protocol/specs/2026-05-04-linker-daemon-protocol.md`.
+//
+// ### In-process engine mode (opt-in, `--in-process`) -- THE TERMINUS
+//
+// `sugar-lsp --in-process` proves buffers IN-PROCESS by linking the engine
+// directly (`prove_engine.rs`): no daemon RPC, no subprocess solver. On
+// `initialize` the resident `ProveContext` (vendor-only base pool + solver
+// plan/registry + IR-compiler registry + consistency index) is built once
+// from the workspace root's `.sugar/imports`, mirroring
+// `sugar-linkerd::server::build_prove_context_for`'s construction exactly
+// (never an import -- that binary crate ships no `[lib]` target). On
+// `didOpen`/`didSave` (and `didChange`, debounced 250ms), the edited buffer
+// is minted as a SOURCE-OVERLAY scratch proof
+// (`sugar_cli::cmd_mint::mint_project_scratch_proof`) and solved against the
+// resident base index via THE ONE DOOR
+// (`sugar_verifier::consistency::verify_consistency_scoped_with_base_index`).
+// Non-discharged consistency rows become `publishDiagnostics` entries whose
+// message is the three-fact block (vendor fact / vendor universe / your
+// fact / conjoined / the fix), rendered by `fol_format.rs` (a port of
+// `editors/vscode-sugar/src/proveClient.ts`'s `formatDetail`/`prettyFol`).
+// Hover repeats the same block; `codeAction` offers the vendor-proven-value
+// Quick Fix (port of `extension.ts`'s `provenValueOf`/`SugarProveFixProvider`).
+//
+// This mode is mutually exclusive with per-plugin and daemon-client mode
+// (opted into by flag; the daemon and the VS Code extension stay UNTOUCHED
+// and continue to ride the existing paths).
+//
+// Usage: sugar-lsp --in-process [--config <path>]
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -62,8 +89,11 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 mod backend;
 mod config;
+mod fol_format;
 mod parser;
 mod plugin;
+mod prove_diagnostics;
+mod prove_engine;
 
 use backend::JsonRpcBackend;
 use config::LspConfig;
@@ -333,7 +363,6 @@ fn send_parse_file_to_daemon(
     Ok(diagnostics)
 }
 
-#[derive(Debug)]
 struct SugarLanguageServer {
     client: Client,
     /// The JSON-RPC verification backend.  `Some` in per-plugin mode; `None`
@@ -350,6 +379,27 @@ struct SugarLanguageServer {
     /// tasks can share the single persistent connection.  `None` until the
     /// first `did_open` / `did_change` event in daemon mode.
     daemon_stream: Arc<Mutex<Option<std::os::unix::net::UnixStream>>>,
+    /// THE TERMINUS: `--in-process` mode active. Mutually exclusive with
+    /// `daemon_socket`/per-plugin routing (see `update_document`'s dispatch).
+    in_process: bool,
+    /// Resident `ProveContext`, built once at `initialize` from the
+    /// workspace root and refreshed in place when `.sugar/imports` drifts.
+    /// `None` until `initialize` runs (or if the workspace root has no
+    /// resolvable project).
+    prove_ctx: Arc<Mutex<Option<Arc<prove_engine::ProveContext>>>>,
+    /// Last-known raw buffer text per uri, in-process mode only. Needed
+    /// because `code_action` has to find the `==` on the asserted line, and
+    /// `didSave` may omit the body (falls back to this cache).
+    raw_documents: Arc<Mutex<HashMap<Url, String>>>,
+    /// Per-uri stash of the last solve's row diagnostics, so `hover` and
+    /// `code_action` can serve the SAME three-fact message / proven-value
+    /// Quick Fix that `publish_diagnostics` just painted, without re-solving.
+    prove_diagnostics: Arc<Mutex<HashMap<Url, Vec<prove_diagnostics::RowDiag>>>>,
+    /// Monotonic per-uri edit counter for the `didChange` 250ms debounce: a
+    /// spawned debounce task solves only if its captured generation is still
+    /// the latest when the sleep completes, so a burst of keystrokes solves
+    /// once, not once per keystroke.
+    change_generation: Arc<Mutex<HashMap<Url, u64>>>,
 }
 
 #[tower_lsp::async_trait]
@@ -368,13 +418,47 @@ impl LanguageServer for SugarLanguageServer {
             })
             .unwrap_or_else(|| PathBuf::from("."));
 
-        // Initialize plugins from config
-        self.init_plugins(&root).await;
+        if self.in_process {
+            // THE TERMINUS: build the resident `ProveContext` once, in-process,
+            // the way `sugar-linkerd::server::build_prove_context_for` does
+            // (loads `.sugar/imports`, builds plan/registry/compilers, indexes
+            // the consistency candidates). Warm because the LSP process lives.
+            let build_root = root.clone();
+            let ctx = tokio::task::spawn_blocking(move || {
+                prove_engine::build_prove_context_for(&build_root)
+            })
+            .await;
+            match ctx {
+                Ok(ctx) => {
+                    let mut slot = self.prove_ctx.lock().await;
+                    *slot = Some(Arc::new(ctx));
+                }
+                Err(e) => {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!("in-process ProveContext build panicked: {e}"),
+                        )
+                        .await;
+                }
+            }
+        } else {
+            // Initialize plugins from config (per-plugin subprocess mode only;
+            // in-process and daemon-client modes route elsewhere).
+            self.init_plugins(&root).await;
+        }
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(TextDocumentSyncKind::FULL),
+                        save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                            include_text: Some(true),
+                        })),
+                        ..TextDocumentSyncOptions::default()
+                    },
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
@@ -418,11 +502,23 @@ impl LanguageServer for SugarLanguageServer {
         let uri = params.text_document.uri;
         let text = params.text_document.text;
         let lang_id = params.text_document.language_id;
+        if self.in_process {
+            self.in_process_open_or_save(uri, text).await;
+            return;
+        }
         self.update_document(uri, text, lang_id).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
+        if self.in_process {
+            // Full sync: take the last content change.
+            if let Some(change) = params.content_changes.last() {
+                self.in_process_debounced_change(uri, change.text.clone())
+                    .await;
+            }
+            return;
+        }
         let lang_id = self
             .documents
             .lock()
@@ -437,20 +533,61 @@ impl LanguageServer for SugarLanguageServer {
         }
     }
 
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        if !self.in_process {
+            return;
+        }
+        let uri = params.text_document.uri;
+        let text = match params.text {
+            Some(t) => t,
+            // The client may omit the body on save; fall back to the last
+            // buffer content we cached from didOpen/didChange.
+            None => match self.raw_documents.lock().await.get(&uri).cloned() {
+                Some(t) => t,
+                None => return,
+            },
+        };
+        self.in_process_open_or_save(uri, text).await;
+    }
+
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         {
             let mut docs = self.documents.lock().await;
             docs.remove(&uri);
         }
+        if self.in_process {
+            self.raw_documents.lock().await.remove(&uri);
+            self.prove_diagnostics.lock().await.remove(&uri);
+            self.change_generation.lock().await.remove(&uri);
+        }
         // Clear any published diagnostics for this file so the editor pane
-        // goes clean.  This applies to both per-plugin and daemon-client mode.
+        // goes clean.  This applies to per-plugin, daemon-client, and
+        // in-process mode alike.
         self.client.publish_diagnostics(uri, vec![], None).await;
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
+
+        if self.in_process {
+            let diags = self.prove_diagnostics.lock().await;
+            if let Some(rows) = diags.get(&uri) {
+                for row in rows {
+                    if is_in_range(position, row.range) {
+                        return Ok(Some(Hover {
+                            contents: HoverContents::Markup(MarkupContent {
+                                kind: MarkupKind::Markdown,
+                                value: format!("```\n{}\n```", row.message),
+                            }),
+                            range: Some(row.range),
+                        }));
+                    }
+                }
+            }
+            return Ok(None);
+        }
 
         let docs = self.documents.lock().await;
         let annotations = match docs.get(&uri) {
@@ -506,6 +643,65 @@ impl LanguageServer for SugarLanguageServer {
         let uri = params.text_document.uri;
         let range = params.range;
 
+        if self.in_process {
+            let mut actions = Vec::new();
+            let diags = self.prove_diagnostics.lock().await;
+            if let Some(rows) = diags.get(&uri) {
+                let raw = self.raw_documents.lock().await;
+                if let Some(text) = raw.get(&uri) {
+                    for row in rows {
+                        if !overlaps_range(range, row.range) {
+                            continue;
+                        }
+                        let Some(proven) = &row.proven_value else {
+                            continue;
+                        };
+                        let Some(line_text) = text.lines().nth(row.range.start.line as usize)
+                        else {
+                            continue;
+                        };
+                        // Replace everything after `==` (the asserted RHS) with
+                        // the proven value. Byte-index `find` is safe here: `==`
+                        // is ASCII, so the split point is a valid UTF-8 boundary
+                        // regardless of what precedes/follows it.
+                        let Some(eq) = line_text.find("==") else {
+                            continue;
+                        };
+                        let rhs_start_col = line_text[..eq + 2].chars().count() as u32;
+                        let rhs_end_col = line_text.chars().count() as u32;
+                        let mut changes = HashMap::new();
+                        changes.insert(
+                            uri.clone(),
+                            vec![TextEdit {
+                                range: Range {
+                                    start: Position {
+                                        line: row.range.start.line,
+                                        character: rhs_start_col,
+                                    },
+                                    end: Position {
+                                        line: row.range.start.line,
+                                        character: rhs_end_col,
+                                    },
+                                },
+                                new_text: format!(" {proven}"),
+                            }],
+                        );
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!("Replace with proven value: {proven}"),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            is_preferred: Some(true),
+                            edit: Some(WorkspaceEdit {
+                                changes: Some(changes),
+                                ..WorkspaceEdit::default()
+                            }),
+                            ..CodeAction::default()
+                        }));
+                    }
+                }
+            }
+            return Ok(Some(actions));
+        }
+
         let docs = self.documents.lock().await;
         let annotations = match docs.get(&uri) {
             Some(a) => a,
@@ -541,6 +737,63 @@ impl LanguageServer for SugarLanguageServer {
 }
 
 impl SugarLanguageServer {
+    /// `didOpen` / `didSave`: solve immediately, no debounce.
+    async fn in_process_open_or_save(&self, uri: Url, text: String) {
+        in_process_solve_and_publish(
+            &self.client,
+            &self.prove_ctx,
+            &self.raw_documents,
+            &self.prove_diagnostics,
+            uri,
+            text,
+        )
+        .await;
+    }
+
+    /// `didChange`: cache the buffer immediately (so a save/hover mid-debounce
+    /// sees the latest text), then solve after a 250ms debounce window --
+    /// only if no NEWER change has landed for this `uri` while we slept.
+    async fn in_process_debounced_change(&self, uri: Url, text: String) {
+        self.raw_documents
+            .lock()
+            .await
+            .insert(uri.clone(), text.clone());
+
+        let generation = {
+            let mut gens = self.change_generation.lock().await;
+            let next = gens.get(&uri).copied().unwrap_or(0) + 1;
+            gens.insert(uri.clone(), next);
+            next
+        };
+
+        let client = self.client.clone();
+        let prove_ctx = self.prove_ctx.clone();
+        let raw_documents = self.raw_documents.clone();
+        let prove_diagnostics = self.prove_diagnostics.clone();
+        let change_generation = self.change_generation.clone();
+        let uri_for_task = uri.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let still_latest = change_generation.lock().await.get(&uri_for_task).copied()
+                == Some(generation);
+            if !still_latest {
+                // A newer edit landed during the debounce window; that task
+                // (or a didSave) will solve instead.
+                return;
+            }
+            in_process_solve_and_publish(
+                &client,
+                &prove_ctx,
+                &raw_documents,
+                &prove_diagnostics,
+                uri_for_task,
+                text,
+            )
+            .await;
+        });
+    }
+
     async fn init_plugins(&self, project_root: &std::path::Path) {
         let mut plugins = self.plugins.lock().await;
         for lang in &self.config.language {
@@ -791,6 +1044,113 @@ fn overlaps_range(a: Range, b: Range) -> bool {
     a.start.line <= b.end.line && a.end.line >= b.start.line
 }
 
+/// Return the resident `ProveContext`, rebuilding it in place first if
+/// `.sugar/imports` has drifted since the last (re)build -- mirrors
+/// `sugar-linkerd::methods::handle_prove_consistency`'s coarse invalidation
+/// check. `None` means `initialize` never built one (no workspace root, or
+/// the build panicked). A rebuild failure keeps serving the stale-but-present
+/// context rather than regressing a working session, same as the daemon.
+async fn get_or_refresh_prove_ctx(
+    prove_ctx: &Arc<Mutex<Option<Arc<prove_engine::ProveContext>>>>,
+) -> Option<Arc<prove_engine::ProveContext>> {
+    let mut guard = prove_ctx.lock().await;
+    let current = guard.clone()?;
+    let imports_root = current.project_root.join(".sugar").join("imports");
+    let current_manifest = prove_engine::scan_proof_manifest(&imports_root);
+    if current_manifest == current.proof_manifest {
+        return Some(current);
+    }
+    let project_root = current.project_root.clone();
+    let rebuilt =
+        tokio::task::spawn_blocking(move || prove_engine::build_prove_context_for(&project_root))
+            .await;
+    match rebuilt {
+        Ok(ctx) => {
+            let arc = Arc::new(ctx);
+            *guard = Some(arc.clone());
+            Some(arc)
+        }
+        Err(_) => Some(current),
+    }
+}
+
+/// THE TERMINUS: solve one buffer in-process against the resident base index
+/// and publish diagnostics. Caches the raw buffer text (for `code_action`'s
+/// line lookup) and the rendered `RowDiag`s (for `hover`) keyed by `uri`.
+/// A free function (rather than a `&self` method) so it can be called both
+/// synchronously (`didOpen`/`didSave`) and from a spawned debounce task
+/// (`didChange`) without fighting the borrow checker over `&self`'s lifetime.
+async fn in_process_solve_and_publish(
+    client: &Client,
+    prove_ctx: &Arc<Mutex<Option<Arc<prove_engine::ProveContext>>>>,
+    raw_documents: &Arc<Mutex<HashMap<Url, String>>>,
+    prove_diagnostics: &Arc<Mutex<HashMap<Url, Vec<prove_diagnostics::RowDiag>>>>,
+    uri: Url,
+    text: String,
+) {
+    raw_documents.lock().await.insert(uri.clone(), text.clone());
+
+    let Some(ctx) = get_or_refresh_prove_ctx(prove_ctx).await else {
+        client
+            .log_message(
+                MessageType::WARNING,
+                "in-process mode: no resident ProveContext (initialize never built one)",
+            )
+            .await;
+        client.publish_diagnostics(uri, vec![], None).await;
+        return;
+    };
+
+    let file = PathBuf::from(uri.path());
+    let file_for_solve = file.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        prove_engine::solve_buffer(&ctx, &file_for_solve, &text)
+    })
+    .await;
+
+    let outcome = match outcome {
+        Ok(o) => o,
+        Err(e) => {
+            client
+                .log_message(MessageType::ERROR, format!("in-process solve panicked: {e}"))
+                .await;
+            return;
+        }
+    };
+
+    if let Some(reason) = &outcome.degraded_reason {
+        client
+            .log_message(
+                MessageType::INFO,
+                format!("in-process solve degraded: {reason}"),
+            )
+            .await;
+    }
+
+    let project_root = prove_ctx
+        .lock()
+        .await
+        .as_ref()
+        .map(|c| c.project_root.clone())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let row_diags = prove_diagnostics::build_row_diags(&outcome.rows, &file, &project_root);
+
+    let diagnostics: Vec<Diagnostic> = row_diags
+        .iter()
+        .map(|rd| Diagnostic {
+            range: rd.range,
+            severity: Some(DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("sugar.prove.unsatisfied".to_string())),
+            source: Some("sugar-prove".to_string()),
+            message: rd.message.clone(),
+            ..Diagnostic::default()
+        })
+        .collect();
+
+    prove_diagnostics.lock().await.insert(uri.clone(), row_diags);
+    client.publish_diagnostics(uri, diagnostics, None).await;
+}
+
 fn format_hover(ann: &Annotation) -> String {
     match &ann.kind {
         AnnotationKind::Implement { target_cid } => {
@@ -1036,6 +1396,10 @@ async fn main() {
     let mut config_path = ".sugar/config.toml".to_string();
     // CLI flag `--daemon-socket <path>` overrides config.server.daemon_socket.
     let mut daemon_socket_cli: Option<String> = None;
+    // THE TERMINUS: `--in-process` opts into proving buffers in-process
+    // (see the module doc comment). Mutually exclusive with daemon-client
+    // mode; per-plugin subprocess mode is skipped entirely when active.
+    let mut in_process = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -1049,6 +1413,9 @@ async fn main() {
                 if let Some(path) = args.next() {
                     daemon_socket_cli = Some(path);
                 }
+            }
+            "--in-process" => {
+                in_process = true;
             }
             _ => {}
         }
@@ -1065,9 +1432,12 @@ async fn main() {
 
     let backend_path = config.server.backend.clone();
 
-    // Spawn backend in per-plugin mode.  In daemon-client mode, the daemon
-    // handles all analysis so no backend binary is needed.
-    let backend: Option<Arc<Mutex<JsonRpcBackend>>> = if daemon_socket.is_some() {
+    // Spawn backend in per-plugin mode.  In-process and daemon-client mode
+    // handle analysis themselves, so no backend binary is spawned.
+    let backend: Option<Arc<Mutex<JsonRpcBackend>>> = if in_process {
+        eprintln!("sugar-lsp: in-process engine mode active (no daemon, no backend subprocess)");
+        None
+    } else if daemon_socket.is_some() {
         eprintln!(
             "sugar-lsp: daemon-client mode active (socket: {})",
             daemon_socket.as_ref().unwrap().display()
@@ -1094,6 +1464,11 @@ async fn main() {
         // project_root removed (unused)
         daemon_socket,
         daemon_stream: Arc::new(Mutex::new(None)),
+        in_process,
+        prove_ctx: Arc::new(Mutex::new(None)),
+        raw_documents: Arc::new(Mutex::new(HashMap::new())),
+        prove_diagnostics: Arc::new(Mutex::new(HashMap::new())),
+        change_generation: Arc::new(Mutex::new(HashMap::new())),
     });
 
     Server::new(stdin, stdout, socket).serve(service).await;
