@@ -88,8 +88,8 @@ def pandas_sum_vendor_ir():
             "kind": "function-contract",
             "name": "pandas.Series.sum",
             "bridgeSourceSymbol": "call:sum",
-            "formals": [],
-            "formalSorts": [],
+            "formals": ["self"],
+            "formalSorts": [{"kind": "primitive", "name": "Any"}],
             "outBinding": "out",
             "post": eq(var("out"), int_const(6)),
         }
@@ -304,7 +304,7 @@ print("vendor surface: pandas-showcase Series.sum fact; no PRE-bearing pandas co
 
 good = stage_consumer("consumer-good", 6, proof)
 good_wall = lift_report(good)
-good_edge = edge_for(good_wall, "call:sum")
+good_edge = edge_for(good_wall, "method:sum")
 print(
     "good wall edge:",
     good_edge["sourceContract"],
@@ -324,7 +324,7 @@ print(
 
 bad = stage_consumer("consumer-bad", 7, proof)
 bad_wall = lift_report(bad)
-bad_edge = edge_for(bad_wall, "call:sum")
+bad_edge = edge_for(bad_wall, "method:sum")
 print(
     "bad wall edge:",
     bad_edge["sourceContract"],
