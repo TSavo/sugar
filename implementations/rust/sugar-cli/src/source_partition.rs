@@ -304,6 +304,110 @@ pub fn inert_support_accounting(
     entries
 }
 
+/// Physical `(body_start, body_end)` 1-based line ranges for every top-level
+/// `def`/`async def` in `source_text`, found by indentation alone: a
+/// function's body is every line strictly more indented than its `def`,
+/// running from the line after the signature until the next non-blank line
+/// at or below the `def`'s own indentation (or EOF). Coarse on purpose --
+/// callers only ever fill gaps between already-claimed lines inside a range,
+/// so a body range that also spans already-claimed lines (a docstring, a
+/// blank line) is harmless: those lines are simply skipped.
+fn function_body_ranges(source_text: &str) -> Vec<(usize, usize)> {
+    let lines: Vec<&str> = source_text.lines().collect();
+    let mut defs: Vec<(usize, usize)> = Vec::new();
+    for (idx, raw) in lines.iter().enumerate() {
+        let line_no = idx + 1;
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("def ") || trimmed.starts_with("async def ") {
+            let indent = raw.len() - trimmed.len();
+            defs.push((line_no, indent));
+        }
+    }
+    let mut ranges = Vec::new();
+    for &(def_line, indent) in &defs {
+        let body_start = def_line + 1;
+        let mut body_end = lines.len();
+        for idx in body_start..=lines.len() {
+            let raw = lines[idx - 1];
+            if raw.trim().is_empty() {
+                continue;
+            }
+            let cur_indent = raw.len() - raw.trim_start().len();
+            if cur_indent <= indent {
+                body_end = idx - 1;
+                break;
+            }
+        }
+        if body_start <= body_end {
+            ranges.push((body_start, body_end));
+        }
+    }
+    ranges
+}
+
+/// Criterion 14 residue drain (#3706 follow-up, re-targeted onto
+/// `SourcePartition` claim generation after the line_accounting layer was
+/// deleted by #3759's partition-type refactor): a `warrant`/`effect` claim
+/// covers its enclosing function's full body span IFF it genuinely covers
+/// that span -- never by widening the schema past what the row actually
+/// proves.
+///
+/// THE RULE: within one function body range, take every existing
+/// `warrant`/`effect` claim already anchored inside it, in ascending line
+/// order. Each anchor claims every still-unclaimed line strictly between
+/// the previous anchor (or the function's first body line, if none) and
+/// itself, under the SAME class and the SAME grounds (the same followable
+/// CID, or the same refusal reason) as the anchor. This is honest because
+/// those in-between lines are ordinary straight-line statements that must
+/// execute, unconditionally, on every path that reaches the anchor
+/// callsite -- they are covered by the exact same proof/refusal the anchor
+/// already carries, never a new one invented for them.
+///
+/// This never invents coverage past the LAST anchor in a function: trailing
+/// body lines after the final warrant/effect stay residue-eligible, same as
+/// a function with zero rows contributes zero expansion (the honesty rule:
+/// a line inside a function whose lift produced NO row stays residue).
+/// Lines already claimed (by a row, or by `inert_support_accounting`) are
+/// never reclassified -- the lattice in `SourcePartition::construct` still
+/// governs final resolution, but this generator never re-emits a claim for
+/// an already-claimed line, so it adds no new collisions.
+pub fn expand_body_span_line_accounting(
+    file: &str,
+    source_text: &str,
+    claims: &[LineAccountingEntry],
+) -> Vec<LineAccountingEntry> {
+    let mut claimed: HashSet<usize> = claims.iter().map(|e| e.line).collect();
+    let mut new_entries = Vec::new();
+
+    for (body_start, body_end) in function_body_ranges(source_text) {
+        let mut anchors: Vec<&LineAccountingEntry> = claims
+            .iter()
+            .filter(|e| {
+                matches!(e.class, LineClass::Warrant | LineClass::Effect)
+                    && e.line >= body_start
+                    && e.line <= body_end
+            })
+            .collect();
+        anchors.sort_by_key(|e| e.line);
+
+        let mut cursor = body_start;
+        for anchor in anchors {
+            for line in cursor..anchor.line {
+                if claimed.insert(line) {
+                    new_entries.push(LineAccountingEntry {
+                        file: file.to_string(),
+                        line,
+                        class: anchor.class,
+                        grounds: anchor.grounds.clone(),
+                    });
+                }
+            }
+            cursor = anchor.line + 1;
+        }
+    }
+    new_entries
+}
+
 /// The partition itself: every physical line of one compilation unit tiled
 /// into exactly one arm. Totals are projections (methods), never stored.
 #[derive(Debug, Clone)]
@@ -522,6 +626,8 @@ pub fn build_line_accounting(
 
         let mut all_claims = file_claims;
         all_claims.extend(inert);
+        let expanded = expand_body_span_line_accounting(file, &source_text, &all_claims);
+        all_claims.extend(expanded);
 
         match SourcePartition::construct(file, total_lines, &all_claims) {
             Ok(partition) => {
@@ -796,14 +902,17 @@ mod tests {
         assert_eq!(partition.support_count(), 0);
     }
 
-    /// The itsdangerous fixture, tiled end to end: proves the partition renders
-    /// the criterion-14 residue (7 gapped lines) that
-    /// `tools/criterion14_conservation.py` used to compute, but as a value of
-    /// the type -- warrant {17,29}, effect {30}, 21 inert support lines, and
-    /// the honest residue {15,16,25,26,27,28,31} named by the construction
-    /// failure. This is the delete-vs-satisfy home for the retired checker.
+    /// The itsdangerous fixture, tiled end to end: proves the partition
+    /// drains the criterion-14 residue that `tools/criterion14_conservation.py`
+    /// used to compute (formerly R=7, per PR #3760's body-span-expansion +
+    /// raise-anchor fix, re-targeted here after #3759 deleted the
+    /// line_accounting layer those fixes lived in) to R=0 as a value of the
+    /// type: warrant {17,29} expand to cover their straight-line body spans,
+    /// effect {31} (the real Python lifter anchors `ast.Raise` on its own
+    /// `lineno`, one line below the `except:` at 30) expands to cover 30, 21
+    /// inert support lines untouched, zero residue.
     #[test]
-    fn itsdangerous_slice_reproduces_the_honest_residue() {
+    fn itsdangerous_slice_drains_to_zero_residue() {
         let source = concat!(
             "\"\"\"Small real slice of itsdangerous (url_safe.py base64 helpers), used as the\n",
             "Criterion 14 conservation ratchet's small in-scope vendor fixture. Kept\n",
@@ -842,11 +951,13 @@ mod tests {
 
         // Row-derived claims exactly as the fixture report pins them: the two
         // discharged CID-bearing returns (17, 29) and the refused Exception
-        // effect (30).
+        // effect anchored at the `raise` itself (31), matching the real
+        // Python lifter's `runtime_failure_locus` (anchors on `ast.Raise`'s
+        // own `lineno`, not the `except:` line above it).
         let mut claims = vec![
             warrant_entry("itsdangerous.py", 17),
             warrant_entry("itsdangerous.py", 29),
-            effect_entry("itsdangerous.py", 30),
+            effect_entry("itsdangerous.py", 31),
         ];
         let claimed: HashSet<usize> = claims.iter().map(|c| c.line).collect();
         claims.extend(inert_support_accounting(
@@ -854,12 +965,17 @@ mod tests {
             source,
             &claimed,
         ));
+        claims.extend(expand_body_span_line_accounting(
+            "itsdangerous.py",
+            source,
+            &claims,
+        ));
 
-        let err = SourcePartition::construct("itsdangerous.py", total_lines, &claims)
-            .expect_err("honest residue means the tiling does not construct");
-        assert_eq!(err.partition.warrant_count(), 2);
-        assert_eq!(err.partition.support_count(), 21);
-        assert_eq!(err.partition.effect_count(), 1);
-        assert_eq!(err.gaps, vec![15, 16, 25, 26, 27, 28, 31]);
+        let partition = SourcePartition::construct("itsdangerous.py", total_lines, &claims)
+            .expect("body-span expansion drains the tiling to total");
+        assert_eq!(partition.warrant_count(), 8);
+        assert_eq!(partition.support_count(), 21);
+        assert_eq!(partition.effect_count(), 2);
+        assert_eq!(partition.gaps().len(), 0);
     }
 }
