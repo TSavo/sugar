@@ -210,7 +210,9 @@ fn decode_cid_set(v: &CborValue) -> Result<BTreeSet<String>, CborDecodeError> {
     };
     let mut out = BTreeSet::new();
     for item in items {
-        let s = item.as_tstr().ok_or(CborDecodeError::UnsupportedMajor(0xff))?;
+        let s = item
+            .as_tstr()
+            .ok_or(CborDecodeError::UnsupportedMajor(0xff))?;
         out.insert(s.to_string());
     }
     Ok(out)
@@ -222,7 +224,9 @@ impl Manifest {
     /// its CID has been verified against the caller-supplied `manifestCid`.
     pub fn from_canonical_cbor(bytes: &[u8]) -> Result<Manifest, CborDecodeError> {
         let top = decode(bytes)?;
-        let map = top.as_map().ok_or(CborDecodeError::UnsupportedMajor(0xff))?;
+        let map = top
+            .as_map()
+            .ok_or(CborDecodeError::UnsupportedMajor(0xff))?;
 
         let version = match map.get("version") {
             Some(CborValue::Uint(v)) => *v as u32,
@@ -232,7 +236,9 @@ impl Manifest {
         let mut groups = BTreeMap::new();
         if let Some(CborValue::Map(gmap)) = map.get("groups") {
             for (name, gval) in gmap {
-                let gmap2 = gval.as_map().ok_or(CborDecodeError::UnsupportedMajor(0xff))?;
+                let gmap2 = gval
+                    .as_map()
+                    .ok_or(CborDecodeError::UnsupportedMajor(0xff))?;
                 let contributor_bundle = gmap2
                     .get("contributorBundle")
                     .and_then(|v| v.as_tstr())
@@ -315,7 +321,10 @@ mod tests {
         m1.groups.insert(
             "b#euf#x".to_string(),
             EufGroup {
-                member_cids: BTreeSet::from(["blake3-512:2".to_string(), "blake3-512:1".to_string()]),
+                member_cids: BTreeSet::from([
+                    "blake3-512:2".to_string(),
+                    "blake3-512:1".to_string(),
+                ]),
                 contributor_bundle: "blake3-512:z".to_string(),
             },
         );
@@ -339,7 +348,10 @@ mod tests {
         m2.groups.insert(
             "b#euf#x".to_string(),
             EufGroup {
-                member_cids: BTreeSet::from(["blake3-512:1".to_string(), "blake3-512:2".to_string()]),
+                member_cids: BTreeSet::from([
+                    "blake3-512:1".to_string(),
+                    "blake3-512:2".to_string(),
+                ]),
                 contributor_bundle: "blake3-512:z".to_string(),
             },
         );
@@ -361,7 +373,9 @@ mod tests {
                 contributor_bundle: "blake3-512:cc".to_string(),
             },
         );
-        m.ambient.closed_forall_cids.insert("blake3-512:dd".to_string());
+        m.ambient
+            .closed_forall_cids
+            .insert("blake3-512:dd".to_string());
         m.ambient
             .ground_callsite_fact_cids
             .insert("blake3-512:ee".to_string());

@@ -237,13 +237,19 @@ pub(crate) fn new(
                 .ok_or_else(|| FetchError::Decode(format!("body {cid} has no `body` object")))?;
             let mut atom_mementos: Vec<(String, AtomMemento)> = Vec::with_capacity(slots.len());
             for (slot, slot_val) in slots {
-                let atom_cid = slot_val.get("atomCid").and_then(Json::as_str).ok_or_else(|| {
-                    FetchError::Decode(format!("body {cid} slot {slot} missing atomCid"))
-                })?;
-                let atom = atoms_so_far.get(atom_cid).ok_or_else(|| FetchError::UnknownAtomRef {
-                    body: cid.to_string(),
-                    atom: atom_cid.to_string(),
-                })?;
+                let atom_cid = slot_val
+                    .get("atomCid")
+                    .and_then(Json::as_str)
+                    .ok_or_else(|| {
+                        FetchError::Decode(format!("body {cid} slot {slot} missing atomCid"))
+                    })?;
+                let atom =
+                    atoms_so_far
+                        .get(atom_cid)
+                        .ok_or_else(|| FetchError::UnknownAtomRef {
+                            body: cid.to_string(),
+                            atom: atom_cid.to_string(),
+                        })?;
                 atom_mementos.push((slot.clone(), AtomMemento::new(atom)));
             }
             let body = ContractBody::from_slots(
@@ -628,8 +634,7 @@ mod tests {
         // major 2 (bstr), 8-byte length field = u64::MAX.
         out.push((2u8 << 5) | 27);
         out.extend_from_slice(&u64::MAX.to_be_bytes());
-        let err =
-            build_index(&out).expect_err("u64::MAX length must error, not panic or wrap");
+        let err = build_index(&out).expect_err("u64::MAX length must error, not panic or wrap");
         assert!(
             matches!(
                 err,
@@ -691,8 +696,7 @@ mod tests {
         let bytes = small_catalog(&[(cid.as_str(), atom_bytes.as_slice())], &[]);
         let index = build_index(&bytes).expect("indexes");
         let range = *index.atoms.get(cid.as_str()).expect("range present");
-        let fetched =
-            fetch_one(&bytes, EntryKind::Atom, &cid, range).expect("real atom verifies");
+        let fetched = fetch_one(&bytes, EntryKind::Atom, &cid, range).expect("real atom verifies");
         assert_eq!(fetched, atom_bytes);
     }
 
@@ -718,7 +722,10 @@ mod tests {
 
         let err = fetch_one(&bytes, EntryKind::Atom, &cid, flipped_range)
             .expect_err("bit-flipped entry must be rejected");
-        assert!(matches!(err, FetchError::CidMismatch { .. } | FetchError::NotJson(_)));
+        assert!(matches!(
+            err,
+            FetchError::CidMismatch { .. } | FetchError::NotJson(_)
+        ));
 
         // The untouched entry elsewhere in the same file must still verify.
         let fetched = fetch_one(&bytes, EntryKind::Atom, &other_cid, untouched_range)
@@ -875,7 +882,8 @@ mod tests {
     }
 
     #[test]
-    fn fetch_one_accepts_legacy_shape_member_with_no_signature_matching_eager_and_anchored_member() {
+    fn fetch_one_accepts_legacy_shape_member_with_no_signature_matching_eager_and_anchored_member()
+    {
         // Previously this gate unconditionally required a signature and
         // refused any member without one (the soundness review's flagged
         // gap: a legacy/flat-format member's CID hash strips `cid` and
@@ -1008,7 +1016,11 @@ mod tests {
             );
         }
         for (cid, bytes) in &new_members {
-            assert_eq!(bytes, eager_members.get(cid).unwrap(), "member {cid} bytes differ");
+            assert_eq!(
+                bytes,
+                eager_members.get(cid).unwrap(),
+                "member {cid} bytes differ"
+            );
         }
     }
 
@@ -1030,15 +1042,31 @@ mod tests {
             .feed(ProofGraph::empty());
         let fed_left = ProofGraph::empty().feed(ProofGraph::read(&bytes).expect("third read"));
 
-        assert_eq!(fed_right.atoms_map(), eager.atoms_map(), "atoms differ after feed(empty)");
-        assert_eq!(fed_right.body_map(), eager.body_map(), "bodies differ after feed(empty)");
+        assert_eq!(
+            fed_right.atoms_map(),
+            eager.atoms_map(),
+            "atoms differ after feed(empty)"
+        );
+        assert_eq!(
+            fed_right.body_map(),
+            eager.body_map(),
+            "bodies differ after feed(empty)"
+        );
         assert_eq!(
             fed_right.members_map(),
             eager.members_map(),
             "members differ after feed(empty)"
         );
-        assert_eq!(fed_left.atoms_map(), eager.atoms_map(), "atoms differ after empty.feed()");
-        assert_eq!(fed_left.body_map(), eager.body_map(), "bodies differ after empty.feed()");
+        assert_eq!(
+            fed_left.atoms_map(),
+            eager.atoms_map(),
+            "atoms differ after empty.feed()"
+        );
+        assert_eq!(
+            fed_left.body_map(),
+            eager.body_map(),
+            "bodies differ after empty.feed()"
+        );
         assert_eq!(
             fed_left.members_map(),
             eager.members_map(),
@@ -1077,8 +1105,16 @@ mod tests {
         let order_a_bc = a.feed(b.feed(c));
 
         for other in [&order_cba, &order_bac, &order_a_bc] {
-            assert_eq!(order_abc.atoms_map(), other.atoms_map(), "atoms differ across fold order");
-            assert_eq!(order_abc.body_map(), other.body_map(), "bodies differ across fold order");
+            assert_eq!(
+                order_abc.atoms_map(),
+                other.atoms_map(),
+                "atoms differ across fold order"
+            );
+            assert_eq!(
+                order_abc.body_map(),
+                other.body_map(),
+                "bodies differ across fold order"
+            );
             assert_eq!(
                 order_abc.members_map(),
                 other.members_map(),
@@ -1187,8 +1223,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(name);
-        std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
+        std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
     }
 
     /// Runs `fold(new, index.keys())` against the unmodified
@@ -1243,8 +1278,16 @@ mod tests {
             }
         }
 
-        assert_eq!(new_atoms.len(), index.atoms.len(), "{label}: atom count == index.len()");
-        assert_eq!(new_bodies.len(), index.bodies.len(), "{label}: body count == index.len()");
+        assert_eq!(
+            new_atoms.len(),
+            index.atoms.len(),
+            "{label}: atom count == index.len()"
+        );
+        assert_eq!(
+            new_bodies.len(),
+            index.bodies.len(),
+            "{label}: body count == index.len()"
+        );
         assert_eq!(
             new_members.len(),
             index.members.len(),
@@ -1281,10 +1324,18 @@ mod tests {
         );
 
         for (cid, bytes) in &new_atom_bytes {
-            assert_eq!(bytes, eager_atoms.get(cid).unwrap(), "{label}: atom {cid} byte-identical");
+            assert_eq!(
+                bytes,
+                eager_atoms.get(cid).unwrap(),
+                "{label}: atom {cid} byte-identical"
+            );
         }
         for (cid, bytes) in &new_body_bytes {
-            assert_eq!(bytes, eager_bodies.get(cid).unwrap(), "{label}: body {cid} byte-identical");
+            assert_eq!(
+                bytes,
+                eager_bodies.get(cid).unwrap(),
+                "{label}: body {cid} byte-identical"
+            );
         }
         for (cid, bytes) in &new_members {
             assert_eq!(
@@ -1313,9 +1364,8 @@ mod tests {
     /// absent, the test skips rather than failing CI on missing local state.
     #[test]
     fn fold_new_matches_eager_read_on_real_pandas_proof_when_present() {
-        let dir = std::path::Path::new(
-            "/Users/tsavo/sugar-pandas-demo/consumer-bad/.sugar/imports",
-        );
+        let dir =
+            std::path::Path::new("/Users/tsavo/sugar-pandas-demo/consumer-bad/.sugar/imports");
         let Ok(entries) = std::fs::read_dir(dir) else {
             eprintln!("skipping: {} not present", dir.display());
             return;

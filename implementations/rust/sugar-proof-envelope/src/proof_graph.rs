@@ -1323,13 +1323,49 @@ impl ProofGraph {
     /// and is safe to drop; a fresh graph re-parses on first access.
     pub fn feed(mut self, other: ProofGraph) -> ProofGraph {
         for (cid, atom) in other.atoms {
-            self.atoms.entry(cid).or_insert(atom);
+            match self.atoms.entry(cid) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(atom);
+                }
+                std::collections::btree_map::Entry::Occupied(o) => {
+                    // Content-addressing invariant: same CID must mean the
+                    // SAME bytes. A mismatch is a soundness event -- refuse
+                    // loudly, never first-writer-wins over divergent content.
+                    assert!(
+                        o.get().bytes() == atom.bytes(),
+                        "feed: atom CID collision with divergent bytes at {}",
+                        o.key()
+                    );
+                }
+            }
         }
         for (cid, body) in other.bodies {
-            self.bodies.entry(cid).or_insert(body);
+            match self.bodies.entry(cid) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(body);
+                }
+                std::collections::btree_map::Entry::Occupied(o) => {
+                    assert!(
+                        o.get().bytes() == body.bytes(),
+                        "feed: body CID collision with divergent bytes at {}",
+                        o.key()
+                    );
+                }
+            }
         }
         for (cid, member) in other.members {
-            self.members.entry(cid).or_insert(member);
+            match self.members.entry(cid) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(member);
+                }
+                std::collections::btree_map::Entry::Occupied(o) => {
+                    assert!(
+                        o.get().bytes == member.bytes,
+                        "feed: member CID collision with divergent bytes at {}",
+                        o.key()
+                    );
+                }
+            }
         }
         self
     }
