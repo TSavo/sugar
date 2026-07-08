@@ -130,12 +130,20 @@ fn vendor_ir_with_encodings(encodings: &[&str]) -> Vec<Json> {
 }
 
 fn pandas_sum_vendor_ir() -> Vec<Json> {
+    // `df["a"].sum()` is a method call, so since #3668 (Shape 2: method call
+    // edges carry AliasFloor receiver identity) the EUF callsite term is
+    // `call:sum(<receiver>)`: the receiver is prepended as the term's sole
+    // arg. The contract must declare one formal slot for it (`self`) or wp
+    // body-reduction refuses with an arity mismatch and the universe join
+    // goes vacuous. The receiver's value is never read by `post` (`sum()`
+    // always returns the constant 6 in this fixture), so an `Any` sort is
+    // honest: there is no narrower slot type to state.
     vec![json!({
         "kind": "function-contract",
         "name": "pandas.Series.sum",
         "bridgeSourceSymbol": "call:sum",
-        "formals": [],
-        "formalSorts": [],
+        "formals": ["self"],
+        "formalSorts": [{"kind": "primitive", "name": "Any"}],
         "outBinding": "out",
         "post": eq(
             var("out"),
@@ -494,13 +502,48 @@ fn assert_linked_sum_post_targets_imported_proof(row: &Json, proof_cid: &str) {
     assert_eq!(post["targetProofCid"].as_str(), Some(proof_cid));
     assert!(post["targetContractCid"].as_str().is_some());
     assert_eq!(post["call"]["name"].as_str(), Some("call:sum"));
+    // `df["a"].sum()` is a method call: since #3668 the receiver
+    // (`df["a"]`) is prepended as the EUF term's sole arg, so the
+    // instantiated post's `call:sum` ctor carries the full receiver chain
+    // rather than a bare 0-arg call.
+    let receiver = json!({
+        "kind": "ctor",
+        "name": "py.subscript",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "call:pandas.DataFrame",
+                "args": [{
+                    "kind": "ctor",
+                    "name": "python:dict",
+                    "args": [{
+                        "kind": "ctor",
+                        "name": "python:dict_entry",
+                        "args": [
+                            {"kind": "const", "value": "a", "sort": string_sort()},
+                            {
+                                "kind": "ctor",
+                                "name": "array",
+                                "args": [
+                                    {"kind": "const", "value": 1, "sort": int_sort()},
+                                    {"kind": "const", "value": 2, "sort": int_sort()},
+                                    {"kind": "const", "value": 3, "sort": int_sort()},
+                                ],
+                            },
+                        ],
+                    }],
+                }],
+            },
+            {"kind": "const", "value": "a", "sort": string_sort()},
+        ],
+    });
     assert_eq!(
         post["instantiatedPost"],
         json!({
             "kind": "atomic",
             "name": "=",
             "args": [
-                {"kind": "ctor", "name": "call:sum", "args": []},
+                {"kind": "ctor", "name": "call:sum", "args": [receiver]},
                 {"kind": "const", "value": 6, "sort": int_sort()},
             ],
         })
@@ -591,7 +634,14 @@ def test_sum():
         "pandas-sum-good",
     );
     let good_report = run_lift_report(&good);
-    assert_report_edge_targets_imported_proof(&good_report, "call:sum", &proof_cid);
+    // The receiver-carrying edge is a method call (`df["a"].sum()`), so its
+    // call-edge targetSymbol is `method:sum` per #3668 (Shape 2: method call
+    // edges carry AliasFloor receiver identity). The vendor contract's own
+    // `bridgeSourceSymbol` stays `call:sum` (the EUF ctor head is always
+    // `call:<callee>` regardless of call-site shape); `_bridge_symbol_match_candidates`
+    // strips both prefixes to the bare name, so the universe linkage still
+    // resolves the edge to this imported proof under the new shape.
+    assert_report_edge_targets_imported_proof(&good_report, "method:sum", &proof_cid);
     run_mint(&good);
     let (good_prove, good_code) = run_prove(&good);
     assert_eq!(
