@@ -35,6 +35,10 @@ pub mod kit_declaration;
 /// The unforgeable `Kit` frontend handle. See `kit::Kit::rendezvous`.
 pub mod kit;
 
+/// The resolve verbs (SEAM 4): `Kit::testimony` (vendor dependency proofs)
+/// and `Kit::source` (source-oracle lookup). See `resolve` module docs.
+pub mod resolve;
+
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed,
     ProofEnvelopeInput, ProofGraph,
