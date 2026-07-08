@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "cargo-sugar",
+    "sugar-arch-guard",
     "sugar-canonicalizer",
     "sugar-plugin-loader",
     "sugar-proof-envelope",
