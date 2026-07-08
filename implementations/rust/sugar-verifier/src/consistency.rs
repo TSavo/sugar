@@ -1797,9 +1797,37 @@ fn collect_ambient_foralls(inv: &Json, out: &mut Vec<Json>) {
     }
 }
 
+/// Attribution of a collected ground callsite fact within the ambient pool.
+///
+/// A ground callsite equality either arrived from an IMPORTED pool member (a
+/// staged `.proof` / vendor-role utterance, identified by its source memento
+/// cid) or was extracted from the CONSUMER's OWN local formula -- its solved
+/// obligation, or its own asserted fact -- which carries no pool identity.
+/// This retires the `"<client>"` / `"<current-obligation>"` sentinel strings:
+/// an own-origin fact has no cid, so it can never be excluded as "its own
+/// vendor" and never collides with a real memento cid in the excluded set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Attribution {
+    /// The consumer's own locally-extracted fact -- no imported pool identity.
+    OwnOrigin,
+    /// An imported pool member, keyed by its source memento cid.
+    Imported(String),
+}
+
+impl Attribution {
+    /// The source memento cid when this fact was imported from the pool; `None`
+    /// for a consumer-own fact (which therefore never matches an excluded cid).
+    fn source_cid(&self) -> Option<&str> {
+        match self {
+            Attribution::OwnOrigin => None,
+            Attribution::Imported(cid) => Some(cid.as_str()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct AmbientGroundCallsiteFact {
-    source_cid: String,
+    attribution: Attribution,
     scope: Option<String>,
     term_key: String,
     witness_key: AmbientFactWitnessKey,
@@ -1816,7 +1844,7 @@ struct AmbientGroundCallsiteFact {
 /// not pool across independent consumers that happen to name the same callsite.
 fn collect_ambient_ground_callsite_facts(
     inv: &Json,
-    source_cid: &str,
+    source: &Attribution,
     scope: &Option<String>,
     provenance_kind: ProofIrProvenanceKind,
     out: &mut Vec<AmbientGroundCallsiteFact>,
@@ -1828,7 +1856,7 @@ fn collect_ambient_ground_callsite_facts(
                 for op in ops {
                     collect_ambient_ground_callsite_facts(
                         op,
-                        source_cid,
+                        source,
                         scope,
                         provenance_kind,
                         out,
@@ -1843,7 +1871,7 @@ fn collect_ambient_ground_callsite_facts(
             if ops.len() == 2 && eval_ground_bool(&ops[0]) == Some(true) {
                 collect_ambient_ground_callsite_facts(
                     &ops[1],
-                    source_cid,
+                    source,
                     scope,
                     provenance_kind,
                     out,
@@ -1858,7 +1886,7 @@ fn collect_ambient_ground_callsite_facts(
                 return;
             };
             out.push(AmbientGroundCallsiteFact {
-                source_cid: source_cid.to_string(),
+                attribution: source.clone(),
                 scope: scope.clone(),
                 term_key,
                 witness_key: AmbientFactWitnessKey {
@@ -1880,7 +1908,7 @@ fn ground_callsite_witness_keys(
     let mut facts = Vec::new();
     collect_ambient_ground_callsite_facts(
         inv,
-        "<current-obligation>",
+        &Attribution::OwnOrigin,
         scope,
         provenance_kind,
         &mut facts,
@@ -1964,7 +1992,7 @@ fn collect_vendor_sworn_facts(
     let mut client_facts = Vec::new();
     collect_ambient_ground_callsite_facts(
         client_fact,
-        "<client>",
+        &Attribution::OwnOrigin,
         &None,
         ProofIrProvenanceKind::Stated,
         &mut client_facts,
@@ -1983,7 +2011,11 @@ fn collect_vendor_sworn_facts(
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for fact in ambient {
-        if excluded_source_cids.iter().any(|c| c == &fact.source_cid) {
+        if fact
+            .attribution
+            .source_cid()
+            .is_some_and(|sc| excluded_source_cids.iter().any(|c| c == sc))
+        {
             continue;
         }
         // NOTE: no `scope` filter here (unlike the solver-conjoin path). This
@@ -2403,9 +2435,10 @@ fn with_ambient_ground_callsite_facts(
     for fact in ambient {
         // A stated row is not independent testimony for itself. The ambient
         // replay path may only add facts sourced from other mementos.
-        if excluded_source_cids
-            .iter()
-            .any(|source_cid| source_cid == &fact.source_cid)
+        if fact
+            .attribution
+            .source_cid()
+            .is_some_and(|sc| excluded_source_cids.iter().any(|source_cid| source_cid == sc))
         {
             continue;
         }
@@ -2796,7 +2829,7 @@ pub fn build_manifest_from_pool(
         let mut facts: Vec<AmbientGroundCallsiteFact> = Vec::new();
         collect_ambient_ground_callsite_facts(
             &inv,
-            &candidate.cid,
+            &Attribution::Imported(candidate.cid.clone()),
             &ground_scope,
             candidate.provenance_kind,
             &mut facts,
@@ -2927,7 +2960,7 @@ fn build_consistency_index_filtered(
             let ground_scope = ambient_ground_callsite_scope(contract_name);
             collect_ambient_ground_callsite_facts(
                 &inv,
-                cid,
+                &Attribution::Imported(cid.clone()),
                 &ground_scope,
                 candidate.provenance_kind,
                 &mut ambient_ground_callsite_facts,
@@ -3492,6 +3525,34 @@ mod tests {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .unwrap()
+    }
+
+    // Attribution is the strong type that retired the "<client>" /
+    // "<current-obligation>" sentinel strings. The soundness-load-bearing
+    // behavior is that a CONSUMER-own fact carries no pool cid, so it never
+    // matches an excluded (own-source) cid, whereas an IMPORTED pool member
+    // exposes exactly its source cid for the "not its own vendor" exclusion.
+    #[test]
+    fn attribution_own_origin_has_no_source_cid() {
+        assert_eq!(Attribution::OwnOrigin.source_cid(), None);
+        let cid = test_cid_string("attr-src");
+        assert_eq!(
+            Attribution::Imported(cid.clone()).source_cid(),
+            Some(cid.as_str())
+        );
+        // An own-origin fact is never excluded by any real cid set.
+        let excluded = [cid.clone()];
+        assert!(
+            !Attribution::OwnOrigin
+                .source_cid()
+                .is_some_and(|sc| excluded.iter().any(|c| c == sc))
+        );
+        // An imported fact IS excluded when its source cid is in the set.
+        assert!(
+            Attribution::Imported(cid.clone())
+                .source_cid()
+                .is_some_and(|sc| excluded.iter().any(|c| c == sc))
+        );
     }
 
     fn test_cid(label: &str) -> MementoCid {
