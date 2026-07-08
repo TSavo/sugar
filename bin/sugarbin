@@ -14,6 +14,7 @@ change only Python and every binary stays cache-hot. --bin selects which
 published binary to resolve (default: sugar). Known names:
   sugar                       sugar-cli
   sugar-linkerd                sugar-linkerd
+  sugar-lsp                    sugar-lsp
   sugar-walk-rpc               sugar-walk
   witness_rpc                  sugar-lift-rust-cargo-test-witness
   discharge_cli                sugar-lift-rust-cargo-test-witness
@@ -75,6 +76,7 @@ package_for_bin() {
   case "$1" in
     sugar) printf 'sugar-cli\n' ;;
     sugar-linkerd) printf 'sugar-linkerd\n' ;;
+    sugar-lsp) printf 'sugar-lsp\n' ;;
     sugar-walk-rpc) printf 'sugar-walk\n' ;;
     witness_rpc) printf 'sugar-lift-rust-cargo-test-witness\n' ;;
     discharge_cli) printf 'sugar-lift-rust-cargo-test-witness\n' ;;
