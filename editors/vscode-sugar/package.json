@@ -21,6 +21,11 @@
     "configuration": {
       "title": "Sugar",
       "properties": {
+        "sugar.lsp.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the `sugar-lsp` binary. The extension spawns `sugar-lsp --in-process` over stdio as a vscode-languageclient LanguageClient; the server builds a resident ProveContext from the workspace root and solves every edited python/rust buffer in-process (no daemon, no cold shell-out). Resolve it with `bin/sugarbin --bin sugar-lsp`."
+        },
         "sugar.linkerd.socketPath": {
           "type": "string",
           "default": "",
@@ -74,11 +79,15 @@
     "watch": "tsc -watch -p ./",
     "e2e": "node ./test/e2e.test.js",
     "prove-e2e": "node ./test/prove-e2e.test.js",
-    "rust-prove-e2e": "node ./test/rust-prove-e2e.test.js"
+    "rust-prove-e2e": "node ./test/rust-prove-e2e.test.js",
+    "lsp-e2e": "node ./test/lsp-e2e.test.js"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
     "@types/vscode": "^1.75.0",
     "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
   }
 }
