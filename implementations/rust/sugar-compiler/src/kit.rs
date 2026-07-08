@@ -103,6 +103,10 @@ pub enum KitError {
     RequestEncoding(serde_json::Error),
     #[error("lift path execution failed: {0}")]
     PathExecution(#[from] PathExecutionError),
+    /// Part 6: `sugar.enumerate` step failures (spawn/wire/decode, or a
+    /// singular seek finding no matching node). See `tree::EnumerateError`.
+    #[error("tree enumeration failed: {0}")]
+    Enumerate(#[from] crate::tree::EnumerateError),
 }
 
 /// The unforgeable frontend handle. Private fields; the only minter is
@@ -226,6 +230,18 @@ impl Kit {
 
     pub fn surface(&self) -> &str {
         &self.manifest.surface
+    }
+
+    /// Part 6: build the `tree::KitConn` an enumeration RPC needs to reach
+    /// THIS kit's manifest command again for `workspace_root`. Crate-private
+    /// -- `tree.rs`'s `impl Kit` block is the only external caller.
+    pub(crate) fn enumerate_conn(&self, workspace_root: &Path) -> crate::tree::KitConn {
+        crate::tree::KitConn {
+            surface: self.manifest.surface.clone(),
+            command: self.manifest.command.clone(),
+            working_dir: self.manifest.working_dir.clone(),
+            workspace_root: workspace_root.to_path_buf(),
+        }
     }
 
     /// SEAM 4 -- the testimony verb. Asks THIS kit (the one this handle
