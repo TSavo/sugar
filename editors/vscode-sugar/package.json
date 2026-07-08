@@ -1,7 +1,7 @@
 {
   "name": "vscode-sugar",
   "displayName": "Sugar (inline wall)",
-  "description": "Live warrant / unsat diagnostics in the editor via sugar-linkerd. Slice A of #3774: one red squiggle, end to end.",
+  "description": "Live warrant / unsat diagnostics in the editor via sugar-lsp --in-process. The daemon this once routed through (sugar-linkerd) is retired.",
   "version": "0.0.1",
   "publisher": "sugar",
   "license": "MIT",
@@ -25,16 +25,6 @@
           "type": "string",
           "default": "",
           "description": "Absolute path to the `sugar-lsp` binary. The extension spawns `sugar-lsp --in-process` over stdio as a vscode-languageclient LanguageClient; the server builds a resident ProveContext from the workspace root and solves every edited python/rust buffer in-process (no daemon, no cold shell-out). Resolve it with `bin/sugarbin --bin sugar-lsp`."
-        },
-        "sugar.linkerd.socketPath": {
-          "type": "string",
-          "default": "",
-          "description": "Unix socket path for a sugar-linkerd daemon. If empty, one is derived under the OS temp dir per workspace."
-        },
-        "sugar.linkerd.binaryPath": {
-          "type": "string",
-          "default": "",
-          "description": "Absolute path to the sugar-linkerd binary. If set and the socket is not already live, the extension spawns the daemon. Resolve it with `bin/sugarbin --bin sugar-linkerd`."
         },
         "sugar.debounceMs": {
           "type": "number",
@@ -77,7 +67,6 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "e2e": "node ./test/e2e.test.js",
     "prove-e2e": "node ./test/prove-e2e.test.js",
     "rust-prove-e2e": "node ./test/rust-prove-e2e.test.js",
     "lsp-e2e": "node ./test/lsp-e2e.test.js"
