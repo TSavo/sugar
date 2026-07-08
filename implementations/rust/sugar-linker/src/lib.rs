@@ -838,23 +838,11 @@ fn derive_link_bundle_inner(
 
     // Sort bridges for determinism (over the wire memento only).
     bridges.sort_by(|a, b| {
-        let ak = a
-            .memento
-            .get("header")
-            .and_then(|h| h.get("target"))
-            .and_then(|t| t.get("cid"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let bk = b
-            .memento
-            .get("header")
-            .and_then(|h| h.get("target"))
-            .and_then(|t| t.get("cid"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        ak.cmp(&bk)
+        a.memento
+            .header
+            .target
+            .cid
+            .cmp(&b.memento.header.target.cid)
     });
 
     // callEdgeSetCid
@@ -876,8 +864,10 @@ fn derive_link_bundle_inner(
 
     // bridgeSetCid (over the wire memento only).
     let bridge_set_cid = {
-        let mut bridge_strs: Vec<String> =
-            bridges.iter().map(|b| b.memento.to_string()).collect();
+        let mut bridge_strs: Vec<String> = bridges
+            .iter()
+            .map(|b| serde_json::to_string(&b.memento).unwrap_or_default())
+            .collect();
         bridge_strs.sort();
         compute_set_cid_sorted(&bridge_strs)
     };
@@ -899,7 +889,10 @@ fn derive_link_bundle_inner(
     // Wire bridges: only the byte-identical mementos are serialized. The
     // in-memory `obligation` field on each [`DerivedBridge`] never reaches the
     // bundle, so the bundle bytes (and linkBundleCid) are unchanged.
-    let bridge_mementos: Vec<Json> = bridges.into_iter().map(|b| b.memento).collect();
+    let bridge_mementos: Vec<Json> = bridges
+        .into_iter()
+        .map(|b| serde_json::to_value(b.memento).unwrap_or(Json::Null))
+        .collect();
 
     // linkBundleCid is over JCS of the bundle sans the CID field itself
     let bundle_without_cid = serde_json::json!({
@@ -1057,38 +1050,98 @@ fn bind(
 // Bridge derivation (R2)
 // -------------------------------------------------------------------
 
+/// The typed product of the bridge memento `derive_bridge` mints (R2).
+///
+/// Replaces the free-form `serde_json::json!` object the linker used to build
+/// and thread through as a raw [`Json`]. Every field is declared in the exact
+/// insertion order the `json!` macro used, and every camelCase wire key is a
+/// `#[serde(rename)]`, so `serde_json::to_string(&Bridge)` reproduces the old
+/// `Value::to_string()` bytes character-for-character. Byte-identity is
+/// load-bearing: `bridgeSetCid` hashes each bridge via a non-canonical
+/// `to_string` (insertion order), and `linkBundleCid` JCS-canonicalizes the
+/// whole bundle, so any reordering or value drift changes a pinned CID (see
+/// `test_link_bundle_cid_byte_identity_gate`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct Bridge {
+    #[serde(rename = "schemaVersion")]
+    schema_version: &'static str,
+    kind: &'static str,
+    header: BridgeHeader,
+    metadata: BridgeMetadata,
+}
+
+/// The bridge memento header: the source contract CID and the resolved target.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct BridgeHeader {
+    kind: &'static str,
+    #[serde(rename = "sourceContractCid")]
+    source_contract_cid: String,
+    target: BridgeTarget,
+}
+
+/// The resolved target of a bridge: a contract, keyed by its CID.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct BridgeTarget {
+    kind: &'static str,
+    cid: String,
+}
+
+/// The bridge memento metadata: call site, derived relation, and provenance.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct BridgeMetadata {
+    /// The lowered call-site locus, or `null` when the lifter had no span.
+    #[serde(rename = "callSite")]
+    call_site: Json,
+    #[serde(rename = "derivedRelation")]
+    derived_relation: DerivedRelation,
+    #[serde(rename = "derivedBy")]
+    derived_by: &'static str,
+    #[serde(rename = "linkerVersion")]
+    linker_version: &'static str,
+}
+
+/// The relation the linker derived for this bridge: `post-implies-pre`, carrying
+/// the emit-side `evidenceTerm` placeholder (the in-memory obligation the
+/// verifier discharges lives on [`DerivedBridge::obligation`], not here).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct DerivedRelation {
+    kind: &'static str,
+    #[serde(rename = "evidenceTerm")]
+    evidence_term: Json,
+}
+
 fn derive_bridge(
     source_contract_cid: &str,
     target_contract_cid: &str,
     call_site_locus: &Option<CallSiteLocus>,
     evidence_term: &Json,
-) -> Json {
+) -> Bridge {
     // Lower the typed locus back to the exact JSON it replaced: `None` -> `null`
     // (the pre-seam `Json::Null`), `Some` -> the `{column,file,line}` object.
     // The bridge is JCS-canonicalized for `bridgeSetCid` / `linkBundleCid`, so
     // this embedding is byte-identical to the old free-form `Json` slot.
-    let call_site_locus = serde_json::to_value(call_site_locus).unwrap_or(Json::Null);
-    serde_json::json!({
-        "schemaVersion": "2",
-        "kind": "bridge",
-        "header": {
-            "kind": "bridge",
-            "sourceContractCid": source_contract_cid,
-            "target": {
-                "kind": "contract",
-                "cid": target_contract_cid
-            }
-        },
-        "metadata": {
-            "callSite": call_site_locus,
-            "derivedRelation": {
-                "kind": "post-implies-pre",
-                "evidenceTerm": evidence_term
+    let call_site = serde_json::to_value(call_site_locus).unwrap_or(Json::Null);
+    Bridge {
+        schema_version: "2",
+        kind: "bridge",
+        header: BridgeHeader {
+            kind: "bridge",
+            source_contract_cid: source_contract_cid.to_string(),
+            target: BridgeTarget {
+                kind: "contract",
+                cid: target_contract_cid.to_string(),
             },
-            "derivedBy": "linker",
-            "linkerVersion": "0.1.0"
-        }
-    })
+        },
+        metadata: BridgeMetadata {
+            call_site,
+            derived_relation: DerivedRelation {
+                kind: "post-implies-pre",
+                evidence_term: evidence_term.clone(),
+            },
+            derived_by: "linker",
+            linker_version: "0.1.0",
+        },
+    }
 }
 
 // -------------------------------------------------------------------
@@ -1176,7 +1229,7 @@ impl ObligationState {
 /// is never serialized, keeping the bundle bytes and `linkBundleCid` identical.
 struct DerivedBridge {
     /// The wire-facing bridge memento (byte-identical to the pre-seam JSON).
-    memento: Json,
+    memento: Bridge,
     /// The in-memory obligation this bridge carries and the verifier discharges.
     obligation: ObligationState,
 }
@@ -1960,6 +2013,62 @@ mod tests {
         let serialized = serde_json::to_string(&bundle.json).expect("serialize bundle json");
         let reparsed: Json = serde_json::from_str(&serialized).expect("parse bundle json");
         assert_eq!(reparsed, bundle.json, "bundle json must round-trip unchanged");
+    }
+
+    /// Per-type wire round-trip for the typed [`Bridge`] memento: the struct
+    /// `derive_bridge` mints must serialize byte-for-byte to the exact free-form
+    /// `json!` object it replaced (same key order, same values), and survive a
+    /// serialize -> parse -> re-serialize round trip unchanged. This pins that
+    /// the `Bridge`/`DerivedRelation` product is a faithful projection of the
+    /// wire bytes `bridgeSetCid` / `linkBundleCid` hash.
+    #[test]
+    fn test_bridge_typed_memento_matches_wire() {
+        let locus = Some(CallSiteLocus {
+            file: "caller.go".into(),
+            line: Some(7),
+            column: Some(3),
+        });
+        let evidence = serde_json::json!({"kind": "Atomic", "name": "obligation", "args": []});
+
+        // Case 1: present call-site locus, evidence term.
+        let bridge = derive_bridge("blake3-512:src", "blake3-512:tgt", &locus, &evidence);
+        let expected = serde_json::json!({
+            "schemaVersion": "2",
+            "kind": "bridge",
+            "header": {
+                "kind": "bridge",
+                "sourceContractCid": "blake3-512:src",
+                "target": { "kind": "contract", "cid": "blake3-512:tgt" }
+            },
+            "metadata": {
+                "callSite": { "column": 3, "file": "caller.go", "line": 7 },
+                "derivedRelation": {
+                    "kind": "post-implies-pre",
+                    "evidenceTerm": {"kind": "Atomic", "name": "obligation", "args": []}
+                },
+                "derivedBy": "linker",
+                "linkerVersion": "0.1.0"
+            }
+        });
+        assert_eq!(
+            serde_json::to_string(&bridge).unwrap(),
+            expected.to_string(),
+            "typed Bridge must serialize byte-identically to the pre-seam json! object"
+        );
+
+        // Case 2: absent locus lowers `callSite` to an explicit `null`.
+        let none_bridge = derive_bridge("blake3-512:src", "blake3-512:tgt", &None, &evidence);
+        assert_eq!(
+            serde_json::to_value(&none_bridge).unwrap()["metadata"]["callSite"],
+            Json::Null,
+            "absent locus must lower to a `null` callSite, not a skipped key"
+        );
+
+        // Round-trip: serialize -> parse -> the parsed value re-serializes stably.
+        let wire = serde_json::to_value(&bridge).unwrap();
+        let reparsed: Json =
+            serde_json::from_str(&serde_json::to_string(&bridge).unwrap()).unwrap();
+        assert_eq!(reparsed, wire, "bridge memento must round-trip unchanged");
     }
 
     // -----------------------------------------------------------------

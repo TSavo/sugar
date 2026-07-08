@@ -1354,11 +1354,11 @@ fn linked_posts_to_json(linked_posts: &[LinkedPostInstance]) -> Json {
             .iter()
             .map(|p| {
                 json!({
-                    "sourceSymbol": &p.source_symbol,
-                    "targetContractCid": &p.target_cid,
-                    "targetProofCid": &p.target_proof_cid,
-                    "formals": &p.formals,
-                    "outBinding": &p.out_binding,
+                    "sourceSymbol": &p.binding.source_symbol,
+                    "targetContractCid": &p.binding.target_cid,
+                    "targetProofCid": &p.binding.target_proof_cid,
+                    "formals": &p.binding.formals,
+                    "outBinding": &p.binding.out_binding,
                     "call": &p.call,
                     "vendorPost": &p.vendor_post,
                     "instantiatedPost": &p.instantiated_post,
@@ -2445,23 +2445,31 @@ fn with_ambient_ground_callsite_facts(
     )
 }
 
+/// The shared binding head carried by both an [`AmbientPost`] (the vendor post
+/// gathered from one bridge) and every [`LinkedPostInstance`] it specializes
+/// into. These five fields were duplicated field-for-field across the two
+/// structs and always copied together at instantiation; naming the product once
+/// makes the copy a single `binding.clone()` and keeps the two shapes from
+/// drifting. Purely internal — no field is serialized via derive, so
+/// `linked_posts_to_json` still emits the same wire keys.
 #[derive(Debug, Clone)]
-struct AmbientPost {
+struct BridgeBinding {
     source_symbol: String,
     target_cid: String,
     target_proof_cid: Option<String>,
     formals: Vec<String>,
     out_binding: String,
+}
+
+#[derive(Debug, Clone)]
+struct AmbientPost {
+    binding: BridgeBinding,
     post: Json,
 }
 
 #[derive(Debug, Clone)]
 struct LinkedPostInstance {
-    source_symbol: String,
-    target_cid: String,
-    target_proof_cid: Option<String>,
-    formals: Vec<String>,
-    out_binding: String,
+    binding: BridgeBinding,
     call: Json,
     vendor_post: Json,
     instantiated_post: Json,
@@ -2527,11 +2535,13 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                     .map(|cid| cid.to_string())
             });
         posts.push(AmbientPost {
-            source_symbol,
-            target_cid: target_cid.to_string(),
-            target_proof_cid,
-            formals,
-            out_binding,
+            binding: BridgeBinding {
+                source_symbol,
+                target_cid: target_cid.to_string(),
+                target_proof_cid,
+                formals,
+                out_binding,
+            },
             post,
         });
     }
@@ -2581,19 +2591,22 @@ fn linked_ambient_post_instances_for_inv(
                 .strip_prefix("call:")
                 .or_else(|| name.strip_prefix("method:"))
                 .unwrap_or(name);
-            (post.source_symbol == name || post.source_symbol == bare)
-                && post.formals.len() == args.len()
+            (post.binding.source_symbol == name || post.binding.source_symbol == bare)
+                && post.binding.formals.len() == args.len()
         }) {
             let mut instance = post.post.clone();
-            for (formal, actual) in post.formals.iter().zip(args.iter()) {
+            for (formal, actual) in post.binding.formals.iter().zip(args.iter()) {
                 instance = crate::instantiate::substitute_formula_pub(&instance, formal, actual);
             }
-            instance =
-                crate::instantiate::substitute_formula_pub(&instance, &post.out_binding, callsite);
+            instance = crate::instantiate::substitute_formula_pub(
+                &instance,
+                &post.binding.out_binding,
+                callsite,
+            );
             if !formula_is_closed(&instance, &mut Vec::new()) {
                 debug!(
-                    source_symbol = %post.source_symbol,
-                    target_cid = %post.target_cid,
+                    source_symbol = %post.binding.source_symbol,
+                    target_cid = %post.binding.target_cid,
                     "verifier/linker: skipped open specialized post"
                 );
                 continue;
@@ -2602,11 +2615,7 @@ fn linked_ambient_post_instances_for_inv(
                 .unwrap_or_else(|_| serde_json::to_string(&instance).unwrap_or_default());
             if seen.insert(key) {
                 instances.push(LinkedPostInstance {
-                    source_symbol: post.source_symbol.clone(),
-                    target_cid: post.target_cid.clone(),
-                    target_proof_cid: post.target_proof_cid.clone(),
-                    formals: post.formals.clone(),
-                    out_binding: post.out_binding.clone(),
+                    binding: post.binding.clone(),
                     call: callsite.clone(),
                     vendor_post: post.post.clone(),
                     instantiated_post: canonicalize_formula_json(&instance),
@@ -3072,10 +3081,10 @@ pub fn verify_consistency_from_indexes(
     if let Some(o) = overlay {
         let seen: std::collections::HashSet<(String, String)> = ambient_posts
             .iter()
-            .map(|p| (p.source_symbol.clone(), p.target_cid.clone()))
+            .map(|p| (p.binding.source_symbol.clone(), p.binding.target_cid.clone()))
             .collect();
         for p in &o.ambient_posts {
-            if !seen.contains(&(p.source_symbol.clone(), p.target_cid.clone())) {
+            if !seen.contains(&(p.binding.source_symbol.clone(), p.binding.target_cid.clone())) {
                 ambient_posts.push(p.clone());
             }
         }
