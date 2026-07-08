@@ -42,6 +42,10 @@ pub mod outcome;
 /// `orchestrate::Orchestrate`.
 pub mod orchestrate;
 
+/// Derive `sugar_linker::LinkerInputs` from a pool's real bridge data
+/// (sugar#3857). See `linker_inputs::derive_linker_inputs`.
+pub mod linker_inputs;
+
 /// The resolve verbs (SEAM 4): `Kit::testimony` (vendor dependency proofs)
 /// and `Kit::source` (source-oracle lookup). See `resolve` module docs.
 pub mod resolve;
