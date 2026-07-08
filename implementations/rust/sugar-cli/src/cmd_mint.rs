@@ -56,11 +56,11 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, cid_from_proof_stem, ed25519_pubkey_string, ed25519_sign_string,
-    proof_filename, AssertionSurfaceMemento, AtomMemento, AuthorityMemento, AuthorityMementoRef,
-    BridgeMemento, ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed,
-    FactoryWalkMemento, FlatAtom, ImplicationMemento, LibrarySugarBindingMemento, MementoCid,
-    PlanMemento, ProofEnvelopeInput, ProofGraph, SourceMemento, WitnessMemento,
+    cid_from_proof_stem, ed25519_pubkey_string, proof_filename, AssertionSurfaceMemento,
+    AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento,
+    ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento, FlatAtom,
+    ImplicationMemento, LibrarySugarBindingMemento, MementoCid, PlanMemento, ProofGraph,
+    SourceMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -2065,8 +2065,7 @@ fn mint_toolchain_output_witness_decl(
     });
     let canonical = encode_jcs(&json_to_cvalue(&witness_value));
     let witness_cid = blake3_512_of(canonical.as_bytes());
-    let signer = ed25519_pubkey_string(&DEV_SIGNER_SEED);
-    let signature = ed25519_sign_string(&DEV_SIGNER_SEED, witness_cid.as_bytes());
+    let (signer, signature) = sugar_compiler::hand_sign(&DEV_SIGNER_SEED, witness_cid.as_bytes());
     Ok(json!({
         "kind": "witness-memento",
         "witness_cid": witness_cid,
@@ -4416,14 +4415,10 @@ fn mint_ir_document_with_source_and_plan_mementos(
         })
         .collect();
 
-    let (proof_signer, proof_signer_seed) = if let Some(authority) = proof_authority {
-        (authority.cid, authority.seed)
-    } else {
-        (
-            ed25519_pubkey_string(&default_signer_seed),
-            default_signer_seed,
-        )
-    };
+    let (proof_signer, proof_signer_seed) = sugar_compiler::resolve_proof_signer(
+        proof_authority.map(|authority| (authority.cid, authority.seed)),
+        default_signer_seed,
+    );
 
     // THE VENDOR TIE: record the set of dependency .proof CIDs this bundle was
     // conjoined against (the bundles in .sugar/imports/). The conjoining itself
@@ -4453,51 +4448,17 @@ fn mint_ir_document_with_source_and_plan_mementos(
         Some(m)
     };
 
-    let proof_input = ProofEnvelopeInput {
-        name: "ir-document".to_string(),
-        version: "1.0.0".to_string(),
-        binary_cid: None,
+    let signed = sugar_compiler::seal_proof_graph(
+        proof_graph,
+        proof_signer,
+        proof_signer_seed,
+        produced_at,
         metadata,
-        graph: proof_graph,
-        signer_cid: proof_signer,
-        signer_seed: proof_signer_seed,
-        declared_at: produced_at,
-        manifest: None,
-    };
-
-    // SEAL-TIME MANIFEST (join-manifest design, lane 1). Two-pass mint: build
-    // the envelope once WITHOUT a manifest, load those just-minted bytes into
-    // a fresh (this-proof-only) pool via the exact loader every consumer of a
-    // `.proof` file uses, then run the SAME grouping+ambient-collection logic
-    // `verify_consistency` runs at every prove -- `build_manifest_from_pool`
-    // is a pure relocation of that scan, scoped here to once-per-seal instead
-    // of once-per-verify-pass. Re-build the envelope WITH the sealed manifest
-    // so it lands inside the signed root (a byte-flip anywhere in it then
-    // fails the whole-proof trust root, per G4). Any failure in this second
-    // pass (malformed just-built bytes, pool load error) is loud: it means
-    // the manifest could not be honestly computed from what was just minted,
-    // so minting must not silently ship a stale/empty one.
-    let unsealed = build_proof_envelope(&proof_input);
-    let mut pool = sugar_verifier::types::MementoPool::default();
-    let proof_bytes = sugar_verifier::load_all_proofs::ProofBytes::try_from_parts(
-        "seal-time-manifest-self-load",
-        unsealed.cid.clone(),
-        unsealed.bytes.clone(),
-        sugar_verifier::Speaker::consumer("seal-time-manifest-self-load"),
-    )
-    .map_err(|e| format!("seal-time manifest: could not stage just-minted proof bytes: {e}"))?;
-    sugar_verifier::load_all_proofs::load_proof_bytes_into_pool(&[proof_bytes], &mut pool);
-    let manifest = sugar_verifier::consistency::build_manifest_from_pool(&pool, &unsealed.cid);
-
-    let sealed_input = ProofEnvelopeInput {
-        manifest: Some(manifest),
-        ..proof_input
-    };
-    let built = build_proof_envelope(&sealed_input);
+    )?;
 
     Ok(MintedIrDocument {
-        bytes: built.bytes,
-        filename_cid: built.cid,
+        bytes: signed.bytes,
+        filename_cid: signed.filename_cid,
         contract_set_cid,
         contract_bindings,
     })

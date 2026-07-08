@@ -16,6 +16,7 @@ members = [
     "sugar-ir-compiler-maude",
     "sugar-ir-compiler-lean",
     "sugar-verifier",
+    "sugar-compiler",
     "libsugar",
     "libsugar-rpc",
     "sugar-cli",
