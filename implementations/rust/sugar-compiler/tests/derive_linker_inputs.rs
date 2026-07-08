@@ -32,12 +32,12 @@ use sugar_compiler::orchestrate::Orchestrate;
 use sugar_compiler::outcome::Outcome;
 use sugar_linker::LinkerErrorKind;
 use sugar_proof_envelope::{
-    build_proof_envelope, BridgeMemento, ClaimContractMemento, ContractBody, Ed25519Seed,
-    FlatAtom, ProofEnvelopeInput, ProofGraph,
+    build_proof_envelope, BridgeMemento, ClaimContractMemento, ContractBody, Ed25519Seed, FlatAtom,
+    ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::load_all_proofs::{load_proof_bytes_into_pool, ProofBytes};
 use sugar_verifier::solvers::registry;
-use sugar_verifier::{MementoPool, Speaker, SolverPlan, SolverSeat};
+use sugar_verifier::{MementoPool, SolverPlan, SolverSeat, Speaker};
 
 const SEED: Ed25519Seed = [0x57; 32]; // 'W' for #3857
 
@@ -252,7 +252,9 @@ fn unresolved_callee_is_vacuous_in_verify_consistency_but_link_error_via_derivat
         Path::new("."),
     );
     assert!(
-        verdicts.iter().all(|r| !format!("{r:?}").contains(CALLEE_SYMBOL)),
+        verdicts
+            .iter()
+            .all(|r| !format!("{r:?}").contains(CALLEE_SYMBOL)),
         "vacuous-contrast premise violated: verify_consistency already mentions the \
          unresolved callee without any derivation -- {verdicts:?}"
     );
@@ -309,7 +311,10 @@ fn resolved_callee_binds_and_reaches_verdicts_not_link_error() {
         .find(|e| e.target_symbol.to_string() == CALLEE_SYMBOL)
         .unwrap_or_else(|| panic!("no call edge derived for {CALLEE_SYMBOL}: {links:?}"));
     assert_eq!(
-        resolved_edge.target_contract_cid.as_ref().map(|c| c.as_str()),
+        resolved_edge
+            .target_contract_cid
+            .as_ref()
+            .map(|c| c.as_str()),
         Some(callee_cid.as_str()),
         "resolved callee must derive to the bridge's real target_contract_cid: {resolved_edge:?}"
     );
@@ -322,9 +327,9 @@ fn resolved_callee_binds_and_reaches_verdicts_not_link_error() {
         .expect("solve_deriving_links must stage this well-formed graph");
 
     match outcome {
-        Outcome::LinkError(errors) => panic!(
-            "a real bridge resolution must never surface as a link failure: {errors:?}"
-        ),
+        Outcome::LinkError(errors) => {
+            panic!("a real bridge resolution must never surface as a link failure: {errors:?}")
+        }
         Outcome::Verdicts(results) => {
             eprintln!("resolved-arm verdicts: {results:?}");
         }

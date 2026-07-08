@@ -138,8 +138,18 @@ pub fn derive_linker_inputs(pool: &MementoPool) -> LinkerInputs {
 
     let call_edges: Vec<LinkerCallEdge> = enumerate_callsites::run(pool)
         .into_iter()
-        .filter_map(|cs| {
-            let source_contract_cid = cs.property_cid?.to_string().into();
+        .map(|cs| {
+            // A callsite with NO attributed contract body must still derive
+            // an edge (gitar on #3866): dropping it here would re-open the
+            // silent-vacuous gap one layer down -- an unbridged callee on an
+            // unattributed callsite would vanish without an UnresolvedSymbol.
+            // An empty source CID is bind-tolerated (resolution keys on the
+            // TARGET symbol); the edge still types the absence.
+            let source_contract_cid = cs
+                .property_cid
+                .map(|cid| cid.to_string())
+                .unwrap_or_default()
+                .into();
             let target_contract_cid = cs
                 .bridge_target_cid
                 .map(|cid| cid.to_string())
@@ -150,13 +160,13 @@ pub fn derive_linker_inputs(pool: &MementoPool) -> LinkerInputs {
                 file,
                 line: cs.line,
             });
-            Some(LinkerCallEdge {
+            LinkerCallEdge {
                 source_contract_cid,
                 target_contract_cid,
                 target_symbol: cs.bridge_ir_name.as_str().into(),
                 call_site_locus,
                 import_signature: None,
-            })
+            }
         })
         .collect();
 
