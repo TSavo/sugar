@@ -1573,6 +1573,7 @@ dependencies = [
 name = "sugar-compiler"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "libsugar",
  "serde",
  "serde_json",

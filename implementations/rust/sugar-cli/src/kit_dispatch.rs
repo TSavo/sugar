@@ -18,7 +18,6 @@
 // Per Supra omnia, rectum the dispatcher refuses loudly with a gap record
 // the caller turns into a `GapRecord` and propagates downstream.
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
@@ -276,12 +275,36 @@ pub fn dependency_proofs_via_rpc(workspace_root: &Path) -> Result<Vec<ProofBytes
             .or_insert_with(|| command);
     }
 
+    // SEAM 4 (`~/.claude/plans/sugar-compiler-liftshift.md`): the RPC spawn
+    // and blob decode that used to live here as `dependency_proofs_for_command`
+    // + `decode_dependency_proof_entry` moved verbatim to
+    // `sugar_compiler::resolve::resolve_testimony` -- the SAME typed core
+    // `Kit::testimony` calls for an already-rendezvous'd kit. This loop
+    // stays here (rather than rendezvous-ing a `Kit` per command) because it
+    // fans out across EVERY configured plugin at once and has no per-plugin
+    // `Dialect` to build a `LiftManifest` from; adding a live handshake
+    // round-trip per command here would be new spawn traffic, flagged for
+    // SEAM 6 rather than added silently.
     let mut proofs = Vec::new();
     for command in commands.values() {
-        let Some(mut resolved) = dependency_proofs_for_command(workspace_root, command)? else {
-            continue;
-        };
-        proofs.append(&mut resolved);
+        let resolution = sugar_compiler::resolve::resolve_testimony(
+            &command.plugin_name,
+            &command.argv,
+            command.working_dir.as_deref(),
+            workspace_root,
+        )
+        .map_err(|error| error.to_string())?;
+        for diagnostic in resolution.diagnostics {
+            record_dependency_proof_diagnostic(diagnostic);
+        }
+        match resolution.outcome {
+            sugar_compiler::resolve::TestimonyOutcome::Proofs(mut resolved) => {
+                proofs.append(&mut resolved);
+            }
+            sugar_compiler::resolve::TestimonyOutcome::Unavailable { reason, .. } => {
+                record_dependency_proof_diagnostic(reason);
+            }
+        }
     }
     proofs.sort_by(|a, b| {
         (a.expected_cid.as_str(), a.label.as_str())
@@ -293,221 +316,6 @@ pub fn dependency_proofs_via_rpc(workspace_root: &Path) -> Result<Vec<ProofBytes
 
 fn command_key(command: &ResolvedCommand) -> String {
     format!("{:?}\u{0}{:?}", command.argv, command.working_dir)
-}
-
-fn rpc_error_is_method_not_supported(error: &Value, method: &str) -> bool {
-    let code = error.get("code").and_then(Value::as_i64);
-    if code == Some(-32601) {
-        return true;
-    }
-    let Some(message) = error.get("message").and_then(Value::as_str) else {
-        return false;
-    };
-    let message = message.to_ascii_lowercase();
-    (code == Some(-32602) || code == Some(-32603))
-        && message.contains("unknown method")
-        && message.contains(method)
-}
-
-fn dependency_proofs_for_command(
-    workspace_root: &Path,
-    cmd_spec: &ResolvedCommand,
-) -> Result<Option<Vec<ProofBytes>>, String> {
-    let mut command = Command::new(&cmd_spec.argv[0]);
-    if cmd_spec.argv.len() > 1 {
-        command.args(&cmd_spec.argv[1..]);
-    }
-    if !cmd_spec.argv.iter().any(|a| a == "--rpc") {
-        command.arg("--rpc");
-    }
-    if let Some(wd) = &cmd_spec.working_dir {
-        command.current_dir(wd);
-    }
-    command.stdin(Stdio::piped());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::inherit());
-
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            record_dependency_proof_diagnostic(format!(
-                "dependency proof resolver unavailable for {:?}: {error}",
-                cmd_spec.argv
-            ));
-            return Ok(None);
-        }
-    };
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or("dependency proof kit stdin unavailable".to_string())?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("dependency proof kit stdout unavailable".to_string())?;
-    let mut reader = BufReader::new(stdout);
-
-    let req = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "sugar.plugin.resolve_dependency_proofs",
-        "params": {
-            "project_root": workspace_root.display().to_string(),
-        },
-    });
-    writeln!(stdin, "{req}").map_err(|e| format!("write resolve_dependency_proofs: {e}"))?;
-
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|e| format!("read resolve_dependency_proofs response: {e}"))?;
-
-    let shutdown = json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "sugar.plugin.shutdown",
-    });
-    let _ = writeln!(stdin, "{shutdown}");
-    drop(stdin);
-    let _ = child.wait();
-
-    if line.trim().is_empty() {
-        record_dependency_proof_diagnostic(format!(
-            "dependency proof resolver {:?} closed without a response",
-            cmd_spec.argv
-        ));
-        return Ok(None);
-    }
-
-    let response: Value = serde_json::from_str(line.trim()).map_err(|e| {
-        format!(
-            "resolve_dependency_proofs response not valid JSON: {e}; raw={}",
-            line.trim()
-        )
-    })?;
-    if let Some(error) = response.get("error") {
-        if rpc_error_is_method_not_supported(error, "sugar.plugin.resolve_dependency_proofs") {
-            record_dependency_proof_diagnostic(format!(
-                "dependency proof resolver {:?} does not implement sugar.plugin.resolve_dependency_proofs",
-                cmd_spec.argv
-            ));
-            return Ok(None);
-        }
-        return Err(format!("dependency proof resolver error: {error}"));
-    }
-
-    let result = response.get("result").cloned().unwrap_or(Value::Null);
-    let proofs = result
-        .get("proofs")
-        .or_else(|| result.get("proofs_base64"))
-        .or_else(|| result.get("proofBytes"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut out = Vec::new();
-    for proof in proofs {
-        match decode_dependency_proof_entry(cmd_spec, &proof) {
-            Ok(Some(decoded)) => out.push(decoded),
-            Ok(None) => continue,
-            Err(error) => return Err(error),
-        }
-    }
-
-    let legacy_paths = result
-        .get("proof_paths")
-        .or_else(|| result.get("proofPaths"))
-        .or_else(|| result.get("paths"))
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or(0);
-    if legacy_paths > 0 {
-        record_dependency_proof_diagnostic(format!(
-            "dependency proof resolver {:?} returned legacy proof_paths; ignoring paths because package proof bytes must cross RPC",
-            cmd_spec.argv
-        ));
-    }
-
-    out.sort_by(|a, b| {
-        (a.expected_cid.as_str(), a.label.as_str())
-            .cmp(&(b.expected_cid.as_str(), b.label.as_str()))
-    });
-    out.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
-    Ok(Some(out))
-}
-
-fn decode_dependency_proof_entry(
-    cmd_spec: &ResolvedCommand,
-    proof: &Value,
-) -> Result<Option<ProofBytes>, String> {
-    let Some(object) = proof.as_object() else {
-        record_dependency_proof_diagnostic(format!(
-            "dependency proof resolver {:?} returned a non-object proof entry: {proof}",
-            cmd_spec.argv
-        ));
-        return Ok(None);
-    };
-    let label_field = object
-        .get("source")
-        .or_else(|| object.get("label"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    let Some(expected_cid) = object
-        .get("cid")
-        .or_else(|| object.get("proof_cid"))
-        .or_else(|| object.get("proofCid"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-    else {
-        let label = label_field
-            .as_deref()
-            .unwrap_or("<unlabeled dependency proof>");
-        return Err(format!(
-            "dependency proof resolver `{}` kit returned dependency proof without a content address for label `{label}`",
-            cmd_spec.plugin_name
-        ));
-    };
-    let Some(bytes_base64) = object
-        .get("bytes_base64")
-        .or_else(|| object.get("bytesBase64"))
-        .and_then(Value::as_str)
-    else {
-        record_dependency_proof_diagnostic(format!(
-            "dependency proof resolver {:?} returned a proof entry without bytes_base64: {proof}",
-            cmd_spec.argv
-        ));
-        return Ok(None);
-    };
-    let bytes = match BASE64.decode(bytes_base64) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            record_dependency_proof_diagnostic(format!(
-                "dependency proof resolver {:?} returned invalid bytes_base64: {error}",
-                cmd_spec.argv
-            ));
-            return Ok(None);
-        }
-    };
-    let label = label_field.unwrap_or_else(|| expected_cid.clone());
-
-    // #3813: a kit's package-manager dependency catalog IS vendor testimony.
-    // Stamp the Vendor role INTO the ProofBytes here, at the one point that
-    // knows where these bytes came from, so the pool intake downstream never
-    // has to guess (the loader honors `ProofBytes::speaker`; it no longer
-    // hardcodes Consumer). The speaker id is the kit/package label the
-    // entry already carries.
-    let speaker = sugar_verifier::Speaker::vendor(label.clone());
-    match ProofBytes::try_from_parts(label, expected_cid, bytes, speaker) {
-        Ok(proof) => Ok(Some(proof)),
-        Err(error) => {
-            record_dependency_proof_diagnostic(format!(
-                "dependency proof resolver {:?} returned invalid expected_cid: {error}",
-                cmd_spec.argv
-            ));
-            Ok(None)
-        }
-    }
 }
 
 fn record_dependency_proof_diagnostic(message: String) {
@@ -1308,25 +1116,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn optional_rpc_method_refusal_accepts_legacy_unknown_method_error() {
-        assert!(rpc_error_is_method_not_supported(
-            &json!({"code": -32601, "message": "method not found"}),
-            "sugar.plugin.resolve_dependency_proofs"
-        ));
-        assert!(rpc_error_is_method_not_supported(
-            &json!({"code": -32602, "message": "unknown method: sugar.plugin.resolve_dependency_proofs"}),
-            "sugar.plugin.resolve_dependency_proofs"
-        ));
-        assert!(rpc_error_is_method_not_supported(
-            &json!({"code": -32603, "message": "unknown method: sugar.plugin.resolve_dependency_proofs"}),
-            "sugar.plugin.resolve_dependency_proofs"
-        ));
-        assert!(!rpc_error_is_method_not_supported(
-            &json!({"code": -32602, "message": "invalid params"}),
-            "sugar.plugin.resolve_dependency_proofs"
-        ));
-    }
+    // `optional_rpc_method_refusal_accepts_legacy_unknown_method_error` moved
+    // to `sugar_compiler::resolve` (SEAM 4) alongside the
+    // `rpc_error_is_method_not_supported` helper it exercises.
 
     #[test]
     fn resolved_manifest_command_paths_are_project_root_anchored() {
