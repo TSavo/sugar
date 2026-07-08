@@ -131,7 +131,7 @@ fn resident_prove_context_matches_direct_verify_consistency() {
         &direct[0].property_name,
         direct[0].verdict,
         &direct[0].reason,
-        direct[0].verification.clone(),
+        direct[0].verification.clone().map(|v| v.to_json()),
         direct[0].locus.clone(),
         &mut report,
     );
