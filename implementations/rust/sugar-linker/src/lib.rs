@@ -608,13 +608,25 @@ pub struct LinkerInputs {
     pub call_edges: Vec<LinkerCallEdge>,
 }
 
-/// Output of a single `link()` invocation.
+/// A content-addressed link bundle — the four set-CIDs plus the canonical
+/// serialized bundle object, grouped as one typed value.
 ///
-/// The `bundle_json` field is a `serde_json::Value` ready to be serialised and
-/// written to disk (CLI) or returned as a `projectStatus` response (daemon).
-/// The scalar CID fields are extracted at the top level for convenience.
+/// This is the typed view that replaces the four loose `Cid` fields and the
+/// bare `bundle_json: Json` that previously sat flat on [`LinkerOutput`].
+///
+/// ## Wire byte-identity
+///
+/// [`link_bundle_cid`](LinkBundle::link_bundle_cid) is the `blake3-512` hash of
+/// the JCS canonicalization of [`json`](LinkBundle::json) sans its own
+/// `linkBundleCid` key, and the daemon / CLI serialize `json` verbatim to
+/// `link-bundle.json`. The bundle bytes must therefore stay byte-for-byte
+/// identical. That is why `json` is kept as the already-derived [`Json`] value
+/// rather than a fully-typed struct: the typing is the *in-memory view* over the
+/// bundle, and the hash / wire source stays the exact bytes the derivation core
+/// built. Typing `json` into a struct would risk reordering keys and changing
+/// the CID.
 #[derive(Debug, Clone)]
-pub struct LinkerOutput {
+pub struct LinkBundle {
     /// `blake3-512` CID of the sorted contract set, as a typed [`Cid`].
     pub contract_set_cid: Cid,
     /// `blake3-512` CID of the sorted call-edge set, as a typed [`Cid`].
@@ -623,11 +635,25 @@ pub struct LinkerOutput {
     pub bridge_set_cid: Cid,
     /// `blake3-512` CID of the full link bundle object, as a typed [`Cid`].
     pub link_bundle_cid: Cid,
+    /// The full `LinkBundle` JSON object per spec R5, including `linkBundleCid`.
+    /// Kept as the already-serialized value so the wire bytes (and thus every
+    /// set-CID and the `linkBundleCid` hash) are byte-for-byte preserved.
+    pub json: Json,
+}
+
+/// Output of a single `link()` invocation.
+///
+/// The [`bundle`](LinkerOutput::bundle) is the typed [`LinkBundle`]: its `json`
+/// field is a `serde_json::Value` ready to be serialised and written to disk
+/// (CLI) or returned as a `projectStatus` response (daemon), and its four
+/// set-CIDs are the typed scalars extracted alongside it for convenience.
+#[derive(Debug, Clone)]
+pub struct LinkerOutput {
+    /// The typed link bundle: four set-CIDs + the canonical serialized object.
+    pub bundle: LinkBundle,
     /// Per-edge linker errors (unresolved symbols, unprovable obligations).
     /// Each error carries a `file` field for per-file LSP diagnostic mapping.
     pub linker_errors: Vec<LinkerError>,
-    /// The full `LinkBundle` JSON object per spec R5, including `linkBundleCid`.
-    pub bundle_json: Json,
 }
 
 // -------------------------------------------------------------------
@@ -901,12 +927,14 @@ fn derive_link_bundle_inner(
     // boundary. Derivation stays `String` (the JCS/hash inputs above are
     // byte-identical); only the public field type strengthens.
     LinkerOutput {
-        contract_set_cid: contract_set_cid.into(),
-        call_edge_set_cid: call_edge_set_cid.into(),
-        bridge_set_cid: bridge_set_cid.into(),
-        link_bundle_cid: link_bundle_cid.into(),
+        bundle: LinkBundle {
+            contract_set_cid: contract_set_cid.into(),
+            call_edge_set_cid: call_edge_set_cid.into(),
+            bridge_set_cid: bridge_set_cid.into(),
+            link_bundle_cid: link_bundle_cid.into(),
+            json: bundle_json,
+        },
         linker_errors: linker_errors_out,
-        bundle_json,
     }
 }
 
@@ -1823,9 +1851,16 @@ mod tests {
             output.linker_errors[0].file.as_deref(),
             Some("examples/polyglot-rust-go/go-caller/caller_fail.go")
         );
-        assert!(output.link_bundle_cid.as_str().starts_with("blake3-512:"));
+        assert!(output
+            .bundle
+            .link_bundle_cid
+            .as_str()
+            .starts_with("blake3-512:"));
 
-        eprintln!("failure-case linkBundleCid = {}", output.link_bundle_cid);
+        eprintln!(
+            "failure-case linkBundleCid = {}",
+            output.bundle.link_bundle_cid
+        );
     }
 
     #[test]
@@ -1836,9 +1871,16 @@ mod tests {
         });
 
         assert!(output.linker_errors.is_empty());
-        assert!(output.link_bundle_cid.as_str().starts_with("blake3-512:"));
+        assert!(output
+            .bundle
+            .link_bundle_cid
+            .as_str()
+            .starts_with("blake3-512:"));
 
-        eprintln!("success-case linkBundleCid = {}", output.link_bundle_cid);
+        eprintln!(
+            "success-case linkBundleCid = {}",
+            output.bundle.link_bundle_cid
+        );
     }
 
     #[test]
@@ -1849,7 +1891,7 @@ mod tests {
         };
         let out1 = link(inputs.clone());
         let out2 = link(inputs);
-        assert_eq!(out1.link_bundle_cid, out2.link_bundle_cid);
+        assert_eq!(out1.bundle.link_bundle_cid, out2.bundle.link_bundle_cid);
     }
 
     #[test]
@@ -1862,7 +1904,10 @@ mod tests {
             contracts: vec![make_process_contract(), make_go_caller_ok_contract()],
             call_edges: vec![],
         });
-        assert_ne!(fail_out.link_bundle_cid, ok_out.link_bundle_cid);
+        assert_ne!(
+            fail_out.bundle.link_bundle_cid,
+            ok_out.bundle.link_bundle_cid
+        );
     }
 
     /// Byte-identity gate: linkBundleCid must match the values pinned by
@@ -1879,15 +1924,42 @@ mod tests {
         });
 
         assert_eq!(
-            fail_out.link_bundle_cid.as_str(),
+            fail_out.bundle.link_bundle_cid.as_str(),
             "blake3-512:a0d04917ab46f58662b4f497a779cab8c2814df0bb40c8df0cb1b6abfe1eaabe7500f638249d423e4d74648add1ce5d47fd9502cd5481a9012807bba50aec584",
             "failure-case linkBundleCid must match baseline from PR #124 smoke test"
         );
         assert_eq!(
-            ok_out.link_bundle_cid.as_str(),
+            ok_out.bundle.link_bundle_cid.as_str(),
             "blake3-512:31fab69f197f4b279594972e35de7844f954a98ddce44b35edd14b77f53bd2ddb8ce95511bbef00f15476cc2f75f998ac4e419e5fe2c2162c008ba1c7c925131",
             "success-case linkBundleCid must match baseline from PR #124 smoke test"
         );
+    }
+
+    /// Wire round-trip for the [`LinkBundle`] typed view: each of the four typed
+    /// `Cid` fields must equal, byte-for-byte, the corresponding string on the
+    /// serialized `json`, and the `json` must survive a serialize → parse round
+    /// trip unchanged. This pins that typing the four CIDs did NOT drift the view
+    /// off the wire bytes the `linkBundleCid` hashes — the typed scalars are a
+    /// faithful projection of the same object written to `link-bundle.json`.
+    #[test]
+    fn test_link_bundle_typed_view_matches_wire() {
+        let output = link(LinkerInputs {
+            contracts: vec![make_process_contract(), make_go_caller_fail_contract()],
+            call_edges: vec![make_cgo_call_edge(&make_go_caller_fail_contract())],
+        });
+        let bundle = &output.bundle;
+
+        // Each typed Cid is exactly the wire string on the serialized object.
+        let wire = |k: &str| bundle.json.get(k).and_then(|v| v.as_str()).unwrap();
+        assert_eq!(bundle.contract_set_cid.as_str(), wire("contractSetCid"));
+        assert_eq!(bundle.call_edge_set_cid.as_str(), wire("callEdgeSetCid"));
+        assert_eq!(bundle.bridge_set_cid.as_str(), wire("bridgeSetCid"));
+        assert_eq!(bundle.link_bundle_cid.as_str(), wire("linkBundleCid"));
+
+        // The bundle json survives a serialize -> parse round trip byte-identically.
+        let serialized = serde_json::to_string(&bundle.json).expect("serialize bundle json");
+        let reparsed: Json = serde_json::from_str(&serialized).expect("parse bundle json");
+        assert_eq!(reparsed, bundle.json, "bundle json must round-trip unchanged");
     }
 
     // -----------------------------------------------------------------
@@ -1938,7 +2010,8 @@ mod tests {
         assert_eq!(mismatch.target_symbol, "rust-kit:process");
         // No bridge for a mismatched edge: bind refused before derivation.
         let bridges = output
-            .bundle_json
+            .bundle
+            .json
             .get("bridges")
             .unwrap()
             .as_array()

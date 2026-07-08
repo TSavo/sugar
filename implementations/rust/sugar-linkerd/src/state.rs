@@ -246,8 +246,8 @@ impl ProjectState {
 
         // Cache under the CID key.
         let key: CacheKey = (
-            output.contract_set_cid.as_str().to_string(),
-            output.call_edge_set_cid.as_str().to_string(),
+            output.bundle.contract_set_cid.as_str().to_string(),
+            output.bundle.call_edge_set_cid.as_str().to_string(),
         );
         self.cache.insert(key, output.clone());
         self.last_output = Some(output);
@@ -300,10 +300,10 @@ impl ProjectState {
     pub fn project_status(&self) -> Option<Json> {
         let output = self.last_output.as_ref()?;
         Some(serde_json::json!({
-            "contractSetCid": output.contract_set_cid,
-            "callEdgeSetCid": output.call_edge_set_cid,
-            "bridgeSetCid":   output.bridge_set_cid,
-            "linkBundleCid":  output.link_bundle_cid,
+            "contractSetCid": output.bundle.contract_set_cid,
+            "callEdgeSetCid": output.bundle.call_edge_set_cid,
+            "bridgeSetCid":   output.bundle.bridge_set_cid,
+            "linkBundleCid":  output.bundle.link_bundle_cid,
         }))
     }
 
@@ -399,7 +399,7 @@ mod tests {
             "blake3-512:aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001aabbccdd00000001",
         )];
         let output = state.update_and_link("rust-kit", "/tmp/foo.rs", contracts, vec![]);
-        assert!(output.link_bundle_cid.as_str().starts_with("blake3-512:"));
+        assert!(output.bundle.link_bundle_cid.as_str().starts_with("blake3-512:"));
     }
 
     #[test]
@@ -412,10 +412,12 @@ mod tests {
         )];
         let cid1 = state
             .update_and_link("go-kit", "/tmp/bar.go", contracts.clone(), vec![])
+            .bundle
             .link_bundle_cid
             .clone();
         let cid2 = state
             .update_and_link("go-kit", "/tmp/bar.go", contracts, vec![])
+            .bundle
             .link_bundle_cid
             .clone();
         assert_eq!(cid1, cid2, "idempotent: same inputs => same linkBundleCid");
@@ -502,6 +504,7 @@ mod tests {
         )];
         let original_cid = state
             .update_and_link("go-kit", "/tmp/baz.go", contracts, vec![])
+            .bundle
             .link_bundle_cid
             .as_str()
             .to_string();

@@ -60,15 +60,15 @@ mod state_conformance {
         let out2 = link(inputs);
 
         assert_eq!(
-            out1.link_bundle_cid, out2.link_bundle_cid,
+            out1.bundle.link_bundle_cid, out2.bundle.link_bundle_cid,
             "byte-identical inputs => byte-identical linkBundleCid"
         );
         assert_eq!(
-            out1.contract_set_cid, out2.contract_set_cid,
+            out1.bundle.contract_set_cid, out2.bundle.contract_set_cid,
             "contractSetCid must be identical"
         );
         assert_eq!(
-            out1.call_edge_set_cid, out2.call_edge_set_cid,
+            out1.bundle.call_edge_set_cid, out2.bundle.call_edge_set_cid,
             "callEdgeSetCid must be identical"
         );
     }
@@ -107,11 +107,11 @@ mod state_conformance {
             ));
 
             assert_eq!(
-                out_foo.link_bundle_cid, expected_foo.link_bundle_cid,
+                out_foo.bundle.link_bundle_cid, expected_foo.bundle.link_bundle_cid,
                 "foo output must match baseline regardless of eviction"
             );
             assert_eq!(
-                out_bar.link_bundle_cid, expected_bar.link_bundle_cid,
+                out_bar.bundle.link_bundle_cid, expected_bar.bundle.link_bundle_cid,
                 "bar output must match baseline regardless of eviction"
             );
         }
@@ -136,7 +136,7 @@ mod state_conformance {
         let out1 = link(inputs.clone());
         let out2 = link(inputs);
         assert_eq!(
-            out1.link_bundle_cid, out2.link_bundle_cid,
+            out1.bundle.link_bundle_cid, out2.bundle.link_bundle_cid,
             "idempotency: same inputs => same output"
         );
 
@@ -147,10 +147,18 @@ mod state_conformance {
         );
 
         // projectStatus (R7): all CID fields present and have blake3-512: prefix.
-        assert!(out1.link_bundle_cid.as_str().starts_with("blake3-512:"));
-        assert!(out1.contract_set_cid.as_str().starts_with("blake3-512:"));
-        assert!(out1.call_edge_set_cid.as_str().starts_with("blake3-512:"));
-        assert!(out1.bridge_set_cid.as_str().starts_with("blake3-512:"));
+        assert!(out1.bundle.link_bundle_cid.as_str().starts_with("blake3-512:"));
+        assert!(out1
+            .bundle
+            .contract_set_cid
+            .as_str()
+            .starts_with("blake3-512:"));
+        assert!(out1
+            .bundle
+            .call_edge_set_cid
+            .as_str()
+            .starts_with("blake3-512:"));
+        assert!(out1.bundle.bridge_set_cid.as_str().starts_with("blake3-512:"));
 
         // flushCache (R8): after flush the next link produces identical output.
         // (Flush just means re-computing from cold: same inputs => same output.)
@@ -163,7 +171,7 @@ mod state_conformance {
             call_edges: vec![],
         });
         assert_eq!(
-            out1.link_bundle_cid, out3.link_bundle_cid,
+            out1.bundle.link_bundle_cid, out3.bundle.link_bundle_cid,
             "post-flush re-link produces identical output"
         );
     }

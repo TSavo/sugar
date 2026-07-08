@@ -288,7 +288,7 @@ fn test_failure_case_emits_linker_error() {
         contracts: vec![rust_contract, go_contract],
         call_edges: vec![call_edge],
     });
-    let bundle = &output.bundle_json;
+    let bundle = &output.bundle.json;
 
     // Must have at least 1 linker-error
     let errors = bundle
@@ -348,7 +348,7 @@ fn test_success_case_clean_bundle() {
         contracts: vec![rust_contract, go_contract],
         call_edges: vec![], // no call edges
     });
-    let bundle = &output.bundle_json;
+    let bundle = &output.bundle.json;
 
     let errors = bundle
         .get("linkerErrors")
@@ -393,12 +393,12 @@ fn test_link_bundle_cid_is_byte_deterministic() {
     });
 
     let cid1 = out1
-        .bundle_json
+        .bundle.json
         .get("linkBundleCid")
         .and_then(|v| v.as_str())
         .expect("linkBundleCid must be present in run 1");
     let cid2 = out2
-        .bundle_json
+        .bundle.json
         .get("linkBundleCid")
         .and_then(|v| v.as_str())
         .expect("linkBundleCid must be present in run 2");
@@ -437,12 +437,12 @@ fn test_failure_and_success_cids_differ() {
     };
 
     let fail_cid = failure_out
-        .bundle_json
+        .bundle.json
         .get("linkBundleCid")
         .and_then(|v| v.as_str())
         .expect("failure linkBundleCid");
     let ok_cid = success_out
-        .bundle_json
+        .bundle.json
         .get("linkBundleCid")
         .and_then(|v| v.as_str())
         .expect("success linkBundleCid");
