@@ -400,6 +400,30 @@ struct SugarLanguageServer {
     /// the latest when the sleep completes, so a burst of keystrokes solves
     /// once, not once per keystroke.
     change_generation: Arc<Mutex<HashMap<Url, u64>>>,
+    /// Mirror of the last `publishDiagnostics` payload sent per uri, across
+    /// all three modes (per-plugin, daemon-client, in-process). Exists so
+    /// `textDocument/diagnostic` (the LSP 3.17 pull counterpart to push
+    /// `publishDiagnostics`) has something honest to answer with instead of
+    /// falling through to tower-lsp's default `Err(method_not_found())`: this
+    /// server declares `diagnosticProvider` in `initialize`, and standard
+    /// clients that support pull diagnostics (e.g. Neovim 0.10+) will call
+    /// `textDocument/diagnostic` whenever that capability is present, so an
+    /// unimplemented handler surfaces as `-32601: Method not found` in the
+    /// client's log the moment such a client attaches.
+    last_diagnostics: Arc<Mutex<HashMap<Url, Vec<Diagnostic>>>>,
+}
+
+/// Push `diagnostics` to the client via `publishDiagnostics` and mirror the
+/// same payload into `cache` so a subsequent `textDocument/diagnostic` pull
+/// for `uri` can answer from the last known state instead of erroring.
+async fn publish_and_cache(
+    client: &Client,
+    cache: &Arc<Mutex<HashMap<Url, Vec<Diagnostic>>>>,
+    uri: Url,
+    diagnostics: Vec<Diagnostic>,
+) {
+    cache.lock().await.insert(uri.clone(), diagnostics.clone());
+    client.publish_diagnostics(uri, diagnostics, None).await;
 }
 
 #[tower_lsp::async_trait]
@@ -561,10 +585,39 @@ impl LanguageServer for SugarLanguageServer {
             self.prove_diagnostics.lock().await.remove(&uri);
             self.change_generation.lock().await.remove(&uri);
         }
+        self.last_diagnostics.lock().await.remove(&uri);
         // Clear any published diagnostics for this file so the editor pane
         // goes clean.  This applies to per-plugin, daemon-client, and
         // in-process mode alike.
         self.client.publish_diagnostics(uri, vec![], None).await;
+    }
+
+    /// The LSP 3.17 pull counterpart to push `publishDiagnostics`. Answers
+    /// from `last_diagnostics`, the mirror populated by every
+    /// `publish_and_cache` call site across all three modes. An empty vec is
+    /// an honest "nothing known yet for this uri" (e.g. queried before the
+    /// first solve/parse completes), not a stub.
+    async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> Result<DocumentDiagnosticReportResult> {
+        let uri = params.text_document.uri;
+        let items = self
+            .last_diagnostics
+            .lock()
+            .await
+            .get(&uri)
+            .cloned()
+            .unwrap_or_default();
+        Ok(DocumentDiagnosticReportResult::Report(
+            DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+                related_documents: None,
+                full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                    result_id: None,
+                    items,
+                },
+            }),
+        ))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -744,6 +797,7 @@ impl SugarLanguageServer {
             &self.prove_ctx,
             &self.raw_documents,
             &self.prove_diagnostics,
+            &self.last_diagnostics,
             uri,
             text,
         )
@@ -771,6 +825,7 @@ impl SugarLanguageServer {
         let raw_documents = self.raw_documents.clone();
         let prove_diagnostics = self.prove_diagnostics.clone();
         let change_generation = self.change_generation.clone();
+        let last_diagnostics = self.last_diagnostics.clone();
         let uri_for_task = uri.clone();
 
         tokio::spawn(async move {
@@ -787,6 +842,7 @@ impl SugarLanguageServer {
                 &prove_ctx,
                 &raw_documents,
                 &prove_diagnostics,
+                &last_diagnostics,
                 uri_for_task,
                 text,
             )
@@ -843,7 +899,7 @@ impl SugarLanguageServer {
                             format!("No configured LSP language kit for `{}`", uri.path()),
                         )
                         .await;
-                    self.client.publish_diagnostics(uri, vec![], None).await;
+                    publish_and_cache(&self.client, &self.last_diagnostics, uri, vec![]).await;
                 }
             }
             return;
@@ -924,6 +980,7 @@ impl SugarLanguageServer {
                 if let Some(cid) = &ann.target_cid {
                     let backend = backend.clone();
                     let client = self.client.clone();
+                    let last_diagnostics = self.last_diagnostics.clone();
                     let uri_clone = uri.clone();
                     let function_name = ann.function_name.clone();
                     let cid = cid.clone();
@@ -934,8 +991,7 @@ impl SugarLanguageServer {
                         match backend.verify(&function_name, &cid).await {
                             Ok(result) => {
                                 let diagnostics = build_diagnostics(&result, range);
-                                client
-                                    .publish_diagnostics(uri_clone, diagnostics, None)
+                                publish_and_cache(&client, &last_diagnostics, uri_clone, diagnostics)
                                     .await;
                             }
                             Err(e) => {
@@ -1007,7 +1063,7 @@ impl SugarLanguageServer {
                     .map(|d| daemon_diag_to_lsp(&d))
                     .collect();
 
-                client.publish_diagnostics(uri, diagnostics, None).await;
+                publish_and_cache(&client, &self.last_diagnostics, uri, diagnostics).await;
             }
             Ok(Err(e)) => {
                 // Clear the stale stream so the next call reconnects.
@@ -1019,7 +1075,7 @@ impl SugarLanguageServer {
                     .log_message(MessageType::WARNING, format!("sugar daemon: {}", e))
                     .await;
                 // Publish empty diagnostics to clear any stale markers.
-                client.publish_diagnostics(uri, vec![], None).await;
+                publish_and_cache(&client, &self.last_diagnostics, uri, vec![]).await;
             }
             Err(join_err) => {
                 client
@@ -1085,6 +1141,7 @@ async fn in_process_solve_and_publish(
     prove_ctx: &Arc<Mutex<Option<Arc<prove_engine::ProveContext>>>>,
     raw_documents: &Arc<Mutex<HashMap<Url, String>>>,
     prove_diagnostics: &Arc<Mutex<HashMap<Url, Vec<prove_diagnostics::RowDiag>>>>,
+    last_diagnostics: &Arc<Mutex<HashMap<Url, Vec<Diagnostic>>>>,
     uri: Url,
     text: String,
 ) {
@@ -1097,7 +1154,7 @@ async fn in_process_solve_and_publish(
                 "in-process mode: no resident ProveContext (initialize never built one)",
             )
             .await;
-        client.publish_diagnostics(uri, vec![], None).await;
+        publish_and_cache(client, last_diagnostics, uri, vec![]).await;
         return;
     };
 
@@ -1148,7 +1205,7 @@ async fn in_process_solve_and_publish(
         .collect();
 
     prove_diagnostics.lock().await.insert(uri.clone(), row_diags);
-    client.publish_diagnostics(uri, diagnostics, None).await;
+    publish_and_cache(client, last_diagnostics, uri, diagnostics).await;
 }
 
 fn format_hover(ann: &Annotation) -> String {
@@ -1469,6 +1526,7 @@ async fn main() {
         raw_documents: Arc::new(Mutex::new(HashMap::new())),
         prove_diagnostics: Arc::new(Mutex::new(HashMap::new())),
         change_generation: Arc::new(Mutex::new(HashMap::new())),
+        last_diagnostics: Arc::new(Mutex::new(HashMap::new())),
     });
 
     Server::new(stdin, stdout, socket).serve(service).await;
