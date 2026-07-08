@@ -45,12 +45,10 @@ use std::path::Path;
 
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_linker::{link, LinkerErrorKind, LinkerInputs};
-use sugar_proof_envelope::{
-    build_proof_envelope, ProofEnvelopeInput, ProofGraph,
-};
+use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph};
 use sugar_verifier::consistency::verify_consistency;
 use sugar_verifier::load_all_proofs::{load_proof_bytes_into_pool, ProofBytes};
-use sugar_verifier::{MementoPool, Speaker, SolverHandle, SolverPlan, SolverSeat};
+use sugar_verifier::{MementoPool, SolverHandle, SolverPlan, SolverSeat, Speaker};
 
 use crate::outcome::Outcome;
 
@@ -77,7 +75,7 @@ pub trait Orchestrate {
         registry: &HashMap<SolverSeat, SolverHandle>,
         compilers: &CompilerRegistry,
         project_root: &Path,
-    ) -> Outcome;
+    ) -> Result<Outcome, SolveError>;
 }
 
 impl Orchestrate for ProofGraph {
@@ -88,7 +86,7 @@ impl Orchestrate for ProofGraph {
         registry: &HashMap<SolverSeat, SolverHandle>,
         compilers: &CompilerRegistry,
         project_root: &Path,
-    ) -> Outcome {
+    ) -> Result<Outcome, SolveError> {
         // Beat 1 -- LINK. Plain `link()` (no solver registry): its only job
         // here is symbol/signature resolution (`bind`'s two failure arms).
         // The obligation-discharge arms `link()` can also emit
@@ -110,7 +108,7 @@ impl Orchestrate for ProofGraph {
             })
             .collect();
         if !link_errors.is_empty() {
-            return Outcome::LinkError(link_errors);
+            return Ok(Outcome::LinkError(link_errors));
         }
 
         // Beat 2 -- DISCHARGE. `verify_consistency` takes a `MementoPool`,
@@ -121,27 +119,43 @@ impl Orchestrate for ProofGraph {
         // already does: seal an internal, throwaway-signed copy and
         // self-load it into a fresh pool via the one loader every `.proof`
         // consumer uses.
-        let pool = match pool_from_graph(self) {
-            Ok(pool) => pool,
-            Err(reason) => {
-                // Round-tripping the graph we were just handed cannot
-                // honestly fail; if it ever does, that is a link-class
-                // failure ("no program assembled"), not a solver verdict.
-                return Outcome::LinkError(vec![sugar_linker::LinkerError {
-                    kind: LinkerErrorKind::UnresolvedSymbol,
-                    target_symbol: String::new(),
-                    source_contract_cid: String::new(),
-                    reason: format!("solve: could not stage graph for discharge: {reason}"),
-                    file: None,
-                    call_site_locus: None,
-                }]);
-            }
-        };
+        // A failed self-load is neither of the two reds -- it is a
+        // precondition failure (the graph could not even be staged), so it
+        // is a typed Err, never a fabricated LinkError (gitar on #3858) and
+        // never a verdict.
+        let pool = pool_from_graph(self).map_err(SolveError::SelfLoad)?;
+        // The loader records partial rejections (duplicate contract names,
+        // malformed members) in pool.load_errors rather than failing -- a
+        // partial pool would discharge silently over missing members
+        // (macroscope on #3858). Refuse loudly instead.
+        if !pool.load_errors.is_empty() {
+            return Err(SolveError::PartialLoad {
+                errors: pool.load_errors.iter().map(|e| format!("{e:?}")).collect(),
+            });
+        }
         let verdicts = verify_consistency(&pool, plan, registry, compilers, project_root);
-        Outcome::Verdicts(verdicts)
+        Ok(Outcome::Verdicts(verdicts))
     }
 }
 
+/// Failure to stage the graph for discharge -- a PRECONDITION failure,
+/// structurally distinct from both reds (neither a link error nor a verdict).
+#[derive(Debug, thiserror::Error)]
+pub enum SolveError {
+    #[error("solve: could not stage graph for discharge: {0}")]
+    SelfLoad(String),
+    #[error("solve: loader rejected part of the graph; refusing to discharge a partial pool: {errors:?}")]
+    PartialLoad { errors: Vec<String> },
+}
+
+/// KNOWN LIMITATION (macroscope on #3858, matches the SEAM 2 finding):
+/// the self-load stamps EVERY member `Speaker::consumer("solve-self-load")`.
+/// ProofGraph does not carry per-member attribution -- attribution is a
+/// property of the feed EVENT (`feed(other, speaker)`, the open design seam)
+/// -- so vendor members are misattributed as consumer here. Harmless for the
+/// two-reds discrimination (conjoin still fires), but Tier-2 signer-trust
+/// attribution through THIS door is not meaningful until the feed-attribution
+/// seam lands. Documented, not hidden.
 fn pool_from_graph(graph: &ProofGraph) -> Result<MementoPool, String> {
     let proof_input = ProofEnvelopeInput {
         name: "solve-self-load".to_string(),

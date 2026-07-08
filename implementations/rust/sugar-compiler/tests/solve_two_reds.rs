@@ -26,9 +26,7 @@ use sugar_claim_envelope::{mint_contract_with_body_cid, Authoring, MintContractA
 use sugar_compiler::orchestrate::Orchestrate;
 use sugar_compiler::outcome::Outcome;
 use sugar_linker::{CallSiteLocus, LinkerCallEdge, LinkerErrorKind, LinkerInputs};
-use sugar_proof_envelope::{
-    ClaimContractMemento, ContractBody, Ed25519Seed, FlatAtom, ProofGraph,
-};
+use sugar_proof_envelope::{ClaimContractMemento, ContractBody, Ed25519Seed, FlatAtom, ProofGraph};
 use sugar_verifier::solvers::registry;
 use sugar_verifier::{ObligationVerdict, SolverPlan, SolverSeat};
 
@@ -55,7 +53,12 @@ fn json_to_cvalue(j: &Json) -> std::sync::Arc<sugar_canonicalizer::Value> {
     }
 }
 
-fn push_named_contract_with_inv(graph: &mut ProofGraph, contract_name: &str, inv: &Json, seed: Ed25519Seed) {
+fn push_named_contract_with_inv(
+    graph: &mut ProofGraph,
+    contract_name: &str,
+    inv: &Json,
+    seed: Ed25519Seed,
+) {
     let inv_atom = graph.register_atom(FlatAtom::new(json_to_cvalue(inv)));
     let body = graph.register_body(ContractBody::from_slots(vec![("inv", &inv_atom)]));
     let body_cid = body.cid().as_str().to_string();
@@ -136,7 +139,9 @@ fn unresolved_cross_kit_symbol_yields_link_error_not_verdicts() {
     let registry = empty_registry();
     let compilers = test_compilers();
 
-    let outcome = graph.solve(links, &plan, &registry, &compilers, Path::new("."));
+    let outcome = graph
+        .solve(links, &plan, &registry, &compilers, Path::new("."))
+        .expect("solve must stage this well-formed graph");
 
     match outcome {
         Outcome::LinkError(errors) => {
@@ -183,7 +188,9 @@ fn same_name_contradiction_yields_unsatisfied_verdict_not_link_error() {
     let registry = registry::build_default_z3("z3");
     let compilers = test_compilers();
 
-    let outcome = graph.solve(links, &plan, &registry, &compilers, Path::new("."));
+    let outcome = graph
+        .solve(links, &plan, &registry, &compilers, Path::new("."))
+        .expect("solve must stage this well-formed graph");
 
     match outcome {
         Outcome::LinkError(errors) => panic!(
