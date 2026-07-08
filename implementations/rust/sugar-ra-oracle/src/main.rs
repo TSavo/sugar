@@ -1,49 +1,41 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// sugar-linkerd: long-running JSON-RPC daemon for the Sugar
-// linker, implementing spec `protocol/specs/2026-05-04-linker-daemon-protocol.md`.
+// sugar-ra-oracle: resident rust-analyzer oracle for the Rust lift pipeline.
+//
+// Extracted from sugar-linkerd (daemon-1 of the linkerd retirement): this
+// binary serves ONLY the two RPCs `sugar_walk::ra_daemon_client` needs
+// (`rustAnalyzerReady`, `resolveReceiverCrate`), over the SAME NDJSON
+// JSON-RPC 2.0 Unix-socket wire protocol sugar-linkerd already speaks for
+// these methods.
 //
 // Usage:
-//   sugar-linkerd --project-cid <cid>
+//   sugar-ra-oracle --project-cid <cid>
 //                    [--socket <path>]
 //                    [--snapshot <path>]
 //                    [--idle-timeout-ms <ms>]
-//                    [--cache-cap <n>]
 //
-// Spec reference:
-//   R1:  socket at ${XDG_RUNTIME_DIR}/sugar/linkerd-<projectCid>.sock
-//   R2:  0600 permissions; reject non-owner UIDs.
-//   R3:  NDJSON encoding, one JSON-RPC 2.0 message per line.
-//   R4:  idle timeout 5 min; warm-start from snapshot.
-//   R5-R9: five RPC methods.
-//   R12-R14: LRU cache + snapshot persistence.
-//   R15: one daemon per projectCid.
-//   R16: no network listener.
-
-mod methods;
-mod server;
-mod snapshot;
-mod state;
+// The four flags are intentionally identical (name and meaning) to the ones
+// `sugar-linkerd` accepts, and to the ones
+// `sugar_walk::ra_daemon_client::connect_or_spawn` already passes when it
+// spawns the daemon -- so repointing that client at this binary (a later
+// step) is a binary-name/env-var change, not a protocol or CLI change.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use server::{default_snapshot_path, default_socket_path, ServerConfig};
+use sugar_ra_oracle::server::{default_snapshot_path, default_socket_path, ServerConfig};
 use tracing::info;
 
 fn main() -> anyhow::Result<()> {
-    // Structured logging.
     init_tracing();
 
-    // Parse arguments (hand-rolled to avoid a heavy CLI dep in the daemon).
+    // Hand-rolled arg parsing, mirroring sugar-linkerd's main.rs (avoids a
+    // heavy CLI dep in a small resident daemon).
     let args: Vec<String> = std::env::args().collect();
     let mut project_cid = String::from("default");
     let mut socket_path: Option<PathBuf> = None;
     let mut snapshot_path: Option<PathBuf> = None;
     let mut idle_timeout_ms: u64 = 5 * 60 * 1000; // 5 min default
-    let mut cache_cap: usize = 1024;
-    let mut project_root: Option<PathBuf> = None;
-    let mut solvers_enabled = true;
 
     let mut i = 1usize;
     while i < args.len() {
@@ -72,23 +64,14 @@ fn main() -> anyhow::Result<()> {
                     idle_timeout_ms = v.parse().unwrap_or(idle_timeout_ms);
                 }
             }
-            "--cache-cap" => {
+            // Flags sugar-linkerd also accepts but this oracle has no use for
+            // (editor-prove/link concerns): accepted and ignored so a caller
+            // that still passes the full linkerd flag set (pre-repoint) does
+            // not fail to spawn this binary.
+            "--cache-cap" | "--project-root" => {
                 i += 1;
-                if let Some(v) = args.get(i) {
-                    cache_cap = v.parse().unwrap_or(cache_cap);
-                }
             }
-            "--project-root" => {
-                i += 1;
-                if let Some(v) = args.get(i) {
-                    project_root = Some(PathBuf::from(v));
-                }
-            }
-            // Force the pure-link() structural (degraded) discharge mode even
-            // when a solver is resolvable. Names the degraded mode explicitly.
-            "--no-solvers" => {
-                solvers_enabled = false;
-            }
+            "--no-solvers" => {}
             _ => {}
         }
         i += 1;
@@ -98,44 +81,36 @@ fn main() -> anyhow::Result<()> {
         socket_path: socket_path.unwrap_or_else(|| default_socket_path(&project_cid)),
         snapshot_path: snapshot_path.unwrap_or_else(|| default_snapshot_path(&project_cid)),
         idle_timeout: Duration::from_millis(idle_timeout_ms),
-        cache_cap,
-        project_root: project_root
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
-        solvers_enabled,
     };
 
     info!(
         project_cid = %project_cid,
         socket = %config.socket_path.display(),
         idle_timeout_ms = %idle_timeout_ms,
-        "sugar-linkerd starting"
+        "sugar-ra-oracle starting"
     );
 
-    // Windows gap: Unix sockets are not supported on Windows.
-    // Named pipe support (\\.\pipe\...) will be added in a follow-up.
     #[cfg(not(unix))]
     {
-        eprintln!("error: sugar-linkerd requires a Unix platform (Unix domain sockets).");
-        eprintln!("Windows named pipe support is planned; see spec R1.");
+        eprintln!("error: sugar-ra-oracle requires a Unix platform (Unix domain sockets).");
         std::process::exit(1);
     }
 
-    // Run the async server on a multi-threaded tokio runtime.
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(server::run(config))?;
+        .block_on(sugar_ra_oracle::server::run(config))?;
 
     Ok(())
 }
 
 fn init_tracing() {
-    // The resident rust-analyzer host (sugar_walk::ra_oracle) no longer lives
-    // in this daemon: it was extracted to sugar-ra-oracle (daemon-1 of the
-    // linkerd retirement). That binary's tracing directive lives in its own
-    // main.rs.
-    let filter =
-        tracing_subscriber::EnvFilter::from_default_env().add_directive("sugar_linkerd=info".parse().unwrap());
+    let filter = tracing_subscriber::EnvFilter::from_default_env()
+        .add_directive("sugar_ra_oracle=info".parse().unwrap())
+        // Surface the resident rust-analyzer host's own index progress (it
+        // lives in sugar_walk::ra_oracle) so an operator watching the oracle
+        // sees the one-time workspace index, not silence.
+        .add_directive("sugar_walk::ra_oracle=info".parse().unwrap());
     if let Ok(path) = std::env::var("SUGAR_LOG_FILE") {
         match std::fs::OpenOptions::new()
             .create(true)

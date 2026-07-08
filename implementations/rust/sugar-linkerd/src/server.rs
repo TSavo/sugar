@@ -29,13 +29,18 @@ use tracing::{debug, error, info, warn};
 
 use crate::methods::{
     handle_flush_cache, handle_get_diagnostics, handle_parse_file, handle_project_status,
-    handle_prove_consistency, handle_resolve_receiver_crate, handle_rust_analyzer_ready,
-    rpc_error, shutdown_response, ERR_METHOD_NOT_FOUND,
+    handle_prove_consistency, rpc_error, shutdown_response, ERR_METHOD_NOT_FOUND,
 };
-use crate::ra_host::RaHost;
-use crate::resolve_cache::ResolveCache;
 use crate::snapshot;
 use crate::state::ProjectState;
+// The resident rust-analyzer host, the resolve cache, and the two RPCs that
+// serve them (rustAnalyzerReady, resolveReceiverCrate) were extracted to
+// sugar-ra-oracle (daemon-1 of the linkerd retirement). This daemon still
+// wires them in-process (unchanged runtime behavior) by depending on that
+// crate as a library, rather than re-implementing them here.
+use sugar_ra_oracle::methods::{handle_resolve_receiver_crate, handle_rust_analyzer_ready};
+use sugar_ra_oracle::ra_host::RaHost;
+use sugar_ra_oracle::resolve_cache::ResolveCache;
 
 /// Configuration for the daemon server.
 pub struct ServerConfig {
