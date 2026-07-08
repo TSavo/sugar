@@ -6,10 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use libsugar::core::{
-    address, execute_path, named_term_document_cid, named_term_document_from_bind_payload,
-    strip_realize_sidecar_from_lift_term, BindKit, ConformanceDeclaration, Dialect,
-    HashMapInputCatalog, Input, Kit, KitRegistry, LiftKit, Path as CorePath, PathAlgebra, Term,
-    Verb,
+    address, execute_path, ConformanceDeclaration, Dialect, HashMapInputCatalog, Input, Kit,
+    KitRegistry, LiftKit, Path as CorePath, PathAlgebra, Term, Verb,
+};
+use sugar_walk::{
+    named_term_document_cid, named_term_document_from_bind_payload,
+    strip_realize_sidecar_from_lift_term, BindKit,
 };
 
 const BIND_NONCARRIER: ConformanceDeclaration = ConformanceDeclaration::NonCarrier {

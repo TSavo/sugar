@@ -1511,7 +1511,7 @@ mod tests {
     ///
     /// Every `pre`/`post` formula reaching the linker is produced by
     /// `serde_json::to_value(&IrFormula)` upstream (e.g.
-    /// `libsugar::core::bind::bind_function_bridge`), so its wire key order is
+    /// `sugar_walk::bind::bind_function_bridge`), so its wire key order is
     /// the `IrFormula` declaration order. This test pins that round-tripping a
     /// representative set of those exact wire values through `Option<IrFormula>`
     /// (deserialize -> re-serialize) reproduces the bytes exactly. If a producer

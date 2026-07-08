@@ -5,7 +5,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use libsugar::core::{named_term_document_from_bind_payload, Term};
+use libsugar::core::Term;
+use sugar_walk::named_term_document_from_bind_payload;
 
 fn sugar_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_sugar"))

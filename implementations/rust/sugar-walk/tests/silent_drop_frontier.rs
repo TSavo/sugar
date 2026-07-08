@@ -72,30 +72,6 @@ const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
     ),
     sanction!(
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        544,
-        "not-mine",
-        "recognize tags are minted only from functions inside inline modules",
-        "sugar-walk::bin::walk_rpc",
-        NOT_MINE_RETIREMENT
-    ),
-    sanction!(
-        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        564,
-        "not-mine",
-        "recognize templates only bind single-name parameters",
-        "sugar-walk::bin::walk_rpc",
-        NOT_MINE_RETIREMENT
-    ),
-    sanction!(
-        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        567,
-        "not-mine",
-        "recognize targets are free functions; receivers have no template parameter name",
-        "sugar-walk::bin::walk_rpc",
-        NOT_MINE_RETIREMENT
-    ),
-    sanction!(
-        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
         2589,
         "not-mine",
         "only is_ok/is_some map to built-in std panic partial stems",

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use libsugar::core::{
-    address, bind_term_document, named_term_document_from_bind_payload,
-    strip_realize_sidecar_from_lift_term, BindKit, BindOptions, Input, Kit, Term,
+use libsugar::core::{address, Input, Kit, Term};
+use sugar_walk::{
+    bind_term_document, named_term_document_from_bind_payload,
+    strip_realize_sidecar_from_lift_term, BindKit, BindOptions,
 };
 use serde_json::{json, Value};
 use sugar_ir_types::Sort;

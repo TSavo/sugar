@@ -13,10 +13,11 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use libsugar::core::{
-    address, execute_path, BindKit, BindOptions, ConformanceDeclaration, HashMapInputCatalog,
-    Input, KitRegistry, Path as CorePath, PathAlgebra, PathExecutionError, Term, Verb,
+    address, execute_path, ConformanceDeclaration, HashMapInputCatalog, Input, KitRegistry,
+    Path as CorePath, PathAlgebra, PathExecutionError, Term, Verb,
 };
 use owo_colors::OwoColorize;
+use sugar_walk::{BindKit, BindOptions};
 use serde_json::Value as Json;
 use sugar_ir_types::{CompositionBoundaryMemento, Sort};
 

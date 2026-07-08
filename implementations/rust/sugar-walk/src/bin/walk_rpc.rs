@@ -10206,8 +10206,9 @@ fn cvalue_to_json(v: &CValue) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libsugar::core::{bind_result_payload, bind_term_document, BindOptions, Term};
+    use libsugar::core::Term;
     use std::collections::BTreeSet;
+    use sugar_walk::{bind_result_payload, bind_term_document, BindOptions};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
     use sugar_claim_envelope::{

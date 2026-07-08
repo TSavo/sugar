@@ -8,9 +8,9 @@ use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_types::{IrFormula, IrTerm, Sort};
 use thiserror::Error;
 
-use super::primitives::address;
-use super::traits::{Kit, KitError};
-use super::types::{
+use libsugar::core::primitives::address;
+use libsugar::core::traits::{Kit, KitError};
+use libsugar::core::types::{
     memento_from_parts, Cid, Contract, Dialect, DomainClaim, DomainKind, Input, Term, Verdict,
 };
 
@@ -385,7 +385,7 @@ pub fn bind_term_document(
     let mut terms = Vec::with_capacity(entries.len());
     for (idx, entry) in entries.into_iter().enumerate() {
         let term_shape_cid = if entry.term_shape_cid.trim().is_empty() {
-            crate::canonical::json_cid(&entry.term_shape)
+            libsugar::canonical::json_cid(&entry.term_shape)
                 .map_err(|e| format!("cid term shape for {}: {e}", entry.fn_name))?
         } else {
             entry.term_shape_cid.clone()
@@ -449,7 +449,7 @@ pub fn bind_term_document(
 /// Return the canonical named-term document CID emitted by `cmd_bind`.
 pub fn named_term_document_cid(named: &NamedTermDocument) -> Result<Cid, BindError> {
     let canonical = bind_payload_named_term_document(named);
-    let cid = crate::canonical::serializable_cid(&canonical)
+    let cid = libsugar::canonical::serializable_cid(&canonical)
         .map_err(|error| BindError::Failed(format!("cid named term JSON: {error}")))?;
     Cid::try_from(cid).map_err(|error| BindError::Failed(error.to_string()))
 }
@@ -693,11 +693,15 @@ fn json_to_canonical_value(j: &Json) -> std::sync::Arc<sugar_canonicalizer::Valu
     match j {
         Json::Null => CV::null(),
         Json::Bool(b) => CV::boolean(*b),
+        // Canonical ProofIR numbers are integers within i64/u64 range. A value
+        // that fits neither (a float, or an out-of-range magnitude) cannot be
+        // minted into a canonical integer; silently coercing it to 0 would
+        // corrupt the CID. Fail loud instead of lying about the number.
         Json::Number(n) => CV::integer(
             n.as_i64()
                 .map(i128::from)
                 .or_else(|| n.as_u64().map(i128::from))
-                .unwrap_or(0),
+                .expect("canonical JSON number must be an integer within i64/u64 range"),
         ),
         Json::String(s) => CV::string(s.clone()),
         Json::Array(items) => CV::array(items.iter().map(json_to_canonical_value).collect()),
@@ -733,10 +737,13 @@ pub fn bind_function_bridge(
         .iter()
         .map(|f| Json::String(f.clone()))
         .collect();
+    // A formal sort always serializes to JSON; `Json::Null` on failure would
+    // silently forge a bridge wire with a missing sort. Valid inputs are
+    // byte-identical to before -- only the impossible failure path is loud.
     let formal_sorts: Vec<Json> = contract
         .formal_sorts
         .iter()
-        .map(|s| serde_json::to_value(s).unwrap_or(Json::Null))
+        .map(|s| serde_json::to_value(s).expect("formal sort serializes to JSON"))
         .collect();
 
     let op_contract_env = json!({
@@ -798,7 +805,13 @@ fn bind_lift_entries(term_json: &Json) -> Result<Vec<BindLiftEntry>, BindError> 
         .ok_or_else(|| BindError::Failed("ProofIR document missing `ir` array".to_string()))?;
     let mut out = Vec::new();
     for item in ir {
-        let kind = item.get("kind").and_then(Json::as_str).unwrap_or("");
+        // An item with no string `kind` is not one of the entry shapes we
+        // lift, so it is skipped -- expressed as an explicit non-match rather
+        // than an empty-string default that hides the absence.
+        let kind = match item.get("kind").and_then(Json::as_str) {
+            Some(kind) => kind,
+            None => continue,
+        };
         // Accept BOTH `bind-lift-entry` (contracts) and
         // `library-sugar-binding-entry` (@sugar functions). The latter
         // was historically skipped, which meant @sugar functions never
@@ -921,7 +934,13 @@ fn entry_display_name(entry: &BindLiftEntry, ordinal: usize, op_cid: &str) -> St
 }
 
 fn unique_name(label: &str, seen: &mut BTreeSet<String>) -> String {
-    let base = label.strip_prefix("concept:").unwrap_or(label).to_string();
+    // Strip the `concept:` namespace prefix when present; a label without it
+    // is its own base. Explicit match so the "no prefix" branch is named, not
+    // an error-erasing default.
+    let base = match label.strip_prefix("concept:") {
+        Some(stripped) => stripped.to_string(),
+        None => label.to_string(),
+    };
     if seen.insert(base.clone()) {
         return base;
     }
@@ -994,9 +1013,18 @@ struct GrammarOpRegistry;
 
 impl GrammarOpRegistry {
     fn cid(&self, name: &str) -> Option<Cid> {
+        // `grammar_op_shape` returns None for a non-grammar name -- the only
+        // honest absence here. Once a shape exists it is a constant compiled
+        // into the binary, so canonicalizing it and parsing the resulting CID
+        // cannot fail on any real input: a failure is a broken grammar shape,
+        // not a runtime miss, and must be loud rather than a silent None.
         let shape = grammar_op_shape(name)?;
-        let cid = crate::canonical::op_cid_from_shape(&shape).ok()?;
-        Cid::try_from(cid.as_str()).ok()
+        let cid = libsugar::canonical::op_cid_from_shape(&shape)
+            .expect("compiled-in grammar op shape must canonicalize");
+        Some(
+            Cid::try_from(cid.as_str())
+                .expect("op_cid_from_shape yields a well-formed CID string"),
+        )
     }
 }
 
@@ -1103,7 +1131,7 @@ fn site_cid(_entry: &BindLiftEntry, name: &str, term_shape_cid: &str) -> Result<
         "name": name,
         "termShapeCid": term_shape_cid,
     });
-    crate::canonical::json_cid(&value).map_err(|e| BindError::Failed(e.to_string()))
+    libsugar::canonical::json_cid(&value).map_err(|e| BindError::Failed(e.to_string()))
 }
 
 fn primitive_sort(name: &str) -> Sort {
@@ -1120,7 +1148,7 @@ mod tests {
     /// `build_function_contract` would produce: body-derived
     /// `post = (result == *(x, 2))`, one formal `x`.
     fn double_contract() -> Contract {
-        use crate::compose::{EffectSet, Locus};
+        use libsugar::compose::{EffectSet, Locus};
         let post = IrFormula::Atomic {
             name: "=".to_string(),
             args: vec![

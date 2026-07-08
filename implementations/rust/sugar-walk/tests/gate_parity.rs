@@ -16,10 +16,6 @@ use syn::spanned::Spanned;
 
 const SANCTIONED_CONTRACT_CONSTRUCTOR_MODULES: &[SanctionedModule] = &[
     SanctionedModule {
-        file: "implementations/rust/libsugar/src/core/bind.rs",
-        reason: "core bind kit mints the bind response contract for term-document payloads",
-    },
-    SanctionedModule {
         file: "implementations/rust/libsugar/src/core/lift_plugin.rs",
         reason: "core lift plugin mints the lift response contract for plugin sessions",
     },
@@ -42,6 +38,10 @@ const SANCTIONED_CONTRACT_CONSTRUCTOR_MODULES: &[SanctionedModule] = &[
     SanctionedModule {
         file: "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
         reason: "walk RPC emits function, totality, manifest, and builtin contract entries",
+    },
+    SanctionedModule {
+        file: "implementations/rust/sugar-walk/src/bind.rs",
+        reason: "bind kit mints the bind response contract for term-document payloads (relocated from libsugar/src/core/bind.rs by #evict-1-bind)",
     },
     SanctionedModule {
         file: "implementations/rust/sugar-walk/src/contract.rs",

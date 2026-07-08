@@ -1200,7 +1200,7 @@ fn parse_declaration_to_contract(decl: &Json, kit_label: &str) -> Option<LinkerC
     );
 
     // Type the pre/post as `IrFormula`. Every kit lifter emits these via
-    // `IrFormula` serialization (see `libsugar::core::bind`), so parse is
+    // `IrFormula` serialization (see `sugar_walk::bind`), so parse is
     // total for real declarations; `json_to_formula` returns `None` only for
     // an absent field.
     let pre_json = json_to_formula(pre_raw);
