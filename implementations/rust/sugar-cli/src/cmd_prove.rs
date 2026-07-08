@@ -310,7 +310,11 @@ pub(crate) fn build_prove_artifact_with_options(
         }),
         ..Default::default()
     };
-    let compilers = component_plan::compiler_registry_from_plan(project_root, &component_plan);
+    let compilers = component_plan::compiler_registry_from_plan(
+        project_root,
+        &component_plan,
+        &component_plan::VerifierComponentRegistry,
+    );
     Runner::new_with_compilers(cfg, compilers)
         .run_with_proof_run()
         .map_err(|error| error.to_string())
