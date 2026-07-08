@@ -1436,6 +1436,14 @@ def _open_equality_fact_vars(arg_terms: list[Term], value_term: Term) -> frozens
     )
 
 
+# Builtins with NO Python body anywhere to dig (C-implemented) but whose vendor-suite
+# assertions are, by the vendor-tests-ARE-the-spec doctrine, the only spec available.
+# `len(x) == N` mints a `call:len::universe` FunctionContract restating that SAME
+# stated equality as a formals-bearing universe, so `collect_ambient_posts` gets a
+# genuine bridge target instead of the callsite going bridge-dark forever (issue #3864).
+_AXIOMATIC_BUILTIN_UNIVERSE_CALLEES = frozenset({"len"})
+
+
 _COMPUTABLE_NUMPY_INTEGER_UFUNCS = frozenset(
     {
         "numpy.add",
@@ -2059,6 +2067,83 @@ def _dict_read_sort(term: Term, *, callee_name: str) -> ProofSort:
     )
 
 
+def _builtin_call_universe(
+    stmt: SourceFragment,
+    fn: SourceFragment,
+    callee_name: str,
+    arg_terms: list[Term],
+    value_term: Term,
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    call_sort: ProofSort,
+) -> LiftResult:
+    """Mint the `call:<callee>::universe` FunctionContract for an axiomatic builtin
+    (see `_AXIOMATIC_BUILTIN_UNIVERSE_CALLEES`). By the time a callsite reaches here
+    `arg_terms`/`value_term` are already closed (`_emit_euf_fact` refuses open terms
+    first), so there are no free formals to recover -- the universe is nullary, and
+    its post is the literal `eq(out, value_term)` the vendor already swore to. This is
+    STATED, not derived: the vendor's own assertion IS the spec for a callee with no
+    Python body to dig, so restating it as a formals-bearing bridge target is honest,
+    not fabricated."""
+    scope_sorts: dict[str, ProofSort] = {"out": call_sort}
+    universe_formula = eq(make_var("out"), value_term)
+    post = _post_condition_from_ir(universe_formula, scope_sorts=scope_sorts, formal_names=())
+    contract_name = euf_callsite_name(
+        callee_name, euf_call_term(callee_name, arg_terms), suffix="::universe"
+    )
+    memento = _statement_source_memento(
+        stmt,
+        fn,
+        memento_file,
+        source_lines,
+        contract_name=contract_name,
+        role="python.builtin-call-universe",
+    )
+    site = _proofir_construction_site(stmt, memento_file)
+    contract = FunctionContract(
+        symbol=contract_name,
+        formals=(),
+        post=post,
+        warrants=(
+            Provenance(
+                node_class=FunctionContract.node_class,
+                construction_site=site,
+                warrant=Stated(locus=site),
+            ),
+        ),
+        out_binding="out",
+        out_sort=call_sort,
+        source_warrants=[memento],
+        bridge_source_symbol=f"call:{callee_name}",
+    )
+    audit = _source_audit(
+        fn,
+        stmt,
+        memento_file,
+        contract_name,
+        memento,
+        role="python.builtin-call-universe",
+        ast_kind="Assert",
+    )
+    walk = _walk_row(
+        "BuiltinCallUniverseSugar",
+        "Assert",
+        stmt,
+        filename,
+        memento,
+        "predicate",
+        requested_role="FunctionBodyConstraint",
+        emitted_formula=_typed_formula_to_rpc(universe_formula, scope_sorts),
+        reason=(
+            "vendor assertion is the only spec available for this builtin "
+            f"(no Python body to dig for {callee_name!r})"
+        ),
+    )
+    return ([contract], [memento], [audit], [walk], [], [])
+
+
 def _emit_euf_fact(
     stmt: SourceFragment,
     fn: SourceFragment,
@@ -2163,11 +2248,34 @@ def _emit_euf_fact(
         role="python.literal-call-sugar",
         ast_kind="Assert",
     )
+    universe_contracts: list[Any] = []
+    universe_mementos: list[SourceMementoDto] = []
+    universe_audits: list[SourceAuditDto] = []
+    universe_walk: list[FactoryWalkRowDto] = []
     edges: list[CallEdgeDto] = []
     if emit_call_edge:
         if callsite is None:
             raise TypeError("emit_call_edge requires callsite")
         target_symbol = edge_target_symbol or f"call:{callee_name}"
+        if callee_name in _AXIOMATIC_BUILTIN_UNIVERSE_CALLEES:
+            (
+                universe_contracts,
+                universe_mementos,
+                universe_audits,
+                universe_walk,
+                _,
+                _,
+            ) = _builtin_call_universe(
+                stmt,
+                fn,
+                callee_name,
+                list(arg_terms),
+                value_term,
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+                call_sort=call_sort,
+            )
         binding = _binding_for_bridge_symbol(
             contract_bindings or [], target_symbol, arg_terms=list(arg_terms)
         )
@@ -2197,10 +2305,10 @@ def _emit_euf_fact(
             ).to_declaration()
         )
     return (
-        [EqualityFactEmission(member, (memento,))],
-        [memento],
-        [audit],
-        [walk],
+        [EqualityFactEmission(member, (memento,)), *universe_contracts],
+        [memento, *universe_mementos],
+        [audit, *universe_audits],
+        [walk, *universe_walk],
         edges,
         [],
     )
