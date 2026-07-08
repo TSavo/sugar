@@ -1,21 +1,23 @@
 warning: unreachable expression
- --> tests/kit_unforgeable_fail/struct_literal.rs:8:19
-  |
-7 |         manifest: unimplemented!(),
-  |                   ---------------- any code following this expression is unreachable
-8 |         registry: unimplemented!(),
-  |                   ^^^^^^^^^^^^^^^^ unreachable expression
-  |
-  = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+  --> tests/kit_unforgeable_fail/struct_literal.rs:10:19
+   |
+ 9 |         manifest: unimplemented!(),
+   |                   ---------------- any code following this expression is unreachable
+10 |         registry: unimplemented!(),
+   |                   ^^^^^^^^^^^^^^^^ unreachable expression
+   |
+   = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
 
-error[E0451]: fields `manifest`, `registry` and `kit_name` of struct `sugar_compiler::kit::Kit` are private
- --> tests/kit_unforgeable_fail/struct_literal.rs:7:9
-  |
-6 |     let _kit = sugar_compiler::kit::Kit {
-  |                ------------------------ in this type
-7 |         manifest: unimplemented!(),
-  |         ^^^^^^^^ private field
-8 |         registry: unimplemented!(),
-  |         ^^^^^^^^ private field
-9 |         kit_name: "forged".to_string(),
-  |         ^^^^^^^^ private field
+error: cannot construct `sugar_compiler::kit::Kit` with struct literal syntax due to private fields
+  --> tests/kit_unforgeable_fail/struct_literal.rs:8:16
+   |
+ 8 |     let _kit = sugar_compiler::kit::Kit {
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^
+ 9 |         manifest: unimplemented!(),
+   |         -------------------------- private field
+10 |         registry: unimplemented!(),
+   |         -------------------------- private field
+11 |         kit_name: "forged".to_string(),
+   |         ------------------------------ private field
+   |
+   = note: ...and other private field `declaration` that was not provided

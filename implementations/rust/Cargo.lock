@@ -1576,6 +1576,7 @@ dependencies = [
  "libsugar",
  "serde",
  "serde_json",
+ "sugar-claim-envelope",
  "sugar-ir-types",
  "sugar-proof-envelope",
  "sugar-verifier",

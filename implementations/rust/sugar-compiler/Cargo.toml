@@ -12,6 +12,7 @@ sugar-verifier = { path = "../sugar-verifier" }
 libsugar = { path = "../libsugar" }
 sugar-ir-types = { path = "../sugar-ir-types" }
 sugar-walk = { path = "../sugar-walk" }
+sugar-claim-envelope = { path = "../sugar-claim-envelope" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

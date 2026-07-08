@@ -6,12 +6,19 @@
 // A `Kit` is minted ONLY by `Kit::rendezvous`: given a resolved lift
 // manifest (the CLI's census/selection-policy output -- WHICH plugin
 // command answers WHICH surface, per `dialect_for_surface`/`lift_kit_name`/
-// `find_manifest` in `sugar-cli/src/lift_plugin.rs`) plus a
-// `ComponentRegistry` builder, rendezvous constructs the kit's own dispatch
-// registration and OWNS the resulting `LiftKit` transport directly on the
-// handle. Holding a `Kit` is compile-time proof a real, resolved kit is
-// present: there is no `Kit::new`, no `From<Value>`, no `Default`, no
-// `Deserialize` (see `sugar-compiler/tests/kit_unforgeable.rs`).
+// `find_manifest` in `sugar-cli/src/lift_plugin.rs`), rendezvous performs a
+// LIVE handshake -- spawn the manifest's command, run `initialize` +
+// `sugar.plugin.kit_declaration` + `shutdown` over its stdio (via
+// `kit_declaration::load_kit_declaration_with_command`, moved here from
+// `sugar-cli/src/kit_declaration.rs` in the same follow-up that added this
+// handshake) -- before constructing the kit's own dispatch registration and
+// owning the resulting `LiftKit` transport on the handle. A manifest whose
+// command doesn't spawn, doesn't speak the protocol, or returns an invalid
+// declaration cannot mint a `Kit`: `RendezvousError::Handshake` names the
+// stage. Holding a `Kit` is therefore proof a real kit process answered its
+// declaration RPC, not just that a manifest shape parsed: there is no
+// `Kit::new`, no `From<Value>`, no `Default`, no `Deserialize` (see
+// `sugar-compiler/tests/kit_unforgeable.rs`).
 //
 // `Kit::lift` folds `dispatch_lift_path`'s body (originally
 // `sugar-cli/src/lift_plugin.rs:293-379`): build the lift request, run it
@@ -41,7 +48,9 @@ use libsugar::core::{
     PathAlgebra, Verb,
 };
 use serde_json::Value;
+use sugar_claim_envelope::KitDeclaration;
 
+use crate::kit_declaration::{load_kit_declaration_with_command, KitDeclarationLoadError};
 use crate::kit_path::{execute_path, KitRegistry, LiftKit, PathExecutionError};
 
 /// The census's resolved answer to "what plugin command answers this
@@ -65,6 +74,12 @@ pub struct LiftManifest {
 pub enum RendezvousError {
     #[error("no lift manifest resolved for surface `{0}` (empty plugin command)")]
     EmptyCommand(String),
+    #[error("kit declaration handshake failed for surface `{surface}`: {source}")]
+    Handshake {
+        surface: String,
+        #[source]
+        source: KitDeclarationLoadError,
+    },
 }
 
 /// Failure during `Kit::lift`.
@@ -97,23 +112,37 @@ pub enum KitError {
 /// "Do NOT make libsugar depend on it -- ABSORB/DELETE").
 pub struct Kit {
     manifest: LiftManifest,
+    declaration: KitDeclaration,
     registry: KitRegistry,
     kit_name: String,
 }
 
 impl Kit {
     /// The ONLY way to mint a `Kit`. Takes the resolved manifest (the
-    /// census's output) and a `ComponentRegistry`-style builder is NOT
-    /// required here: registration against `KitRegistry` (the path-algebra
-    /// dispatch table, distinct from `libsugar::core::ComponentRegistry`'s
-    /// verifier-backed `CompilerRegistry`) is exactly the `LiftKit`
-    /// construction `dispatch_lift_path` used to do inline on every call
-    /// (`lift_plugin.rs:346-360`); rendezvous does it once, here, and the
-    /// result lives on the handle.
+    /// census's output) and performs a LIVE handshake before constructing
+    /// anything: spawns `manifest.command`, runs `initialize` +
+    /// `sugar.plugin.kit_declaration` + `shutdown` over its stdio, and
+    /// requires a valid `KitDeclaration` back (`load_kit_declaration_with_command`
+    /// already calls `KitDeclaration::validate`). Only after that
+    /// round-trip succeeds does rendezvous register the `LiftKit` transport
+    /// against `KitRegistry` (the path-algebra dispatch table, distinct
+    /// from `libsugar::core::ComponentRegistry`'s verifier-backed
+    /// `CompilerRegistry`) -- exactly the construction `dispatch_lift_path`
+    /// used to do inline on every call (`lift_plugin.rs:346-360`);
+    /// rendezvous does it once, here, and the result lives on the handle.
+    /// A forged manifest pointing at a non-kit command (e.g. `/bin/false`)
+    /// fails here with `RendezvousError::Handshake`, before any `Kit`
+    /// exists.
     pub fn rendezvous(manifest: LiftManifest) -> Result<Kit, RendezvousError> {
         if manifest.command.is_empty() {
             return Err(RendezvousError::EmptyCommand(manifest.surface.clone()));
         }
+        let declaration =
+            load_kit_declaration_with_command(&manifest.command, manifest.working_dir.as_deref())
+                .map_err(|source| RendezvousError::Handshake {
+                    surface: manifest.surface.clone(),
+                    source,
+                })?;
         let kit_name = format!("lift-{}", manifest.surface);
         let mut registry = KitRegistry::default();
         registry.register(
@@ -130,9 +159,16 @@ impl Kit {
         );
         Ok(Kit {
             manifest,
+            declaration,
             registry,
             kit_name,
         })
+    }
+
+    /// The kit's own declared identity, methods, and proof-resolution
+    /// strategy, as answered by the live handshake in `rendezvous`.
+    pub fn declaration(&self) -> &KitDeclaration {
+        &self.declaration
     }
 
     /// `Kit::lift(project_root, request)`: folds `dispatch_lift_path`'s

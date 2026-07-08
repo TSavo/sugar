@@ -39,7 +39,6 @@ pub mod component_plan;
 pub mod doctor;
 pub mod doctor_oracle;
 pub mod floor_runtime_check;
-pub mod kit_declaration;
 pub mod kit_dispatch;
 pub mod lift_plugin;
 pub mod panic_annotations_runtime;
