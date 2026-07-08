@@ -21,7 +21,7 @@ cd examples/numpy-vendor && ./run.sh
 
 ## System Dependencies
 
-The build supports **11 host languages** (Rust, Go, C++, TypeScript, C#, Python, Java, Ruby, Zig, Swift, C). All are optional; pick the languages you care about. The only hard requirements are Rust (the canonical CLI implementation) and Python 3.12 (kit RPC).
+The build supports **10 host languages** (Rust, C++, TypeScript, C#, Python, Java, Ruby, Zig, Swift, C). All are optional; pick the languages you care about. The only hard requirements are Rust (the canonical CLI implementation) and Python 3.12 (kit RPC).
 
 | Package | macOS (Homebrew) | Ubuntu / Debian | Purpose |
 |---------|------------------|-----------------|---------|
@@ -82,7 +82,7 @@ The `Makefile` at the repo root is the single source of truth. It coordinates cr
 ```sh
 make help              # print available targets
 make ci                # conformance + solver dispatch + all language test suites
-make build-all         # build all kit binaries (Rust, Python, Go, C++, C#, Java)
+make build-all         # build kit binaries (Rust, Python)
 make test-all          # test-rust + test-python (the proven provers)
 make conformance       # cross-kit conformance harness (catalog CIDs must match pinned)
 make clean             # remove all build artifacts
@@ -386,14 +386,14 @@ CI=1 cargo build --release
 
 ### macOS
 
-- Rust builds locally; Python, Go, and other tools use Homebrew.
+- Rust builds locally; Python and other tools use Homebrew.
 - For CI parity (Linux), use `bcargo` or `CI=1 cargo ...`.
 - Swift builds only on macOS; excluded from conformance harness on Linux.
 
 ### Linux (battleaxe / CI)
 
 - All builds run natively.
-- Python, Go, Rust, C++, Java, C# all supported.
+- Python, Rust, C++, Java, C# all supported.
 - Swift skipped.
 - Full solver portfolio available (z3, cvc5, maude, vampire, coq, lean).
 
