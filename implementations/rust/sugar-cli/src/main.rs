@@ -22,6 +22,7 @@ use clap::{Parser, Subcommand};
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
+mod admission;
 mod cmd_bind;
 mod cmd_compose;
 mod cmd_diff;
@@ -42,6 +43,7 @@ mod cmd_self_check;
 mod cmd_verify;
 mod cmd_version;
 mod component_plan;
+mod discharge_config;
 mod doctor;
 mod doctor_oracle;
 pub mod floor_runtime_check;
