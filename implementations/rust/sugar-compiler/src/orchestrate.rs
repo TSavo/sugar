@@ -145,7 +145,7 @@ impl Orchestrate for ProofGraph {
         // contents, and both beats read it, rather than each independently
         // re-staging the graph.
         let pool = self_load_pool(self)?;
-        let links = crate::linker_inputs::derive_linker_inputs(&pool);
+        let links = crate::linker_inputs::derive_linker_inputs(&pool)?;
 
         // Beat 1 -- LINK, over the pool-derived program.
         if let Some(outcome) = link_beat(links) {
@@ -212,6 +212,12 @@ pub enum SolveError {
     SelfLoad(String),
     #[error("solve: loader rejected part of the graph; refusing to discharge a partial pool: {errors:?}")]
     PartialLoad { errors: Vec<String> },
+    /// A loaded contract body carried a field the linker-input derivation
+    /// could not decode (sugar#3869) -- deriving over a silently-thinned
+    /// contract would be an incomplete-load false green, so it is a typed
+    /// precondition failure, same class as `SelfLoad`/`PartialLoad`.
+    #[error("solve: refusing to derive linker inputs over malformed contract data: {0}")]
+    MalformedContract(#[from] crate::linker_inputs::MalformedContractField),
 }
 
 /// KNOWN LIMITATION (macroscope on #3858, matches the SEAM 2 finding):

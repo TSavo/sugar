@@ -76,55 +76,101 @@ use sugar_ir_types::{IrFormula, Sort};
 use sugar_linker::{CallSiteLocus, LinkerCallEdge, LinkerContract, LinkerInputs};
 use sugar_verifier::{enumerate_callsites, MementoPool};
 
+/// A contract member's body carried a field this derivation could not decode
+/// (sugar#3869). Malformed contract data is a typed load error naming the
+/// contract, NEVER a silently-dropped element: a dropped `Sort` or
+/// `IrFormula` would let bad input achieve success-with-omission -- a
+/// false-green/incomplete-load vector in the compiler substrate.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "derive_linker_inputs: contract {contract_name:?} ({contract_cid}): malformed {field}: {detail}"
+)]
+pub struct MalformedContractField {
+    pub contract_name: String,
+    pub contract_cid: String,
+    pub field: &'static str,
+    pub detail: String,
+}
+
 /// Derive `LinkerInputs` from the pool's own contract union and its
 /// enumerated call sites, so beat 1 of `Orchestrate::solve` sees production
 /// edges -- including edges the pool never resolved a bridge for.
-pub fn derive_linker_inputs(pool: &MementoPool) -> LinkerInputs {
+///
+/// A MISSING optional field (`formals`, `formalSorts`, `pre`, `post`) is a
+/// legitimate body shape and derives to empty/`None`; a PRESENT field that
+/// fails to decode is a typed `Err` (sugar#3869), never an omission.
+pub fn derive_linker_inputs(pool: &MementoPool) -> Result<LinkerInputs, MalformedContractField> {
     let contracts: Vec<LinkerContract> = pool
         .contract_members_with_bodies()
         .map(|(cid, body)| {
-            let formals = body
+            let contract_name = body
+                .get("contractName")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let malformed = |field: &'static str, detail: String| MalformedContractField {
+                contract_name: contract_name.clone(),
+                contract_cid: cid.to_string(),
+                field,
+                detail,
+            };
+            let formals: Vec<String> = body
                 .get("formals")
                 .and_then(|v| v.as_array())
                 .map(|items| {
                     items
                         .iter()
-                        .filter_map(|item| item.as_str().map(str::to_string))
-                        .collect()
+                        .map(|item| {
+                            item.as_str().map(str::to_string).ok_or_else(|| {
+                                malformed("formals entry", format!("expected a string, got {item}"))
+                            })
+                        })
+                        .collect::<Result<_, _>>()
                 })
+                .transpose()?
                 .unwrap_or_default();
-            let formal_sorts = body
+            let formal_sorts: Vec<Sort> = body
                 .get("formalSorts")
                 .and_then(|v| v.as_array())
                 .map(|items| {
                     items
                         .iter()
-                        .filter_map(|item| serde_json::from_value::<Sort>(item.clone()).ok())
-                        .collect()
+                        .map(|item| {
+                            serde_json::from_value::<Sort>(item.clone())
+                                .map_err(|e| malformed("formalSorts entry", format!("{e}: {item}")))
+                        })
+                        .collect::<Result<_, _>>()
                 })
+                .transpose()?
                 .unwrap_or_default();
-            LinkerContract {
-                name: body
-                    .get("contractName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
+            let pre_json = body
+                .get("pre")
+                .map(|v| {
+                    serde_json::from_value::<IrFormula>(v.clone())
+                        .map_err(|e| malformed("pre IrFormula", format!("{e}: {v}")))
+                })
+                .transpose()?;
+            let post_json = body
+                .get("post")
+                .map(|v| {
+                    serde_json::from_value::<IrFormula>(v.clone())
+                        .map_err(|e| malformed("post IrFormula", format!("{e}: {v}")))
+                })
+                .transpose()?;
+            Ok(LinkerContract {
+                name: contract_name,
                 // See module doc: never exercised by resolution, only by
                 // `Symbol::qualified`, which this module never constructs.
                 kit: String::new(),
                 contract_cid: cid.to_string().into(),
-                pre_json: body
-                    .get("pre")
-                    .and_then(|v| serde_json::from_value::<IrFormula>(v.clone()).ok()),
-                post_json: body
-                    .get("post")
-                    .and_then(|v| serde_json::from_value::<IrFormula>(v.clone()).ok()),
+                pre_json,
+                post_json,
                 formals,
                 formal_sorts,
                 euf_coordinate: None,
-            }
+            })
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
 
     // Only contract CIDs actually present in the derived union may become a
     // `Bound` edge target below. A `CallSite.bridge_target_cid` pointing at a
@@ -170,8 +216,8 @@ pub fn derive_linker_inputs(pool: &MementoPool) -> LinkerInputs {
         })
         .collect();
 
-    LinkerInputs {
+    Ok(LinkerInputs {
         contracts,
         call_edges,
-    }
+    })
 }
