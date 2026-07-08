@@ -164,7 +164,10 @@ fn fact_key(memento: &Value, formula: &Value) -> (String, String, String) {
 /// `DomainClaim.payload` (a `Term::Const{value, ..}` carrying the RPC
 /// response's raw `ir` array verbatim -- see `kit_path/lift_plugin.rs`'s
 /// `claim_from_response_term`).
-fn facts_from_whole_project_lift(kit: &Kit, workspace_root: &Path) -> Vec<(String, String, String)> {
+fn facts_from_whole_project_lift(
+    kit: &Kit,
+    workspace_root: &Path,
+) -> Vec<(String, String, String)> {
     let request = json!({
         "workspace_root": workspace_root.display().to_string(),
         "source_paths": ["."],
@@ -238,7 +241,10 @@ fn enumeration_fold_matches_whole_project_lift() {
     let from_lift = facts_from_whole_project_lift(&kit, &project);
     let from_tree = facts_from_tree(&kit, &project);
 
-    assert!(!from_lift.is_empty(), "fixture must produce at least one fact via Kit::lift");
+    assert!(
+        !from_lift.is_empty(),
+        "fixture must produce at least one fact via Kit::lift"
+    );
     assert_eq!(
         from_tree, from_lift,
         "enumeration tree's fact set must equal Kit::lift's fact set (fold == blob)"
@@ -258,7 +264,10 @@ fn scan_seek_coherence_at_every_level() {
 
     // source_files: plural vs singular.
     let files = kit.source_files(&project).expect("source_files scan");
-    assert!(!files.is_empty(), "fixture must have at least one source file");
+    assert!(
+        !files.is_empty(),
+        "fixture must have at least one source file"
+    );
     for file in &files {
         let seeked = kit
             .source_file(&project, file.source_memento())

@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use sugar_ir_types::IrFormula;
-use sugar_walk::source_oracle::{SrcSpan, SourceMemento};
+use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
 
 use crate::kit::{Kit, KitError};
 
@@ -121,7 +121,9 @@ pub enum EnumerateError {
     Malformed { plugin: String, reason: String },
     /// A singular seek (`Kit::source_file`, `SourceFile::function`, ...)
     /// found no matching node -- distinct from a wire/decode failure.
-    #[error("sugar.enumerate seek on `{plugin}` at level `{level}` found no node for the given memento")]
+    #[error(
+        "sugar.enumerate seek on `{plugin}` at level `{level}` found no node for the given memento"
+    )]
     SeekMiss { plugin: String, level: &'static str },
     /// `universe()`/`implication()`-style claim data the current kit-side
     /// factory audit does not expose as its own level (see module doc's
@@ -425,16 +427,17 @@ fn decode_node(value: &Value) -> Result<WireNode, String> {
 
 fn decode_gap(value: &Value) -> GapInfo {
     let mut decode_note = None;
-    let memento = value
-        .get("memento")
-        .filter(|v| !v.is_null())
-        .and_then(|v| match decode_memento(v) {
-            Ok(m) => Some(m),
-            Err(e) => {
-                decode_note = Some(e);
-                None
-            }
-        });
+    let memento =
+        value
+            .get("memento")
+            .filter(|v| !v.is_null())
+            .and_then(|v| match decode_memento(v) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    decode_note = Some(e);
+                    None
+                }
+            });
     let mut reason = value
         .get("reason")
         .and_then(Value::as_str)
@@ -554,11 +557,7 @@ fn enumerate_rpc(
     let nodes = result
         .get("nodes")
         .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .map(decode_node)
-                .collect::<Result<Vec<_>, _>>()
-        })
+        .map(|arr| arr.iter().map(decode_node).collect::<Result<Vec<_>, _>>())
         .unwrap_or_else(|| Ok(Vec::new()))
         .map_err(|reason| EnumerateError::MalformedNode {
             plugin: plugin.clone(),
@@ -627,9 +626,13 @@ impl SourceFile {
     /// GRANULARITY note: functions come from `payload.ir`'s
     /// function-contract entries, one per `fnName`.
     pub fn functions(&self) -> Result<Vec<Function>, KitError> {
-        let (nodes, _gaps) =
-            enumerate_rpc(&self.conn, Level::Functions, Some(self.memento.to_json()), false)
-                .map_err(KitError::from)?;
+        let (nodes, _gaps) = enumerate_rpc(
+            &self.conn,
+            Level::Functions,
+            Some(self.memento.to_json()),
+            false,
+        )
+        .map_err(KitError::from)?;
         Ok(nodes
             .into_iter()
             .map(|n| Function {
@@ -641,14 +644,22 @@ impl SourceFile {
     }
 
     pub fn functions_gaps(&self) -> Result<Vec<GapInfo>, KitError> {
-        let (_nodes, gaps) =
-            enumerate_rpc(&self.conn, Level::Functions, Some(self.memento.to_json()), false)?;
+        let (_nodes, gaps) = enumerate_rpc(
+            &self.conn,
+            Level::Functions,
+            Some(self.memento.to_json()),
+            false,
+        )?;
         Ok(gaps)
     }
 
     pub fn function(&self, memento: &SourceMemento) -> Result<Function, KitError> {
-        let (nodes, _gaps) =
-            enumerate_rpc(&self.conn, Level::Functions, Some(memento_to_json(memento)), true)?;
+        let (nodes, _gaps) = enumerate_rpc(
+            &self.conn,
+            Level::Functions,
+            Some(memento_to_json(memento)),
+            true,
+        )?;
         let node = nodes.into_iter().next().ok_or(EnumerateError::SeekMiss {
             plugin: self.conn.surface.clone(),
             level: "functions",
@@ -676,8 +687,12 @@ impl SourceFile {
 
 impl Function {
     pub fn call_sites(&self) -> Result<Vec<CallSite>, KitError> {
-        let (nodes, _gaps) =
-            enumerate_rpc(&self.conn, Level::CallSites, Some(self.memento.to_json()), false)?;
+        let (nodes, _gaps) = enumerate_rpc(
+            &self.conn,
+            Level::CallSites,
+            Some(self.memento.to_json()),
+            false,
+        )?;
         Ok(nodes
             .into_iter()
             .map(|n| CallSite {
@@ -689,14 +704,22 @@ impl Function {
     }
 
     pub fn call_sites_gaps(&self) -> Result<Vec<GapInfo>, KitError> {
-        let (_nodes, gaps) =
-            enumerate_rpc(&self.conn, Level::CallSites, Some(self.memento.to_json()), false)?;
+        let (_nodes, gaps) = enumerate_rpc(
+            &self.conn,
+            Level::CallSites,
+            Some(self.memento.to_json()),
+            false,
+        )?;
         Ok(gaps)
     }
 
     pub fn call_site(&self, memento: &SourceMemento) -> Result<CallSite, KitError> {
-        let (nodes, _gaps) =
-            enumerate_rpc(&self.conn, Level::CallSites, Some(memento_to_json(memento)), true)?;
+        let (nodes, _gaps) = enumerate_rpc(
+            &self.conn,
+            Level::CallSites,
+            Some(memento_to_json(memento)),
+            true,
+        )?;
         let node = nodes.into_iter().next().ok_or(EnumerateError::SeekMiss {
             plugin: self.conn.surface.clone(),
             level: "call_sites",
@@ -715,8 +738,12 @@ impl CallSite {
     /// IS its assertion (1:1) -- there is no further per-assertion split
     /// in the kit-side audit yet; flagged, not hidden.
     pub fn assertions(&self) -> Result<Vec<Assertion>, KitError> {
-        let (nodes, _gaps) =
-            enumerate_rpc(&self.conn, Level::Assertions, Some(self.memento.to_json()), true)?;
+        let (nodes, _gaps) = enumerate_rpc(
+            &self.conn,
+            Level::Assertions,
+            Some(self.memento.to_json()),
+            true,
+        )?;
         Ok(nodes
             .into_iter()
             .map(|n| Assertion {
@@ -728,14 +755,22 @@ impl CallSite {
     }
 
     pub fn assertions_gaps(&self) -> Result<Vec<GapInfo>, KitError> {
-        let (_nodes, gaps) =
-            enumerate_rpc(&self.conn, Level::Assertions, Some(self.memento.to_json()), true)?;
+        let (_nodes, gaps) = enumerate_rpc(
+            &self.conn,
+            Level::Assertions,
+            Some(self.memento.to_json()),
+            true,
+        )?;
         Ok(gaps)
     }
 
     pub fn assertion(&self, memento: &SourceMemento) -> Result<Assertion, KitError> {
-        let (nodes, _gaps) =
-            enumerate_rpc(&self.conn, Level::Assertions, Some(memento_to_json(memento)), true)?;
+        let (nodes, _gaps) = enumerate_rpc(
+            &self.conn,
+            Level::Assertions,
+            Some(memento_to_json(memento)),
+            true,
+        )?;
         let node = nodes.into_iter().next().ok_or(EnumerateError::SeekMiss {
             plugin: self.conn.surface.clone(),
             level: "assertions",
