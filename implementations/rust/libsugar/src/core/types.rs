@@ -2336,4 +2336,158 @@ mod tests {
 
         assert!(nodes.is_empty());
     }
+
+    // Proof-corpus strict-load sweep (#3840 follow-up). #3840 made this
+    // module's contract-field decode loud: a `pre`/`post`/`formalSorts`/
+    // `returnSort` field (or a required effect sub-field) that is PRESENT
+    // but fails to deserialize now panics instead of silently collapsing to
+    // the same default an ABSENT field gets (see `solver_input_field`,
+    // `solver_input_vec_field`, `parse_effect_set`, `parse_effect` above).
+    // `PathContractMaterial::to_contract` -- the function those helpers
+    // back -- is crate-private, so this sweep lives here (inside the module)
+    // rather than as an external integration test.
+    //
+    // There are no committed `PathDocument`/`DomainClaim`-canonical-bytes
+    // JSON fixtures anywhere in the repository (confirmed by search), so
+    // there is no on-disk corpus that exercises `to_contract` through its
+    // real production callers (`PathDocument::materialized_inputs`,
+    // `domain_claim_from_canonical_bytes`). The closest thing to a real,
+    // committed corpus in the exact schema `to_contract` parses (`fnName`,
+    // `formalSorts`, `returnSort`, `pre`, `post`, `effects`, `bodyCid`,
+    // `locus`, `autoMintedMementos`) is `scripts/output/**/*.json`: demo
+    // artifacts from `scripts/cross-language-demo` that embed
+    // `function-contract` JSON objects (either directly, e.g.
+    // `runtime-eval/lifted-declarations.json`, or nested one level inside an
+    // `evidence.body.rawWitness` JSON string in the legacy-witness shape).
+    // Nothing in current production Rust code loads these particular files
+    // through `to_contract` today, but they are genuinely committed JSON in
+    // that exact schema, so this sweep parses every `function-contract`
+    // object reachable from them (recursing into embedded JSON strings too)
+    // and drives each one through the real, current, strict
+    // `PathContractMaterial::to_contract` to confirm none of it depended on
+    // the old silent-default behavior.
+    fn scripts_output_root() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("libsugar has rust workspace parent")
+            .parent()
+            .expect("rust workspace has implementations parent")
+            .parent()
+            .expect("implementations has repo root parent")
+            .join("scripts/output")
+    }
+
+    /// Recursively collect every `function-contract`-shaped JSON object
+    /// reachable from `value`, including ones nested inside JSON-encoded
+    /// string fields (the legacy `rawWitness` shape).
+    fn collect_function_contract_objects(value: &JsonValue, out: &mut Vec<JsonValue>) {
+        match value {
+            JsonValue::Object(map) => {
+                if map.get("kind").and_then(JsonValue::as_str) == Some("function-contract") {
+                    out.push(value.clone());
+                }
+                for nested in map.values() {
+                    collect_function_contract_objects(nested, out);
+                }
+            }
+            JsonValue::Array(items) => {
+                for item in items {
+                    collect_function_contract_objects(item, out);
+                }
+            }
+            JsonValue::String(text) => {
+                if let Ok(embedded) = serde_json::from_str::<JsonValue>(text) {
+                    collect_function_contract_objects(&embedded, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn scripts_output_function_contract_corpus_loads_without_panicking() {
+        let root = scripts_output_root();
+        assert!(
+            root.is_dir(),
+            "expected scripts/output to exist at {}",
+            root.display()
+        );
+
+        let mut json_files = Vec::new();
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir)
+                .unwrap_or_else(|error| panic!("read dir {}: {error}", dir.display()))
+            {
+                let entry = entry.expect("read dir entry");
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                    json_files.push(path);
+                }
+            }
+        }
+        json_files.sort();
+        assert!(
+            !json_files.is_empty(),
+            "expected at least one committed JSON fixture under {}; the sweep \
+             would otherwise pass vacuously",
+            root.display()
+        );
+
+        let mut contracts_checked = 0usize;
+        let mut failures = Vec::new();
+        for path in &json_files {
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            let Ok(parsed) = serde_json::from_str::<JsonValue>(&text) else {
+                // Not every file under scripts/output is JSON-shaped content
+                // we recognize; a parse failure here is a fixture-shape
+                // miss, not a contract-decode miss, so it is out of scope
+                // for this sweep.
+                continue;
+            };
+            let mut contracts = Vec::new();
+            collect_function_contract_objects(&parsed, &mut contracts);
+            for contract_value in contracts {
+                contracts_checked += 1;
+                let material = PathContractMaterial {
+                    cid: "sweep-test".to_string(),
+                    value: contract_value,
+                    formal_regions: vec![],
+                    return_region: None,
+                    concept_hint: None,
+                };
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    material.to_contract();
+                }));
+                if let Err(payload) = outcome {
+                    let message = payload
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "<non-string panic payload>".to_string());
+                    failures.push(format!("{}: {message}", path.display()));
+                }
+            }
+        }
+
+        eprintln!(
+            "scripts-output-function-contract-sweep: {} json file(s) scanned, {} function-contract object(s) checked",
+            json_files.len(),
+            contracts_checked
+        );
+        assert!(
+            contracts_checked > 0,
+            "expected at least one function-contract object under {}; the sweep \
+             would otherwise pass vacuously",
+            root.display()
+        );
+        assert!(
+            failures.is_empty(),
+            "strict contract decode panicked on committed scripts/output corpus:\n{}",
+            failures.join("\n")
+        );
+    }
 }
