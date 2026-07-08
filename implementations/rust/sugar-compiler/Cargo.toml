@@ -13,6 +13,8 @@ libsugar = { path = "../libsugar" }
 sugar-ir-types = { path = "../sugar-ir-types" }
 sugar-walk = { path = "../sugar-walk" }
 sugar-claim-envelope = { path = "../sugar-claim-envelope" }
+sugar-linker = { path = "../sugar-linker" }
+sugar-ir-compiler = { path = "../sugar-ir-compiler" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -20,3 +22,5 @@ tracing = "0.1"
 
 [dev-dependencies]
 trybuild = "1"
+sugar-canonicalizer = { path = "../sugar-canonicalizer" }
+sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }

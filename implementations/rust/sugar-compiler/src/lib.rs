@@ -35,6 +35,13 @@ pub mod kit_declaration;
 /// The unforgeable `Kit` frontend handle. See `kit::Kit::rendezvous`.
 pub mod kit;
 
+/// The two-reds typed solve outcome. See `outcome::Outcome`.
+pub mod outcome;
+
+/// `ProofGraph::solve`, the `Orchestrate` extension trait. See
+/// `orchestrate::Orchestrate`.
+pub mod orchestrate;
+
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed,
     ProofEnvelopeInput, ProofGraph,
