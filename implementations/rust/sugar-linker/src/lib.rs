@@ -47,7 +47,7 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CanonValue};
 use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT as SMT_DIALECT};
-use sugar_ir_types::IrFormula;
+use sugar_ir_types::{IrFormula, Sort};
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
 
@@ -239,9 +239,13 @@ pub struct Signature {
     /// Formal parameter names, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub formals: Vec<String>,
-    /// Formal sorts, positionally aligned with `formals`.
+    /// Formal sorts, positionally aligned with `formals`, as strongly-typed
+    /// [`Sort`]s. Retyped from `serde_json::Value` in the sort-typeify seam: the
+    /// `{"kind":"primitive","name":...}` wire JSON is unchanged (`Sort` is
+    /// `#[serde(tag = "kind")]` and serializes to the identical tagged object),
+    /// so signature bytes and the linkBundleCid are byte-for-byte preserved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sorts: Vec<Json>,
+    pub sorts: Vec<Sort>,
     /// EUF coordinate this signature answers to, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub euf_coordinate: Option<String>,
@@ -314,9 +318,14 @@ pub struct LinkerContract {
     /// cleanly and never trip the check.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub formals: Vec<String>,
-    /// Declared formal sorts, positionally aligned with `formals`.
+    /// Declared formal sorts, positionally aligned with `formals`, as
+    /// strongly-typed [`Sort`]s (adopted from `sugar-ir-types`). Retyped from
+    /// `serde_json::Value` in the sort-typeify seam: the `{"kind":"primitive",
+    /// "name":...}` wire JSON is unchanged (`Sort` is `#[serde(tag = "kind")]`
+    /// and serializes to the identical tagged object), so contract CIDs and
+    /// snapshot bytes are byte-for-byte preserved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub formal_sorts: Vec<Json>,
+    pub formal_sorts: Vec<Sort>,
     /// EUF coordinate (the `enc#euf#c:...` segment) this contract answers to,
     /// if it is an EUF-callsite contract. `None` for ordinary contracts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1484,6 +1493,57 @@ mod tests {
         );
     }
 
+    /// The sort-typeify seam: `formal_sorts` / `Signature::sorts` are typed
+    /// [`Sort`]s, but the element wire JSON is byte-identical to the pre-seam
+    /// `{"kind":"primitive","name":"Int"}` object, and the check compares
+    /// `Sort == Sort` rather than `Json == Json`.
+    #[test]
+    fn formal_sorts_typeify_is_byte_identical_on_the_wire() {
+        // A single Sort element round-trips to the exact tagged wire object.
+        let sort_wire = r#"{"kind":"primitive","name":"Int"}"#;
+        let parsed: Sort = serde_json::from_str(sort_wire).expect("Sort must parse");
+        assert_eq!(parsed, Sort::Primitive { name: "Int".into() });
+        let back = serde_json::to_string(&parsed).expect("Sort serializes");
+        assert_eq!(back, sort_wire, "Sort element wire must be byte-identical");
+
+        // A LinkerContract carrying formal_sorts round-trips byte-for-byte, and
+        // the empty-vector default is still omitted.
+        let contract_wire = r#"{"name":"process","kit":"rust-kit","contract_cid":"blake3-512:00","pre_json":null,"post_json":null,"formals":["n"],"formal_sorts":[{"kind":"primitive","name":"Int"}]}"#;
+        let contract: LinkerContract =
+            serde_json::from_str(contract_wire).expect("LinkerContract must parse");
+        assert_eq!(
+            contract.formal_sorts,
+            vec![Sort::Primitive { name: "Int".into() }]
+        );
+        let back = serde_json::to_string(&contract).expect("LinkerContract serializes");
+        assert_eq!(
+            back, contract_wire,
+            "LinkerContract formal_sorts wire must be byte-identical"
+        );
+
+        // The check compares typed Sorts: agreeing sorts pass, disagreeing fail.
+        let exported = Signature {
+            formals: vec!["n".into()],
+            sorts: vec![Sort::Primitive { name: "Int".into() }],
+            euf_coordinate: None,
+        };
+        let agree = Signature {
+            sorts: vec![Sort::Primitive { name: "Int".into() }],
+            ..Default::default()
+        };
+        assert!(agree.check(&exported).is_ok(), "matching Sorts must check");
+        let disagree = Signature {
+            sorts: vec![Sort::Primitive {
+                name: "String".into(),
+            }],
+            ..Default::default()
+        };
+        assert!(
+            disagree.check(&exported).is_err(),
+            "disagreeing Sorts must fail the check"
+        );
+    }
+
     /// The obligation-typeify seam: the single [`Obligation`] value the linker
     /// checks lowers to the EXACT `{"kind":"implies","operands":[post,pre]}`
     /// JSON the SMT compiler consumed before this seam. This is both the term
@@ -1706,7 +1766,7 @@ mod tests {
     fn make_process_contract_with_signature() -> LinkerContract {
         LinkerContract {
             formals: vec!["n".into()],
-            formal_sorts: vec![serde_json::json!({"kind": "primitive", "name": "Int"})],
+            formal_sorts: vec![Sort::Primitive { name: "Int".into() }],
             ..make_process_contract()
         }
     }
