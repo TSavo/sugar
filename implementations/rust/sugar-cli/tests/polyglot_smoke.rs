@@ -265,11 +265,6 @@ fn make_cgo_call_edge(go_contract: &LinkerContract) -> LinkerCallEdge {
             line: Some(21),
             column: Some(9),
         }),
-        evidence_term_json: serde_json::json!({
-            "kind": "Atomic",
-            "name": "call-site-obligation",
-            "args": [{"kind": "Var", "name": "GoCallerFail", "sort": "String"}]
-        }),
         ..Default::default()
     }
 }

@@ -100,7 +100,6 @@ fn cgo_edge() -> LinkerCallEdge {
             line: Some(1),
             column: Some(1),
         }),
-        evidence_term_json: json!({"kind": "Atomic", "name": "obligation", "args": []}),
         ..Default::default()
     }
 }
