@@ -260,7 +260,7 @@ fn unresolved_callee_is_vacuous_in_verify_consistency_but_link_error_via_derivat
     );
 
     // Derivation: the absence becomes a typed edge.
-    let links = derive_linker_inputs(&pool);
+    let links = derive_linker_inputs(&pool).expect("well-formed pool must derive");
     let unresolved_edge = links
         .call_edges
         .iter()
@@ -304,7 +304,7 @@ fn resolved_callee_binds_and_reaches_verdicts_not_link_error() {
     push_bridge(&mut graph, &callee_cid);
 
     let pool = load_into_pool(&graph);
-    let links = derive_linker_inputs(&pool);
+    let links = derive_linker_inputs(&pool).expect("well-formed pool must derive");
     let resolved_edge = links
         .call_edges
         .iter()
@@ -333,5 +333,139 @@ fn resolved_callee_binds_and_reaches_verdicts_not_link_error() {
         Outcome::Verdicts(results) => {
             eprintln!("resolved-arm verdicts: {results:?}");
         }
+    }
+}
+
+/// Push a signed contract whose `formalSorts` carries the caller-supplied
+/// raw JSON (well-formed or not): the mint path stores `formal_sorts` as raw
+/// canonical values, so a malformed `Sort` rides through minting and loading
+/// untouched -- exactly the shape sugar#3869's `.ok()` swallow used to thin
+/// silently at derivation time.
+/// Returns the minted contract CID: the resolved BODY shape carries no
+/// `contractName` (the name rides in the member header), so the CID is the
+/// name the typed error and the derived union key on.
+fn push_contract_with_formal_sorts(
+    graph: &mut ProofGraph,
+    contract_name: &str,
+    sort_json: &Json,
+) -> String {
+    let inv = json!({"kind": "atomic", "name": "true", "args": []});
+    let inv_atom = graph.register_atom(FlatAtom::new(json_to_cvalue(&inv)));
+    let body = graph.register_body(ContractBody::from_slots(vec![("inv", &inv_atom)]));
+    let body_cid = body.cid().as_str().to_string();
+    let args = MintContractArgs {
+        evidence_term: None,
+        formals: vec!["x".to_string()],
+        emit_empty_formals: false,
+        formal_sorts: vec![json_to_cvalue(sort_json)],
+        library: None,
+        bridge_source_symbol: None,
+        body_discharge_eligible: true,
+        body_discharge_refusal_reason: None,
+        panic_loci: Vec::new(),
+        class_shapes: Vec::new(),
+        source_warrants: Vec::new(),
+        proofir_provenance: Some(json_to_cvalue(&json!({
+            "warrants": [{
+                "kind": "Stated",
+                "locus": {"path": "sugar-compiler/tests/derive_linker_inputs.rs", "line": 1, "column": 0}
+            }]
+        }))),
+        contract_name: contract_name.to_string(),
+        pre: None,
+        post: None,
+        inv: Some(json_to_cvalue(&inv)),
+        out_binding: "result".into(),
+        produced_by: "seam-3869-discrimination-test".into(),
+        produced_at: "2026-07-08T00:00:00.000Z".into(),
+        input_cids: Vec::new(),
+        authoring: Authoring::KitAuthor {
+            author: "seam-3869-discrimination-test".into(),
+            note: None,
+        },
+        signer_seed: SEED,
+    };
+    let minted = mint_contract_with_body_cid(&args, Some(&body_cid)).expect("mint sorted contract");
+    let cid = minted.cid.clone();
+    graph.push_claim_contract(ClaimContractMemento::new(minted.canonical_bytes));
+    cid
+}
+
+/// sugar#3869 discrimination pair, malformed arm: a `formalSorts` entry that
+/// is not a decodable `Sort` must be a TYPED load error naming the contract
+/// -- both from `derive_linker_inputs` directly and through
+/// `solve_deriving_links` (as `SolveError::MalformedContract`) -- never a
+/// silently-dropped element (the old `filter_map(.ok())` false green).
+#[test]
+fn malformed_formal_sort_is_typed_error_naming_the_contract() {
+    const CONTRACT: &str = "seam3869::malformed_sort";
+    let mut graph = ProofGraph::new();
+    let cid = push_contract_with_formal_sorts(
+        &mut graph,
+        CONTRACT,
+        &json!({"kind": "no-such-sort-kind"}),
+    );
+    let pool = load_into_pool(&graph);
+
+    let err = derive_linker_inputs(&pool)
+        .expect_err("a malformed formalSorts entry must be a typed error, not a dropped element");
+    assert_eq!(
+        err.contract_cid, cid,
+        "the typed error must name the offending contract by CID: {err}"
+    );
+    assert_eq!(err.field, "formalSorts entry", "wrong field named: {err}");
+
+    // Through the production door: solve_deriving_links must refuse with the
+    // same typed precondition failure, never proceed to link/discharge over a
+    // silently-thinned contract union.
+    let plan = SolverPlan::Single(SolverSeat::Z3);
+    let registry = registry::build_default_z3("z3");
+    let compilers = test_compilers();
+    match graph.solve_deriving_links(&plan, &registry, &compilers, Path::new(".")) {
+        Err(sugar_compiler::orchestrate::SolveError::MalformedContract(e)) => {
+            assert_eq!(
+                e.field, "formalSorts entry",
+                "SolveError must carry the typed field naming: {e}"
+            );
+        }
+        other => panic!(
+            "expected SolveError::MalformedContract naming {CONTRACT}, got {other:?}"
+        ),
+    }
+}
+
+/// sugar#3869 discrimination pair, well-formed arm: the SAME contract shape
+/// with a decodable `Sort` derives unchanged -- the sort arrives in the
+/// derived contract, and `solve_deriving_links` proceeds past derivation
+/// (no `MalformedContract`).
+#[test]
+fn well_formed_formal_sort_derives_unchanged() {
+    const CONTRACT: &str = "seam3869::well_formed_sort";
+    let mut graph = ProofGraph::new();
+    let cid = push_contract_with_formal_sorts(
+        &mut graph,
+        CONTRACT,
+        &json!({"kind": "primitive", "name": "Int"}),
+    );
+    let pool = load_into_pool(&graph);
+
+    let links = derive_linker_inputs(&pool).expect("well-formed formalSorts must derive");
+    let contract = links
+        .contracts
+        .iter()
+        .find(|c| c.contract_cid.as_str() == cid)
+        .unwrap_or_else(|| panic!("derived union must contain {CONTRACT} ({cid}): {links:?}"));
+    assert_eq!(
+        contract.formal_sorts.len(),
+        1,
+        "the well-formed sort must arrive, not be dropped: {contract:?}"
+    );
+
+    let plan = SolverPlan::Single(SolverSeat::Z3);
+    let registry = registry::build_default_z3("z3");
+    let compilers = test_compilers();
+    match graph.solve_deriving_links(&plan, &registry, &compilers, Path::new(".")) {
+        Err(e) => panic!("well-formed contract data must never refuse derivation: {e}"),
+        Ok(outcome) => eprintln!("well-formed-arm outcome: {outcome:?}"),
     }
 }
