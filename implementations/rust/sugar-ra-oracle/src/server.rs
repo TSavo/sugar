@@ -64,7 +64,8 @@ impl Default for ServerConfig {
 }
 
 /// Compute the socket path for a given projectCid. Identical formula to
-/// sugar-linkerd's `default_socket_path` so a project's oracle and (while it
+/// The socket formula matches what sugar-walk::ra_daemon_client probes
+/// (`ra-oracle-<cid>.sock`) so a manually started oracle and (while it
 /// still exists) editor daemon do not collide on one socket namespace only by
 /// accident of a shared default -- callers key ordinarily by their own
 /// project_cid prefix (`ra_daemon_client` uses an `ra-`-prefixed cid).
@@ -73,7 +74,7 @@ pub fn default_socket_path(project_cid: &str) -> PathBuf {
         .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
     PathBuf::from(base)
         .join("sugar")
-        .join(format!("linkerd-{project_cid}.sock"))
+        .join(format!("ra-oracle-{project_cid}.sock"))
 }
 
 /// Compute the snapshot path for a given projectCid. Identical formula to
@@ -82,7 +83,7 @@ pub fn default_snapshot_path(project_cid: &str) -> PathBuf {
     let base = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| dirs_next_cache_home());
     PathBuf::from(base)
         .join("sugar")
-        .join("linkerd")
+        .join("ra-oracle")
         .join(project_cid)
         .join("snapshot.bin")
 }
