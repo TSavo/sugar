@@ -70,14 +70,11 @@ fn libsugar_never_reaches_verifier_or_linker() {
 fn proof_envelope_stays_a_leaf() {
     let graph = direct_graph();
     let reach = closure(&graph, "sugar-proof-envelope");
-    let extra: Vec<&String> = reach
-        .iter()
-        .filter(|c| c.as_str() != "sugar-canonicalizer")
-        .collect();
-    assert!(
-        extra.is_empty(),
-        "sugar-proof-envelope grew arrows above the canonicalizer: {extra:?}. \
-         The currency's home must not depend on the machinery that consumes it."
+    let expected: std::collections::BTreeSet<String> = ["sugar-canonicalizer".to_string()].into();
+    assert_eq!(
+        reach, expected,
+        "sugar-proof-envelope's closure must be EXACTLY {{sugar-canonicalizer}} \
+         (drift above = climbing; drift below = the leaf lost its floor)."
     );
 }
 

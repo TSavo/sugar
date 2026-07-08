@@ -60,13 +60,19 @@ pub fn direct_graph() -> DepGraph {
                 // A workspace arrow is a dependency declared with `path = ...`.
                 // (`toml` values: either a table with a `path` key, or a bare
                 // version string, which is a registry dep and ignored.)
-                let is_path_dep = spec
-                    .as_table()
-                    .map(|t| t.contains_key("path"))
-                    .unwrap_or(false);
-                if is_path_dep {
-                    deps.insert(dep_name.clone());
+                let Some(spec_table) = spec.as_table() else {
+                    continue; // bare version string = registry dep
+                };
+                if !spec_table.contains_key("path") {
+                    continue;
                 }
+                // Edges key by the target's package.name: honor renames
+                // (`alias = { package = "real-name", path = ... }`).
+                let target = spec_table
+                    .get("package")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or(dep_name);
+                deps.insert(target.to_string());
             }
         }
         graph.insert(name.to_string(), deps);
@@ -81,12 +87,22 @@ pub fn direct_graph() -> DepGraph {
 }
 
 /// Transitive closure of one crate's workspace dependencies.
+/// Panics if `start` is not a discovered crate: an unknown start would make
+/// every forbidden-arrow assertion vacuously green.
 pub fn closure(graph: &DepGraph, start: &str) -> BTreeSet<String> {
     let mut seen = BTreeSet::new();
     let mut stack: Vec<String> = graph
         .get(start)
-        .map(|d| d.iter().cloned().collect())
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            panic!(
+                "closure(): `{start}` is not a discovered workspace crate; \
+                 known: {:?}",
+                graph.keys().collect::<Vec<_>>()
+            )
+        })
+        .iter()
+        .cloned()
+        .collect();
     while let Some(next) = stack.pop() {
         if seen.insert(next.clone()) {
             if let Some(deps) = graph.get(&next) {
