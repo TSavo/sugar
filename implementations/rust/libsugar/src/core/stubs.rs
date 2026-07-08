@@ -292,6 +292,7 @@ fn term_formals(term: &Term) -> Vec<String> {
                 .iter()
                 .filter_map(|arg| match arg {
                     Term::Var { name } => Some(name.clone()),
+                    // sugar-audit: not-mine(non-var-op-argument-carries-no-formal-name-by-stub-project-design)
                     _ => None,
                 })
                 .collect();

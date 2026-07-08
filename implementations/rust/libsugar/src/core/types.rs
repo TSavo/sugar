@@ -1088,6 +1088,7 @@ impl Path {
                         Some(name.clone())
                     }
                 })
+                // sugar-audit: default-ok(cycle-diagnostic-step-name-defaults-to-empty-the-surrounding-err-cycle-refusal-is-unaffected)
                 .unwrap_or_default();
             return Err(PathError::Cycle { step });
         }
@@ -1473,14 +1474,15 @@ impl PathContractMaterial {
             vec![None; formals.len()]
         };
         FunctionContractMemento {
+            // sugar-audit: default-ok(display-only-function-name-defaults-to-empty-not-solver-input)
             fn_name: string_field(object, "fnName").unwrap_or_default(),
             formal_regions,
             formals,
-            formal_sorts: parse_vec_field(object, "formalSorts"),
-            return_sort: parse_field(object, "returnSort").unwrap_or_else(any_sort),
+            formal_sorts: solver_input_vec_field(object, "formalSorts"),
+            return_sort: solver_input_field(object, "returnSort").unwrap_or_else(any_sort),
             return_region: self.return_region.clone(),
-            pre: parse_field(object, "pre").unwrap_or_else(formula_true),
-            post: parse_field(object, "post").unwrap_or_else(formula_true),
+            pre: solver_input_field(object, "pre").unwrap_or_else(formula_true),
+            post: solver_input_field(object, "post").unwrap_or_else(formula_true),
             body_cid: optional_string_field(object, "bodyCid"),
             effects: parse_effect_set(object.and_then(|object| object.get("effects"))),
             locus: parse_locus(object.and_then(|object| object.get("locus"))),
@@ -1512,6 +1514,7 @@ fn optional_string_field(
     match object?.get(field)? {
         JsonValue::String(value) => Some(value.clone()),
         JsonValue::Null => None,
+        // sugar-audit: default-ok(cosmetic-cross-reference-string-defaults-to-absent-not-solver-input)
         _ => None,
     }
 }
@@ -1529,86 +1532,191 @@ fn string_vec_field(
                 .filter_map(|item| item.as_str().map(std::string::ToString::to_string))
                 .collect()
         })
+        // sugar-audit: default-ok(display-only-formal-name-list-defaults-to-empty-not-solver-input)
         .unwrap_or_default()
 }
 
-fn parse_field<T>(object: Option<&serde_json::Map<String, JsonValue>>, field: &str) -> Option<T>
+/// Decode a solver-input-bearing contract field (`pre`, `post`, `returnSort`,
+/// `formalSorts`). A field that is genuinely ABSENT legitimately falls back
+/// to the caller's default (e.g. no `pre` means the trivial precondition
+/// `true`). A field that is PRESENT but fails to deserialize is a corrupted
+/// or schema-drifted memento, not a legitimate absence: silently collapsing
+/// that case into the same default a missing field gets would detach an
+/// already-minted verdict from the (now vacuous) contract content it was
+/// discharged against. That must be loud, never a silent `.ok()` swallow.
+fn solver_input_field<T>(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    field: &str,
+) -> Option<T>
 where
     T: de::DeserializeOwned,
 {
-    object
-        .and_then(|object| object.get(field))
-        .cloned()
-        .and_then(|value| serde_json::from_value(value).ok())
+    let value = object.and_then(|object| object.get(field))?.clone();
+    Some(serde_json::from_value(value).unwrap_or_else(|error| {
+        panic!("contract field {field:?} is present but failed to decode: {error}")
+    }))
 }
 
-fn parse_vec_field<T>(object: Option<&serde_json::Map<String, JsonValue>>, field: &str) -> Vec<T>
+/// Vec-valued counterpart of `solver_input_field` (`formalSorts`): an absent
+/// field is legitimately an empty vec, but a present field that is not an
+/// array, or an entry inside it that fails to deserialize, is loud -- a
+/// silently truncated or malformed sort list would misalign formal
+/// positions against `formals`/`formal_regions` without any signal.
+fn solver_input_vec_field<T>(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    field: &str,
+) -> Vec<T>
 where
     T: de::DeserializeOwned,
 {
-    object
-        .and_then(|object| object.get(field))
-        .and_then(JsonValue::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| serde_json::from_value(item.clone()).ok())
-                .collect()
+    let Some(value) = object.and_then(|object| object.get(field)) else {
+        return Vec::new();
+    };
+    let items = value
+        .as_array()
+        .unwrap_or_else(|| panic!("contract field {field:?} is present but not an array"));
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            serde_json::from_value(item.clone()).unwrap_or_else(|error| {
+                panic!("contract field {field:?}[{index}] failed to decode: {error}")
+            })
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 fn parse_effect_set(value: Option<&JsonValue>) -> EffectSet {
-    let effects = value
-        .and_then(JsonValue::as_array)
-        .map(|items| items.iter().filter_map(parse_effect).collect())
-        .unwrap_or_default();
+    // Absent or explicit JSON null legitimately means "no effects recorded".
+    // A present-but-non-array `effects` value is a malformed memento, not a
+    // legitimate absence: silently treating it as empty would let an
+    // actually-impure function look pure to `is_pure()`'s composition gate.
+    let effects = match value {
+        None | Some(JsonValue::Null) => Vec::new(),
+        Some(JsonValue::Array(items)) => items.iter().filter_map(parse_effect).collect(),
+        Some(_) => panic!("contract field \"effects\" is present but not an array"),
+    };
     EffectSet { effects }
+}
+
+/// A recognized effect `kind` commits to that effect's schema: a required
+/// sub-field missing or wrong-shaped at that point is a corrupted memento
+/// (not a legitimate absence, unlike the top-level `kind` tag itself being
+/// missing, which just means the entry is unclassifiable) and must be loud,
+/// because silently dropping the whole effect entry would let an actually
+/// impure function look pure to `is_pure()`'s composition-purity gate.
+fn required_effect_field(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    kind: &str,
+    field: &str,
+) -> String {
+    string_field(object, field)
+        .unwrap_or_else(|| panic!("effect kind {kind:?} is missing required field {field:?}"))
+}
+
+fn required_effect_bool_field(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    kind: &str,
+    field: &str,
+) -> bool {
+    bool_field(object, field)
+        .unwrap_or_else(|| panic!("effect kind {kind:?} is missing required field {field:?}"))
+}
+
+fn required_effect_usize_field(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    kind: &str,
+    field: &str,
+) -> usize {
+    usize_field(object, field)
+        .unwrap_or_else(|| panic!("effect kind {kind:?} is missing required field {field:?}"))
+}
+
+/// `formals` inside a `possible_aliasing` effect is load-bearing for
+/// `check_aliasing_discharged`: every pair drawn from this list must have a
+/// matching `AliasingMemento`. Silently dropping a non-string entry here
+/// (as the generic `string_vec_field` metadata helper does) would let that
+/// pair escape the aliasing-discharge check entirely, so a malformed entry
+/// is loud instead.
+fn required_effect_formals_field(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    kind: &str,
+) -> Vec<String> {
+    let Some(items) = object
+        .and_then(|object| object.get("formals"))
+        .and_then(JsonValue::as_array)
+    else {
+        panic!("effect kind {kind:?} is missing required array field \"formals\"")
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            item.as_str().map(str::to_string).unwrap_or_else(|| {
+                panic!("effect kind {kind:?} field \"formals\"[{index}] is not a string")
+            })
+        })
+        .collect()
 }
 
 fn parse_effect(value: &JsonValue) -> Option<Effect> {
     let object = value.as_object();
-    match string_field(object, "kind")?.as_str() {
+    // A missing/non-string `kind` tag makes the entry unclassifiable, not
+    // corrupted: there is no schema to hold it to.
+    let kind = string_field(object, "kind")?;
+    match kind.as_str() {
         "reads" => Some(Effect::Reads {
-            target: string_field(object, "target")?,
+            target: required_effect_field(object, &kind, "target"),
         }),
         "writes" => Some(Effect::Writes {
-            target: string_field(object, "target")?,
+            target: required_effect_field(object, &kind, "target"),
         }),
         "io" => Some(Effect::Io),
         "unsafe" => Some(Effect::Unsafe),
         "panics" => Some(Effect::Panics),
         "unresolved_call" => Some(Effect::UnresolvedCall {
-            name: string_field(object, "name")?,
+            name: required_effect_field(object, &kind, "name"),
         }),
         "opaque_loop" => Some(Effect::OpaqueLoop {
-            loop_cid: string_field(object, "loopCid")?,
+            loop_cid: required_effect_field(object, &kind, "loopCid"),
         }),
         "early_return" => Some(Effect::EarlyReturn {
-            try_cid: string_field(object, "tryCid")?,
+            try_cid: required_effect_field(object, &kind, "tryCid"),
         }),
         "closure_capture" => Some(Effect::ClosureCapture {
-            body_fn_cid: string_field(object, "bodyFnCid")?,
-            n_captures: usize_field(object, "nCaptures")?,
+            body_fn_cid: required_effect_field(object, &kind, "bodyFnCid"),
+            n_captures: required_effect_usize_field(object, &kind, "nCaptures"),
         }),
         "pinned_reference" => Some(Effect::PinnedReference {
-            target: string_field(object, "target")?,
+            target: required_effect_field(object, &kind, "target"),
         }),
         "raw_ptr_provenance" => Some(Effect::RawPointerProvenance {
-            target: string_field(object, "target")?,
-            mutable: bool_field(object, "mutable")?,
+            target: required_effect_field(object, &kind, "target"),
+            mutable: required_effect_bool_field(object, &kind, "mutable"),
         }),
-        "atomic_access" => Some(Effect::AtomicAccess {
-            target: string_field(object, "target")?,
-            kind: parse_atomic_kind(&string_field(object, "atomicKind")?)?,
-            ordering: optional_string_field(object, "ordering"),
-        }),
+        "atomic_access" => {
+            // Unrecognized atomicKind string: same "recognized enum-tag
+            // miss" shape as the unclassifiable-effect-kind case below, not
+            // a missing-required-field corruption, so this `?` (not a bare
+            // wildcard) intentionally stays a quiet forward-compat miss.
+            let atomic_kind =
+                parse_atomic_kind(&required_effect_field(object, &kind, "atomicKind"))?;
+            Some(Effect::AtomicAccess {
+                target: required_effect_field(object, &kind, "target"),
+                kind: atomic_kind,
+                ordering: optional_string_field(object, "ordering"),
+            })
+        }
         "possible_aliasing" => Some(Effect::PossibleAliasing {
-            formals: string_vec_field(object, "formals"),
+            formals: required_effect_formals_field(object, &kind),
         }),
         "drop" => Some(Effect::Drop {
-            name: string_field(object, "name")?,
+            name: required_effect_field(object, &kind, "name"),
         }),
+        // Unrecognized effect kind tag: same "forward schema evolution"
+        // shape already sanctioned elsewhere in this scan for unrecognized
+        // enum-tag strings.
+        // sugar-audit: not-mine(unrecognized-effect-kind-tag-carries-no-typed-effect-payload)
         _ => None,
     }
 }
@@ -1619,6 +1727,7 @@ fn parse_atomic_kind(value: &str) -> Option<AtomicKind> {
         "store" => Some(AtomicKind::Store),
         "rmw" => Some(AtomicKind::Rmw),
         "cas" => Some(AtomicKind::Cas),
+        // sugar-audit: not-mine(unrecognized-atomic-kind-string-carries-no-typed-atomic-effect)
         _ => None,
     }
 }
@@ -1627,7 +1736,9 @@ fn parse_locus(value: Option<&JsonValue>) -> Locus {
     let object = value.and_then(JsonValue::as_object);
     Locus {
         file: optional_string_field(object, "file"),
+        // sugar-audit: default-ok(debug-only-source-line-defaults-to-zero-not-solver-input)
         line: usize_field(object, "line").unwrap_or(0),
+        // sugar-audit: default-ok(debug-only-source-column-defaults-to-zero-not-solver-input)
         col: usize_field(object, "col").unwrap_or(0),
     }
 }
@@ -1636,6 +1747,7 @@ fn parse_aliasing_mementos(value: Option<&JsonValue>) -> Vec<AliasingMemento> {
     value
         .and_then(JsonValue::as_array)
         .map(|items| items.iter().filter_map(parse_aliasing_memento).collect())
+        // sugar-audit: default-ok(fewer-aliasing-mementos-only-makes-check-aliasing-discharged-refuse-more-never-silently-accept)
         .unwrap_or_default()
 }
 
@@ -1660,6 +1772,7 @@ fn usize_field(object: Option<&serde_json::Map<String, JsonValue>>, field: &str)
     object?
         .get(field)?
         .as_u64()
+        // sugar-audit: default-ok(u64-to-usize-width-overflow-only-occurs-on-32-bit-targets-past-4-billion)
         .and_then(|value| usize::try_from(value).ok())
 }
 
