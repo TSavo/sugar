@@ -494,6 +494,51 @@ def test_plain_enum_member_refuses_by_name():
     assert scan.totality_holds()
 
 
+def test_plain_enum_member_value_pins_even_though_bare_member_refuses():
+    # `.value` is a stable attribute access on any Enum member: it always
+    # returns the underlying literal, so the == dispatch gate that forces
+    # the bare plain-Enum member to refuse does not apply here.
+    scan = _scan("""
+        from enum import Enum
+
+        class Color(Enum):
+            RED = 1
+        """)
+    assert "Color.RED" not in scan.pins
+    assert scan.pins["Color.RED.value"].term == int_const(1)
+    assert scan.totality_holds()
+
+
+def test_enum_member_value_pin_discriminates_wrong_member():
+    scan = _scan("""
+        from enum import Enum
+
+        class Color(Enum):
+            RED = 1
+            BLUE = 2
+        """)
+    assert scan.pins["Color.RED.value"].term == int_const(1)
+    assert scan.pins["Color.BLUE.value"].term == int_const(2)
+    assert scan.pins["Color.RED.value"].term != scan.pins["Color.BLUE.value"].term
+
+
+def test_enum_member_value_pin_refuses_when_member_rebound():
+    scan = _scan("""
+        from enum import Enum
+
+        class Color(Enum):
+            RED = 1
+
+        Color.RED = object()
+        """)
+    assert "Color.RED.value" not in scan.pins
+    assert any(
+        r["name"] == "Color.RED.value" and "attribute write" in r["reason"]
+        for r in scan.refusals
+    )
+    assert scan.totality_holds()
+
+
 def test_enum_member_attr_write_refuses():
     scan = _scan("""
         from enum import IntEnum

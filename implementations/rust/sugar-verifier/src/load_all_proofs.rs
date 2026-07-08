@@ -32,8 +32,83 @@ use sugar_proof_envelope::{
 };
 
 use crate::types::{
-    BridgePin, BundleScopedCallsiteKey, EffectSiteAnnotation, LoadError, MementoPool,
+    BridgePin, BundleScopedCallsiteKey, EffectSiteAnnotation, LoadError, MementoPool, Speaker,
+    SpeakerRole,
 };
+
+fn path_components(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// Do the last two components of `dir` spell `.sugar/imports`? (The daemon's
+/// `build_prove_context_for` walks the imports dir DIRECTLY as its walk root,
+/// so the staging boundary sits ABOVE the enumerated proofs, not inside the
+/// relative path.)
+fn ends_with_sugar_imports(dir: &Path) -> bool {
+    let c = path_components(dir);
+    c.len() >= 2 && c[c.len() - 2] == ".sugar" && c[c.len() - 1] == "imports"
+}
+
+/// Is `path` staged under the ACTIVE project's `.sugar/imports/` tree? (#3807
+/// attribution stamp; #3813 anchor tightening.) That is the ONE place a
+/// vendor bundle is staged into a consumer's project (see
+/// `sugar_cli::cmd_import` / the daemon's `build_prove_context_for`, which
+/// loads `<project_root>/.sugar/imports` as its vendor-only base pool).
+///
+/// Anchored, NOT a free-floating component scan: `import_root` is the walk
+/// root this path was enumerated under. A path is imported iff EITHER
+///   * the walk root itself IS `<...>/.sugar/imports` (the daemon shape:
+///     proofs sit directly under a root that already is the staging dir), OR
+///   * the path lies immediately under `<import_root>/.sugar/imports` (the
+///     project-root shape: the staging boundary is the FIRST two components
+///     below the root).
+/// A NESTED `.sugar/imports` deeper in the tree (e.g. a fixture subproject at
+/// `<root>/tests/fixtures/demo/.sugar/imports/...`) is NOT the active
+/// project's staging dir and is therefore NOT classed imported -- the old
+/// free-floating `windows(2)` scan mislabeled it Vendor. When no anchor is
+/// known (`None`, the anchorless `load_files_into_pool` callers, which supply
+/// their own consumer bundles) we fall back to the conservative component
+/// scan that matched pre-#3813 behavior.
+fn path_is_imported(path: &Path, import_root: Option<&Path>) -> bool {
+    match import_root {
+        Some(root) => {
+            if ends_with_sugar_imports(root) {
+                return true;
+            }
+            match path.strip_prefix(root) {
+                Ok(rel) => {
+                    let c = path_components(rel);
+                    c.len() >= 2 && c[0] == ".sugar" && c[1] == "imports"
+                }
+                // Not under this root: cannot be the active project's staged
+                // import.
+                Err(_) => false,
+            }
+        }
+        None => {
+            let c = path_components(path);
+            c.windows(2).any(|w| w[0] == ".sugar" && w[1] == "imports")
+        }
+    }
+}
+
+/// The Speaker a path-walk load attributes a bundle's members to: the bundle
+/// path is the identity label, and the role is derived from WHERE the bundle
+/// sits relative to the active project's `import_root` (`.sugar/imports/**` =
+/// the vendor speaking; anywhere else = the consumer's own project output).
+/// Path-derived, not caller-declared, so the walk cannot get it wrong.
+fn speaker_for_path(path: &Path, import_root: Option<&Path>) -> Speaker {
+    Speaker {
+        id: path.display().to_string(),
+        role: if path_is_imported(path, import_root) {
+            SpeakerRole::Vendor
+        } else {
+            SpeakerRole::Consumer
+        },
+    }
+}
 
 const PANIC_FREEDOM_EFFECT: &str = "panic-freedom";
 const EFFECT_SITE_ANNOTATION_LOAD_ERROR_TAG: &str = "[effect-site-annotation]";
@@ -44,6 +119,13 @@ pub struct ProofBytes {
     pub label: String,
     pub expected_cid: MementoCid,
     pub bytes: Vec<u8>,
+    /// WHO speaks these bytes (#3812/#3813). The Speaker travels WITH the
+    /// ProofBytes from the point that KNOWS it -- the constructor site -- so
+    /// no downstream loader ever guesses (or hardcodes) a role.
+    /// `dependency_proofs_via_rpc` stamps `Speaker::vendor` (a package
+    /// manager's dependency catalog IS vendor testimony); a caller staging
+    /// its own project's bytes stamps `Speaker::consumer`.
+    pub speaker: Speaker,
 }
 
 impl ProofBytes {
@@ -51,6 +133,7 @@ impl ProofBytes {
         label: impl Into<String>,
         expected_cid: impl Into<String>,
         bytes: Vec<u8>,
+        speaker: Speaker,
     ) -> Result<Self, String> {
         let raw = expected_cid.into();
         let expected_cid = MementoCid::try_parse(raw.clone()).map_err(|_| {
@@ -60,6 +143,7 @@ impl ProofBytes {
             label: label.into(),
             expected_cid,
             bytes,
+            speaker,
         })
     }
 }
@@ -69,8 +153,11 @@ pub fn run(project_root: &Path) -> MementoPool {
     info!(root = %project_root.display(), "load_all_proofs: scanning for .proof files");
     let mut pool = MementoPool::default();
     for path in enumerate_proof_files(project_root) {
-        debug!(path = %path.display(), "load_all_proofs: loading .proof file");
-        load_path_into_pool(&path, &mut pool);
+        // #3813: anchor the vendor/consumer role decision to THIS walk's root
+        // so a nested subproject `.sugar/imports` is not mislabeled Vendor.
+        let speaker = speaker_for_path(&path, Some(project_root));
+        debug!(path = %path.display(), role = ?speaker.role, "load_all_proofs: loading .proof file");
+        load_path_into_pool(&path, &mut pool, &speaker);
     }
     info!(
         mementos = pool.mementos.len(),
@@ -95,29 +182,91 @@ pub fn run_with_files(project_root: &Path, proof_files: &[PathBuf]) -> MementoPo
     pool
 }
 
+/// Load explicit files, attributing each one's members to a Speaker derived
+/// from its own path (#3807: `speaker_for_path`, the same rule `run()`'s
+/// walk uses). Every existing caller of this function loads a bundle that is
+/// either the consumer's own project output (the daemon's scratch-overlay
+/// mint under a temp dir, `sugar mint`'s applied-proof merge, self-check
+/// fixtures) -- never a path under `.sugar/imports` -- so in practice these
+/// all stamp `SpeakerRole::Consumer` today, but the check is the honest one
+/// (path-derived, not caller-declared) rather than a role the caller could
+/// get wrong.
 pub fn load_files_into_pool(proof_files: &[PathBuf], pool: &mut MementoPool) {
     let mut proof_files = proof_files.to_vec();
     proof_files.sort();
     proof_files.dedup();
     for path in proof_files {
-        load_path_into_pool(&path, pool);
+        // Anchorless intake: these callers stage their OWN consumer bundles
+        // (never a `.sugar/imports` path), so `None` keeps the conservative
+        // pre-#3813 scan without an active-project anchor to tighten against.
+        let speaker = speaker_for_path(&path, None);
+        load_path_into_pool(&path, pool, &speaker);
+    }
+}
+
+/// Rank a speaker role for the dedup tiebreak below. CONSUMER OUTRANKS VENDOR
+/// (rank 0 vs 1): when the SAME content (same CID = same bytes) is presented
+/// by two different speakers, the surviving attribution is Consumer. That is
+/// the SOUND direction -- misattributing a consumer obligation as a vendor
+/// hypothesis would let it ride free (a false GREEN); misattributing a vendor
+/// fact as a consumer obligation only ever makes the check STRICTER, never
+/// masks. So on conflict we keep the stricter (Consumer) label. Vendor-wins,
+/// the naive first-writer rule, is unsound here and is exactly what the
+/// `speaker_dedup_*` tests refute.
+fn speaker_role_rank(role: SpeakerRole) -> u8 {
+    match role {
+        SpeakerRole::Consumer => 0,
+        SpeakerRole::Vendor => 1,
     }
 }
 
 pub fn load_proof_bytes_into_pool(proofs: &[ProofBytes], pool: &mut MementoPool) {
     let mut proofs = proofs.to_vec();
+    // #3813 (finding 1): the Speaker now travels WITH each ProofBytes, so the
+    // SAME cid+bytes can arrive under two different speakers. The dedup key is
+    // (cid, bytes) -- identical content collapses to ONE load (loading it
+    // twice would spuriously trip the effect-site-annotation-duplicate
+    // guard) -- but the SURVIVOR must be deterministic and role-correct, not
+    // whichever record happened to sort first by label. So the sort leads
+    // with (cid, role_rank, speaker.id, label): within a cid group the
+    // Consumer record (rank 0) sorts ahead of the Vendor record (rank 1), and
+    // `dedup_by` keeps the FIRST of each equal (cid, bytes) run. Result:
+    // same-content-conflicting-speaker deterministically resolves to Consumer
+    // (see `speaker_role_rank`), independent of input order.
     proofs.sort_by(|a, b| {
-        (a.expected_cid.as_str(), a.label.as_str())
-            .cmp(&(b.expected_cid.as_str(), b.label.as_str()))
+        (
+            a.expected_cid.as_str(),
+            speaker_role_rank(a.speaker.role),
+            a.speaker.id.as_str(),
+            a.label.as_str(),
+        )
+            .cmp(&(
+                b.expected_cid.as_str(),
+                speaker_role_rank(b.speaker.role),
+                b.speaker.id.as_str(),
+                b.label.as_str(),
+            ))
     });
     proofs.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
     for proof in proofs {
-        load_bytes_into_pool(&proof.label, &proof.expected_cid, &proof.bytes, pool);
+        // #3813: the Speaker is CONSTRUCTED into each ProofBytes at the
+        // point that knows it (cmd_mint's applied-proof merge and the
+        // self_check/doctor fixtures stamp Consumer; the kit-RPC dependency
+        // catalog intake stamps Vendor). This loader never re-derives or
+        // hardcodes a role -- it honors the constructed attribution, the
+        // same way `load_files_into_pool` honors the path-derived one.
+        load_bytes_into_pool(
+            &proof.label,
+            &proof.expected_cid,
+            &proof.bytes,
+            pool,
+            &proof.speaker,
+        );
     }
 }
 
-fn load_path_into_pool(path: &Path, pool: &mut MementoPool) {
-    match load_one(path, pool) {
+fn load_path_into_pool(path: &Path, pool: &mut MementoPool, speaker: &Speaker) {
+    match load_one(path, pool, speaker) {
         Ok(()) => {}
         Err(e) => pool.load_errors.push(LoadError {
             proof_path: path.display().to_string(),
@@ -147,7 +296,11 @@ fn enumerate_proof_files(project_root: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::error::Error>> {
+fn load_one(
+    path: &Path,
+    pool: &mut MementoPool,
+    speaker: &Speaker,
+) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(path)?;
     let source_label = path.display().to_string();
 
@@ -178,7 +331,13 @@ fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::erro
                 });
                 return Ok(());
             }
-            return load_catalog_bytes(path.display().to_string(), &derived_full, &bytes, pool);
+            return load_catalog_bytes(
+                path.display().to_string(),
+                &derived_full,
+                &bytes,
+                pool,
+                speaker,
+            );
         }
         None => {
             // Stem isn't a recognizable CID (e.g. the negative fixture
@@ -195,13 +354,23 @@ fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::erro
     }
 }
 
-fn load_bytes_into_pool(
+/// `pub(crate)` so the utterance verbs (`crate::utterance::speak_*`) can
+/// load one envelope's bytes under THEIR caller's Speaker instead of the
+/// Consumer default `load_proof_bytes_into_pool` stamps.
+pub(crate) fn load_bytes_into_pool(
     source_label: &str,
     expected_cid: &MementoCid,
     bytes: &[u8],
     pool: &mut MementoPool,
+    speaker: &Speaker,
 ) {
-    if let Err(e) = load_catalog_bytes(source_label.to_string(), expected_cid, bytes, pool) {
+    if let Err(e) = load_catalog_bytes(
+        source_label.to_string(),
+        expected_cid,
+        bytes,
+        pool,
+        speaker,
+    ) {
         pool.load_errors.push(LoadError {
             proof_path: source_label.to_string(),
             reason: format!("read/decode: {e}"),
@@ -214,6 +383,7 @@ fn load_catalog_bytes(
     expected_cid: &MementoCid,
     bytes: &[u8],
     pool: &mut MementoPool,
+    speaker: &Speaker,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Rule 1: content hash matches the expected CID.
     let derived_full = computed_memento_cid(blake3_512_of(bytes));
@@ -241,7 +411,16 @@ fn load_catalog_bytes(
         }
     };
 
-    // Atoms -> pool: CIDs already verified by ProofGraph::read().
+    // Atoms -> pool: CIDs already verified by ProofGraph::read(). NOTE
+    // (SEAM 2): this is exactly `ProofGraph::feed`'s atom-merge rule
+    // (CID-keyed, first-writer-per-CID, order-independent because
+    // content-addressed) expressed inline rather than by storing a
+    // `ProofGraph` on `MementoPool` -- `ProofGraph` carries a `RefCell`
+    // typed-member cache, which is not `Sync`, and `MementoPool` is shared
+    // across `rayon` parallel iteration in `runner.rs`. Making `MementoPool`
+    // hold a `ProofGraph` directly breaks that Sync bound; fixing it (e.g.
+    // swapping the cache to a `Sync`-safe cell) is a real design change, not
+    // a lift-and-shift, so it is out of scope for this seam.
     for atom in graph.atoms() {
         let atom_cid = computed_atom_cid(atom.cid().as_str().to_string());
         pool.atoms
@@ -249,7 +428,8 @@ fn load_catalog_bytes(
             .or_insert_with(|| atom.bytes().to_vec());
     }
 
-    // Bodies -> pool: CIDs already verified by ProofGraph::read().
+    // Bodies -> pool: CIDs already verified by ProofGraph::read(). Same note
+    // as atoms above.
     for body in graph.bodies() {
         let body_cid = computed_body_cid(body.cid().as_str().to_string());
         pool.body
@@ -438,6 +618,13 @@ fn load_catalog_bytes(
                     continue;
                 }
             };
+
+        // #3807/#3812: attribute this member to its speaker now that
+        // insertion has succeeded. The Speaker was constructed once, by the
+        // intake that actually knows where the bytes came from (path walk,
+        // ProofBytes caller, or utterance verb). Idempotent by CID: a
+        // member already attributed keeps its FIRST speaker.
+        pool.attribute_member(cid.clone(), speaker.clone());
 
         if let Some((sym, callsite_key)) = bridge_index {
             pool.bridges_by_symbol.insert(sym.clone(), cid.clone());
@@ -666,9 +853,15 @@ mod tests {
             signer_cid: "test-signer".to_string(),
             signer_seed: [0x24; 32],
             declared_at: "2026-06-01T00:00:00Z".to_string(),
+            manifest: None,
         });
-        ProofBytes::try_from_parts("annotation-test.proof".to_string(), proof.cid, proof.bytes)
-            .expect("built proof CID must parse")
+        ProofBytes::try_from_parts(
+            "annotation-test.proof".to_string(),
+            proof.cid,
+            proof.bytes,
+            Speaker::consumer("annotation-test.proof"),
+        )
+        .expect("built proof CID must parse")
     }
 
     #[test]
@@ -677,6 +870,7 @@ mod tests {
             "bad-rpc-proof.proof",
             "sha256:not-a-blake3-proof-cid",
             b"not a proof catalog".to_vec(),
+            Speaker::vendor("bad-rpc-proof.proof"),
         )
         .expect_err("bad expected proof CID must fail before loader lookup");
 
@@ -693,6 +887,7 @@ mod tests {
             "bad-rpc-proof.proof",
             "blake3-512:not-hex",
             b"not a proof catalog".to_vec(),
+            Speaker::vendor("bad-rpc-proof.proof"),
         )
         .expect_err("bad expected proof CID hex must fail before loader lookup");
 
@@ -835,5 +1030,104 @@ mod tests {
             "duplicate effect-site annotation should fail loud: {:#?}",
             pool.load_errors
         );
+    }
+
+    // #3813 (finding 1): the SAME cid+bytes presented by two different
+    // speakers must dedup to a DETERMINISTIC, role-correct survivor --
+    // Consumer wins, independent of input order. The bad twin is the naive
+    // "first in input order / first by label" rule, which would let a
+    // Vendor-first ordering mislabel the member Vendor (unsound: a consumer
+    // obligation riding free as a vendor hypothesis).
+    #[test]
+    fn speaker_dedup_same_cid_two_speakers_is_deterministic_consumer() {
+        let annotation = mint_effect_site_annotation(&annotation_args(
+            PANIC_EFFECT,
+            "src/lib.rs",
+            42,
+            "method:unwrap",
+            "residue",
+            "lock_poisoning_residue",
+            "lock poisoning is runtime residue",
+        ))
+        .expect("mint annotation");
+        let base = proof_bytes(vec![annotation]);
+
+        // Identical content (same expected_cid + bytes), conflicting speaker.
+        let mut vendor = base.clone();
+        vendor.speaker = Speaker::vendor("vendor-dep");
+        let mut consumer = base.clone();
+        consumer.speaker = Speaker::consumer("consumer-own");
+        assert_eq!(vendor.expected_cid, consumer.expected_cid);
+        assert_eq!(vendor.bytes, consumer.bytes);
+
+        for order in [
+            vec![vendor.clone(), consumer.clone()],
+            vec![consumer.clone(), vendor.clone()],
+        ] {
+            let mut pool = MementoPool::default();
+            load_proof_bytes_into_pool(&order, &mut pool);
+
+            // Identical content collapses to ONE member (no double-load: a
+            // second load would spuriously trip the effect-site-duplicate
+            // guard).
+            assert_eq!(pool.mementos.len(), 1, "same cid+bytes loads once");
+            assert!(
+                pool.load_errors.is_empty(),
+                "no spurious dup error: {:#?}",
+                pool.load_errors
+            );
+            // Deterministic + sound: the survivor is CONSUMER regardless of
+            // input order. Vendor-wins (the bad twin) would flip this on the
+            // vendor-first ordering.
+            let (_cid, speaker) = pool
+                .member_speaker
+                .iter()
+                .next()
+                .expect("one attributed member");
+            assert_eq!(
+                speaker.role,
+                SpeakerRole::Consumer,
+                "conflicting-speaker survivor must be Consumer (order-independent)"
+            );
+        }
+    }
+
+    // #3813 (finding 2): `path_is_imported` is anchored to the active walk
+    // root. A nested subproject `.sugar/imports` is NOT the active project's
+    // staging dir and must NOT be classed Vendor. The old free-floating
+    // `windows(2)` scan mislabeled it.
+    #[test]
+    fn path_is_imported_anchors_to_active_project_root() {
+        let root = Path::new("/proj");
+
+        // Project-root staging: the FIRST two components under root.
+        let staged = Path::new("/proj/.sugar/imports/pkg/blake3-512_abc.proof");
+        assert!(path_is_imported(staged, Some(root)));
+        assert_eq!(speaker_for_path(staged, Some(root)).role, SpeakerRole::Vendor);
+
+        // Nested subproject staging deeper in the tree: NOT the active
+        // project's imports -> must be Consumer, not Vendor (the bug).
+        let nested = Path::new("/proj/tests/fixtures/demo/.sugar/imports/x.proof");
+        assert!(
+            !path_is_imported(nested, Some(root)),
+            "a nested subproject .sugar/imports must not be classed imported"
+        );
+        assert_eq!(
+            speaker_for_path(nested, Some(root)).role,
+            SpeakerRole::Consumer
+        );
+
+        // Daemon shape: the walk root itself IS `.sugar/imports`, proofs sit
+        // directly under it. Still Vendor.
+        let imports_root = Path::new("/proj/.sugar/imports");
+        let direct = Path::new("/proj/.sugar/imports/y.proof");
+        assert!(path_is_imported(direct, Some(imports_root)));
+        assert_eq!(
+            speaker_for_path(direct, Some(imports_root)).role,
+            SpeakerRole::Vendor
+        );
+
+        // Anchorless fallback keeps the conservative pre-#3813 scan.
+        assert!(path_is_imported(staged, None));
     }
 }

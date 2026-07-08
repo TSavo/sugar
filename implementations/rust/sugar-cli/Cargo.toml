@@ -29,6 +29,7 @@ sugar-proof-envelope = { path = "../sugar-proof-envelope" }
 sugar-claim-envelope = { path = "../sugar-claim-envelope" }
 sugar-ir-symbolic = { path = "../sugar-ir-symbolic" }
 sugar-verifier = { path = "../sugar-verifier" }
+sugar-compiler = { path = "../sugar-compiler" }
 sugar-lift = { path = "../sugar-lift" }
 sugar-linker = { path = "../sugar-linker" }
 libsugar = { path = "../libsugar" }

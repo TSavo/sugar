@@ -7,8 +7,8 @@
 // lift-plugin conformance gate). `verify` runs the *kit-level
 // verification flow* end-to-end and emits a verification receipt:
 //
-//   1. Lift the kit's contract claims. The lifter writes each
-//      @sugar/@boundary annotation as a contract memento (referencing
+//   1. Lift the kit's contract claims. The lifter writes each lifted
+//      contract from native source as a contract memento (referencing
 //      its concept) into the kit's `.proof` catalog under `.sugar/`.
 //      We load that catalog with `load_all_proofs` and enumerate the
 //      contract claims via `enumerate_callsites` (the bridge/callsite
@@ -122,6 +122,47 @@ fn resolve_signer_seed() -> Result<([u8; 32], bool), String> {
         return decode_seed_hex(token).map(|s| (s, true));
     }
     Ok((VERIFY_SIGNER_SEED_DEV, false))
+}
+
+/// The Ed25519 signer seed used to sign minted verification witnesses,
+/// bundled with whether it carries real signer authority (SEAM 6,
+/// `~/.claude/plans/sugar-compiler-liftshift.md`). Replaces the old
+/// `(signer_seed: &[u8; 32], signer_is_authoritative: bool)` pair threaded
+/// separately through `verify_one_claim` / `verify_direct_formula_claim` /
+/// `mint_verification_witness`; this is face-owned policy (which env vars,
+/// which dev-seed fallback), never seen by `sugar-compiler`.
+///
+/// PRESERVES `is_authoritative` exactly as [`resolve_signer_seed`] computed
+/// it: `true` only when `SUGAR_VERIFY_SIGNER_KEY`/`_FILE` supplied an
+/// override, `false` for the well-known dev seed (an integrity tag only,
+/// never an authority attestation). Flipping this silently would make
+/// dev-signed witnesses read as authoritative -- a security regression.
+#[derive(Clone, Copy)]
+pub(crate) struct SignerConfig {
+    pub(crate) seed: [u8; 32],
+    pub(crate) is_authoritative: bool,
+}
+
+/// Manual `Debug`: the 32-byte signing seed must never reach logs or test
+/// output, so it is redacted while `is_authoritative` stays visible.
+impl std::fmt::Debug for SignerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SignerConfig")
+            .field("seed", &"<redacted>")
+            .field("is_authoritative", &self.is_authoritative)
+            .finish()
+    }
+}
+
+impl SignerConfig {
+    /// Resolve via [`resolve_signer_seed`]'s existing precedence (env key,
+    /// env key-file, dev-seed fallback) and wrap the result.
+    fn resolve() -> Result<SignerConfig, String> {
+        resolve_signer_seed().map(|(seed, is_authoritative)| SignerConfig {
+            seed,
+            is_authoritative,
+        })
+    }
 }
 
 /// Decode a hex-encoded 32-byte Ed25519 seed.
@@ -297,7 +338,7 @@ pub fn run(args: VerifyArgs) -> u8 {
     // solver-dispatch flow. The logic is owned by cmd_prove (it predates
     // this verb); we reuse it so both verbs expose one behavior.
     if args.artifact.is_some() || args.proof.is_some() || args.policy.is_some() {
-        return crate::cmd_prove::run_admission_gate_with(
+        return crate::admission::run_admission_gate_with(
             &args.artifact,
             &args.proof,
             &args.policy,
@@ -423,8 +464,11 @@ pub fn run(args: VerifyArgs) -> u8 {
     if component_plan_options.allow_failed_components {
         emit_component_plan_warnings(&component_plan);
     }
-    let compiler_registry =
-        component_plan::compiler_registry_from_plan(&project_root, &component_plan);
+    let compiler_registry = component_plan::compiler_registry_from_plan(
+        &project_root,
+        &component_plan,
+        &component_plan::VerifierComponentRegistry,
+    );
 
     if !quiet && !json_out {
         let plan_label = match (&plan, plan_is_default) {
@@ -450,14 +494,14 @@ pub fn run(args: VerifyArgs) -> u8 {
 
     // Resolve the signer seed once. A malformed override fails the whole
     // run (fail closed) rather than silently signing with the dev seed.
-    let (signer_seed, signer_is_authoritative) = match resolve_signer_seed() {
+    let signer = match SignerConfig::resolve() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("{}: signer key: {e}", "error".red().bold());
             return EXIT_USER_ERROR;
         }
     };
-    if !quiet && !json_out && !signer_is_authoritative {
+    if !quiet && !json_out && !signer.is_authoritative {
         println!(
             "  {} witnesses signed with the well-known dev seed (integrity tag only; set {} for an authoritative signer)",
             "note:".yellow(),
@@ -476,8 +520,7 @@ pub fn run(args: VerifyArgs) -> u8 {
             &solver_registry,
             &compiler_registry,
             &witness_dir,
-            &signer_seed,
-            signer_is_authoritative,
+            &signer,
         ));
     }
     for claim in &direct_formula_claims {
@@ -487,8 +530,7 @@ pub fn run(args: VerifyArgs) -> u8 {
             &solver_registry,
             &compiler_registry,
             &witness_dir,
-            &signer_seed,
-            signer_is_authoritative,
+            &signer,
         ));
     }
 
@@ -578,7 +620,7 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         emit_component_plan_warnings(&component_plan);
     }
 
-    crate::cmd_prove::configure_witness_discharge_env_with_plan(
+    crate::discharge_config::configure_witness_discharge_env_with_plan(
         project_root,
         &cfg_doc,
         Some(&component_plan),
@@ -611,7 +653,11 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
         ..Default::default()
     };
-    let compilers = component_plan::compiler_registry_from_plan(project_root, &component_plan);
+    let compilers = component_plan::compiler_registry_from_plan(
+        project_root,
+        &component_plan,
+        &component_plan::VerifierComponentRegistry,
+    );
     let runner = Runner::new_with_compilers(cfg, compilers);
     let run_artifact = match runner.run_with_proof_run() {
         Ok(artifact) => artifact,
@@ -853,8 +899,7 @@ fn verify_direct_formula_claim(
     solver_registry: &std::collections::HashMap<SolverSeat, SolverHandle>,
     compiler_registry: &CompilerRegistry,
     witness_dir: &std::path::Path,
-    signer_seed: &[u8; 32],
-    signer_is_authoritative: bool,
+    signer: &SignerConfig,
 ) -> ClaimResult {
     let mut result = ClaimResult {
         property_name: claim.property_name.clone(),
@@ -908,8 +953,7 @@ fn verify_direct_formula_claim(
             &claim.formula,
             &result.discharging_solver,
             witness_dir,
-            signer_seed,
-            signer_is_authoritative,
+            signer,
         ) {
             Ok(cid) => result.witness_cid = Some(cid),
             Err(e) => {
@@ -929,8 +973,7 @@ fn verify_one_claim(
     solver_registry: &std::collections::HashMap<SolverSeat, SolverHandle>,
     compiler_registry: &CompilerRegistry,
     witness_dir: &std::path::Path,
-    signer_seed: &[u8; 32],
-    signer_is_authoritative: bool,
+    signer: &SignerConfig,
 ) -> ClaimResult {
     let mut result = ClaimResult {
         property_name: cs.property_name.clone(),
@@ -1278,8 +1321,7 @@ fn verify_one_claim(
             &obligation,
             &result.discharging_solver,
             witness_dir,
-            signer_seed,
-            signer_is_authoritative,
+            signer,
         ) {
             Ok(cid) => result.witness_cid = Some(cid),
             Err(e) => {
@@ -1345,13 +1387,12 @@ fn mint_verification_witness(
     obligation: &Json,
     discharging_solver: &str,
     witness_dir: &std::path::Path,
-    signer_seed: &[u8; 32],
-    signer_is_authoritative: bool,
+    signer: &SignerConfig,
 ) -> Result<String, String> {
     std::fs::create_dir_all(witness_dir)
         .map_err(|e| format!("create {}: {e}", witness_dir.display()))?;
 
-    let pubkey = ed25519_pubkey_string(signer_seed);
+    let pubkey = ed25519_pubkey_string(&signer.seed);
     let observed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     // The obligation CID is the fixture state this witness pins to.
@@ -1367,7 +1408,7 @@ fn mint_verification_witness(
         "bridge_ir_name": cs.bridge_ir_name,
         "source_layer": cs.bridge_source_layer,
         "target_layer": cs.bridge_target_layer,
-        "signer_attests_authority": signer_is_authoritative,
+        "signer_attests_authority": signer.is_authoritative,
     });
 
     // Build the content over which the CID + signature are computed.
@@ -1408,7 +1449,7 @@ fn mint_verification_witness(
     // the single source of truth defined in sugar-ir-types. The verify path
     // (witness_verify) reconstructs identical bytes.
     let attested = witness.attestation_payload();
-    witness.signature = Some(ed25519_sign_string(signer_seed, &attested));
+    witness.signature = Some(ed25519_sign_string(&signer.seed, &attested));
 
     let bytes =
         serde_json::to_string_pretty(&witness).map_err(|e| format!("serialize witness: {e}"))?;
@@ -1708,6 +1749,27 @@ fn short_cid(cid: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Discrimination pair for the redacting `Debug` impl: the seed bytes
+    /// must be absent (no hex, no decimal array), while `is_authoritative`
+    /// and the redaction marker must be present.
+    #[test]
+    fn signer_config_debug_redacts_seed() {
+        let seed = [0xABu8; 32];
+        let config = SignerConfig {
+            seed,
+            is_authoritative: true,
+        };
+        let rendered = format!("{config:?}");
+        // Positive arm: the safe field and the redaction marker are visible.
+        assert!(rendered.contains("is_authoritative"), "got: {rendered}");
+        assert!(rendered.contains("true"), "got: {rendered}");
+        assert!(rendered.contains("<redacted>"), "got: {rendered}");
+        // Negative arm: no seed bytes in any common rendering.
+        assert!(!rendered.contains("171"), "decimal seed byte leaked: {rendered}");
+        assert!(!rendered.to_lowercase().contains("ab"), "hex seed byte leaked: {rendered}");
+        assert!(!rendered.contains('['), "array rendering leaked: {rendered}");
+    }
+
     fn test_cid(label: &str) -> sugar_verifier::MementoCid {
         sugar_verifier::MementoCid::try_parse(label.to_string()).unwrap_or_else(|_| {
             sugar_verifier::MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(
@@ -1941,6 +2003,7 @@ mod tests {
             guard_facts: Vec::new(),
             file: None,
             line: None,
+            source_column: None,
             callee: None,
             panic_site: false,
             attribute_safety: None,
@@ -1951,8 +2014,7 @@ mod tests {
             &obligation,
             "z3@4.x",
             &tmp,
-            &VERIFY_SIGNER_SEED_DEV,
-            false,
+            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
         )
         .expect("witness mint must succeed");
         assert!(cid.starts_with("blake3-512:"));
@@ -2053,6 +2115,7 @@ mod tests {
             guard_facts,
             file: None,
             line: None,
+            source_column: None,
             callee: None,
             // This fixture is a panic trap (`opt.unwrap()`); the guarded vs
             // unguarded split keys off `panic_site` to demand the `panic-safe`
@@ -2132,8 +2195,7 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &VERIFY_SIGNER_SEED_DEV,
-            false,
+            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
         );
         assert_eq!(
             guarded.verdict,
@@ -2160,8 +2222,7 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &VERIFY_SIGNER_SEED_DEV,
-            false,
+            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
         );
         assert_ne!(
             unguarded.verdict,
@@ -2535,8 +2596,7 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &VERIFY_SIGNER_SEED_DEV,
-            false,
+            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
         );
         assert_eq!(
             positive.verdict,
@@ -2565,8 +2625,7 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &VERIFY_SIGNER_SEED_DEV,
-            false,
+            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
         );
         assert_ne!(
             control.verdict,
@@ -2605,8 +2664,7 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &VERIFY_SIGNER_SEED_DEV,
-            false,
+            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
         );
         assert_eq!(
             positive.verdict,
@@ -2640,8 +2698,7 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &VERIFY_SIGNER_SEED_DEV,
-            false,
+            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
         );
         assert_ne!(
             wrong_predicate.verdict,
@@ -2666,8 +2723,7 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &VERIFY_SIGNER_SEED_DEV,
-            false,
+            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
         );
         assert_ne!(
             wrong_receiver.verdict,

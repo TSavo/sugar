@@ -189,12 +189,14 @@ fn build_lone_opaque_proof_bundle(literal: &str) -> ProofBytes {
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     });
 
     ProofBytes::try_from_parts(
         format!("lone-opaque-{literal}.proof"),
         built.cid,
         built.bytes,
+        sugar_verifier::Speaker::consumer(format!("lone-opaque-{literal}.proof")),
     )
     .expect("built proof CID must parse")
 }

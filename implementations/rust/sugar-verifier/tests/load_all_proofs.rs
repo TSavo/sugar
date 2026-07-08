@@ -93,7 +93,21 @@ fn write_minimal_member_proof(dir: &Path, member_cid: &str, member_bytes: &[u8])
 }
 
 fn proof_bytes(label: &str, expected_cid: String, bytes: Vec<u8>) -> load_all_proofs::ProofBytes {
-    load_all_proofs::ProofBytes::try_from_parts(label.to_string(), expected_cid, bytes)
+    proof_bytes_spoken_by(
+        label,
+        expected_cid,
+        bytes,
+        sugar_verifier::Speaker::consumer(label),
+    )
+}
+
+fn proof_bytes_spoken_by(
+    label: &str,
+    expected_cid: String,
+    bytes: Vec<u8>,
+    speaker: sugar_verifier::Speaker,
+) -> load_all_proofs::ProofBytes {
+    load_all_proofs::ProofBytes::try_from_parts(label.to_string(), expected_cid, bytes, speaker)
         .expect("test proof CID must parse")
 }
 
@@ -162,6 +176,7 @@ fn publish_parseint_proof(dir: &Path) -> String {
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&input);
     let hex = cid_hex(&built.cid).unwrap();
@@ -211,6 +226,7 @@ fn publish_parseint_proof_with_target_proof_cid(dir: &Path, target_proof_cid: St
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&input);
     let hex = cid_hex(&built.cid).unwrap();
@@ -292,6 +308,7 @@ fn catalog_graph_sections_load_flat_atoms_and_pointer_bodies_by_cid() {
         signer_cid,
         signer_seed,
         declared_at: "2026-04-30T00:00:00.000Z".into(),
+        manifest: None,
     });
     let hex = cid_hex(&built.cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write");
@@ -637,6 +654,7 @@ fn multiple_proofs_in_one_dir_all_loaded() {
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     });
     let hex = cid_hex(&built.cid).unwrap();
     fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write");
@@ -662,4 +680,155 @@ fn proofs_in_subdirectories_are_found() {
     assert_eq!(pool.load_errors.len(), 0, "{:?}", pool.load_errors);
     assert_eq!(pool.mementos.len(), 2);
     let _ = fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// #3813: the dependency-proofs intake (`RunnerConfig.extra_proofs` ->
+// `load_proof_bytes_into_pool`) must honor the Speaker CONSTRUCTED into each
+// `ProofBytes` -- it must NOT re-hardcode `SpeakerRole::Consumer`. A kit's
+// package-manager dependency catalog is VENDOR testimony; with the
+// positional labeling fallback deleted (#3812), a Consumer re-hardcode here
+// would silently count the vendor's conjunct as the client's own fact.
+// ---------------------------------------------------------------------------
+
+fn envelope_fixture_bytes(name: &str) -> Vec<u8> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("implementations/rust")
+        .join("sugar-proof-envelope/tests/fixtures")
+        .join(name);
+    fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
+}
+
+fn staged_proof_bytes(name: &str, speaker: sugar_verifier::Speaker) -> load_all_proofs::ProofBytes {
+    let bytes = envelope_fixture_bytes(name);
+    let cid = blake3_512_of(&bytes);
+    load_all_proofs::ProofBytes::try_from_parts(name, cid, bytes, speaker)
+        .expect("fixture bytes stage into ProofBytes")
+}
+
+/// DISCRIMINATION (attribution layer): a vendor-stamped `ProofBytes` loaded
+/// through the ONE bulk intake attributes every member to the VENDOR
+/// speaker, and a consumer-stamped one to the CONSUMER speaker. This test
+/// FAILS if `load_proof_bytes_into_pool` ever re-hardcodes Consumer.
+#[test]
+fn proof_bytes_intake_honors_constructed_speaker_role() {
+    use sugar_verifier::types::{MementoPool, SpeakerRole};
+
+    let mut pool = MementoPool::default();
+    load_all_proofs::load_proof_bytes_into_pool(
+        &[
+            staged_proof_bytes(
+                "base64_vendor.proof",
+                sugar_verifier::Speaker::vendor("dep-kit:base64"),
+            ),
+            staged_proof_bytes(
+                "base64_consumer.proof",
+                sugar_verifier::Speaker::consumer("my-project"),
+            ),
+        ],
+        &mut pool,
+    );
+    assert!(pool.load_errors.is_empty(), "{:#?}", pool.load_errors);
+    assert!(!pool.member_speaker.is_empty(), "members must be attributed");
+
+    let vendor_members = pool
+        .member_speaker
+        .values()
+        .filter(|s| s.role == SpeakerRole::Vendor && s.id == "dep-kit:base64")
+        .count();
+    let consumer_members = pool
+        .member_speaker
+        .values()
+        .filter(|s| s.role == SpeakerRole::Consumer && s.id == "my-project")
+        .count();
+    assert!(
+        vendor_members > 0,
+        "the vendor-stamped bundle's members must be attributed to the VENDOR speaker \
+         (a Consumer re-hardcode in load_proof_bytes_into_pool makes this zero): {:#?}",
+        pool.member_speaker
+    );
+    assert!(
+        consumer_members > 0,
+        "the consumer-stamped bundle's members must be attributed to the CONSUMER speaker: {:#?}",
+        pool.member_speaker
+    );
+    assert_eq!(
+        vendor_members + consumer_members,
+        pool.member_speaker.len(),
+        "every member is attributed to exactly the speaker its ProofBytes carried"
+    );
+}
+
+/// DISCRIMINATION (row-label layer): the same two bundles entering through
+/// the dependency-proofs intake shape (`load_proof_bytes_into_pool`, exactly
+/// what `RunnerConfig.extra_proofs` drives) produce solved rows whose
+/// client-fact labels FOLLOW the constructed Speaker. Re-stamping the vendor
+/// bundle as Consumer (the old hardcode) changes which rows carry
+/// `clientFactIr`, so a re-hardcode flips this assertion.
+#[test]
+fn dependency_intake_rows_label_vendor_fact_as_vendor() {
+    use sugar_verifier::solvers::registry::build_default_z3;
+    use sugar_verifier::solvers::{SolverPlan, SolverSeat};
+    use sugar_verifier::types::MementoPool;
+    use sugar_verifier::utterance::solve;
+
+    let registry = build_default_z3("z3");
+    let plan = SolverPlan::Single(SolverSeat::Z3);
+    let mut compilers = sugar_ir_compiler::registry::Registry::new();
+    compilers.register(std::sync::Arc::new(
+        sugar_ir_compiler_smt_lib::SmtLibCompiler::new(),
+    ));
+
+    let labeled_props = |vendor_role_on_vendor_bytes: bool| {
+        let vendor_speaker = if vendor_role_on_vendor_bytes {
+            sugar_verifier::Speaker::vendor("dep-kit:base64")
+        } else {
+            // The OLD BUG, reproduced deliberately: vendor testimony
+            // mislabeled as the consumer's own.
+            sugar_verifier::Speaker::consumer("dep-kit:base64")
+        };
+        let mut pool = MementoPool::default();
+        load_all_proofs::load_proof_bytes_into_pool(
+            &[
+                staged_proof_bytes("base64_vendor.proof", vendor_speaker),
+                staged_proof_bytes(
+                    "base64_consumer.proof",
+                    sugar_verifier::Speaker::consumer("my-project"),
+                ),
+            ],
+            &mut pool,
+        );
+        assert!(pool.load_errors.is_empty(), "{:#?}", pool.load_errors);
+        let rows = solve(&pool, &plan, &registry, &compilers, Path::new("."));
+        let props: std::collections::BTreeSet<String> = rows
+            .iter()
+            .filter(|r| {
+                r.verification
+                    .as_ref()
+                    .is_some_and(|v| v.to_json().get("clientFactIr").is_some())
+            })
+            .map(|r| r.property_name.clone())
+            .collect();
+        props
+    };
+
+    let honest = labeled_props(true);
+    let mislabeled = labeled_props(false);
+    assert!(
+        !mislabeled.is_empty(),
+        "sanity: consumer-attributed groups must carry client-fact labels"
+    );
+    // The two base64 fixtures form DISJOINT #euf# groups, so with honest
+    // vendor attribution the vendor bundle's groups carry NO client-fact
+    // label; with the Consumer re-hardcode they all do. If the intake ever
+    // re-hardcodes Consumer, `honest` equals `mislabeled` and this fails.
+    assert_ne!(
+        honest, mislabeled,
+        "vendor-stamped dependency proofs must NOT be labeled as the client's own facts"
+    );
+    assert!(
+        honest.is_subset(&mislabeled),
+        "honest attribution labels a strict subset (the consumer's groups only): honest={honest:?} mislabeled={mislabeled:?}"
+    );
 }

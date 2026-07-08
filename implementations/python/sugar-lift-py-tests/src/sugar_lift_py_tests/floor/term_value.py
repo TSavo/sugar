@@ -18,6 +18,28 @@ class TermValue(FloorValue):
 
     def to_term(self, *, owner: str):
         del owner
+        # Int embeds in Real losslessly (3 and 3.0 are the same number), but the
+        # embedding only goes one way at the term level: an Int-sorted term and
+        # a Real-sorted term are structurally distinct EUF constants even when
+        # the numbers agree, so an INTEGRAL float still projects through the
+        # Int constructor -- matching any plain-int sibling it must agree with
+        # (e.g. `float('3.0') == 3`, `np.divide(6, 3) == 2`). Only a genuinely
+        # fractional float needs the Real ctor, because there is no lossless
+        # Int projection for it.
+        if type(self.value) is float and self.value == int(self.value):
+            from sugar_lift_py_tests.ir import num
+
+            return num(int(self.value))
+        if type(self.value) is float:
+            from decimal import Decimal
+
+            from sugar_lift_py_tests.ir import real_lit
+
+            # A canonical decimal string, never a Python float text form (see
+            # `ir.real_lit`): `Decimal(str(value))` round-trips because
+            # `repr`/`str` of a Python float is already the shortest exact
+            # decimal that reparses to the same double.
+            return real_lit(format(Decimal(str(self.value)), "f"))
         from sugar_lift_py_tests.ir import num
 
         return num(int(self.value))

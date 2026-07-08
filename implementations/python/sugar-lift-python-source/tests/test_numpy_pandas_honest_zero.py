@@ -54,7 +54,7 @@ def test_fixture_selection_is_keyed_by_package_versions() -> None:
     fixture = _load_fixture_for_package_versions({"numpy": "2.5.1", "pandas": "3.0.3"})
 
     assert fixture["package_versions"] == {"numpy": "2.5.1", "pandas": "3.0.3"}
-    assert fixture["counts_by_kind"]["decorator-refused"] == 8993
+    assert fixture["counts_by_kind"]["decorator-refused"] == 8971
 
 
 def test_unknown_package_version_skips_with_named_fixture_key() -> None:

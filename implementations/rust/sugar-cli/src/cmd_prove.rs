@@ -4,7 +4,8 @@
 //
 // The witness-discharge path resolves each lift surface's manifest (the SAME
 // dispatch lift uses) to export SUGAR_WITNESS_DISCHARGE_<TOOL> per tool, so
-// witness recompute rides the manifest with no bespoke config.
+// witness recompute rides the manifest with no bespoke config. SEAM 6: that
+// resolution now lives in `crate::discharge_config`, shared with `cmd_verify`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,9 +22,9 @@ use sugar_verifier::{
     LegacyZ3Fallback, MementoCid, PlanArtifactInput, ProofRunArtifact, Runner, RunnerConfig,
 };
 
-use crate::component_plan::{
-    self, ComponentPlan, ComponentPlanOptions, PlanIntent, PlannedLiftManifest,
-};
+use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
+#[cfg(test)]
+use crate::component_plan::PlannedLiftManifest;
 use crate::project_config::{read_project_config, ProjectConfig, WitnessEntry};
 use crate::report_fmt;
 use crate::report_witness::{
@@ -34,99 +35,9 @@ use crate::ProveArgs;
 // The witness-discharge path loads the lift surface manifest at
 // `<project>/.sugar/lift/<surface>/manifest.toml` to read its
 // `discharge_command` + `witness_tool`. No hardcoded `sugar-lift-<kit>`.
-
-fn find_manifest_with_plan(
-    project_root: &std::path::Path,
-    surface: &str,
-    plan: Option<&ComponentPlan>,
-) -> Result<PlannedLiftManifest, String> {
-    let project_local = project_root
-        .join(".sugar")
-        .join("lift")
-        .join(surface)
-        .join("manifest.toml");
-    if project_local.exists() {
-        return parse_authored_lift_manifest(&project_local, surface);
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        let user_global = PathBuf::from(home)
-            .join(".config")
-            .join("sugar")
-            .join("lift")
-            .join(surface)
-            .join("manifest.toml");
-        if user_global.exists() {
-            return parse_authored_lift_manifest(&user_global, surface);
-        }
-    }
-    if let Some(plan) = plan {
-        if let Some(planned) = plan
-            .lift_manifests
-            .iter()
-            .find(|manifest| manifest.surface == surface)
-        {
-            return Ok(planned.clone());
-        }
-    } else if let Some(planned) = component_plan::planned_lift_manifest(project_root, surface) {
-        return Ok(planned);
-    }
-    Err(format!(
-        "no plugin manifest for surface `{surface}` (looked in .sugar/lift/{surface}/manifest.toml, ~/.config/sugar/lift/{surface}/manifest.toml, and discovered Sugar components)"
-    ))
-}
-
-fn parse_authored_lift_manifest(path: &Path, surface: &str) -> Result<PlannedLiftManifest, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let toml: toml::Value = text
-        .parse()
-        .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
-    let string_field = |key: &str| -> Option<String> {
-        toml.get(key)
-            .and_then(toml::Value::as_str)
-            .map(str::to_string)
-            .filter(|value| !value.is_empty())
-    };
-    let array_field = |key: &str| -> Vec<String> {
-        toml.get(key)
-            .and_then(toml::Value::as_array)
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(toml::Value::as_str)
-                    .map(str::to_string)
-                    .filter(|value| !value.is_empty())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-    };
-    let manifest = PlannedLiftManifest {
-        surface: surface.to_string(),
-        name: string_field("name").unwrap_or_else(|| surface.to_string()),
-        version: string_field("version"),
-        protocol_version: string_field("protocol_version")
-            .or_else(|| string_field("protocolVersion")),
-        command: array_field("command"),
-        working_dir: string_field("working_dir").map(PathBuf::from),
-        method: string_field("method"),
-        phase: string_field("phase"),
-        discharge_command: array_field("discharge_command")
-            .into_iter()
-            .chain(array_field("dischargeCommand"))
-            .collect(),
-        witness_tool: string_field("witness_tool").or_else(|| string_field("witnessTool")),
-        resolve_witness_command: array_field("resolve_witness_command")
-            .into_iter()
-            .chain(array_field("resolveWitnessCommand"))
-            .collect(),
-        resolve_witness_method: string_field("resolve_witness_method")
-            .or_else(|| string_field("resolveWitnessMethod")),
-    };
-    if manifest.command.is_empty() {
-        return Err(format!("manifest {} has no `command`", path.display()));
-    }
-    Ok(manifest)
-}
+// SEAM 6: this resolution + the `SUGAR_WITNESS_*` env staging it feeds now
+// live in `crate::discharge_config` (shared with `cmd_verify`, which used to
+// reach into this module's internals directly).
 
 // ---------------------------------------------------------------------------
 // pub fn run: entry point from main.rs
@@ -259,7 +170,11 @@ pub(crate) fn build_prove_artifact_with_options(
         emit_component_plan_warnings(&component_plan);
     }
 
-    configure_witness_discharge_env_with_plan(project_root, &cfg_doc, Some(&component_plan));
+    crate::discharge_config::configure_witness_discharge_env_with_plan(
+        project_root,
+        &cfg_doc,
+        Some(&component_plan),
+    );
     let plan_artifact = component_plan::plan_artifact_memento(
         project_root,
         PlanIntent::Prove,
@@ -310,7 +225,11 @@ pub(crate) fn build_prove_artifact_with_options(
         }),
         ..Default::default()
     };
-    let compilers = component_plan::compiler_registry_from_plan(project_root, &component_plan);
+    let compilers = component_plan::compiler_registry_from_plan(
+        project_root,
+        &component_plan,
+        &component_plan::VerifierComponentRegistry,
+    );
     Runner::new_with_compilers(cfg, compilers)
         .run_with_proof_run()
         .map_err(|error| error.to_string())
@@ -726,234 +645,17 @@ fn read_file_witness(project_root: &Path, witness: &WitnessEntry) -> Result<Valu
     }))
 }
 
-// WITNESS DISCHARGE defaults: so `sugar prove <project>` and artifact-mode
-// `sugar verify --project <project>` settle execution witnesses by recompute
-// WITHOUT the caller exporting env vars. The discharge command is declared in
-// the KIT'S MANIFEST (alongside its lift `command`) and resolved here through
-// the SAME `find_manifest` dispatch lift uses -- no bespoke config.
-pub(crate) fn configure_witness_discharge_env_with_plan(
-    project_root: &Path,
-    cfg_doc: &crate::project_config::ProjectConfig,
-    component_plan: Option<&ComponentPlan>,
-) {
-    if std::env::var_os("SUGAR_WITNESS_PROJECT_DIR").is_none() {
-        let p = project_root
-            .canonicalize()
-            .unwrap_or_else(|_| project_root.to_path_buf());
-        std::env::set_var("SUGAR_WITNESS_PROJECT_DIR", &p);
-    }
-    let planned_plugins;
-    let plugins: Vec<&crate::project_config::PluginEntry> =
-        if cfg_doc.plugins.iter().any(|p| p.is_lift_plugin()) {
-            cfg_doc
-                .plugins
-                .iter()
-                .filter(|p| p.is_lift_plugin())
-                .collect()
-        } else {
-            planned_plugins = component_plan
-                .map(|plan| plan.plugins.clone())
-                .unwrap_or_else(|| component_plan::planned_lift_plugins(project_root));
-            planned_plugins
-                .iter()
-                .filter(|p| p.is_lift_plugin())
-                .collect()
-        };
-    let mut witness_resolvers: Vec<Value> = Vec::new();
-    for plugin in plugins {
-        let manifest = match find_manifest_with_plan(project_root, &plugin.surface, component_plan)
-        {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if !manifest.resolve_witness_command.is_empty() {
-            let working_dir = manifest_working_dir(project_root, &manifest);
-            witness_resolvers.push(json!({
-                "argv": manifest.resolve_witness_command,
-                "working_dir": working_dir.display().to_string(),
-                "method": manifest
-                    .resolve_witness_method
-                    .unwrap_or_else(|| "sugar.plugin.resolve_witness".to_string()),
-            }));
-        }
-        if manifest.discharge_command.is_empty() {
-            continue;
-        }
-        let Some(tool) = manifest.witness_tool.as_deref() else {
-            continue;
-        };
-        let key = format!(
-            "SUGAR_WITNESS_DISCHARGE_{}",
-            tool.to_uppercase()
-                .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
-        );
-        if std::env::var_os(&key).is_none() {
-            std::env::set_var(&key, manifest.discharge_command.join(" "));
-        }
-    }
-    if !witness_resolvers.is_empty() && std::env::var_os("SUGAR_WITNESS_RESOLVERS").is_none() {
-        if let Ok(encoded) = serde_json::to_string(&witness_resolvers) {
-            std::env::set_var("SUGAR_WITNESS_RESOLVERS", encoded);
-        }
-    }
-}
-
-fn manifest_working_dir(project_root: &Path, manifest: &PlannedLiftManifest) -> PathBuf {
-    manifest
-        .working_dir
-        .as_ref()
-        .map(|path| {
-            if path.is_absolute() {
-                path.clone()
-            } else {
-                project_root.join(path)
-            }
-        })
-        .unwrap_or_else(|| project_root.to_path_buf())
-}
+// SEAM 6: witness-discharge env staging moved to `crate::discharge_config`
+// (shared with `cmd_verify`, closing the old face-to-face reach-in).
 
 fn run_admission_gate(args: &ProveArgs) -> u8 {
-    run_admission_gate_with(
+    crate::admission::run_admission_gate_with(
         &args.artifact,
         &args.proof,
         &args.policy,
         args.out.json,
         args.out.quiet,
     )
-}
-
-/// Shared admission-gate entry point. The supply-chain artifact/policy
-/// verification logic is owned here (it predates the keystone `verify`
-/// verb), but both `prove` (legacy alias) and `verify` (PR-9 / #1405)
-/// surface the same `--artifact`/`--proof`/`--policy` flags. Threading the
-/// three `Option<PathBuf>` values directly (rather than `&ProveArgs`) lets
-/// `cmd_verify` reuse this without coupling to the prover's arg struct.
-pub fn run_admission_gate_with(
-    artifact: &Option<PathBuf>,
-    proof: &Option<PathBuf>,
-    policy: &Option<PathBuf>,
-    json: bool,
-    quiet: bool,
-) -> u8 {
-    match verify_artifact_or_policy(artifact, proof, policy) {
-        Ok(report) => {
-            let ok = report["ok"].as_bool().unwrap_or(false);
-            if json {
-                println!("{}", serde_json::to_string_pretty(&report).unwrap());
-            } else if !quiet {
-                let verdict = report["verdict"].as_str().unwrap_or("unknown");
-                println!("verify admission: {verdict}");
-                if let Some(reason) = report.get("reason").and_then(Value::as_str) {
-                    println!("  reason: {reason}");
-                }
-            }
-            if ok {
-                crate::EXIT_OK
-            } else {
-                crate::EXIT_VERIFY_FAIL
-            }
-        }
-        Err(error) => {
-            eprintln!("{}: {error}", "error".red().bold());
-            crate::EXIT_USER_ERROR
-        }
-    }
-}
-
-fn verify_artifact_or_policy(
-    artifact: &Option<PathBuf>,
-    proof: &Option<PathBuf>,
-    policy: &Option<PathBuf>,
-) -> Result<Value, String> {
-    let proof_path = proof
-        .as_ref()
-        .ok_or_else(|| "--proof is required for admission verification".to_string())?;
-    let proof = read_json_value(proof_path)?;
-
-    let policy_report = policy
-        .as_ref()
-        .map(|policy_path| verify_policy_receipt(&proof, policy_path))
-        .transpose()?;
-    let artifact_report = artifact
-        .as_ref()
-        .map(|artifact_path| verify_artifact_receipt(&proof, artifact_path))
-        .transpose()?;
-
-    match (policy_report, artifact_report) {
-        (Some(policy), Some(artifact)) => {
-            let policy_ok = value_ok(&policy);
-            let artifact_ok = value_ok(&artifact);
-            let ok = policy_ok && artifact_ok;
-            Ok(json!({
-                "ok": ok,
-                "verdict": if ok { "accepted" } else { "rejected" },
-                "reason": combined_admission_reason(policy_ok, artifact_ok),
-                "policy": policy,
-                "artifact": artifact,
-            }))
-        }
-        (Some(policy), None) => Ok(policy),
-        (None, Some(artifact)) => Ok(artifact),
-        (None, None) => Err("--artifact or --policy is required for admission verification".into()),
-    }
-}
-
-fn verify_policy_receipt(proof: &Value, policy_path: &Path) -> Result<Value, String> {
-    let policy = read_json_value(policy_path)?;
-    let pinned = policy
-        .get("policyCid")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "policy receipt missing policyCid".to_string())?;
-    let candidate = proof
-        .get("policyCid")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "proof receipt missing policyCid".to_string())?;
-    let ok = pinned == candidate;
-    Ok(json!({
-        "ok": ok,
-        "verdict": if ok { "accepted" } else { "rejected" },
-        "reason": if ok { "policyCid matched" } else { "policyCid mismatch" },
-        "pinnedPolicyCid": pinned,
-        "candidatePolicyCid": candidate,
-    }))
-}
-
-fn verify_artifact_receipt(proof: &Value, artifact_path: &Path) -> Result<Value, String> {
-    let artifact_bytes = std::fs::read(artifact_path)
-        .map_err(|e| format!("read artifact {}: {e}", artifact_path.display()))?;
-    let observed_binary_cid = blake3_512_of(&artifact_bytes);
-    let attested_binary_cid = proof
-        .get("binaryCid")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "proof receipt missing binaryCid".to_string())?;
-    let ok = observed_binary_cid == attested_binary_cid;
-    Ok(json!({
-        "ok": ok,
-        "verdict": if ok { "accepted" } else { "rejected" },
-        "reason": if ok { "binaryCid matched" } else { "binaryCid mismatch" },
-        "artifact": artifact_path,
-        "attestedBinaryCid": attested_binary_cid,
-        "observedBinaryCid": observed_binary_cid,
-    }))
-}
-
-fn value_ok(value: &Value) -> bool {
-    value.get("ok").and_then(Value::as_bool).unwrap_or(false)
-}
-
-fn combined_admission_reason(policy_ok: bool, artifact_ok: bool) -> &'static str {
-    match (policy_ok, artifact_ok) {
-        (true, true) => "policyCid and binaryCid matched",
-        (false, true) => "policyCid mismatch",
-        (true, false) => "binaryCid mismatch",
-        (false, false) => "policyCid and binaryCid mismatch",
-    }
-}
-
-fn read_json_value(path: &Path) -> Result<Value, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))
 }
 
 #[cfg(test)]

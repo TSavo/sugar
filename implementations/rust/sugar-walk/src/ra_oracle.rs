@@ -2,7 +2,7 @@
 //!
 //! The syntactic tiers (T1 path/import resolution, T2a local type-flow) resolve
 //! a method call's receiver-defining crate only when it is locally determinable.
-//! When they refuse (`callee_crate == None` on a method call), this oracle asks
+//! When they abstain (`callee_crate == None` on a method call), this oracle asks
 //! the language's own semantic analyzer, rust-analyzer, "what does this method
 //! resolve to, and in which crate is the receiver type defined" via the LSP
 //! `textDocument/definition` request, then maps the resolved definition's file
@@ -13,13 +13,13 @@
 //! known crate (sysroot core/alloc/std, collapsed to "std"; or a cargo-registry
 //! crate). Ambiguity (more than one distinct crate), an unmappable path (a
 //! workspace-local file, a path outside the known roots), a null result, or an
-//! unavailable analyzer all yield `None` (refuse). The oracle never guesses a
+//! unavailable analyzer all yield `None` (abstain). The oracle never guesses a
 //! bridge; an unresolved call stays a lift-gap.
 //!
 //! Availability: the oracle is opt-in behind the `SUGAR_RESOLVE_ORACLE`
 //! environment variable (`= "rust-analyzer"`). When unset, or when the
 //! rust-analyzer binary cannot be located/spawned, `RaOracle::start` returns
-//! `None` and every resolution refuses, so the fast path and CI are unaffected
+//! `None` and every resolution abstains, so the fast path and CI are unaffected
 //! by a missing analyzer. This degradation is deterministic: oracle-off and
 //! oracle-on-but-absent both reduce to the same Tier-2a behavior.
 
@@ -48,7 +48,7 @@ pub struct ResolveQuery {
 /// receiver-type discriminator panic-freedom uses to pick the disambiguated
 /// rust-std shim partial). `type_stem == None` means the crate is known but the
 /// type could not be disambiguated (ambiguous or unmappable stem), so the caller
-/// keeps the crate-only resolution and refuses to disambiguate, never guesses.
+/// keeps the crate-only resolution and abstains to disambiguate, never guesses.
 #[derive(Debug, Clone)]
 pub struct TypedResolution {
     pub krate: String,
@@ -99,14 +99,14 @@ const DEFINITION_WAIT: Duration = Duration::from_secs(30);
 /// "not ready, retry" signal, which we use INSTEAD of any wall-clock wait.
 const CONTENT_MODIFIED: i64 = -32801;
 /// How many times to re-ask a `ContentModified`-answered query before giving up
-/// and refusing. With the backoff below this spans up to a couple of minutes of
+/// and abstaining. With the backoff below this spans up to a couple of minutes of
 /// genuine cold-load churn, while a warm server pays zero retries.
 const NOT_READY_RETRIES: usize = 40;
 
 impl RaOracle {
-    /// Start the oracle for `workspace_root`, or return `None` to refuse.
+    /// Start the oracle for `workspace_root`, or return `None` to abstain.
     ///
-    /// Returns `None` (and the caller falls back to Tier-2a refusal) when:
+    /// Returns `None` (and the caller falls back to Tier-2a abstention) when:
     ///   - `SUGAR_RESOLVE_ORACLE` is not exactly `"rust-analyzer"`; or
     ///   - the rust-analyzer binary cannot be located or spawned.
     pub fn start(workspace_root: &Path) -> Option<RaOracle> {
@@ -205,7 +205,7 @@ impl RaOracle {
         let quiesced = match oracle.initialize() {
             Some(q) => q,
             None => {
-                warn!("oracle: LSP initialize handshake failed; refusing all queries");
+                warn!("oracle: LSP initialize handshake failed; abstaining all queries");
                 let _ = oracle.child.kill();
                 return None;
             }
@@ -219,7 +219,7 @@ impl RaOracle {
             warn!(
                 workspace = %workspace_root.display(),
                 index_wait_s = INDEX_WAIT.as_secs(),
-                "oracle: rust-analyzer NOT quiescent after the index wait; refusing rather than \
+                "oracle: rust-analyzer NOT quiescent after the index wait; abstaining rather than \
                  minting against a partially-indexed analyzer"
             );
             let _ = oracle.child.kill();
@@ -266,7 +266,7 @@ impl RaOracle {
         // Wait ONCE for the workspace to settle before issuing any query. While
         // rust-analyzer is still loading the sysroot / a dependency it answers
         // `definition` with a REAL null (no definition yet), not ContentModified,
-        // so the per-query retry below cannot recover it: the call would refuse
+        // so the per-query retry below cannot recover it: the call would abstain
         // permanently. Blocking here on the server's own quiescence signal fixes
         // that, and is still event-driven (a warm server reports quiescent
         // immediately, paying nothing). The per-query ContentModified retry
@@ -484,7 +484,7 @@ impl RaOracle {
         }
     }
 
-    /// Resolve one query to a definitive crate, or `None` (refuse).
+    /// Resolve one query to a definitive crate, or `None` (abstain).
     ///
     /// Readiness is EVENT-DRIVEN, not timer-driven. While rust-analyzer is still
     /// loading/indexing it answers `textDocument/definition` with the LSP
@@ -496,9 +496,9 @@ impl RaOracle {
     /// when the index is already warm the first reply is the answer, and when it
     /// is cold we retry exactly as long as the server says it is still moving.
     /// A definition / a real null is taken as final; ambiguity and unmappable
-    /// paths are refusals (never retried).
+    /// paths are abstentions (never retried).
     ///
-    /// Returns `None` on any refusal. Call `resolve_crate_classified` for the
+    /// Returns `None` on any abstention. Call `resolve_crate_classified` for the
     /// reason breakdown (used by `resolve_batch` for the N/M/K summary).
     pub fn resolve_crate(&mut self, q: &ResolveQuery) -> Option<String> {
         match self.resolve_crate_classified(q) {
@@ -507,11 +507,11 @@ impl RaOracle {
         }
     }
 
-    /// Like `resolve_crate` but distinguishes the refusal reason so callers
+    /// Like `resolve_crate` but distinguishes the abstention reason so callers
     /// can produce the N/M/K summary (resolved/total/not-ready).
     ///   Ok(Some(crate))  -> resolved
-    ///   Ok(None)         -> refused: null definition, unmappable, or ambiguous
-    ///   Err(())          -> refused: ContentModified budget exhausted (RA not ready)
+    ///   Ok(None)         -> abstained: null definition, unmappable, or ambiguous
+    ///   Err(())          -> abstained: ContentModified budget exhausted (RA not ready)
     pub fn resolve_crate_classified(&mut self, q: &ResolveQuery) -> Result<Option<String>, ()> {
         let result = match self.definition_result(q)? {
             Some(r) => r,
@@ -527,7 +527,7 @@ impl RaOracle {
             None => trace!(
                 file = %q.abs_path.display(),
                 line = q.lsp_line, col = q.lsp_col,
-                "oracle: refused (null result, unmappable path, or ambiguous crates)"
+                "oracle: abstained (null result, unmappable path, or ambiguous crates)"
             ),
         }
         Ok(resolved)
@@ -542,7 +542,7 @@ impl RaOracle {
     ///                                the stem was ambiguous/unmappable but the
     ///                                crate was definite; the caller then keeps
     ///                                the crate but cannot disambiguate the type)
-    ///   Ok(None)                  -> deterministic refuse (null/unmappable/ambiguous)
+    ///   Ok(None)                  -> deterministic abstain (null/unmappable/ambiguous)
     ///   Err(())                   -> not-ready (ContentModified budget exhausted)
     pub fn resolve_typed_classified(
         &mut self,
@@ -567,8 +567,8 @@ impl RaOracle {
         // even when the definition lands at a workspace-local position (where the
         // def-file-stem path yields nothing). The definition file-stem
         // (`type_stem_from_definition_result`) stays as the FALLBACK for the cases
-        // hover refuses, so this is strictly additive: a hover that is empty,
-        // ambiguous, or a signature/binding block (not a bare type path) refuses,
+        // hover abstains, so this is strictly additive: a hover that is empty,
+        // ambiguous, or a signature/binding block (not a bare type path) abstains,
         // and the caller drops to the def-stem, then to None. An unresolved stem
         // stays unresolved; we never guess. (The crate still comes from
         // `definition`; hover only refines the type stem.)
@@ -595,7 +595,7 @@ impl RaOracle {
     }
 
     /// Ask `textDocument/hover` at the method-ident position for the RECEIVER's
-    /// type stem (`result`/`option`/`slice`/`str`/...), or `None` (refuse).
+    /// type stem (`result`/`option`/`slice`/`str`/...), or `None` (abstain).
     ///
     /// rust-analyzer's hover at a method-call ident renders the receiver type as
     /// the FIRST fenced ```rust``` block of the markdown (a bare type path such as
@@ -607,7 +607,7 @@ impl RaOracle {
     /// is a refinement layered on top of the already-settled definition result, so
     /// a not-ready (ContentModified) hover, a transport failure, an empty/ambiguous
     /// markdown, or a block that is a signature/binding rather than a bare type
-    /// path all yield `None` (refuse) and the caller falls back to the definition
+    /// path all yield `None` (abstain) and the caller falls back to the definition
     /// file-stem. We never guess a stem from an ambiguous hover.
     fn hover_type_stem(&mut self, q: &ResolveQuery) -> Option<String> {
         if self.ensure_open(&q.abs_path).is_none() {
@@ -616,7 +616,7 @@ impl RaOracle {
         let uri = path_to_uri(&q.abs_path);
         // Hover refines an already-resolved crate, so it does NOT carry the
         // ContentModified retry budget the crate path does: if RA answers "not
-        // ready" we simply refuse the stem (the def-stem fallback or `None`
+        // ready" we simply abstain the stem (the def-stem fallback or `None`
         // remains). A single ContentModified retry catches a transient churn
         // without spinning.
         for attempt in 0..=1 {
@@ -668,7 +668,7 @@ impl RaOracle {
     }
 
     /// Resolve a method call's receiver/param mutability via its hover signature:
-    /// `Mutating` (`&mut self` / `&mut` param -> refuse "mutation through &mut"),
+    /// `Mutating` (`&mut self` / `&mut` param -> abstain "mutation through &mut"),
     /// `RefClean` (no receiver/param mutation), or `Unknown` (hover unavailable or
     /// no parseable `fn`). The source-audit datum that turns a side-effect-
     /// undetermined method call into a verdict.
@@ -730,7 +730,7 @@ impl RaOracle {
                 warn!(
                     file = %q.abs_path.display(),
                     line = q.lsp_line, col = q.lsp_col, attempts = attempt + 1,
-                    "oracle: refused after exhausting ContentModified retry budget"
+                    "oracle: abstained after exhausting ContentModified retry budget"
                 );
                 return Err(());
             }
@@ -982,8 +982,8 @@ fn rustup_toolchain_env_for(bin: &Path) -> Vec<(String, String)> {
 }
 
 /// Map a `textDocument/definition` result to a single defining crate, or
-/// `None` (refuse). Accepts `Location`, `Location[]`, or `LocationLink[]`.
-/// Refuses on: empty result, any location whose path is unmappable, or more
+/// `None` (abstain). Accepts `Location`, `Location[]`, or `LocationLink[]`.
+/// Abstains on: empty result, any location whose path is unmappable, or more
 /// than one distinct normalized crate across the locations.
 fn crate_from_definition_result(result: &Value) -> Option<String> {
     let locations: Vec<&Value> = match result {
@@ -1001,25 +1001,25 @@ fn crate_from_definition_result(result: &Value) -> Option<String> {
             .or_else(|| loc.get("targetUri"))
             .and_then(|v| v.as_str())?;
         // Every location must map to a known crate; an unmappable one is a
-        // refuse, not a "skip and trust the rest". Soundness over coverage.
+        // abstain, not a "skip and trust the rest". Soundness over coverage.
         let krate = crate_from_uri(uri)?;
         crates.insert(normalize_crate(&krate));
     }
     if crates.len() == 1 {
         crates.into_iter().next()
     } else {
-        // Ambiguous dispatch across distinct crates: refuse.
+        // Ambiguous dispatch across distinct crates: abstain.
         None
     }
 }
 
 /// Map a `textDocument/definition` result to the defining TYPE stem (the source
-/// file's stem at the definition site), or `None` (refuse). This is the cheap
+/// file's stem at the definition site), or `None` (abstain). This is the cheap
 /// receiver-type discriminator for panic-freedom: `Option::unwrap` is defined in
 /// `core/src/option.rs` (stem `option`), `Result::unwrap` in `result.rs` (stem
 /// `result`), `[T]::get`/`Vec::get` in `slice/mod.rs` / `vec/mod.rs`. The stem
 /// alone separates the std panic partials (Option vs Result vs slice/vec) with
-/// no `textDocument/hover` round-trip. Refuses (None) on empty, ambiguity across
+/// no `textDocument/hover` round-trip. Abstains (None) on empty, ambiguity across
 /// distinct stems, or any unmappable location, mirroring the crate extractor.
 fn type_stem_from_definition_result(result: &Value) -> Option<String> {
     let locations: Vec<&Value> = match result {
@@ -1042,7 +1042,7 @@ fn type_stem_from_definition_result(result: &Value) -> Option<String> {
     if stems.len() == 1 {
         stems.into_iter().next()
     } else {
-        // Ambiguous defining type across locations: refuse (no disambiguation).
+        // Ambiguous defining type across locations: abstain (no disambiguation).
         None
     }
 }
@@ -1144,7 +1144,7 @@ fn hover_markdown(result: &Value) -> Option<String> {
 }
 
 /// Parse the RECEIVER TYPE STEM from a `textDocument/hover` markdown body, or
-/// `None` (refuse). This is the hover path of the panic-leaf type discriminator:
+/// `None` (abstain). This is the hover path of the panic-leaf type discriminator:
 /// hover at a method-call ident renders the receiver type as the FIRST fenced
 /// ```rust``` block (a bare type path, e.g. `core::result::Result`); the method
 /// signature and docs follow in later blocks.
@@ -1156,7 +1156,7 @@ fn hover_markdown(result: &Value) -> Option<String> {
 /// lowercase it to the stem (`Result` -> `result`, `Option` -> `option`,
 /// `Vec` -> `vec`, `str` -> `str`).
 ///
-/// REFUSE (`None`) when:
+/// ABSTAIN (`None`) when:
 ///   - there is no ```rust``` block, or it is empty;
 ///   - the first line is a SIGNATURE or BINDING, not a bare type path: it begins
 ///     with a Rust keyword (`impl`/`fn`/`pub`/`let`/`const`/`static`/`use`/
@@ -1167,7 +1167,7 @@ fn hover_markdown(result: &Value) -> Option<String> {
 ///     defensive floor, not the common path.)
 ///   - the resulting head is empty.
 /// The head is NOT itself constrained to a known panic type here: the
-/// `(type_stem, leaf)` mapping downstream is the gate that refuses an
+/// `(type_stem, leaf)` mapping downstream is the gate that abstains an
 /// out-of-set head. This keeps the parser a pure, total text function.
 pub fn type_stem_from_hover_markdown(markdown: &str) -> Option<String> {
     // Find the first fenced ```rust ... ``` block.
@@ -1256,7 +1256,7 @@ fn first_rust_fenced_block(markdown: &str) -> Option<String> {
 /// parameter. This is the oracle datum the source-audit needs to turn a
 /// side-effect-UNDETERMINED method call into a verdict:
 ///   - `Mutating`  -> `&mut self` or a `&mut`-typed parameter is present. The
-///                    provable "mutation through &mut" effect -> REFUSE.
+///                    provable "mutation through &mut" effect -> ABSTAIN.
 ///   - `RefClean`  -> only `&self` / by-value `self` / shared-ref / value params.
 ///                    No receiver/param mutation -> consistent with the EUF value
 ///                    warrant. (The body could still do IO/panic, which a
@@ -1373,7 +1373,7 @@ pub fn crate_from_uri(uri: &str) -> Option<String> {
             }
         }
     }
-    // git checkouts and path/workspace deps are not resolved here: refuse.
+    // git checkouts and path/workspace deps are not resolved here: abstain.
     None
 }
 
@@ -1427,7 +1427,7 @@ fn path_to_uri(path: &Path) -> String {
 
 /// Resolve a batch of queries grouped by file, reusing one warm oracle session.
 /// Returns a map from (file, lsp_line, lsp_col) to the resolved crate. Queries
-/// that refuse are simply absent from the map.
+/// that abstain are simply absent from the map.
 pub fn resolve_batch(
     workspace_root: &Path,
     queries: &[ResolveQuery],
@@ -1472,14 +1472,14 @@ pub fn resolve_batch(
         return out;
     };
     let mut not_ready_count = 0usize;
-    let mut other_refused_count = 0usize;
+    let mut other_abstained_count = 0usize;
     for q in queries {
         match oracle.resolve_crate_classified(q) {
             Ok(Some(krate)) => {
                 out.insert((q.abs_path.clone(), q.lsp_line, q.lsp_col), krate);
             }
             Ok(None) => {
-                other_refused_count += 1;
+                other_abstained_count += 1;
             }
             Err(()) => {
                 not_ready_count += 1;
@@ -1487,18 +1487,18 @@ pub fn resolve_batch(
         }
     }
     let resolved = out.len();
-    let refused_count = not_ready_count + other_refused_count;
+    let abstained_count = not_ready_count + other_abstained_count;
     info!(
         resolved = resolved,
         total = total,
-        refused = refused_count,
+        abstained = abstained_count,
         not_ready = not_ready_count,
-        other_refused = other_refused_count,
-        "oracle: batch complete: resolved {}/{} method calls ({} not-ready/churn, {} refused: no definite crate)",
+        other_abstained = other_abstained_count,
+        "oracle: batch complete: resolved {}/{} method calls ({} not-ready/churn, {} abstained: no definite crate)",
         resolved,
         total,
         not_ready_count,
-        other_refused_count
+        other_abstained_count
     );
     out
 }
@@ -1546,13 +1546,13 @@ mod tests {
             type_stem_from_definition_result(&single).as_deref(),
             Some("option")
         );
-        // Two distinct stems -> refuse (no disambiguation).
+        // Two distinct stems -> abstain (no disambiguation).
         let ambiguous = json!([
             { "uri": "file:///opt/rust/library/core/src/option.rs", "range": {} },
             { "uri": "file:///opt/rust/library/core/src/result.rs", "range": {} }
         ]);
         assert_eq!(type_stem_from_definition_result(&ambiguous), None);
-        // Empty / null -> refuse.
+        // Empty / null -> abstain.
         assert_eq!(type_stem_from_definition_result(&json!([])), None);
         // LocationLink targetUri is read.
         let link = json!([{ "targetUri": "file:///opt/rust/library/core/src/result.rs", "targetRange": {} }]);
@@ -1673,8 +1673,8 @@ mod tests {
     }
 
     #[test]
-    fn hover_type_head_refuses_signature_binding_and_empty() {
-        // A SIGNATURE-only block (no leading receiver-type block): refuse, never
+    fn hover_type_head_abstains_signature_binding_and_empty() {
+        // A SIGNATURE-only block (no leading receiver-type block): abstain, never
         // mis-read a fn signature as the receiver type.
         assert_eq!(
             type_stem_from_hover_markdown(
@@ -1682,26 +1682,26 @@ mod tests {
             ),
             None
         );
-        // An `impl` header is a signature block, not a bare type: refuse.
+        // An `impl` header is a signature block, not a bare type: abstain.
         assert_eq!(
             type_stem_from_hover_markdown("```rust\nimpl<T, E> Result<T, E>\n```"),
             None
         );
         // A `let` binding render (hover at the receiver expression, not the
-        // method): refuse — not a bare type path.
+        // method): abstain — not a bare type path.
         assert_eq!(
             type_stem_from_hover_markdown("```rust\nlet opt: Option<u32>\n```"),
             None
         );
         // No ```rust``` block at all (e.g. an `extern crate serde_json` doc hover
-        // that opens with prose): refuse.
+        // that opens with prose): abstain.
         assert_eq!(
             type_stem_from_hover_markdown("# Serde JSON\n\nsome prose, no code fence"),
             None
         );
-        // Empty markdown -> refuse.
+        // Empty markdown -> abstain.
         assert_eq!(type_stem_from_hover_markdown(""), None);
-        // An empty ```rust``` block -> refuse.
+        // An empty ```rust``` block -> abstain.
         assert_eq!(type_stem_from_hover_markdown("```rust\n\n```"), None);
     }
 
@@ -1745,7 +1745,7 @@ mod tests {
     }
 
     #[test]
-    fn crate_from_uri_refuses_workspace_local() {
+    fn crate_from_uri_abstains_workspace_local() {
         let u = "file:///Users/x/sugar/implementations/rust/sugar-cli/src/main.rs";
         assert_eq!(crate_from_uri(u), None);
     }
@@ -1760,7 +1760,7 @@ mod tests {
     }
 
     #[test]
-    fn definition_result_refuses_on_empty() {
+    fn definition_result_abstains_on_empty() {
         assert_eq!(crate_from_definition_result(&json!([])), None);
         assert_eq!(crate_from_definition_result(&json!(null)), None);
     }
@@ -1775,7 +1775,7 @@ mod tests {
     }
 
     #[test]
-    fn definition_result_refuses_ambiguous_crates() {
+    fn definition_result_abstains_ambiguous_crates() {
         let r = json!([
             { "uri": "file:///x/registry/src/h/foo-1.0.0/src/lib.rs", "range": {} },
             { "uri": "file:///x/registry/src/h/bar-2.0.0/src/lib.rs", "range": {} }
@@ -1784,8 +1784,8 @@ mod tests {
     }
 
     #[test]
-    fn definition_result_refuses_when_one_location_unmappable() {
-        // One known crate, one workspace-local: must refuse, not trust the known.
+    fn definition_result_abstains_when_one_location_unmappable() {
+        // One known crate, one workspace-local: must abstain, not trust the known.
         let r = json!([
             { "uri": "file:///opt/rust/library/core/src/option.rs", "range": {} },
             { "uri": "file:///ws/sugar/src/main.rs", "range": {} }

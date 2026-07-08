@@ -261,7 +261,7 @@ impl AuthorityMementoRef {
     }
 }
 
-fn json_to_canonical_value(value: &Json) -> Arc<Value> {
+pub(crate) fn json_to_canonical_value(value: &Json) -> Arc<Value> {
     json_to_canonical_value_at(value, "$").unwrap_or_else(|err| panic!("{err}"))
 }
 
@@ -274,6 +274,12 @@ fn json_to_canonical_value_at(value: &Json, path: &str) -> Result<Arc<Value>, Ca
                 Ok(Value::integer(i128::from(i)))
             } else if let Some(u) = n.as_u64() {
                 Ok(Value::integer(i128::from(u)))
+            } else if let Ok(i) = n.to_string().parse::<i128>() {
+                // Big integers beyond i64/u64 (e.g. i128::MAX = 2^127-1, sworn by
+                // pandas' own tests) still canonicalize losslessly. serde_json's
+                // arbitrary_precision keeps the exact digits so the parse is exact,
+                // never a float round-trip.
+                Ok(Value::integer(i))
             } else {
                 Err(CanonicalizerError::Other(format!(
                     "non-integer JSON number at {path}: {n}"
@@ -448,14 +454,18 @@ impl ContractBody {
 }
 
 #[derive(Clone, Debug)]
-struct MemberRecord {
+pub(crate) struct MemberRecord {
     cid: MementoCid,
     bytes: Vec<u8>,
 }
 
 impl MemberRecord {
-    fn new(cid: MementoCid, bytes: Vec<u8>) -> Self {
+    pub(crate) fn new(cid: MementoCid, bytes: Vec<u8>) -> Self {
         Self { cid, bytes }
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 
     fn from_whole_bytes(bytes: Vec<u8>, type_name: &str, expected_kinds: &[&str]) -> Self {
@@ -1227,95 +1237,137 @@ impl ProofGraph {
     /// records. Each member resolves its body by CID lookup against the graph;
     /// nothing is inlined. Source/witness leaves are never in the catalog --
     /// those resolve through kit-driven oracles, off this graph.
+    ///
+    /// Re-expressed (per the reader-unification mandate) as ONE primitive --
+    /// `crate::cbor_index::new(cid)`: index lookup -> verified byte range ->
+    /// typed entry -- folded over `build_index`'s CID enumeration instead of
+    /// three bespoke inline loops. Atoms are folded first (no dependency),
+    /// then bodies (consulting the completed atoms map for the same
+    /// atom-existence check the old loop performed), then members. This is
+    /// gated by `cbor_index`'s differential test
+    /// (`fold_new_matches_eager_read_byte_and_member_identical`), which
+    /// proved this fold produces a byte/member-identical result to the
+    /// bespoke loop it replaces on a real `.proof` fixture before this
+    /// refactor landed.
     pub fn read(bytes: &[u8]) -> Result<ProofGraph, crate::ProofEnvelopeError> {
-        use crate::cbor_decode::{decode, CborValue};
+        use crate::cbor_index::{build_index, new as new_entry, EntryKind, TypedEntry};
         use crate::ProofEnvelopeError::Other;
 
-        let catalog = decode(bytes).map_err(|e| Other(format!("CBOR decode catalog: {e:?}")))?;
-        let map = catalog
-            .as_map()
-            .ok_or_else(|| Other("catalog root is not a CBOR map".into()))?;
-
+        let index = build_index(bytes).map_err(|e| Other(format!("CBOR decode catalog: {e:?}")))?;
         let mut graph = ProofGraph::new();
 
-        // 1. Atoms: the data leaves. The content-addressed hash is lossless over
-        //    the store, so we restore by recomputation -- re-derive each FlatAtom
-        //    from its bytes and check the CID matches the catalog key.
-        if let Some(atoms) = map.get("atoms").and_then(CborValue::as_map) {
-            for (cid, val) in atoms {
-                let raw = val
-                    .as_bstr()
-                    .ok_or_else(|| Other(format!("atom {cid} is not a byte string")))?;
-                let json: Json = serde_json::from_slice(raw)
-                    .map_err(|e| Other(format!("atom {cid} bytes not JSON: {e}")))?;
-                let atom = FlatAtom::new(json_to_canonical_value(&json));
-                if atom.cid().as_str() != cid {
-                    return Err(Other(format!(
-                        "atom CID mismatch: catalog key {cid} != recomputed {}",
-                        atom.cid().as_str()
-                    )));
+        // 1. Atoms: the data leaves. The content-addressed hash is lossless
+        //    over the store, so `new` restores each by recomputation -- CID
+        //    equality (checked inside `new`/`fetch_one`) is what is trusted,
+        //    never the byte range alone.
+        for cid in index.atoms.keys() {
+            match new_entry(bytes, &index, EntryKind::Atom, cid, &graph.atoms)
+                .map_err(|e| Other(format!("atom {cid}: {e}")))?
+            {
+                TypedEntry::Atom(atom) => {
+                    graph.atoms.insert(cid.clone(), atom);
                 }
-                graph.atoms.insert(cid.clone(), atom);
+                _ => unreachable!("EntryKind::Atom always yields TypedEntry::Atom"),
             }
         }
 
         // 2. Bodies: relationships, by CID only. A body holds atom-memento
-        //    references, never inline atom data -- resolve each atomCid out of
-        //    the atoms map and rebuild from slots, then recompute the CID.
-        if let Some(bodies) = map.get("body").and_then(CborValue::as_map) {
-            for (cid, val) in bodies {
-                let raw = val
-                    .as_bstr()
-                    .ok_or_else(|| Other(format!("body {cid} is not a byte string")))?;
-                let json: Json = serde_json::from_slice(raw)
-                    .map_err(|e| Other(format!("body {cid} bytes not JSON: {e}")))?;
-                let slots = json
-                    .get("body")
-                    .and_then(Json::as_object)
-                    .ok_or_else(|| Other(format!("body {cid} has no `body` object")))?;
-                let mut atom_mementos: Vec<(String, AtomMemento)> = Vec::with_capacity(slots.len());
-                for (slot, slot_val) in slots {
-                    let atom_cid = slot_val
-                        .get("atomCid")
-                        .and_then(Json::as_str)
-                        .ok_or_else(|| Other(format!("body {cid} slot {slot} missing atomCid")))?;
-                    let atom = graph.atoms.get(atom_cid).ok_or_else(|| {
-                        Other(format!("body {cid} references unknown atom {atom_cid}"))
-                    })?;
-                    atom_mementos.push((slot.clone(), AtomMemento::new(atom)));
+        //    references, never inline atom data; `new` resolves each
+        //    `atomCid` against `graph.atoms` (the atoms folded in step 1)
+        //    and refuses a body that references an atom not yet present --
+        //    the same referential-integrity check the old inline loop made.
+        for cid in index.bodies.keys() {
+            match new_entry(bytes, &index, EntryKind::Body, cid, &graph.atoms)
+                .map_err(|e| Other(format!("body {cid}: {e}")))?
+            {
+                TypedEntry::Body(body) => {
+                    graph.bodies.insert(cid.clone(), body);
                 }
-                let body = ContractBody::from_slots(
-                    atom_mementos.iter().map(|(s, m)| (s.as_str(), m)).collect(),
-                );
-                if body.cid().as_str() != cid {
-                    return Err(Other(format!(
-                        "body CID mismatch: catalog key {cid} != recomputed {}",
-                        body.cid().as_str()
-                    )));
-                }
-                graph.bodies.insert(cid.clone(), body);
+                _ => unreachable!("EntryKind::Body always yields TypedEntry::Body"),
             }
         }
 
-        // 3. Members: signed mementos, kept as records. Each resolves its body
-        //    lazily by CID lookup when asked (see `contract_body_of`); source and
-        //    witness leaves are never stored here -- those resolve off-graph
-        //    through kit-driven oracles.
-        if let Some(members) = map.get("members").and_then(CborValue::as_map) {
-            for (cid, val) in members {
-                let memento_cid = MementoCid::try_parse(cid.clone()).map_err(|raw| {
-                    Other(format!(
-                        "member {raw}: invalid memento CID; requires `blake3-512:` plus 128 hex characters"
-                    ))
-                })?;
-                let raw = val
-                    .as_bstr()
-                    .ok_or_else(|| Other(format!("member {cid} is not a byte string")))?;
-                graph.insert_member(MemberRecord::new(memento_cid, raw.to_vec()));
+        // 3. Members: signed mementos, kept as records. Each resolves its
+        //    body lazily by CID lookup when asked (see `contract_body_of`);
+        //    source and witness leaves are never stored here -- those
+        //    resolve off-graph through kit-driven oracles. Members have no
+        //    atom-existence dependency, so `graph.atoms` is passed only
+        //    because `new`'s signature is uniform across all three kinds;
+        //    it is unused on this branch.
+        for cid in index.members.keys() {
+            match new_entry(bytes, &index, EntryKind::Member, cid, &graph.atoms)
+                .map_err(|e| Other(format!("member {cid}: {e}")))?
+            {
+                TypedEntry::Member(record) => {
+                    graph.insert_member(record);
+                }
+                _ => unreachable!("EntryKind::Member always yields TypedEntry::Member"),
             }
         }
 
         Ok(graph)
+    }
+
+    /// Merge `other` into `self` and return the combined graph -- the graph
+    /// MERGE (SEAM 2). `empty()` is the identity; every map here is keyed by
+    /// content CID, so two graphs describing the SAME atom/body/member agree
+    /// bit-for-bit on that entry (the CID recomputation in `read` already
+    /// proved it), which is exactly what makes the union commutative and
+    /// associative regardless of feed order: `a.feed(b) == b.feed(a)` and
+    /// `a.feed(b).feed(c) == a.feed(b.feed(c))` for any partition of the same
+    /// input set. On a same-CID collision the existing entry is kept (the
+    /// two are equal content, so it does not matter which "wins"); this
+    /// mirrors the `entry(..).or_insert_with(..)` behavior `load_all_proofs`
+    /// already used before this seam absorbed it. The lazy typed-member cache
+    /// is NOT merged -- it is a pure memoization of `self.members`/`other.members`
+    /// and is safe to drop; a fresh graph re-parses on first access.
+    pub fn feed(mut self, other: ProofGraph) -> ProofGraph {
+        for (cid, atom) in other.atoms {
+            match self.atoms.entry(cid) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(atom);
+                }
+                std::collections::btree_map::Entry::Occupied(o) => {
+                    // Content-addressing invariant: same CID must mean the
+                    // SAME bytes. A mismatch is a soundness event -- refuse
+                    // loudly, never first-writer-wins over divergent content.
+                    assert!(
+                        o.get().bytes() == atom.bytes(),
+                        "feed: atom CID collision with divergent bytes at {}",
+                        o.key()
+                    );
+                }
+            }
+        }
+        for (cid, body) in other.bodies {
+            match self.bodies.entry(cid) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(body);
+                }
+                std::collections::btree_map::Entry::Occupied(o) => {
+                    assert!(
+                        o.get().bytes() == body.bytes(),
+                        "feed: body CID collision with divergent bytes at {}",
+                        o.key()
+                    );
+                }
+            }
+        }
+        for (cid, member) in other.members {
+            match self.members.entry(cid) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(member);
+                }
+                std::collections::btree_map::Entry::Occupied(o) => {
+                    assert!(
+                        o.get().bytes == member.bytes,
+                        "feed: member CID collision with divergent bytes at {}",
+                        o.key()
+                    );
+                }
+            }
+        }
+        self
     }
 
     /// Resolve a contract member's body by following its `bodyCid` into the
@@ -1477,6 +1529,12 @@ impl ProofGraph {
             signer_cid: identity.signer_cid.clone(),
             signer_seed: identity.signer_seed,
             declared_at: identity.declared_at.clone(),
+            // `ProofGraph::write` is the generic identity-only writer; the
+            // seal-time manifest (join-manifest design) is populated by
+            // `cmd_mint.rs` via `ProofEnvelopeInput` directly, not through
+            // this path, so callers here get the pre-lane behavior (no
+            // manifest slot) unchanged.
+            manifest: None,
         })
     }
 
@@ -1709,6 +1767,20 @@ mod tests {
             .unwrap_or_else(|| "<non-string panic>".to_string());
         assert!(msg.contains("non-integer JSON number"), "{msg}");
         assert!(msg.contains("$.envelope.body.value"), "{msg}");
+    }
+
+    #[test]
+    fn proof_graph_json_canonicalization_keeps_big_integers_beyond_u64() {
+        // The REAL pandas 3.0.3 proof (minted from pandas' own test suite) swears
+        // a fact whose value is i128::MAX = 2^127-1, well beyond i64/u64. serde_json
+        // parses that as an arbitrary-precision number; the canonicalizer must keep
+        // the exact digits (never round-trip through f64) and never panic.
+        let big = "170141183460469231731687303715884105727"; // i128::MAX
+        let raw = format!(r#"{{"kind":"const","value":{big}}}"#);
+        let value: Json = serde_json::from_str(&raw).expect("big-int JSON");
+        let canon = json_to_canonical_value_at(&value, "$").expect("big int canonicalizes");
+        let jcs = encode_jcs(&canon);
+        assert!(jcs.contains(big), "exact digits preserved, got {jcs}");
     }
 
     #[test]
@@ -1949,6 +2021,7 @@ mod tests {
             signer_cid: "blake3-512:bb".into(),
             signer_seed: [0x11; 32],
             declared_at: "2026-04-30T00:00:00.000Z".into(),
+            manifest: None,
         });
 
         // Read the catalog back into a strongly typed graph.

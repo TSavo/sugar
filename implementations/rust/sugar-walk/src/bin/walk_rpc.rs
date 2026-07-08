@@ -26,7 +26,7 @@ use std::sync::{Arc, OnceLock};
 
 use base64::Engine;
 use libsugar::canonical::local_op_cid as canonical_local_op_cid;
-use libsugar::panic_freedom;
+use sugar_ir_types::panic_freedom;
 use quote::ToTokens;
 use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
@@ -38,9 +38,8 @@ use sugar_ir_types::{EvidenceMemento, IrFormula, IrTerm, SourceKind};
 use sugar_lift_contracts::lift_file_with_docstring_evidence;
 use sugar_walk::emit::{rust_function_term_json_for_file, shadow_proof_ir_cid, shadow_to_proof_ir};
 use sugar_walk::source_oracle::{
-    block_inner_source, block_to_ast_template, resolve_source_memento,
-    source_memento_of_named_item_fn, source_memento_of_statement_span, source_memento_of_term_span,
-    SourceMemento, SrcSpan,
+    block_inner_source, resolve_source_memento, source_memento_of_named_item_fn,
+    source_memento_of_statement_span, source_memento_of_term_span, SourceMemento, SrcSpan,
 };
 use sugar_walk::{
     build_function_contract_with_file_and_post_override, build_shadow_source,
@@ -56,14 +55,15 @@ const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
 
 // Tier 2b native semantic oracle (spec 2026-05-30-callee-resolution-tiers §2.T2b).
 // The RA LSP client now lives in the `sugar_walk::ra_oracle` library module so
-// BOTH this per-mint binary AND the resident `sugar-linkerd` daemon import the
+// BOTH this per-mint binary AND the resident `sugar-ra-oracle` daemon (daemon-2
+// repoint; previously `sugar-linkerd`, see daemon-1 extraction) import the
 // same framing/quiescence/resolve logic with no copy-paste. This binary no longer
-// COLD-SPAWNS rust-analyzer per mint; it asks the warm resident daemon via
+// COLD-SPAWNS rust-analyzer per mint; it asks the warm resident oracle via
 // `resolveReceiverCrate` (see `resolve_method_calls_via_oracle`). The oracle is
 // opt-in (SUGAR_RESOLVE_ORACLE=rust-analyzer) and refuses (leaves
-// callee_crate = None) when the daemon is unreachable or cannot reach readiness,
+// callee_crate = None) when the oracle is unreachable or cannot reach readiness,
 // so the fast path and CI are unaffected. The RA LSP client itself lives in
-// `sugar_walk::ra_oracle` and is imported by the daemon, not this binary.
+// `sugar_walk::ra_oracle` and is imported by the oracle daemon, not this binary.
 
 // The daemon client lives alongside this binary (std-only, synchronous NDJSON).
 #[path = "../ra_daemon_client.rs"]
@@ -247,19 +247,7 @@ fn handle_line(line: &str) -> Value {
         "shutdown" => Ok(Value::Null),
         KIT_DECLARATION_RPC_METHOD => Ok(kit_declaration_result()),
         COMPONENT_PLAN_RPC_METHOD => Ok(component_plan_result(&params)),
-        // Recognizer foundation (#81, #82) per protocol §4.2.5. The lift
-        // binary handles this too because it already owns the syn AST
-        // machinery that recognize needs — same kit, same language.
-        "sugar.plugin.recognize" => recognize(&params),
         "sugar.plugin.resolve_source_memento" => resolve_source_memento_rpc(&params),
-        // Materialize (#1359, rust mirror of the python bind_rpc materializer).
-        // Materializes native boundary stubs by asking the SOURCE ORACLE to
-        // resolve each bound vendor function's REAL body from on-disk source
-        // (CID-verified against the SourceMemento the vendor sugar-lift minted)
-        // and rewriting the stub body in place. On a CID-misalign (source
-        // drift) the oracle REFUSES and the site is reported `outcome:"refused"`
-        // with NO write. Same kit, same syn AST machinery, same source-oracle
-        // family as lift/recognize.
         // Implication lifter (#97). For every call expression in every
         // function body in the supplied source files, emit a kind:bridge
         // memento that links the call site (sourceSymbol = callee ident)
@@ -343,22 +331,6 @@ fn source_lines_for_memento(workspace_root: &Path, memento: &SourceMemento) -> V
             })
             .collect(),
     )
-}
-
-fn json_field_or_null(value: &Value, key: &str) -> Value {
-    match value.get(key) {
-        Some(field) => field.clone(),
-        None => Value::Null,
-    }
-}
-
-fn json_any_field_or_null(value: &Value, keys: &[&str]) -> Value {
-    for key in keys {
-        if let Some(field) = value.get(*key) {
-            return field.clone();
-        }
-    }
-    Value::Null
 }
 
 fn relative_display_path(path: &Path, root: &Path) -> String {
@@ -445,210 +417,6 @@ fn source_memento_from_json_value(value: &Value) -> Result<SourceMemento, String
         source_cid,
         template_cid,
     })
-}
-
-/// Recognizer foundation (#81, #82) per protocol §4.2.5.
-///
-/// Walk user source files, compute their function bodies' identifier-
-/// canonical AST templates with the same `block_to_ast_template` the
-/// sugar lifter uses, and match by `template_cid` against the request's
-/// kit-resolved sugar binding templates. An exact CID match means the
-/// user's function body IS the shim's sugar body (modulo whitespace +
-/// alpha-equivalence on params) — tier `exact`. Tiers `structural`,
-/// `probable`, `refused` are reserved for follow-up tier-2/3 work.
-///
-/// The kit owns the AST machinery; the substrate sees only the tag set.
-/// This is the language-blind invariant: the substrate sends project source
-/// paths and collects tags opaquely; only the kit reads Rust package proofs
-/// and syn shapes.
-fn recognize(params: &Value) -> Result<Value, String> {
-    let project_root = params
-        .get("project_root")
-        .and_then(|v| v.as_str())
-        .ok_or("missing `project_root`")?;
-    let project_root = std::path::PathBuf::from(project_root);
-
-    let source_paths: Vec<String> = params
-        .get("source_paths")
-        .and_then(|v| v.as_array())
-        .ok_or("missing `source_paths` array")?
-        .iter()
-        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-        .collect();
-
-    // Index bindings by template_cid for O(1) lookup. The kit reads the
-    // template_cid the lifter emitted; `binding_templates` remains accepted for
-    // older direct kit tests, but the CLI does not send it. Real template
-    // authority comes from proof catalogs the Rust kit resolves itself.
-    let mut bindings_by_cid: HashMap<String, RecognizeBindingTemplate> = HashMap::new();
-    if let Some(binding_templates) = params.get("binding_templates").and_then(|v| v.as_array()) {
-        for binding in binding_templates {
-            if let Some(cid) = binding.get("template_cid").and_then(|v| v.as_str()) {
-                bindings_by_cid.insert(
-                    cid.to_string(),
-                    RecognizeBindingTemplate {
-                        body: binding.clone(),
-                        target_proof_cid: binding
-                            .get("target_proof_cid")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                    },
-                );
-            }
-        }
-    }
-    for binding in load_binding_templates_for_project(&project_root)? {
-        if let Some(cid) = binding.body.get("template_cid").and_then(|v| v.as_str()) {
-            bindings_by_cid.insert(cid.to_string(), binding);
-        }
-    }
-
-    let mut tags: Vec<Value> = Vec::new();
-
-    for rel_path in &source_paths {
-        let full_path = project_root.join(rel_path);
-        let src = match std::fs::read_to_string(&full_path) {
-            Ok(s) => s,
-            Err(_) => continue, // missing files are not errors at the recognize layer
-        };
-        let file = match syn::parse_file(&src) {
-            Ok(f) => f,
-            Err(_) => continue, // unparseable files cannot host AST recognition
-        };
-
-        recognize_walk_items(&file.items, rel_path, &bindings_by_cid, &mut tags);
-    }
-
-    Ok(json!({ "tags": tags }))
-}
-
-/// Recursively visit items + nested modules, collecting recognize tags.
-fn recognize_walk_items(
-    items: &[syn::Item],
-    rel_path: &str,
-    bindings_by_cid: &HashMap<String, RecognizeBindingTemplate>,
-    tags: &mut Vec<Value>,
-) {
-    for item in items {
-        match item {
-            syn::Item::Fn(item_fn) => {
-                if let Some(tag) = recognize_match_item_fn(item_fn, rel_path, bindings_by_cid) {
-                    tags.push(tag);
-                }
-            }
-            syn::Item::Mod(item_mod) => {
-                if let Some((_, ref nested)) = item_mod.content {
-                    recognize_walk_items(nested, rel_path, bindings_by_cid, tags);
-                }
-            }
-            // sugar-audit: not-mine(recognize tags are minted only from functions inside inline modules)
-            _ => {}
-        }
-    }
-}
-
-/// Compute the candidate's identifier-canonical AST template and look it
-/// up in `bindings_by_cid`. Returns a tag JSON if matched at tier `exact`.
-fn recognize_match_item_fn(
-    item_fn: &syn::ItemFn,
-    rel_path: &str,
-    bindings_by_cid: &HashMap<String, RecognizeBindingTemplate>,
-) -> Option<Value> {
-    let param_names: Vec<String> = item_fn
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Typed(pat_ty) => match &*pat_ty.pat {
-                syn::Pat::Ident(pid) => Some(pid.ident.to_string()),
-                // sugar-audit: not-mine(recognize templates only bind single-name parameters)
-                _ => None,
-            },
-            // sugar-audit: not-mine(recognize targets are free functions; receivers have no template parameter name)
-            syn::FnArg::Receiver(_) => None,
-        })
-        .collect();
-
-    let candidate_template = block_to_ast_template(&item_fn.block, &param_names);
-    let candidate_cid = blake3_512_of(candidate_template.to_string().as_bytes());
-
-    let binding = bindings_by_cid.get(&candidate_cid)?;
-    let body = &binding.body;
-
-    let start = item_fn.sig.fn_token.span.start();
-    let end = item_fn.block.brace_token.span.close().end();
-
-    let param_bindings: Vec<Value> = param_names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| {
-            json!({
-                "index": i + 1,
-                "source_text": n,
-            })
-        })
-        .collect();
-
-    Some(json!({
-        "file": rel_path,
-        "span": {
-            "start_line": start.line,
-            "start_col": start.column,
-            "end_line": end.line,
-            "end_col": end.column,
-        },
-        "function_name": item_fn.sig.ident.to_string(),
-        "op_cid": json_field_or_null(body, "op_cid"),
-        "library_tag": json_field_or_null(body, "library_tag"),
-        "template_cid": candidate_cid,
-        "contract_cid": json_field_or_null(body, "contract_cid"),
-        "target_proof_cid": match &binding.target_proof_cid {
-            Some(cid) => Value::String(cid.clone()),
-            None => json_field_or_null(body, "target_proof_cid"),
-        },
-        "match_tier": "exact",
-        "param_bindings": param_bindings,
-    }))
-}
-
-#[derive(Debug, Clone)]
-struct RecognizeBindingTemplate {
-    body: Value,
-    target_proof_cid: Option<String>,
-}
-
-fn load_binding_templates_for_project(
-    project_root: &Path,
-) -> Result<Vec<RecognizeBindingTemplate>, String> {
-    let proof_paths = resolve_recognizer_proof_paths(project_root)?;
-    let mut bindings = Vec::new();
-    for path in proof_paths {
-        bindings.extend(binding_templates_from_proof(&path)?);
-    }
-    Ok(bindings)
-}
-
-fn binding_templates_from_proof(path: &Path) -> Result<Vec<RecognizeBindingTemplate>, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| format!("read Rust recognizer proof {}: {error}", path.display()))?;
-    let proof_cid = blake3_512_of(&bytes);
-    let graph = sugar_proof_envelope::ProofGraph::read(&bytes)
-        .map_err(|error| format!("decode Rust recognizer proof {}: {error}", path.display()))?;
-
-    let mut bindings = Vec::new();
-    for view in graph.members_view() {
-        let Ok(parsed) = serde_json::from_slice::<Value>(view.bytes()) else {
-            continue;
-        };
-        let body = match parsed.get("body") {
-            Some(body) => body,
-            None => &parsed,
-        };
-        if let Some(binding) = binding_template_from_sugar_entry(body, Some(proof_cid.clone())) {
-            bindings.push(binding);
-        }
-    }
-    Ok(bindings)
 }
 
 fn rust_vendor_contract_bindings_from_proofs(project_root: &Path) -> Result<Vec<Value>, String> {
@@ -900,46 +668,6 @@ fn rust_vendor_contract_binding_member(
             .map(str::to_string),
         discharge_policy: member.field("dischargePolicy").cloned(),
     }))
-}
-
-fn binding_template_from_sugar_entry(
-    entry: &Value,
-    target_proof_cid: Option<String>,
-) -> Option<RecognizeBindingTemplate> {
-    if entry.get("kind").and_then(Value::as_str) != Some("library-sugar-binding-entry") {
-        return None;
-    }
-    let op_cid = entry
-        .get("op_cid")
-        .or_else(|| entry.get("opCid"))
-        .and_then(Value::as_str)?;
-    let library_tag = json_any_field_or_null(entry, &["target_library_tag", "library_tag"]);
-    let body_source = entry.get("body_source")?;
-    let template_cid = body_source
-        .get("template_cid")
-        .and_then(Value::as_str)
-        .map(str::to_string)?;
-    let param_names = body_source
-        .get("param_names")
-        .or_else(|| entry.get("param_names"))
-        .cloned()
-        .unwrap_or_else(|| Value::Array(Vec::new()));
-
-    let mut body = json!({
-        "op_cid": op_cid,
-        "library_tag": library_tag,
-        "template_cid": template_cid,
-        "param_names": param_names,
-        "contract_cid": json_field_or_null(entry, "contract_cid"),
-    });
-    if let Some(cid) = &target_proof_cid {
-        body["target_proof_cid"] = Value::String(cid.clone());
-    }
-
-    Some(RecognizeBindingTemplate {
-        body,
-        target_proof_cid,
-    })
 }
 
 fn resolve_recognizer_proof_paths(project_root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -5604,8 +5332,8 @@ fn resolve_method_calls_via_oracle(
         oracle_on,
         total_callsites = callsites.len(),
         total_method_calls,
-        linkerd_bin = %std::env::var("SUGAR_LINKERD_BIN").unwrap_or_else(|_| "<unset>".into()),
-        linkerd_socket = %std::env::var("SUGAR_LINKERD_SOCKET").unwrap_or_else(|_| "<unset>".into()),
+        oracle_bin = %std::env::var("SUGAR_RA_ORACLE_BIN").unwrap_or_else(|_| "<unset>".into()),
+        oracle_socket = %std::env::var("SUGAR_RA_ORACLE_SOCKET").unwrap_or_else(|_| "<unset>".into()),
         "ORACLE: resolve_method_calls_via_oracle ENTER"
     );
     let mut observation = OracleObservation {
@@ -5657,11 +5385,11 @@ fn resolve_method_calls_via_oracle(
     }
     info!(
         count = total_queries,
-        "ORACLE: asking resident daemon (sugar-linkerd) to resolve {total_queries} method calls -- spawning/indexing daemon now"
+        "ORACLE: asking resident daemon (sugar-ra-oracle) to resolve {total_queries} method calls -- spawning/indexing daemon now"
     );
     // The resident warm rust-analyzer indexes the workspace ONCE inside the
     // daemon and is reused across mints, fronted by a content-addressed cache.
-    // The daemon client waits on linkerd's readiness signal before resolving,
+    // The daemon client waits on the oracle's readiness signal before resolving,
     // so a cold proof mint does not bake a partially-indexed answer into proof.
     let batch = ra_daemon_client::resolve_receiver_crates(workspace_root, &queries);
     observation.reachable = batch.reachable;
@@ -5822,8 +5550,8 @@ fn push_rust_binding_key_leaf(leaves: &mut Vec<String>, leaf: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// Source Oracle + materialize (#1359). The rust mirror of the python kit's
-// `source_oracle.py` + `bind_rpc.py::materialize_impl`. The `.proof` carries a
+// Source Oracle (#1359). The rust mirror of the python kit's
+// `source_oracle.py`. The `.proof` carries a
 // SourceMemento (locus + source_cid/template_cid, no inline body); the
 // oracle reconstructs the body from on-disk source IFF it recomputes to the
 // pinned CIDs, else REFUSES. Exact-or-refuse, no silent loss.
@@ -6671,7 +6399,6 @@ fn kit_declaration_result() -> Value {
                 {"name": "initialize", "required": true},
                 {"name": "lift", "required": true},
                 {"name": "shutdown", "required": true},
-                {"name": "sugar.plugin.recognize", "required": false},
                 {"name": "sugar.plugin.lift_implications", "required": false},
                 {"name": COMPONENT_PLAN_RPC_METHOD, "required": false},
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": false}
@@ -7052,7 +6779,7 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
                 ]);
                 let signature_shape_cid = blake3_512_of(encode_jcs(&sig_shape).as_bytes());
                 let mut parametric_sort_expansions: Vec<
-                    libsugar::core::source_aliases::ParametricSortExpansion,
+                    sugar_walk::source_aliases::ParametricSortExpansion,
                 > = Vec::new();
                 let param_sort_cids: Vec<String> = param_types
                     .iter()
@@ -8641,21 +8368,21 @@ fn fn_param_names(item_fn: &syn::ItemFn) -> Vec<String> {
 /// Catalog-driven rust-source-syntax → concept-hub sort CID (#1370).
 ///
 /// NO hardcoded source-token names. Reads kit-source-alias mementos via
-/// libsugar::core::source_aliases::load_kit_source_aliases("rust") and
+/// sugar_walk::source_aliases::load_kit_source_aliases("rust") and
 /// dispatches via the recursive resolver. Parametric types emit composite
 /// CIDs computed via content-addressing; expansions are accumulated for
 /// realize-side dispatch.
 fn rust_source_type_to_concept_hub_sort_cid(
     rust_type: &str,
-    expansions: &mut Vec<libsugar::core::source_aliases::ParametricSortExpansion>,
+    expansions: &mut Vec<sugar_walk::source_aliases::ParametricSortExpansion>,
 ) -> Option<String> {
     let aliases = RUST_ALIASES
-        .get_or_init(|| libsugar::core::source_aliases::load_kit_source_aliases("rust"));
-    libsugar::core::source_aliases::rust_type_to_sort_cid(rust_type, aliases, expansions)
+        .get_or_init(|| sugar_walk::source_aliases::load_kit_source_aliases("rust"));
+    sugar_walk::source_aliases::rust_type_to_sort_cid(rust_type, aliases, expansions)
 }
 
 static RUST_ALIASES: OnceLock<
-    std::collections::BTreeMap<String, libsugar::core::source_aliases::KitSourceAliasEntry>,
+    std::collections::BTreeMap<String, sugar_walk::source_aliases::KitSourceAliasEntry>,
 > = OnceLock::new();
 
 fn sugar_param_types(item_fn: &syn::ItemFn) -> Vec<String> {
@@ -10480,8 +10207,9 @@ fn cvalue_to_json(v: &CValue) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libsugar::core::{bind_result_payload, bind_term_document, BindOptions, Term};
+    use libsugar::core::Term;
     use std::collections::BTreeSet;
+    use sugar_walk::{bind_result_payload, bind_term_document, BindOptions};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
     use sugar_claim_envelope::{
@@ -10491,8 +10219,9 @@ mod tests {
     use sugar_proof_envelope::{
         build_proof_envelope, ed25519_pubkey_string, proof_filename, AtomMemento, BridgeMemento,
         ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FlatAtom,
-        LibrarySugarBindingMemento, ProofEnvelopeInput, ProofGraph,
+        ProofEnvelopeInput, ProofGraph,
     };
+    use sugar_walk::source_oracle::block_to_ast_template;
 
     // ---- Source Oracle + materialize (#1359) --------------------------------
 
@@ -11298,354 +11027,6 @@ pub fn op(alpha: &i64, beta: &i64) -> i64 {
         assert!(entry_b["body_source"].get("body_text").is_none());
         assert!(entry_a["body_source"].get("ast_template").is_none());
         assert!(entry_b["body_source"].get("ast_template").is_none());
-    }
-
-    // ---------------------------------------------------------------------
-    // Recognizer foundation Phase C (#81, #82, #86): the sugar.plugin.recognize
-    // RPC handler. Walks user source, matches function bodies' identifier-
-    // canonical templates against supplied binding_templates by template_cid,
-    // emits tier-`exact` tags for matches. Tier-1 = exact-cid match.
-    // ---------------------------------------------------------------------
-
-    #[test]
-    fn recognize_emits_exact_tag_for_alpha_equivalent_user_function() {
-        // The shim's sugar (what would land in the .proof envelope):
-        let sugar_src = r##"
-pub fn json_parse(s: &str) -> i64 {
-    serde_json::from_str(s)
-}
-"##;
-        let sugar_entry = single_sugar_entry_for_source("recognize_sugar_src", sugar_src);
-        let binding_template = json!({
-            "op_cid": sugar_entry["op_cid"],
-            "library_tag": sugar_entry["target_library_tag"],
-            "template_cid": sugar_entry["body_source"]["template_cid"],
-            "param_names": sugar_entry["body_source"]["param_names"],
-            "contract_cid": "blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-        });
-
-        // The user's function — alpha-equivalent (different param name).
-        let user_src = r##"
-pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
-    serde_json::from_str(input)
-}
-"##;
-        let root = temp_workspace("recognize_user_src");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let user_rel = "src/lib.rs";
-        fs::write(root.join(user_rel), user_src).expect("write user source");
-
-        let resp = recognize(&json!({
-            "project_root": root.to_string_lossy(),
-            "source_paths": [user_rel],
-            "binding_templates": [binding_template],
-        }))
-        .expect("recognize should succeed");
-
-        let tags = resp["tags"].as_array().expect("tags array");
-        assert_eq!(tags.len(), 1, "alpha-equivalent body must match: {tags:?}");
-        let tag = &tags[0];
-        assert_eq!(tag["op_cid"], sugar_entry["op_cid"]);
-        assert_eq!(tag["library_tag"], sugar_entry["target_library_tag"]);
-        assert_eq!(tag["match_tier"], "exact");
-        assert_eq!(tag["file"], user_rel);
-        // param_bindings reflects the USER's spelling (input), not the sugar's (s).
-        let bindings = tag["param_bindings"].as_array().expect("param_bindings");
-        assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0]["index"], 1);
-        assert_eq!(bindings[0]["source_text"], "input");
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn recognize_loads_binding_templates_from_imported_proofs() {
-        let sugar_src = r##"
-pub fn json_parse(s: &str) -> i64 {
-    serde_json::from_str(s)
-}
-"##;
-        let sugar_entry = single_sugar_entry_for_source("recognize_imported_sugar", sugar_src);
-        let expected_op_cid = sugar_entry["op_cid"].clone();
-        let expected_library_tag = sugar_entry["target_library_tag"].clone();
-        let contract_cid = "blake3-512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-
-        let user_src = r##"
-pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
-    serde_json::from_str(input)
-}
-"##;
-        let root = temp_workspace("recognize_imported_user");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let user_rel = "src/lib.rs";
-        fs::write(root.join(user_rel), user_src).expect("write user source");
-
-        let proof_cid = write_sugar_binding_proof(
-            &root.join(".sugar").join("imports"),
-            sugar_entry,
-            contract_cid,
-            "@test/rust-recognize-imported-shim",
-        );
-
-        let resp = recognize(&json!({
-            "project_root": root.to_string_lossy(),
-            "source_paths": [user_rel],
-        }))
-        .expect("recognize should succeed");
-
-        let tags = resp["tags"].as_array().expect("tags array");
-        assert_eq!(
-            tags.len(),
-            1,
-            "Rust recognizer must self-resolve imported sugar binding proofs without CLI binding_templates: {tags:?}"
-        );
-        let tag = &tags[0];
-        assert_eq!(tag["op_cid"], expected_op_cid);
-        assert_eq!(tag["library_tag"], expected_library_tag);
-        assert_eq!(tag["contract_cid"], contract_cid);
-        assert_eq!(tag["target_proof_cid"], proof_cid);
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn recognize_matches_template_cid_only_imported_proof() {
-        let sugar_src = r##"
-pub fn json_parse(s: &str) -> i64 {
-    serde_json::from_str(s)
-}
-"##;
-        let mut sugar_entry =
-            single_sugar_entry_for_source("recognize_template_cid_only_sugar", sugar_src);
-        let expected_op_cid = sugar_entry["op_cid"].clone();
-        let expected_library_tag = sugar_entry["target_library_tag"].clone();
-        let contract_cid = "blake3-512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-        let body_source = sugar_entry["body_source"]
-            .as_object_mut()
-            .expect("body_source object");
-        assert!(body_source.get("template_cid").is_some());
-        assert!(body_source.get("body_text").is_none());
-        assert!(body_source.get("ast_template").is_none());
-
-        let user_src = r##"
-pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
-    serde_json::from_str(input)
-}
-"##;
-        let root = temp_workspace("recognize_template_cid_only_user");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let user_rel = "src/lib.rs";
-        fs::write(root.join(user_rel), user_src).expect("write user source");
-
-        let proof_cid = write_sugar_binding_proof(
-            &root.join(".sugar").join("imports"),
-            sugar_entry,
-            contract_cid,
-            "@test/rust-recognize-template-cid-only-shim",
-        );
-
-        let resp = recognize(&json!({
-            "project_root": root.to_string_lossy(),
-            "source_paths": [user_rel],
-        }))
-        .expect("recognize should succeed");
-
-        let tags = resp["tags"].as_array().expect("tags array");
-        assert_eq!(
-            tags.len(),
-            1,
-            "Rust recognizer must match imported sugar proofs by pinned template_cid alone: {tags:?}"
-        );
-        let tag = &tags[0];
-        assert_eq!(tag["op_cid"], expected_op_cid);
-        assert_eq!(tag["library_tag"], expected_library_tag);
-        assert_eq!(tag["contract_cid"], contract_cid);
-        assert_eq!(tag["target_proof_cid"], proof_cid);
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn recognize_loads_binding_templates_from_cargo_dependency_proofs() {
-        let sugar_src = r##"
-pub fn json_parse(s: &str) -> i64 {
-    serde_json::from_str(s)
-}
-"##;
-        let sugar_entry = single_sugar_entry_for_source("recognize_cargo_sugar", sugar_src);
-        let expected_op_cid = sugar_entry["op_cid"].clone();
-        let contract_cid = "blake3-512:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-
-        let root = temp_workspace("recognize_cargo_dependency");
-        let project = root.join("project");
-        let dep = root.join("recognize-shim");
-        fs::create_dir_all(project.join("src")).expect("create project src");
-        fs::create_dir_all(dep.join("src")).expect("create dep src");
-        fs::write(
-            project.join("Cargo.toml"),
-            r#"[package]
-name = "recognize-user"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-recognize-shim = { path = "../recognize-shim" }
-"#,
-        )
-        .expect("write project Cargo.toml");
-        fs::write(
-            dep.join("Cargo.toml"),
-            r#"[package]
-name = "recognize-shim"
-version = "0.1.0"
-edition = "2021"
-"#,
-        )
-        .expect("write dep Cargo.toml");
-        fs::write(dep.join("src").join("lib.rs"), "pub fn marker() {}\n").expect("write dep src");
-        let user_rel = "src/lib.rs";
-        fs::write(
-            project.join(user_rel),
-            r##"
-pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
-    serde_json::from_str(input)
-}
-"##,
-        )
-        .expect("write user source");
-        let proof_cid = write_sugar_binding_proof(
-            &dep,
-            sugar_entry,
-            contract_cid,
-            "@test/rust-recognize-cargo-shim",
-        );
-
-        let resp = recognize(&json!({
-            "project_root": project.to_string_lossy(),
-            "source_paths": [user_rel],
-        }))
-        .expect("recognize should succeed");
-
-        let tags = resp["tags"].as_array().expect("tags array");
-        assert_eq!(
-            tags.len(),
-            1,
-            "Rust recognizer must resolve package proof templates through Cargo metadata: {tags:?}"
-        );
-        let tag = &tags[0];
-        assert_eq!(tag["op_cid"], expected_op_cid);
-        assert_eq!(tag["contract_cid"], contract_cid);
-        assert_eq!(tag["target_proof_cid"], proof_cid);
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn recognize_returns_empty_tags_for_non_matching_source() {
-        let sugar_src = r##"
-pub fn json_parse(s: &str) -> i64 {
-    serde_json::from_str(s)
-}
-"##;
-        let sugar_entry = single_sugar_entry_for_source("recognize_neg_sugar", sugar_src);
-        let binding_template = json!({
-            "op_cid": sugar_entry["op_cid"],
-            "library_tag": sugar_entry["target_library_tag"],
-            "template_cid": sugar_entry["body_source"]["template_cid"],
-            "contract_cid": "blake3-512:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-        });
-
-        // User's function is structurally DIFFERENT — calls a different function.
-        let user_src = r##"
-pub fn json_parse(s: &str) -> i64 {
-    completely_different_function(s)
-}
-"##;
-        let root = temp_workspace("recognize_neg_user");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let user_rel = "src/lib.rs";
-        fs::write(root.join(user_rel), user_src).expect("write user source");
-
-        let resp = recognize(&json!({
-            "project_root": root.to_string_lossy(),
-            "source_paths": [user_rel],
-            "binding_templates": [binding_template],
-        }))
-        .expect("recognize should succeed");
-
-        let tags = resp["tags"].as_array().expect("tags array");
-        assert!(
-            tags.is_empty(),
-            "non-matching source must produce no tags: {tags:?}"
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn recognize_routes_multiple_bindings_per_call_site_pool() {
-        // Two binding templates (json + sql shapes). User source contains
-        // one match for each. Recognize emits two tags.
-        let json_sugar = r##"
-pub fn json_parse(s: &str) -> i64 {
-    serde_json::from_str(s)
-}
-"##;
-        let sql_sugar = r##"
-pub fn sql_execute(conn: &i64, sql: &str, args: &i64) -> i64 {
-    conn.execute(sql, args)
-}
-"##;
-        let json_entry = single_sugar_entry_for_source("recognize_multi_json", json_sugar);
-        let sql_entry = single_sugar_entry_for_source("recognize_multi_sql", sql_sugar);
-        let bindings = json!([
-            {
-                "op_cid": json_entry["op_cid"],
-                "library_tag": json_entry["target_library_tag"],
-                "template_cid": json_entry["body_source"]["template_cid"],
-                "contract_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            {
-                "op_cid": sql_entry["op_cid"],
-                "library_tag": sql_entry["target_library_tag"],
-                "template_cid": sql_entry["body_source"]["template_cid"],
-                "contract_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-            }
-        ]);
-
-        let user_src = r##"
-pub fn json_parse(input: &str) -> i64 {
-    serde_json::from_str(input)
-}
-
-pub fn sql_execute(c: &i64, q: &str, p: &i64) -> i64 {
-    c.execute(q, p)
-}
-"##;
-        let root = temp_workspace("recognize_multi_user");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let user_rel = "src/lib.rs";
-        fs::write(root.join(user_rel), user_src).expect("write user source");
-
-        let resp = recognize(&json!({
-            "project_root": root.to_string_lossy(),
-            "source_paths": [user_rel],
-            "binding_templates": bindings,
-        }))
-        .expect("recognize");
-
-        let tags = resp["tags"].as_array().expect("tags array");
-        assert_eq!(tags.len(), 2, "expected 2 tags (json + sql): {tags:?}");
-        let op_cids: Vec<&str> = tags.iter().filter_map(|t| t["op_cid"].as_str()).collect();
-        assert!(op_cids.contains(&json_entry["op_cid"].as_str().expect("json op cid")));
-        assert!(op_cids.contains(&sql_entry["op_cid"].as_str().expect("sql op cid")));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -12915,39 +12296,6 @@ reason = "scope discipline probe"
         fs::write(sugar_dir.join("residue.toml"), body).expect("write residue manifest");
     }
 
-    fn write_sugar_binding_proof(
-        proof_dir: &Path,
-        mut sugar_entry: Value,
-        contract_cid: &str,
-        proof_name: &str,
-    ) -> String {
-        sugar_entry["contract_cid"] = Value::String(contract_cid.to_string());
-        let member = json!({
-            "body": sugar_entry,
-            "header": {"kind": "library-sugar-binding-entry"},
-        });
-        let member_bytes = serde_json::to_vec(&member).expect("member json");
-        let member_cid = blake3_512_of(&member_bytes);
-        let memento = LibrarySugarBindingMemento::new(member_bytes);
-        assert_eq!(memento.cid().as_str(), member_cid);
-        let mut graph = ProofGraph::new();
-        graph.push_library_sugar_binding(memento);
-        let signer_seed: Ed25519Seed = [0x91; 32];
-        let proof = build_proof_envelope(&ProofEnvelopeInput {
-            name: proof_name.to_string(),
-            version: "0.1.0".to_string(),
-            binary_cid: None,
-            metadata: None,
-            graph,
-            signer_cid: ed25519_pubkey_string(&signer_seed),
-            signer_seed,
-            declared_at: "2026-05-31T00:00:00.000Z".to_string(),
-        });
-        fs::create_dir_all(proof_dir).expect("create proof dir");
-        fs::write(proof_dir.join(proof_filename(&proof.cid)), &proof.bytes).expect("write proof");
-        proof.cid
-    }
-
     fn register_test_contract_body_graph(
         proof_graph: &mut ProofGraph,
         pre: Option<&Arc<CValue>>,
@@ -13084,6 +12432,7 @@ reason = "scope discipline probe"
             version: "0.1.0".to_string(),
             binary_cid: None,
             metadata: None,
+            manifest: None,
             graph,
             signer_cid: ed25519_pubkey_string(&signer_seed),
             signer_seed,

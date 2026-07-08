@@ -137,9 +137,9 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Existing docs:** `./examples/pandas-showcase/README.md`
 
 ### numpy-showcase
-**Summary:** NumPy correctness: one real `numpy.rot90` operation lifted across the full Sugar lifecycle (lift → materialize → recognize → prove). Shows public-symbol resolution, oracle materialize, consistency and witness verification.
+**Summary:** NumPy correctness: one real `numpy.rot90` operation lifted across the Sugar lifecycle (lift → mint → prove). Shows public-symbol resolution, lean SourceMemento lift, consistency and witness verification.
 
-- **Key paths:** `/examples/numpy-showcase/` (run.sh, README.md, app.py, boundary.py, test_numpy_rot90.py)
+- **Key paths:** `/examples/numpy-showcase/` (run.sh, README.md, app.py, test_numpy_rot90.py)
 - **Audience:** End-user (foundational Python library)
 - **Doc priority:** P0 (core library)
 - **Existing docs:** `./examples/numpy-showcase/README.md`
@@ -394,48 +394,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Doc priority:** P2 (witness verification)
 - **Existing docs:** none
 
-## Cross-Language & Polyglot Proofs
-
-### polyglot-rust-go
-**Summary:** Rust and Go library interop: same algorithm (e.g., checksum, encoding) proven in both languages and shown to produce equivalent results.
-
-- **Key paths:** `/examples/polyglot-rust-go/` (run.sh, README.md, rust/, go/)
-- **Audience:** End-user (multi-language correctness)
-- **Doc priority:** P1 (federation flagship)
-- **Existing docs:** `./examples/polyglot-rust-go/README.md`
-
-### go-double
-**Summary:** Go scalar-assertion consistency: good suite SAT, bad suite UNSAT contradiction.
-
-- **Key paths:** `/examples/go-double/` (run.sh, README.md, test_double.go)
-- **Audience:** Contributor (Go template)
-- **Doc priority:** P1 (Go learning)
-- **Existing docs:** `./examples/go-double/README.md`
-
-### go-identity
-**Summary:** Go identity and equality operations: proving identity operators (==, !=) over Go value types.
-
-- **Key paths:** `/examples/go-identity/` (run.sh, README.md, test_identity.go)
-- **Audience:** Contributor (Go operators)
-- **Doc priority:** P1 (Go technique)
-- **Existing docs:** `./examples/go-identity/README.md`
-
-### recognize-demo-go
-**Summary:** `recognize` command over Go source: finding and tagging function calls to recognized libraries.
-
-- **Key paths:** `/examples/recognize-demo-go/` (app.go)
-- **Audience:** Contributor (CLI demo)
-- **Doc priority:** P2 (tool demo)
-- **Existing docs:** none
-
-### recognize-demo-python
-**Summary:** `recognize` command over Python source: tagging library calls in Python apps.
-
-- **Key paths:** `/examples/recognize-demo-python/` (app.py)
-- **Audience:** Contributor (CLI demo)
-- **Doc priority:** P2 (tool demo)
-- **Existing docs:** none
-
 ## Async / Effects Proofs (Tokio)
 
 ### tokio-channel-implication-edge
@@ -524,14 +482,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Doc priority:** P1 (compiler plugin reference)
 - **Existing docs:** none
 
-### sugar-shim-numpy
-**Summary:** NumPy shim layer for Sugar: provides a NumPy-compatible surface that records all operations as assertions for lifting.
-
-- **Key paths:** `/examples/sugar-shim-numpy/` (run.sh, README.md)
-- **Audience:** Contributor (framework integration)
-- **Doc priority:** P2 (integration technique)
-- **Existing docs:** `./examples/sugar-shim-numpy/README.md`
-
 ## Test Fixtures & Dummies
 
 ### numpy-consumer-demo
@@ -556,14 +506,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Key paths:** `/examples/pandas-source-accounting/` (run.sh, good/)
 - **Audience:** Contributor (library auditing)
 - **Doc priority:** P2 (accounting technique)
-- **Existing docs:** none
-
-### python-boundary
-**Summary:** Python boundary function stub: wrapper over library call with contract interface for `materialize` command.
-
-- **Key paths:** `/examples/python-boundary/` (double.py, test_double.py)
-- **Audience:** Contributor (boundary stub)
-- **Doc priority:** P2 (tool support)
 - **Existing docs:** none
 
 ### python-array-map-sugar
@@ -678,14 +620,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Doc priority:** P2 (safety proof)
 - **Existing docs:** none
 
-### rusqlite-demo-consumer
-**Summary:** Rusqlite (Rust SQLite bindings) consumer demo: calling rusqlite from app code.
-
-- **Key paths:** `/examples/rusqlite-demo-consumer/` ()
-- **Audience:** Contributor (database-binding demo)
-- **Doc priority:** P2 (demo)
-- **Existing docs:** none
-
 ### sugar-rpc-minimal
 **Summary:** Minimal RPC server fixture: test infrastructure for witness RPC services.
 
@@ -700,14 +634,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 - **Key paths:** `/examples/agent-plugins/` (doubleledger-fixture/, echo-agent/)
 - **Audience:** Contributor (plugin testing)
 - **Doc priority:** P2 (plugin reference)
-- **Existing docs:** none
-
-### voltron-demo
-**Summary:** Voltron collection demo: multiple libraries linked through shared contracts.
-
-- **Key paths:** `/examples/voltron-demo/` ()
-- **Audience:** Contributor (composition demo)
-- **Doc priority:** P2 (demo)
 - **Existing docs:** none
 
 ### zero-touch-demo
@@ -727,8 +653,6 @@ This is the wall of real-library correctness proofs and runnable demonstrations.
 2. **Examples without run.sh:** Some fixtures (e.g., `oracle-hover-fixture`, `panic-freedom-fixture`) lack `run.sh`. Are these meant to be manually invoked or included as libraries?
 
 3. **Organizational structure:** Are the 88 examples meant to be grouped by language, by proof technique, or by maturity level? Current repo has them flat; should examples.md provide navigation hints?
-
-4. **Go support scope:** Only two Go examples (`go-double`, `go-identity`). Is Go support complete or in-progress?
 
 5. **Library coverage gaps:** Several patterns are "prototype" (base64, bitflags, itertools, etc.) with run.sh but no README and no PROVENANCE. Are these stable enough to document publicly?
 

@@ -37,7 +37,13 @@ impl Cid {
         Ok(Self(value))
     }
 
-    pub(crate) fn from_hash_output(value: String) -> Self {
+    /// Construct a CID from an already-hashed BLAKE3-512 value.
+    ///
+    /// Widened from `pub(crate)` to `pub` for #evict-1-bind: `bind.rs`
+    /// relocated to `sugar-walk` still needs this to mint CIDs from a
+    /// `blake3_512_of` digest. Behavior is unchanged (same debug-assert,
+    /// same construction); only accessibility grew.
+    pub fn from_hash_output(value: String) -> Self {
         debug_assert!(Self::parse(value.clone()).is_ok());
         Self(value)
     }
@@ -115,8 +121,10 @@ pub enum CidError {
 /// `core::Term` instead of extending generated `IrTerm` because `IrTerm::Ctor`
 /// is generated from the protocol CDDL and still carries only a bare name.
 /// Conversions are provided: `From<IrTerm>` synthesizes a deterministic
-/// name-derived op CID for compatibility, while `From<Term> for IrTerm` drops
-/// the op CID when crossing back into the historical IR.
+/// name-derived op CID for compatibility, while `From<Term> for IrTerm`
+/// crosses back into the historical IR by delegating to the single lowering
+/// seam [`crate::wp::lower_term`], which *records* the discarded op CID as an
+/// [`OpCidProjection`] rather than silently dropping it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Term {
@@ -655,19 +663,34 @@ impl From<IrTerm> for Term {
 
 impl From<Term> for IrTerm {
     fn from(value: Term) -> Self {
-        match value {
-            Term::Op { name, args, .. } => IrTerm::Ctor {
-                name,
-                args: args.into_iter().map(IrTerm::from).collect(),
-            },
-            Term::Var { name } => IrTerm::Var { name },
-            Term::Const { value, sort } => IrTerm::Const { value, sort },
-            Term::Unit => IrTerm::Ctor {
-                name: "unit".to_string(),
-                args: vec![],
-            },
-        }
+        // Structural lowering is the degenerate case of the single
+        // term-lowering seam `wp::lower_term` run against a resolver that
+        // knows no contracts ([`crate::wp::EmptyOpResolver`]): every `Op`
+        // falls to the bare `Ctor` form, and the faithful op-CID texture is
+        // *recorded* as an `OpCidProjection` and then loudly projected away,
+        // never silently dropped via `..`. Because no contract can ever be
+        // found, neither `OpaqueCall` nor `ArityMismatch` can fire, so the
+        // lowering is total and the `expect` is unreachable.
+        crate::wp::lower_term(&value, &crate::wp::EmptyOpResolver)
+            .expect("structural lowering against the empty resolver is total")
     }
+}
+
+/// One recorded op-CID projection: the faithful operation content-ID that the
+/// single lowering seam [`crate::wp::lower_term`] discards when it lowers a
+/// [`Term::Op`] into the historical [`IrTerm::Ctor`], which carries only a
+/// bare name.
+///
+/// This is the paper-16 texture the paper-9 [`Boundary`] is licensed to drop.
+/// Materializing it here turns what used to be a silent `..` pattern-drop into
+/// an auditable record: [`crate::wp::lower_term_projected`] returns the full
+/// list of op CIDs a lowering had to project away.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpCidProjection {
+    /// The bare operation name that survives into [`IrTerm::Ctor`].
+    pub name: String,
+    /// The faithful operation content-ID that is projected away.
+    pub op_cid: Cid,
 }
 
 /// The lossy formula stratum reused from `sugar-ir-types`.
@@ -702,10 +725,12 @@ pub enum Witness {
     /// Solver/checker transcript for an unknown result.
     #[serde(rename = "unknown")]
     Unknown { transcript: JsonValue },
-    /// Chain-integrity evidence produced by ProveKit.
+    /// Chain-integrity evidence produced by a chain-integrity discharge kit
+    /// (e.g. the now-deleted `ProveKit`, per #evict-3-provekit).
     #[serde(rename = "chain-integrity")]
     ChainIntegrity(ChainIntegrityWitness),
-    /// Chain-integrity failure evidence produced by ProveKit.
+    /// Chain-integrity failure evidence produced by a chain-integrity
+    /// discharge kit (e.g. the now-deleted `ProveKit`, per #evict-3-provekit).
     #[serde(rename = "chain-integrity-failure")]
     ChainIntegrityFailure(ChainIntegrityFailureWitness),
 }
@@ -1063,6 +1088,7 @@ impl Path {
                         Some(name.clone())
                     }
                 })
+                // sugar-audit: default-ok(cycle-diagnostic-step-name-defaults-to-empty-the-surrounding-err-cycle-refusal-is-unaffected)
                 .unwrap_or_default();
             return Err(PathError::Cycle { step });
         }
@@ -1448,14 +1474,15 @@ impl PathContractMaterial {
             vec![None; formals.len()]
         };
         FunctionContractMemento {
+            // sugar-audit: default-ok(display-only-function-name-defaults-to-empty-not-solver-input)
             fn_name: string_field(object, "fnName").unwrap_or_default(),
             formal_regions,
             formals,
-            formal_sorts: parse_vec_field(object, "formalSorts"),
-            return_sort: parse_field(object, "returnSort").unwrap_or_else(any_sort),
+            formal_sorts: solver_input_vec_field(object, "formalSorts"),
+            return_sort: solver_input_field(object, "returnSort").unwrap_or_else(any_sort),
             return_region: self.return_region.clone(),
-            pre: parse_field(object, "pre").unwrap_or_else(formula_true),
-            post: parse_field(object, "post").unwrap_or_else(formula_true),
+            pre: solver_input_field(object, "pre").unwrap_or_else(formula_true),
+            post: solver_input_field(object, "post").unwrap_or_else(formula_true),
             body_cid: optional_string_field(object, "bodyCid"),
             effects: parse_effect_set(object.and_then(|object| object.get("effects"))),
             locus: parse_locus(object.and_then(|object| object.get("locus"))),
@@ -1487,6 +1514,7 @@ fn optional_string_field(
     match object?.get(field)? {
         JsonValue::String(value) => Some(value.clone()),
         JsonValue::Null => None,
+        // sugar-audit: default-ok(cosmetic-cross-reference-string-defaults-to-absent-not-solver-input)
         _ => None,
     }
 }
@@ -1504,86 +1532,191 @@ fn string_vec_field(
                 .filter_map(|item| item.as_str().map(std::string::ToString::to_string))
                 .collect()
         })
+        // sugar-audit: default-ok(display-only-formal-name-list-defaults-to-empty-not-solver-input)
         .unwrap_or_default()
 }
 
-fn parse_field<T>(object: Option<&serde_json::Map<String, JsonValue>>, field: &str) -> Option<T>
+/// Decode a solver-input-bearing contract field (`pre`, `post`, `returnSort`,
+/// `formalSorts`). A field that is genuinely ABSENT legitimately falls back
+/// to the caller's default (e.g. no `pre` means the trivial precondition
+/// `true`). A field that is PRESENT but fails to deserialize is a corrupted
+/// or schema-drifted memento, not a legitimate absence: silently collapsing
+/// that case into the same default a missing field gets would detach an
+/// already-minted verdict from the (now vacuous) contract content it was
+/// discharged against. That must be loud, never a silent `.ok()` swallow.
+fn solver_input_field<T>(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    field: &str,
+) -> Option<T>
 where
     T: de::DeserializeOwned,
 {
-    object
-        .and_then(|object| object.get(field))
-        .cloned()
-        .and_then(|value| serde_json::from_value(value).ok())
+    let value = object.and_then(|object| object.get(field))?.clone();
+    Some(serde_json::from_value(value).unwrap_or_else(|error| {
+        panic!("contract field {field:?} is present but failed to decode: {error}")
+    }))
 }
 
-fn parse_vec_field<T>(object: Option<&serde_json::Map<String, JsonValue>>, field: &str) -> Vec<T>
+/// Vec-valued counterpart of `solver_input_field` (`formalSorts`): an absent
+/// field is legitimately an empty vec, but a present field that is not an
+/// array, or an entry inside it that fails to deserialize, is loud -- a
+/// silently truncated or malformed sort list would misalign formal
+/// positions against `formals`/`formal_regions` without any signal.
+fn solver_input_vec_field<T>(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    field: &str,
+) -> Vec<T>
 where
     T: de::DeserializeOwned,
 {
-    object
-        .and_then(|object| object.get(field))
-        .and_then(JsonValue::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| serde_json::from_value(item.clone()).ok())
-                .collect()
+    let Some(value) = object.and_then(|object| object.get(field)) else {
+        return Vec::new();
+    };
+    let items = value
+        .as_array()
+        .unwrap_or_else(|| panic!("contract field {field:?} is present but not an array"));
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            serde_json::from_value(item.clone()).unwrap_or_else(|error| {
+                panic!("contract field {field:?}[{index}] failed to decode: {error}")
+            })
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 fn parse_effect_set(value: Option<&JsonValue>) -> EffectSet {
-    let effects = value
-        .and_then(JsonValue::as_array)
-        .map(|items| items.iter().filter_map(parse_effect).collect())
-        .unwrap_or_default();
+    // Absent or explicit JSON null legitimately means "no effects recorded".
+    // A present-but-non-array `effects` value is a malformed memento, not a
+    // legitimate absence: silently treating it as empty would let an
+    // actually-impure function look pure to `is_pure()`'s composition gate.
+    let effects = match value {
+        None | Some(JsonValue::Null) => Vec::new(),
+        Some(JsonValue::Array(items)) => items.iter().filter_map(parse_effect).collect(),
+        Some(_) => panic!("contract field \"effects\" is present but not an array"),
+    };
     EffectSet { effects }
+}
+
+/// A recognized effect `kind` commits to that effect's schema: a required
+/// sub-field missing or wrong-shaped at that point is a corrupted memento
+/// (not a legitimate absence, unlike the top-level `kind` tag itself being
+/// missing, which just means the entry is unclassifiable) and must be loud,
+/// because silently dropping the whole effect entry would let an actually
+/// impure function look pure to `is_pure()`'s composition-purity gate.
+fn required_effect_field(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    kind: &str,
+    field: &str,
+) -> String {
+    string_field(object, field)
+        .unwrap_or_else(|| panic!("effect kind {kind:?} is missing required field {field:?}"))
+}
+
+fn required_effect_bool_field(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    kind: &str,
+    field: &str,
+) -> bool {
+    bool_field(object, field)
+        .unwrap_or_else(|| panic!("effect kind {kind:?} is missing required field {field:?}"))
+}
+
+fn required_effect_usize_field(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    kind: &str,
+    field: &str,
+) -> usize {
+    usize_field(object, field)
+        .unwrap_or_else(|| panic!("effect kind {kind:?} is missing required field {field:?}"))
+}
+
+/// `formals` inside a `possible_aliasing` effect is load-bearing for
+/// `check_aliasing_discharged`: every pair drawn from this list must have a
+/// matching `AliasingMemento`. Silently dropping a non-string entry here
+/// (as the generic `string_vec_field` metadata helper does) would let that
+/// pair escape the aliasing-discharge check entirely, so a malformed entry
+/// is loud instead.
+fn required_effect_formals_field(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    kind: &str,
+) -> Vec<String> {
+    let Some(items) = object
+        .and_then(|object| object.get("formals"))
+        .and_then(JsonValue::as_array)
+    else {
+        panic!("effect kind {kind:?} is missing required array field \"formals\"")
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            item.as_str().map(str::to_string).unwrap_or_else(|| {
+                panic!("effect kind {kind:?} field \"formals\"[{index}] is not a string")
+            })
+        })
+        .collect()
 }
 
 fn parse_effect(value: &JsonValue) -> Option<Effect> {
     let object = value.as_object();
-    match string_field(object, "kind")?.as_str() {
+    // A missing/non-string `kind` tag makes the entry unclassifiable, not
+    // corrupted: there is no schema to hold it to.
+    let kind = string_field(object, "kind")?;
+    match kind.as_str() {
         "reads" => Some(Effect::Reads {
-            target: string_field(object, "target")?,
+            target: required_effect_field(object, &kind, "target"),
         }),
         "writes" => Some(Effect::Writes {
-            target: string_field(object, "target")?,
+            target: required_effect_field(object, &kind, "target"),
         }),
         "io" => Some(Effect::Io),
         "unsafe" => Some(Effect::Unsafe),
         "panics" => Some(Effect::Panics),
         "unresolved_call" => Some(Effect::UnresolvedCall {
-            name: string_field(object, "name")?,
+            name: required_effect_field(object, &kind, "name"),
         }),
         "opaque_loop" => Some(Effect::OpaqueLoop {
-            loop_cid: string_field(object, "loopCid")?,
+            loop_cid: required_effect_field(object, &kind, "loopCid"),
         }),
         "early_return" => Some(Effect::EarlyReturn {
-            try_cid: string_field(object, "tryCid")?,
+            try_cid: required_effect_field(object, &kind, "tryCid"),
         }),
         "closure_capture" => Some(Effect::ClosureCapture {
-            body_fn_cid: string_field(object, "bodyFnCid")?,
-            n_captures: usize_field(object, "nCaptures")?,
+            body_fn_cid: required_effect_field(object, &kind, "bodyFnCid"),
+            n_captures: required_effect_usize_field(object, &kind, "nCaptures"),
         }),
         "pinned_reference" => Some(Effect::PinnedReference {
-            target: string_field(object, "target")?,
+            target: required_effect_field(object, &kind, "target"),
         }),
         "raw_ptr_provenance" => Some(Effect::RawPointerProvenance {
-            target: string_field(object, "target")?,
-            mutable: bool_field(object, "mutable")?,
+            target: required_effect_field(object, &kind, "target"),
+            mutable: required_effect_bool_field(object, &kind, "mutable"),
         }),
-        "atomic_access" => Some(Effect::AtomicAccess {
-            target: string_field(object, "target")?,
-            kind: parse_atomic_kind(&string_field(object, "atomicKind")?)?,
-            ordering: optional_string_field(object, "ordering"),
-        }),
+        "atomic_access" => {
+            // Unrecognized atomicKind string: same "recognized enum-tag
+            // miss" shape as the unclassifiable-effect-kind case below, not
+            // a missing-required-field corruption, so this `?` (not a bare
+            // wildcard) intentionally stays a quiet forward-compat miss.
+            let atomic_kind =
+                parse_atomic_kind(&required_effect_field(object, &kind, "atomicKind"))?;
+            Some(Effect::AtomicAccess {
+                target: required_effect_field(object, &kind, "target"),
+                kind: atomic_kind,
+                ordering: optional_string_field(object, "ordering"),
+            })
+        }
         "possible_aliasing" => Some(Effect::PossibleAliasing {
-            formals: string_vec_field(object, "formals"),
+            formals: required_effect_formals_field(object, &kind),
         }),
         "drop" => Some(Effect::Drop {
-            name: string_field(object, "name")?,
+            name: required_effect_field(object, &kind, "name"),
         }),
+        // Unrecognized effect kind tag: same "forward schema evolution"
+        // shape already sanctioned elsewhere in this scan for unrecognized
+        // enum-tag strings.
+        // sugar-audit: not-mine(unrecognized-effect-kind-tag-carries-no-typed-effect-payload)
         _ => None,
     }
 }
@@ -1594,6 +1727,7 @@ fn parse_atomic_kind(value: &str) -> Option<AtomicKind> {
         "store" => Some(AtomicKind::Store),
         "rmw" => Some(AtomicKind::Rmw),
         "cas" => Some(AtomicKind::Cas),
+        // sugar-audit: not-mine(unrecognized-atomic-kind-string-carries-no-typed-atomic-effect)
         _ => None,
     }
 }
@@ -1602,7 +1736,9 @@ fn parse_locus(value: Option<&JsonValue>) -> Locus {
     let object = value.and_then(JsonValue::as_object);
     Locus {
         file: optional_string_field(object, "file"),
+        // sugar-audit: default-ok(debug-only-source-line-defaults-to-zero-not-solver-input)
         line: usize_field(object, "line").unwrap_or(0),
+        // sugar-audit: default-ok(debug-only-source-column-defaults-to-zero-not-solver-input)
         col: usize_field(object, "col").unwrap_or(0),
     }
 }
@@ -1611,6 +1747,7 @@ fn parse_aliasing_mementos(value: Option<&JsonValue>) -> Vec<AliasingMemento> {
     value
         .and_then(JsonValue::as_array)
         .map(|items| items.iter().filter_map(parse_aliasing_memento).collect())
+        // sugar-audit: default-ok(fewer-aliasing-mementos-only-makes-check-aliasing-discharged-refuse-more-never-silently-accept)
         .unwrap_or_default()
 }
 
@@ -1635,6 +1772,7 @@ fn usize_field(object: Option<&serde_json::Map<String, JsonValue>>, field: &str)
     object?
         .get(field)?
         .as_u64()
+        // sugar-audit: default-ok(u64-to-usize-width-overflow-only-occurs-on-32-bit-targets-past-4-billion)
         .and_then(|value| usize::try_from(value).ok())
 }
 
@@ -1835,20 +1973,31 @@ pub(crate) fn contract_to_cvalue(contract: &Contract) -> Arc<CValue> {
     }
 }
 
-pub(crate) fn formula_true() -> IrFormula {
+/// Widened from `pub(crate)` to `pub` for #evict-2-liftplugin-pathexec:
+/// `path_executor.rs`'s test module relocates to `sugar-cli` and needs this
+/// fixture helper from outside the crate. Behavior is unchanged; only
+/// accessibility grew.
+pub fn formula_true() -> IrFormula {
     IrFormula::Atomic {
         name: "true".to_string(),
         args: vec![],
     }
 }
 
-pub(crate) fn any_sort() -> Sort {
+/// Widened from `pub(crate)` to `pub` for #evict-2-liftplugin-pathexec: see
+/// `formula_true` above.
+pub fn any_sort() -> Sort {
     Sort::Primitive {
         name: "Any".to_string(),
     }
 }
 
-pub(crate) fn memento_from_parts(
+/// Build a `Contract` (`FunctionContractMemento`) from its parts.
+///
+/// Widened from `pub(crate)` to `pub` for #evict-1-bind: `bind.rs`
+/// relocated to `sugar-walk` calls this to materialize the bind-result
+/// response contract. Behavior is unchanged; only accessibility grew.
+pub fn memento_from_parts(
     fn_name: String,
     formals: Vec<String>,
     formal_sorts: Vec<Sort>,
@@ -2186,5 +2335,159 @@ mod tests {
         let nodes: Vec<_> = term.walk().collect();
 
         assert!(nodes.is_empty());
+    }
+
+    // Proof-corpus strict-load sweep (#3840 follow-up). #3840 made this
+    // module's contract-field decode loud: a `pre`/`post`/`formalSorts`/
+    // `returnSort` field (or a required effect sub-field) that is PRESENT
+    // but fails to deserialize now panics instead of silently collapsing to
+    // the same default an ABSENT field gets (see `solver_input_field`,
+    // `solver_input_vec_field`, `parse_effect_set`, `parse_effect` above).
+    // `PathContractMaterial::to_contract` -- the function those helpers
+    // back -- is crate-private, so this sweep lives here (inside the module)
+    // rather than as an external integration test.
+    //
+    // There are no committed `PathDocument`/`DomainClaim`-canonical-bytes
+    // JSON fixtures anywhere in the repository (confirmed by search), so
+    // there is no on-disk corpus that exercises `to_contract` through its
+    // real production callers (`PathDocument::materialized_inputs`,
+    // `domain_claim_from_canonical_bytes`). The closest thing to a real,
+    // committed corpus in the exact schema `to_contract` parses (`fnName`,
+    // `formalSorts`, `returnSort`, `pre`, `post`, `effects`, `bodyCid`,
+    // `locus`, `autoMintedMementos`) is `scripts/output/**/*.json`: demo
+    // artifacts from `scripts/cross-language-demo` that embed
+    // `function-contract` JSON objects (either directly, e.g.
+    // `runtime-eval/lifted-declarations.json`, or nested one level inside an
+    // `evidence.body.rawWitness` JSON string in the legacy-witness shape).
+    // Nothing in current production Rust code loads these particular files
+    // through `to_contract` today, but they are genuinely committed JSON in
+    // that exact schema, so this sweep parses every `function-contract`
+    // object reachable from them (recursing into embedded JSON strings too)
+    // and drives each one through the real, current, strict
+    // `PathContractMaterial::to_contract` to confirm none of it depended on
+    // the old silent-default behavior.
+    fn scripts_output_root() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("libsugar has rust workspace parent")
+            .parent()
+            .expect("rust workspace has implementations parent")
+            .parent()
+            .expect("implementations has repo root parent")
+            .join("scripts/output")
+    }
+
+    /// Recursively collect every `function-contract`-shaped JSON object
+    /// reachable from `value`, including ones nested inside JSON-encoded
+    /// string fields (the legacy `rawWitness` shape).
+    fn collect_function_contract_objects(value: &JsonValue, out: &mut Vec<JsonValue>) {
+        match value {
+            JsonValue::Object(map) => {
+                if map.get("kind").and_then(JsonValue::as_str) == Some("function-contract") {
+                    out.push(value.clone());
+                }
+                for nested in map.values() {
+                    collect_function_contract_objects(nested, out);
+                }
+            }
+            JsonValue::Array(items) => {
+                for item in items {
+                    collect_function_contract_objects(item, out);
+                }
+            }
+            JsonValue::String(text) => {
+                if let Ok(embedded) = serde_json::from_str::<JsonValue>(text) {
+                    collect_function_contract_objects(&embedded, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn scripts_output_function_contract_corpus_loads_without_panicking() {
+        let root = scripts_output_root();
+        assert!(
+            root.is_dir(),
+            "expected scripts/output to exist at {}",
+            root.display()
+        );
+
+        let mut json_files = Vec::new();
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir)
+                .unwrap_or_else(|error| panic!("read dir {}: {error}", dir.display()))
+            {
+                let entry = entry.expect("read dir entry");
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                    json_files.push(path);
+                }
+            }
+        }
+        json_files.sort();
+        assert!(
+            !json_files.is_empty(),
+            "expected at least one committed JSON fixture under {}; the sweep \
+             would otherwise pass vacuously",
+            root.display()
+        );
+
+        let mut contracts_checked = 0usize;
+        let mut failures = Vec::new();
+        for path in &json_files {
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            let Ok(parsed) = serde_json::from_str::<JsonValue>(&text) else {
+                // Not every file under scripts/output is JSON-shaped content
+                // we recognize; a parse failure here is a fixture-shape
+                // miss, not a contract-decode miss, so it is out of scope
+                // for this sweep.
+                continue;
+            };
+            let mut contracts = Vec::new();
+            collect_function_contract_objects(&parsed, &mut contracts);
+            for contract_value in contracts {
+                contracts_checked += 1;
+                let material = PathContractMaterial {
+                    cid: "sweep-test".to_string(),
+                    value: contract_value,
+                    formal_regions: vec![],
+                    return_region: None,
+                    concept_hint: None,
+                };
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    material.to_contract();
+                }));
+                if let Err(payload) = outcome {
+                    let message = payload
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "<non-string panic payload>".to_string());
+                    failures.push(format!("{}: {message}", path.display()));
+                }
+            }
+        }
+
+        eprintln!(
+            "scripts-output-function-contract-sweep: {} json file(s) scanned, {} function-contract object(s) checked",
+            json_files.len(),
+            contracts_checked
+        );
+        assert!(
+            contracts_checked > 0,
+            "expected at least one function-contract object under {}; the sweep \
+             would otherwise pass vacuously",
+            root.display()
+        );
+        assert!(
+            failures.is_empty(),
+            "strict contract decode panicked on committed scripts/output corpus:\n{}",
+            failures.join("\n")
+        );
     }
 }

@@ -291,49 +291,6 @@ fn sugar_cli_does_not_expose_legacy_link_subcommand() {
 }
 
 #[test]
-fn materialize_does_not_expose_source_lang_discovery_mode() {
-    let help = Command::new(sugar_bin())
-        .arg("materialize")
-        .arg("--help")
-        .output()
-        .expect("spawn sugar materialize --help");
-    let stdout = String::from_utf8_lossy(&help.stdout);
-    let stderr = String::from_utf8_lossy(&help.stderr);
-    assert!(
-        help.status.success(),
-        "sugar materialize --help failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-    assert!(
-        !stdout.contains("--source-lang"),
-        "`materialize --source-lang` is the legacy CLI-side cross-language discovery mode; source language discovery must be kit-owned over RPC\nstdout:\n{stdout}"
-    );
-
-    let rejected = Command::new(sugar_bin())
-        .arg("materialize")
-        .arg("--library")
-        .arg("python-requests")
-        .arg("--source-dir")
-        .arg(".")
-        .arg("--target")
-        .arg("python")
-        .arg("--source-lang")
-        .arg("rust")
-        .output()
-        .expect("spawn sugar materialize --source-lang");
-    let stderr = String::from_utf8_lossy(&rejected.stderr);
-    assert!(
-        !rejected.status.success(),
-        "`sugar materialize --source-lang` must be rejected at the CLI boundary"
-    );
-    assert!(
-        stderr.contains("unexpected argument")
-            || stderr.contains("unrecognized")
-            || stderr.contains("unknown"),
-        "stderr should reject --source-lang at clap boundary\n{stderr}"
-    );
-}
-
-#[test]
 fn lift_identify_only_delegates_from_project_config() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");
@@ -913,7 +870,7 @@ while IFS= read -r line; do
       fi
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[],"sourceLedger":{"source_loci":0,"source_warranted":0,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"implications":[{"name":"caller-post-implies-callee-pre","antecedent":"caller","antecedentSlot":"post","consequent":"callee","consequentSlot":"pre","prover":"single-plugin-implications"}]}}'
     else
-      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"caller","outBinding":"out","post":{"kind":"atomic","name":"caller_post","args":[]}},{"kind":"contract","name":"callee","outBinding":"out","pre":{"kind":"atomic","name":"callee_pre","args":[]},"post":{"kind":"atomic","name":"callee_post","args":[]}}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"callEdges":[{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:callee","targetContract":null,"targetContractCid":null,"callSiteLocus":{"file":"app.py","line":2,"column":11}}]}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"app.py::tests::t_caller::assertion","outBinding":"out","post":{"kind":"atomic","name":"t_caller_fact","args":[]}},{"kind":"contract","name":"caller","outBinding":"out","post":{"kind":"atomic","name":"caller_post","args":[]}},{"kind":"contract","name":"callee","outBinding":"out","pre":{"kind":"atomic","name":"callee_pre","args":[]},"post":{"kind":"atomic","name":"callee_post","args":[]}}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"callEdges":[{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:callee","targetContract":null,"targetContractCid":null,"callSiteLocus":{"file":"app.py","line":2,"column":11}}]}}'
     fi
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
@@ -984,7 +941,7 @@ while IFS= read -r line; do
     if [[ "$line" == *'"contract_bindings"'* ]]; then
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[],"sourceLedger":{"source_loci":0,"source_warranted":0,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"implications":[{"name":"caller-post-implies-callee-pre","antecedent":"caller","antecedentSlot":"post","consequent":"callee","consequentSlot":"pre","prover":"single-plugin-implications"}]}}'
     else
-      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","planMementos":[{"kind":"component-plan","planning":{"source":"test-plan"},"planAtoms":[]}],"ir":[{"kind":"contract","name":"caller","outBinding":"out","post":{"kind":"atomic","name":"caller_post","args":[]}},{"kind":"contract","name":"callee","outBinding":"out","pre":{"kind":"atomic","name":"callee_pre","args":[]},"post":{"kind":"atomic","name":"callee_post","args":[]}}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"callEdges":[{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:callee","targetContract":"callee","targetContractCid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","callSiteLocus":{"file":"app.py","line":2,"column":11}},{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:missing","targetContract":null,"targetContractCid":null,"callSiteLocus":{"file":"app.py","line":3,"column":11}}]}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","planMementos":[{"kind":"component-plan","planning":{"source":"test-plan"},"planAtoms":[]}],"ir":[{"kind":"contract","name":"app.py::tests::t_caller::assertion","outBinding":"out","post":{"kind":"atomic","name":"t_caller_fact","args":[]}},{"kind":"contract","name":"caller","outBinding":"out","post":{"kind":"atomic","name":"caller_post","args":[]}},{"kind":"contract","name":"callee","outBinding":"out","pre":{"kind":"atomic","name":"callee_pre","args":[]},"post":{"kind":"atomic","name":"callee_post","args":[]}}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"callEdges":[{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:callee","targetContract":"callee","targetContractCid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","callSiteLocus":{"file":"app.py","line":2,"column":11}},{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:missing","targetContract":null,"targetContractCid":null,"callSiteLocus":{"file":"app.py","line":3,"column":11}}]}}'
     fi
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'

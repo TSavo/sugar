@@ -294,7 +294,7 @@ fn value_type_name(value: &Value) -> &'static str {
 mod tests {
     use super::*;
     use crate::contract::build_function_contract;
-    use libsugar::panic_freedom;
+    use sugar_ir_types::panic_freedom;
     use serde_json::Value as JsonValue;
     use sugar_claim_envelope::contract_cid as kit_contract_cid;
 

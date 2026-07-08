@@ -1,0 +1,4 @@
+{
+  "sugar.linkerd.binaryPath": "/Users/tsavo/provekit-wt/fresh-main-20260701/implementations/rust/target/release/sugar-linkerd",
+  "sugar.debounceMs": 400
+}

@@ -12,7 +12,7 @@
 # `test-rust` runs the rust workspace (including the crate-pair inheritance
 # E2E) and exercises the active kit RPC surfaces; `test-python`
 # runs the python lifter/emit kits including the numpy proof. Other per-language suites
-# (test-go / ...) exist but are not part of the gate.
+# (test-csharp / test-c / ...) exist but are not part of the gate.
 
 .DEFAULT_GOAL := help
 
@@ -67,14 +67,14 @@ help:
 	@echo "Per-language build:"
 	@echo "  make build-rust     cargo build --release (workspace)"
 	@echo "  make build-python   pip-install Python realize kits and shim packages"
-	@echo "  make build-<lang>   go / cpp / csharp / c"
+	@echo "  make build-<lang>   cpp / csharp / c"
 	@echo ""
 	@echo "Per-language test:"
 	@echo "  make test-rust  test-python   (the proven provers)"
 	@echo "  make numpy-wall                build and ratchet-check the NumPy lift wall"
 	@echo "  make pandas-wall               build and ratchet-check the pandas lift wall"
 	@echo "  make test-python-format       Black check for implementations/python"
-	@echo "  make test-<lang>              go / csharp / php / c"
+	@echo "  make test-<lang>              csharp / php / c"
 	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
 	@echo ""
 	@echo "Self-lift experiments:"
@@ -88,7 +88,7 @@ help:
 # --- Per-language builds -----------------------------------------------------
 
 # Build every kit's binaries. Useful before `make conformance` or before
-# spawning `sugar-linkerd` (which subprocesses kit lifters at lift
+# running `sugar lift`/`sugar mint` (which subprocess kit lifters at lift
 # time). Each kit's build target is independent; failures stay isolated.
 .PHONY: build-all
 build-all: build-rust build-python
@@ -101,14 +101,6 @@ build-rust:
 .PHONY: build-rust-cli
 build-rust-cli:
 	bin/sugarbin --profile release >/dev/null
-
-.PHONY: build-go
-build-go:
-	cd implementations/go && go build ./...
-	cd implementations/go/sugar-ir-symbolic && go build ./...
-	cd implementations/go/sugar-lift-go-tests && go build ./...
-	cd implementations/go/sugar-lift-go && go build ./...
-
 
 .PHONY: build-csharp
 build-csharp:
@@ -203,19 +195,6 @@ test-rust: build-python
 	  $(CARGO) test --no-fail-fast --release --manifest-path implementations/rust/Cargo.toml \
 	  || failed="$$failed implementations/rust"; \
 	if [ -n "$$failed" ]; then echo "test-rust FAIL:$$failed"; exit 1; fi
-
-.PHONY: test-go
-test-go:
-	@failed=""; \
-	(cd implementations/go && go test ./...) \
-	  || failed="$$failed implementations/go"; \
-	(cd implementations/go/sugar-ir-symbolic && go test ./...) \
-	  || failed="$$failed sugar-ir-symbolic"; \
-	(cd implementations/go/sugar-lift-go-tests && go test ./...) \
-	  || failed="$$failed sugar-lift-go-tests"; \
-	(cd implementations/go/sugar-lift-go && go test ./...) \
-	  || failed="$$failed sugar-lift-go"; \
-	if [ -n "$$failed" ]; then echo "test-go FAIL:$$failed"; exit 1; fi
 
 .PHONY: test-csharp
 test-csharp: build-csharp

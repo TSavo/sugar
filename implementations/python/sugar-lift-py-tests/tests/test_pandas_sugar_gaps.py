@@ -561,6 +561,57 @@ def test_pandas_string_symbolic_concat_typed_red_witness_has_bad_twin(
     )
 
 
+def test_sklearn_symbolic_divided_by_string_is_typed_runtime_effect() -> None:
+    outcome, selected = _term_outcome(
+        'n_bytes / "GB"',
+        {"n_bytes": SymbolicValue(make_var("n_bytes"))},
+    )
+
+    assert "BinOpSugar" in selected
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RuntimeEffect)
+    assert (
+        "symbolic arithmetic-operator over string runtime boundary"
+        in outcome.effect.reason
+    )
+    assert "SymbolicValue / StringValue" in outcome.effect.reason
+    assert "pandas_gap.py:1:0" in outcome.effect.reason
+
+
+def test_sklearn_symbolic_divided_by_string_typed_red_witness_has_bad_twin(
+    tmp_path: Path,
+) -> None:
+    _assert_red_effect_seed_has_wrong_effect_twin(
+        _symbolic_string_operator_witness(),
+        tmp_path,
+    )
+
+
+def test_sklearn_symbolic_no_arm_operand_pair_still_panics() -> None:
+    """Discrimination twin: an operand pair with genuinely no arm still panics.
+
+    ``SymbolicValue`` paired with ``ImportAliasValue`` (an unrelated floor
+    value with no binary-operator arm at all) must still raise ``FactoryGap``.
+    This proves the new SymbolicValue/StringValue arm did not widen dispatch
+    to swallow shapes that have no lawful floor.
+    """
+    from sugar_lift_py_tests.factory import FactoryGap
+    from sugar_lift_py_tests.operations.binary_operator_operation import (
+        BinaryOperatorOperation,
+    )
+
+    receiver = SymbolicValue(make_var("x"))
+    operation = BinaryOperatorOperation(
+        operator="/",
+        right=ImportAliasValue(name="os", bound_name="os"),
+        owner="BinOpSugar",
+        blame="test_no_arm.py:1:0",
+    )
+    with pytest.raises(FactoryGap) as excinfo:
+        operation.binary_symbolic(receiver, ctx=None)
+    assert "SymbolicValue/ImportAliasValue" in excinfo.value.info.observed
+
+
 def test_pandas_symbolic_map_receiver_is_typed_runtime_effect() -> None:
     outcome, selected = _term_outcome(
         "values.map(lambda x: x + 1)",
@@ -1191,6 +1242,34 @@ def _string_symbolic_concat_witness() -> SugarRedEffectWitnessPair:
         ),
         lying=EffectWitnessSource(
             source=('def A(suffix):\n    return "articleId" + suffix\n'),
+            expectation=wrong_effect,
+            expected_match=False,
+        ),
+    )
+
+
+def _symbolic_string_operator_witness() -> SugarRedEffectWitnessPair:
+    right_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="symbolic arithmetic-operator over string runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    wrong_effect = TypedRedEffectExpectation(
+        effect_class="RuntimeEffect",
+        reason_needle="symbolic string concatenation runtime boundary",
+        blame_needle="test_witness.py:2:",
+    )
+    return SugarRedEffectWitnessPair(
+        name="sklearn_symbolic_divided_by_string_runtime_effect",
+        owner_sugar="BinOpSugar",
+        family="pandas-floor-gap",
+        truthful=EffectWitnessSource(
+            source=('def A(n_bytes):\n    return n_bytes / "GB"\n'),
+            expectation=right_effect,
+            expected_match=True,
+        ),
+        lying=EffectWitnessSource(
+            source=('def A(n_bytes):\n    return n_bytes / "GB"\n'),
             expectation=wrong_effect,
             expected_match=False,
         ),

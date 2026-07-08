@@ -42,8 +42,7 @@ Each entry is a directory under [`examples/`](../../examples/) with a `run.sh`.
 - **Rust** — std + real crates:
   `rust-coretests-report`, `std-core-showcase`, `serde-json-showcase`, `regex-showcase`,
   `tokio-{channel,await,mutex}-implication-edge`, `uuid-showcase`, `url-showcase`,
-  `bitflags-showcase`, `itertools-showcase`, `num-integer-showcase`,
-  `rusqlite-demo-consumer`.
+  `bitflags-showcase`, `itertools-showcase`, `num-integer-showcase`.
 - **Java** — Commons Codec / validation / regex:
   `java-commons-codec-crc32`, `java-codec-universe`, `java-b64-strong`, `java-b64-tails`,
   `java-abs-flagship`, `java-pattern-regex`, `java-urlsafe-seam`, `java-witness-recompute`,

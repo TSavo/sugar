@@ -9679,6 +9679,17 @@ enum Effect {
     /// payload reduced to runtime/opaque data rather than a literal floor. Presence
     /// predicates can ignore payloads; value-consuming adaptors cannot fabricate a value.
     RuntimeMonadicPayload { method: String, ctor: String },
+    /// UNESTABLISHABLE-MONADIC-FAMILY: a value-consuming Option/Result adaptor
+    /// (`unwrap_or`, `unwrap_or_default`, ...) reached a SYMBOLIC receiver (no
+    /// concrete Some/None/Ok/Err payload to match) and the recognizer could not
+    /// pin the receiver to a single Option-or-Result family from the call's own
+    /// syntax (the legacy `Carrier::Any` dispatch, or a `Carrier`-establishable
+    /// receiver still lacking a reified default term). The symbolic-variant
+    /// guarded-split lane (#3445 Part 1 slice, collapse family) needs a fixed
+    /// family to pick `adt.is_some`/`opt:some#0` vs `adt.is_ok`/`res:ok#0` --
+    /// guessing between the two would be an unsound fake-dig. Named, typed
+    /// refusal; never a panic.
+    UnestablishableMonadicFamily { method: String },
     /// ATOMIC-LOAD: `.load(Ordering::*)` reads interior-mutable atomic state through
     /// shared-reference semantics. Path receivers that the temporal planner can version
     /// stay on the method-key floor; non-path receivers have no single binding identity
@@ -10005,6 +10016,13 @@ impl Effect {
             }
             Effect::RuntimeMonadicPayload { method, ctor } => {
                 format!("runtime Option/Result payload, not literal (`{method}` over `{ctor}`)")
+            }
+            Effect::UnestablishableMonadicFamily { method } => {
+                format!(
+                    "symbolic Option/Result receiver for `{method}` did not establish a \
+                     single Option-or-Result family from source; refusing rather than \
+                     guessing which guarded split to emit"
+                )
             }
             Effect::AtomicLoad => {
                 "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state"

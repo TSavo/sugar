@@ -765,6 +765,7 @@ mod tests {
             signer_cid: "blake3-512:bb".into(),
             signer_seed: [0x11; 32],
             declared_at: "2026-04-30T00:00:00.000Z".into(),
+            manifest: None,
         })
         .bytes;
 
@@ -785,11 +786,14 @@ mod tests {
     // shape that `decode` expects: a map with a `members` map of CID -> bstr
     // (the JCS-JSON member body bytes).
     fn encode_two_member_catalog(m1: &Json, m2: &Json) -> Vec<u8> {
-        use sugar_canonicalizer::blake3_512_of;
+        // Keys must be the members' HONEST canonical CIDs (JCS layered-envelope
+        // recipe) -- the reader's per-entry verification recomputes them and
+        // refuses a mismatched key before the ambiguity check can run.
+        use sugar_canonicalizer::jcs_cid_of_json;
         let b1 = serde_json::to_vec(m1).unwrap();
         let b2 = serde_json::to_vec(m2).unwrap();
-        let c1 = blake3_512_of(&b1);
-        let c2 = blake3_512_of(&b2);
+        let c1 = jcs_cid_of_json(m1);
+        let c2 = jcs_cid_of_json(m2);
         // Hand-roll deterministic CBOR: { "members": { c1: b1, c2: b2 } }.
         let mut out = Vec::new();
         // map(1)

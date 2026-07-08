@@ -1,8 +1,0 @@
-# PEP 1.7.0 lift plugin manifest for sugar-shim-numpy.
-# Points at the installed sugar-bind-lift-python entry-point script
-# (rebound to this worktree's source via `pip install -e
-# implementations/python/sugar-lift-python-source`). Required by
-# `sugar mint`, which looks for .sugar/lift/<surface>/manifest.toml.
-name = "python-bind-lift"
-command = ["/usr/local/bin/sugar-bind-lift-python", "--rpc"]
-working_dir = "."

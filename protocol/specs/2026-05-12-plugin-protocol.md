@@ -306,114 +306,15 @@ follow kit-supplied `.proof` paths, or reinterpret package-manager metadata.
 
 Graceful close. After this, an `stdio:` plugin SHOULD exit zero on stdin EOF; an HTTP plugin MAY ignore the call.
 
-#### §4.2.5 `sugar.plugin.recognize`
+#### §4.2.5 `sugar.plugin.recognize` (RETIRED)
 
-Kit-owned source-level recognition: given user source files in the kit's
-target language, the kit identifies sites whose structural shape matches
-its published sugar binding templates and returns tags. The substrate
-MUST NOT inspect language-native AST shapes directly; each language kit
-owns its own AST machinery and reports tags in a language-blind form.
-
-This is the reverse direction of `materialize`. Where `materialize` reads
-a boundary citation in source and writes the kit's sugar body, `recognize`
-reads idiomatic user code and writes the boundary citations that would
-have been present had the user authored them by hand. The same
-`ast_template` artifact a kit emits at lift time (see the bind-IR
-lift result spec) is the matchable template here, but the kit owns
-template/proof resolution. The runtime MUST NOT read `.proof` files or
-construct recognizer templates from package-manager paths.
-
-Request:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 5,
-  "method": "sugar.plugin.recognize",
-  "params": {
-    "project_root": "/absolute/project/root",
-    "source_paths": ["src/lib.rs", "src/ingest.rs"]
-  }
-}
-```
-
-The kit resolves the applicable sugar templates from its own package,
-project, and proof context, then matches its native AST shape against
-each template's `ast_template` under alpha-equivalence on `param_ref`
-markers. The runtime supplies source scope and receives normalized tags;
-it does not construct, forward, or interpret `binding_templates`.
-
-Response (success):
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 5,
-  "result": {
-    "tags": [
-      {
-        "file": "src/ingest.rs",
-        "span": {
-          "start_line": 14,
-          "start_col": 4,
-          "end_line": 14,
-          "end_col": 49
-        },
-        "concept_name": "concept:json-parse",
-        "library_tag": "sugar-shim-serde-json-rust",
-        "family": "concept:family:json",
-        "template_cid": "blake3-512:<hex>",
-        "contract_cid": "blake3-512:<hex>",
-        "match_tier": "exact",
-        "param_bindings": [
-          { "index": 1, "source_text": "input" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-`tags[].match_tier` MUST be one of `"exact"`, `"structural"`,
-`"probable"`, or `"refused"`. Tiers correspond to the recognition
-strength:
-
-- **`exact`** — the user's source matches the template byte-for-byte
-  after alpha-equivalence on `param_ref` markers. Highest confidence;
-  the substrate emits a bridge equivalent to an explicit user-authored
-  carrier comment.
-- **`structural`** — the user's source matches the template's AST shape
-  but with idiomatic syntactic variation (block wrapping, intermediate
-  temp names, try-operator vs explicit match). Substrate may still
-  emit a bridge but records the structural-match flag in the receipt.
-- **`probable`** — the user's source resembles the template at the call
-  shape but a discriminating detail diverges (callee path, arity, or
-  type slot). Substrate records the probable tag but DOES NOT emit a
-  bridge without explicit user confirmation (per Supra omnia, rectum).
-- **`refused`** — the kit considered a site, found a near-match, but
-  refused to claim it. The refusal lands in the receipt with a
-  `would_close_with_concept` field.
-
-`param_bindings` maps the template's `param_ref` indices back to the
-literal source text at the user's call site. The substrate uses this
-to record what concrete arguments the recognized site passed, so the
-discharger can reason about the user's actual pre/post values.
-
-The substrate MAY repeat the request across multiple kits and union the
-returned tag sets by `(file, span)` tuple. Where two kits both produce
-`exact` tags for the same span, the family-library routing override
-(§4.2.x, materialize) governs which family wins; without an override,
-the more-specific concept wins; without specificity, the substrate
-refuses to emit a tag and records both candidates with a counter-claim
-list.
-
-Implementations MAY return an empty `tags` array. Implementations MUST
-NOT return tags for spans outside the supplied `source_paths`.
-
-The substrate treats returned `template_cid` and `contract_cid` values as
-content-addressed normalized data and composes them language-blindly. The
-kit is responsible for making those CIDs correspond to the sugar templates
-and proof data it resolved. The kit's role is structural pattern matching
-against its language's AST; cross-tag composition, family-library disambiguation,
-and bridge emission all stay substrate-side.
+RETIRED (#3811). The `recognize` and `materialize` verbs are removed from the
+protocol and from every kit. Ingress into the proof pool is lift of native
+source (the factory); egress is emission of native artifacts from neutral
+predicates (`emit`). There is no source-rewriting verb and no tag-scanning
+verb. Kits MUST NOT declare `sugar.plugin.recognize` or
+`sugar.plugin.materialize` in their kit declarations; the runtime does not
+dispatch them.
 
 ### §4.3 Error model on the wire
 

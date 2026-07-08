@@ -1472,6 +1472,18 @@ def _numpy_integer_literal_call_derived_fact(
     integer arithmetic axiom and emit the result as Derived testimony under the same
     EUF key as the stated assertion.
     """
+    if callee_name in _COMPUTABLE_NUMPY_FLOAT_UFUNCS:
+        return _numpy_float_literal_call_derived_fact(
+            stmt,
+            callee_name=callee_name,
+            callsite=callsite,
+            fn=fn,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            ctx=ctx,
+            call_return_sort=call_return_sort,
+        )
     if callee_name not in _COMPUTABLE_NUMPY_INTEGER_UFUNCS:
         return None
     if len(callsite.call_args()) != 2 or callsite.call_keywords():
@@ -1507,6 +1519,71 @@ def _numpy_integer_literal_call_derived_fact(
         source_lines=source_lines,
         warrant=Derived(
             floor_chain=("literal_call_report.numpy_integer_ufunc", callee_name)
+        ),
+        call_return_sort=call_return_sort,
+    )
+
+
+_COMPUTABLE_NUMPY_FLOAT_UFUNCS = frozenset({"numpy.divide"})
+
+
+def _numpy_float_literal_call_derived_fact(
+    stmt: SourceFragment,
+    *,
+    callee_name: str,
+    callsite: SourceFragment,
+    fn: SourceFragment,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    ctx: FactoryBuildContext,
+    call_return_sort: ProofSort | None,
+) -> LiftResult | None:
+    """Emit the kit-computed sibling for ``numpy.divide`` over literal numeric
+    operands.
+
+    Boundary: division is IEEE-754 true division, not numpy execution -- both
+    operands must reduce through the factory into the kit's own
+    ``TermValue(int | float)`` floor values, and the quotient is Python's own
+    ``/`` on the resulting floats (identical bit pattern to numpy's float64
+    ``true_divide`` for finite operands). Division by zero is a permanent
+    stop-line here: numpy's IEEE inf/nan/RuntimeWarning behavior is not
+    reproduced, so a zero divisor returns ``None`` and the callsite falls back
+    to the ordinary opaque assertion rather than fabricating a floored value.
+    """
+    if len(callsite.call_args()) != 2 or callsite.call_keywords():
+        return None
+
+    values: list[int | float] = []
+    arg_terms: list[Term] = []
+    for arg_frag in callsite.call_args():
+        value = _numeric_floor_for_numpy_literal_arg(arg_frag, ctx=ctx)
+        if value is None:
+            return None
+        values.append(value)
+        arg_terms.append(_lift_literal_via_factory(arg_frag, filename, ctx=ctx))
+
+    left, right = values
+    if right == 0:
+        # Stop-line: division by zero is not computed here. Fabricating
+        # numpy's inf/nan/RuntimeWarning semantics without a floor for them
+        # would be a lie dressed as a Derived fact.
+        return None
+    result = left / right
+
+    from sugar_lift_py_tests.floor import TermValue
+
+    return _emit_euf_fact(
+        stmt,
+        fn,
+        callee_name,
+        arg_terms,
+        TermValue(result).to_term(owner="literal_call_report.numpy_float_ufunc"),
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+        warrant=Derived(
+            floor_chain=("literal_call_report.numpy_float_ufunc", callee_name)
         ),
         call_return_sort=call_return_sort,
     )
@@ -1577,6 +1654,28 @@ def _integer_floor_for_numpy_literal_arg(
     if type(value.value) is not int:
         return None
     if not _fits_numpy_int64(value.value):
+        return None
+    return value.value
+
+
+def _numeric_floor_for_numpy_literal_arg(
+    frag: SourceFragment,
+    *,
+    ctx: FactoryBuildContext,
+) -> int | float | None:
+    """Like ``_integer_floor_for_numpy_literal_arg`` but admits float floors
+    too, for the float-semantics ufuncs (``numpy.divide``). Ints stay ints
+    (Python promotes on ``/`` regardless); non-numeric floors return None."""
+    from sugar_lift_py_tests.floor import TermValue
+
+    body = ctx.build_body(frag, SugarRole.TERM)
+    outcome = body.reduce(ctx)
+    if isinstance(outcome, Incomplete):
+        return None
+    value = complete_value(outcome, owner="literal_call_report.numpy_float_ufunc_arg")
+    if not isinstance(value, TermValue):
+        return None
+    if type(value.value) not in (int, float):
         return None
     return value.value
 

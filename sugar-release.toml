@@ -43,10 +43,10 @@ exclude = [
   # cargo subcommand wrappers (front the same CLIs as sugar/sugar-lift)
   "cargo-sugar",
   "cargo-sugar-lift",
-  # language-server / linker daemons (editor/build integration, not yet pinned)
+  # language-server / oracle daemons (editor/build integration, not yet pinned)
   "sugar-lsp",
   "sugar-lsp-rust",
-  "sugar-linkerd",
+  "sugar-ra-oracle",
   # IR-compiler backend bins (internal to the verify pipeline)
   "sugar-ir-coq",
   "sugar-ir-lean",

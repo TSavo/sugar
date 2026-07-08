@@ -341,6 +341,7 @@ fn publish_double_project_with_formals(
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
+        manifest: None,
     };
     let built = build_proof_envelope(&input);
     let hex = cid_hex(&built.cid).unwrap();

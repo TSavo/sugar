@@ -495,3 +495,36 @@ def test_discharge_command_refuses_mutated(tmp_path):
     (tmp_path / "impl.py").write_text(BAD)
     rc, j = _run_discharge(path, proj)
     assert rc == 1 and j["verdict"] == "REFUSED", j
+
+
+# --- #3587 recurrence: the LSP lift's witness-package contract must carry ----
+# proofirProvenance, the same stamp the rust cargo-test-witness mirror got
+# under #3601, or sugar-verifier's ambient-testimony gate refuses it with
+# `provenance-kind-required` (recensus4, live on build-witness-showcase,
+# numpy-attribute-safety-showcase, numpy-vendor, python-literal-base20,
+# python-literal-base64).
+
+
+def test_lsp_lift_stamps_witness_package_contract_with_proofir_provenance(tmp_path):
+    from sugar_pytest_witness.lift_lsp import handle_lift
+
+    proj = _project(tmp_path, GOOD)
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        handle_lift(1, {"workspace_root": proj})
+    resp = json.loads(captured.getvalue().strip().splitlines()[-1])
+    ir = resp["result"]["ir"]
+    contracts = [
+        m
+        for m in ir
+        if m.get("kind") == "contract" and m.get("name", "").startswith("witness-package:")
+    ]
+    assert contracts, f"no witness-package contract emitted: {ir}"
+    contract = contracts[0]
+    assert "proofirProvenance" in contract, (
+        "witness-package contract lacks proofirProvenance -- sugar-verifier's "
+        "contract_provenance_kind will refuse it with provenance-kind-required "
+        f"(#3587 recurrence): {contract}"
+    )
+    warrants = contract["proofirProvenance"]["warrants"]
+    assert warrants and warrants[0]["kind"] == "Derived", contract["proofirProvenance"]

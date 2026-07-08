@@ -7,10 +7,10 @@ use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
 use std::fmt::Write as _;
 use sugar_verifier::superposition::{reports_from_report, Strength, SuperpositionReport};
-use sugar_verifier::{LoadError, ObligationVerdict, Report, ReportRow};
+use sugar_verifier::{LoadError, ObligationVerdict, Report};
 
 pub fn report_to_json(r: &Report) -> Json {
-    let rows: Vec<Json> = r.rows.iter().map(row_to_json).collect();
+    let rows: Vec<Json> = r.rows.iter().map(sugar_verifier::report::row_to_json).collect();
     let load_errors: Vec<Json> = r.load_errors.iter().map(load_error_to_json).collect();
     let call_edges: Vec<Json> = r
         .call_edges
@@ -87,27 +87,13 @@ fn superposition_report_to_json(s: &SuperpositionReport) -> Json {
     })
 }
 
-fn row_to_json(row: &ReportRow) -> Json {
-    json!({
-        "bridge": row.callsite.bridge_ir_name,
-        "targetCid": row.callsite.bridge_target_cid,
-        "sourceLayer": row.callsite.bridge_source_layer,
-        "targetLayer": row.callsite.bridge_target_layer,
-        "property": row.callsite.property_name,
-        "propertyCid": row.callsite.property_cid,
-        "status": row.status.as_str(),
-        "reason": row.reason,
-        "dischargeMethod": row.discharge_method,
-        "bodyDischargeTier": row.body_discharge_tier,
-        "verification": row.verification.clone(),
-        "file": row.callsite.file,
-        "line": row.callsite.line,
-        "callee": row.callsite.callee,
-        "callsiteBundleCid": row.callsite.callsite_bundle_cid,
-        "panicSite": row.callsite.panic_site,
-    })
-}
-
+// Base row shape AND its FOL enrichment both live in
+// `sugar_verifier::report::row_to_json` (moved here 2026-07-07, part of
+// #3774 "one renderer" slice, pure move, no logic change): rows are BORN
+// enriched with the three conjoined facts (vendor fact / vendor universe /
+// your fact), so the sugar-linkerd `proveConsistency` RPC and `sugar prove
+// --json` render the IDENTICAL enriched row from the SAME function, never a
+// reimplementation and never a second, CLI-only enrichment pass.
 fn discharge_split_to_json(r: &Report) -> Json {
     let mut panic_safe = 0usize;
     let mut reflexive = 0usize;
@@ -475,6 +461,95 @@ mod tests {
             j["rows"][0]["verification"]["linkedPosts"][0]["sourceSymbol"],
             "call:enc"
         );
+    }
+
+    #[test]
+    fn consistency_row_renders_three_part_fol() {
+        // A consistency row carrying the vendor universe (linkedPosts.vendorPost),
+        // the consumer's own fact (clientFactIr), and the vendor's sworn vector
+        // (vendorFactIr) as ProofIR must surface all three as human-readable FOL
+        // rendered by the SAME renderer `sugar lift --report --visual` uses.
+        let mut r = Report::default();
+        r.rows.push(ReportRow {
+            callsite: CallSite {
+                bridge_ir_name: "consistency".into(),
+                property_name: "consistency:enc#euf#c:call:enc(s:'xyz')::assertion".into(),
+                ..CallSite::default()
+            },
+            status: ObligationVerdict::Unsatisfied,
+            reason: "contradictory".into(),
+            discharge_method: Some("consistency".into()),
+            body_discharge_tier: None,
+            verification: Some(json!({
+                "kind": "consistency",
+                "linkedPosts": [{
+                    "sourceSymbol": "call:enc",
+                    "vendorPost": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            { "kind": "var", "name": "out" },
+                            { "kind": "const", "value": "YWJj",
+                              "sort": { "kind": "primitive", "name": "String" } }
+                        ]
+                    }
+                }],
+                "clientFactIr": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        { "kind": "ctor", "name": "call:enc", "args": [
+                            { "kind": "const", "value": "xyz",
+                              "sort": { "kind": "primitive", "name": "String" } }
+                        ]},
+                        { "kind": "const", "value": "AAAA",
+                          "sort": { "kind": "primitive", "name": "String" } }
+                    ]
+                },
+                // The vendor's sworn value for the SAME callsite the consumer
+                // asserted (LHS must match; a different-callsite vector is
+                // correctly ignored by the callsite-matched vendor-fact rule).
+                "vendorFactIr": [{
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        { "kind": "ctor", "name": "call:enc", "args": [
+                            { "kind": "const", "value": "xyz",
+                              "sort": { "kind": "primitive", "name": "String" } }
+                        ]},
+                        { "kind": "const", "value": "YWJj",
+                          "sort": { "kind": "primitive", "name": "String" } }
+                    ]
+                }],
+            })),
+        });
+
+        let j = report_to_json(&r);
+        let v = &j["rows"][0]["verification"];
+        let universe = v["vendorUniverseFol"].as_str().unwrap_or_default();
+        let client = v["clientFactFol"].as_str().unwrap_or_default();
+        let vendor = v["vendorFactFol"].as_str().unwrap_or_default();
+        assert!(universe.starts_with("⊢ "), "universe: {universe}");
+        assert!(client.contains("enc(\"xyz\")"), "client: {client}");
+        assert!(client.contains("\"AAAA\""), "client: {client}");
+        assert!(vendor.contains("enc(\"xyz\")"), "vendor: {vendor}");
+        assert!(vendor.contains("\"YWJj\""), "vendor: {vendor}");
+    }
+
+    #[test]
+    fn non_consistency_verification_passes_through_unchanged() {
+        let mut r = Report::default();
+        r.rows.push(ReportRow {
+            callsite: CallSite::default(),
+            status: ObligationVerdict::Discharged,
+            reason: "ok".into(),
+            discharge_method: Some("reflexive".into()),
+            body_discharge_tier: None,
+            verification: Some(json!({ "kind": "body-eq" })),
+        });
+        let j = report_to_json(&r);
+        assert_eq!(j["rows"][0]["verification"]["kind"], "body-eq");
+        assert!(j["rows"][0]["verification"]["vendorUniverseFol"].is_null());
     }
 
     #[test]

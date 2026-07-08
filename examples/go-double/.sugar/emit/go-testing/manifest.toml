@@ -1,4 +1,0 @@
-name = "go-testing"
-command = ["sugar-emit-go-testing", "--rpc"]
-working_dir = "."
-protocol_versions = ["pep/1.7.0"]

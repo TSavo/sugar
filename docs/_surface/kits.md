@@ -168,12 +168,12 @@ The Rust kit is the core federation seat. It owns the reference IR types (CDDL-g
 - **Priority:** P1 (cross-crate bridging)
 - **Existing coverage:** none
 
-#### sugar-linkerd — Linker Daemon
-- **Path:** `implementations/rust/sugar-linkerd/`
+#### sugar-ra-oracle — Resident Rust-Analyzer Oracle
+- **Path:** `implementations/rust/sugar-ra-oracle/`
 - **Kind:** Binary (JSON-RPC daemon)
-- **Summary:** Long-running service for per-kit LSP plugins; serves linker queries over NDJSON; implements daemon protocol spec 2026-05-04.
+- **Summary:** Resident rust-analyzer oracle for the Rust lift pipeline (`sugar-walk::ra_daemon_client`'s Tier 2b method-call resolution). Extracted from the retired `sugar-linkerd` linker daemon (which used to also serve editor-facing linker queries over NDJSON per daemon protocol spec 2026-05-04; that path is now `sugar-lsp --in-process`, and the daemon itself is deleted -- see daemon-3-delete).
 - **Audience:** integrators
-- **Priority:** P1 (IDE integration infrastructure)
+- **Priority:** P1 (rust-lift infrastructure)
 - **Existing coverage:** none
 
 ### CLI & Entry Points

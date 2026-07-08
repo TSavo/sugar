@@ -28,7 +28,7 @@ use sugar_linker::solver_api::{
     registry, ObligationVerdict, SolverHandle, SolverPlan, SolverSeat, SolversConfig, StubSolver,
 };
 use sugar_linker::{
-    link, link_with_solvers, LinkerCallEdge, LinkerContract, LinkerInputs, Registry,
+    link, link_with_solvers, CallSiteLocus, LinkerCallEdge, LinkerContract, LinkerInputs, Registry,
 };
 
 // -------------------------------------------------------------------
@@ -64,13 +64,18 @@ fn and_of(a: Json, b: Json) -> Json {
     json!({"kind": "and", "operands": [a, b]})
 }
 
+fn to_formula(v: Json) -> sugar_ir_types::IrFormula {
+    serde_json::from_value(v).expect("test formula must be a valid IrFormula")
+}
+
 fn caller(post: Option<Json>) -> LinkerContract {
     LinkerContract {
         name: "caller".into(),
         kit: "rust-kit".into(),
         contract_cid: CALLER_CID.into(),
         pre_json: None,
-        post_json: post,
+        post_json: post.map(to_formula),
+        ..Default::default()
     }
 }
 
@@ -79,8 +84,9 @@ fn callee(pre: Option<Json>) -> LinkerContract {
         name: "callee".into(),
         kit: "rust-kit".into(),
         contract_cid: CALLEE_CID.into(),
-        pre_json: pre,
+        pre_json: pre.map(to_formula),
         post_json: None,
+        ..Default::default()
     }
 }
 
@@ -89,12 +95,12 @@ fn cgo_edge() -> LinkerCallEdge {
         source_contract_cid: CALLER_CID.into(),
         target_contract_cid: Some(CALLEE_CID.into()),
         target_symbol: "rust-kit:callee".into(),
-        call_site_locus_json: json!({
-            "file": "caller.rs",
-            "line": 1,
-            "column": 1
+        call_site_locus: Some(CallSiteLocus {
+            file: "caller.rs".into(),
+            line: Some(1),
+            column: Some(1),
         }),
-        evidence_term_json: json!({"kind": "Atomic", "name": "obligation", "args": []}),
+        ..Default::default()
     }
 }
 
@@ -221,7 +227,8 @@ fn logically_incompatible_emits_implication_unprovable() {
         "expected exactly one linker error"
     );
     assert_eq!(
-        out.linker_errors[0].kind, "implication-unprovable",
+        out.linker_errors[0].kind.wire_str(),
+        "implication-unprovable",
         "weak-post case must surface implication-unprovable, got {:?}",
         out.linker_errors[0]
     );
@@ -229,12 +236,12 @@ fn logically_incompatible_emits_implication_unprovable() {
     assert_eq!(err.target_symbol, "rust-kit:callee");
     assert_eq!(err.file.as_deref(), Some("caller.rs"));
     assert_eq!(
-        err.call_site_locus_json.as_ref(),
-        Some(&json!({
-            "file": "caller.rs",
-            "line": 1,
-            "column": 1
-        })),
+        err.call_site_locus.as_ref(),
+        Some(&CallSiteLocus {
+            file: "caller.rs".into(),
+            line: Some(1),
+            column: Some(1),
+        }),
         "solver failure must preserve the callsite locus for LSP diagnostics"
     );
 }
@@ -272,7 +279,10 @@ fn solver_undecidable_does_not_silently_discharge() {
     let (registry, plan) = stub_registry_and_plan(ObligationVerdict::Undecidable);
     let out = link_with_solvers(inputs(Some(post), Some(pre)), &registry, &plan);
     assert_eq!(out.linker_errors.len(), 1);
-    assert_eq!(out.linker_errors[0].kind, "implication-undecidable");
+    assert_eq!(
+        out.linker_errors[0].kind.wire_str(),
+        "implication-undecidable"
+    );
 }
 
 // -------------------------------------------------------------------
@@ -287,7 +297,8 @@ fn pure_link_with_no_registry_emits_undecidable_for_distinct_predicates() {
     let out = link(inputs(Some(post), Some(pre)));
     assert_eq!(out.linker_errors.len(), 1, "expected one error");
     assert_eq!(
-        out.linker_errors[0].kind, "implication-undecidable",
+        out.linker_errors[0].kind.wire_str(),
+        "implication-undecidable",
         "pure link() with no solver must surface undecidable, never silent-discharge"
     );
 }
@@ -315,7 +326,10 @@ fn callee_pre_absent_is_vacuously_discharged() {
 fn caller_post_absent_emits_unprovable_obligation() {
     let out = link(inputs(None, Some(ge_x_n(0))));
     assert_eq!(out.linker_errors.len(), 1);
-    assert_eq!(out.linker_errors[0].kind, "unprovable-obligation");
+    assert_eq!(
+        out.linker_errors[0].kind.wire_str(),
+        "unprovable-obligation"
+    );
 }
 
 // -------------------------------------------------------------------

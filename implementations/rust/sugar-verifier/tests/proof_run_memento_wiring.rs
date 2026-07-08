@@ -38,6 +38,7 @@ fn write_empty_fixture_proof(project_root: &Path) -> String {
         signer_cid,
         signer_seed,
         declared_at: "2026-05-13T00:00:00.000Z".into(),
+        manifest: None,
     });
     let hex = cid_hex(&built.cid).unwrap();
     fs::write(project_root.join(format!("{hex}.proof")), built.bytes).expect("write fixture");
@@ -150,6 +151,7 @@ fn forged_stage_receipt_cid_is_rejected() {
         signer_cid,
         signer_seed,
         declared_at: "2026-07-01T00:00:00.000Z".into(),
+        manifest: None,
     });
     let forged = rewrite_single_member_key(&built.bytes, &claimed_cid);
     let bundle_cid = write_proof_bytes(&project_root, &forged);

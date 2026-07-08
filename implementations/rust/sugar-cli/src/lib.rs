@@ -31,14 +31,16 @@ pub struct OutputFlags {
     pub quiet: bool,
 }
 
+pub mod cmd_emit;
+pub mod cmd_mint;
 pub mod cmd_release_gate;
 pub mod cmd_self_check;
 pub mod component_plan;
 pub mod doctor;
 pub mod doctor_oracle;
 pub mod floor_runtime_check;
-pub mod kit_declaration;
 pub mod kit_dispatch;
 pub mod lift_plugin;
 pub mod panic_annotations_runtime;
 pub mod project_config;
+pub mod report_witness;

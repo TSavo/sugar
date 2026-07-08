@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "cargo-sugar",
+    "sugar-arch-guard",
     "sugar-canonicalizer",
     "sugar-plugin-loader",
     "sugar-proof-envelope",
@@ -15,6 +16,7 @@ members = [
     "sugar-ir-compiler-maude",
     "sugar-ir-compiler-lean",
     "sugar-verifier",
+    "sugar-compiler",
     "libsugar",
     "libsugar-rpc",
     "sugar-cli",
@@ -26,7 +28,7 @@ members = [
     "sugar-linker",
     "sugar-lsp",
     "sugar-lsp-rust",
-    "sugar-linkerd",
+    "sugar-ra-oracle",
 ]
 
 [workspace.package]
@@ -55,7 +57,7 @@ base64 = "0.22"
 thiserror = "1"
 # JSON for IR text emission
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 # Verifier glue
 walkdir = "2"
 toml = "0.8"

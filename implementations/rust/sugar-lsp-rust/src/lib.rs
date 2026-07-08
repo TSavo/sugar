@@ -2,14 +2,13 @@
 //
 // Library surface for sugar-lsp-rust.
 //
-// Exposes `daemon_client` so the main sugar-lsp tower-lsp server can
-// depend on this crate and call `connect_or_spawn` / `send_parse_file`
-// without duplicating the implementation.
-//
 // The `[[bin]]` target (`src/main.rs`) speaks the per-language NDJSON
 // plugin protocol (initialize / parse / shutdown).  This `[lib]` target
-// exposes the daemon-client primitives for the LSP server that routes
-// through `sugar-linkerd`.
+// exposes the forward-propagation floor used by both the bin and its tests.
+//
+// (This crate previously also exposed a `daemon_client` module for a
+// `sugar-lsp-rust --daemon-socket` mode that routed through the now-retired
+// `sugar-linkerd` daemon; nothing ever depended on this lib export, and the
+// mode is retired along with the daemon. See daemon-3-delete.)
 
-pub mod daemon_client;
 pub mod forward_propagator;

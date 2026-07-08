@@ -12,10 +12,12 @@
 //   - Otherwise (callee in another crate, extern "C" import, or unresolvable
 //     path) set `target_contract_cid` to None and populate `target_symbol`.
 //
-// The `evidenceTerm` is a placeholder `{kind: "obligation", source: <cid_B>,
-// target: <cid_A or symbol>}` per the dispatch spec. The linker derives the
-// actual predicate-level check later; the lifter's job is to surface the call
-// edge as a content-addressable memento.
+// No `evidenceTerm` is emitted on the call-edge memento: the satisfaction
+// obligation `post_B ⊃ pre_A` is only knowable once both contracts are resolved
+// (link time), so the linker mints the live obligation term onto the bridge (see
+// sugar-linker `obligation_evidence_term`). The lifter's job is only to surface
+// the call edge as a content-addressable memento. The Python reference
+// (`CallEdgeDecl.to_declaration`) emits no `evidenceTerm` on the wire either.
 //
 // Locus shape (no prior definition in this codebase; defined here per spec):
 //   { "file": <source_path>, "line": <u32 | null>, "col": <u32 | null> }
@@ -26,7 +28,24 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
+use syn::spanned::Spanned;
+
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
+
+/// Clone a base locus (which carries the file) and stamp it with the 1-based
+/// line and 0-based column of a call-site span. The editor needs a real range
+/// to anchor the diagnostic squiggle; a `None` line collapses the squiggle to
+/// the top of the file. `proc-macro2` span locations are available in this
+/// build (the contract adapter already reads `ident.span().start().line`).
+fn locus_at(base: &CallSiteLocus, span: proc_macro2::Span) -> CallSiteLocus {
+    let start = span.start();
+    CallSiteLocus {
+        file: base.file.clone(),
+        // A zero line means span locations were unavailable; keep `None` then.
+        line: (start.line > 0).then_some(start.line as u32),
+        col: Some(start.column as u32),
+    }
+}
 
 /// A call-edge memento as defined in spec #114 §1.
 #[derive(Debug, Clone)]
@@ -85,25 +104,18 @@ pub fn mint_call_edge(
     locus: &CallSiteLocus,
     target_symbol: &str,
 ) -> CallEdgeMemento {
-    // evidenceTerm placeholder per dispatch spec.
-    let evidence_term = Value::object([
-        ("kind", Value::string("obligation")),
-        ("source", Value::string(source_contract_cid.to_string())),
-        (
-            "target",
-            Value::string(
-                target_contract_cid
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| target_symbol.to_string()),
-            ),
-        ),
-    ]);
-
     let target_cid_value: Arc<Value> = match target_contract_cid {
         Some(cid) => Value::string(cid.to_string()),
         None => Value::null(),
     };
 
+    // No `evidenceTerm` is minted here: the satisfaction obligation `post_B ⊃ pre_A`
+    // is only knowable once BOTH contracts are resolved, which happens at link
+    // time. The linker mints the bridge's live `evidenceTerm` from that resolved
+    // obligation (see sugar-linker `obligation_evidence_term`), so a lift-side
+    // placeholder would be a dead field the linker never reads. The Python
+    // reference (`CallEdgeDecl.to_declaration`) likewise emits no `evidenceTerm`
+    // on the call-edge wire.
     let memento = Value::object([
         ("schemaVersion", Value::string("1")),
         ("kind", Value::string("call-edge")),
@@ -114,7 +126,6 @@ pub fn mint_call_edge(
         ("targetContractCid", target_cid_value),
         ("callSiteLocus", locus.to_value()),
         ("targetSymbol", Value::string(target_symbol.to_string())),
-        ("evidenceTerm", evidence_term),
     ]);
 
     let canonical_bytes = encode_jcs(&memento).into_bytes();
@@ -294,7 +305,8 @@ fn collect_call_sites_in_expr(
         // Emit an edge for this call site.
         if let Some(callee_name) = callee_name_from_expr(&c.func) {
             let target_cid = contract_cids.get(&callee_name).map(|s| s.as_str());
-            let edge = mint_call_edge(source_cid, target_cid, locus, &callee_name);
+            let call_locus = locus_at(locus, c.func.span());
+            let edge = mint_call_edge(source_cid, target_cid, &call_locus, &callee_name);
             edges.push(edge);
         }
         collect_call_sites_in_expr(&c.func, source_cid, locus, contract_cids, edges);
@@ -308,7 +320,8 @@ fn collect_call_sites_in_expr(
         // Emit an edge for the method call.
         let callee_name = mc.method.to_string();
         // Methods don't resolve to contract CIDs by name alone; treat as unresolved.
-        let edge = mint_call_edge(source_cid, None, locus, &callee_name);
+        let call_locus = locus_at(locus, mc.method.span());
+        let edge = mint_call_edge(source_cid, None, &call_locus, &callee_name);
         edges.push(edge);
         // Recurse into receiver and arguments.
         collect_call_sites_in_expr(&mc.receiver, source_cid, locus, contract_cids, edges);

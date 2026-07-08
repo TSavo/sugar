@@ -8,7 +8,7 @@ From clone to first demo:
 
 ```sh
 # 1. Install system dependencies (macOS example; see table below for Ubuntu)
-brew install rust go python@3.12 node@22 pnpm openssl@3 nlohmann-json
+brew install rust python@3.12 node@22 pnpm openssl@3 nlohmann-json
 
 # 2. Build the CLI
 cargo install --path implementations/rust/sugar-cli
@@ -21,13 +21,12 @@ cd examples/numpy-vendor && ./run.sh
 
 ## System Dependencies
 
-The build supports **11 host languages** (Rust, Go, C++, TypeScript, C#, Python, Java, Ruby, Zig, Swift, C). All are optional; pick the languages you care about. The only hard requirements are Rust (the canonical CLI implementation) and Python 3.12 (kit RPC).
+The build supports **10 host languages** (Rust, C++, TypeScript, C#, Python, Java, Ruby, Zig, Swift, C). All are optional; pick the languages you care about. The only hard requirements are Rust (the canonical CLI implementation) and Python 3.12 (kit RPC).
 
 | Package | macOS (Homebrew) | Ubuntu / Debian | Purpose |
 |---------|------------------|-----------------|---------|
 | **Rust stable** | `rustup install stable` | `rustup install stable` | Canonical CLI, all Rust kits, conformance harness |
 | **Python 3.12** | `brew install python@3.12` | `sudo apt install python3.12 python3-pip` | Python kit, test lifting, pip venv provisioning |
-| **Go 1.22+** | `brew install go` | `nodesource` apt repo | Go kit, go test lifting |
 | **Node 22 + pnpm** | `brew install node@22 pnpm` | `nodesource` apt repo + `npm i -g pnpm` | TypeScript kit, emitter plugins |
 | **.NET 10 SDK** | `brew install --cask dotnet-sdk` | Microsoft `packages-microsoft-prod` apt repo | C# kit |
 | **OpenSSL 3** | `brew install openssl@3` | `sudo apt install libssl-dev` | Crypto (ed25519, blake3 build) |
@@ -61,9 +60,6 @@ cargo install --path implementations/rust/sugar-cli
 # Python kits (test lifting, hypothesis, pytest witness, source binding)
 cd implementations/python && pip install -e .
 
-# Go kits
-cd implementations/go && go build ./... && go build ./sugar-lift-go/...
-
 # TypeScript (Node.js emitters, realize kits)
 cd implementations/typescript && pnpm install && pnpm build
 
@@ -86,7 +82,7 @@ The `Makefile` at the repo root is the single source of truth. It coordinates cr
 ```sh
 make help              # print available targets
 make ci                # conformance + solver dispatch + all language test suites
-make build-all         # build all kit binaries (Rust, Python, Go, C++, C#, Java)
+make build-all         # build kit binaries (Rust, Python)
 make test-all          # test-rust + test-python (the proven provers)
 make conformance       # cross-kit conformance harness (catalog CIDs must match pinned)
 make clean             # remove all build artifacts
@@ -390,14 +386,14 @@ CI=1 cargo build --release
 
 ### macOS
 
-- Rust builds locally; Python, Go, and other tools use Homebrew.
+- Rust builds locally; Python and other tools use Homebrew.
 - For CI parity (Linux), use `bcargo` or `CI=1 cargo ...`.
 - Swift builds only on macOS; excluded from conformance harness on Linux.
 
 ### Linux (battleaxe / CI)
 
 - All builds run natively.
-- Python, Go, Rust, C++, Java, C# all supported.
+- Python, Rust, C++, Java, C# all supported.
 - Swift skipped.
 - Full solver portfolio available (z3, cvc5, maude, vampire, coq, lean).
 

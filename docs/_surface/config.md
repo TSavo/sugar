@@ -282,9 +282,9 @@ version = "0.4.0"
 | `SUGAR_WITNESS_SIGNER_SEED` | Ed25519 seed for witness signing (hex, 32 bytes) | `0x42424242...` (64 hex chars) |
 | `SUGAR_VERIFY_SIGNER_KEY` | Public key for proof verification (hex) | Used in `sugar verify` |
 | `SUGAR_VERIFY_SIGNER_KEY_FILE` | Path to public key file (PEM format) | Alternative to `SUGAR_VERIFY_SIGNER_KEY` |
-| `SUGAR_LINKERD_BIN` | Path to linkerd daemon binary | Used for proof linkage/federation |
-| `SUGAR_LINKERD_LOG` | Log file for linkerd daemon | `/tmp/linkerd.log` |
-| `SUGAR_LINKERD_SOCKET` | Unix socket for linkerd RPC | `/tmp/linkerd.sock` |
+| `SUGAR_RA_ORACLE_BIN` | Path to the rust-analyzer oracle binary (`sugar-ra-oracle`) | Used by the Rust lift pipeline's method-call resolution (daemon-2 repoint; was `SUGAR_LINKERD_BIN`) |
+| `SUGAR_RA_ORACLE_LOG` | Log file for the rust-analyzer oracle daemon | `/tmp/ra-oracle.log` |
+| `SUGAR_RA_ORACLE_SOCKET` | Unix socket for the rust-analyzer oracle RPC | `/tmp/ra-oracle.sock` |
 | `SUGAR_CONTRACTS_RPC` | JSON-RPC URL for contract resolution | `http://localhost:9999` |
 | `SUGAR_CONTRACTS_RPC_TARGET_DIR` | Target directory for RPC responses | `/tmp/contracts` |
 | `SUGAR_COMPONENT_PATH` | Component search path (colon-separated) | `/path1:/path2` |
@@ -455,7 +455,7 @@ version = "0.4.0"
 
 7. **GitHub Actions integration:** `sugar init` mentions creating a GitHub Action; what env vars or config does that Action expect? Template location?
 
-8. **Distributed verifier coordination:** `sugar-linkerd` suggests proof federation/coordination across machines; what configuration wires a linkerd daemon and how does it discover peers?
+8. **Distributed verifier coordination:** resolved -- the `sugar-linkerd` daemon this question referred to never did cross-machine coordination (it was a per-project editor linker/prove daemon); it is retired (#3844 flipped the editor path to `sugar-lsp --in-process`; daemon-3-delete removed the crate). The one job it did that still needs a resident process, the rust-analyzer oracle, lives on in `sugar-ra-oracle` with no peer discovery -- it is a per-project subprocess, not a distributed service.
 
 ---
 

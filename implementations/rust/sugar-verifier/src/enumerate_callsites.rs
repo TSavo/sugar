@@ -6,7 +6,7 @@
 //
 // Mirrors implementations/cpp/.../verifier/enumerate_callsites.cpp.
 
-use libsugar::panic_freedom;
+use sugar_ir_types::panic_freedom;
 use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
@@ -283,6 +283,7 @@ fn callsite_from_panic_locus(
         guard_facts: Vec::new(),
         file,
         line,
+        source_column: None,
         callee: Some(callee.to_string()),
         panic_site: true,
         attribute_safety: attribute_safety_from_locus(locus),
@@ -354,6 +355,7 @@ fn attribute_safety_callsite_from_locus(
         guard_facts: path_cond.to_vec(),
         file,
         line,
+        source_column: None,
         callee: Some(panic_freedom::RUNTIME_FAILURE_SITE.to_string()),
         panic_site: true,
         attribute_safety: Some(safety),
@@ -1059,6 +1061,7 @@ fn walk_term(
             guard_facts: path_cond.to_vec(),
             file: callsite_file,
             line: callsite_line,
+            source_column: None,
             callee: callsite_callee,
             panic_site,
             attribute_safety: occ_locus.and_then(attribute_safety_from_locus),
@@ -1218,7 +1221,7 @@ mod guard_propagation_tests {
     //! property and is pinned in `sugar-walk`'s lift tests, not here.
 
     use super::*;
-    use libsugar::panic_freedom;
+    use sugar_ir_types::panic_freedom;
     use serde_json::json;
 
     fn test_cid(label: &str) -> MementoCid {

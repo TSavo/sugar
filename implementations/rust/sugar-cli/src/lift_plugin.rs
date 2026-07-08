@@ -10,9 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use libsugar::core::{
-    address, execute_path, ConformanceDeclaration, Dialect, DomainClaim, HashMapInputCatalog,
-    Input, KitRegistry, LiftKit, LiftPluginKit, LiftPluginKitError, Path as CorePath, PathAlgebra,
-    PathExecutionError, Term, Verb,
+    address, ConformanceDeclaration, Dialect, DomainClaim, HashMapInputCatalog, Input,
+    Path as CorePath, PathAlgebra, Term, Verb,
 };
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
@@ -20,6 +19,9 @@ use serde_json::{json, Value};
 use sugar_ir_types::CompositionBoundaryMemento;
 
 use crate::component_plan::PlannedLiftManifest;
+use sugar_compiler::kit_path::{
+    execute_path, KitRegistry, LiftKit, LiftPluginKit, LiftPluginKitError, PathExecutionError,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiftPluginSession {
@@ -268,6 +270,13 @@ pub(crate) fn dispatch_lift(
         "lift kit parsed surface={surface} elapsed={:?}",
         started.elapsed()
     ));
+    // #3774 daemonLift phase split: per-surface plugin dispatch wall time,
+    // visible in the daemon's tracing output (trace_log above is file-gated).
+    tracing::info!(
+        surface,
+        dispatch_ms = started.elapsed().as_millis() as u64,
+        "mint/lift: plugin dispatch complete"
+    );
     if !quiet {
         if let Some(name) = core_session
             .initialize_response

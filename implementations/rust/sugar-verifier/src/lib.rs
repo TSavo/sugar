@@ -41,6 +41,7 @@ pub mod compiler_registry;
 pub mod consistency;
 pub mod domain_claim_shape_report;
 pub mod effects;
+pub mod fol_render;
 pub mod enumerate_callsites;
 pub mod formula_rewrite;
 pub mod handshake;
@@ -56,6 +57,7 @@ pub mod solve_obligation;
 pub mod solvers;
 pub mod superposition;
 pub mod types;
+pub mod utterance;
 
 pub use domain_claim_shape_report::{
     shape_report_claim, shape_report_claims, validate_trichotomy, DomainClaimShapeReport,

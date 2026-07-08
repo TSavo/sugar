@@ -120,6 +120,7 @@ fn main() {
         signer_cid: pubkey_str.clone(),
         signer_seed: SEED,
         declared_at: PRODUCED_AT.into(),
+        manifest: None,
     };
     let proof_out = build_proof_envelope(&proof_input);
     let hex: String = proof_out

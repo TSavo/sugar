@@ -48,6 +48,7 @@ pub fn local_op_cid(name: &str) -> Result<String> {
 }
 
 pub fn bare_local_operator_name(name: &str) -> &str {
+    // sugar-audit: default-ok(absent-legacy-concept-prefix-means-the-name-is-already-bare)
     name.strip_prefix(LEGACY_CONCEPT_PREFIX).unwrap_or(name)
 }
 

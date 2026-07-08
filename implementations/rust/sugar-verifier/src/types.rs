@@ -29,6 +29,42 @@ pub struct LoadError {
     pub reason: String,
 }
 
+/// Which side of the vendor/consumer conversation a speaker is on. This is
+/// the ONLY thing the consistency labeling ever reads: a `Vendor` speaker's
+/// members become the VENDOR-FACT half of a report row, a `Consumer`
+/// speaker's members become the YOUR-FACT half.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SpeakerRole {
+    Vendor,
+    Consumer,
+}
+
+/// WHO SAID a pool member (#3807/#3812): the identity stamped against each
+/// member CID at the moment its bytes enter the pool, by the loader (or
+/// utterance verb) that actually knows where they came from.
+///
+/// This is the CONSTRUCTED attribution stamp: instead of inferring "is this
+/// a vendor fact?" from callsite position (first()), authorship heuristics
+/// in the report renderer, or a buffer relabel in the editor, the intake
+/// that KNOWS who spoke a member records it here, once, at insert time.
+/// Every later consumer (consistency partitioning, report rendering) reads
+/// this stamp instead of re-deriving it. Minimal by design: no
+/// authentication yet, just a label and a role.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Speaker {
+    /// Human-readable identity label. For path-walk loads this is the
+    /// `.proof` bundle path; for `ProofBytes` loads the caller's label; for
+    /// utterance verbs whatever identity the caller supplied. Not a
+    /// MementoCid: some intakes supply a human label rather than a bundle
+    /// CID.
+    pub id: String,
+    /// `Vendor` when the member arrived from a staged vendor bundle
+    /// (`.sugar/imports/**`) or a vendor-role utterance; `Consumer` when it
+    /// is the consumer's own project output (own bundle, scratch overlay,
+    /// self-check fixture, consumer-role utterance).
+    pub role: SpeakerRole,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectSiteAnnotation {
     pub effect_kind: String,
@@ -304,6 +340,14 @@ pub struct MementoPool {
     /// in two bundles (an honest one and a poisoned one); we never want
     /// last-writer-wins to silently swap them.
     pub bundle_members: BTreeMap<MementoCid, std::collections::BTreeSet<MementoCid>>,
+    /// THE ATTRIBUTION MAP (#3807/#3812): member CID -> `Speaker`. Stamped
+    /// at insert time by the intake that knows who spoke a member's bytes
+    /// (`load_all_proofs`, the utterance verbs `speak_*`, the daemon's
+    /// overlay/base-pool loads, or a test fixture's explicit
+    /// `attribute_member_for_tests`). A side map, not a `StoredMember`
+    /// field: attribution is a POOL-INTAKE fact ("who handed me these
+    /// bytes"), not part of the memento's own signed content.
+    pub member_speaker: BTreeMap<MementoCid, Speaker>,
     pub load_errors: Vec<LoadError>,
     /// Contract CID -> contract name (indexed during load)
     pub cid_to_name: BTreeMap<MementoCid, String>,
@@ -383,6 +427,50 @@ impl MementoPool {
     /// consumer call sites.
     pub fn stored_member<'a>(&'a self, cid: &MementoCid) -> Option<&'a StoredMember> {
         self.mementos.get(cid)
+    }
+
+    /// Attribute a member CID to a speaker (#3807/#3812). Called by the
+    /// intake that knows who spoke the member's bytes. IDEMPOTENT by CID:
+    /// first writer wins, so re-speaking an already-attributed member is a
+    /// no-op, and a later `merge()` from another pool preserves the FIRST
+    /// pool's stamp on collision (same policy as every other index).
+    pub fn attribute_member(&mut self, cid: MementoCid, speaker: Speaker) {
+        self.member_speaker.entry(cid).or_insert(speaker);
+    }
+
+    /// Test/fixture-only attribution stamping by CID string, so consistency
+    /// and report tests can construct vendor/consumer member sets without
+    /// going through the on-disk `.proof` loader.
+    #[doc(hidden)]
+    pub fn attribute_member_for_tests(&mut self, cid: &str, role: SpeakerRole, id: &str) {
+        if let Ok(cid) = MementoCid::try_parse(cid.to_string()) {
+            self.attribute_member(
+                cid,
+                Speaker {
+                    id: id.to_string(),
+                    role,
+                },
+            );
+        }
+    }
+
+    /// Look up who spoke a member, if attribution was stamped at intake.
+    pub fn member_speaker(&self, cid: &MementoCid) -> Option<&Speaker> {
+        self.member_speaker.get(cid)
+    }
+
+    /// Was this member CID spoken by a VENDOR-role speaker (staged
+    /// `.sugar/imports/**` bundle or vendor utterance)? Members with no
+    /// recorded attribution (e.g. pool built entirely by
+    /// `insert_unanchored_for_tests` fixtures that never call
+    /// `attribute_member_for_tests`) are treated as CONSUMER -- the safe
+    /// default that reproduces pre-#3807 behavior (everything conjoined as
+    /// the client's own fact) for callers that never opted into attribution.
+    pub fn is_vendor_member(&self, cid: &str) -> bool {
+        MementoCid::try_parse(cid.to_string())
+            .ok()
+            .and_then(|cid| self.member_speaker.get(&cid))
+            .is_some_and(|speaker| speaker.role == SpeakerRole::Vendor)
     }
 
     /// Iterate verified members of one kind in pool CID order.
@@ -767,7 +855,12 @@ impl MementoPool {
         Ok(Some(value))
     }
 
-    #[cfg(test)]
+    /// Test-only fixture helper: insert a raw envelope without signature
+    /// anchoring. Not `#[cfg(test)]` (part of #3774 warm-daemon slice) so
+    /// sugar-linkerd's `tests/prove_consistency.rs` integration test can build
+    /// the identical fixture shape this crate's own consistency tests use,
+    /// rather than duplicating envelope-shape knowledge in a second crate.
+    #[doc(hidden)]
     pub fn insert_unanchored_for_tests(&mut self, memento_cid: MementoCid, envelope: Json) {
         let member = StoredMember::from_envelope(memento_cid.clone(), &envelope)
             .expect("test member must carry a known member kind");
@@ -1155,6 +1248,9 @@ impl MementoPool {
         for (k, vs) in other.bundle_members {
             self.bundle_members.entry(k).or_default().extend(vs);
         }
+        for (k, v) in other.member_speaker {
+            self.member_speaker.entry(k).or_insert(v);
+        }
         self.load_errors.extend(other.load_errors);
         for (k, v) in other.cid_to_name {
             self.cid_to_name.entry(k).or_insert(v);
@@ -1467,6 +1563,18 @@ impl<'de> Deserialize<'de> for BridgePin {
     }
 }
 
+/// The source locus of a lifted assertion, recovered from the contract
+/// memento's own `file` + `span` fields. Threaded through the consistency
+/// verdict so an `unsatisfied` row says WHERE the offending assertion is,
+/// letting the IDE anchor a red squiggle at the exact line/column instead of
+/// dropping the source the way a directory-prove otherwise does (#3462 family).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SourceLocus {
+    pub file: String,
+    pub line: usize,
+    pub column: Option<usize>,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct CallSite {
     pub bridge_ir_name: String,
@@ -1542,6 +1650,10 @@ pub struct CallSite {
     pub file: Option<String>,
     /// Opaque kit-provided source line for observability.
     pub line: Option<usize>,
+    /// Opaque kit-provided source column (0-based) for observability. Carried
+    /// alongside `file`/`line` so a consistency verdict can anchor an IDE
+    /// diagnostic at the exact assertion, not merely the file/line.
+    pub source_column: Option<usize>,
     /// Opaque kit-provided callee label for observability.
     pub callee: Option<String>,
     /// True when the kit classified this callsite as panic-relevant. The

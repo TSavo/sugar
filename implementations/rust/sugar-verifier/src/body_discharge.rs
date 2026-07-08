@@ -64,7 +64,7 @@
 // itself a direct arg of an `=` atomic (e.g. `=(Ok(clone(x)), Ok(x))`),
 // `enumerate_callsites` now threads the enclosing `=` atomic down through
 // the non-bridged ctor so the nested callsite sees it. This tier then
-// reduces BOTH sides of the enclosing `=` via `wp::value_expr_of_term`,
+// reduces BOTH sides of the enclosing `=` via `wp::lower_term`,
 // which recurses into every body-bearing nested call and leaves
 // no-contract ctors as uninterpreted constructors. The result is
 // `=(reduced_lhs, reduced_rhs)` — the same obligation as the outer
@@ -73,7 +73,7 @@
 //
 // The pre-guard: if the nested call has a non-trivial `pre` (a real
 // precondition, e.g. `unwrap` / `expect`), reduce-in-place is refused.
-// `value_expr_of_term` inlines the body value and silently drops the
+// `lower_term` inlines the body value and silently drops the
 // precondition check, which would falsely discharge an equality around a
 // call that can panic. Pre-bearing nested calls stay honestly undecidable.
 //
@@ -91,7 +91,7 @@
 //            preserved; unwrap can panic so its pre must be discharged
 //            separately, not silently dropped).
 //
-// SOUNDNESS: `value_expr_of_term` uses the body definition (ground truth),
+// SOUNDNESS: `lower_term` uses the body definition (ground truth),
 // not the postcondition as an axiom. Both sides are reduced by the same
 // mechanism. A false nested-body emits a concrete wrong equality that z3
 // refutes. No circular self-assumption. falsePass=0 invariant holds.
@@ -100,7 +100,7 @@ use serde_json::Value as Json;
 
 use libsugar::core::types::Term;
 use libsugar::wp::{
-    self, value_expr_of_term, OpContractInfo, OpContractResolver, SlotInfo, WpError,
+    self, lower_term, OpContractInfo, OpContractResolver, SlotInfo, WpError,
 };
 use sugar_ir_types::{IrFormula, IrTerm};
 
@@ -380,7 +380,7 @@ pub fn extract_body_obligation(
         // NESTED-CALL reduce-in-place tier. When the enclosing atomic IS an
         // `=` (threaded down by `enumerate_callsites` through non-bridged
         // ctors), reduce both sides of the enclosing `=` fully via
-        // `value_expr_of_term`. This inlines every body-bearing nested call
+        // `lower_term`. This inlines every body-bearing nested call
         // (including the current callsite's call) and leaves no-contract ctors
         // as uninterpreted constructors. The result is `=(reduced_lhs,
         // reduced_rhs)` for z3.
@@ -1103,7 +1103,7 @@ fn recognize_eq_nested_call(cs: &CallSite) -> bool {
 /// call nested inside a non-bridged ctor that is itself inside an `=` atomic.
 ///
 /// The mechanism is **reduce-in-place**: reduce BOTH sides of the enclosing
-/// `=` via [`libsugar::wp::value_expr_of_term`], which recurses into
+/// `=` via [`libsugar::wp::lower_term`], which recurses into
 /// every argument, inlines body-bearing nested calls through their body
 /// definitions, and keeps no-contract ctors as uninterpreted constructors.
 /// The result is `=(reduced_lhs, reduced_rhs)` — a concrete formula with
@@ -1112,7 +1112,7 @@ fn recognize_eq_nested_call(cs: &CallSite) -> bool {
 /// # Pre-guard (refuse-floor)
 ///
 /// Before reducing, checks whether the nested call's target contract
-/// carries a non-trivial `pre`. If it does, **refuses**. `value_expr_of_term`
+/// carries a non-trivial `pre`. If it does, **refuses**. `lower_term`
 /// inlines only the body VALUE and silently discards the precondition; a
 /// call that can panic (e.g. `unwrap`, `expect`) must have its pre discharged
 /// via the panic-freedom path, not silently dropped here. Refusing preserves
@@ -1129,7 +1129,7 @@ fn recognize_eq_nested_call(cs: &CallSite) -> bool {
 ///
 /// # Soundness
 ///
-/// `value_expr_of_term` uses the function's body definition (the ground
+/// `lower_term` uses the function's body definition (the ground
 /// truth, same as wp). It does NOT assume the callee's postcondition as
 /// an axiom. A false body definition produces a concretely-wrong equality
 /// that z3 refutes (SAT on the negation). falsePass=0 is preserved.
@@ -1138,7 +1138,7 @@ fn extract_eq_nested_reduce_obligation(
     pool: &MementoPool,
 ) -> Result<Option<BodyObligation>, String> {
     // Pre-guard: refuse if the nested call's target has a non-trivial pre.
-    // value_expr_of_term inlines the body VALUE only; a precondition on the
+    // lower_term inlines the body VALUE only; a precondition on the
     // nested call must be discharged separately (panic-freedom path), not
     // silently dropped by inlining.
     if target_has_nontrivial_pre(cs, pool) {
@@ -1166,7 +1166,7 @@ fn extract_eq_nested_reduce_obligation(
     let resolver = CatalogResolver::new(pool);
 
     // Deserialize the LHS and RHS of the `=` as IrTerms, then reduce each
-    // through all body-bearing calls via value_expr_of_term.
+    // through all body-bearing calls via lower_term.
     let lhs_ir: IrTerm = serde_json::from_value(lhs_json.clone()).map_err(|e| {
         format!(
             "refuse: nested-call reduce-in-place: LHS of enclosing `=` for \
@@ -1183,18 +1183,18 @@ fn extract_eq_nested_reduce_obligation(
     })?;
 
     // IrTerm -> Term conversion (same as in extract_body_obligation and
-    // reduce_to_value_expr). value_expr_of_term takes &Term, not &IrTerm.
+    // reduce_to_value_expr). lower_term takes &Term, not &IrTerm.
     let lhs_term: Term = lhs_ir.into();
     let rhs_term: Term = rhs_ir.into();
 
-    let reduced_lhs = value_expr_of_term(&lhs_term, &resolver).map_err(|e| {
+    let reduced_lhs = lower_term(&lhs_term, &resolver).map_err(|e| {
         format!(
             "refuse: nested-call reduce-in-place: LHS reduction failed for \
              `{}`: {e}",
             cs.bridge_ir_name
         )
     })?;
-    let reduced_rhs = value_expr_of_term(&rhs_term, &resolver).map_err(|e| {
+    let reduced_rhs = lower_term(&rhs_term, &resolver).map_err(|e| {
         format!(
             "refuse: nested-call reduce-in-place: RHS reduction failed for \
              `{}`: {e}",
@@ -1219,7 +1219,7 @@ fn extract_eq_nested_reduce_obligation(
 #[cfg(test)]
 mod discharge_method_tests {
     use super::*;
-    use libsugar::panic_freedom;
+    use sugar_ir_types::panic_freedom;
     use serde_json::json;
 
     fn ok_ctor(arg: &str) -> Json {
@@ -1478,7 +1478,7 @@ mod callee_post_guard_fact_tests {
     //!   - a `var` arg_term (not a call) does NOT yield a fact (structural).
     use super::*;
     use crate::types::{CallSite, MementoPool};
-    use libsugar::panic_freedom;
+    use sugar_ir_types::panic_freedom;
     use serde_json::json;
 
     // CIDs for hand-built contracts in these tests.
@@ -2268,7 +2268,7 @@ mod nested_call_reduce_in_place_tests {
     //! Three tests per the discrimination protocol:
     //!
     //!   POSITIVE  -- `=(Ok(double(3)), Ok(6))` must reduce both sides via
-    //!                `value_expr_of_term`, yielding `=(Ok(*(3,2)), Ok(6))`.
+    //!                `lower_term`, yielding `=(Ok(*(3,2)), Ok(6))`.
     //!                Sides differ structurally (6 vs *(3,2)), so this is NOT
     //!                reflexive but IS a sound concrete obligation for z3.
     //!                Note: the unit test only checks the SHAPE (no z3 fork);
@@ -2563,7 +2563,7 @@ mod nested_call_reduce_in_place_tests {
     fn structural_pre_bearing_nested_call_is_refused() {
         // Atomic: `=(Ok(pre_bearing_call(x)), Ok(x))`.
         // `pre_bearing_call` has a real non-trivial `pre` (is_ok(x)). The
-        // reduce-in-place path MUST refuse, because `value_expr_of_term` would
+        // reduce-in-place path MUST refuse, because `lower_term` would
         // silently drop the pre. The refuse-floor is preserved: a pre-bearing
         // nested call stays undecidable.
         let x_var = json!({"kind": "var", "name": "x"});

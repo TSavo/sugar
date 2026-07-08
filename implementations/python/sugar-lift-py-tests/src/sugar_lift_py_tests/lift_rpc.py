@@ -15,6 +15,7 @@ from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.filename import cid_from_proof_stem
 from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
+from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
 from sugar_lift_py_tests.lib import lift_source
 
 KIT_ID = "python"
@@ -24,6 +25,7 @@ LIFT_RPC_MODULE = "sugar_lift_py_tests.lift_rpc"
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
 COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
 RESOLVE_SOURCE_MEMENTO_RPC_METHOD = "sugar.plugin.resolve_source_memento"
+ENUMERATE_RPC_METHOD = "sugar.enumerate"
 COMPONENT_PROTOCOL_VERSION = "sugar-component/1"
 LIFT_PROTOCOL_VERSION = "pep/1.7.0"
 PYTHON_SURFACE = "python"
@@ -62,12 +64,24 @@ def _kit_declaration_result() -> Dict[str, Any]:
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": True},
                 {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
                 {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": False},
+                {"name": ENUMERATE_RPC_METHOD, "required": False},
                 {"name": "lift", "required": True},
                 {"name": "sugar.plugin.lift_implications", "required": False},
                 {"name": "sugar.plugin.resolve_dependency_proofs", "required": False},
                 {"name": "shutdown", "required": False},
             ]
         },
+        # PART 6 FIX (2026-07-08, discovered by `Kit::rendezvous` against a
+        # real python kit for the first time -- no prior rust test exercised
+        # this path with the python kit; the strong `KitDeclaration` schema
+        # (`sugar-claim-envelope`) requires `proofResolution.strategy`
+        # non-empty; this kit's proof-resolution mechanism is exactly its
+        # `sugar.plugin.resolve_dependency_proofs` handler below.
+        "proofResolution": {
+            "strategy": "rpc-proof-bytes",
+            "rpcMethod": "sugar.plugin.resolve_dependency_proofs",
+        },
+        "residueCategories": [],
     }
 
 
@@ -515,6 +529,399 @@ def _resolve_source_memento_result(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _degenerate_file_memento(rel_path: str) -> Dict[str, Any]:
+    """The file-level locator (Part 6 Phase 2's "degenerate memento shape"):
+    a `source-memento` with only `file` populated -- span/source_cid/
+    template_cid absent (`null`), since a whole file has no single body/AST
+    template to CID. `SourceFile` is the one node type whose locator does not
+    name a function body."""
+    return {
+        "kind": "source-memento",
+        "file": rel_path,
+        "function_name": "",
+        "span": None,
+        "param_names": [],
+        "source_cid": None,
+        "template_cid": None,
+    }
+
+
+def _enumerate_file_of(at: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(at, dict):
+        return None
+    file_name = at.get("file")
+    return file_name if isinstance(file_name, str) and file_name else None
+
+
+def _memento_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
+    """Primary-key equality for the tree's locator (the plan's "memento is
+    the primary key"): same file + same span + same source_cid. Only span
+    fields present on BOTH sides are compared, so a degenerate (file-only)
+    target matches on file alone."""
+    if candidate.get("file") != target.get("file"):
+        return False
+    target_source_cid = target.get("source_cid") or target.get("sourceCid")
+    if target_source_cid:
+        if candidate.get("source_cid") != target_source_cid:
+            return False
+    target_span = target.get("span")
+    # The Rust client's `SourceMemento` has no optional span -- a
+    # degenerate (file-only) locator round-trips through it as an
+    # all-zero span (`SrcSpan{0,0,0,0}`), not `null` (see `tree.rs`'s
+    # `decode_memento` doc). Treat an all-zero span the SAME as "no span
+    # constraint" so a file-level seek survives that round trip.
+    if isinstance(target_span, dict) and any(
+        target_span.get(key) not in (0, None)
+        for key in ("start_line", "start_col", "end_line", "end_col")
+    ):
+        candidate_span = candidate.get("span") or {}
+        for key in ("start_line", "start_col", "end_line", "end_col"):
+            if key in target_span and candidate_span.get(key) != target_span.get(key):
+                return False
+    target_fn = (
+        target.get("function_name")
+        or target.get("sourceFunctionName")
+        or target.get("source_function_name")
+    )
+    if target_fn:
+        candidate_fn = (
+            candidate.get("function_name")
+            or candidate.get("sourceFunctionName")
+            or candidate.get("source_function_name")
+        )
+        if candidate_fn != target_fn:
+            return False
+    return True
+
+
+def _lift_file_for_enumeration(
+    workspace_root: str, root: Path, file_rel: str
+) -> List[Dict[str, Any]]:
+    """Lift ONE file server-side (Part 6 Phase 3: "it is ACCEPTABLE ... for
+    the first cut to lift the WHOLE file ... and slice/serve the requested
+    level from that one parse" -- file-granular laziness, not per-node wire
+    laziness). Returns `payload.ir` (`BodyUniverseDto` rows, already through
+    `to_rpc_value`): `kind="function-contract"` entries ARE the function
+    level; `kind="contract"` entries are the per-call-site claims (this
+    kit's construction collapses call-site and assertion into ONE record --
+    see the module note by `_handle_enumerate`), each carrying its own
+    `sourceWarrants[0]` memento and `post`/`inv` FOL.
+    """
+    full_path = (root / file_rel).resolve()
+    source = full_path.read_text(encoding="utf-8")
+    try:
+        result = lift_source(str(full_path), source, memento_file=file_rel)
+    except ValueError as exc:
+        if "no source sites" in str(exc):
+            return []
+        raise
+    return [to_rpc_value(item) for item in result.payload.ir]
+
+
+def _item_memento(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    warrants = item.get("sourceWarrants")
+    if isinstance(warrants, list) and warrants and isinstance(warrants[0], dict):
+        return warrants[0]
+    return None
+
+
+def _item_fact_formula(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return item.get("inv") if item.get("inv") is not None else item.get("post")
+
+
+def _find_item_by_memento(
+    items: List[Dict[str, Any]], target: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(target, dict):
+        return None
+    for item in items:
+        memento = _item_memento(item)
+        if memento is not None and _memento_matches(memento, target):
+            return item
+    return None
+
+
+def _send_enumerate_result(
+    msg_id: Any,
+    nodes: List[Dict[str, Any]],
+    gaps: List[Dict[str, Any]],
+) -> None:
+    _send(
+        {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {"nodes": nodes, "gaps": gaps},
+        }
+    )
+
+
+def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
+    """`sugar.enumerate`: the ONE wire method behind the Rust `tree` module's
+    lazy accessors (Part 6 Phase 2,
+    `protocol/specs/2026-07-08-enumeration-protocol.md`). `level` selects the
+    granularity; `at` is the parent's (scan) or this node's own (seek)
+    memento; `seek=true` asks for exactly the ONE node matching `at` rather
+    than every child of it.
+    """
+    level = params.get("level")
+    workspace_root = str(params.get("workspace_root", "."))
+    at = params.get("at") if isinstance(params.get("at"), dict) else None
+    seek = bool(params.get("seek", False))
+    root = Path(workspace_root).resolve()
+
+    try:
+        if level == "source_files":
+            nodes = []
+            for full_path in _iter_python_files(workspace_root, ["."]):
+                try:
+                    rel_path = Path(full_path).resolve().relative_to(root).as_posix()
+                except ValueError:
+                    rel_path = Path(full_path).name
+                memento = _degenerate_file_memento(rel_path)
+                if seek and at is not None and not _memento_matches(memento, at):
+                    continue
+                nodes.append({"memento": memento, "audit": None, "payload": None})
+            _send_enumerate_result(msg_id, nodes, [])
+            return
+
+        if level in ("functions", "call_sites", "assertions", "facts"):
+            file_rel = _enumerate_file_of(at)
+            if file_rel is None:
+                _send_enumerate_result(
+                    msg_id,
+                    [],
+                    [
+                        {
+                            "memento": at,
+                            "reason": f"sugar.enumerate level={level!r} requires `at.file`",
+                        }
+                    ],
+                )
+                return
+            full_path = root / file_rel
+            # SECURITY (macroscope on #3862): a forged memento with an
+            # absolute path (pathlib join discards root) or a ../ traversal
+            # could enumerate files OUTSIDE the workspace. Require the
+            # resolved path to stay under the resolved workspace root.
+            resolved_root = root.resolve()
+            resolved_full = full_path.resolve()
+            if not (
+                resolved_full == resolved_root
+                or resolved_root in resolved_full.parents
+            ):
+                _send_enumerate_result(
+                    msg_id,
+                    [],
+                    [
+                        {
+                            "memento": at,
+                            "reason": (
+                                "refused: memento file escapes the workspace root "
+                                f"({file_rel!r})"
+                            ),
+                        }
+                    ],
+                )
+                return
+            if not full_path.is_file():
+                _send_enumerate_result(
+                    msg_id,
+                    [],
+                    [{"memento": at, "reason": f"no such file: {file_rel}"}],
+                )
+                return
+            ir_items = _lift_file_for_enumeration(workspace_root, root, file_rel)
+
+            if level == "functions":
+                # A function gets a node either because it OWNS a
+                # function-contract (kind="function-contract") or because it
+                # merely ENCLOSES a call-site assertion (kind="contract",
+                # whose memento's own source_function_name names its caller
+                # -- e.g. a test function with no contract of its own but
+                # real assertions inside it). Both are real functions in the
+                # source; a driver walking source_files -> functions must be
+                # able to reach either kind of call site underneath.
+                seen_names: set = set()
+                nodes = []
+
+                def _emit(memento, audit):
+                    fn_name = memento.get("source_function_name") or memento.get(
+                        "sourceFunctionName"
+                    )
+                    if fn_name in seen_names:
+                        return
+                    if seek and at is not None and not _memento_matches(memento, at):
+                        return
+                    seen_names.add(fn_name)
+                    nodes.append({"memento": memento, "audit": audit, "payload": None})
+
+                for item in ir_items:
+                    if item.get("kind") != "function-contract":
+                        continue
+                    memento = _item_memento(item)
+                    if memento is None:
+                        continue
+                    _emit(
+                        memento,
+                        {
+                            "kind": item.get("kind"),
+                            "name": item.get("name"),
+                            "formals": item.get("formals"),
+                            "bridgeSourceSymbol": item.get("bridgeSourceSymbol"),
+                        },
+                    )
+                for item in ir_items:
+                    if item.get("kind") != "contract":
+                        continue
+                    memento = _item_memento(item)
+                    if memento is None:
+                        continue
+                    fn_name = memento.get("source_function_name") or memento.get(
+                        "sourceFunctionName"
+                    )
+                    if not fn_name or fn_name in seen_names:
+                        continue
+                    _emit(
+                        {
+                            "kind": "source-memento",
+                            "file": file_rel,
+                            "function_name": fn_name,
+                            "source_function_name": fn_name,
+                            "span": None,
+                            "param_names": [],
+                            "source_cid": None,
+                            "template_cid": None,
+                        },
+                        {
+                            "kind": "function",
+                            "name": fn_name,
+                            "note": "no function-contract of its own; reachable "
+                            "because it encloses a call-site assertion",
+                        },
+                    )
+                _send_enumerate_result(msg_id, nodes, [])
+                return
+
+            if level == "call_sites":
+                # GRANULARITY (reported, not hidden): `Function::call_sites()`
+                # scopes to `kind="contract"` items whose own memento's
+                # `source_function_name` matches the enclosing function's
+                # name from `at` -- there is no per-function AST-scope index
+                # kit-side yet beyond that name match, so two same-named
+                # nested functions in one file would collide (flagged, not
+                # hidden; out of scope for this fixture-sized cut).
+                target_fn = (
+                    at.get("function_name")
+                    or at.get("sourceFunctionName")
+                    or at.get("source_function_name")
+                    if at
+                    else None
+                )
+                built = []
+                for item in ir_items:
+                    if item.get("kind") != "contract":
+                        continue
+                    memento = _item_memento(item)
+                    if memento is None:
+                        continue
+                    if target_fn:
+                        item_fn = (
+                            memento.get("source_function_name")
+                            or memento.get("sourceFunctionName")
+                            or memento.get("function_name")
+                        )
+                        if item_fn != target_fn:
+                            continue
+                    if seek and at is not None and not _memento_matches(memento, at):
+                        continue
+                    built.append({"memento": memento, "audit": item, "payload": None})
+                _send_enumerate_result(msg_id, built, [])
+                return
+
+            if level == "assertions":
+                # Seek-only: a call site's own contract item IS its
+                # assertion (1:1 in this cut's granularity -- see tree.rs
+                # module doc's CLAIM-side note).
+                item = _find_item_by_memento(ir_items, at)
+                if item is None:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [{"memento": at, "reason": "no call site for this memento"}],
+                    )
+                    return
+                _send_enumerate_result(
+                    msg_id,
+                    [
+                        {
+                            "memento": _item_memento(item),
+                            "audit": item,
+                            "payload": None,
+                        }
+                    ],
+                    [],
+                )
+                return
+
+            if level == "facts":
+                item = _find_item_by_memento(ir_items, at)
+                if item is None:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [{"memento": at, "reason": "no assertion for this memento"}],
+                    )
+                    return
+                formula = _item_fact_formula(item)
+                if formula is None:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [
+                            {
+                                "memento": _item_memento(item),
+                                "reason": "assertion carries no post/inv fact",
+                            }
+                        ],
+                    )
+                    return
+                _send_enumerate_result(
+                    msg_id,
+                    [
+                        {
+                            "memento": _item_memento(item),
+                            "audit": item,
+                            "payload": formula,
+                        }
+                    ],
+                    [],
+                )
+                return
+
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32602,
+                    "message": f"sugar.enumerate: unknown level {level!r}",
+                },
+            }
+        )
+    except Exception as exc:
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32603,
+                    "message": str(exc),
+                    "data": traceback.format_exc(),
+                },
+            }
+        )
+
+
 def _handle_initialize(msg_id: Any) -> None:
     _send(
         {
@@ -785,6 +1192,8 @@ def main(argv: Optional[List[str]] = None) -> None:
             _handle_resolve_dependency_proofs(
                 msg_id, params if isinstance(params, dict) else {}
             )
+        elif method == ENUMERATE_RPC_METHOD:
+            _handle_enumerate(msg_id, params if isinstance(params, dict) else {})
         elif method == "shutdown":
             _send({"jsonrpc": "2.0", "id": msg_id, "result": {"ok": True}})
             break

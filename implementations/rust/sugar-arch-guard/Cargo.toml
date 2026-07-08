@@ -1,0 +1,15 @@
+[package]
+name = "sugar-arch-guard"
+description = "Dependency-closure guard: encodes the workspace's REAL dependency baseline and forbids the arrows that would invert the compiler DAG."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Deliberately NO workspace-crate dependencies: the guard must build in
+# seconds and stay green regardless of which crate is mid-surgery. It reads
+# manifests; it never links the code it audits.
+[dependencies]
+toml = "0.8"
+
+[lib]
+path = "src/lib.rs"

@@ -41,8 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from .leaf_assertions import harvest_source
-from .bind_lifter import _local_op_cid
-from .lifter import lift_source
+from .lifter import _module_path, lift_source
 from .verify_dialect import (
     VerifyDialectRefusal,
     collect_int_signatures,
@@ -143,12 +142,12 @@ def _iter_py_files(root: Path):
 def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
     """Walk every `.py` under root, returning (ir_items, diagnostics).
 
-    mode == "bindings": `library-sugar-binding-entry` per annotated function
+    mode == "bindings": `library-sugar-binding-entry` per catalogued function
       (declaration catalog; mint skips it). Delegates to the bind lifter.
-    mode == "contracts": verify-facing function-contracts gated on the
-      `@sugar.boundary`/`@sugar.sugar` declaration + harvested callsites.
-    mode == "bare": verify-facing function-contracts for ALL functions +
-      harvested callsites (the production-bridge behaviour).
+    mode == "contracts" / mode == "bare": verify-facing function-contracts for
+      ALL functions + harvested callsites (the production-bridge behaviour).
+      Annotation authoring surfaces are retired (#3816): NATIVE SOURCE is the
+      only lift path, so there is no declaration gate.
     """
     Json = dict
     root_path = Path(root or ".").resolve()
@@ -156,11 +155,9 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
     diagnostics: list[Json] = []
     seen_fn: set[str] = set()
     seen_contract: set[str] = set()
-    annotated_only = mode != "bare"
 
     # The bindings surface is the declaration catalog only -- delegate wholly
-    # to the existing bind lifter (it already emits library-sugar-binding-entry
-    # from @sugar.bind / @sugar.boundary). No callsite harvesting.
+    # to the existing bind lifter. No callsite harvesting.
     if mode == "bindings":
         from . import bind_lifter
 
@@ -188,9 +185,12 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
                 ir_items.append(decl)
             continue
 
-        # Body-derived function-contracts (verify-facing dialect).
-        annotations = _boundary_annotations(source)
-        sorts_by_fn = collect_int_signatures(source)
+        # Body-derived function-contracts (verify-facing dialect). Keyed by
+        # QUALIFIED fnName (module_path + qualname, mirroring the lifter's own
+        # `fnName` construction) end-to-end: two functions that share only a
+        # bare leaf name (a method on another class, a nested helper shadowing
+        # a module-level function, ...) must not collide (#3819).
+        sorts_by_fn = collect_int_signatures(source, _module_path(rel))
         lifted = lift_source(source, rel)
         diagnostics.extend(lifted.diagnostics)
         for refusal in lifted.refusals:
@@ -203,11 +203,7 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
                 continue
             if fn_name in seen_fn:
                 continue
-            bare = fn_name.rsplit(".", 1)[-1]
-            declaration = annotations.get(bare)
-            if annotated_only and declaration is None:
-                continue
-            sorts = sorts_by_fn.get(bare)
+            sorts = sorts_by_fn.get(fn_name)
             if sorts is None:
                 diagnostics.append(
                     {"path": rel, "message": f"{fn_name}: no signature parsed"}
@@ -225,49 +221,9 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
                 )
                 continue
             seen_fn.add(fn_name)
-            # Tag the contract with the authoring declaration's canonical
-            # operator CID; the authoring string itself is not transported as
-            # identity.
-            if declaration is not None:
-                concept = declaration.get("concept", "")
-                if concept:
-                    item["opCid"] = _local_op_cid(concept)
-                item["authoringKind"] = declaration.get("kind", "")
-                if declaration.get("library"):
-                    item["library"] = declaration["library"]
             ir_items.append(item)
 
     return ir_items, diagnostics
-
-
-def _boundary_annotations(source: str) -> dict[str, dict[str, str]]:
-    """Map bare function name -> {concept, kind, library} for functions
-    decorated with `@sugar.boundary(...)` / `@boundary(...)` /
-    `@sugar.sugar(...)` / `@sugar(...)`. This gates verify-facing contract
-    emission in the `contracts` surface, mirroring Go's `AnnotatedOnly`.
-
-    Note this is distinct from the existing `@sugar.bind(concept=, library=)`
-    library-binding decorator the bind lifter consumes; `@boundary`/`@sugar`
-    here is the verify-facing AUTHORING declaration: "this function's body is a
-    contract I want discharged"."""
-    import ast
-
-    from .authoring import authoring_declaration
-
-    out: dict[str, dict[str, str]] = {}
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return out
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            decl = authoring_declaration(decorator)
-            if decl is not None:
-                out[node.name] = decl
-                break
-    return out
 
 
 def dispatch(request: dict[str, Any]) -> dict[str, Any]:

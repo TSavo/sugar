@@ -22,6 +22,7 @@ use clap::{Parser, Subcommand};
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
+mod admission;
 mod cmd_bind;
 mod cmd_compose;
 mod cmd_diff;
@@ -32,18 +33,17 @@ mod cmd_hash;
 mod cmd_implicate;
 mod cmd_init;
 mod cmd_lift;
-mod cmd_materialize;
 mod cmd_mint;
 mod cmd_model;
 mod cmd_package;
 mod cmd_plugin;
 mod cmd_prove;
-mod cmd_recognize;
 mod cmd_release_gate;
 mod cmd_self_check;
 mod cmd_verify;
 mod cmd_version;
 mod component_plan;
+mod discharge_config;
 mod doctor;
 mod doctor_oracle;
 pub mod floor_runtime_check;
@@ -130,12 +130,6 @@ enum Cmd {
     Dump(DumpArgs),
     /// Compute the BLAKE3-512 self-identifying CID of a file (or stdin).
     Hash(HashArgs),
-    /// Recognizer (per protocol §4.2.5): scan source for shapes that
-    /// match published sugar binding templates; emit tags. The reverse
-    /// direction of `materialize` — same kit, same AST machinery, two
-    /// directions over one .proof envelope. Tron-named for the kit-side
-    /// fingerprint scanner.
-    Recognize(cmd_recognize::RecognizeArgs),
     /// Initialize a project: sugar.toml, .sugar/, sample invariant, GitHub Action.
     Init(InitArgs),
     /// Dispatch the configured lift surface and write its ProofIR term JSON (no `.proof` envelope; use `mint` for that).
@@ -154,8 +148,6 @@ enum Cmd {
     /// Implements the eight-verb pipeline (paper 20 §9) against arbitrary user code.
     /// --rewrite={annotate,canonical,invisible} --mode={witness,emitter,monitor,gate} --target-language=<lang>
     Bind(cmd_bind::BindArgs),
-    /// Materialize source-oracle bodies by resolving real source by reference.
-    Materialize(cmd_materialize::MaterializeArgs),
     /// Validate a kit's config/manifest wiring before a run. Catches missing
     /// binaries (the manifest-path footgun) before they silently produce an
     /// empty-set attestation. Exit 0 on pass (warnings allowed), exit 2 on any
@@ -333,7 +325,6 @@ fn main() -> ExitCode {
         Cmd::Implicate(a) | Cmd::Imp(a) => cmd_implicate::run(a),
         Cmd::Dump(a) => cmd_dump::run(a),
         Cmd::Hash(a) => cmd_hash::run(a),
-        Cmd::Recognize(a) => cmd_recognize::run(a),
         Cmd::Init(a) => cmd_init::run(a),
         Cmd::Lift(a) => cmd_lift::run(a),
         Cmd::Mint(a) => cmd_mint::run(a),
@@ -341,7 +332,6 @@ fn main() -> ExitCode {
         Cmd::Version(a) => cmd_version::run(a),
         Cmd::Compose(a) => cmd_compose::run(a),
         Cmd::Bind(a) => cmd_bind::run(a),
-        Cmd::Materialize(a) => cmd_materialize::run(a),
         Cmd::Doctor(a) => cmd_doctor::run(a),
         Cmd::ReleaseGate(a) => cmd_release_gate::run(a),
         Cmd::Derive(a) => cmd_model::run(a),

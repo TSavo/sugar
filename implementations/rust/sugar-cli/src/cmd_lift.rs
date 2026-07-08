@@ -1699,11 +1699,9 @@ fn source_report_from_lift_response(
         .cloned()
         .unwrap_or_default();
     trace_lift_collection_checkpoint("source_report.diagnostics", diagnostics.len());
-    if let Some(condition) = no_vendor_test_corpus_condition(
-        &ledger,
-        &assertion_surface_audits,
-        &contracts,
-    ) {
+    if let Some(condition) =
+        no_vendor_test_corpus_condition(&ledger, &assertion_surface_audits, &contracts)
+    {
         diagnostics.push(condition);
     }
 
@@ -4874,7 +4872,9 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
     for diagnostic in &report.diagnostics {
         if diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus") {
             if let Some(message) = diagnostic.get("message").and_then(Value::as_str) {
-                out.push_str(&format!("NAMED CONDITION [no-vendor-test-corpus]: {message}\n"));
+                out.push_str(&format!(
+                    "NAMED CONDITION [no-vendor-test-corpus]: {message}\n"
+                ));
             }
         }
     }
@@ -5603,10 +5603,9 @@ fn source_report_has_hard_failures(report: &LiftSourceReport) -> bool {
         .vendor_conjoins
         .iter()
         .any(|row| matches!(row.vendor_source, Some(VendorSourceResolution::Drifted(_))))
-        || report
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus"))
+        || report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus")
+        })
 }
 
 fn vendor_conjoins_from_lift_response(
@@ -7294,645 +7293,11 @@ fn generalized_contract_fol(contract: &Value) -> Vec<String> {
         .collect()
 }
 
-fn generalized_formula_rows(formula: &Value) -> Vec<String> {
-    if let Some(row) = generalized_base64_block_formula(formula) {
-        return vec![row];
-    }
-    formula_operands(formula)
-        .iter()
-        .flat_map(generalized_formula_rows)
-        .collect()
-}
-
-fn generalized_base64_block_formula(formula: &Value) -> Option<String> {
-    let parts = base64_block_formula_parts(formula)?;
-    let vars = payload_vars(&parts.payload);
-    let output = generalized_call_output(parts.subject, &vars);
-    let input = parts.input.map(proofir_term_to_fol).unwrap_or_else(|| {
-        if vars.is_empty() {
-            format_base64_payload_input(&parts.payload)
-        } else {
-            format!("[{}]", vars.join(", "))
-        }
-    });
-    let blocks = format_base64_payload_with_input(&parts.payload, &input);
-    let quantifiers = vars
-        .iter()
-        .map(|name| format!("∀ {name}:Int. "))
-        .collect::<String>();
-    Some(format!("{quantifiers}str.eq-bv-blocks({output}, {blocks})"))
-}
-
-fn proofir_formula_to_fol_with_instances(formula: &Value) -> String {
-    if let Some(rendered) = instantiated_base64_block_formula(formula) {
-        return rendered;
-    }
-    let Some(kind) = formula.get("kind").and_then(Value::as_str) else {
-        return proofir_formula_to_fol(formula);
-    };
-    match kind {
-        "and" => {
-            let operands = formula_operands(formula);
-            if operands.is_empty() {
-                "⊤".to_string()
-            } else {
-                format_formula_join_with_instances(&operands, " ∧ ")
-            }
-        }
-        "or" => {
-            let operands = formula_operands(formula);
-            if operands.is_empty() {
-                "⊥".to_string()
-            } else {
-                format_formula_join_with_instances(&operands, " ∨ ")
-            }
-        }
-        "not" => {
-            let operands = formula_operands(formula);
-            match operands.as_slice() {
-                [one] => format!(
-                    "¬{}",
-                    parenthesize_formula(&proofir_formula_to_fol_with_instances(one))
-                ),
-                _ => proofir_formula_to_fol(formula),
-            }
-        }
-        "implies" => {
-            let operands = formula_operands(formula);
-            match operands.as_slice() {
-                [left, right] => format!(
-                    "{} ⇒ {}",
-                    parenthesize_formula(&proofir_formula_to_fol_with_instances(left)),
-                    parenthesize_formula(&proofir_formula_to_fol_with_instances(right))
-                ),
-                _ => proofir_formula_to_fol(formula),
-            }
-        }
-        "forall" | "exists" => {
-            let symbol = if kind == "forall" { "∀" } else { "∃" };
-            let name = formula.get("name").and_then(Value::as_str).unwrap_or("?");
-            let sort = formula
-                .get("sort")
-                .map(proofir_sort_to_fol)
-                .unwrap_or_else(|| "?".to_string());
-            let body = formula
-                .get("body")
-                .map(proofir_formula_to_fol_with_instances)
-                .unwrap_or_else(|| "<missing body>".to_string());
-            format!("{symbol} {name}:{sort}. {body}")
-        }
-        _ => proofir_formula_to_fol(formula),
-    }
-}
-
-fn format_formula_join_with_instances(operands: &[Value], separator: &str) -> String {
-    operands
-        .iter()
-        .map(|operand| parenthesize_formula(&proofir_formula_to_fol_with_instances(operand)))
-        .collect::<Vec<_>>()
-        .join(separator)
-}
-
-fn instantiated_base64_block_formula(formula: &Value) -> Option<String> {
-    let parts = base64_block_formula_parts(formula)?;
-    let rendered = format_base64_block_formula(&parts);
-    format_instantiation(&parts.payload)
-        .map(|instantiation| format!("{instantiation} ⊢ {rendered}"))
-        .or(Some(rendered))
-}
-
-fn proofir_formula_to_fol(formula: &Value) -> String {
-    let Some(kind) = formula.get("kind").and_then(Value::as_str) else {
-        return serde_json::to_string(formula)
-            .unwrap_or_else(|_| "<unrenderable formula>".to_string());
-    };
-    match kind {
-        "true" | "True" => "⊤".to_string(),
-        "false" | "False" => "⊥".to_string(),
-        "atomic" | "Atomic" => {
-            let name = formula.get("name").and_then(Value::as_str).unwrap_or("?");
-            let args = formula
-                .get("args")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            if name == "str.eq-bv-blocks" {
-                if let Some(rendered) = format_base64_block_formula_from_formula(formula) {
-                    return rendered;
-                }
-            }
-            if args.is_empty() {
-                return match name {
-                    "true" | "⊤" => "⊤".to_string(),
-                    "false" | "⊥" => "⊥".to_string(),
-                    _ => name.to_string(),
-                };
-            }
-            if args.len() == 2 && is_infix_predicate(name) {
-                return format!(
-                    "{} {} {}",
-                    proofir_term_to_fol(&args[0]),
-                    fol_predicate_symbol(name),
-                    proofir_term_to_fol(&args[1])
-                );
-            }
-            let rendered_args = args
-                .iter()
-                .map(proofir_term_to_fol)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{name}({rendered_args})")
-        }
-        "and" => {
-            let operands = formula_operands(formula);
-            if operands.is_empty() {
-                "⊤".to_string()
-            } else {
-                format_formula_join(&operands, " ∧ ")
-            }
-        }
-        "or" => {
-            let operands = formula_operands(formula);
-            if operands.is_empty() {
-                "⊥".to_string()
-            } else {
-                format_formula_join(&operands, " ∨ ")
-            }
-        }
-        "not" => {
-            let operands = formula_operands(formula);
-            match operands.as_slice() {
-                [one] => format!("¬{}", parenthesize_formula(&proofir_formula_to_fol(one))),
-                _ => format!("not({})", format_formula_join(&operands, ", ")),
-            }
-        }
-        "implies" => {
-            let operands = formula_operands(formula);
-            match operands.as_slice() {
-                [left, right] => format!(
-                    "{} ⇒ {}",
-                    parenthesize_formula(&proofir_formula_to_fol(left)),
-                    parenthesize_formula(&proofir_formula_to_fol(right))
-                ),
-                _ => format!("implies({})", format_formula_join(&operands, ", ")),
-            }
-        }
-        "forall" | "exists" => {
-            let symbol = if kind == "forall" { "∀" } else { "∃" };
-            let name = formula.get("name").and_then(Value::as_str).unwrap_or("?");
-            let sort = formula
-                .get("sort")
-                .map(proofir_sort_to_fol)
-                .unwrap_or_else(|| "?".to_string());
-            let body = formula
-                .get("body")
-                .map(proofir_formula_to_fol)
-                .unwrap_or_else(|| "<missing body>".to_string());
-            format!("{symbol} {name}:{sort}. {body}")
-        }
-        "choice" => {
-            let name = formula
-                .get("var_name")
-                .or_else(|| formula.get("varName"))
-                .and_then(Value::as_str)
-                .unwrap_or("?");
-            let sort = formula
-                .get("sort")
-                .map(proofir_sort_to_fol)
-                .unwrap_or_else(|| "?".to_string());
-            let body = formula
-                .get("body")
-                .map(proofir_formula_to_fol)
-                .unwrap_or_else(|| "<missing body>".to_string());
-            format!("ε {name}:{sort}. {body}")
-        }
-        other => serde_json::to_string(formula)
-            .unwrap_or_else(|_| format!("<unrenderable {other} formula>")),
-    }
-}
-
-fn formula_operands(formula: &Value) -> Vec<Value> {
-    formula
-        .get("operands")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
-fn format_formula_join(operands: &[Value], separator: &str) -> String {
-    operands
-        .iter()
-        .map(|operand| parenthesize_formula(&proofir_formula_to_fol(operand)))
-        .collect::<Vec<_>>()
-        .join(separator)
-}
-
-fn parenthesize_formula(rendered: &str) -> String {
-    if rendered == "⊤"
-        || rendered == "⊥"
-        || rendered.starts_with('∀')
-        || rendered.starts_with('∃')
-        || (!rendered.contains(" ∧ ") && !rendered.contains(" ∨ ") && !rendered.contains(" ⇒ "))
-    {
-        rendered.to_string()
-    } else {
-        format!("({rendered})")
-    }
-}
-
-fn is_infix_predicate(name: &str) -> bool {
-    matches!(
-        name,
-        "=" | "==" | "!=" | "≠" | ">" | ">=" | "≥" | "<" | "<=" | "≤"
-    )
-}
-
-fn fol_predicate_symbol(name: &str) -> &str {
-    match name {
-        "==" => "=",
-        "!=" => "≠",
-        ">=" => "≥",
-        "<=" => "≤",
-        other => other,
-    }
-}
-
-fn proofir_term_to_fol(term: &Value) -> String {
-    if let Some(name) = term.get("var").and_then(Value::as_str) {
-        return name.to_string();
-    }
-    if let Some(value) = term.get("int").or_else(|| term.get("real")) {
-        return scalar_value_to_fol(value);
-    }
-    if let Some(value) = term.get("str").and_then(Value::as_str) {
-        return quoted_string(value);
-    }
-
-    let Some(kind) = term.get("kind").and_then(Value::as_str) else {
-        return scalar_value_to_fol(term);
-    };
-    match kind {
-        "var" | "Var" => term
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("?")
-            .to_string(),
-        "const" | "Const" => term
-            .get("value")
-            .map(scalar_value_to_fol)
-            .unwrap_or_else(|| "?".to_string()),
-        "ctor" | "Ctor" => {
-            let name = term.get("name").and_then(Value::as_str).unwrap_or("?");
-            let args = term
-                .get("args")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            if args.is_empty() {
-                // A `call:`-prefixed ctor is a function/method invocation; an
-                // empty arg list is a zero-arg call (`answer()`, `B::new()`),
-                // so render the parens — they're what makes the universe read
-                // as a call rather than a bare symbol. Nullary data ctors
-                // (unit variants like `None`) keep their bare form.
-                if name.starts_with("call:") {
-                    return format!("{name}()");
-                }
-                return name.to_string();
-            }
-            if let Some(rendered) = format_symbolic_ctor(name, &args) {
-                return rendered;
-            }
-            let rendered_args = args
-                .iter()
-                .map(proofir_term_to_fol)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{name}({rendered_args})")
-        }
-        "let" | "Let" => proofir_let_term_to_fol(term),
-        other => {
-            serde_json::to_string(term).unwrap_or_else(|_| format!("<unrenderable {other} term>"))
-        }
-    }
-}
-
-fn proofir_let_term_to_fol(term: &Value) -> String {
-    let bindings = term
-        .get("bindings")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let body = term
-        .get("body")
-        .map(proofir_term_to_fol)
-        .unwrap_or_else(|| "<missing body>".to_string());
-    if bindings.is_empty() {
-        return body;
-    }
-    let rendered_bindings = bindings
-        .iter()
-        .map(|binding| {
-            let name = binding.get("name").and_then(Value::as_str).unwrap_or("?");
-            let bound = binding
-                .get("boundTerm")
-                .or_else(|| binding.get("bound_term"))
-                .map(proofir_term_to_fol)
-                .unwrap_or_else(|| "<missing bound>".to_string());
-            format!("{name} = {bound}")
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    format!("let {rendered_bindings} in {body}")
-}
-
-fn format_symbolic_ctor(name: &str, args: &[Value]) -> Option<String> {
-    if name == "cf_ite" {
-        return format_cf_ite_term(args);
-    }
-    let symbol = match name {
-        "bv32.add" | "concept:add" | "+" => "+",
-        "bv32.sub" | "concept:sub" | "-" => "-",
-        "bv32.mul" | "concept:mul" | "*" => "*",
-        "/" => "/",
-        "%" => "%",
-        "bv32.and" => "&",
-        "bv32.or" => "|",
-        "bv32.xor" => "⊕",
-        "bv32.shl" => "<<",
-        "bv32.lshr" => ">>>",
-        "cf_eq" => "=",
-        "cf_ne" => "≠",
-        "cf_lt" => "<",
-        "cf_le" => "≤",
-        "cf_gt" => ">",
-        "cf_ge" => "≥",
-        _ => return None,
-    };
-    if args.len() != 2 {
-        return None;
-    }
-    Some(format!(
-        "({} {} {})",
-        proofir_term_to_fol(&args[0]),
-        symbol,
-        proofir_term_to_fol(&args[1])
-    ))
-}
-
-fn format_cf_ite_term(args: &[Value]) -> Option<String> {
-    if args.len() != 3 {
-        return None;
-    }
-    Some(format!(
-        "if {} then {} else {}",
-        trim_wrapping_parens(&proofir_term_to_fol(&args[0])),
-        proofir_term_to_fol(&args[1]),
-        proofir_term_to_fol(&args[2])
-    ))
-}
-
-fn trim_wrapping_parens(rendered: &str) -> &str {
-    if rendered.starts_with('(') && rendered.ends_with(')') {
-        &rendered[1..rendered.len() - 1]
-    } else {
-        rendered
-    }
-}
-
-fn scalar_value_to_fol(value: &Value) -> String {
-    match value {
-        Value::String(s) => render_embedded_proofir_json(s).unwrap_or_else(|| quoted_string(s)),
-        Value::Number(n) => n.to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null => "null".to_string(),
-        _ => serde_json::to_string(value).unwrap_or_else(|_| "<unrenderable value>".to_string()),
-    }
-}
-
-fn render_embedded_proofir_json(value: &str) -> Option<String> {
-    if !value.trim_start().starts_with('{') {
-        return None;
-    }
-    let parsed: Value = serde_json::from_str(value).ok()?;
-    if let Some(kind) = parsed.get("kind").and_then(Value::as_str) {
-        if is_formula_kind(kind) {
-            return Some(proofir_formula_to_fol(&parsed));
-        }
-        if is_term_kind(kind) {
-            return Some(proofir_term_to_fol(&parsed));
-        }
-    }
-    render_structured_payload(&parsed)
-}
-
-fn render_structured_payload(value: &Value) -> Option<String> {
-    let payload = base64_payload_from_value(value)?;
-    let input = format_base64_payload_input(&payload);
-    Some(format_base64_payload_with_input(&payload, &input))
-}
-
-#[derive(Debug, Clone)]
-struct Base64BlockPayload {
-    input_bytes: Option<Vec<Value>>,
-    vars: Vec<String>,
-    per_char: Vec<Value>,
-    table: Option<String>,
-}
-
-struct Base64BlockFormulaParts<'a> {
-    subject: &'a Value,
-    input: Option<&'a Value>,
-    payload: Base64BlockPayload,
-}
-
-fn base64_block_formula_parts(formula: &Value) -> Option<Base64BlockFormulaParts<'_>> {
-    if formula.get("kind").and_then(Value::as_str) != Some("atomic")
-        || formula.get("name").and_then(Value::as_str) != Some("str.eq-bv-blocks")
-    {
-        return None;
-    }
-    let args = formula.get("args").and_then(Value::as_array)?;
-    match args.as_slice() {
-        [subject, payload] => Some(Base64BlockFormulaParts {
-            subject,
-            input: None,
-            payload: base64_payload_from_term(payload)?,
-        }),
-        [subject, input, payload] => Some(Base64BlockFormulaParts {
-            subject,
-            input: Some(input),
-            payload: base64_payload_from_term(payload)?,
-        }),
-        _ => None,
-    }
-}
-
-fn format_base64_block_formula_from_formula(formula: &Value) -> Option<String> {
-    let parts = base64_block_formula_parts(formula)?;
-    Some(format_base64_block_formula(&parts))
-}
-
-fn format_base64_block_formula(parts: &Base64BlockFormulaParts<'_>) -> String {
-    let subject = proofir_term_to_fol(parts.subject);
-    let input = parts
-        .input
-        .map(proofir_term_to_fol)
-        .unwrap_or_else(|| format_base64_payload_input(&parts.payload));
-    let blocks = format_base64_payload_with_input(&parts.payload, &input);
-    format!("str.eq-bv-blocks({subject}, {blocks})")
-}
-
-fn base64_payload_from_term(term: &Value) -> Option<Base64BlockPayload> {
-    let raw = term.get("value").and_then(Value::as_str)?;
-    let parsed: Value = serde_json::from_str(raw).ok()?;
-    base64_payload_from_value(&parsed)
-}
-
-fn base64_payload_from_value(value: &Value) -> Option<Base64BlockPayload> {
-    let input_bytes = value.get("input_bytes").and_then(Value::as_array).cloned();
-    let per_char = value.get("per_char").and_then(Value::as_array)?.clone();
-    let vars = value
-        .get("vars")
-        .and_then(Value::as_array)
-        .map(|vars| {
-            vars.iter()
-                .filter_map(Value::as_str)
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let table = value
-        .get("table")
-        .and_then(Value::as_array)
-        .and_then(|values| bytes_array_to_ascii(values.as_slice()));
-    Some(Base64BlockPayload {
-        input_bytes,
-        vars,
-        per_char,
-        table,
-    })
-}
-
-fn format_base64_payload_with_input(payload: &Base64BlockPayload, input: &str) -> String {
-    let chars = payload
-        .per_char
-        .iter()
-        .map(proofir_term_to_fol)
-        .collect::<Vec<_>>()
-        .join(", ");
-    let table = payload
-        .table
-        .as_deref()
-        .map(|table| format!(", table={}", quoted_string(table)))
-        .unwrap_or_default();
-    format!("base64.blocks(input={input}, chars=[{chars}]{table})")
-}
-
-fn payload_vars(payload: &Base64BlockPayload) -> Vec<String> {
-    if let Some(input_bytes) = payload.input_bytes.as_ref() {
-        if payload.vars.len() == input_bytes.len() && !payload.vars.is_empty() {
-            return payload.vars.clone();
-        }
-        return (0..input_bytes.len())
-            .map(|index| format!("b{index}"))
-            .collect();
-    }
-    payload.vars.clone()
-}
-
-fn generalized_call_output(term: &Value, vars: &[String]) -> String {
-    if term.get("kind").and_then(Value::as_str) == Some("ctor") {
-        if let Some(name) = term.get("name").and_then(Value::as_str) {
-            if name.starts_with("call:") {
-                return format!("{name}(bytes({}))", vars.join(", "));
-            }
-        }
-    }
-    "output".to_string()
-}
-
-fn format_instantiation(payload: &Base64BlockPayload) -> Option<String> {
-    let input_bytes = payload.input_bytes.as_ref()?;
-    Some(
-        payload_vars(payload)
-            .iter()
-            .zip(input_bytes.iter())
-            .map(|(name, value)| format!("{name}={}", scalar_value_to_fol(value)))
-            .collect::<Vec<_>>()
-            .join(", "),
-    )
-}
-
-fn format_base64_payload_input(payload: &Base64BlockPayload) -> String {
-    if let Some(input_bytes) = payload.input_bytes.as_ref() {
-        return format_scalar_array(input_bytes);
-    }
-    let vars = payload_vars(payload);
-    if vars.is_empty() {
-        "?".to_string()
-    } else {
-        format!("[{}]", vars.join(", "))
-    }
-}
-
-fn format_scalar_array(values: &[Value]) -> String {
-    let rendered = values
-        .iter()
-        .map(scalar_value_to_fol)
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("[{rendered}]")
-}
-
-fn bytes_array_to_ascii(values: &[Value]) -> Option<String> {
-    let mut out = String::new();
-    for value in values {
-        let byte = value.as_u64()?;
-        if !(32..=126).contains(&byte) {
-            return None;
-        }
-        out.push(char::from_u32(byte as u32)?);
-    }
-    Some(out)
-}
-
-fn is_formula_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "true"
-            | "True"
-            | "false"
-            | "False"
-            | "atomic"
-            | "Atomic"
-            | "and"
-            | "or"
-            | "not"
-            | "implies"
-            | "forall"
-            | "exists"
-            | "choice"
-    )
-}
-
-fn is_term_kind(kind: &str) -> bool {
-    matches!(kind, "var" | "Var" | "const" | "Const" | "ctor" | "Ctor")
-}
-
-fn quoted_string(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"<unrenderable string>\"".to_string())
-}
-
-fn proofir_sort_to_fol(sort: &Value) -> String {
-    if let Some(name) = sort.as_str() {
-        return name.to_string();
-    }
-    sort.get("name")
-        .or_else(|| sort.get("kind"))
-        .and_then(Value::as_str)
-        .unwrap_or("?")
-        .to_string()
-}
+// ProofIR -> FOL renderer family lives in sugar-verifier (moved 2026-07-07,
+// part of #3774): the daemon's proveConsistency RPC and this CLI binary
+// call the SAME renderer, never a second copy. Re-export so every existing
+// unqualified call site in this file (and its test module) keeps compiling.
+pub(crate) use sugar_verifier::fol_render::*;
 
 fn lift_output_document(
     project_root: &PathBuf,
@@ -9042,7 +8407,7 @@ mod tests {
 
         assert_eq!(
             proofir_formula_to_fol(&formula),
-            "∀ x:Int. (x ≥ 0 ∧ x < 10) ⇒ call:encode(x) = \"baz\""
+            "∀ x:Int. (x ≥ 0 ∧ x < 10) ⇒ encode(x) = \"baz\""
         );
     }
 
@@ -9137,7 +8502,7 @@ mod tests {
 
         assert_eq!(
             proofir_formula_to_fol(&formula),
-            "str.eq-bv-blocks(call:encodeBase64String(\"foo\"), base64.blocks(input=[102, 111, 111], chars=[((bits >>> 18) & 63)], table=\"ABC+/\"))"
+            "str.eq-bv-blocks(encodeBase64String(\"foo\"), base64.blocks(input=[102, 111, 111], chars=[((bits >>> 18) & 63)], table=\"ABC+/\"))"
         );
     }
 
@@ -9244,10 +8609,10 @@ mod tests {
 
         assert!(human.contains("generalized FOL:"));
         assert!(human.contains("∀ b0:Int. ∀ b1:Int. ∀ b2:Int."));
-        assert!(human.contains("call:encodeBase64String(bytes(b0, b1, b2))"));
+        assert!(human.contains("encodeBase64String(bytes(b0, b1, b2))"));
         assert!(human.contains("instantiated FOL:"));
         assert!(human.contains(
-            "b0=102, b1=111, b2=111 ⊢ str.eq-bv-blocks(call:encodeBase64String(\"foo\")"
+            "b0=102, b1=111, b2=111 ⊢ str.eq-bv-blocks(encodeBase64String(\"foo\")"
         ));
     }
 
@@ -9573,7 +8938,7 @@ mod tests {
         );
         assert!(human.contains("known callers of this function:"), "{human}");
         assert!(
-            human.contains("src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len::assertion :: 3 = call:encoded_len(2, false)"),
+            human.contains("src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len::assertion :: 3 = encoded_len(2, false)"),
             "{human}"
         );
     }
@@ -9679,7 +9044,7 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(
-            human.contains("callsite preconditions depending on this post:\n  - callee.post [post: result = Some(value)] -> method:unwrap.pre via method:unwrap [pre: is_some(call:callee(7))]"),
+            human.contains("callsite preconditions depending on this post:\n  - callee.post [post: result = Some(value)] -> method:unwrap.pre via method:unwrap [pre: is_some(callee(7))]"),
             "{human}"
         );
     }
@@ -9827,7 +9192,7 @@ mod tests {
 
         assert!(
             human.contains(
-                "    assert_eq!(3, encoded_len(2, false).unwrap());  FACT ⊢ ¬panic(call:encoded_len#panic_callsite(2, false))"
+                "    assert_eq!(3, encoded_len(2, false).unwrap());  FACT ⊢ ¬panic(encoded_len#panic_callsite(2, false))"
             ),
             "{human}"
         );
@@ -9964,7 +9329,7 @@ mod tests {
         );
         assert!(
             human.contains(
-                "walk warranted by observed facts:\n  - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(call:encoded_len#panic_callsite(2, false))"
+                "walk warranted by observed facts:\n  - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(encoded_len#panic_callsite(2, false))"
             ),
             "{human}"
         );
@@ -10009,7 +9374,7 @@ mod tests {
         let visual = render_report_visual(&report, None);
         assert!(
             visual.contains(
-                "    walk warranted by observed facts:\n      - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(call:encoded_len#panic_callsite(2, false))"
+                "    walk warranted by observed facts:\n      - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(encoded_len#panic_callsite(2, false))"
             ),
             "{visual}"
         );
@@ -10408,7 +9773,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
             "the `::callable` contract marker must not attach unrelated call:callable facts:\n{visual}"
         );
         assert!(
-            !section.contains("call:callable(method)"),
+            !section.contains("callable(method)"),
             "callable builtin facts are not _as_dict callsite evidence:\n{visual}"
         );
     }
@@ -12281,7 +11646,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
         assert!(
             human.contains(
-                "facts observed:\n  - src/lib.rs::tests::enc_asserts :: call:enc(\"abc\") = \"def\" @ src/lib.rs:12-14 enc_asserts() source_cid=blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "facts observed:\n  - src/lib.rs::tests::enc_asserts :: enc(\"abc\") = \"def\" @ src/lib.rs:12-14 enc_asserts() source_cid=blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             ),
             "{human}"
         );
@@ -12414,7 +11779,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         );
         assert!(
             human.contains(
-                "src/lib.rs::tests::support_only::panic-free::answer :: panic-free(call:answer())"
+                "src/lib.rs::tests::support_only::panic-free::answer :: panic-free(answer())"
             ),
             "{human}"
         );
@@ -12602,12 +11967,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             no_vendor_test_corpus_condition(&serde_json::json!({ "source_loci": 42 }), &[], &[]);
         let condition = condition.expect("zero-assertion source tree must name the condition");
         assert_eq!(condition["kind"], "no-vendor-test-corpus");
-        assert!(
-            condition["message"]
-                .as_str()
-                .unwrap()
-                .contains("no vendor test corpus in workspace")
-        );
+        assert!(condition["message"]
+            .as_str()
+            .unwrap()
+            .contains("no vendor test corpus in workspace"));
     }
 
     #[test]
@@ -12615,8 +11978,11 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let contracts = vec![serde_json::json!({
             "name": "test_mod::tests::test_thing::assert:1:1::assertion"
         })];
-        let condition =
-            no_vendor_test_corpus_condition(&serde_json::json!({ "source_loci": 42 }), &[], &contracts);
+        let condition = no_vendor_test_corpus_condition(
+            &serde_json::json!({ "source_loci": 42 }),
+            &[],
+            &contracts,
+        );
         assert!(
             condition.is_none(),
             "a workspace with observed test facts must not carry the empty-corpus terminal"
@@ -12636,9 +12002,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     fn no_vendor_test_corpus_condition_is_a_hard_report_failure() {
         let mut report = minimal_source_report();
         report.ledger = serde_json::json!({ "source_loci": 42, "source_unresolved": 0 });
-        report.diagnostics = vec![
-            no_vendor_test_corpus_condition(&report.ledger, &[], &[]).expect("condition")
-        ];
+        report.diagnostics =
+            vec![no_vendor_test_corpus_condition(&report.ledger, &[], &[]).expect("condition")];
         assert!(source_report_has_hard_failures(&report));
         let human = render_source_report_human(&report);
         assert!(

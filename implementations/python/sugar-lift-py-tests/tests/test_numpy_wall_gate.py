@@ -19,8 +19,18 @@ def test_summarizes_wall_with_report_json_census_definitions() -> None:
     # `lineAccounting`, never a scrape of `--visual` ANSI text.
     report = {
         "lineAccounting": [
-            {"file": "a.py", "line": 1, "class": "warrant", "grounds": "cid:blake3-512:x"},
-            {"file": "a.py", "line": 2, "class": "effect", "grounds": "runtime-effect owner=await"},
+            {
+                "file": "a.py",
+                "line": 1,
+                "class": "warrant",
+                "grounds": "cid:blake3-512:x",
+            },
+            {
+                "file": "a.py",
+                "line": 2,
+                "class": "effect",
+                "grounds": "runtime-effect owner=await",
+            },
             {"file": "a.py", "line": 3, "class": "effect", "grounds": "gap at a.py:2"},
             {"file": "a.py", "line": 4, "class": "effect", "grounds": ""},
         ],

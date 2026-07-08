@@ -1,6 +1,13 @@
 # Contract-Comment Sugar (`pep/1.7.0`, liftable pre/post/invariant comments)
 
-**Status:** v1.0.0 normative draft.
+**Status: RETIRED (2026-07-07, #3809 / #3816).** The comment-pragma authoring
+surface described here (`//sugar:contract`, JSDoc/doc-comment pre/post/invariant
+tags) is retired along with the entire annotation family. The only lift path is
+native source: contracts come from real assertions and function bodies, never
+from a bespoke comment DSL. This document is kept for protocol history only and
+is no longer normative.
+
+**Status (historical):** v1.0.0 normative draft.
 **Date:** 2026-05-14
 **Author:** T Savo
 **Related:**
