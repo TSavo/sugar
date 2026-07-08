@@ -58,7 +58,12 @@ pub const ERR_METHOD_NOT_FOUND: i64 = -32601;
 pub const ERR_INVALID_PARAMS: i64 = -32602;
 pub const ERR_KIT_NOT_IN_MANIFEST: i64 = -33001;
 pub const ERR_LIFTER_UNAVAILABLE: i64 = -33002;
-#[allow(dead_code)]
+/// A lifted declaration carried a **present** `pre`/`post` formula that failed
+/// to type as `IrFormula` (malformed IR-JSON from a kit lifter). This is
+/// distinct from a legitimately *absent* formula (which types as `None` and
+/// discharges structurally): a present-but-unparseable formula must never
+/// fold into the same `None` and pass through as a silent vacuous discharge.
+/// See `json_to_formula`.
 pub const ERR_LINKER_DISCHARGE_FAILURE: i64 = -33003;
 /// Resident prove context (pool/plan/registry) failed to build at startup, or
 /// this daemon binary predates the `proveConsistency` RPC. The extension
@@ -228,6 +233,9 @@ pub async fn handle_parse_file(state: Arc<Mutex<ProjectState>>, params: &Json, i
         }
         Err(LiftError::KitNotInManifest(msg)) => {
             return rpc_error(ERR_KIT_NOT_IN_MANIFEST, &msg, id)
+        }
+        Err(LiftError::MalformedFormula(msg)) => {
+            return rpc_error(ERR_LINKER_DISCHARGE_FAILURE, &msg, id)
         }
     };
 
@@ -792,6 +800,10 @@ fn persist_cache_sidecar(path: &std::path::Path, bytes: &[u8]) -> std::io::Resul
 enum LiftError {
     LifterUnavailable(String),
     KitNotInManifest(String),
+    /// A declaration's `pre`/`post` field was present but failed to type as
+    /// `IrFormula`. Refused loudly (`ERR_LINKER_DISCHARGE_FAILURE`) rather than
+    /// silently folded into an absent (vacuously-discharged) formula.
+    MalformedFormula(String),
 }
 
 /// Lift `source` for the given `kit_id` and return `(contracts, call_edges)`.
@@ -1123,12 +1135,19 @@ async fn spawn_kit_lifter(
             LiftError::LifterUnavailable(format!("{binary} response missing 'result' field"))
         })?;
 
-        // 6. Extract declarations array.
+        // 6. Extract declarations array. A malformed (present-but-unparseable)
+        // pre/post formula on any declaration aborts the whole lift loudly
+        // (`ERR_LINKER_DISCHARGE_FAILURE`) rather than silently dropping just
+        // that contract or folding the formula into an absent/vacuous one.
         let decls_json = extract_array_field(result, "declarations");
-        let contracts = decls_json
-            .iter()
-            .filter_map(|decl| parse_declaration_to_contract(decl, &kit_label))
-            .collect::<Vec<_>>();
+        let mut contracts = Vec::with_capacity(decls_json.len());
+        for decl in &decls_json {
+            if let Some(contract) = parse_declaration_to_contract(decl, &kit_label)
+                .map_err(|e| LiftError::MalformedFormula(format!("{binary}: {e}")))?
+            {
+                contracts.push(contract);
+            }
+        }
 
         // 7. Extract callEdges array (may be absent for some kits, e.g. zig).
         let edges_json = extract_array_field(result, "callEdges");
@@ -1170,13 +1189,21 @@ fn extract_array_field<'a>(result: &'a Json, field: &str) -> Vec<Json> {
 /// in the declarations array are skipped.
 ///
 /// CID is computed as BLAKE3-512(JCS({name, outBinding?, pre?, post?, inv?})).
-fn parse_declaration_to_contract(decl: &Json, kit_label: &str) -> Option<LinkerContract> {
+///
+/// Returns `Err` when a **present** `pre`/`post` field fails to type as
+/// `IrFormula` (see [`json_to_formula`]): that is a loud refusal, not a
+/// dropped/skipped declaration, so callers must propagate it rather than
+/// filtering it out.
+fn parse_declaration_to_contract(decl: &Json, kit_label: &str) -> Result<Option<LinkerContract>, String> {
     if decl.get("kind").and_then(|k| k.as_str()) != Some("contract") {
-        return None;
+        return Ok(None);
     }
-    let name = decl.get("name").and_then(|n| n.as_str())?.to_string();
+    let Some(name) = decl.get("name").and_then(|n| n.as_str()) else {
+        return Ok(None);
+    };
+    let name = name.to_string();
     if name.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let pre_raw = decl.get("pre").cloned();
@@ -1200,20 +1227,21 @@ fn parse_declaration_to_contract(decl: &Json, kit_label: &str) -> Option<LinkerC
     );
 
     // Type the pre/post as `IrFormula`. Every kit lifter emits these via
-    // `IrFormula` serialization (see `sugar_walk::bind`), so parse is
-    // total for real declarations; `json_to_formula` returns `None` only for
-    // an absent field.
-    let pre_json = json_to_formula(pre_raw);
-    let post_json = json_to_formula(post_raw);
+    // `IrFormula` serialization (see `sugar_walk::bind`), so parse is total
+    // for real declarations; `json_to_formula` returns `Ok(None)` only for an
+    // absent field, and `Err` for a present-but-unparseable one (which must
+    // surface, not fold silently into `None`/vacuous).
+    let pre_json = json_to_formula(pre_raw).map_err(|e| format!("contract `{name}`: pre {e}"))?;
+    let post_json = json_to_formula(post_raw).map_err(|e| format!("contract `{name}`: post {e}"))?;
 
-    Some(LinkerContract {
+    Ok(Some(LinkerContract {
         name,
         kit: kit_label.to_string(),
         contract_cid: contract_cid.into(),
         pre_json,
         post_json,
         ..Default::default()
-    })
+    }))
 }
 
 /// Compute a contract content CID from declaration fields.
@@ -1420,8 +1448,17 @@ async fn lift_rust_source(
             };
             let cid = compute_contract_cid(&args);
 
-            let pre_json = json_to_formula(pre_v.map(|v| value_arc_to_json(&v)));
-            let post_json = json_to_formula(post_v.map(|v| value_arc_to_json(&v)));
+            // A present-but-unparseable pre/post here means the in-process
+            // rust-kit lifter minted an IrFormula shape `json_to_formula` cannot
+            // round-trip: a real bug, not a legitimate absence. Surface it
+            // loudly rather than silently discharging as if there were no
+            // pre/post condition at all.
+            let pre_json = json_to_formula(pre_v.map(|v| value_arc_to_json(&v))).map_err(|e| {
+                LiftError::MalformedFormula(format!("contract `{}`: pre {e}", decl.name))
+            })?;
+            let post_json = json_to_formula(post_v.map(|v| value_arc_to_json(&v))).map_err(|e| {
+                LiftError::MalformedFormula(format!("contract `{}`: post {e}", decl.name))
+            })?;
 
             contracts.push(LinkerContract {
                 name: decl.name.clone(),
@@ -1476,13 +1513,28 @@ fn value_arc_to_json(v: &std::sync::Arc<sugar_canonicalizer::Value>) -> Json {
 }
 
 /// Type a raw pre/post declaration formula as an [`IrFormula`] for the
-/// `LinkerContract` formula fields. `None` (absent field) maps to `None`.
-/// Every kit lifter emits pre/post via `IrFormula` serialization, so the
-/// deserialize is total for real declarations; a value IrFormula cannot
-/// represent maps to `None` (treated downstream as an absent formula) rather
-/// than being smuggled through untyped.
-fn json_to_formula(raw: Option<Json>) -> Option<sugar_ir_types::IrFormula> {
-    raw.and_then(|v| serde_json::from_value(v).ok())
+/// `LinkerContract` formula fields.
+///
+/// `None` (absent field: the wire declaration has no `pre`/`post` key, or an
+/// explicit `null`) maps to `Ok(None)` -- a legitimate, structurally-discharged
+/// absence.
+///
+/// A **present** value that fails to deserialize as `IrFormula` maps to `Err`,
+/// never to `Ok(None)`. Doctrine: refuse loudly. Before this fix,
+/// `serde_json::from_value(..).ok()` folded a present-but-invalid formula into
+/// the SAME `None` the absent case produces, so a malformed pre/post silently
+/// became a vacuous discharge instead of a surfaced refusal -- indistinguishable
+/// from "this function truly has no precondition". Every kit lifter emits
+/// pre/post via `IrFormula` serialization, so the deserialize is total for real
+/// declarations; a genuine parse failure here means the wire payload is
+/// corrupt/malformed and must be surfaced, not swallowed.
+fn json_to_formula(raw: Option<Json>) -> Result<Option<sugar_ir_types::IrFormula>, String> {
+    match raw {
+        None => Ok(None),
+        Some(v) => serde_json::from_value(v.clone()).map(Some).map_err(|e| {
+            format!("formula failed to type as IrFormula: {e} (raw json: {v})")
+        }),
+    }
 }
 
 // -------------------------------------------------------------------
@@ -1906,5 +1958,135 @@ fn value_to_json(v: &sugar_canonicalizer::Value) -> Json {
             }
             Json::Object(map)
         }
+    }
+}
+
+// -------------------------------------------------------------------
+// Tests: loud-refusal-on-malformed-formula (harden-loud-formula-parse)
+//
+// Regression coverage for the `json_to_formula` hardening: a PRESENT
+// pre/post formula that fails to type as `IrFormula` must surface as `Err`,
+// never fold silently into the same `Ok(None)` a legitimately ABSENT
+// pre/post produces. Before the fix, `serde_json::from_value(..).ok()`
+// made those two cases indistinguishable, so a malformed formula from a
+// (possibly buggy or compromised) kit lifter would vacuously discharge
+// instead of refusing loudly.
+// -------------------------------------------------------------------
+
+#[cfg(test)]
+mod formula_parse_tests {
+    use super::*;
+
+    /// Absent (missing) pre/post is a legitimate `Ok(None)`: no formula was
+    /// declared at all.
+    #[test]
+    fn json_to_formula_absent_is_ok_none() {
+        assert_eq!(json_to_formula(None), Ok(None));
+    }
+
+    /// A present, well-typed formula parses to `Ok(Some(_))`.
+    #[test]
+    fn json_to_formula_valid_parses() {
+        let v = serde_json::json!({"kind": "and", "operands": []});
+        let result = json_to_formula(Some(v));
+        assert!(
+            matches!(result, Ok(Some(_))),
+            "expected Ok(Some(_)) for a valid formula, got {result:?}"
+        );
+    }
+
+    /// THE regression this task exists to fix: a present-but-malformed formula
+    /// (unknown `kind` tag) must surface as `Err`, never silently fold into
+    /// `Ok(None)` (which downstream is indistinguishable from a legitimately
+    /// absent formula and lets the linker vacuously discharge the obligation).
+    #[test]
+    fn json_to_formula_malformed_present_is_loud_err() {
+        let v = serde_json::json!({"kind": "not-a-real-formula-kind", "bogus": true});
+        let result = json_to_formula(Some(v));
+        assert!(
+            result.is_err(),
+            "a present-but-unparseable formula must be Err, not Ok(None); got {result:?}"
+        );
+    }
+
+    /// A present non-object scalar (e.g. a bare string) is equally malformed
+    /// and must also refuse loudly rather than silently vanish.
+    #[test]
+    fn json_to_formula_malformed_scalar_is_loud_err() {
+        let v = serde_json::json!("this is not a formula");
+        let result = json_to_formula(Some(v));
+        assert!(
+            result.is_err(),
+            "a present scalar (non-formula) value must be Err; got {result:?}"
+        );
+    }
+
+    /// End-to-end through `parse_declaration_to_contract`: a declaration whose
+    /// `pre` is present but malformed must be refused (`Err`), not silently
+    /// dropped and not silently accepted with a vacuous pre-condition.
+    #[test]
+    fn parse_declaration_malformed_pre_is_loud_err() {
+        let decl = serde_json::json!({
+            "kind": "contract",
+            "name": "vulnerable_fn",
+            "pre": {"kind": "not-a-real-formula-kind"},
+            "post": null,
+        });
+        let result = parse_declaration_to_contract(&decl, "go-kit");
+        assert!(
+            result.is_err(),
+            "malformed pre must surface as Err from parse_declaration_to_contract; got {result:?}"
+        );
+    }
+
+    /// Same for a malformed `post`.
+    #[test]
+    fn parse_declaration_malformed_post_is_loud_err() {
+        let decl = serde_json::json!({
+            "kind": "contract",
+            "name": "vulnerable_fn",
+            "pre": null,
+            "post": {"kind": "not-a-real-formula-kind"},
+        });
+        let result = parse_declaration_to_contract(&decl, "go-kit");
+        assert!(
+            result.is_err(),
+            "malformed post must surface as Err from parse_declaration_to_contract; got {result:?}"
+        );
+    }
+
+    /// Byte-identity companion: a declaration with well-formed pre/post still
+    /// parses cleanly (valid inputs are unaffected by this hardening).
+    #[test]
+    fn parse_declaration_valid_pre_post_still_parses() {
+        let decl = serde_json::json!({
+            "kind": "contract",
+            "name": "ok_fn",
+            "pre": {"kind": "and", "operands": []},
+            "post": {"kind": "and", "operands": []},
+        });
+        let result = parse_declaration_to_contract(&decl, "go-kit");
+        let contract = result
+            .expect("valid pre/post must not error")
+            .expect("contract must be Some for a `kind: contract` declaration");
+        assert!(contract.pre_json.is_some());
+        assert!(contract.post_json.is_some());
+    }
+
+    /// Absent pre/post (no keys at all) is legitimate: `Ok(Some(contract))`
+    /// with `pre_json`/`post_json` both `None` -- distinct from the malformed
+    /// case, which must be `Err` rather than a contract with `None` fields.
+    #[test]
+    fn parse_declaration_absent_pre_post_is_ok_with_none_fields() {
+        let decl = serde_json::json!({
+            "kind": "contract",
+            "name": "no_annotations_fn",
+        });
+        let result = parse_declaration_to_contract(&decl, "go-kit");
+        let contract = result
+            .expect("absent pre/post must not error")
+            .expect("contract must be Some for a `kind: contract` declaration");
+        assert!(contract.pre_json.is_none());
+        assert!(contract.post_json.is_none());
     }
 }
