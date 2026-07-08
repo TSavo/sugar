@@ -27,7 +27,7 @@
 // Use sugar-linker directly: the extracted library the CLI now delegates
 // to.  No more sugar_cli_test_support shim needed.
 
-use sugar_linker::{link, LinkerCallEdge, LinkerContract, LinkerInputs};
+use sugar_linker::{link, CallSiteLocus, LinkerCallEdge, LinkerContract, LinkerInputs};
 
 // -------------------------------------------------------------------
 // Daemon-level smoke helpers (used by test 5 below)
@@ -260,10 +260,10 @@ fn make_cgo_call_edge(go_contract: &LinkerContract) -> LinkerCallEdge {
         source_contract_cid: go_contract.contract_cid.clone(),
         target_contract_cid: None, // cross-kit → null
         target_symbol: "rust-kit:process".into(),
-        call_site_locus_json: serde_json::json!({
-            "column": 9,
-            "file": "examples/polyglot-rust-go/go-caller/caller_fail.go",
-            "line": 21
+        call_site_locus: Some(CallSiteLocus {
+            file: "examples/polyglot-rust-go/go-caller/caller_fail.go".into(),
+            line: Some(21),
+            column: Some(9),
         }),
         evidence_term_json: serde_json::json!({
             "kind": "Atomic",

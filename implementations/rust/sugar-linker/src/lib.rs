@@ -51,6 +51,45 @@ use sugar_ir_types::{IrFormula, Sort};
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
 
+/// The typed locus of a call site, per `ir-formal-grammar.md` (`Locus`).
+///
+/// Replaces the free-form `serde_json::Value` that the call-site slot used to
+/// carry on [`LinkerCallEdge`] and [`LinkerError`]. The seam is byte-identical:
+/// the linker embeds this locus into every bridge memento (see [`derive_bridge`])
+/// and hashes it into `bridgeSetCid` / `linkBundleCid`, so its serialized shape
+/// must reproduce the exact `{file, line, column}` object the linker previously
+/// threaded through as raw JSON.
+///
+/// # Why a dedicated struct rather than the verifier's `SourceLocus`
+///
+/// The verifier's [`sugar_verifier::SourceLocus`] types `line` as a bare `usize`
+/// and omits `column` when absent. The linker's callSiteLocus, however, carries
+/// `line` and `col` straight from a lift memento where both are `Option` (see
+/// `sugar_lift::CallSiteLocus`), and the daemon (`spawn_kit_lifter`) has always
+/// serialized an absent line/column as an explicit `null` — a shape `SourceLocus`
+/// cannot reproduce without changing bytes. `line`/`column` are therefore
+/// `Option<usize>` here and serialize `None` as `null` (never skipped), matching
+/// the pre-seam `serde_json::json!` output field-for-field.
+///
+/// # Field order is load-bearing
+///
+/// `bridgeSetCid` hashes each bridge memento via a non-canonical
+/// `serde_json::to_string` (the `preserve_order` build keeps insertion order),
+/// so the serialized key order of the embedded `callSite` object feeds a pinned
+/// CID. Fields are declared in JCS-canonical (alphabetical) order —
+/// `column, file, line` — the order the pinned baseline was minted with;
+/// reordering them changes `linkBundleCid`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallSiteLocus {
+    /// 1-based column, or `null` when the lifter had no span location. Named
+    /// `column` (not `col`) to match the linker-side grammar object.
+    pub column: Option<usize>,
+    /// Source file the call site lives in.
+    pub file: String,
+    /// 1-based line, or `null` when the lifter had no span location.
+    pub line: Option<usize>,
+}
+
 /// Re-exports from `sugar-verifier` so callers do not need a direct
 /// dependency on the verifier crate to construct a registry / plan.
 pub mod solver_api {
@@ -367,8 +406,13 @@ pub struct LinkerCallEdge {
     /// `Ord` is the resolution join key; it serializes to / from the exact
     /// `"<kit>:<name>"` wire string (see [`Symbol`]).
     pub target_symbol: Symbol,
-    /// JCS-canonical locus of the call site.  Shape per `ir-formal-grammar.md`.
-    pub call_site_locus_json: Json,
+    /// Typed locus of the call site, per `ir-formal-grammar.md`. `None` when the
+    /// owning kit emitted no `callSiteLocus` (the pre-seam `Json::Null` state);
+    /// `skip_serializing_if` keeps that absence off the internal snapshot wire.
+    /// This slot never reaches a pinned CID directly — the linker embeds it into
+    /// each bridge memento (see [`derive_bridge`]) where JCS canonicalizes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_locus: Option<CallSiteLocus>,
     /// ProofIR evidence term encoding the satisfaction obligation `post_B ⊃ pre_A`.
     pub evidence_term_json: Json,
     /// The typed import signature the call site declares for its target: the
@@ -541,11 +585,13 @@ pub struct LinkerError {
     /// Human-readable explanation.
     pub reason: String,
     /// Source file where the call site is located.  Derived from
-    /// `call_site_locus_json.file`; `None` if the locus has no file field.
+    /// `call_site_locus.file`; `None` if the edge carried no locus.
     pub file: Option<String>,
-    /// Original call-site locus emitted by the owning kit. Used by linkerd/LSP
-    /// to place solver diagnostics at the source call expression.
-    pub call_site_locus_json: Option<Json>,
+    /// Original call-site locus emitted by the owning kit, as the typed
+    /// [`CallSiteLocus`]. Used by linkerd/LSP to place solver diagnostics at the
+    /// source call expression. `None` when the edge carried no locus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_locus: Option<CallSiteLocus>,
 }
 
 /// Input bundle for a single `link()` invocation.
@@ -685,19 +731,22 @@ fn derive_link_bundle_inner(
         a.source_contract_cid
             .cmp(&b.source_contract_cid)
             .then_with(|| {
-                a.call_site_locus_json
-                    .to_string()
-                    .cmp(&b.call_site_locus_json.to_string())
+                // Deterministic tiebreak over the typed locus. The struct
+                // serializes in a fixed field order, so this string is stable
+                // for identical loci; it only orders edges sharing a source CID
+                // and never enters a CID hash.
+                serde_json::to_string(&a.call_site_locus)
+                    .unwrap_or_default()
+                    .cmp(&serde_json::to_string(&b.call_site_locus).unwrap_or_default())
             })
     });
 
     for edge in &sorted_edges {
         // Extract file from call-site locus for per-file diagnostics
         let locus_file = edge
-            .call_site_locus_json
-            .get("file")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .call_site_locus
+            .as_ref()
+            .map(|l| l.file.clone());
 
         // bind: the sole minter of a `BoundContractCid`, with two outcomes —
         // the bound target, or the typed failure (undefined-symbol /
@@ -708,7 +757,7 @@ fn derive_link_bundle_inner(
             Ok(bound) => bound,
             Err(mut err) => {
                 err.file = locus_file;
-                err.call_site_locus_json = Some(edge.call_site_locus_json.clone());
+                err.call_site_locus = edge.call_site_locus.clone();
                 linker_errors_out.push(err);
                 continue;
             }
@@ -737,7 +786,7 @@ fn derive_link_bundle_inner(
         let memento = derive_bridge(
             edge.source_contract_cid.as_str(),
             target_cid,
-            &edge.call_site_locus_json,
+            &edge.call_site_locus,
             &edge.evidence_term_json,
         );
         let bridge = DerivedBridge {
@@ -754,7 +803,7 @@ fn derive_link_bundle_inner(
             plan,
         ) {
             err.file = locus_file;
-            err.call_site_locus_json = Some(edge.call_site_locus_json.clone());
+            err.call_site_locus = edge.call_site_locus.clone();
             linker_errors_out.push(err);
         }
 
@@ -926,7 +975,7 @@ fn bind(
             edge.target_symbol
         ),
         file: None,
-        call_site_locus_json: None,
+        call_site_locus: None,
     };
 
     // Resolve to a candidate CID: the kit's claim, else the cross-kit symbol
@@ -957,7 +1006,7 @@ fn bind(
                     edge.target_symbol, cid
                 ),
                 file: None,
-                call_site_locus_json: None,
+                call_site_locus: None,
             });
         }
     }
@@ -983,9 +1032,14 @@ fn bind(
 fn derive_bridge(
     source_contract_cid: &str,
     target_contract_cid: &str,
-    call_site_locus: &Json,
+    call_site_locus: &Option<CallSiteLocus>,
     evidence_term: &Json,
 ) -> Json {
+    // Lower the typed locus back to the exact JSON it replaced: `None` -> `null`
+    // (the pre-seam `Json::Null`), `Some` -> the `{column,file,line}` object.
+    // The bridge is JCS-canonicalized for `bridgeSetCid` / `linkBundleCid`, so
+    // this embedding is byte-identical to the old free-form `Json` slot.
+    let call_site_locus = serde_json::to_value(call_site_locus).unwrap_or(Json::Null);
     serde_json::json!({
         "schemaVersion": "2",
         "kind": "bridge",
@@ -1154,7 +1208,7 @@ fn discharge_obligation(
                     "caller post-condition is absent; cannot discharge `post_caller \u{2283} pre_callee` for target `{target_cid}`"
                 ),
                 file: None, // populated by caller from locus
-                call_site_locus_json: None, // populated by caller from locus
+                call_site_locus: None, // populated by caller from locus
             });
         }
         ObligationState::VacuousPreAbsent => return None,
@@ -1200,7 +1254,7 @@ fn discharge_obligation(
                     error.payload
                 ),
                 file: None,
-                call_site_locus_json: None,
+                call_site_locus: None,
             });
         }
     };
@@ -1220,7 +1274,7 @@ fn discharge_obligation(
                     "compile post-implies-pre to SMT-LIB failed for target `{target_cid}`: {e}"
                 ),
                 file: None,
-                call_site_locus_json: None,
+                call_site_locus: None,
             });
         }
     };
@@ -1237,7 +1291,7 @@ fn discharge_obligation(
                 "solver reports `post_caller \u{2283} pre_callee` is violated for target `{target_cid}`: {reason}"
             ),
             file: None,
-            call_site_locus_json: None,
+            call_site_locus: None,
         }),
         ObligationVerdict::Undecidable | ObligationVerdict::Disagreement => Some(LinkerError {
             kind: LinkerErrorKind::ImplicationUndecidable,
@@ -1247,7 +1301,7 @@ fn discharge_obligation(
                 "solver could not decide `post_caller \u{2283} pre_callee` for target `{target_cid}`: {reason}"
             ),
             file: None,
-            call_site_locus_json: None,
+            call_site_locus: None,
         }),
         ObligationVerdict::SolverTimeout => Some(LinkerError {
             kind: LinkerErrorKind::ImplicationSolverTimeout,
@@ -1257,7 +1311,7 @@ fn discharge_obligation(
                 "solver exceeded host timeout while checking `post_caller \u{2283} pre_callee` for target `{target_cid}`: {reason}"
             ),
             file: None,
-            call_site_locus_json: None,
+            call_site_locus: None,
         }),
         // A refusal is distinct from "undecidable": there is no sound discharger
         // for this bridge's obligation (the precondition lowers to a construct the
@@ -1271,7 +1325,7 @@ fn discharge_obligation(
                 "no sound discharger for `post_caller \u{2283} pre_callee` on target `{target_cid}`; refused, not guessed: {reason}"
             ),
             file: None,
-            call_site_locus_json: None,
+            call_site_locus: None,
         }),
     }
 }
@@ -1446,6 +1500,86 @@ mod tests {
         let back: LinkerCallEdge = serde_json::from_value(v).unwrap();
         assert_eq!(back.source_contract_cid.as_str(), "blake3-512:aaaa");
         assert!(back.target_contract_cid.is_none());
+    }
+
+    /// Byte-identity gate for the [`CallSiteLocus`] seam: the typed locus must
+    /// produce the exact same JCS bytes the free-form `{column,file,line}` Json
+    /// object did, since that object is embedded into every bridge memento and
+    /// hashed into `bridgeSetCid` / `linkBundleCid`.
+    #[test]
+    fn call_site_locus_wire_is_byte_identical_roundtrip() {
+        // JCS of the typed locus == JCS of the raw grammar object.
+        let raw = serde_json::json!({
+            "column": 9,
+            "file": "examples/polyglot-rust-go/go-caller/caller_fail.go",
+            "line": 21
+        });
+        let typed = CallSiteLocus {
+            file: "examples/polyglot-rust-go/go-caller/caller_fail.go".into(),
+            line: Some(21),
+            column: Some(9),
+        };
+        let typed_json = serde_json::to_value(&typed).unwrap();
+        assert_eq!(
+            jcs_of_json(&typed_json),
+            jcs_of_json(&raw),
+            "typed locus must canonicalize to the same JCS bytes as the raw object"
+        );
+        // And it round-trips back through the struct unchanged.
+        let back: CallSiteLocus = serde_json::from_value(raw).unwrap();
+        assert_eq!(back, typed);
+
+        // An unlocated locus (the lifter's `line: None` / `col: None` state) keeps
+        // both keys as explicit `null` — never dropped — byte-matching the
+        // pre-seam `serde_json::json!` the daemon emitted from `Option<u32>`.
+        let unlocated = CallSiteLocus {
+            file: "pipeline.py".into(),
+            line: None,
+            column: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&unlocated).unwrap(),
+            serde_json::json!({"file": "pipeline.py", "line": null, "column": null})
+        );
+        let back_unlocated: CallSiteLocus =
+            serde_json::from_value(serde_json::json!({
+                "file": "pipeline.py",
+                "line": null,
+                "column": null
+            }))
+            .unwrap();
+        assert_eq!(back_unlocated, unlocated);
+
+        // Absence is preserved: `None` embeds as `null` (the pre-seam
+        // `Json::Null`), `Some` as the object, exactly as `derive_bridge` needs.
+        let none: Option<CallSiteLocus> = None;
+        assert!(serde_json::to_value(&none).unwrap().is_null());
+        let some = Some(typed.clone());
+        assert_eq!(serde_json::to_value(&some).unwrap(), typed_json);
+
+        // On a `LinkerCallEdge`, an absent locus stays off the wire (skip) and
+        // round-trips to `None`; a present one round-trips byte-for-byte.
+        let edge = LinkerCallEdge {
+            source_contract_cid: "blake3-512:aaaa".into(),
+            call_site_locus: Some(typed.clone()),
+            ..Default::default()
+        };
+        let ev = serde_json::to_value(&edge).unwrap();
+        assert_eq!(jcs_of_json(&ev["call_site_locus"]), jcs_of_json(&typed_json));
+        let back_edge: LinkerCallEdge = serde_json::from_value(ev).unwrap();
+        assert_eq!(back_edge.call_site_locus, Some(typed));
+
+        let bare = LinkerCallEdge {
+            source_contract_cid: "blake3-512:aaaa".into(),
+            ..Default::default()
+        };
+        let bv = serde_json::to_value(&bare).unwrap();
+        assert!(
+            bv.get("call_site_locus").is_none(),
+            "absent locus must be skipped, not serialized as null"
+        );
+        let back_bare: LinkerCallEdge = serde_json::from_value(bv).unwrap();
+        assert!(back_bare.call_site_locus.is_none());
     }
 
     /// Unqualified / empty-part symbols resolve to nothing, exactly as the old
@@ -1658,10 +1792,10 @@ mod tests {
             source_contract_cid: go_contract.contract_cid.clone(),
             target_contract_cid: None,
             target_symbol: "rust-kit:process".into(),
-            call_site_locus_json: serde_json::json!({
-                "column": 9,
-                "file": "examples/polyglot-rust-go/go-caller/caller_fail.go",
-                "line": 21
+            call_site_locus: Some(CallSiteLocus {
+                file: "examples/polyglot-rust-go/go-caller/caller_fail.go".into(),
+                line: Some(21),
+                column: Some(9),
             }),
             evidence_term_json: serde_json::json!({
                 "kind": "Atomic",
@@ -1835,7 +1969,11 @@ mod tests {
             target_contract_cid: None,
             // No `polars-kit:scalar_sum` contract is present in the union.
             target_symbol: "polars-kit:scalar_sum".into(),
-            call_site_locus_json: serde_json::json!({"file": "pipeline.py", "line": 3, "column": 5}),
+            call_site_locus: Some(CallSiteLocus {
+                file: "pipeline.py".into(),
+                line: Some(3),
+                column: Some(5),
+            }),
             evidence_term_json: serde_json::json!({"kind": "Atomic", "name": "obligation", "args": []}),
             ..Default::default()
         };

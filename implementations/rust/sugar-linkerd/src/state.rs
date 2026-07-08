@@ -290,7 +290,7 @@ impl ProjectState {
                     "sourceContractCid": e.source_contract_cid,
                     "reason": e.reason,
                     "file": e.file,
-                    "callSiteLocus": e.call_site_locus_json,
+                    "callSiteLocus": e.call_site_locus,
                 })
             })
             .collect()
@@ -377,6 +377,7 @@ impl ProjectState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sugar_linker::CallSiteLocus;
 
     fn make_contract(name: &str, kit: &str, cid: &str) -> LinkerContract {
         LinkerContract {
@@ -472,7 +473,11 @@ mod tests {
                 source_contract_cid: source_cid.into(),
                 target_contract_cid: None,
                 target_symbol: "rust-kit:missing".into(),
-                call_site_locus_json: locus.clone(),
+                call_site_locus: Some(CallSiteLocus {
+                    file: "/tmp/caller.rs".into(),
+                    line: Some(7),
+                    column: Some(13),
+                }),
                 evidence_term_json: serde_json::json!({
                     "kind": "Atomic",
                     "name": "obligation",
