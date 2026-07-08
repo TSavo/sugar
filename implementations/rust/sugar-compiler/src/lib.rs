@@ -46,6 +46,12 @@ pub mod orchestrate;
 /// and `Kit::source` (source-oracle lookup). See `resolve` module docs.
 pub mod resolve;
 
+/// Part 6, Phases 1+2: the strongly-typed navigable tree
+/// (`SourceFile`/`Function`/`CallSite`/`Assertion`/`Fact`/...) and the
+/// `sugar.enumerate` wire method that drives it lazily over the kit's
+/// membrane. See `tree` module docs.
+pub mod tree;
+
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed,
     ProofEnvelopeInput, ProofGraph,

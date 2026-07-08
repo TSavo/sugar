@@ -25,3 +25,4 @@ base64 = { workspace = true }
 trybuild = "1"
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
+tempfile = { workspace = true }

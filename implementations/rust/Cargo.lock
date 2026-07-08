@@ -1586,6 +1586,7 @@ dependencies = [
  "sugar-proof-envelope",
  "sugar-verifier",
  "sugar-walk",
+ "tempfile",
  "thiserror",
  "tracing",
  "trybuild",
