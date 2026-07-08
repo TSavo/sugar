@@ -74,6 +74,15 @@ pub struct LiftManifest {
 pub enum RendezvousError {
     #[error("no lift manifest resolved for surface `{0}` (empty plugin command)")]
     EmptyCommand(String),
+    #[error(
+        "relative working_dir `{working_dir}` for surface `{surface}`: LiftManifest's contract \
+         is a RESOLVED working directory -- resolve against the project root before rendezvous \
+         (the CLI census does this via resolved_working_dir)"
+    )]
+    RelativeWorkingDir {
+        surface: String,
+        working_dir: String,
+    },
     #[error("kit declaration handshake failed for surface `{surface}`: {source}")]
     Handshake {
         surface: String,
@@ -136,6 +145,18 @@ impl Kit {
     pub fn rendezvous(manifest: LiftManifest) -> Result<Kit, RendezvousError> {
         if manifest.command.is_empty() {
             return Err(RendezvousError::EmptyCommand(manifest.surface.clone()));
+        }
+        // The manifest's contract: working_dir arrives RESOLVED (absolute).
+        // A relative dir would silently run the kit in whatever CWD this
+        // process happens to have -- refuse loudly instead (answer the
+        // "relative to what?" question ONCE, at the census that resolves it).
+        if let Some(dir) = &manifest.working_dir {
+            if dir.is_relative() {
+                return Err(RendezvousError::RelativeWorkingDir {
+                    surface: manifest.surface.clone(),
+                    working_dir: dir.display().to_string(),
+                });
+            }
         }
         let declaration =
             load_kit_declaration_with_command(&manifest.command, manifest.working_dir.as_deref())
@@ -227,6 +248,24 @@ mod rendezvous_tests {
             Err(other) => panic!("expected Handshake refusal, got: {other:?}"),
             Ok(_) => panic!("a non-kit command must never mint a Kit"),
         }
+    }
+
+    /// A relative working_dir refuses before spawning: the manifest's
+    /// contract is resolved-absolute (macroscope on #3854 -- a "." dir would
+    /// silently run the kit in this process's CWD instead of the project).
+    #[test]
+    fn rendezvous_refuses_a_relative_working_dir() {
+        let forged = LiftManifest {
+            surface: "relative".to_string(),
+            name: "relative".to_string(),
+            dialect: Dialect::Rust,
+            command: vec!["/bin/false".to_string()],
+            working_dir: Some(PathBuf::from(".")),
+        };
+        assert!(matches!(
+            Kit::rendezvous(forged),
+            Err(RendezvousError::RelativeWorkingDir { .. })
+        ));
     }
 
     /// Empty command refuses before spawning anything.
