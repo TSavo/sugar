@@ -16051,6 +16051,22 @@ fn production_cli_discharged(src: &str, label: &str) -> bool {
         !statuses.is_empty(),
         "{label}: production prove emitted no row for tests/{label}.rs; rows={rows:?}"
     );
+    // A non-discharged status only counts as a caught BAD twin if the solver
+    // actually ran and refuted it ("unsatisfied"). `--allow-failed-components`
+    // lets `sugar prove` skip a seat that fails to spawn on this box, which
+    // surfaces as "undecidable"/"refused"/"solver-timeout"/"disagreement", not
+    // "unsatisfied" -- those are not a verdict, they are the solver never
+    // having run. Treating them as a caught bad twin would let a skipped seat
+    // masquerade as a refutation, exactly the silent-pass this migration was
+    // built to eliminate. Require every row to be authoritative (discharged or
+    // genuinely unsatisfied); anything else is a hard harness error naming the
+    // non-authoritative status, never a silent pass.
+    assert!(
+        statuses
+            .iter()
+            .all(|status| status == "discharged" || status == "unsatisfied"),
+        "{label}: seat skipped/non-authoritative, verdict is not authoritative; statuses={statuses:?}"
+    );
     statuses.iter().all(|status| status == "discharged")
 }
 
@@ -16077,8 +16093,11 @@ fn inv_json_without_fold_recurrences(decl: &sugar_ir_symbolic::ContractDecl) -> 
     inv_json(&stripped)
 }
 
-/// Lift a single assertion and z3-check the emitted invariant.
-/// `true` = SAT (GOOD twin), `false` = UNSAT (BAD twin). Missing z3 is a hard error.
+/// Lift a single assertion (teeth: exactly one warranted decl) and take the
+/// soundness verdict from the PRODUCTION CLI via `production_cli_discharged`.
+/// `true` = discharged (GOOD twin), `false` = non-discharged/unsatisfied (BAD
+/// twin). Missing z3 / missing production row / a non-authoritative row is a
+/// hard harness error.
 fn single_assertion_verdict(src: &str, label: &str) -> bool {
     let out = lift_file(&parse(src), "tests/char_method_teeth.rs");
     assert_warranted_decl_count(&out, 1);
@@ -26069,11 +26088,11 @@ fn assert_rpc_source_boundary(doc: &serde_json::Value, fn_name: &str, category: 
     let reason = locus_reason(doc, fn_name).unwrap_or("");
     assert!(
         reason.contains(category),
-        "{fn_name} refusal must carry category {category:?}, got {reason:?}: {doc:#}"
+        "{fn_name} boundary must carry category {category:?}, got {reason:?}: {doc:#}"
     );
     assert!(
         !reason.contains("refuted"),
-        "{fn_name} must refuse by name, not refute: {reason}"
+        "{fn_name} must be a named boundary, not refuted: {reason}"
     );
 }
 
