@@ -9,6 +9,16 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sugar_ir_types::{IrFormula, IrTerm, Sort};
+// BOUNDARY IMPURITY (flagged in SEAM 3b review, not fixed here): this pulls
+// RUST-KIT-specific knowledge (sugar-walk) into the language-neutral kit
+// dispatch engine. Lift-and-shift only -- moved byte-identical from
+// sugar-cli/src/kit_path/lift_plugin.rs, where it already lived. The kits-
+// are-blind asymmetry says this normalization belongs kit-side (the rust
+// kit should strip its own realize-sidecar before returning a response
+// across the membrane); today the neutral engine reaches into one
+// language's kit to do it for every kit. No guard rule forbids
+// sugar-compiler -> sugar-walk today, but once this call moves behind the
+// membrane (a future purification seam), add one.
 use sugar_walk::strip_realize_sidecar_from_lift_term;
 use thiserror::Error;
 use tracing::info;
@@ -185,6 +195,9 @@ impl LiftPluginKit {
         // for downstream consumers that need realize-time metadata.
         trace_lift_transport_checkpoint("claim_from_response_term.start", response, 0);
         let before = current_rss_kib();
+        // BOUNDARY IMPURITY: see the `use sugar_walk::...` import note above
+        // -- this is the actual crossing point where the neutral engine does
+        // a rust-kit-specific normalization for every kit, not just rust's.
         let canonical_term = strip_realize_sidecar_from_lift_term(response_term.clone());
         trace_lift_transport_checkpoint_with_delta(
             "claim_from_response_term.after_strip_sidecar_clone",
