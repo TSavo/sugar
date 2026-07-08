@@ -46,6 +46,8 @@ use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
 /// / `SourceRefusal::Unavailable`, never here).
 #[derive(Debug, thiserror::Error)]
 pub enum TestimonyError {
+    #[error("dependency proof resolver `{plugin}` has an empty command")]
+    EmptyCommand { plugin: String },
     #[error("dependency proof resolver `{plugin}` stdin unavailable")]
     StdinUnavailable { plugin: String },
     #[error("dependency proof resolver `{plugin}` stdout unavailable")]
@@ -62,7 +64,9 @@ pub enum TestimonyError {
         #[source]
         source: std::io::Error,
     },
-    #[error("resolve_dependency_proofs response from `{plugin}` not valid JSON: {source}; raw={raw}")]
+    #[error(
+        "resolve_dependency_proofs response from `{plugin}` not valid JSON: {source}; raw={raw}"
+    )]
     InvalidJson {
         plugin: String,
         #[source]
@@ -91,6 +95,7 @@ pub enum TestimonyOutcome {
 /// CID shape) is dropped with a diagnostic rather than failing the whole
 /// resolve -- the same tolerance `decode_dependency_proof_entry` had.
 /// Callers that want those diagnostics get them back alongside the proofs.
+#[derive(Debug)]
 pub struct TestimonyResolution {
     pub outcome: TestimonyOutcome,
     pub diagnostics: Vec<String>,
@@ -114,6 +119,11 @@ pub fn resolve_testimony(
     workspace_root: &Path,
 ) -> Result<TestimonyResolution, TestimonyError> {
     let mut diagnostics = Vec::new();
+    if command.is_empty() {
+        return Err(TestimonyError::EmptyCommand {
+            plugin: plugin_name.to_string(),
+        });
+    }
     let mut cmd = Command::new(&command[0]);
     if command.len() > 1 {
         cmd.args(&command[1..]);
@@ -134,18 +144,26 @@ pub fn resolve_testimony(
             return Ok(TestimonyResolution {
                 outcome: TestimonyOutcome::Unavailable {
                     plugin: plugin_name.to_string(),
-                    reason: format!("dependency proof resolver unavailable for {command:?}: {error}"),
+                    reason: format!(
+                        "dependency proof resolver unavailable for {command:?}: {error}"
+                    ),
                 },
                 diagnostics,
             });
         }
     };
-    let mut stdin = child.stdin.take().ok_or_else(|| TestimonyError::StdinUnavailable {
-        plugin: plugin_name.to_string(),
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| TestimonyError::StdoutUnavailable {
-        plugin: plugin_name.to_string(),
-    })?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| TestimonyError::StdinUnavailable {
+            plugin: plugin_name.to_string(),
+        })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| TestimonyError::StdoutUnavailable {
+            plugin: plugin_name.to_string(),
+        })?;
     let mut reader = BufReader::new(stdout);
 
     let req = json!({
@@ -188,11 +206,12 @@ pub fn resolve_testimony(
         });
     }
 
-    let response: Value = serde_json::from_str(line.trim()).map_err(|source| TestimonyError::InvalidJson {
-        plugin: plugin_name.to_string(),
-        source,
-        raw: line.trim().to_string(),
-    })?;
+    let response: Value =
+        serde_json::from_str(line.trim()).map_err(|source| TestimonyError::InvalidJson {
+            plugin: plugin_name.to_string(),
+            source,
+            raw: line.trim().to_string(),
+        })?;
     if let Some(error) = response.get("error") {
         if rpc_error_is_method_not_supported(error, "sugar.plugin.resolve_dependency_proofs") {
             return Ok(TestimonyResolution {
@@ -241,7 +260,8 @@ pub fn resolve_testimony(
     }
 
     out.sort_by(|a: &ProofBytes, b: &ProofBytes| {
-        (a.expected_cid.as_str(), a.label.as_str()).cmp(&(b.expected_cid.as_str(), b.label.as_str()))
+        (a.expected_cid.as_str(), a.label.as_str())
+            .cmp(&(b.expected_cid.as_str(), b.label.as_str()))
     });
     out.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
 
@@ -431,12 +451,18 @@ pub fn resolve_source(
         plugin: plugin_name.to_string(),
         reason: format!("source oracle unavailable for {command:?}: {error}"),
     })?;
-    let mut stdin = child.stdin.take().ok_or_else(|| SourceRefusal::StdinUnavailable {
-        plugin: plugin_name.to_string(),
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| SourceRefusal::StdoutUnavailable {
-        plugin: plugin_name.to_string(),
-    })?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| SourceRefusal::StdinUnavailable {
+            plugin: plugin_name.to_string(),
+        })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| SourceRefusal::StdoutUnavailable {
+            plugin: plugin_name.to_string(),
+        })?;
     let mut reader = BufReader::new(stdout);
 
     let req = json!({
@@ -477,11 +503,12 @@ pub fn resolve_source(
         });
     }
 
-    let response: Value = serde_json::from_str(line.trim()).map_err(|source| SourceRefusal::InvalidJson {
-        plugin: plugin_name.to_string(),
-        source,
-        raw: line.trim().to_string(),
-    })?;
+    let response: Value =
+        serde_json::from_str(line.trim()).map_err(|source| SourceRefusal::InvalidJson {
+            plugin: plugin_name.to_string(),
+            source,
+            raw: line.trim().to_string(),
+        })?;
     if let Some(error) = response.get("error") {
         if rpc_error_is_method_not_supported(error, "sugar.plugin.resolve_source_memento") {
             return Err(SourceRefusal::Unavailable {
@@ -506,17 +533,86 @@ pub fn resolve_source(
     decode_resolved_source(plugin_name, &result)
 }
 
-fn decode_resolved_source(plugin_name: &str, result: &Value) -> Result<ResolvedSource, SourceRefusal> {
+fn decode_resolved_source(
+    plugin_name: &str,
+    result: &Value,
+) -> Result<ResolvedSource, SourceRefusal> {
     let malformed = |reason: &str| SourceRefusal::MalformedResponse {
         plugin: plugin_name.to_string(),
         reason: reason.to_string(),
     };
+    // Two live server dialects answer this method (macroscope on #3856):
+    // walk_rpc's flat `{file, span, ...}` and rust_test_assertions_rpc's
+    // status-keyed `{status: resolved|drifted|absent, ...}`. Decode BOTH,
+    // typed; a drifted/absent status maps to the same honest refusals the
+    // flat dialect signals via RPC error. Wire unification is follow-up.
+    if let Some(status) = result.get("status").and_then(Value::as_str) {
+        match status {
+            "resolved" => { /* fall through to field decode below */ }
+            "drifted" => {
+                return Err(SourceRefusal::Refused {
+                    plugin: plugin_name.to_string(),
+                    reason: result
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("source drifted from sworn memento")
+                        .to_string(),
+                });
+            }
+            "absent" => {
+                return Err(SourceRefusal::Refused {
+                    plugin: plugin_name.to_string(),
+                    reason: result
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("source absent for memento")
+                        .to_string(),
+                });
+            }
+            other => {
+                return Err(malformed(&format!("unknown status `{other}`")));
+            }
+        }
+        // status:"resolved" in the status dialect carries the span inside
+        // `memento` rather than a top-level `span`.
+        if result.get("span").is_none() {
+            if let Some(memento) = result.get("memento") {
+                let file = memento
+                    .get("file")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| malformed("status dialect: missing `memento.file`"))?
+                    .to_string();
+                let span_value = memento
+                    .get("span")
+                    .ok_or_else(|| malformed("status dialect: missing `memento.span`"))?;
+                return decode_span_and_source(plugin_name, result, file, span_value);
+            }
+            return Err(malformed(
+                "status dialect: resolved without span or memento",
+            ));
+        }
+    }
     let file = result
         .get("file")
         .and_then(Value::as_str)
         .ok_or_else(|| malformed("missing `file`"))?
         .to_string();
-    let span_value = result.get("span").ok_or_else(|| malformed("missing `span`"))?;
+    let span_value = result
+        .get("span")
+        .ok_or_else(|| malformed("missing `span`"))?;
+    decode_span_and_source(plugin_name, result, file, span_value)
+}
+
+fn decode_span_and_source(
+    plugin_name: &str,
+    result: &Value,
+    file: String,
+    span_value: &Value,
+) -> Result<ResolvedSource, SourceRefusal> {
+    let malformed = |reason: &str| SourceRefusal::MalformedResponse {
+        plugin: plugin_name.to_string(),
+        reason: reason.to_string(),
+    };
     let span = SrcSpan {
         start_line: span_value
             .get("start_line")
@@ -551,7 +647,10 @@ fn decode_resolved_source(plugin_name: &str, result: &Value) -> Result<ResolvedS
                 .filter_map(|line| {
                     let number = line.get("line").and_then(Value::as_u64)? as usize;
                     let source = line.get("source").and_then(Value::as_str)?.to_string();
-                    Some(SourceLine { line: number, source })
+                    Some(SourceLine {
+                        line: number,
+                        source,
+                    })
                 })
                 .collect()
         })
@@ -590,5 +689,60 @@ mod tests {
             &json!({"code": -32602, "message": "invalid params"}),
             "sugar.plugin.resolve_dependency_proofs"
         ));
+    }
+}
+
+#[cfg(test)]
+mod dialect_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The status dialect (rust_test_assertions_rpc): resolved carries the
+    /// span inside `memento`, drifted/absent map to typed refusals.
+    #[test]
+    fn status_dialect_resolved_decodes_via_memento_span() {
+        let result = json!({
+            "status": "resolved",
+            "source": "assert np.add(2, 3) == 5",
+            "bodyText": "assert np.add(2, 3) == 5",
+            "memento": {
+                "file": "tests/test_x.py",
+                "span": {"start_line": 3, "start_col": 4, "end_line": 3, "end_col": 30},
+            }
+        });
+        let resolved = decode_resolved_source("rust-test-assertions", &result)
+            .expect("status:resolved must decode");
+        assert_eq!(resolved.file, "tests/test_x.py");
+        assert_eq!(resolved.span.start_line, 3);
+        assert_eq!(resolved.source, "assert np.add(2, 3) == 5");
+    }
+
+    #[test]
+    fn status_dialect_drifted_is_a_typed_refusal() {
+        let result = json!({"status": "drifted", "reason": "source CID mismatch"});
+        match decode_resolved_source("rust-test-assertions", &result) {
+            Err(SourceRefusal::Refused { reason, .. }) => {
+                assert!(reason.contains("mismatch"));
+            }
+            other => panic!("drifted must refuse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flat_dialect_still_decodes() {
+        let result = json!({
+            "file": "src/lib.rs",
+            "span": {"start_line": 1, "start_col": 0, "end_line": 1, "end_col": 10},
+            "source": "fn x() {}",
+        });
+        let resolved = decode_resolved_source("walk", &result).expect("flat dialect must decode");
+        assert_eq!(resolved.file, "src/lib.rs");
+    }
+
+    #[test]
+    fn empty_command_is_a_typed_error_not_a_panic() {
+        let err = resolve_testimony("empty", &[], None, Path::new("."))
+            .expect_err("empty command must refuse");
+        assert!(matches!(err, TestimonyError::EmptyCommand { .. }));
     }
 }
