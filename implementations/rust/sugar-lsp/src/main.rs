@@ -94,15 +94,22 @@ struct SugarLanguageServer {
     /// THE TERMINUS: `--in-process` mode active. Mutually exclusive with
     /// per-plugin routing (see `update_document`'s dispatch).
     in_process: bool,
-    /// Resident `ProveContext`, built once at `initialize` from the
-    /// workspace root and refreshed in place when `.sugar/imports` drifts.
+    /// THE `proofs` MAP (`.proofs: Map<Cid, ProofGraph>` in the re-plumb
+    /// spec): the vendor-only base pool parsed from `.sugar/imports`, built
+    /// once at `initialize` and refreshed whole-map when the `.proof` file
+    /// watcher (`did_change_watched_files`, or the drift check every solve
+    /// already runs) sees a manifest change. `ProveContext` bundles the
+    /// parsed pool with the derived `ConsistencyIndex`/solver plan so a
+    /// refresh recomputes both together (see `get_or_refresh_prove_ctx`).
     /// `None` until `initialize` runs (or if the workspace root has no
     /// resolvable project).
     prove_ctx: Arc<Mutex<Option<Arc<prove_engine::ProveContext>>>>,
-    /// Last-known raw buffer text per uri, in-process mode only. Needed
-    /// because `code_action` has to find the `==` on the asserted line, and
-    /// `didSave` may omit the body (falls back to this cache).
-    raw_documents: Arc<Mutex<HashMap<Url, String>>>,
+    /// THE `lifted` MAP (`.lifted: Map<File, ProofGraph>` in the re-plumb
+    /// spec): last-known raw buffer text per open uri, refreshed per-entry
+    /// on `didOpen`/`didChange`/`didSave`. Feeds `solve_buffer`'s per-file
+    /// mint. Also serves `code_action`'s `==` line lookup, and is the
+    /// fallback when `didSave` omits the body.
+    lifted: Arc<Mutex<HashMap<Url, String>>>,
     /// Per-uri stash of the last solve's row diagnostics, so `hover` and
     /// `code_action` can serve the SAME three-fact message / proven-value
     /// Quick Fix that `publish_diagnostics` just painted, without re-solving.
@@ -218,6 +225,37 @@ impl LanguageServer for SugarLanguageServer {
         self.client
             .log_message(MessageType::INFO, "Sugar LSP server initialized")
             .await;
+
+        // THE `proofs` MAP's watcher: dynamically register interest in
+        // `.proof` files so a real client forwards `did_change_watched_files`
+        // whenever `.sugar/imports` gains/loses/updates a vendor proof.
+        // Registration failure (a client without watcher support) is not
+        // fatal -- the per-solve drift check in `get_or_refresh_prove_ctx`
+        // still catches the same drift on the next buffer edit; this
+        // registration only makes the refresh happen WITHOUT waiting for one.
+        if self.in_process {
+            let registration = Registration {
+                id: "sugar-lsp-proof-watcher".to_string(),
+                method: "workspace/didChangeWatchedFiles".to_string(),
+                register_options: Some(
+                    serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+                        watchers: vec![FileSystemWatcher {
+                            glob_pattern: GlobPattern::String("**/*.proof".to_string()),
+                            kind: None,
+                        }],
+                    })
+                    .unwrap(),
+                ),
+            };
+            if let Err(e) = self.client.register_capability(vec![registration]).await {
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!("proof-watcher registration failed (client may lack support): {e}"),
+                    )
+                    .await;
+            }
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -277,12 +315,37 @@ impl LanguageServer for SugarLanguageServer {
             Some(t) => t,
             // The client may omit the body on save; fall back to the last
             // buffer content we cached from didOpen/didChange.
-            None => match self.raw_documents.lock().await.get(&uri).cloned() {
+            None => match self.lifted.lock().await.get(&uri).cloned() {
                 Some(t) => t,
                 None => return,
             },
         };
         self.in_process_open_or_save(uri, text).await;
+    }
+
+    /// The proof-watcher event: the `proofs` map's own entry point (a
+    /// `.proof` landing/changing under `.sugar/imports`), symmetric with
+    /// `did_change`'s `lifted` map entry point. Neither event kind gets a
+    /// private code path: both end at `get_or_refresh_prove_ctx` (refresh
+    /// `proofs`) followed by `in_process_solve_and_publish` (fold everything,
+    /// discharge, publish) -- the IDENTICAL call `did_open`/`did_save`/
+    /// `did_change` make. A `.proof` change cannot alter any open buffer's
+    /// text, so this refreshes `proofs` once and re-folds for every
+    /// currently-open uri in `lifted`, each against its own last-known text.
+    async fn did_change_watched_files(&self, _params: DidChangeWatchedFilesParams) {
+        if !self.in_process {
+            return;
+        }
+        let open: Vec<(Url, String)> = self
+            .lifted
+            .lock()
+            .await
+            .iter()
+            .map(|(u, t)| (u.clone(), t.clone()))
+            .collect();
+        for (uri, text) in open {
+            self.in_process_open_or_save(uri, text).await;
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -292,7 +355,7 @@ impl LanguageServer for SugarLanguageServer {
             docs.remove(&uri);
         }
         if self.in_process {
-            self.raw_documents.lock().await.remove(&uri);
+            self.lifted.lock().await.remove(&uri);
             self.prove_diagnostics.lock().await.remove(&uri);
             self.change_generation.lock().await.remove(&uri);
         }
@@ -410,7 +473,7 @@ impl LanguageServer for SugarLanguageServer {
             let mut actions = Vec::new();
             let diags = self.prove_diagnostics.lock().await;
             if let Some(rows) = diags.get(&uri) {
-                let raw = self.raw_documents.lock().await;
+                let raw = self.lifted.lock().await;
                 if let Some(text) = raw.get(&uri) {
                     for row in rows {
                         if !overlaps_range(range, row.range) {
@@ -505,7 +568,7 @@ impl SugarLanguageServer {
         in_process_solve_and_publish(
             &self.client,
             &self.prove_ctx,
-            &self.raw_documents,
+            &self.lifted,
             &self.prove_diagnostics,
             &self.last_diagnostics,
             uri,
@@ -518,7 +581,7 @@ impl SugarLanguageServer {
     /// sees the latest text), then solve after a 250ms debounce window --
     /// only if no NEWER change has landed for this `uri` while we slept.
     async fn in_process_debounced_change(&self, uri: Url, text: String) {
-        self.raw_documents
+        self.lifted
             .lock()
             .await
             .insert(uri.clone(), text.clone());
@@ -532,7 +595,7 @@ impl SugarLanguageServer {
 
         let client = self.client.clone();
         let prove_ctx = self.prove_ctx.clone();
-        let raw_documents = self.raw_documents.clone();
+        let lifted = self.lifted.clone();
         let prove_diagnostics = self.prove_diagnostics.clone();
         let change_generation = self.change_generation.clone();
         let last_diagnostics = self.last_diagnostics.clone();
@@ -550,7 +613,7 @@ impl SugarLanguageServer {
             in_process_solve_and_publish(
                 &client,
                 &prove_ctx,
-                &raw_documents,
+                &lifted,
                 &prove_diagnostics,
                 &last_diagnostics,
                 uri_for_task,
@@ -749,13 +812,13 @@ async fn get_or_refresh_prove_ctx(
 async fn in_process_solve_and_publish(
     client: &Client,
     prove_ctx: &Arc<Mutex<Option<Arc<prove_engine::ProveContext>>>>,
-    raw_documents: &Arc<Mutex<HashMap<Url, String>>>,
+    lifted: &Arc<Mutex<HashMap<Url, String>>>,
     prove_diagnostics: &Arc<Mutex<HashMap<Url, Vec<prove_diagnostics::RowDiag>>>>,
     last_diagnostics: &Arc<Mutex<HashMap<Url, Vec<Diagnostic>>>>,
     uri: Url,
     text: String,
 ) {
-    raw_documents.lock().await.insert(uri.clone(), text.clone());
+    lifted.lock().await.insert(uri.clone(), text.clone());
 
     let Some(ctx) = get_or_refresh_prove_ctx(prove_ctx).await else {
         client
@@ -939,7 +1002,7 @@ async fn main() {
         // project_root removed (unused)
         in_process,
         prove_ctx: Arc::new(Mutex::new(None)),
-        raw_documents: Arc::new(Mutex::new(HashMap::new())),
+        lifted: Arc::new(Mutex::new(HashMap::new())),
         prove_diagnostics: Arc::new(Mutex::new(HashMap::new())),
         change_generation: Arc::new(Mutex::new(HashMap::new())),
         last_diagnostics: Arc::new(Mutex::new(HashMap::new())),
