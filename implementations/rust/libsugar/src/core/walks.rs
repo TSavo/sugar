@@ -6,8 +6,6 @@
 //! DomainClaims) plus the `Catalog` trait. It explicitly avoids the Kit /
 //! Domain / Solver / Verbs dispatch layer so it can be consumed by:
 //!
-//! - `sugar_cli::kit_path::prove_kit::ProveKit` for chain-integrity discharge
-//!   (relocated from `core::prove_kit` by #evict-2-liftplugin-pathexec)
 //! - `sugar_walk::bind` for concept-tier hub assertions (relocated from
 //!   `core::bind` by #evict-1-bind)
 //! - downstream lifters and verifiers that need to traverse premise chains
@@ -82,8 +80,11 @@ impl fmt::Display for ChainBreak {
 impl std::error::Error for ChainBreak {}
 
 /// Walk-failure payload that retains the partial trace observed before the
-/// break. Used by `ProveKit` to emit `ChainIntegrityFailureWitness` with the
-/// steps it traced before the algorithm aborted.
+/// break, for a `ChainIntegrityFailureWitness`-shaped caller to report the
+/// steps it traced before the algorithm aborted. (The built-in `ProveKit`
+/// consumer that motivated this shape was deleted by #evict-3-provekit as
+/// dead code; this remains substrate for the next live chain-integrity
+/// caller.)
 pub struct ChainWalkFailure {
     /// The structural reason the walk broke.
     pub breakage: ChainBreak,
@@ -215,7 +216,8 @@ fn walk_inner(
 
     // Catalog presence is checked BEFORE the trace is updated so that a
     // missing premise never leaks into `walked_steps_before_break`. This
-    // matches the contract asserted by the existing ProveKit failure tests.
+    // matches the contract asserted by this module's own failure tests below
+    // (see `PremiseNotInCatalog` cases).
     if !catalog.contains(claim_cid) {
         return Err(ChainBreak::PremiseNotInCatalog {
             cid: claim_cid.clone(),

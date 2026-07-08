@@ -725,10 +725,12 @@ pub enum Witness {
     /// Solver/checker transcript for an unknown result.
     #[serde(rename = "unknown")]
     Unknown { transcript: JsonValue },
-    /// Chain-integrity evidence produced by ProveKit.
+    /// Chain-integrity evidence produced by a chain-integrity discharge kit
+    /// (e.g. the now-deleted `ProveKit`, per #evict-3-provekit).
     #[serde(rename = "chain-integrity")]
     ChainIntegrity(ChainIntegrityWitness),
-    /// Chain-integrity failure evidence produced by ProveKit.
+    /// Chain-integrity failure evidence produced by a chain-integrity
+    /// discharge kit (e.g. the now-deleted `ProveKit`, per #evict-3-provekit).
     #[serde(rename = "chain-integrity-failure")]
     ChainIntegrityFailure(ChainIntegrityFailureWitness),
 }
