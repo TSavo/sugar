@@ -1941,11 +1941,35 @@ impl Attribution {
     }
 }
 
+/// The canonical join key for a ground callsite fact: the JCS canonicalization
+/// of a `call:*` ctor term. The cross-fact join -- a consumer obligation pooling
+/// a sibling's sworn vector about the SAME concrete call -- is EXACTLY `TermKey`
+/// equality, so the wrapper carries `Eq`/`Ord`/`Hash` and nothing else may be
+/// compared against it. `#[serde(transparent)]`: the wire form is the bare
+/// string, so no artifact byte changes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+struct TermKey(String);
+
+impl TermKey {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The ambient scope prefix of a callsite-keyed obligation (the segment before
+/// the final `::`, or the whole pre-`#euf#` segment). Finite-replay ground facts
+/// travel only within a matching scope, so the wrapper carries `Eq`/`Ord` for
+/// that guard. `#[serde(transparent)]`: the wire form is the bare string.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+struct Scope(String);
+
 #[derive(Debug, Clone)]
 struct AmbientGroundCallsiteFact {
     attribution: Attribution,
-    scope: Option<String>,
-    term_key: String,
+    scope: Option<Scope>,
+    term_key: TermKey,
     witness_key: AmbientFactWitnessKey,
     fact: Json,
 }
@@ -1961,7 +1985,7 @@ struct AmbientGroundCallsiteFact {
 fn collect_ambient_ground_callsite_facts(
     inv: &Json,
     source: &Attribution,
-    scope: &Option<String>,
+    scope: &Option<Scope>,
     provenance_kind: ProofIrProvenanceKind,
     out: &mut Vec<AmbientGroundCallsiteFact>,
 ) {
@@ -2018,7 +2042,7 @@ fn collect_ambient_ground_callsite_facts(
 
 fn ground_callsite_witness_keys(
     inv: &Json,
-    scope: &Option<String>,
+    scope: &Option<Scope>,
     provenance_kind: ProofIrProvenanceKind,
 ) -> std::collections::BTreeSet<AmbientFactWitnessKey> {
     let mut facts = Vec::new();
@@ -2158,15 +2182,17 @@ fn collect_vendor_sworn_facts(
     out
 }
 
-fn ground_callsite_term_key(term: &Json) -> Option<String> {
+fn ground_callsite_term_key(term: &Json) -> Option<TermKey> {
     if !is_callsite_ctor_term(term) {
         return None;
     }
-    libsugar::canonical::json_jcs(&federate_primitive_sorts(term)).ok()
+    libsugar::canonical::json_jcs(&federate_primitive_sorts(term))
+        .ok()
+        .map(TermKey)
 }
 
-fn ambient_ground_callsite_scope(property_name: &str) -> Option<String> {
-    EufCoordinate::parse(property_name).scope()
+fn ambient_ground_callsite_scope(property_name: &str) -> Option<Scope> {
+    EufCoordinate::parse(property_name).scope().map(Scope)
 }
 
 /// True if every `var` occurrence in the formula/term tree is bound by an
@@ -2536,7 +2562,7 @@ fn with_ambient_ground_callsite_facts(
 
     let mut callsites = Vec::new();
     collect_unquantified_ctor_terms(&inv, &mut callsites);
-    let wanted: std::collections::BTreeSet<String> = callsites
+    let wanted: std::collections::BTreeSet<TermKey> = callsites
         .iter()
         .filter_map(ground_callsite_term_key)
         .collect();
@@ -4001,11 +4027,38 @@ mod tests {
                 name.contains("#euf#"),
             );
             assert_eq!(
-                EufCoordinate::parse(name).scope(),
+                EufCoordinate::parse(name).scope().map(Scope),
                 ambient_ground_callsite_scope(name),
             );
         }
     }
+
+    /// STRONG-TYPING SEAM: `TermKey`/`Scope` are `#[serde(transparent)]` newtypes
+    /// over the bare join/scope strings, so a value's wire form is byte-identical
+    /// to the raw string it wraps and survives a serde round-trip unchanged. This
+    /// is the artifact-invariance receipt for the seam: nothing that touches a
+    /// serialized memento observes a different shape.
+    #[test]
+    fn term_key_and_scope_serde_are_transparent_and_round_trip() {
+        let tk = TermKey("call:enc(s:\"abc\")".to_string());
+        let wire = serde_json::to_string(&tk).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::to_string("call:enc(s:\"abc\")").unwrap(),
+            "TermKey wire form must be the bare string (transparent)",
+        );
+        assert_eq!(serde_json::from_str::<TermKey>(&wire).unwrap(), tk);
+
+        let sc = Scope("src/lib.rs::tests::t".to_string());
+        let wire = serde_json::to_string(&sc).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::to_string("src/lib.rs::tests::t").unwrap(),
+            "Scope wire form must be the bare string (transparent)",
+        );
+        assert_eq!(serde_json::from_str::<Scope>(&wire).unwrap(), sc);
+    }
+
     fn gt(a: Json, b: Json) -> Json {
         json!({"kind":"atomic","name":">","args":[a,b]})
     }
