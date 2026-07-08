@@ -1748,10 +1748,17 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "sugar-canonicalizer",
+ "sugar-cli",
+ "sugar-ir-compiler",
+ "sugar-verifier",
  "tempfile",
  "tokio",
  "toml",
  "tower-lsp",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]
