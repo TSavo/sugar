@@ -4430,35 +4430,55 @@ mod tests {
             res.remove(0)
         };
 
-        let labels = |r: &ConsistencyResult| -> (String, String) {
+        // Parsed-structure labels, NOT serialized-substring search (#3870):
+        // a benign IR shape change must not false-green a wrong attribution.
+        let labels = |r: &ConsistencyResult| -> (Json, Json) {
             let v = r
                 .verification
                 .as_ref()
                 .expect("verification detail")
                 .to_json();
-            let client = v.get("clientFactIr").expect("client fact label").to_string();
-            let vendor = v
-                .get("vendorFactIr")
-                .expect("vendor fact label")
-                .to_string();
+            let client = v.get("clientFactIr").expect("client fact label").clone();
+            let vendor = v.get("vendorFactIr").expect("vendor fact label").clone();
             (client, vendor)
         };
+        // The exact conjunct nodes the two contracts swore, as full IR trees.
+        // clientFactIr is the CONSTRUCTED conjunction of consumer-spoken
+        // members (an `and` node even for one member); vendorFactIr is the
+        // vector of vendor-spoken members.
+        let says_6 = eqf(var("r"), int(6));
+        let says_5 = eqf(var("r"), int(5));
+        let and1 = |c: &Json| json!({"kind":"and","operands":[c]});
 
         // Consumer speaks ==6, vendor speaks ==5.
         let normal = solve_with(true);
         assert_eq!(normal.verdict, ObligationVerdict::Unsatisfied);
         let (client, vendor) = labels(&normal);
-        assert!(
-            client.contains("\"value\":6") && !client.contains("\"value\":5"),
-            "clientFactIr must be the consumer's ==6 conjunct ONLY: {client}"
+        assert_eq!(
+            client,
+            and1(&says_6),
+            "clientFactIr must be EXACTLY the consumer's ==6 conjunction"
         );
-        assert!(
-            vendor.contains("\"value\":5") && !vendor.contains("\"value\":6"),
-            "vendorFactIr must carry the vendor's ==5 conjunct: {vendor}"
+        assert_eq!(
+            vendor,
+            json!([says_5]),
+            "vendorFactIr must be EXACTLY the vendor's ==5 conjunct vector"
         );
 
         // FLIP the speakers over the SAME two contracts: labels flip,
         // verdict does not.
+        //
+        // BAD-TWIN RECEIPT (run 2026-07-08, then reverted): with the fixture
+        // attribution swapped (Consumer<->Vendor roles on the same CIDs),
+        // the structural assert_eq! FAILS loudly:
+        //   clientFactIr must be EXACTLY the consumer's ==6 conjunction
+        //   left:  {"kind":"and","operands":[{..."value":5...}]}
+        //   right: {"kind":"and","operands":[{..."value":6...}]}
+        // proving the assertion discriminates attribution structurally.
+        // Unlike the old `client.contains("\"value\":6")` substring check,
+        // a benign IR serialization/shape change (key reordering, wrapper
+        // node, escaping) cannot false-green this: only the exact parsed
+        // clientFactIr/vendorFactIr nodes satisfy it.
         let flipped = solve_with(false);
         assert_eq!(
             flipped.verdict,
@@ -4466,13 +4486,15 @@ mod tests {
             "attribution must never change the verdict (solver input is byte-identical)"
         );
         let (client, vendor) = labels(&flipped);
-        assert!(
-            client.contains("\"value\":5") && !client.contains("\"value\":6"),
-            "flipped clientFactIr must be the (now consumer-spoken) ==5 conjunct: {client}"
+        assert_eq!(
+            client,
+            and1(&says_5),
+            "flipped clientFactIr must be EXACTLY the (now consumer-spoken) ==5 conjunction"
         );
-        assert!(
-            vendor.contains("\"value\":6") && !vendor.contains("\"value\":5"),
-            "flipped vendorFactIr must carry the (now vendor-spoken) ==6 conjunct: {vendor}"
+        assert_eq!(
+            vendor,
+            json!([says_6]),
+            "flipped vendorFactIr must be EXACTLY the (now vendor-spoken) ==6 conjunct vector"
         );
     }
 
