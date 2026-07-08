@@ -1959,12 +1959,12 @@ mod tests {
                 observation: OracleHostObservation {
                     host: "rust-analyzer".to_string(),
                     locatability: OracleHostLocatability::Found {
-                        host_binary: "/bin/sugar-linkerd".to_string(),
+                        host_binary: "/bin/sugar-ra-oracle".to_string(),
                         rust_analyzer_binary: Some("/bin/rust-analyzer".to_string()),
                         discovery: "env".to_string(),
                     },
                     readiness: OracleHostReadiness::Ready {
-                        detail: "sugar-linkerd spawned and reported rust-analyzer ready"
+                        detail: "sugar-ra-oracle spawned and reported rust-analyzer ready"
                             .to_string(),
                     },
                     engagement: OracleHostEngagement::Engaged {
@@ -1972,7 +1972,7 @@ mod tests {
                     },
                     convergence: OracleResolutionConvergence::Converged {
                         detail:
-                            "resolution readiness is gated by linkerd rustAnalyzerReady; convergence harness removed"
+                            "resolution readiness is gated by the ra-oracle's rustAnalyzerReady; convergence harness removed"
                                 .to_string(),
                     },
                 },
@@ -1982,7 +1982,7 @@ mod tests {
         fn ready_from_path() -> Self {
             let mut adapter = Self::ready();
             adapter.observation.locatability = OracleHostLocatability::Found {
-                host_binary: "/usr/local/bin/sugar-linkerd".to_string(),
+                host_binary: "/usr/local/bin/sugar-ra-oracle".to_string(),
                 rust_analyzer_binary: Some("/usr/local/bin/rust-analyzer".to_string()),
                 discovery: "path".to_string(),
             };
@@ -1994,8 +1994,8 @@ mod tests {
                 observation: OracleHostObservation {
                     host: "rust-analyzer".to_string(),
                     locatability: OracleHostLocatability::Missing {
-                        missing: vec!["sugar-linkerd".to_string()],
-                        detail: "missing oracle host prerequisite(s): sugar-linkerd".to_string(),
+                        missing: vec!["sugar-ra-oracle".to_string()],
+                        detail: "missing oracle host prerequisite(s): sugar-ra-oracle".to_string(),
                     },
                     readiness: OracleHostReadiness::NotReady {
                         detail: "oracle host is not locatable".to_string(),
@@ -2922,7 +2922,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         let locatable = check_by_id_from_checks(&checks, "oracle.host.locatable");
         assert_eq!(
             locatable.evidence.get("hostBinary").and_then(Value::as_str),
-            Some("/bin/sugar-linkerd")
+            Some("/bin/sugar-ra-oracle")
         );
         assert_eq!(
             locatable.evidence.get("discovery").and_then(Value::as_str),
@@ -2941,7 +2941,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         assert_eq!(locatable.status, CheckStatus::Warn);
         assert_eq!(locatable.severity, CheckSeverity::Advisory);
         assert!(
-            locatable.detail.contains("sugar-linkerd"),
+            locatable.detail.contains("sugar-ra-oracle"),
             "missing-host detail should name the missing binary: {}",
             locatable.detail
         );

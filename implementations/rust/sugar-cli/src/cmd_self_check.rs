@@ -214,7 +214,7 @@ pub fn run(args: SelfCheckArgs) -> u8 {
             {
                 failed = true;
                 eprintln!(
-                    "self-check --oracle requested but the oracle resolved 0/{} receivers; the census is SYNTACTIC-ONLY (sugar-linkerd unreachable or rust-analyzer not ready). Set SUGAR_LINKERD_BIN and run doctor.",
+                    "self-check --oracle requested but the oracle resolved 0/{} receivers; the census is SYNTACTIC-ONLY (sugar-ra-oracle unreachable or rust-analyzer not ready). Set SUGAR_RA_ORACLE_BIN and run doctor.",
                     scoreboard.oracle.attempted
                 );
             }
