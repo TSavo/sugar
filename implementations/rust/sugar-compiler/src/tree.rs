@@ -88,6 +88,8 @@ pub struct KitConn {
 /// than inventing a parallel error surface every accessor must know about).
 #[derive(Debug, thiserror::Error)]
 pub enum EnumerateError {
+    #[error("enumeration kit `{plugin}` returned a malformed node: {reason}")]
+    MalformedNode { plugin: String, reason: String },
     #[error("enumeration kit `{plugin}` unavailable: {reason}")]
     Unavailable { plugin: String, reason: String },
     #[error("enumeration kit `{plugin}` stdin unavailable")]
@@ -344,11 +346,17 @@ fn memento_to_json(m: &SourceMemento) -> Value {
     m.to_json()
 }
 
-fn decode_memento(value: &Value) -> SourceMemento {
+fn decode_memento(value: &Value) -> Result<SourceMemento, String> {
+    // `file` is the one REQUIRED field at every level: a memento without a
+    // file is not a degenerate key, it is no key at all (gitar on #3862 --
+    // a silent empty-string memento would vanish from the address space).
+    // Every other field stays legitimately optional: file-level locators
+    // are degenerate by design.
     let file = value
         .get("file")
         .and_then(Value::as_str)
-        .unwrap_or_default()
+        .filter(|f| !f.is_empty())
+        .ok_or_else(|| format!("memento missing required `file`: {value}"))?
         .to_string();
     let function_name = value
         .get("function_name")
@@ -392,35 +400,49 @@ fn decode_memento(value: &Value) -> SourceMemento {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    SourceMemento {
+    Ok(SourceMemento {
         file,
         function_name,
         span,
         param_names,
         source_cid,
         template_cid,
-    }
+    })
 }
 
-fn decode_node(value: &Value) -> Option<WireNode> {
-    let memento_value = value.get("memento")?;
-    Some(WireNode {
-        memento: decode_memento(memento_value),
+fn decode_node(value: &Value) -> Result<WireNode, String> {
+    // A node without a memento would silently vanish from the address
+    // space if skipped -- an accounting violation. Refuse loudly.
+    let memento_value = value
+        .get("memento")
+        .ok_or_else(|| format!("node missing required `memento`: {value}"))?;
+    Ok(WireNode {
+        memento: decode_memento(memento_value)?,
         audit: value.get("audit").cloned().filter(|v| !v.is_null()),
         payload: value.get("payload").cloned().filter(|v| !v.is_null()),
     })
 }
 
 fn decode_gap(value: &Value) -> GapInfo {
+    let mut decode_note = None;
     let memento = value
         .get("memento")
         .filter(|v| !v.is_null())
-        .map(decode_memento);
-    let reason = value
+        .and_then(|v| match decode_memento(v) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                decode_note = Some(e);
+                None
+            }
+        });
+    let mut reason = value
         .get("reason")
         .and_then(Value::as_str)
         .unwrap_or("unspecified gap")
         .to_string();
+    if let Some(note) = decode_note {
+        reason = format!("{reason} (gap memento undecodable: {note})");
+    }
     GapInfo { memento, reason }
 }
 
@@ -532,8 +554,16 @@ fn enumerate_rpc(
     let nodes = result
         .get("nodes")
         .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(decode_node).collect())
-        .unwrap_or_default();
+        .map(|arr| {
+            arr.iter()
+                .map(decode_node)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap_or_else(|| Ok(Vec::new()))
+        .map_err(|reason| EnumerateError::MalformedNode {
+            plugin: plugin.clone(),
+            reason,
+        })?;
     let gaps = result
         .get("gaps")
         .and_then(Value::as_array)
@@ -798,16 +828,29 @@ mod tests {
             source_cid: "blake3-512:abc".to_string(),
             template_cid: "blake3-512:def".to_string(),
         };
-        let decoded = decode_memento(&original.to_json());
+        let decoded = decode_memento(&original.to_json()).expect("round trip");
         assert_eq!(decoded, original);
     }
 
     #[test]
     fn decode_memento_defaults_degenerate_file_level_locator() {
         let value = json!({"file": "a.py"});
-        let decoded = decode_memento(&value);
+        let decoded = decode_memento(&value).expect("file-level degenerate locator is legal");
         assert_eq!(decoded.file, "a.py");
         assert_eq!(decoded.span.start_line, 0);
         assert_eq!(decoded.source_cid, "");
+    }
+
+    /// gitar on #3862: a memento without `file` is no key at all -- refuse.
+    #[test]
+    fn decode_memento_refuses_missing_file() {
+        assert!(decode_memento(&json!({"span": null})).is_err());
+        assert!(decode_memento(&json!({"file": ""})).is_err());
+    }
+
+    /// A node without a memento must error loudly, never vanish silently.
+    #[test]
+    fn decode_node_refuses_missing_memento() {
+        assert!(decode_node(&json!({"payload": {"x": 1}})).is_err());
     }
 }
