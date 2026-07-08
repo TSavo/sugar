@@ -23,6 +23,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use owo_colors::OwoColorize;
 use serde_json::{json, Value};
 
 use crate::component_plan::{self, ComponentPlan, PlannedLiftManifest};
@@ -82,7 +83,14 @@ impl WitnessDischargeConfig {
             let manifest =
                 match find_manifest_with_plan(project_root, &plugin.surface, component_plan) {
                     Ok(m) => m,
-                    Err(_) => continue,
+                    Err(err) => {
+                        eprintln!(
+                            "{}: {}",
+                            "warn".yellow().bold(),
+                            manifest_lookup_warning(&plugin.surface, &err)
+                        );
+                        continue;
+                    }
                 };
             if !manifest.resolve_witness_command.is_empty() {
                 let working_dir = manifest_working_dir(project_root, &manifest);
@@ -254,6 +262,16 @@ fn parse_authored_lift_manifest(path: &Path, surface: &str) -> Result<PlannedLif
     Ok(manifest)
 }
 
+/// The loud-loss diagnostic for a plugin whose manifest lookup failed:
+/// the discharge/resolver commands for this plugin are OMITTED from the
+/// witness-discharge config, and the omission must say so (#3872). Names
+/// the plugin surface and carries the lookup error verbatim.
+fn manifest_lookup_warning(surface: &str, err: &str) -> String {
+    format!(
+        "skipping witness-discharge config for plugin `{surface}`: manifest lookup failed: {err}"
+    )
+}
+
 fn manifest_working_dir(project_root: &Path, manifest: &PlannedLiftManifest) -> PathBuf {
     manifest
         .working_dir
@@ -266,4 +284,72 @@ fn manifest_working_dir(project_root: &Path, manifest: &PlannedLiftManifest) -> 
             }
         })
         .unwrap_or_else(|| project_root.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project_config::PluginEntry;
+
+    fn plugin(surface: &str) -> PluginEntry {
+        PluginEntry {
+            kind: Some("lift".to_string()),
+            surface: surface.to_string(),
+            ..PluginEntry::default()
+        }
+    }
+
+    /// #3872: the warn-emission function names the plugin surface and
+    /// carries the lookup error, so the omitted discharge command says so.
+    #[test]
+    fn manifest_lookup_warning_names_surface_and_error() {
+        let msg = manifest_lookup_warning("rust-kit-3872", "no plugin manifest for surface");
+        assert!(msg.contains("rust-kit-3872"), "must name plugin.surface: {msg}");
+        assert!(
+            msg.contains("no plugin manifest for surface"),
+            "must carry the lookup error: {msg}"
+        );
+        assert!(msg.contains("skipping"), "must say the plugin was omitted: {msg}");
+    }
+
+    /// Err arm: a plugin whose manifest lookup fails contributes nothing —
+    /// from_plan continues past it (and warns on stderr at line 85; the
+    /// warning text itself is asserted above).
+    #[test]
+    fn from_plan_skips_plugin_with_failed_manifest_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = ProjectConfig {
+            plugins: vec![plugin("no-such-surface-3872")],
+            ..ProjectConfig::default()
+        };
+        let plan = ComponentPlan::default();
+        let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
+        assert!(config.discharge_commands.is_empty());
+        assert!(config.resolvers.is_empty());
+    }
+
+    /// Ok arm (discrimination pair): the same box with a real manifest on
+    /// disk produces the discharge command — proving the Err arm's empty
+    /// result is the lookup failure, not a dead pipeline.
+    #[test]
+    fn from_plan_collects_discharge_command_when_manifest_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let surface_dir = dir.path().join(".sugar").join("lift").join("kit-3872");
+        std::fs::create_dir_all(&surface_dir).unwrap();
+        std::fs::write(
+            surface_dir.join("manifest.toml"),
+            "command = [\"lifter\"]\ndischarge_command = [\"discharge\", \"--fast\"]\nwitness_tool = \"z3\"\n",
+        )
+        .unwrap();
+        let cfg = ProjectConfig {
+            plugins: vec![plugin("kit-3872")],
+            ..ProjectConfig::default()
+        };
+        let plan = ComponentPlan::default();
+        let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
+        assert_eq!(
+            config.discharge_commands.get("SUGAR_WITNESS_DISCHARGE_Z3"),
+            Some(&"discharge --fast".to_string())
+        );
+    }
 }
