@@ -1,0 +1,13 @@
+[package]
+name = "sugar-compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Sugar: mint-time proof signing and seal-time manifest assembly (moved out of sugar-cli, seam 1)."
+
+[dependencies]
+sugar-canonicalizer = { path = "../sugar-canonicalizer" }
+sugar-proof-envelope = { path = "../sugar-proof-envelope" }
+sugar-verifier = { path = "../sugar-verifier" }
+serde_json = { workspace = true }

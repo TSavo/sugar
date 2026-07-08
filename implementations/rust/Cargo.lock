@@ -1526,6 +1526,7 @@ dependencies = [
  "serial_test",
  "sugar-canonicalizer",
  "sugar-claim-envelope",
+ "sugar-compiler",
  "sugar-ir-compiler",
  "sugar-ir-compiler-coq",
  "sugar-ir-compiler-smt-lib",
@@ -1544,6 +1545,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "walkdir",
+]
+
+[[package]]
+name = "sugar-compiler"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sugar-canonicalizer",
+ "sugar-proof-envelope",
+ "sugar-verifier",
 ]
 
 [[package]]
