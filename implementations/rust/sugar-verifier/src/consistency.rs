@@ -900,6 +900,9 @@ fn try_witness_discharge(
         .and_then(|c| c.get("tool"))
         .and_then(|t| t.as_str())
         .unwrap_or("");
+    // TODO(SEAM 7): read via WitnessDischargeConfig once fully plumbed
+    // (sugar-cli::discharge_config::WitnessDischargeConfig computes this
+    // value; today it only stages the env var, which this reads directly).
     let project = match std::env::var("SUGAR_WITNESS_PROJECT_DIR") {
         Ok(p) if !p.trim().is_empty() => p,
         _ => {
@@ -1074,6 +1077,9 @@ fn find_witness_resolvers(project_root: &Path) -> Vec<WitnessResolver> {
     found
 }
 
+// TODO(SEAM 7): read via WitnessDischargeConfig once fully plumbed
+// (sugar-cli::discharge_config::WitnessDischargeConfig computes this
+// value; today it only stages the env var, which this reads directly).
 fn witness_resolvers_from_env() -> Vec<WitnessResolver> {
     let Ok(raw) = std::env::var("SUGAR_WITNESS_RESOLVERS") else {
         return Vec::new();
