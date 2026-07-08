@@ -488,6 +488,65 @@ def test_multistatement_body_refuses():
         to_verify_dialect(contract, collect_int_signatures(source)["f"])
 
 
+def test_collect_int_signatures_keys_methods_by_qualified_name_not_bare_leaf():
+    """Regression for #3819: two methods on DIFFERENT classes that share only
+    the bare leaf name `compute` must get their OWN signatures. Bare
+    `node.name` keying (the pre-fix behaviour) collapses both into a single
+    `"compute"` entry, silently overwriting one formal-sort mapping with the
+    other."""
+    source = (
+        "class A:\n"
+        "    def compute(self, x: int) -> int:\n"
+        "        return x + 1\n"
+        "\n"
+        "\n"
+        "class B:\n"
+        "    def compute(self, y: int) -> int:\n"
+        "        return y * 3\n"
+    )
+    sorts = collect_int_signatures(source)
+    assert "compute" not in sorts
+    assert sorts["A.compute"].formal_sorts == {"x": "Int"}
+    assert sorts["B.compute"].formal_sorts == {"y": "Int"}
+
+
+def test_lift_workspace_resolves_nested_functions_sharing_a_leaf_name():
+    """End-to-end regression for #3819: two nested `helper` closures (in
+    different outer functions) share only their bare leaf name. Under
+    bare-leaf keying, `lift_workspace`'s lookup collides the two signatures
+    (last-source-order wins) and one contract silently refuses instead of
+    lowering to its own body-derived post. Both must independently discharge
+    with THEIR OWN formal name and operator."""
+    import tempfile
+    from pathlib import Path as _Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _Path(tmp)
+        (root / "lib.py").write_text(
+            "def outer1(a: int) -> int:\n"
+            "    def helper(x: int) -> int:\n"
+            "        return x + 1\n"
+            "    return helper(a)\n"
+            "\n"
+            "\n"
+            "def outer2(b: int) -> int:\n"
+            "    def helper(y: int) -> int:\n"
+            "        return y * 5\n"
+            "    return helper(b)\n"
+        )
+        ir, _diag = lift_workspace(str(root), "contracts")
+        by_fn = {
+            item["fnName"]: item for item in ir if item.get("kind") == "function-contract"
+        }
+
+    helper1 = by_fn["lib.outer1.<locals>.helper"]
+    helper2 = by_fn["lib.outer2.<locals>.helper"]
+    assert helper1["post"]["args"][1]["name"] == "+"
+    assert helper1["post"]["args"][1]["args"][0] == {"kind": "var", "name": "x"}
+    assert helper2["post"]["args"][1]["name"] == "*"
+    assert helper2["post"]["args"][1]["args"][0] == {"kind": "var", "name": "y"}
+
+
 def test_leaf_harvester_lifts_call_eq():
     source = "def test_double():\n    assert double(3) == 6\n"
     result = harvest_source(source, "test_m.py")
