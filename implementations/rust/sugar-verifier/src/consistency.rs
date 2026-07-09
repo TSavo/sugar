@@ -3353,16 +3353,10 @@ fn build_consistency_index_filtered(
     }
 }
 
-/// CACHED-BASE editor path (#3774 daemonSolve trim): identical semantics to
-/// loading `overlay_pool`'s members onto the base pool and running the solve
-/// door with `Some(scope)` over the merged pool -- adjudicated by the
-/// differential test `cached_index_path_matches_merged_pool_scoped_run`
-/// (sugar-linkerd/tests/prove_consistency.rs) -- but the base pool's
-/// candidates/ambients/locus come from the prebuilt `base` index instead of
-/// an O(pool) re-scan, and the base pool itself is never cloned. Per-request
-/// work: index the (tiny) overlay pool, dedupe by CID against the base,
-/// merge, group, solve the in-scope groups.
-pub fn verify_consistency_scoped_with_base_index(
+/// CACHED-BASE solve body: base index + overlay pool, scoped groups.
+/// Policy is explicit — callers must choose [`warm_solve`] (zero project FS)
+/// or [`verify_consistency_scoped_with_base_index`] (cold disk face).
+fn verify_consistency_scoped_with_base_index_policy(
     base: &ConsistencyIndex,
     overlay_pool: &MementoPool,
     plan: &SolverPlan,
@@ -3370,6 +3364,7 @@ pub fn verify_consistency_scoped_with_base_index(
     compilers: &CompilerRegistry,
     project_root: &Path,
     scope: &Path,
+    pool_only_inputs: bool,
 ) -> Vec<ConsistencyResult> {
     let skip: std::collections::HashSet<String> = base
         .candidates
@@ -3382,7 +3377,6 @@ pub fn verify_consistency_scoped_with_base_index(
         )
         .collect();
     let overlay = build_consistency_index_filtered(overlay_pool, Some(&skip));
-    // Editor daemon is a cold-disk face today (scope + project files).
     verify_consistency_from_indexes(
         base,
         Some(&overlay),
@@ -3391,6 +3385,74 @@ pub fn verify_consistency_scoped_with_base_index(
         compilers,
         project_root,
         Some(scope),
+        pool_only_inputs,
+    )
+}
+
+/// #3809 warm **SOLVE** door — resident base index + overlay pool face.
+///
+/// This is the in-process warm path used by `sugar-lsp` (and any daemon that
+/// holds a prebuilt [`ConsistencyIndex`]). Answers "cold or warm?" **once**:
+/// forces `pool_only_inputs = true` so discharge never `Path::exists` /
+/// witness `read_dir` under the project tree.
+///
+/// ## What this is / is not
+///
+/// - **Is:** pure discharge over a resident base index + pre-fed overlay
+///   pool + in-memory plan/registry/compilers. Zero project FS reads.
+/// - **Is not:** kit fold / mint / source overlay construction (lift face,
+///   happens *before* this door). Not the full `Runner`/`proof-run` face —
+///   that is [`crate`]-adjacent `sugar_compiler::orchestrate::warm_solve`
+///   over a complete pool (same vocabulary, different arity).
+///
+/// Prefer this over [`verify_consistency_scoped_with_base_index`] for any
+/// warm re-solve. The cold scoped face remains for discrimination tests.
+pub fn warm_solve(
+    base: &ConsistencyIndex,
+    overlay_pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: &Path,
+) -> Vec<ConsistencyResult> {
+    verify_consistency_scoped_with_base_index_policy(
+        base,
+        overlay_pool,
+        plan,
+        registry,
+        compilers,
+        project_root,
+        scope,
+        /* pool_only_inputs = */ true,
+    )
+}
+
+/// Cold-disk scoped face (may `Path::exists` / witness `read_dir` for locus
+/// preference and scope). Prefer [`warm_solve`] for the LSP/daemon warm path
+/// (#3809). Kept public so discrimination instruments can prove warm ≡ cold
+/// on speaker-stamped pools (byte-identical rows).
+///
+/// Semantics (cold): identical to loading `overlay_pool`'s members onto the
+/// base pool and running the solve door with `Some(scope)` — adjudicated by
+/// historical differential tests — but the base index is prebuilt.
+pub fn verify_consistency_scoped_with_base_index(
+    base: &ConsistencyIndex,
+    overlay_pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: &Path,
+) -> Vec<ConsistencyResult> {
+    verify_consistency_scoped_with_base_index_policy(
+        base,
+        overlay_pool,
+        plan,
+        registry,
+        compilers,
+        project_root,
+        scope,
         /* pool_only_inputs = */ false,
     )
 }
@@ -7030,5 +7092,173 @@ mod tests {
         let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].verdict, ObligationVerdict::Unsatisfied);
+    }
+
+    /// #3809 GAP 3 instrument: named [`warm_solve`] must produce **byte-identical**
+    /// wire rows to the cold scoped face on a speaker-free base+overlay pool
+    /// (same merge/group/solve; warm forces pool_only without changing the
+    /// conjoin when locus preference has no FS/speaker discrimination).
+    ///
+    /// Layout mirrors the LSP face: resident **base** index (vendor) +
+    /// **overlay** pool (consumer) over one euf property with a contradiction.
+    #[test]
+    fn warm_solve_byte_identical_to_cold_scoped_face() {
+        let z3_ok = std::process::Command::new("z3")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !z3_ok {
+            eprintln!("skip: z3 unavailable");
+            return;
+        }
+        let prop = "demo.check#euf#c:1(2,3)::assertion";
+        // Project tree so cold scope (Path::exists) keeps the group; warm
+        // keeps relative loci by prefix rule without statting.
+        let project = unique_temp_dir("warm-solve-gap3-project");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(project.join("src").join("lib.rs"), b"// fixture\n").unwrap();
+
+        let insert_with_file = |pool: &mut MementoPool, cid: &str, inv: Json| {
+            let env = json!({
+                "envelope": {
+                    "header": {
+                        "kind": "contract",
+                        "contractName": prop,
+                        "inv": inv,
+                        "file": "src/lib.rs",
+                        "span": {"start_line": 1, "start_col": 0, "end_line": 1, "end_col": 10},
+                        "proofirProvenance": proofir_provenance("Stated")
+                    }
+                }
+            });
+            pool.insert_unanchored_for_tests(test_cid(cid), env);
+        };
+
+        // Sibling SOURCE-MEMENTO carries file/span for scope + squiggle anchor
+        // (scoped door drops groups with no locus_entries — see #3802).
+        let insert_source_locus = |pool: &mut MementoPool, cid: &str| {
+            let env = json!({
+                "envelope": {
+                    "header": {
+                        "kind": "source-memento",
+                        "contractName": prop,
+                        "file": "src/lib.rs",
+                        "span": {"start_line": 1, "start_col": 0, "end_line": 1, "end_col": 10},
+                    }
+                }
+            });
+            pool.insert_unanchored_for_tests(test_cid(cid), env);
+        };
+
+        // Base (vendor): check(2,3) == 5
+        let mut base_pool = MementoPool::default();
+        insert_with_file(
+            &mut base_pool,
+            "blake3-512:vendor-warm-gap3",
+            json!({"kind":"and","operands":[eqf(var("r"), int_const(5))]}),
+        );
+        insert_source_locus(&mut base_pool, "blake3-512:vendor-src-warm-gap3");
+        // Overlay (consumer): check(2,3) == 6  → conjoined UNSAT with vendor
+        let mut overlay = MementoPool::default();
+        insert_with_file(
+            &mut overlay,
+            "blake3-512:consumer-warm-gap3",
+            json!({"kind":"and","operands":[eqf(var("r"), int_const(6))]}),
+        );
+        insert_source_locus(&mut overlay, "blake3-512:consumer-src-warm-gap3");
+
+        let (plan, registry) = z3_plan_and_registry();
+        let compilers = test_compilers();
+        let base_index = build_consistency_index(&base_pool);
+
+        let cold = verify_consistency_scoped_with_base_index(
+            &base_index,
+            &overlay,
+            &plan,
+            &registry,
+            &compilers,
+            &project,
+            &project,
+        );
+        let warm = warm_solve(
+            &base_index,
+            &overlay,
+            &plan,
+            &registry,
+            &compilers,
+            &project,
+            &project,
+        );
+
+        // Second warm pass with project_root as a FILE trap — zero project FS.
+        // Relative locus "src/lib.rs" stays in-scope on warm without exists().
+        let trap = unique_temp_dir("warm-solve-gap3-trap");
+        let trap_file = trap.join("project_root_is_a_file");
+        std::fs::write(&trap_file, b"warm_solve must not open children\n").unwrap();
+        let warm_trap = warm_solve(
+            &base_index,
+            &overlay,
+            &plan,
+            &registry,
+            &compilers,
+            &trap_file,
+            &trap_file,
+        );
+
+        let wire = |rows: &[ConsistencyResult]| -> Vec<String> {
+            let mut blobs: Vec<String> = rows
+                .iter()
+                .map(|cr| {
+                    let mut report = crate::types::Report::default();
+                    crate::report::add_consistency_with_verification(
+                        &cr.contract_cid,
+                        &cr.property_name,
+                        cr.verdict,
+                        &cr.reason,
+                        cr.verification.as_ref().map(|v| v.to_json()),
+                        cr.locus.clone(),
+                        &mut report,
+                    );
+                    serde_json::to_string(&crate::report::row_to_json(&report.rows[0]))
+                        .expect("row_to_json serialize")
+                })
+                .collect();
+            blobs.sort();
+            blobs
+        };
+
+        let cold_wire = wire(&cold);
+        let warm_wire = wire(&warm);
+        let trap_wire = wire(&warm_trap);
+        eprintln!(
+            "warm_solve byte-identity gate:\n\
+             \tcold rows={} warm rows={} trap rows={}\n\
+             \tcold={cold_wire:?}\n\
+             \twarm={warm_wire:?}\n\
+             \ttrap={trap_wire:?}",
+            cold.len(),
+            warm.len(),
+            warm_trap.len(),
+        );
+        assert_eq!(
+            warm_wire, cold_wire,
+            "warm_solve must be byte-identical to cold scoped face (row_to_json)"
+        );
+        assert_eq!(
+            trap_wire, warm_wire,
+            "warm_solve with file-trap project_root must match (zero project FS)"
+        );
+        assert!(
+            !warm.is_empty(),
+            "fixture must produce at least one consistency row"
+        );
+        assert!(
+            warm.iter().any(|r| r.verdict == ObligationVerdict::Unsatisfied),
+            "vendor==5 ∧ consumer==6 must be Unsatisfied: {warm:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&project);
+        let _ = std::fs::remove_dir_all(&trap);
     }
 }

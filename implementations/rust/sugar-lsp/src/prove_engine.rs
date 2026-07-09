@@ -24,9 +24,9 @@
 //      (`sugar_cli::cmd_mint::mint_project_scratch_proof`), load its bytes
 //      into an overlay `MementoPool`
 //      (`sugar_verifier::load_all_proofs::{ProofBytes, load_proof_bytes_into_pool}`),
-//      then solve through THE ONE DOOR
-//      (`consistency::verify_consistency_scoped_with_base_index`) and render
-//      rows via `sugar_verifier::report::row_to_json`.
+//      then solve through THE warm SOLVE door
+//      (`consistency::warm_solve` — pool_only, zero project FS reads) and
+//      render rows via `sugar_verifier::report::row_to_json`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -247,8 +247,9 @@ pub struct SolveOutcome {
 
 /// Solve one edited buffer against the resident base index: mint the
 /// SOURCE-OVERLAY scratch proof, load it into a small overlay pool, and
-/// drive THE ONE DOOR (`verify_consistency_scoped_with_base_index`), scoped
-/// to `file`. `ctx` is never mutated (the caller owns invalidation/rebuild).
+/// drive THE warm SOLVE door ([`sugar_verifier::consistency::warm_solve`]),
+/// scoped to `file`. Cold-disk scoped solve is unexpressible here — only
+/// `warm_solve` is called. `ctx` is never mutated (caller owns rebuild).
 pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutcome {
     let scratch_dir = std::env::temp_dir().join("sugar-lsp-lift-scratch").join(
         sugar_canonicalizer::blake3_512_hex(ctx.project_root.display().to_string().as_bytes()),
@@ -324,7 +325,9 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
         ),
     };
 
-    let results = sugar_verifier::consistency::verify_consistency_scoped_with_base_index(
+    // #3809: named warm SOLVE door (not the cold scoped face). Forces
+    // pool_only_inputs — zero project FS reads during discharge.
+    let results = sugar_verifier::consistency::warm_solve(
         &ctx.consistency_index,
         &overlay_pool,
         &ctx.plan,
