@@ -254,10 +254,10 @@ pub fn solve_project(
 /// `.proof` files. Use this when the pool was assembled with speakers via
 /// [`pool_from_graph_with_speaker`] and vendor `ProofBytes` merge.
 ///
-/// Warm callers (`prove_from_kit`) must set [`RunnerConfig::pool_only_inputs`]
-/// so discharge does not re-open project proofs / call-edges / named
-/// artifacts / config.toml. Cold `solve_project` leaves the flag false so
-/// disk solvers-config + legacy call-edge sidecars still resolve.
+/// Warm callers should prefer [`warm_solve`], which **forces** the zero-disk
+/// input policy. This door honors `cfg.pool_only_inputs` as the caller set it
+/// (cold `solve_project` leaves it false so disk solvers-config + legacy
+/// call-edge sidecars still resolve).
 pub fn solve_project_with_pool(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
@@ -285,6 +285,41 @@ pub fn solve_project_with_pool(
         artifact,
         outcome_class,
     })
+}
+
+/// #3809 warm **SOLVE** door — pure discharge over a pre-fed pool.
+///
+/// ## Scope (DoD read-side)
+///
+/// This is the solve half only. It does **not**:
+/// - re-read `.sugar/config.toml` / component plans / lift manifests
+/// - re-rendezvous a kit or re-run `sugar.enumerate` (lift)
+/// - walk project `*.proof` / call-edges / named artifacts
+/// - write `.sugar/runs/` or tier-2 cache
+///
+/// Claim bytes + solvers + signers + plan_artifact must already ride on
+/// `cfg` / `pool` / `compilers` in memory (CLI cold front or prior fold).
+///
+/// ## Out of scope (not "warm solve FS")
+///
+/// - **Kit process source reads during fold/enumerate** — that is *lift*,
+///   done before this door; owned by rendezvous + `sugar.enumerate`.
+/// - **CLI `plan_workspace` / `read_project_config`** — cold front that
+///   *builds* the pinned plan; a warm re-solve must pass the already-pinned
+///   `RunnerConfig` (and compilers) without calling those again.
+/// - **z3 process spawn** — process execution, not a project filesystem read.
+/// - **Full pandas CLI wall (~33s)** — vendor-feed volume / unscoped solve,
+///   not residual plan/manifest I/O on this door.
+///
+/// Forces `pool_only_inputs = true` and `cache_dir = None`.
+pub fn warm_solve(
+    mut cfg: RunnerConfig,
+    compilers: CompilerRegistry,
+    pool: MementoPool,
+) -> Result<ProvenOutcome, SolveError> {
+    cfg.pool_only_inputs = true;
+    cfg.cache_dir = None;
+    solve_project_with_pool(cfg, compilers, pool)
 }
 
 /// Failures staging the kit walk + testimony into a dischargeable pool —
@@ -321,17 +356,26 @@ pub fn prove_from_kit(
     kit: &Kit,
     workspace_root: &Path,
     speaker: Speaker,
-    mut cfg: RunnerConfig,
+    cfg: RunnerConfig,
     compilers: CompilerRegistry,
 ) -> Result<ProvenOutcome, ProveFromKitError> {
-    // Warm DoD (#3809 batch): discharge must not re-walk project_root for
-    // proofs / call-edges / named artifacts / config.toml. Claim bytes are
-    // the folded pool + RPC testimony / extra_proofs only.
-    // Also clear cache_dir so tier-2 never read_dir/write under a project
-    // cache path (#9); mint-and-cache is likewise skipped when pool_only.
-    cfg.pool_only_inputs = true;
-    cfg.cache_dir = None;
+    // LIFT front (not warm-solve DoD): fold + testimony assemble the pool.
+    // Kit source reads / enumerate RPC live here — rendezvous front, kept.
+    let pool = fold_kit_to_pool(kit, workspace_root, speaker, &cfg)?;
 
+    // SOLVE half (#3809 warm door): pure discharge; no plan/manifest re-read.
+    Ok(warm_solve(cfg, compilers, pool)?)
+}
+
+/// LIFT half of [`prove_from_kit`]: walk enumerate + optional testimony into
+/// a multi-speaker pool. May spawn the kit and (kit-side) read sources.
+/// Not the warm-solve DoD surface — use [`warm_solve`] once the pool is fed.
+pub fn fold_kit_to_pool(
+    kit: &Kit,
+    workspace_root: &Path,
+    speaker: Speaker,
+    cfg: &RunnerConfig,
+) -> Result<MementoPool, ProveFromKitError> {
     // 1. Local claim walk. Speaker is typed through fold so walk face and
     // pool intake share one identity; stamping happens at step 2.
     let local = feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?;
@@ -378,8 +422,7 @@ pub fn prove_from_kit(
         load_proof_bytes_into_pool(&cfg.extra_proofs, &mut pool);
     }
 
-    // 5. Production solve over the multi-speaker pool.
-    Ok(solve_project_with_pool(cfg, compilers, pool)?)
+    Ok(pool)
 }
 
 impl From<ProofRunArtifactError> for SolveError {
