@@ -1,5 +1,6 @@
 [package]
 name = "sugar-lift-rust-cargo-test-witness"
+publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true

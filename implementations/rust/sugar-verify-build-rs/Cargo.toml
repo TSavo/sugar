@@ -1,5 +1,6 @@
 [package]
 name = "sugar-verify-build-rs"
+publish = false
 version = "0.1.0"
 edition = "2021"
 description = "Cargo build.rs integration for sugar verification. The memento IS the verification."

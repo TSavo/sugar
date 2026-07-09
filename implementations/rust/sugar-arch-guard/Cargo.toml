@@ -1,5 +1,6 @@
 [package]
 name = "sugar-arch-guard"
+publish = false
 description = "Dependency-closure guard: encodes the workspace's REAL dependency baseline and forbids the arrows that would invert the compiler DAG."
 version.workspace = true
 edition.workspace = true
