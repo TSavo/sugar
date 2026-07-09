@@ -170,7 +170,7 @@ pub(crate) fn build_prove_artifact_with_options(
         emit_component_plan_warnings(&component_plan);
     }
 
-    crate::discharge_config::configure_witness_discharge_env_with_plan(
+    let witness_discharge = crate::discharge_config::witness_discharge_for_plan(
         project_root,
         &cfg_doc,
         Some(&component_plan),
@@ -223,6 +223,7 @@ pub(crate) fn build_prove_artifact_with_options(
             member_cid: artifact.member_cid.clone(),
             member_bytes: artifact.member_bytes.clone(),
         }),
+        witness_discharge,
         ..Default::default()
     };
     let compilers = component_plan::compiler_registry_from_plan(

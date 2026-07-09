@@ -907,6 +907,84 @@ struct WitnessResolver {
     method: String,
 }
 
+/// SEAM 7 (#3809 witness-as-verb step 1): typed witness-discharge context.
+///
+/// **CID-idempotency (protocol law):** a witness `ObligationVerdict` is a pure
+/// function of content-addressed inputs (`packageCid` on the claim + contract
+/// identity + resolver body bytes). Two paths that feed the same inputs MUST
+/// return byte-identical verdicts; disagreement is a red test, not a
+/// "double-entry" hazard. Env dies because those inputs are spoken/typed —
+/// env has nothing left to carry.
+///
+/// Carries what used to ride `SUGAR_WITNESS_PROJECT_DIR` / `SUGAR_WITNESS_RESOLVERS`.
+/// Package CID stays on the claim (`evidence.certificate.proofData`).
+///
+/// Precedence in [`try_witness_discharge`] / resolver discovery:
+/// 1. Typed fields on this struct (when set / non-empty)
+/// 2. Optional env fallback (legacy tests / caller override; step 3 retires)
+/// 3. Cold path only: `read_dir(.sugar/lift)` for resolvers (skipped when warm —
+///    warm is a CID-cache-hit face of the same recompute, not a second law)
+#[derive(Debug, Clone, Default)]
+pub struct WitnessDischargeContext {
+    /// Project root for package resolve (was `SUGAR_WITNESS_PROJECT_DIR`).
+    pub project_dir: Option<PathBuf>,
+    /// Kit resolve plugins (was `SUGAR_WITNESS_RESOLVERS` JSON array).
+    pub resolvers: Vec<WitnessResolverSpec>,
+}
+
+/// One kit oracle that answers `sugar.plugin.resolve_witness`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WitnessResolverSpec {
+    pub argv: Vec<String>,
+    pub working_dir: PathBuf,
+    pub method: String,
+}
+
+impl WitnessResolverSpec {
+    pub fn new(
+        argv: Vec<String>,
+        working_dir: impl Into<PathBuf>,
+        method: impl Into<String>,
+    ) -> Self {
+        Self {
+            argv,
+            working_dir: working_dir.into(),
+            method: method.into(),
+        }
+    }
+}
+
+impl WitnessDischargeContext {
+    /// Project dir: typed first, else env fallback.
+    pub fn project_dir_resolved(&self) -> Option<PathBuf> {
+        if let Some(ref p) = self.project_dir {
+            if !p.as_os_str().is_empty() {
+                return Some(p.clone());
+            }
+        }
+        std::env::var("SUGAR_WITNESS_PROJECT_DIR")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from)
+    }
+
+    fn typed_resolvers(&self) -> Vec<WitnessResolver> {
+        self.resolvers
+            .iter()
+            .filter(|r| !r.argv.is_empty())
+            .map(|r| WitnessResolver {
+                argv: r.argv.clone(),
+                working_dir: r.working_dir.clone(),
+                method: if r.method.is_empty() {
+                    "sugar.plugin.resolve_witness".to_string()
+                } else {
+                    r.method.clone()
+                },
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct WitnessPackageClaim {
     package_cid: String,
@@ -964,14 +1042,14 @@ fn try_witness_discharge(
         .and_then(|c| c.get("tool"))
         .and_then(|t| t.as_str())
         .unwrap_or("");
-    // TODO(SEAM 7): read via WitnessDischargeConfig once fully plumbed
-    // (sugar-cli::discharge_config::WitnessDischargeConfig computes this
-    // value; today it only stages the env var, which this reads directly).
-    let project = match std::env::var("SUGAR_WITNESS_PROJECT_DIR") {
-        Ok(p) if !p.trim().is_empty() => p,
-        _ => {
+    // SEAM 7: typed WitnessDischargeContext first; env only as optional fallback.
+    let project = match active_witness_context().project_dir_resolved() {
+        Some(p) => p,
+        None => {
             return Some(undecidable(
-                "custom witness present but SUGAR_WITNESS_PROJECT_DIR unset (fail-closed)".into(),
+                "custom witness present but witness project_dir unset \
+                 (typed WitnessDischargeContext / SUGAR_WITNESS_PROJECT_DIR fallback; fail-closed)"
+                    .into(),
             ))
         }
     };
@@ -980,7 +1058,7 @@ fn try_witness_discharge(
         Ok(c) => c,
         Err(e) => return Some(undecidable(e)),
     };
-    let resolvers = find_witness_resolvers(Path::new(&project));
+    let resolvers = find_witness_resolvers(&project);
     if resolvers.is_empty() {
         return Some(undecidable(
             "custom witness package present but no resolve_witness_command configured \
@@ -988,7 +1066,7 @@ fn try_witness_discharge(
                 .to_string(),
         ));
     }
-    let outcome = match resolve_witness_package(&resolvers, Path::new(&project), &claim) {
+    let outcome = match resolve_witness_package(&resolvers, &project, &claim) {
         Ok(o) => o,
         Err(e) => {
             let effect = VerifyEffect::UnwitnessedDischarge {
@@ -1127,12 +1205,17 @@ fn json_str_list(data: &Json, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-// Thread-local warm-path flag for witness resolution: set for the duration
+// Thread-local warm-path flag + typed discharge context: set for the duration
 // of `verify_consistency_from_indexes` so deep call sites (par_iter group
-// solve → `try_witness_discharge`) can refuse project `read_dir` without
-// threading a bool through every private helper.
+// solve → `try_witness_discharge`) see the same session config without
+// threading every arg through private helpers.
 thread_local! {
     static POOL_ONLY_WITNESS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ACTIVE_WITNESS_CTX: std::cell::RefCell<WitnessDischargeContext> =
+        std::cell::RefCell::new(WitnessDischargeContext {
+            project_dir: None,
+            resolvers: Vec::new(),
+        });
 }
 
 struct PoolOnlyWitnessGuard {
@@ -1150,6 +1233,28 @@ impl Drop for PoolOnlyWitnessGuard {
     fn drop(&mut self) {
         POOL_ONLY_WITNESS.with(|c| c.set(self.prev));
     }
+}
+
+struct WitnessCtxGuard {
+    prev: WitnessDischargeContext,
+}
+
+impl WitnessCtxGuard {
+    fn enter(ctx: &WitnessDischargeContext) -> Self {
+        let prev = ACTIVE_WITNESS_CTX.with(|c| std::mem::replace(&mut *c.borrow_mut(), ctx.clone()));
+        Self { prev }
+    }
+}
+
+impl Drop for WitnessCtxGuard {
+    fn drop(&mut self) {
+        let prev = std::mem::take(&mut self.prev);
+        ACTIVE_WITNESS_CTX.with(|c| *c.borrow_mut() = prev);
+    }
+}
+
+fn active_witness_context() -> WitnessDischargeContext {
+    ACTIVE_WITNESS_CTX.with(|c| c.borrow().clone())
 }
 
 /// Scope membership without mandatory disk stats.
@@ -1172,12 +1277,18 @@ fn locus_in_scope(scope_root: &Path, file: &str, pool_only_inputs: bool) -> bool
 }
 
 fn find_witness_resolvers(project_root: &Path) -> Vec<WitnessResolver> {
+    let ctx = active_witness_context();
+    // SEAM 7: typed resolvers first.
+    let mut found = ctx.typed_resolvers();
+    // Optional env fallback when typed list is empty (legacy tests / caller override).
+    if found.is_empty() {
+        found = witness_resolvers_from_env_fallback();
+    }
     // Warm path: never read_dir `.sugar/lift/*/manifest.toml` (#3809 #8).
     if POOL_ONLY_WITNESS.with(|c| c.get()) {
-        return Vec::new();
+        return found;
     }
     let lift_dir = project_root.join(".sugar").join("lift");
-    let mut found = witness_resolvers_from_env();
     if let Ok(entries) = std::fs::read_dir(&lift_dir) {
         for entry in entries.flatten() {
             let manifest = entry.path().join("manifest.toml");
@@ -1189,10 +1300,9 @@ fn find_witness_resolvers(project_root: &Path) -> Vec<WitnessResolver> {
     found
 }
 
-// TODO(SEAM 7): read via WitnessDischargeConfig once fully plumbed
-// (sugar-cli::discharge_config::WitnessDischargeConfig computes this
-// value; today it only stages the env var, which this reads directly).
-fn witness_resolvers_from_env() -> Vec<WitnessResolver> {
+/// Env fallback for resolvers (SEAM 7 step 1). Prefer typed
+/// [`WitnessDischargeContext::resolvers`]. Retired as live primary in step 3.
+fn witness_resolvers_from_env_fallback() -> Vec<WitnessResolver> {
     let Ok(raw) = std::env::var("SUGAR_WITNESS_RESOLVERS") else {
         return Vec::new();
     };
@@ -3183,6 +3293,8 @@ pub fn build_manifest_from_pool(
 /// Cold-disk policy (`pool_only_inputs = false`): may `Path::exists` for locus
 /// preference and read witness lift manifests. Prefer
 /// [`verify_consistency_with_policy`] on the warm path.
+///
+/// Witness discharge config defaults empty (env fallback still available).
 pub fn verify_consistency(
     pool: &MementoPool,
     plan: &SolverPlan,
@@ -3190,16 +3302,26 @@ pub fn verify_consistency(
     compilers: &CompilerRegistry,
     project_root: &Path,
 ) -> Vec<ConsistencyResult> {
-    verify_consistency_with_policy(pool, plan, registry, compilers, project_root, false)
+    verify_consistency_with_policy(
+        pool,
+        plan,
+        registry,
+        compilers,
+        project_root,
+        false,
+        &WitnessDischargeContext::default(),
+    )
 }
 
-/// Like [`verify_consistency`], with an explicit warm/cold disk policy.
+/// Like [`verify_consistency`], with an explicit warm/cold disk policy and
+/// typed [`WitnessDischargeContext`] (SEAM 7).
 ///
 /// When `pool_only_inputs` is true (#3809):
 /// - locus preference uses pool **speaker role** (Consumer beats Vendor), never
 ///   `Path::exists`
 /// - scope filters use pure path-prefix checks, never `Path::exists`
 /// - custom-witness resolver discovery does not `read_dir` project manifests
+///   (typed/env resolvers only)
 pub fn verify_consistency_with_policy(
     pool: &MementoPool,
     plan: &SolverPlan,
@@ -3207,6 +3329,7 @@ pub fn verify_consistency_with_policy(
     compilers: &CompilerRegistry,
     project_root: &Path,
     pool_only_inputs: bool,
+    witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
     let index = build_consistency_index(pool);
     verify_consistency_from_indexes(
@@ -3218,6 +3341,7 @@ pub fn verify_consistency_with_policy(
         project_root,
         None,
         pool_only_inputs,
+        witness,
     )
 }
 
@@ -3393,6 +3517,7 @@ fn verify_consistency_scoped_with_base_index_policy(
     project_root: &Path,
     scope: &Path,
     pool_only_inputs: bool,
+    witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
     let skip: std::collections::HashSet<String> = base
         .candidates
@@ -3414,6 +3539,7 @@ fn verify_consistency_scoped_with_base_index_policy(
         project_root,
         Some(scope),
         pool_only_inputs,
+        witness,
     )
 }
 
@@ -3453,6 +3579,31 @@ pub fn warm_solve(
         project_root,
         scope,
         /* pool_only_inputs = */ true,
+        &WitnessDischargeContext::default(),
+    )
+}
+
+/// Warm solve with typed witness discharge context (SEAM 7).
+pub fn warm_solve_with_witness(
+    base: &ConsistencyIndex,
+    overlay_pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    scope: &Path,
+    witness: &WitnessDischargeContext,
+) -> Vec<ConsistencyResult> {
+    verify_consistency_scoped_with_base_index_policy(
+        base,
+        overlay_pool,
+        plan,
+        registry,
+        compilers,
+        project_root,
+        scope,
+        /* pool_only_inputs = */ true,
+        witness,
     )
 }
 
@@ -3482,6 +3633,7 @@ pub fn verify_consistency_scoped_with_base_index(
         project_root,
         scope,
         /* pool_only_inputs = */ false,
+        &WitnessDischargeContext::default(),
     )
 }
 
@@ -3495,6 +3647,9 @@ pub fn verify_consistency_scoped_with_base_index(
 ///
 /// `pool_only_inputs`: when true, never `Path::exists` / witness `read_dir`
 /// (#3809 #8). Locus preference uses speaker role; scope uses path prefix.
+///
+/// `witness`: SEAM 7 typed discharge context (project_dir + resolvers). Env
+/// remains optional fallback when fields are empty.
 #[allow(clippy::too_many_arguments)]
 pub fn verify_consistency_from_indexes(
     base: &ConsistencyIndex,
@@ -3505,8 +3660,10 @@ pub fn verify_consistency_from_indexes(
     project_root: &Path,
     scope: Option<&Path>,
     pool_only_inputs: bool,
+    witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
-    let _witness_guard = PoolOnlyWitnessGuard::enter(pool_only_inputs);
+    let _pool_only_guard = PoolOnlyWitnessGuard::enter(pool_only_inputs);
+    let _witness_ctx_guard = WitnessCtxGuard::enter(witness);
     let candidates: Vec<&ConsistencyCandidate> = base
         .candidates
         .iter()
@@ -4541,12 +4698,41 @@ mod tests {
         .to_string();
         std::env::set_var("SUGAR_WITNESS_RESOLVERS", encoded);
 
-        let resolvers = witness_resolvers_from_env();
+        // SEAM 7: env remains optional fallback when typed context is empty.
+        let resolvers = witness_resolvers_from_env_fallback();
         assert_eq!(resolvers.len(), 1);
         assert_eq!(resolvers[0].argv, vec!["/bin/echo".to_string()]);
         assert_eq!(resolvers[0].working_dir, cwd);
         assert_eq!(resolvers[0].method, "sugar.plugin.resolve_witness");
 
+        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
+    }
+
+    #[test]
+    fn witness_resolvers_prefer_typed_context_over_env() {
+        let _env = witness_env_lock();
+        let cwd = std::env::current_dir().unwrap();
+        std::env::set_var(
+            "SUGAR_WITNESS_RESOLVERS",
+            json!([{
+                "argv": ["/bin/from-env"],
+                "working_dir": cwd.display().to_string(),
+                "method": "sugar.plugin.resolve_witness",
+            }])
+            .to_string(),
+        );
+        let typed = WitnessDischargeContext {
+            project_dir: Some(cwd.clone()),
+            resolvers: vec![WitnessResolverSpec {
+                argv: vec!["/bin/from-typed".to_string()],
+                working_dir: cwd.clone(),
+                method: "sugar.plugin.resolve_witness".to_string(),
+            }],
+        };
+        let _guard = WitnessCtxGuard::enter(&typed);
+        let resolvers = find_witness_resolvers(&cwd);
+        assert_eq!(resolvers.len(), 1, "typed wins; env not mixed in");
+        assert_eq!(resolvers[0].argv, vec!["/bin/from-typed".to_string()]);
         std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
     }
 
@@ -6701,6 +6887,75 @@ mod tests {
 
         std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
         std::env::remove_var("SUGAR_WITNESS_DISCHARGE_PYTEST");
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// SEAM 7 receipt: witness(packageCid, contractCid) is CID-idempotent.
+    /// Env-staged config and typed `WitnessDischargeContext` are two paths to
+    /// the same recompute; they MUST emit byte-identical `ObligationVerdict`
+    /// (same verdict / witnessed / reason). Disagreement = broken non-determinism.
+    #[test]
+    fn witness_verdict_byte_identical_env_vs_typed_context() {
+        let _env = witness_env_lock();
+        let package_bytes =
+            b"{\"outcome\":\"passed\",\"test\":\"one\"}\n{\"outcome\":\"passed\",\"test\":\"two\"}\n";
+        let package_cid = blake3_512_of(package_bytes);
+        let project = unique_temp_dir("seam7-idempotent");
+        write_resolver_manifest(&project, package_bytes);
+        let script = project
+            .join(".sugar")
+            .join("lift")
+            .join("fake-witness")
+            .join("resolve.sh");
+        let contract_cid = "blake3-512:seam7-idempotent-contract".to_string();
+        let property = "test_x".to_string();
+        let body = package_contract("pytest", &package_cid, 2, 2);
+
+        // Path A: env-only (empty typed TLS), cold disk resolver under project.
+        std::env::set_var("SUGAR_WITNESS_PROJECT_DIR", &project);
+        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
+        let _empty = WitnessCtxGuard::enter(&WitnessDischargeContext::default());
+        let via_env =
+            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
+        drop(_empty);
+
+        // Path B: typed context only — kill env, speak project_dir + resolver.
+        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
+        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
+        let typed = WitnessDischargeContext {
+            project_dir: Some(project.clone()),
+            resolvers: vec![WitnessResolverSpec {
+                argv: vec![script.display().to_string()],
+                working_dir: project.clone(),
+                method: "sugar.plugin.resolve_witness".to_string(),
+            }],
+        };
+        let _typed_guard = WitnessCtxGuard::enter(&typed);
+        let via_typed =
+            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
+        drop(_typed_guard);
+
+        assert_eq!(
+            via_env.verdict, via_typed.verdict,
+            "CID-idempotent: same packageCid must not fork verdict env vs typed"
+        );
+        assert_eq!(via_env.witnessed, via_typed.witnessed);
+        assert_eq!(
+            via_env.reason, via_typed.reason,
+            "byte-identical reason string for same recompute inputs"
+        );
+        assert_eq!(via_env.contract_cid, via_typed.contract_cid);
+        assert_eq!(via_env.property_name, via_typed.property_name);
+        assert_eq!(
+            via_env.verdict,
+            ObligationVerdict::Discharged,
+            "package is all-passed; both paths must discharge"
+        );
+        eprintln!(
+            "RECEIPT seam7_idempotent packageCid={} verdict={:?} reason={}",
+            package_cid, via_typed.verdict, via_typed.reason
+        );
+
         let _ = std::fs::remove_dir_all(&project);
     }
 

@@ -620,7 +620,7 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         emit_component_plan_warnings(&component_plan);
     }
 
-    crate::discharge_config::configure_witness_discharge_env_with_plan(
+    let witness_discharge = crate::discharge_config::witness_discharge_for_plan(
         project_root,
         &cfg_doc,
         Some(&component_plan),
@@ -651,6 +651,7 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         extra_projects,
         extra_proofs: dependency_proofs,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
+        witness_discharge,
         ..Default::default()
     };
     let compilers = component_plan::compiler_registry_from_plan(
