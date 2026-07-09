@@ -624,9 +624,17 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         if (
             fragment.call_is_method_call()
             and target is not None
+            and not fragment.call_has_keywords()
             and (
                 _resolver_has_method(ctx, target)
                 or _method_receiver_is_temporally_bound(fragment, ctx)
+                # Vendor method body dig: `np.array(...).sum()` is a method
+                # call on a constructed receiver expression. Local-class and
+                # temporally-bound Name receivers already qualify above; Call /
+                # Attribute receivers need the same MethodCallStrategy so the
+                # reduce path can mint call:<method>(receiver) (opaque
+                # coordinate, computed=None) instead of call-builtin:sum gap.
+                or _method_receiver_is_constructed_expression(fragment)
             )
         ):
             receiver = fragment.call_receiver()
@@ -681,6 +689,21 @@ def _method_receiver_is_temporally_bound(fragment, ctx) -> bool:
         return False
     receiver_name = receiver.name_id()
     return any(binding.name == receiver_name for binding in ctx.temporal.bindings)
+
+
+def _method_receiver_is_constructed_expression(fragment) -> bool:
+    """True when the method receiver is a constructed expression (not a bare Name).
+
+    `np.array([1,2,3]).sum()` / `df.groupby(...).sum()` — receiver is Call or
+    Attribute. Bare `buffer.decode()` stays on the Name frontier so unresolved
+    locals still gap as call-method:decode.
+    """
+    if fragment.call_has_keywords():
+        return False
+    receiver = fragment.call_receiver()
+    if receiver is None:
+        return False
+    return receiver.observed in {"Call", "Attribute", "Subscript"}
 
 
 def _build_constructor_strategy(fragment, ctx, target: str, class_site):
