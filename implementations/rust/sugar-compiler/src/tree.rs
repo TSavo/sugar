@@ -15,14 +15,15 @@
 // holds a `serde_json::Value`.
 //
 // LEAF ADDRESS (#3809 T resolution): the typed descent bottoms in
-// `SourceMemento[path]` — nested path is the address (`file[fn[site]]` /
-// `file[fn[assertion]]`; factory 1:1 site ≡ assertion share the leaf),
+// `SourceMemento[path]` — nested path is the address (`file[fn[leaf]]`;
+// factory 1:1 site ≡ assertion ≡ fact share the leaf span under one memento),
 // memento CIDs are the sealed wire currency. Fragment stays LOCAL (kit/oracle);
 // memento crosses. See [`MementoPath`] / [`SourceMementoAtPath`].
 //
-// TYPED PATH LEVELS (so far): `CallSite` and `Assertion` store a stamped
-// [`MementoPath`]; `Function` exposes computed `path()` / `memento_at_path()`
-// as `file[fn]`. `SourceFile` / `Fact` / `Universe` remain flat memento nodes.
+// TYPED PATH LEVELS: `CallSite`, `Assertion`, `Fact`, and `Universe` store a
+// stamped [`MementoPath`]; `Function` exposes computed `path()` /
+// `memento_at_path()` as `file[fn]`. `SourceFile` remains flat (file-only
+// path shape already exists via [`MementoPath::file`] — next step).
 //
 // GRANULARITY: `Function::call_sites` is span-scoped when the parent function
 // memento carries a non-degenerate span; otherwise name-scoped (degenerate
@@ -54,13 +55,18 @@ use crate::kit::{Kit, KitError};
 /// Display form: `file`, `file[fn]`, or `file[fn[leaf]]` (spans in debug).
 /// Does not replace [`SourceMemento`] content-address; it indexes the sealed
 /// memento in the typed descent
-/// `rendezvous → kit → source → functions → assertions → SourceMemento[path]`.
+/// `rendezvous → kit → source → functions → assertions → facts → SourceMemento[path]`.
+///
+/// **No deeper nesting for fact/universe:** factory truth is site ≡ assertion ≡
+/// fact (same kind=contract memento / leaf span). Universe is linked off the
+/// call site (claim-side join), not a nested leaf under assertion — its path
+/// is the owning site's path; its memento is the function-contract seal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MementoPath {
     pub file: String,
     pub function: Option<MementoPathFunction>,
     /// Call-site / assertion / fact leaf within the function (factory 1:1:
-    /// site ≡ assertion share the same leaf span under one memento).
+    /// site ≡ assertion ≡ fact share the same leaf span under one memento).
     pub leaf: Option<MementoPathLeaf>,
 }
 
@@ -71,7 +77,7 @@ pub struct MementoPathFunction {
     pub span: SrcSpan,
 }
 
-/// Leaf segment (call site / assertion / fact) within a function.
+/// Leaf segment (call site / assertion / fact / site-linked universe) within a function.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MementoPathLeaf {
     pub span: SrcSpan,
@@ -335,9 +341,14 @@ pub struct IrFormulaPlaceholder(pub IrFormula);
 /// When the kit stamps the full `kind=function-contract` IR row on the wire
 /// audit (pre/post/inv/formals/bridgeSourceSymbol), [`Self::ir_row`] carries
 /// it so feed construction can mint mint-complete members — not name shells.
+///
+/// Path is the owning [`CallSite`]'s nested address (descent index); memento
+/// is the function-contract seal (often a different CID / name than the site).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Universe {
     memento: SourceMemento,
+    /// Nested path of the linking call site: `SourceMemento[file[fn[site]]]`.
+    path: MementoPath,
     audit: Option<AuditRow>,
     /// Full function-contract IR object from the wire `audit` when present.
     ir_row: Option<Value>,
@@ -354,6 +365,16 @@ impl Sourced for Universe {
 impl Universe {
     pub fn audit_row(&self) -> Option<&AuditRow> {
         self.audit.as_ref()
+    }
+
+    /// Nested path of the linking call site (`file[fn[site]]`).
+    pub fn path(&self) -> &MementoPath {
+        &self.path
+    }
+
+    /// Universe seal at the linking site's path (wire currency + descent index).
+    pub fn memento_at_path(&self) -> SourceMementoAtPath {
+        SourceMementoAtPath::new(self.path.clone(), self.memento.clone())
     }
 
     /// Full IR row from wire audit (formals, post/pre/inv, bridgeSourceSymbol).
@@ -505,6 +526,9 @@ pub struct Assertion {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fact {
     memento: SourceMemento,
+    /// Nested path address: `SourceMemento[file[fn[fact]]]` (T #3809).
+    /// Factory 1:1 with Assertion / CallSite — same leaf under the function.
+    path: MementoPath,
     audit: Option<AuditRow>,
     payload: IrFormula,
     /// Full `kind=contract` IR object from the wire `audit` when present
@@ -532,6 +556,18 @@ impl Fact {
     pub fn audit_row(&self) -> Option<&AuditRow> {
         self.audit.as_ref()
     }
+
+    /// Nested path index for this fact (`file[fn[leaf]]`).
+    /// Same address shape as the owning assertion / call site (factory 1:1).
+    pub fn path(&self) -> &MementoPath {
+        &self.path
+    }
+
+    /// Utterance leaf: sealed memento keyed by nested path (wire currency + path).
+    pub fn memento_at_path(&self) -> SourceMementoAtPath {
+        SourceMementoAtPath::new(self.path.clone(), self.memento.clone())
+    }
+
     pub fn payload(&self) -> &IrFormula {
         &self.payload
     }
@@ -1089,7 +1125,11 @@ impl CallSite {
             Some(self.memento.to_json()),
             true,
         )?;
+        // Path = this site's nested address (descent index). Memento = the
+        // function-contract seal (may differ from the site memento).
+        let path = self.path.clone();
         Ok(nodes.into_iter().next().map(|n| Universe {
+            path: path.clone(),
             memento: n.memento,
             audit: n.audit.as_ref().map(AuditRow::from_json),
             // Preserve full function-contract IR (pre/post/inv/formals) for
@@ -1143,7 +1183,11 @@ impl Assertion {
                     reason: format!("fact payload does not decode as IrFormula: {error}"),
                 })
             })?;
+            // Factory 1:1: fact leaf path ≡ owning assertion path
+            // (`file[fn[leaf]]`). Path is a derived index; memento seals content.
+            let path = self.path.clone();
             out.push(Fact {
+                path,
                 memento: n.memento,
                 audit: n.audit.as_ref().map(AuditRow::from_json),
                 payload: formula,
