@@ -14,17 +14,15 @@
 // and the memento is that fragment's durable, CID-pinned address). No node
 // holds a `serde_json::Value`.
 //
-// GRANULARITY LANDED (report to the coordinator, not hidden): the shipping
-// python kit's factory audit (`factory_walk`, a `FactoryWalkRowDto` per
-// AST node visited) does not yet group its rows by enclosing function --
-// there is no distinct "which function owns this row" index today. So
-// `Function::call_sites()` and `SourceFile`-level enumeration both resolve
-// to the SAME per-file `factory_walk` row set (file-granular laziness, the
-// plan's Phase 3 explicitly calls this the expected first cut: "it is
-// ACCEPTABLE ... for the first cut"). `Function` nodes are real (one per
-// `payload.ir` function-contract entry, keyed by `fnName`), but their
-// `call_sites()` is not yet scoped to that function's own span -- flagged
-// here, not silently narrowed.
+// LEAF ADDRESS (#3809 T resolution): the typed descent bottoms in
+// `SourceMemento[path]` — nested path is the address (`file[fn[site]]`),
+// memento CIDs are the sealed wire currency. Fragment stays LOCAL (kit/oracle);
+// memento crosses. See [`MementoPath`] / [`SourceMementoAtPath`].
+//
+// GRANULARITY: `Function::call_sites` is span-scoped when the parent function
+// memento carries a non-degenerate span; otherwise name-scoped (degenerate
+// file/fn locators). Same-named nested functions with distinct spans no longer
+// cross-contaminate.
 //
 // CLAIM vs OBLIGATION (plan's "two halves meeting at the callsite"):
 // `universe`/`assertions`/`facts` are the claim side, kit-enumerated over
@@ -40,6 +38,150 @@ use sugar_ir_types::IrFormula;
 use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
 
 use crate::kit::{Kit, KitError};
+
+// ---------------------------------------------------------------------------
+// SourceMemento[path] — path is the descent address; memento is the seal.
+// Fragment never appears here (content-address law).
+// ---------------------------------------------------------------------------
+
+/// Nested path index for enumeration: path IS the address.
+///
+/// Display form: `file`, `file[fn]`, or `file[fn[leaf]]` (spans in debug).
+/// Does not replace [`SourceMemento`] content-address; it indexes the sealed
+/// memento in the typed descent
+/// `rendezvous → kit → source → functions → assertions → SourceMemento[path]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MementoPath {
+    pub file: String,
+    pub function: Option<MementoPathFunction>,
+    /// Call-site / assertion / fact leaf within the function (factory 1:1:
+    /// site ≡ assertion share the same leaf span under one memento).
+    pub leaf: Option<MementoPathLeaf>,
+}
+
+/// Function segment of a [`MementoPath`]: `file[name@span]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MementoPathFunction {
+    pub name: String,
+    pub span: SrcSpan,
+}
+
+/// Leaf segment (call site / assertion / fact) within a function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MementoPathLeaf {
+    pub span: SrcSpan,
+}
+
+impl MementoPath {
+    /// File-only path: `SourceMemento[file]`.
+    pub fn file(file: impl Into<String>) -> Self {
+        Self {
+            file: file.into(),
+            function: None,
+            leaf: None,
+        }
+    }
+
+    /// Path for a function node: `SourceMemento[file[fn]]`.
+    pub fn for_function(memento: &SourceMemento) -> Self {
+        Self {
+            file: memento.file.clone(),
+            function: Some(MementoPathFunction {
+                name: memento.function_name.clone(),
+                span: memento.span.clone(),
+            }),
+            leaf: None,
+        }
+    }
+
+    /// Path for a call-site / assertion / fact under a function:
+    /// `SourceMemento[file[fn[leaf]]]`.
+    pub fn for_site_under(function: &SourceMemento, site: &SourceMemento) -> Self {
+        Self {
+            file: function.file.clone(),
+            function: Some(MementoPathFunction {
+                name: function.function_name.clone(),
+                span: function.span.clone(),
+            }),
+            leaf: Some(MementoPathLeaf {
+                span: site.span.clone(),
+            }),
+        }
+    }
+
+    /// Stable display form of the path index (not a CID).
+    pub fn display(&self) -> String {
+        let mut s = self.file.clone();
+        if let Some(ref f) = self.function {
+            s.push('[');
+            s.push_str(&f.name);
+            if !span_is_degenerate(&f.span) {
+                s.push('@');
+                s.push_str(&span_display(&f.span));
+            }
+            if let Some(ref leaf) = self.leaf {
+                s.push('[');
+                if !span_is_degenerate(&leaf.span) {
+                    s.push_str(&span_display(&leaf.span));
+                } else {
+                    s.push_str("leaf");
+                }
+                s.push(']');
+            }
+            s.push(']');
+        }
+        s
+    }
+}
+
+/// Content-addressed [`SourceMemento`] addressed by nested [`MementoPath`].
+///
+/// - **path** — typed descent address (`file[fn[site]]`)
+/// - **memento** — CID-keyed seal that crosses the wire
+///
+/// Fragment stays local; never stored here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceMementoAtPath {
+    pub path: MementoPath,
+    pub memento: SourceMemento,
+}
+
+impl SourceMementoAtPath {
+    pub fn new(path: MementoPath, memento: SourceMemento) -> Self {
+        Self { path, memento }
+    }
+
+    pub fn path_display(&self) -> String {
+        self.path.display()
+    }
+}
+
+fn span_is_degenerate(span: &SrcSpan) -> bool {
+    span.start_line == 0
+        && span.start_col == 0
+        && span.end_line == 0
+        && span.end_col == 0
+}
+
+fn span_display(span: &SrcSpan) -> String {
+    format!(
+        "{}:{}-{}:{}",
+        span.start_line, span.start_col, span.end_line, span.end_col
+    )
+}
+
+/// True when `inner` lies within `outer` (line-span containment).
+/// Degenerate outer/inner → false (caller falls back to name scoping).
+fn span_contains(outer: &SrcSpan, inner: &SrcSpan) -> bool {
+    if span_is_degenerate(outer) || span_is_degenerate(inner) {
+        return false;
+    }
+    let outer_start = (outer.start_line, outer.start_col);
+    let outer_end = (outer.end_line, outer.end_col);
+    let inner_start = (inner.start_line, inner.start_col);
+    let inner_end = (inner.end_line, inner.end_col);
+    inner_start >= outer_start && inner_end <= outer_end
+}
 
 /// The enumeration levels `sugar.enumerate` answers. Wire value is the
 /// snake_case name in the protocol spec
@@ -337,6 +479,8 @@ pub struct Function {
 pub struct CallSite {
     conn: KitConn,
     memento: SourceMemento,
+    /// Nested path address: `SourceMemento[file[fn[site]]]` (T #3809).
+    path: MementoPath,
     audit: Option<AuditRow>,
     /// Join key for universe/bridge, e.g. `"call:len"` | `"method:count"`.
     /// Decoded from the wire audit's `bridgeSourceSymbol` (prefix preserved).
@@ -398,6 +542,16 @@ impl Function {
 impl CallSite {
     pub fn audit_row(&self) -> Option<&AuditRow> {
         self.audit.as_ref()
+    }
+
+    /// Nested path index for this site (`file[fn[site]]`).
+    pub fn path(&self) -> &MementoPath {
+        &self.path
+    }
+
+    /// Leaf address: sealed memento keyed by nested path (wire currency + path).
+    pub fn memento_at_path(&self) -> SourceMementoAtPath {
+        SourceMementoAtPath::new(self.path.clone(), self.memento.clone())
     }
 
     /// First-class `call:` / `method:` bridge identity for this call site
@@ -765,6 +919,16 @@ impl SourceFile {
 }
 
 impl Function {
+    /// Path for this function node: `SourceMemento[file[fn]]`.
+    pub fn path(&self) -> MementoPath {
+        MementoPath::for_function(&self.memento)
+    }
+
+    /// Sealed memento at this function's path.
+    pub fn memento_at_path(&self) -> SourceMementoAtPath {
+        SourceMementoAtPath::new(self.path(), self.memento.clone())
+    }
+
     pub fn call_sites(&self) -> Result<Vec<CallSite>, KitError> {
         let (nodes, _gaps) = enumerate_rpc(
             &self.conn,
@@ -772,13 +936,29 @@ impl Function {
             Some(self.memento.to_json()),
             false,
         )?;
+        // Client-side span filter (matches kit): when this function memento has
+        // a real span, drop sites whose span is outside it (path address law).
+        let parent_span = &self.memento.span;
         Ok(nodes
             .into_iter()
-            .map(|n| CallSite {
-                conn: self.conn.clone(),
-                memento: n.memento,
-                bridge_source_symbol: decode_bridge_source_symbol(n.audit.as_ref()),
-                audit: n.audit.as_ref().map(AuditRow::from_json),
+            .filter(|n| {
+                if span_is_degenerate(parent_span) {
+                    return true;
+                }
+                if span_is_degenerate(&n.memento.span) {
+                    return true; // name-scoped fallback for locus-less sites
+                }
+                span_contains(parent_span, &n.memento.span)
+            })
+            .map(|n| {
+                let path = MementoPath::for_site_under(&self.memento, &n.memento);
+                CallSite {
+                    conn: self.conn.clone(),
+                    path,
+                    memento: n.memento,
+                    bridge_source_symbol: decode_bridge_source_symbol(n.audit.as_ref()),
+                    audit: n.audit.as_ref().map(AuditRow::from_json),
+                }
             })
             .collect())
     }
@@ -804,8 +984,10 @@ impl Function {
             plugin: self.conn.surface.clone(),
             level: "call_sites",
         })?;
+        let path = MementoPath::for_site_under(&self.memento, &node.memento);
         Ok(CallSite {
             conn: self.conn.clone(),
+            path,
             memento: node.memento,
             bridge_source_symbol: decode_bridge_source_symbol(node.audit.as_ref()),
             audit: node.audit.as_ref().map(AuditRow::from_json),
