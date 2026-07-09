@@ -253,6 +253,11 @@ pub fn solve_project(
 /// discharge as [`solve_project`], without re-walking the project for
 /// `.proof` files. Use this when the pool was assembled with speakers via
 /// [`pool_from_graph_with_speaker`] and vendor `ProofBytes` merge.
+///
+/// Warm callers (`prove_from_kit`) must set [`RunnerConfig::pool_only_inputs`]
+/// so discharge does not re-open project proofs / call-edges / named
+/// artifacts / config.toml. Cold `solve_project` leaves the flag false so
+/// disk solvers-config + legacy call-edge sidecars still resolve.
 pub fn solve_project_with_pool(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
@@ -316,9 +321,14 @@ pub fn prove_from_kit(
     kit: &Kit,
     workspace_root: &Path,
     speaker: Speaker,
-    cfg: RunnerConfig,
+    mut cfg: RunnerConfig,
     compilers: CompilerRegistry,
 ) -> Result<ProvenOutcome, ProveFromKitError> {
+    // Warm DoD (#3809 batch): discharge must not re-walk project_root for
+    // proofs / call-edges / named artifacts / config.toml. Claim bytes are
+    // the folded pool + RPC testimony / extra_proofs only.
+    cfg.pool_only_inputs = true;
+
     // 1. Local claim walk. Speaker is typed through fold so walk face and
     // pool intake share one identity; stamping happens at step 2.
     let local = feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?;

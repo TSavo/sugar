@@ -117,6 +117,21 @@ pub struct RunnerConfig {
     /// it as an already-addressed run input and stores the plan-memento bytes in
     /// the proof-run bundle without reinterpreting component discovery.
     pub plan_artifact: Option<PlanArtifactInput>,
+    /// Warm / preloaded-pool discharge (#3809 DoD): when true, the runner
+    /// treats the caller-supplied pool plus in-memory config fields
+    /// (`extra_proofs`, `plan_artifact`, `solvers_config` /
+    /// `legacy_z3_fallback`, `trusted_implication_signers`) as the **sole**
+    /// claim+config source. It MUST NOT walk or read `project_root` for:
+    /// - `*.proof` input CIDs (use pool member keys + `extra_proofs` instead)
+    /// - `*.call-edges.json` (pool bridges already drive enumerate_callsites)
+    /// - `link-bundle.json` / `plugin-registry.json` named artifacts
+    /// - `.sugar/config.toml` (signers + SolversConfig) — only what's already
+    ///   on this `RunnerConfig` is used
+    ///
+    /// Proof-run **writes** under `project_root/.sugar/runs/` may still occur
+    /// (output receipt, not an input side-channel). Default `false` preserves
+    /// the cold disk face. Set by `prove_from_kit` / warm callers only.
+    pub pool_only_inputs: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,9 +215,13 @@ impl Runner {
     pub fn new_with_compilers(mut cfg: RunnerConfig, compilers: CompilerRegistry) -> Self {
         // Resolve solver config. Precedence:
         //   1. cfg.solvers_config (test/demo override)
-        //   2. .sugar/config.toml under project_root
+        //   2. .sugar/config.toml under project_root (skipped when pool_only_inputs)
         //   3. explicit legacy single-Z3 compat fallback
-        if cfg.trusted_implication_signers.is_empty() {
+        //
+        // Warm path (#3809): signers + solvers must already ride on `cfg`
+        // (CLI reads config once before prove_from_kit). Re-opening
+        // config.toml here is a silent disk side-channel on an in-memory pool.
+        if cfg.trusted_implication_signers.is_empty() && !cfg.pool_only_inputs {
             cfg.trusted_implication_signers =
                 match load_trusted_implication_signers(&cfg.project_root) {
                     Ok(signers) => signers,
@@ -255,18 +274,33 @@ impl Runner {
         &self,
         mut pool: MementoPool,
     ) -> Result<ProofRunArtifact, ProofRunArtifactError> {
-        let input_artifact_cids = discover_input_artifact_cids(&self.cfg);
+        // Input CIDs for the proof-run memento: either walk the project (cold)
+        // or take them from the preloaded pool + in-memory extra_proofs (warm).
+        let input_artifact_cids = if self.cfg.pool_only_inputs {
+            discover_input_artifact_cids_from_pool(&pool, &self.cfg)
+        } else {
+            discover_input_artifact_cids(&self.cfg)
+        };
         let proof_envelope_cid = input_artifact_cids
             .iter()
             .next()
             .cloned()
             .unwrap_or_else(|| placeholder_cid("empty-proof-inputs"));
-        let link_bundle_cid =
+        // Named on-disk planning artifacts are cold-path only. Warm path uses
+        // placeholders (plan_artifact, if any, is already on cfg and stamped
+        // into the run memento separately below).
+        let link_bundle_cid = if self.cfg.pool_only_inputs {
+            placeholder_cid("absent-link-bundle")
+        } else {
             discover_named_artifact_cid(&self.cfg.project_root, "link-bundle.json")
-                .unwrap_or_else(|| placeholder_cid("absent-link-bundle"));
-        let plugin_registry_cid =
+                .unwrap_or_else(|| placeholder_cid("absent-link-bundle"))
+        };
+        let plugin_registry_cid = if self.cfg.pool_only_inputs {
+            placeholder_cid("absent-plugin-registry")
+        } else {
             discover_named_artifact_cid(&self.cfg.project_root, "plugin-registry.json")
-                .unwrap_or_else(|| placeholder_cid("absent-plugin-registry"));
+                .unwrap_or_else(|| placeholder_cid("absent-plugin-registry"))
+        };
 
         let mut stages = Vec::with_capacity(4);
         let mut report = Report::default();
@@ -296,7 +330,14 @@ impl Runner {
         )?);
 
         let enumerate_stage = StageCapture::start("enumerate_callsites", loaded_cids.clone());
-        let call_edges = call_edge_loader::load_call_edge_files(&self.cfg.project_root);
+        // Cold path may still load legacy `*.call-edges.json` sidecars.
+        // Warm path: pool bridges + enumerate_callsites are the sole edge
+        // source — do not WalkDir project_root.
+        let call_edges = if self.cfg.pool_only_inputs {
+            Vec::new()
+        } else {
+            call_edge_loader::load_call_edge_files(&self.cfg.project_root)
+        };
         let obligations = call_edge_loader::process_call_edges(&call_edges, &pool);
         for (source_cid, target_cid, locus) in &obligations {
             let file = locus
@@ -1146,6 +1187,28 @@ fn discover_input_artifact_cids(cfg: &RunnerConfig) -> BTreeSet<String> {
     cids
 }
 
+/// Warm-path input CIDs: pool member keys + in-memory `extra_proofs` only.
+/// No `WalkDir` / `std::fs::read` of project `*.proof` files (#3809 DoD).
+fn discover_input_artifact_cids_from_pool(
+    pool: &MementoPool,
+    cfg: &RunnerConfig,
+) -> BTreeSet<String> {
+    let mut cids: BTreeSet<String> = pool
+        .mementos
+        .keys()
+        .map(|cid| cid.to_string())
+        .collect();
+    for proof in &cfg.extra_proofs {
+        cids.insert(sugar_canonicalizer::blake3_512_of(&proof.bytes));
+    }
+    // plan_artifact is an already-addressed run input carried on cfg.
+    if let Some(plan) = &cfg.plan_artifact {
+        cids.insert(plan.plan_cid.clone());
+        cids.insert(plan.member_cid.clone());
+    }
+    cids
+}
+
 fn collect_proof_file_cids(root: &Path, out: &mut BTreeSet<String>) {
     if !root.exists() {
         return;
@@ -1287,8 +1350,12 @@ fn build_plan_and_registry(cfg: &RunnerConfig) -> (SolverPlan, HashMap<SolverSea
     if let Some(sc) = &cfg.solvers_config {
         return (SolverPlan::from_config(sc), registry::build(sc));
     }
-    if let Ok(Some(sc)) = SolversConfig::load(&cfg.project_root) {
-        return (SolverPlan::from_config(&sc), registry::build(&sc));
+    // Warm path: never open project config for solvers — use legacy fallback
+    // only. Cold path still discovers `.sugar/config.toml` solvers.
+    if !cfg.pool_only_inputs {
+        if let Ok(Some(sc)) = SolversConfig::load(&cfg.project_root) {
+            return (SolverPlan::from_config(&sc), registry::build(&sc));
+        }
     }
     // Fallback: explicit legacy single-Z3 compat plan. Absence is loud at the
     // solver layer (empty registry -> solver not found), never a silent skip.

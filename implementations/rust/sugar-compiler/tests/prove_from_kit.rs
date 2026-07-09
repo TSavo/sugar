@@ -32,7 +32,7 @@ use sugar_compiler::orchestrate::{
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph};
 use sugar_verifier::types::SpeakerRole;
-use sugar_verifier::{LegacyZ3Fallback, RunnerConfig, Speaker};
+use sugar_verifier::{LegacyZ3Fallback, MementoPool, Runner, RunnerConfig, Speaker};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -475,6 +475,200 @@ fn prove_from_kit_ignores_project_root_proof_files() {
         "discrimination failed: disk solve_project did not report a load_error for the \
          poison .proof (instrument would be a no-op). disk load_errors={:?}",
         disk.artifact.report.load_errors
+    );
+}
+
+/// #3809 warm-prove DoD batch: remaining engine **input** FS classes on the
+/// fold→discharge path, and the first coherent close (`pool_only_inputs`).
+///
+/// **FS-read inventory (engine, warm `prove_from_kit` discharge, measured):**
+///
+/// | # | Side-channel | Before this batch | After |
+/// |---|--------------|-------------------|-------|
+/// | 1 | project `*.proof` walk+read for run-input CIDs (`discover_input_artifact_cids`) | OPEN | **CLOSED** (pool keys only) |
+/// | 2 | `*.call-edges.json` WalkDir+read | OPEN | **CLOSED** (empty; pool bridges) |
+/// | 3 | `link-bundle.json` / `plugin-registry.json` named reads | OPEN | **CLOSED** (placeholders) |
+/// | 4 | `.sugar/config.toml` re-read for trusted signers + SolversConfig | OPEN | **CLOSED** (cfg-only) |
+/// | 5 | project `*.proof` load into pool (`load_all_proofs`) | closed #3910 | closed |
+/// | 6 | proof-run **write** to `.sugar/runs/` | WRITE (not a read) | still writes |
+/// | 7 | CLI pre-solve: config/plan/manifests, kit spawn, fold enumerate | OUT OF DISCHARGE | open (CLI/kit) |
+/// | 8 | consistency locus `Path::exists`, witness resolver manifests | conditional | open (next batch) |
+/// | 9 | tier-2 implication cache_dir reads | if cache_dir set | open (leave unset on warm) |
+///
+/// Gate: canary files planted under project_root must NOT contribute their
+/// content CIDs to the warm proof-run memento inputs; cold disk face still
+/// sees canary proof CID (discrimination). Verdict rows must match a clean
+/// (no-canary) prove_from_kit on the same sources (byte-identical status
+/// multiset / property names).
+#[test]
+fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
+    if !python_blake3_available() {
+        eprintln!("skip: python3/blake3 unavailable");
+        return;
+    }
+    if !z3_available() {
+        eprintln!("skip: z3 unavailable (solver path)");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+
+    // --- canaries (would be read on cold walk) ---
+    let canary_proof_bytes = b"warm-canary-proof-body-not-a-real-envelope-v1";
+    let canary_proof_cid = sugar_canonicalizer::blake3_512_of(canary_proof_bytes);
+    // Filename CID matches content so cold load_all_proofs doesn't rule-1
+    // reject before hashing into discover_input_artifact_cids — but the
+    // bytes are still garbage for envelope decode. For discover_* we only
+    // need content hash. Use a stem that will be walked as *.proof.
+    let canary_proof_name = format!(
+        "{}.proof",
+        canary_proof_cid.replace(':', "_")
+    );
+    fs::write(project.join(&canary_proof_name), canary_proof_bytes).expect("canary proof");
+
+    let link_bundle_bytes = b"{\"warm-canary\":\"link-bundle-v1\"}";
+    let link_bundle_cid = sugar_canonicalizer::blake3_512_of(link_bundle_bytes);
+    fs::write(project.join("link-bundle.json"), link_bundle_bytes).expect("link-bundle");
+
+    let plugin_reg_bytes = b"{\"warm-canary\":\"plugin-registry-v1\"}";
+    let plugin_reg_cid = sugar_canonicalizer::blake3_512_of(plugin_reg_bytes);
+    fs::write(project.join("plugin-registry.json"), plugin_reg_bytes).expect("plugin-registry");
+
+    let call_edges = br#"{"edges":[{"sourceContractCid":"canary-src","targetSymbol":"call:canary"}]}"#;
+    fs::write(project.join("trap.call-edges.json"), call_edges).expect("call-edges");
+
+    let sugar = project.join(".sugar");
+    fs::create_dir_all(&sugar).expect("mkdir .sugar");
+    // Distinct signer that must NOT be auto-loaded on warm path (empty cfg signers).
+    fs::write(
+        sugar.join("config.toml"),
+        "trusted_implication_signers = [\"warm-canary-signer-must-not-autoload\"]\n",
+    )
+    .expect("config.toml");
+
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+    let speaker = Speaker::consumer("prove-from-kit:pool-only");
+    let compilers = test_compilers();
+
+    // Clean baseline (no canaries) for verdict identity — second temp tree.
+    let clean_dir = tempfile::tempdir().expect("clean tempdir");
+    let clean_project = stage_fixture(clean_dir.path());
+    let clean_kit = Kit::rendezvous(python_kit_manifest(clean_dir.path())).expect("rendezvous clean");
+    let clean = prove_from_kit(
+        &clean_kit,
+        &clean_project,
+        Speaker::consumer("prove-from-kit:pool-only-clean"),
+        runner_cfg(&clean_project),
+        compilers.clone(),
+    )
+    .expect("clean prove_from_kit");
+    let clean_rows = report_verdict_keys(&clean);
+
+    let warm = prove_from_kit(
+        &kit,
+        &project,
+        speaker,
+        runner_cfg(&project),
+        compilers,
+    )
+    .expect("warm prove_from_kit with canaries must still discharge from pool only");
+
+    let inputs = &warm.artifact.memento.header.input_artifact_cids;
+    let link_cid = &warm.artifact.memento.header.link_bundle_cid;
+    let reg_cid = &warm.artifact.memento.header.plugin_registry_cid;
+
+    eprintln!(
+        "pool_only canary gate:\n\
+         \tcanary_proof_cid={canary_proof_cid}\n\
+         \tlink_bundle_cid(file)={link_bundle_cid}\n\
+         \tplugin_reg_cid(file)={plugin_reg_cid}\n\
+         \twarm input_artifact_cids ({})={inputs:?}\n\
+         \twarm link_bundle_cid={link_cid}\n\
+         \twarm plugin_registry_cid={reg_cid}\n\
+         \twarm rows={}\n\
+         \tclean rows={}",
+        inputs.len(),
+        warm.artifact.report.rows.len(),
+        clean.artifact.report.rows.len(),
+    );
+
+    // (1) canary .proof content hash must not be a warm run input
+    assert!(
+        !inputs.iter().any(|c| c == &canary_proof_cid),
+        "warm path still absorbed canary .proof content CID into run inputs \
+         (discover_input_artifact_cids still walking project). R_proof_canary=1"
+    );
+
+    // (3) named artifacts must be placeholders, not file content hashes
+    assert_ne!(
+        link_cid, &link_bundle_cid,
+        "warm path read link-bundle.json (R_named_link=1)"
+    );
+    assert_ne!(
+        reg_cid, &plugin_reg_cid,
+        "warm path read plugin-registry.json (R_named_reg=1)"
+    );
+
+    // (2) canary call-edge must not appear on the report
+    let canary_edges: Vec<_> = warm
+        .artifact
+        .report
+        .call_edges
+        .iter()
+        .filter(|e| {
+            e.source_contract_cid.contains("canary")
+                || e.target_contract_cid.contains("canary")
+                || e.file.contains("canary")
+        })
+        .collect();
+    assert!(
+        canary_edges.is_empty(),
+        "warm path loaded trap.call-edges.json: {canary_edges:?} (R_call_edges=1)"
+    );
+
+    // Verdict identity vs clean fixture (same sources, no canary pollution)
+    assert_eq!(
+        report_verdict_keys(&warm),
+        clean_rows,
+        "canaries must not change warm verdict rows (byte-identical gate)"
+    );
+    assert_eq!(
+        warm.outcome_class, clean.outcome_class,
+        "canaries must not change outcome class"
+    );
+
+    // Discrimination: cold disk face (no pool_only) still sees canary proof CID
+    // via discover_input_artifact_cids when Runner runs without the flag.
+    let cold_cfg = RunnerConfig {
+        project_root: project.clone(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+        pool_only_inputs: false,
+        ..Default::default()
+    };
+    // Empty pool — we only care that discover walks canary into inputs.
+    // run_with_proof_run would load_all_proofs; use a direct unit of the
+    // discover helper via running with pool that has no members but cfg
+    // cold: actually discover_input_artifact_cids is private. Discrimination
+    // via cold solve_project load_errors / or hash the file is known present.
+    // Stronger: cold Runner with empty extra, load_pool will try canary and
+    // may load_error; content hash still collected by discover when using
+    // run_with_proof_run_inner after a minimal pool.
+    let cold_pool = MementoPool::default();
+    let cold_runner = Runner::new_with_compilers(cold_cfg, test_compilers());
+    let cold = cold_runner
+        .run_with_proof_run_with_pool(cold_pool)
+        .expect("cold empty-pool run still builds a memento");
+    let cold_inputs = &cold.memento.header.input_artifact_cids;
+    eprintln!("cold discrimination inputs={cold_inputs:?}");
+    assert!(
+        cold_inputs.iter().any(|c| c == &canary_proof_cid),
+        "discrimination failed: cold path did not include canary proof CID \
+         (instrument would be a no-op). cold_inputs={cold_inputs:?}"
+    );
+    assert_eq!(
+        &cold.memento.header.link_bundle_cid, &link_bundle_cid,
+        "discrimination: cold path should hash link-bundle.json"
     );
 }
 
