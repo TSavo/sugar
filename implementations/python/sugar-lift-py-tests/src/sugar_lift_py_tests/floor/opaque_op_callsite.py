@@ -102,6 +102,29 @@ class OpaqueOpCallsite(FloorValue):
         """
         return self._downstream().project_sequence_with(operation, ctx)
 
+    def attribute_assign_with(self, operation: Any, ctx: Any) -> Any:
+        """Attr-assign on opaque vendor result: typed runtime boundary.
+
+        ``x = s.copy(); x.name = \"c\"`` is real mutation of a non-local object
+        identity. Same honest red as SymbolicValue — RuntimeEffect, not a
+        fabricated mutated coordinate and not a construction gap that pretends
+        the floor can invent ``__setattr__`` for call:copy(…).
+        """
+        del ctx
+        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            RuntimeEffect(
+                "attribute assignment runtime boundary: opaque coordinate "
+                f"`call:{self.callee}(...)` cannot be mutated as source object "
+                "state. Python attribute assignment can invoke descriptors and "
+                "__setattr__ at runtime; keep as typed red until a narrower "
+                "attribute mutation floor owns this shape. "
+                f"blame={operation.blame}"
+            )
+        )
+
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().binary_operator_with(operation, ctx)
 
