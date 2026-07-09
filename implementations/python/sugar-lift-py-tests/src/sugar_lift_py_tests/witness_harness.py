@@ -250,10 +250,36 @@ def _run_lift_rpc(project: Path) -> dict:
     return run_lift_rpc(project)
 
 
+def _hermetic_sugar_env(project: Path) -> dict[str, str]:
+    """Point the sugar binary at this project's staged `.sugar` only.
+
+    `SUGAR_HOME` is the exclusive component-discovery door (see
+    `component_roots` in sugar-cli). Setting it to `project/.sugar` keeps
+    mint/prove from reading the binary's repo-root kit tree or any ancestor
+    `.sugar` — the pre-existing non-hermeticity that made aggregate witness
+    runs lie. One door; no dual path.
+    """
+    env = dict(os.environ)
+    env["SUGAR_HOME"] = str((project / ".sugar").resolve())
+    # Drop any ambient component path the host shell may carry; the staged
+    # project is the sole authority for this invocation.
+    env.pop("SUGAR_COMPONENT_PATH", None)
+    return env
+
+
 def mint_and_prove(project: Path) -> WitnessPipelineResult:
     sugar = _ensure_sugar_bin()
     capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"
     capture.unlink(missing_ok=True)
+    # Content-addressed proofs accumulate under --out .; a reused project
+    # directory would otherwise load stale sibling catalogs into the pool.
+    for stale in project.glob("*.proof"):
+        stale.unlink(missing_ok=True)
+    runs = project / ".sugar" / "runs"
+    if runs.is_dir():
+        for stale in runs.glob("*.proof"):
+            stale.unlink(missing_ok=True)
+    hermetic_env = _hermetic_sugar_env(project)
     mint = subprocess.run(
         [str(sugar), "mint", "--out", ".", "--quiet"],
         cwd=project,
@@ -261,6 +287,7 @@ def mint_and_prove(project: Path) -> WitnessPipelineResult:
         capture_output=True,
         check=False,
         timeout=120,
+        env=hermetic_env,
     )
     if mint.returncode != 0:
         raise WitnessPipelineError(
@@ -274,6 +301,7 @@ def mint_and_prove(project: Path) -> WitnessPipelineResult:
         capture_output=True,
         check=False,
         timeout=120,
+        env=hermetic_env,
     )
     if not prove.stdout.strip():
         raise WitnessPipelineError(
