@@ -30,6 +30,7 @@ from sugar_lift_py_tests.ir import (
     ctor,
     eq,
     make_var,
+    not_,
     str_const,
     term_to_value,
 )
@@ -3328,15 +3329,19 @@ def _function_universe(
         body_formulas = universe_sugar.constraint_formulas()
         body_step_formulas = universe_sugar.constraint_formula_steps()
     except (TypeError, ValueError, FactoryGap, IncompleteFunctionBody) as exc:
-        fallback = _urlsafe_translate_function_universe(
-            callee,
-            callee_name,
-            filename=filename,
-            memento_file=memento_file,
-            source_lines=source_lines,
-        )
-        if fallback is not None:
-            return fallback
+        for closed_universe in (
+            _urlsafe_translate_function_universe,
+            _strip_literal_function_universe,
+        ):
+            fallback = closed_universe(
+                callee,
+                callee_name,
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+            )
+            if fallback is not None:
+                return fallback
         _record_dig_refusal(
             dig_refusals,
             callee=callee.function_name(),
@@ -3629,6 +3634,190 @@ def _is_cpython_urlsafe_b64encode_translate(
     return getattr(base64, "_urlsafe_encode_translation", None) == bytes.maketrans(
         b"+/", b"-_"
     )
+
+
+def _strip_literal_function_universe(
+    callee: SourceFragment,
+    callee_name: str,
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> LiftResult | None:
+    """Closed no-suffix / no-prefix universe from ``return X.rstrip(lit)`` / ``lstrip``.
+
+    ``rstrip`` / ``lstrip`` over a literal character set is total: the result never
+    ends (resp. starts) with any character from that set. When the body dig cannot
+    reduce the receiver (e.g. ``urlsafe_b64encode(...).rstrip(b\"=\")``), this still
+    mints a covering ambient post so a lying padded equality is UNSAT — attached to
+    the **outer** callee (stated coordinate), not the stuck inner method.
+    """
+
+    del filename  # walk row uses memento provenance; filename kept for API parity
+    shape = _strip_return_shape(callee)
+    if shape is None:
+        return None
+    method, chars, return_stmt = shape
+    pred = "suffix-of" if method == "rstrip" else "prefix-of"
+    universe_kind = "no-suffix-chars" if method == "rstrip" else "no-prefix-chars"
+
+    imported_source = getattr(callee.node, "_sugar_source", None)
+    if imported_source is not None:
+        source_lines = imported_source.splitlines(keepends=True)
+        memento_file = getattr(callee.node, "_sugar_file", memento_file)
+
+    formal_names = tuple(callee.function_params())
+    scope_sorts: dict[str, ProofSort] = {
+        name: UnknownSort(reason=f"no declared sort for formal {name!r}")
+        for name in formal_names
+    }
+    scope_sorts["out"] = StringSort()
+    parts = [not_(atomic(pred, [str_const(ch), make_var("out")])) for ch in chars]
+    formula: Formula = parts[0] if len(parts) == 1 else and_(parts)
+    function_post = _post_condition_from_ir(
+        formula,
+        scope_sorts=scope_sorts,
+        formal_names=formal_names,
+    )
+    function_contract_name = (
+        f"{Path(memento_file).stem}::{callee.function_name()}::callable"
+    )
+    role = "python.translate-universe"
+    function_memento = _function_source_memento(
+        callee,
+        memento_file,
+        source_lines,
+        role=role,
+        contract_name=function_contract_name,
+    )
+    return_memento = _statement_source_memento(
+        return_stmt,
+        callee,
+        memento_file,
+        source_lines,
+        contract_name=function_contract_name,
+        role=role,
+    )
+    provenance = Provenance(
+        node_class=FunctionContract.node_class,
+        construction_site=_proofir_construction_site(return_stmt, memento_file),
+        warrant=Stated(locus=_proofir_construction_site(return_stmt, memento_file)),
+    )
+    function_contract = FunctionContract(
+        symbol=function_contract_name,
+        formals=tuple(
+            FunctionContract.formal(name, scope_sorts[name]) for name in formal_names
+        ),
+        post=function_post,
+        warrants=(provenance,),
+        out_binding="out",
+        out_sort=StringSort(),
+        source_warrants=[function_memento],
+        bridge_source_symbol=f"call:{callee_name}",
+    )
+    audit = _source_audit(
+        callee,
+        return_stmt,
+        memento_file,
+        function_contract_name,
+        return_memento,
+        role=role,
+        ast_kind="Return",
+    )
+    audit["universe_kind"] = universe_kind
+    # Second locus: the strip method Attribute on the return value (logo warrant).
+    ret_val = return_stmt.return_value()
+    if ret_val is not None and ret_val.observed == "Call" and ret_val.call_is_method_call():
+        method_func = ret_val.call_func()
+        loci = list(audit.get("loci") or [])
+        loci.append(
+            {
+                "file": memento_file,
+                "line": method_func.line,
+                "col": method_func.col,
+                "status": "warranted",
+                "ast_kind": "Attribute",
+                "role": role,
+                "contract": function_contract_name,
+                "reason": f"{method} literal strip totality ({universe_kind})",
+            }
+        )
+        audit["loci"] = loci
+        totals = dict(audit.get("totals") or {})
+        totals["source_loci"] = len(loci)
+        totals["source_warranted"] = sum(
+            1 for loc in loci if loc.get("status") == "warranted"
+        )
+        audit["totals"] = totals
+
+    walk = _walk_row(
+        "StripLiteralUniverseSugar",
+        "Return",
+        return_stmt,
+        memento_file,
+        return_memento,
+        "predicate",
+        requested_role="FunctionBodyConstraint",
+        emitted_formula=_typed_formula_to_rpc(formula, scope_sorts),
+        reason=(
+            f"{method} over literal {chars!r} is total: out never "
+            f"{'ends' if method == 'rstrip' else 'starts'} with any stripped char"
+        ),
+    )
+    return (
+        [function_contract],
+        [function_memento, return_memento],
+        [audit],
+        [walk],
+        [],
+        [],
+    )
+
+
+def _strip_return_shape(
+    callee: SourceFragment,
+) -> tuple[str, str, SourceFragment] | None:
+    """If the body returns ``X.rstrip(lit)`` / ``lstrip(lit)``, return shape parts.
+
+    Returns ``(method, chars, return_stmt)`` or ``None``.
+    """
+
+    for stmt in reversed(callee.function_body()):
+        if stmt.observed != "Return":
+            continue
+        ret = stmt.return_value()
+        if ret is None or ret.observed != "Call":
+            return None
+        if not ret.call_is_method_call():
+            return None
+        method = ret.call_target_name()
+        if method not in ("rstrip", "lstrip"):
+            return None
+        args = ret.call_args()
+        if len(args) != 1 or ret.call_has_keywords():
+            return None
+        try:
+            lit = args[0].literal_value()
+        except TypeError:
+            return None
+        if isinstance(lit, bytes):
+            # latin-1 preserves every byte as a code point for SMT string theory.
+            chars = lit.decode("latin-1")
+        elif isinstance(lit, str):
+            chars = lit
+        else:
+            return None
+        if not chars:
+            return None
+        # Dedup while preserving order (rstrip(b"==") is still {=}).
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for ch in chars:
+            if ch not in seen:
+                seen.add(ch)
+                ordered.append(ch)
+        return method, "".join(ordered), stmt
+    return None
 
 
 def _dig_universe(
