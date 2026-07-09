@@ -694,16 +694,27 @@ def _method_receiver_is_temporally_bound(fragment, ctx) -> bool:
 def _method_receiver_is_constructed_expression(fragment) -> bool:
     """True when the method receiver is a constructed expression (not a bare Name).
 
-    `np.array([1,2,3]).sum()` / `df.groupby(...).sum()` — receiver is Call or
-    Attribute. Bare `buffer.decode()` stays on the Name frontier so unresolved
-    locals still gap as call-method:decode.
+    `np.array([1,2,3]).sum()` / `b\"hi\".decode()` — receiver is Call, Attribute,
+    Constant, etc. Bare `buffer.decode()` stays on the Name frontier so
+    unresolved locals still gap as call-method:decode.
     """
     if fragment.call_has_keywords():
         return False
     receiver = fragment.call_receiver()
     if receiver is None:
         return False
-    return receiver.observed in {"Call", "Attribute", "Subscript"}
+    return receiver.observed in {
+        "Call",
+        "Attribute",
+        "Subscript",
+        "Constant",
+        "PrimitiveLiteral",
+        "List",
+        "Tuple",
+        "Dict",
+        "Set",
+        "JoinedStr",
+    }
 
 
 def _build_constructor_strategy(fragment, ctx, target: str, class_site):
