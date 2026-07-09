@@ -48,6 +48,11 @@ class FactoryBuildContext:
     # recursion is not finitely constructible -> the bridge stays the vendor's axiom
     # rather than hanging the lifter.
     building: frozenset[str] = field(default_factory=frozenset[str])
+    # Opt-in: when True, a resolved callee whose body cannot open during dig
+    # emits symbolic call:f (ExternalBridge) so outer towers can finish.
+    # Default False keeps top-level force_floor Incomplete on nested gaps so
+    # ambient strip posts stay logo-safe (str.suffixof sorts).
+    nested_external_bridge: bool = False
 
     def __post_init__(self) -> None:
         if self.factory_audit_sink is None and self.audit_sink is not None:
@@ -107,4 +112,5 @@ class FactoryBuildContext:
             dig_sink=self.dig_sink,
             record_operation=self.record_operation,
             building=self.building,
+            nested_external_bridge=self.nested_external_bridge,
         )
