@@ -12,8 +12,8 @@ Coverage snapshot (coords = call:<op> present in IR):
 
 | surface | direct coords | body dig coords | dual-assert unsat |
 |---------|---------------|-----------------|-------------------|
-| Series.mean/max/min/sum/count/std | yes | yes | mean/max/min/sum/count yes |
-| Series.head/tail/astype | yes | partial | — |
+| Series.mean/max/min/sum/count/std | yes (FOL call: + edge method:) | yes (df[col].m) | mean/max/min/sum/count yes |
+| Series.head/tail/astype | yes / call:astype | partial | astype.sum dual yes (Batch B) |
 | DataFrame.shape/empty | yes | yes (shape) | shape dual: unsat (tuple injectivity) |
 | DataFrame.dtypes/columns/index/values | yes | columns via list() | — |
 | chain dropna().shape | yes | yes | shape dual unsat |
