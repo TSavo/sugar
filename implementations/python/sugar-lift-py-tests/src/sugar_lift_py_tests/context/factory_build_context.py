@@ -11,11 +11,11 @@ from sugar_lift_py_tests.context.sink_protocols import (
     OperationRecorder,
     ProofSink,
 )
-from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.temporal import TemporalContext
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.factory.factory_build_result import FactoryBuildResult
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -70,6 +70,7 @@ class FactoryBuildContext:
         self, node: ast.AST | SourceFragment | None, role: SugarRole
     ) -> "SugarBody[Any]":
         from sugar_lift_py_tests.factory.build import build_node
+        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
         from sugar_lift_py_tests.sugar_body import SugarBody
 
         # Accept a SourceFragment directly (idempotent) or an ast node.
