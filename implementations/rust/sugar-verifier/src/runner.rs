@@ -623,11 +623,15 @@ impl Runner {
             plugin_registry_cid,
             run_verdict,
         )?;
+        // Warm path (`pool_only_inputs`): seal the proof-run envelope in memory
+        // only — do not create_dir_all / write under project_root/.sugar/runs/
+        // (#3809 write #6). Cold path still persists for durable receipts.
         let (bundle_cid, bundle_path) = write_proof_run_bundle(
             &self.cfg.project_root,
             &memento,
             &stages,
             self.cfg.plan_artifact.as_ref(),
+            /* persist_to_disk = */ !self.cfg.pool_only_inputs,
         )?;
 
         Ok(ProofRunArtifact {
@@ -1077,11 +1081,16 @@ fn make_proof_run_memento(
     Ok(memento)
 }
 
+/// Seal the proof-run envelope. When `persist_to_disk` is true (cold face),
+/// write under `project_root/.sugar/runs/`. When false (warm / pool_only),
+/// return the content CID and an empty `bundle_path` — no create_dir_all,
+/// no write (#3809 write #6 closed).
 fn write_proof_run_bundle(
     project_root: &Path,
     memento: &sugar_ir_types::ProofRunMemento,
     stages: &[sugar_ir_types::StageReceipt],
     plan_artifact: Option<&PlanArtifactInput>,
+    persist_to_disk: bool,
 ) -> Result<(String, PathBuf), ProofRunArtifactError> {
     use sugar_proof_envelope::{
         build_proof_envelope, PlanMemento, ProofEnvelopeInput, ProofGraph, ProofRunMemento,
@@ -1120,6 +1129,12 @@ fn write_proof_run_bundle(
         declared_at: iso_now(),
         manifest: None,
     });
+    if !persist_to_disk {
+        // In-memory receipt: CID is real; path is deliberately empty so
+        // callers cannot open() a project file that was never written.
+        let _ = project_root; // warm path does not touch project_root here
+        return Ok((built.cid, PathBuf::new()));
+    }
     let out_dir = project_root.join(".sugar").join("runs");
     std::fs::create_dir_all(&out_dir)?;
     // Colon-free, prefix-retained on-disk name (Windows-safe); the loader
@@ -2837,9 +2852,14 @@ mod consistency_owned_callsite_tests {
         );
 
         let project_root = make_unique_cache_dir("plan-artifact-bundle");
-        let (_bundle_cid, bundle_path) =
-            write_proof_run_bundle(&project_root, &memento, &[stage], Some(&plan_artifact))
-                .expect("proof-run bundle");
+        let (_bundle_cid, bundle_path) = write_proof_run_bundle(
+            &project_root,
+            &memento,
+            &[stage],
+            Some(&plan_artifact),
+            /* persist_to_disk = */ true,
+        )
+        .expect("proof-run bundle");
         let bytes = std::fs::read(&bundle_path).expect("read proof-run bundle");
         let graph = sugar_proof_envelope::ProofGraph::read(&bytes).expect("read proof graph");
         let plans = graph.plans().collect::<Vec<_>>();

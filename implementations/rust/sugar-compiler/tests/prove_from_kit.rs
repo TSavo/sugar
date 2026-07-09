@@ -490,7 +490,7 @@ fn prove_from_kit_ignores_project_root_proof_files() {
 /// | 3 | `link-bundle.json` / `plugin-registry.json` named reads | OPEN | **CLOSED** (placeholders) |
 /// | 4 | `.sugar/config.toml` re-read for trusted signers + SolversConfig | OPEN | **CLOSED** (cfg-only) |
 /// | 5 | project `*.proof` load into pool (`load_all_proofs`) | closed #3910 | closed |
-/// | 6 | proof-run **write** to `.sugar/runs/` | WRITE (not a read) | still writes |
+/// | 6 | proof-run **write** to `.sugar/runs/` | WRITE | **CLOSED** (in-memory seal; empty bundle_path) |
 /// | 7 | CLI pre-solve: config/plan/manifests, kit spawn, fold enumerate | OUT OF DISCHARGE | open (CLI/kit) |
 /// | 8 | consistency locus `Path::exists`, witness resolver manifests | conditional | open (next batch) |
 /// | 9 | tier-2 implication cache_dir reads | if cache_dir set | open (leave unset on warm) |
@@ -669,6 +669,119 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     assert_eq!(
         &cold.memento.header.link_bundle_cid, &link_bundle_cid,
         "discrimination: cold path should hash link-bundle.json"
+    );
+}
+
+/// #3809 write #6 — warm discharge must not `create_dir_all` / `std::fs::write`
+/// under `project_root/.sugar/runs/`.
+///
+/// BEFORE (pre-fix, pool_only_inputs already set by prove_from_kit):
+///   `write_proof_run_bundle` always did:
+///     std::fs::create_dir_all(project_root/.sugar/runs)
+///     std::fs::write(.../{cid}.proof, sealed_bytes)
+///
+/// AFTER: warm path seals the envelope in memory only; `bundle_path` is empty
+/// and `.sugar/runs` is not created. `bundle_cid` remains a real content CID.
+/// Cold `solve_project` over a sealed fold graph still persists (discrimination).
+/// Verdict rows match a second warm run (byte-identical gate).
+#[test]
+fn prove_from_kit_does_not_write_proof_run_bundle() {
+    if !python_blake3_available() {
+        eprintln!("skip: python3/blake3 unavailable");
+        return;
+    }
+    if !z3_available() {
+        eprintln!("skip: z3 unavailable (solver path)");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+    let runs_dir = project.join(".sugar").join("runs");
+    assert!(
+        !runs_dir.exists(),
+        "precondition: fixture must not already have .sugar/runs"
+    );
+
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+    let speaker = Speaker::consumer("prove-from-kit:no-runs-write");
+    let compilers = test_compilers();
+    let cfg = runner_cfg(&project);
+
+    let warm = prove_from_kit(&kit, &project, speaker.clone(), cfg.clone(), compilers.clone())
+        .expect("prove_from_kit");
+
+    eprintln!(
+        "write#6 gate (warm):\n\
+         \truns_dir exists={} path={}\n\
+         \tbundle_path={:?} exists={}\n\
+         \tbundle_cid={}\n\
+         \trows={}",
+        runs_dir.exists(),
+        runs_dir.display(),
+        warm.artifact.bundle_path,
+        warm.artifact.bundle_path.exists(),
+        warm.artifact.bundle_cid,
+        warm.artifact.report.rows.len(),
+    );
+
+    assert!(
+        !runs_dir.exists(),
+        "warm prove_from_kit must not create_dir_all project_root/.sugar/runs \
+         (write #6 still open). R_runs_dir=1"
+    );
+    assert!(
+        warm.artifact.bundle_path.as_os_str().is_empty(),
+        "warm bundle_path must be empty (in-memory receipt); got {:?}",
+        warm.artifact.bundle_path
+    );
+    assert!(
+        !warm.artifact.bundle_cid.is_empty(),
+        "bundle_cid must still be a real content address (in-memory seal)"
+    );
+    assert!(
+        warm.artifact.bundle_cid.starts_with("blake3-512:"),
+        "bundle_cid must look like a blake3 CID: {}",
+        warm.artifact.bundle_cid
+    );
+
+    // Byte-identical verdicts: second warm run matches first
+    let warm2 = prove_from_kit(
+        &kit,
+        &project,
+        Speaker::consumer("prove-from-kit:no-runs-write-2"),
+        cfg,
+        compilers.clone(),
+    )
+    .expect("second prove_from_kit");
+    assert_eq!(
+        report_verdict_keys(&warm),
+        report_verdict_keys(&warm2),
+        "warm verdict rows must be stable (byte-identical gate)"
+    );
+    assert_eq!(warm.outcome_class, warm2.outcome_class);
+
+    // Discrimination: cold disk face still writes under .sugar/runs
+    let local = feed_from_tree::fold_project(&kit, &project, Some(&speaker)).expect("fold");
+    let disk_dir = tempfile::tempdir().expect("disk project");
+    seal_graph_to_project(&local, disk_dir.path(), "write6-disk");
+    let disk =
+        solve_project(runner_cfg(disk_dir.path()), compilers).expect("disk solve_project");
+    let disk_runs = disk_dir.path().join(".sugar").join("runs");
+    eprintln!(
+        "write#6 gate (cold discrimination):\n\
+         \tdisk_runs exists={}\n\
+         \tdisk bundle_path={:?} exists={}",
+        disk_runs.exists(),
+        disk.artifact.bundle_path,
+        disk.artifact.bundle_path.exists(),
+    );
+    assert!(
+        disk_runs.exists() && disk.artifact.bundle_path.exists(),
+        "discrimination failed: cold solve_project must still write .sugar/runs \
+         (instrument would be a no-op). disk_runs={} bundle={:?}",
+        disk_runs.display(),
+        disk.artifact.bundle_path
     );
 }
 
