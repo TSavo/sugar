@@ -194,7 +194,9 @@ fn is_universe_not_modeled(err: &KitError) -> bool {
 }
 
 /// Walk the tree; for every call site, try `universe()`. Collects
-/// NotModeled hits and any names that succeed (none today).
+/// NotModeled hits and any universe **member names** that succeed (none
+/// today — `universe()` is NotModeled). Names are function-contract style
+/// (`len::builtin-universe`, `mathy::add::callable`), not bridge identities.
 fn universe_probe_from_tree(
     kit: &Kit,
     workspace_root: &Path,
@@ -208,9 +210,15 @@ fn universe_probe_from_tree(
                 call_sites += 1;
                 match call_site.universe() {
                     Ok(universe) => {
-                        // Universe is memento-only today; when level=universe
-                        // lands, member name should appear on audit/memento.
-                        collect_bridge_or_name_strings(
+                        // Universe is memento-only today (no audit_row yet).
+                        // When Task 1 serves level=universe, member names must
+                        // match batch function-contract `name` keys. Collect
+                        // from memento JSON including non-bridge name strings
+                        // (e.g. memento `name` / `function_name` / any string
+                        // equal to a batch universe name). Do NOT filter
+                        // through is_bridge_identity — those are call:/method:
+                        // forms for failure mode 3 only.
+                        collect_universe_member_name_strings(
                             &universe.source_memento().to_json(),
                             &mut names,
                         );
@@ -237,7 +245,7 @@ fn identity_symbols_from_tree(kit: &Kit, workspace_root: &Path) -> BTreeSet<Stri
     for file in kit.source_files(workspace_root).expect("source_files") {
         for function in file.functions().expect("functions") {
             for call_site in function.call_sites().expect("call_sites") {
-                collect_bridge_or_name_strings(&call_site.source_memento().to_json(), &mut out);
+                collect_bridge_identity_strings(&call_site.source_memento().to_json(), &mut out);
                 if let Some(audit) = call_site.audit_row() {
                     for candidate in [
                         audit.selected.as_deref(),
@@ -261,19 +269,65 @@ fn identity_symbols_from_tree(kit: &Kit, workspace_root: &Path) -> BTreeSet<Stri
     out
 }
 
-fn collect_bridge_or_name_strings(value: &Value, out: &mut BTreeSet<String>) {
+/// Universe member-name candidates from a successful `Universe` memento.
+///
+/// Matches the same keys batch uses (`function-contract` `name` values like
+/// `len::builtin-universe`). Collects:
+/// - explicit name-ish object fields Task 1 may populate (`name`,
+///   `function_name`, `source_function_name`, `universe_name`, `member_name`)
+/// - every non-empty string leaf in the memento JSON (so a dedicated field
+///   or nested audit still greening `R_universe_missing` without rewriting
+///   this instrument)
+///
+/// Intentionally does **not** apply `is_bridge_identity` — bridge `call:` /
+/// `method:` strings are failure mode 3 only.
+fn collect_universe_member_name_strings(value: &Value, out: &mut BTreeSet<String>) {
+    const NAME_KEYS: &[&str] = &[
+        "name",
+        "function_name",
+        "source_function_name",
+        "universe_name",
+        "member_name",
+    ];
+    match value {
+        Value::String(s) if !s.is_empty() => {
+            out.insert(s.clone());
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_universe_member_name_strings(item, out);
+            }
+        }
+        Value::Object(map) => {
+            for key in NAME_KEYS {
+                if let Some(s) = map.get(*key).and_then(Value::as_str) {
+                    if !s.is_empty() {
+                        out.insert(s.to_string());
+                    }
+                }
+            }
+            for v in map.values() {
+                collect_universe_member_name_strings(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk JSON for `call:` / `method:` bridge identity strings only.
+fn collect_bridge_identity_strings(value: &Value, out: &mut BTreeSet<String>) {
     match value {
         Value::String(s) if is_bridge_identity(s) => {
             out.insert(s.clone());
         }
         Value::Array(items) => {
             for item in items {
-                collect_bridge_or_name_strings(item, out);
+                collect_bridge_identity_strings(item, out);
             }
         }
         Value::Object(map) => {
             for v in map.values() {
-                collect_bridge_or_name_strings(v, out);
+                collect_bridge_identity_strings(v, out);
             }
         }
         _ => {}
