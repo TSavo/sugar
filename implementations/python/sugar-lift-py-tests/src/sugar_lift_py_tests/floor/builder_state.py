@@ -11,6 +11,11 @@ from .floor_value import FloorValue
 class BuilderState(FloorValue):
     current: ArrayLiteral
 
+    def to_term(self, *, owner: str):
+        # A builder is a stateful array construction; the coordinate for
+        # `len(Builder([...]))` projects as the underlying array term.
+        return self.current.to_term(owner=owner)
+
     def map_with(self, operation: Any, ctx: Any) -> Any:
         return operation.map_builder(self, ctx)
 

@@ -98,6 +98,8 @@ def _array_element(value, *, element: SugarBody):
                 f"shape. blame={_element_blame(element)}"
             )
         )
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+
     if not isinstance(
         value,
         (
@@ -109,6 +111,7 @@ def _array_element(value, *, element: SugarBody):
             ImportAliasValue,
             ArrayLiteral,
             TupleLiteralValue,
+            OpaqueOpCallsite,
         ),
     ):
         blame = _element_blame(element)

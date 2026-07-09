@@ -67,17 +67,9 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         if isinstance(argument_outcome, Incomplete):
             return argument_outcome
         argument = complete_value(argument_outcome, owner="BuiltinCallSugar argument")
-        if self.name == "str":
-            return perform_operation(
-                owner="BuiltinCallSugar",
-                blame=self.blame,
-                receiver=argument,
-                operation=StrCoercionOperation(
-                    owner="BuiltinCallSugar",
-                    blame=self.blame,
-                ),
-                ctx=ctx,
-            )
+        # Stateful / lazy / reflective builtins keep their existing effect paths —
+        # coordinate-izing them would be noise or wrong (next advances state;
+        # reversed is lazy; dir inventories runtime attrs).
         if self.name == "next":
             return perform_operation(
                 owner="BuiltinCallSugar",
@@ -91,8 +83,8 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             )
         if self.name == "dir":
             return _build_dir_builtin(argument, self.blame, ctx)
-        method_name = _BUILTIN_DUNDER_METHODS.get(self.name)
-        if method_name is not None:
+        if self.name == "reversed":
+            method_name = _BUILTIN_DUNDER_METHODS["reversed"]
             return perform_operation(
                 owner="BuiltinCallSugar",
                 blame=self.blame,
@@ -105,6 +97,33 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 ),
                 ctx=ctx,
             )
+        if self.name == "str":
+            outcome = perform_operation(
+                owner="BuiltinCallSugar",
+                blame=self.blame,
+                receiver=argument,
+                operation=StrCoercionOperation(
+                    owner="BuiltinCallSugar",
+                    blame=self.blame,
+                ),
+                ctx=ctx,
+            )
+            return _coordinate_outcome(self.name, argument, outcome)
+        method_name = _BUILTIN_DUNDER_METHODS.get(self.name)
+        if method_name is not None:
+            outcome = perform_operation(
+                owner="BuiltinCallSugar",
+                blame=self.blame,
+                receiver=argument,
+                operation=MethodCallOperation(
+                    name=method_name,
+                    arguments=(),
+                    owner="BuiltinCallSugar",
+                    blame=self.blame,
+                ),
+                ctx=ctx,
+            )
+            return _coordinate_outcome(self.name, argument, outcome)
         raise TypeError(f"write more Sugar for builtin call `{self.name}`")
 
 
@@ -334,6 +353,11 @@ class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
             return right_outcome
         left = complete_value(left_outcome, owner="DivmodBuiltinSugar left")
         right = complete_value(right_outcome, owner="DivmodBuiltinSugar right")
+        # Leave unwrapped: divmod returns a pair used via subscript
+        # (`divmod(z,2)[0]`). Coordinate-izing the pair needs a multi-value
+        # surface before call:divmod can be the sole join point without
+        # breaking residual py.subscript(divmod(...), i) digs. (Listed in
+        # the brief's pure-value set; held until that surface exists.)
         return perform_operation(
             owner="DivmodBuiltinSugar",
             blame=self.blame,
@@ -397,7 +421,7 @@ class FormatBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
             if isinstance(spec_outcome, Incomplete):
                 return spec_outcome
             spec = complete_value(spec_outcome, owner="FormatBuiltinSugar spec")
-        return perform_operation(
+        outcome = perform_operation(
             owner="FormatBuiltinSugar",
             blame=self.blame,
             receiver=argument,
@@ -409,6 +433,7 @@ class FormatBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
             ),
             ctx=ctx,
         )
+        return _coordinate_outcome("format", argument, outcome, extra_args=(spec,))
 
 
 _BUILTIN_DUNDER_METHODS = {
@@ -429,6 +454,29 @@ _BUILTIN_DUNDER_METHODS = {
     "operator.index": "__index__",
 }
 _OPERATOR_INDEX_CALL = "operator.index"
+# Pure-value operators become `call:<op>(...)` coordinates via the one wrap.
+# Stateful / lazy / reflective builtins (next, reversed, dir) stay unwrapped —
+# see BuiltinCallSugar._build. getattr lives on GetattrBuiltinSugar.
+_COORDINATE_BUILTIN_OPS = frozenset(
+    {
+        "abs",
+        "round",
+        "floor",
+        "ceil",
+        "trunc",
+        "int",
+        "float",
+        "complex",
+        "operator.index",
+        "len",
+        "hash",
+        "repr",
+        "bytes",
+        "str",
+        "format",
+        # divmod held: pair+subscript residual (see DivmodBuiltinSugar._build)
+    }
+)
 _OWNED_BUILTIN_CALLS = frozenset(
     {
         "next",
@@ -436,6 +484,25 @@ _OWNED_BUILTIN_CALLS = frozenset(
         *_BUILTIN_DUNDER_METHODS,
     }
 ) - {_OPERATOR_INDEX_CALL}
+
+
+def _coordinate_outcome(
+    callee: str,
+    arg,
+    outcome: Outcome,
+    *,
+    extra_args: tuple = (),
+) -> Outcome:
+    """Apply the one OpaqueOp wrap to a pure-value builtin result."""
+    if isinstance(outcome, Incomplete):
+        return outcome
+    from sugar_lift_py_tests.floor.opaque_op_callsite import wrap_builtin_operator
+    from sugar_lift_py_tests.outcome import Complete
+
+    result = complete_value(outcome, owner=f"builtin:{callee}")
+    return Complete(
+        wrap_builtin_operator(callee, arg, result, extra_args=extra_args)
+    )
 
 
 def _owned_builtin_name(site, ctx) -> str | None:

@@ -34,36 +34,46 @@ class SymbolicValue(FloorValue):
         del ctx
         if operation.name == "__format__" and len(operation.arguments) == 1:
             from sugar_lift_py_tests.floor.string_value import StringValue
-            from sugar_lift_py_tests.ir import ctor, str_const
             from sugar_lift_py_tests.outcome import Complete
 
             spec = operation.arguments[0]
             if isinstance(spec, StringValue):
-                return Complete(
-                    SymbolicValue(ctor("py.format", [self.term, str_const(spec.value)]))
-                )
+                # Non-concrete marker; FormatBuiltinSugar's wrap attaches
+                # `call:format(<x>, <spec>)` with computed=None.
+                return Complete(self)
         if operation.name == "__len__" and not operation.arguments:
             from sugar_lift_py_tests.outcome import Complete
 
-            from .opaque_op_callsite import OpaqueOpCallsite
-
-            # `len` of an opaque value is the opaque coordinate `call:len(<x>)` -- the
-            # SAME symbol the LHS emits -- not a `py.len` variant the LHS can never
-            # meet by congruence. No computed value: the argument is not a counted
-            # construction.
-            return Complete(OpaqueOpCallsite(callee="len", arg=self, computed=None))
+            # Non-concrete marker; BuiltinCallSugar wrap attaches call:len(<x>).
+            return Complete(self)
         if operation.name == "__int__" and not operation.arguments:
-            from sugar_lift_py_tests.ir import _ConstStr, _Ctor, ctor
+            from sugar_lift_py_tests.ir import _Ctor
             from sugar_lift_py_tests.outcome import Complete
 
-            if isinstance(self.term, _Ctor) and self.term.name == "py.format":
-                if (
-                    len(self.term.args) == 2
-                    and isinstance(self.term.args[1], _ConstStr)
-                    and self.term.args[1].value == ""
-                ):
-                    return Complete(SymbolicValue(self.term.args[0]))
-                return Complete(SymbolicValue(ctor("py.int", [self.term])))
+            # int(format(x, "")) → x (empty-spec format is the identity stringifier
+            # for the int path). call:format coordinates keep the same rule.
+            if isinstance(self.term, _Ctor) and self.term.name in {
+                "py.format",
+                "call:format",
+            }:
+                if len(self.term.args) >= 2:
+                    from sugar_lift_py_tests.ir import _ConstStr
+
+                    spec = self.term.args[1]
+                    if isinstance(spec, _ConstStr) and spec.value == "":
+                        return Complete(SymbolicValue(self.term.args[0]))
+            # Non-concrete marker; BuiltinCallSugar wrap attaches call:int(<x>).
+            return Complete(self)
+        if operation.name == "__hash__" and not operation.arguments:
+            from sugar_lift_py_tests.outcome import Complete
+
+            # hash never folds statically — marker only; wrap → call:hash, no companion.
+            return Complete(self)
+        if operation.name in {"__repr__", "__bytes__", "__abs__", "__float__", "__complex__", "__index__", "__round__", "__floor__", "__ceil__", "__trunc__"} and not operation.arguments:
+            from sugar_lift_py_tests.outcome import Complete
+
+            # Pure-value builtins on an opaque receiver: non-concrete marker for wrap.
+            return Complete(self)
         from sugar_lift_py_tests.effect import FactoryGapEffect
         from sugar_lift_py_tests.outcome import Incomplete
 

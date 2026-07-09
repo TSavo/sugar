@@ -31,13 +31,8 @@ class TupleLiteralValue(FloorValue):
             from sugar_lift_py_tests.floor.term_value import TermValue
             from sugar_lift_py_tests.outcome import Complete
 
-            from .opaque_op_callsite import OpaqueOpCallsite
-
-            return Complete(
-                OpaqueOpCallsite(
-                    callee="len", arg=self, computed=TermValue(len(self.items))
-                )
-            )
+            # Bare folded count; BuiltinCallSugar wrap re-attaches call:len.
+            return Complete(TermValue(len(self.items)))
         _call_method_gap(
             owner=operation.owner,
             blame=operation.blame,
