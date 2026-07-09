@@ -18,7 +18,11 @@ Coverage snapshot (coords = call:<op> present in IR):
 | DataFrame.dtypes/columns/index/values | yes | columns via list() | — |
 | chain dropna().shape | yes | yes | tuple sat* |
 | chain reshape().sum | yes | yes | yes |
-| chain groupby().sum | yes (direct) | weak (is not None) | identity refused |
+| chain groupby().sum | yes (direct) | yes (value eq A()==…) | identity still weak |
+
+Body dig for groupby().sum() is the value-equality surface
+(`assert A() == A()` / shape projection), not `is not None` — see
+test_groupby_body_dig.py.
 
 *tuple RHS dual-assert currently sat under z3 (tuple injectivity gap — known).
 """
