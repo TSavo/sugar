@@ -214,8 +214,17 @@ pub enum VerificationDetail {
     },
     /// Symbolic-solver consistency detail. `rawSolverVerdict`/`solverReason` are
     /// nullable-but-always-present (serialized as JSON `null` when absent, never
-    /// dropped); `clientFactIr`/`vendorFactIr` are the appended conjoined facts and
-    /// ARE dropped when absent.
+    /// dropped); `clientFactIr`/`vendorFactIr`/`vendorSwornContextIr` are the
+    /// appended conjoined facts and ARE dropped when absent.
+    ///
+    /// `vendorFactIr` carries ONLY facts that actually entered the checked
+    /// formula's conjunction (the ambient ground-callsite conjoin and the
+    /// cross-proof vendor-spoken candidates) -- it answers "what did the
+    /// solver see." `vendorSwornContextIr` carries `collect_vendor_sworn_facts`'s
+    /// DISPLAY-ONLY same-callee sworn vectors, which are never conjoined into
+    /// the solved obligation and carry no soundness weight; keeping them in a
+    /// separate field means a vacuously-Discharged row (no participating vendor
+    /// fact) can never be misread as "the vendor fact that resolved this."
     #[serde(rename = "consistency")]
     Solver {
         property: String,
@@ -243,6 +252,12 @@ pub enum VerificationDetail {
             skip_serializing_if = "Option::is_none"
         )]
         vendor_fact_ir: Option<Json>,
+        #[serde(
+            rename = "vendorSwornContextIr",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        vendor_sworn_context_ir: Option<Json>,
     },
     /// Provenance-KIND refusal detail (a custom-witness / panic-callsite contract
     /// that carried the wrong `proofirProvenance.warrants[].kind`).
@@ -1635,10 +1650,12 @@ fn attach_conjoined_facts(
     result: &mut ConsistencyResult,
     client_fact: &Json,
     vendor_facts: &[Json],
+    vendor_sworn_context: &[Json],
 ) {
     let Some(VerificationDetail::Solver {
         client_fact_ir,
         vendor_fact_ir,
+        vendor_sworn_context_ir,
         ..
     }) = result.verification.as_mut()
     else {
@@ -1647,6 +1664,9 @@ fn attach_conjoined_facts(
     *client_fact_ir = Some(client_fact.clone());
     if !vendor_facts.is_empty() {
         *vendor_fact_ir = Some(Json::Array(vendor_facts.to_vec()));
+    }
+    if !vendor_sworn_context.is_empty() {
+        *vendor_sworn_context_ir = Some(Json::Array(vendor_sworn_context.to_vec()));
     }
 }
 
@@ -1680,6 +1700,7 @@ fn consistency_verification_detail(
         solver_invocations: solver_invocations_to_json(invs),
         client_fact_ir: None,
         vendor_fact_ir: None,
+        vendor_sworn_context_ir: None,
     }
 }
 
@@ -2005,10 +2026,15 @@ impl Attribution {
 
 /// The canonical join key for a ground callsite fact: the JCS canonicalization
 /// of a `call:*` ctor term. The cross-fact join -- a consumer obligation pooling
-/// a sibling's sworn vector about the SAME concrete call -- is EXACTLY `TermKey`
-/// equality, so the wrapper carries `Eq`/`Ord`/`Hash` and nothing else may be
-/// compared against it. `#[serde(transparent)]`: the wire form is the bare
-/// string, so no artifact byte changes.
+/// a sibling's sworn vector about the SAME concrete call -- requires `TermKey`
+/// equality PLUS `Scope` equality (`with_ambient_ground_callsite_facts`); a
+/// `TermKey` match alone is not sufficient (#3884: the same concrete call can
+/// be named by independent consumers -- see `Scope` below and
+/// `ambient_ground_callsite_facts_do_not_cross_consumer_scopes`, which pins
+/// that a shared `TermKey` across scopes must NOT pool). The wrapper carries
+/// `Eq`/`Ord`/`Hash` and nothing else may be compared against it.
+/// `#[serde(transparent)]`: the wire form is the bare string, so no artifact
+/// byte changes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 struct TermKey(String);
@@ -2037,13 +2063,14 @@ struct AmbientGroundCallsiteFact {
 }
 
 /// Collect closed ground facts about concrete callsite terms. A literal-domain
-/// loop replay may emit `call:g(3) == 1` rather than a universal. That fact is
-/// still in the pool's shared callsite vocabulary and must constrain sibling
-/// `#euf#` obligations about the same concrete call. We collect only ground
-/// equalities whose subject is a `call:*` ctor; local variables and non-call
-/// helper ctors never travel. Unlike closed universals, these are finite replay
-/// facts from one assertion context, so they are scoped to that context and do
-/// not pool across independent consumers that happen to name the same callsite.
+/// loop replay may emit `call:g(3) == 1` rather than a universal. That fact
+/// must constrain sibling `#euf#` obligations about the same concrete call --
+/// but ONLY within the SAME `Scope` (see `Scope`/`TermKey` above): unlike
+/// closed universals, these are finite replay facts from one assertion
+/// context, so a shared `TermKey` alone never pools two independent
+/// consumers' testimony (`ambient_ground_callsite_facts_do_not_cross_consumer_scopes`
+/// pins exactly that). We collect only ground equalities whose subject is a
+/// `call:*` ctor; local variables and non-call helper ctors never travel.
 fn collect_ambient_ground_callsite_facts(
     inv: &Json,
     source: &Attribution,
@@ -3617,7 +3644,8 @@ fn process_consistency_group(
                     attach_conjoined_facts(
                         &mut result,
                         client_fact_own,
-                        &union_facts(union_facts(vendor_facts, vendor_spoken_equalities), sworn),
+                        &union_facts(vendor_facts, vendor_spoken_equalities),
+                        &sworn,
                     );
                 }
                 out.push(result);
@@ -3679,11 +3707,7 @@ fn process_consistency_group(
                             &ambient_ground_callsite_facts,
                             std::slice::from_ref(&candidate.cid),
                         );
-                        attach_conjoined_facts(
-                            &mut result,
-                            &original_inv,
-                            &union_facts(vendor_facts, sworn),
-                        );
+                        attach_conjoined_facts(&mut result, &original_inv, &vendor_facts, &sworn);
                     }
                     if !suppress_standalone_support_vacuity(
                         property_name,
@@ -3877,6 +3901,7 @@ mod tests {
             solver_invocations: json!([]),
             client_fact_ir: None,
             vendor_fact_ir: None,
+            vendor_sworn_context_ir: None,
         };
         assert_wire_identity(
             &detail,
@@ -3895,9 +3920,13 @@ mod tests {
 
     #[test]
     fn test_verification_detail_solver_with_conjoined_facts_round_trip() {
-        // The clientFactIr / vendorFactIr fields are appended by
-        // attach_conjoined_facts AFTER solverInvocations, and are dropped when
-        // absent -- exactly the insertion-order the mutate path produced.
+        // The clientFactIr / vendorFactIr / vendorSwornContextIr fields are
+        // appended by attach_conjoined_facts AFTER solverInvocations, and are
+        // dropped when absent -- exactly the insertion-order the mutate path
+        // produced. vendorFactIr is the solve-participating fact set;
+        // vendorSwornContextIr is the display-only sworn-context set and MUST
+        // stay a distinct field (#3884: conflating the two let a never-conjoined
+        // context fact look like the fact that discharged the row).
         let detail = VerificationDetail::Solver {
             property: "prop".to_string(),
             checked_formula_cid: "blake3-512:cf".to_string(),
@@ -3908,6 +3937,7 @@ mod tests {
             solver_invocations: json!([{"compiler": "smt-lib-v2.6"}]),
             client_fact_ir: Some(json!({"value": 6})),
             vendor_fact_ir: Some(json!([{"value": 5}])),
+            vendor_sworn_context_ir: Some(json!([{"value": 9}])),
         };
         assert_wire_identity(
             &detail,
@@ -3922,6 +3952,7 @@ mod tests {
                 "solverInvocations": [{"compiler": "smt-lib-v2.6"}],
                 "clientFactIr": {"value": 6},
                 "vendorFactIr": [{"value": 5}],
+                "vendorSwornContextIr": [{"value": 9}],
             }),
         );
     }
@@ -3967,7 +3998,12 @@ mod tests {
             locus: None,
         };
         let before = witness.verification.clone();
-        attach_conjoined_facts(&mut witness, &json!({"value": 6}), &[json!({"value": 5})]);
+        attach_conjoined_facts(
+            &mut witness,
+            &json!({"value": 6}),
+            &[json!({"value": 5})],
+            &[json!({"value": 7})],
+        );
         assert_eq!(witness.verification, before, "witness arm is not a facts sink");
 
         let mut solver = ConsistencyResult {
@@ -3988,10 +4024,16 @@ mod tests {
             )),
             locus: None,
         };
-        attach_conjoined_facts(&mut solver, &json!({"value": 6}), &[json!({"value": 5})]);
+        attach_conjoined_facts(
+            &mut solver,
+            &json!({"value": 6}),
+            &[json!({"value": 5})],
+            &[json!({"value": 7})],
+        );
         let Some(VerificationDetail::Solver {
             client_fact_ir,
             vendor_fact_ir,
+            vendor_sworn_context_ir,
             ..
         }) = &solver.verification
         else {
@@ -3999,6 +4041,12 @@ mod tests {
         };
         assert_eq!(client_fact_ir.as_ref(), Some(&json!({"value": 6})));
         assert_eq!(vendor_fact_ir.as_ref(), Some(&json!([{"value": 5}])));
+        assert_eq!(
+            vendor_sworn_context_ir.as_ref(),
+            Some(&json!([{"value": 7}])),
+            "display-only sworn context lands in its OWN field, never mixed \
+             into vendorFactIr"
+        );
     }
 
     fn pool_with_contract(name: &str, inv: Json) -> MementoPool {
