@@ -232,8 +232,8 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         sugar_name="LocalDefSupportSugar",
         floor_name="SupportValue",
         reason=(
-            "nested FunctionDef/AsyncFunctionDef/ClassDef are local "
-            "definitions, not part of the body return universe"
+            "nested FunctionDef/AsyncFunctionDef/ClassDef/Import/ImportFrom "
+            "are local definitions, not part of the body return universe"
         ),
     ),
     NonFolOptOut(

@@ -777,17 +777,24 @@ fn is_ground_term(node: &Json) -> bool {
 
 /// Ground *data value* for structural equality.
 ///
-/// Primitive consts always count. Ground constructor trees (`tuple(0,0)`,
-/// `array(…)`, nested data ctors) also count so component-wise injectivity is
-/// free via distinct JCS keys: `tuple(0,0) ≠ tuple(1,1)` without SMT ADT
-/// theory. Callsites (`call:…`, `await`) are terms, not values — leaving them
-/// out keeps `ground_term_const_equality` oriented (term, value).
+/// Primitive consts always count. Ground **data** constructor trees
+/// (`tuple(0,0)`, `array(…)`, nested data ctors) also count so component-wise
+/// injectivity is free via distinct JCS keys: `tuple(0,0) ≠ tuple(1,1)` without
+/// SMT ADT theory.
+///
+/// Operator / language ctors (`+`, `-`, `py.subscript`, …) are **not** values
+/// even when fully ground: `call:A(5) == 6` and body dig `call:A(5) == +(5,1)`
+/// must NOT structural-refute a truthful binop seed. #3924 widened this
+/// predicate past data ctors and falsely refuted truthful arithmetic body digs
+/// (corpus `binop_return` truthful→unsat). Callsites (`call:…`, `await`) stay
+/// terms, not values — leaving them out keeps `ground_term_const_equality`
+/// oriented (term, value).
 fn is_const_value(node: &Json) -> bool {
     match node.get("kind").and_then(|k| k.as_str()) {
         Some("const") => true,
         Some("ctor") => {
             let name = node.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            if name.starts_with("call:") || name == "await" {
+            if !is_ground_data_ctor_name(name) {
                 return false;
             }
             node.get("args")
@@ -796,6 +803,27 @@ fn is_const_value(node: &Json) -> bool {
         }
         _ => false,
     }
+}
+
+/// Data constructors that are structural *values* (not operators / callsites).
+///
+/// Whitelist is intentional: any non-data ground ctor (`+`, `*`, `py.attr`, …)
+/// must fall through to SMT so theory can prove `+(5,1) == 6`.
+fn is_ground_data_ctor_name(name: &str) -> bool {
+    matches!(
+        name,
+        "tuple"
+            | "array"
+            | "None"
+            | "python:dict"
+            | "python:dict_entry"
+            | "python:set"
+            | "python:frozenset"
+            | "python:bytes"
+            | "python:bytearray"
+            | "python:list"
+            | "python:tuple"
+    )
 }
 
 fn eval_ground_bool(node: &Json) -> Option<bool> {
@@ -4780,6 +4808,52 @@ mod tests {
         assert!(
             res[0].reason.contains("equals both"),
             "reason should name the dual values: {}",
+            res[0].reason
+        );
+    }
+
+    /// ARITHMETIC OPERATORS ARE NOT STRUCTURAL VALUES: a truthful binop body dig
+    /// posts `call:A(5) == +(5,1)` while the assertion posts `call:A(5) == 6`.
+    /// Those must NOT structural-refute — SMT (or fold) proves them equal. #3924
+    /// treated every ground non-call ctor as a value, so `+(5,1)` vs `6` falsely
+    /// refuted the corpus `binop_return` truthful seed (Part of #3809).
+    #[test]
+    fn pure_callsite_arithmetic_value_does_not_structural_refute_truthful() {
+        let (plan, reg) = z3_plan_and_registry();
+        let call_a = json!({"kind":"ctor","name":"call:A","args":[
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":5}
+        ]});
+        let plus = json!({"kind":"ctor","name":"+","args":[
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":5},
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":1},
+        ]});
+        let inv = json!({"kind":"and","operands":[
+            eqf(call_a.clone(), int(6)),
+            eqf(call_a.clone(), plus),
+        ]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:arith-not-structural",
+            "A#euf#c:call:A(i:5)::assertion",
+            inv,
+        );
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
+        assert_ne!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "call:A(5)==6 ∧ call:A(5)==+(5,1) must NOT structural-refute a truthful binop: {res:?}"
+        );
+        assert!(
+            !res[0].reason.contains("structural:"),
+            "must not fire pre-SMT structural path on arithmetic: {}",
             res[0].reason
         );
     }
