@@ -1,4 +1,4 @@
-"""AttributeSugar lowers Python attribute access to the `py.attr` ctor."""
+"""AttributeSugar lowers Python attribute access to the call:<attr> coordinate."""
 
 from __future__ import annotations
 
@@ -56,20 +56,17 @@ class _TypeErrorBody:
         raise TypeError("reduce bug, not a recognition miss")
 
 
-def test_attribute_reduces_to_py_attr_ctor() -> None:
+def test_attribute_reduces_to_call_attr_coordinate() -> None:
     assert fol(reduce_term("arr.shape")) == fol(
-        ctor("py.attr", [make_var("arr"), str_const("shape")])
+        ctor("call:shape", [make_var("arr")])
     )
 
 
-def test_call_result_attribute_reduces_to_py_attr_ctor() -> None:
+def test_call_result_attribute_reduces_to_call_attr_coordinate() -> None:
     assert fol(reduce_term("np.any(arr).dtype")) == fol(
         ctor(
-            "py.attr",
-            [
-                ctor("call:any", [make_var("np"), make_var("arr")]),
-                str_const("dtype"),
-            ],
+            "call:dtype",
+            [ctor("call:any", [make_var("np"), make_var("arr")])],
         )
     )
 

@@ -51,18 +51,8 @@ def test_boolop_assertion_composes_child_assertions() -> None:
                 "args": [
                     {
                         "kind": "ctor",
-                        "name": "py.attr",
-                        "args": [
-                            {"kind": "var", "name": "dt"},
-                            {
-                                "kind": "const",
-                                "sort": {
-                                    "kind": "primitive",
-                                    "name": "String",
-                                },
-                                "value": "coerce",
-                            },
-                        ],
+                        "name": "call:coerce",
+                        "args": [{"kind": "var", "name": "dt"}],
                     },
                     {
                         "kind": "const",

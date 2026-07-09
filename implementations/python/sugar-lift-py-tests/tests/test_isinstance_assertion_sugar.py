@@ -186,15 +186,8 @@ def test_isinstance_assertion_lifts_call_subject_with_keywords_symbolically() ->
                 "args": [
                     {
                         "kind": "ctor",
-                        "name": "py.attr",
-                        "args": [
-                            {"kind": "var", "name": "np"},
-                            {
-                                "kind": "const",
-                                "sort": {"kind": "primitive", "name": "String"},
-                                "value": "int64",
-                            },
-                        ],
+                        "name": "call:int64",
+                        "args": [{"kind": "var", "name": "np"}],
                     }
                 ],
             },

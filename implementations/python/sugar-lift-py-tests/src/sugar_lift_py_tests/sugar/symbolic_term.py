@@ -215,8 +215,11 @@ def symbolic_term(
             ],
         )
     if site.observed == "Attribute":
+        # Attribute access is a unary coordinate call:<attr>(receiver), same head
+        # family as methods (call:sum(receiver)). Not py.attr(receiver, "name") —
+        # that spelling is location-blind but never euf-keyed with the callsite path.
         return ctor(
-            "py.attr",
+            f"call:{site.attr_name()}",
             [
                 symbolic_term(
                     site.attr_receiver(),
@@ -225,8 +228,7 @@ def symbolic_term(
                     from_imports=from_imports,
                     name_resolver=name_resolver,
                     external_bridge_sink=external_bridge_sink,
-                ),
-                str_const(site.attr_name()),
+                )
             ],
         )
     if site.observed == "Subscript":
