@@ -195,12 +195,18 @@ def _ctx_with_formal_binds(site: SourceFragment, ctx):
     bridge shortcut must bind too, or `def A(s): return s.mean()` builds as
     FactoryGap(call-method:mean) while the universe post correctly states
     `out == call:mean(s)`.
+
+    Install-source digs (``_sugar_file`` / ``_sugar_source`` on the FunctionDef)
+    also seed module-level ``Name = ...`` Assign constants into temporal so body
+    names like ``_urlsafe_encode_translation`` reduce instead of TemporalContext
+    floor-gapping before NameSugar.
     """
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.temporal import TemporalContext, bind_temporal
 
     body_ctx = ctx.with_temporal(TemporalContext.empty())
+    body_ctx = _ctx_with_module_global_binds(site, body_ctx)
     for param_name in site.function_params():
         body_ctx = bind_temporal(
             body_ctx,
@@ -210,6 +216,144 @@ def _ctx_with_formal_binds(site: SourceFragment, ctx):
             blame=site.blame,
         )
     return body_ctx
+
+
+def _module_source_for_site(site: SourceFragment, ctx) -> tuple[str, str] | None:
+    """Return ``(source_text, filename)`` for install-source / tagged digs.
+
+    Prefer the on-disk module at ``_sugar_file`` so function-only
+    ``_sugar_source`` (from ``inspect.getsource`` of a single def) still sees
+    module-level Assign constants. Fall back to ``_sugar_source`` when the file
+    is unavailable (sibling-install path already stores the full module text).
+    """
+    sugar_file = getattr(site.node, "_sugar_file", None)
+    sugar_source = getattr(site.node, "_sugar_source", None)
+    if sugar_file is None and sugar_source is None:
+        return None
+    if sugar_file:
+        from pathlib import Path
+
+        path = Path(sugar_file)
+        if path.is_file():
+            try:
+                return path.read_text(encoding="utf-8"), sugar_file
+            except OSError:
+                pass
+    if sugar_source:
+        return sugar_source, sugar_file or getattr(ctx, "filename", "<module>")
+    return None
+
+
+def _names_in_fragment(site: SourceFragment) -> list[str]:
+    """Collect bare Name identifiers under ``site`` (free + bound uses)."""
+    if site.observed == "Name":
+        return [site.name_id()]
+    if site.observed == "Call":
+        names: list[str] = []
+        receiver = site.call_receiver()
+        if receiver is not None:
+            names.extend(_names_in_fragment(receiver))
+        for arg in site.call_args():
+            names.extend(_names_in_fragment(arg))
+        for keyword in site.call_keywords():
+            names.extend(_names_in_fragment(keyword.keyword_value()))
+        return names
+    if site.observed == "Attribute":
+        return _names_in_fragment(site.attr_receiver())
+    if site.observed == "keyword":
+        return _names_in_fragment(site.keyword_value())
+    names = []
+    for child in site.fragments():
+        names.extend(_names_in_fragment(child))
+    return names
+
+
+def _module_level_assigns_before(
+    root: SourceFragment, fn: SourceFragment
+) -> list[SourceFragment]:
+    """Top-level ``Name = ...`` Assigns textually before ``fn`` in the module.
+
+    Install-source FunctionDefs often carry line numbers from a function-only
+    ``inspect.getsource`` slice (line 1), while the on-disk module uses real
+    lines. Prefer an exact line match when both are set and equal; otherwise
+    accept the first same-named FunctionDef (stdlib modules do not redefine).
+    """
+    assigns: list[SourceFragment] = []
+    fn_name = fn.function_name()
+    same_name: list[tuple[list[SourceFragment], SourceFragment]] = []
+    for fragment in root.fragments():
+        for stmt in fragment.statements():
+            if stmt.observed == "FunctionDef" and stmt.function_name() == fn_name:
+                if fn.line and stmt.line and fn.line == stmt.line:
+                    return assigns
+                same_name.append((list(assigns), stmt))
+            if stmt.observed == "Assign" and stmt.assign_target_name() is not None:
+                assigns.append(stmt)
+    if same_name:
+        return same_name[0][0]
+    return assigns
+
+
+def _ctx_with_module_global_binds(site: SourceFragment, ctx):
+    """Seed temporal with module-level ``Name = ...`` Assigns needed by body dig.
+
+    Only runs for FunctionDefs tagged with install-source provenance
+    (``_sugar_file`` / ``_sugar_source``). Failed Assign folds are skipped so a
+    single unliftable module constant does not poison formal-only digs.
+    """
+    from sugar_lift_py_tests.outcome import Incomplete, complete_value
+    from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
+
+    loaded = _module_source_for_site(site, ctx)
+    if loaded is None:
+        return ctx
+    source, filename = loaded
+    try:
+        root = SourceFragment.from_source(source, filename)
+    except SyntaxError:
+        return ctx
+
+    module_assigns = _module_level_assigns_before(root, site)
+    if not module_assigns:
+        return ctx
+
+    needed: set[str] = set()
+    for body_stmt in site.function_body():
+        needed.update(_names_in_fragment(body_stmt))
+    needed -= set(site.function_params())
+    if not needed:
+        return ctx
+
+    selected: list[SourceFragment] = []
+    needed_work = set(needed)
+    for prior in reversed(module_assigns):
+        name = prior.assign_target_name()
+        if name is None or name not in needed_work:
+            continue
+        selected.append(prior)
+        needed_work.update(_names_in_fragment(prior.assign_value()))
+        needed_work.discard(name)
+    selected.reverse()
+    if not selected:
+        return ctx
+
+    folded_ctx = ctx
+    for prior in selected:
+        try:
+            block = BlockSugar(
+                statements=(folded_ctx.build_body(prior, SugarRole.STATEMENT),),
+                blame=prior.blame,
+            )
+            folded = block.fold_with_context(folded_ctx)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(folded.outcome, Incomplete):
+            continue
+        complete_value(
+            folded.outcome, owner="sugar_constructors.module_global_binds"
+        )
+        folded_ctx = folded.ctx
+    return folded_ctx
 
 
 def build_bridge_body(site: SourceFragment, ctx):
