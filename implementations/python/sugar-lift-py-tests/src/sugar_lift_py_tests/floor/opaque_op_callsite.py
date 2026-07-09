@@ -43,6 +43,20 @@ class OpaqueOpCallsite(FloorValue):
 
         return ctor(f"call:{self.callee}", [self.arg.to_term(owner=owner)])
 
+    def _downstream(self) -> FloorValue:
+        """The value a downstream operation consumes. A computed length behaves as
+        its counted value (`len([1,2,3]) + 1 == 4`); an OPAQUE length behaves as its
+        symbolic coordinate term `call:len(<x>)` -- exactly the symbolic citizen the
+        retired `py.len` `SymbolicValue` was, now spelled `call:len`. Either way an
+        operator over a length is a total floor, never a construction gap. (The
+        coordinate itself is preserved in `to_term`; `_downstream` is only the value
+        an ARITHMETIC/format expression consumes.)"""
+        if self.computed is not None:
+            return self.computed
+        from .symbolic_value import SymbolicValue
+
+        return SymbolicValue(self.to_term(owner="OpaqueOpCallsite.symbolic"))
+
     def call_method_with(self, operation: Any, ctx: Any) -> Any:
         # A nested `len` ALWAYS wraps into another opaque coordinate --
         # `len(len(x))` -> `call:len(call:len(<x>))` -- and never delegates to the
@@ -53,28 +67,28 @@ class OpaqueOpCallsite(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(OpaqueOpCallsite(callee="len", arg=self, computed=None))
-        # Any other method over a computed length behaves as its value (e.g.
-        # `.__int__` on a known count).
-        if self.computed is not None:
-            return self.computed.call_method_with(operation, ctx)
-        return super().call_method_with(operation, ctx)
+        return self._downstream().call_method_with(operation, ctx)
 
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        if self.computed is not None:
-            return self.computed.binary_operator_with(operation, ctx)
-        return super().binary_operator_with(operation, ctx)
+        return self._downstream().binary_operator_with(operation, ctx)
 
     def reflected_binary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        if self.computed is not None:
-            return self.computed.reflected_binary_operator_with(operation, ctx)
-        return super().reflected_binary_operator_with(operation, ctx)
+        return self._downstream().reflected_binary_operator_with(operation, ctx)
 
     def unary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        if self.computed is not None:
-            return self.computed.unary_operator_with(operation, ctx)
-        return super().unary_operator_with(operation, ctx)
+        return self._downstream().unary_operator_with(operation, ctx)
 
     def bitwise_with(self, operation: Any, ctx: Any) -> Any:
-        if self.computed is not None:
-            return self.computed.bitwise_with(operation, ctx)
-        return super().bitwise_with(operation, ctx)
+        return self._downstream().bitwise_with(operation, ctx)
+
+    def format_value_with(self, operation: Any, ctx: Any) -> Any:
+        return self._downstream().format_value_with(operation, ctx)
+
+    def str_with(self, operation: Any, ctx: Any) -> Any:
+        return self._downstream().str_with(operation, ctx)
+
+    def subscript_with(self, operation: Any, ctx: Any) -> Any:
+        return self._downstream().subscript_with(operation, ctx)
+
+    def contains_with(self, operation: Any, ctx: Any) -> Any:
+        return self._downstream().contains_with(operation, ctx)
