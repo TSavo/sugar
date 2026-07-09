@@ -1,20 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Campaign A / Task 0 — RED instrument: `sugar.enumerate` is incomplete vs
-// the old batch `Kit::lift` drive.
+// Campaign A completeness instruments vs the old batch `Kit::lift` drive.
 //
-// Measures remaining work `R` for:
-//   R_universe_not_modeled — CallSite::universe() returns NotModeled while
-//                            batch IR carries matching function-contract /
-//                            builtin-universe rows
-//   R_universe_missing     — fold of enumerate levels does not surface the
-//                            universe member names present in batch payload.ir
-//   R_identity_missing     — batch bridge symbols (`call:len`, `method:…`)
-//                            are not first-class on the tree's call-site
-//                            audit / memento (ambiguous bare names do not count)
+// Axes (Tasks 0–2 greened; Task 4 holds the floor + #3896 discrimination):
+//   R_universe_not_modeled — CallSite::universe() NotModeled vs batch rows
+//   R_universe_missing     — fold misses batch universe member names
+//   R_identity_missing     — batch call:/method: not first-class on call sites
+//   R_dual_records         — factory one-to-one site≡assertion (Task 3)
+//   universe gap naming    — #3896: absence gap names callee; coverage has none
 //
-// Stays red until Campaign A closes those gaps. Skips (not fails) when
-// python3/blake3 are unavailable — same convention as enumerate_conformance.
+// fold==blob for facts+universes+identities also lives in enumerate_conformance.
+// Skips (not fails) when python3/blake3 are unavailable.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -602,6 +598,93 @@ fn enumerate_callsite_assertion_is_factory_one_to_one() {
     eprintln!(
         "factory_one_to_one tree: call_sites={tree_sites} each has exactly 1 assertion; \
          R_dual_records=0 (factory truth receipt for protocol Section 4)"
+    );
+}
+
+/// Task 4 / #3896 discrimination: call sites **with** universe sugar return
+/// `Ok(Some)` and no gap; call sites **without** coverage return `Ok(None)`
+/// and a gap whose reason names the callee (`no universe sugar for callee …`).
+///
+/// Fixture already carries both sides: `call:add` / `call:len` are covered;
+/// `method:count` has no universe sugar (gap names `call:count` via FOL join).
+#[test]
+fn enumerate_universe_gap_names_callee_without_coverage() {
+    if !python_blake3_available() {
+        eprintln!("python3/blake3 not on PATH: skipping enumerate completeness test");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+
+    let mut covered: Vec<String> = Vec::new();
+    let mut gapped: Vec<(String, String)> = Vec::new();
+
+    for file in kit.source_files(&project).expect("source_files") {
+        for function in file.functions().expect("functions") {
+            for call_site in function.call_sites().expect("call_sites") {
+                let bss = call_site
+                    .bridge_source_symbol()
+                    .unwrap_or("<missing-bridge>")
+                    .to_string();
+                match call_site.universe().expect("universe RPC") {
+                    Some(universe) => {
+                        let gaps = call_site.universe_gaps().expect("universe_gaps");
+                        let sugar_gaps: Vec<_> = gaps
+                            .iter()
+                            .filter(|g| g.reason.contains("no universe sugar"))
+                            .collect();
+                        assert!(
+                            sugar_gaps.is_empty(),
+                            "covered call site must not report universe-absence gap. \
+                             bss={bss:?} universe={:?} gaps={gaps:?}",
+                            universe.source_memento().function_name
+                        );
+                        covered.push(bss);
+                    }
+                    None => {
+                        let gaps = call_site.universe_gaps().expect("universe_gaps");
+                        let reason = gaps
+                            .iter()
+                            .map(|g| g.reason.as_str())
+                            .find(|r| r.contains("no universe sugar for callee"))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Ok(None) for bss={bss:?} must carry gap reason \
+                                     'no universe sugar for callee <name>' (#3896). gaps={gaps:?}"
+                                )
+                            });
+                        // Reason must name the callee: either the bridge symbol
+                        // itself or its bare name (FOL may use call:X while
+                        // edge identity is method:X).
+                        let bare = bss
+                            .strip_prefix("method:")
+                            .or_else(|| bss.strip_prefix("call:"))
+                            .unwrap_or(bss.as_str());
+                        assert!(
+                            reason.contains(bare) || reason.contains(bss.as_str()),
+                            "gap reason must name the callee. bss={bss:?} bare={bare:?} \
+                             reason={reason:?} (#3896)"
+                        );
+                        gapped.push((bss, reason.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "universe discrimination: covered={covered:?} gapped={gapped:?}"
+    );
+    assert!(
+        !covered.is_empty(),
+        "fixture must include at least one call site with universe coverage \
+         (e.g. call:add / call:len); covered={covered:?}"
+    );
+    assert!(
+        !gapped.is_empty(),
+        "fixture must include at least one call site without universe sugar \
+         so gap reason can name the callee (#3896); gapped={gapped:?}"
     );
 }
 
