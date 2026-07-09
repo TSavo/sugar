@@ -12,14 +12,12 @@
 // a face-to-face reach-in. Both faces now call the ONE function in this
 // module instead.
 //
-// This is an ENV-FALLBACK model, not full plumbing: `sugar-verifier`'s
-// `consistency.rs` still reads `SUGAR_WITNESS_PROJECT_DIR` /
-// `SUGAR_WITNESS_RESOLVERS` from the process environment directly (see the
-// `TODO(SEAM 7)` markers left at those two read sites -- full typed
-// plumbing through every verifier call site is deferred). This struct is
-// the face-side computation of what the env WOULD carry; `apply_env`
-// stages it into the process environment with the EXACT caller-wins
-// precedence the pre-SEAM-6 code had.
+// SEAM 7 (#3809 witness-as-verb step 1): this struct converts to
+// `sugar_verifier::WitnessDischargeContext` and is passed as a typed
+// argument into the verifier. Env is optional fallback only (legacy tests);
+// it dies as a live channel because verdict inputs are content-addressed
+// (packageCid + contract + resolver body) — env has nothing left to carry.
+// CID-idempotency: typed path and env path must emit the same ObligationVerdict.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -131,6 +129,8 @@ impl WitnessDischargeConfig {
     /// ALWAYS wins over the derived value (`var_os(...).is_none()` guard on
     /// every write). Do not invert this -- it is what lets a caller override
     /// any single derived setting without disabling the rest.
+    ///
+    /// SEAM 7: primary path is [`Self::to_verifier_context`]; env is fallback.
     pub fn apply_env(&self) {
         if let Some(project_dir) = &self.project_dir {
             if std::env::var_os("SUGAR_WITNESS_PROJECT_DIR").is_none() {
@@ -148,6 +148,51 @@ impl WitnessDischargeConfig {
             }
         }
     }
+
+    /// SEAM 7: typed context for `sugar_verifier` discharge (no env required).
+    pub fn to_verifier_context(&self) -> sugar_verifier::consistency::WitnessDischargeContext {
+        use sugar_verifier::consistency::{WitnessDischargeContext, WitnessResolverSpec};
+        let resolvers = self
+            .resolvers
+            .iter()
+            .filter_map(|item| {
+                let argv = item
+                    .get("argv")
+                    .and_then(|v| v.as_array())
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_str().map(str::to_string))
+                            .filter(|value| !value.is_empty())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if argv.is_empty() {
+                    return None;
+                }
+                let working_dir = item
+                    .get("working_dir")
+                    .or_else(|| item.get("workingDir"))
+                    .and_then(|v| v.as_str())
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                let method = item
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("sugar.plugin.resolve_witness")
+                    .to_string();
+                Some(WitnessResolverSpec {
+                    argv,
+                    working_dir,
+                    method,
+                })
+            })
+            .collect();
+        WitnessDischargeContext {
+            project_dir: self.project_dir.clone(),
+            resolvers,
+        }
+    }
 }
 
 /// Shared entry point: compute the config from the project's manifest plan
@@ -155,12 +200,25 @@ impl WitnessDischargeConfig {
 /// and `cmd_verify::run_artifact_project_verify` call this ONE function --
 /// this is what closes the SEAM 6 face-to-face coupling (`cmd_verify` used
 /// to call `cmd_prove::configure_witness_discharge_env_with_plan` directly).
+///
+/// Prefer [`witness_discharge_for_plan`] when filling `RunnerConfig` (SEAM 7).
 pub(crate) fn configure_witness_discharge_env_with_plan(
     project_root: &Path,
     cfg_doc: &ProjectConfig,
     component_plan: Option<&ComponentPlan>,
 ) {
     WitnessDischargeConfig::from_plan(project_root, cfg_doc, component_plan).apply_env();
+}
+
+/// SEAM 7: compute typed verifier context + stage env fallback in one place.
+pub(crate) fn witness_discharge_for_plan(
+    project_root: &Path,
+    cfg_doc: &ProjectConfig,
+    component_plan: Option<&ComponentPlan>,
+) -> sugar_verifier::consistency::WitnessDischargeContext {
+    let config = WitnessDischargeConfig::from_plan(project_root, cfg_doc, component_plan);
+    config.apply_env();
+    config.to_verifier_context()
 }
 
 // The witness-discharge path loads the lift surface manifest at

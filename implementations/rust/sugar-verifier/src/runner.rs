@@ -132,6 +132,11 @@ pub struct RunnerConfig {
     /// (output receipt, not an input side-channel). Default `false` preserves
     /// the cold disk face. Set by `prove_from_kit` / warm callers only.
     pub pool_only_inputs: bool,
+    /// SEAM 7 (#3809): typed witness-discharge context (project_dir + resolvers).
+    /// Replaces primary reliance on `SUGAR_WITNESS_PROJECT_DIR` /
+    /// `SUGAR_WITNESS_RESOLVERS` for custom-witness package recompute.
+    /// Empty default still allows env fallback (step 1); step 3 retires env.
+    pub witness_discharge: crate::consistency::WitnessDischargeContext,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -531,6 +536,7 @@ impl Runner {
             &self.compilers,
             &self.cfg.project_root,
             self.cfg.pool_only_inputs,
+            &self.cfg.witness_discharge,
         );
         for cr in &consistency_results {
             match cr.verdict {
@@ -848,6 +854,7 @@ impl Runner {
             compilers,
             &self.cfg.project_root,
             self.cfg.pool_only_inputs,
+            &self.cfg.witness_discharge,
         );
         for cr in &consistency_results {
             match cr.verdict {

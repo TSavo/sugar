@@ -39,6 +39,8 @@ pub mod callee_purity;
 pub mod cbor_decode;
 pub mod compiler_registry;
 pub mod consistency;
+// SEAM 7: re-export typed witness discharge context for CLI / compiler callers.
+pub use consistency::{WitnessDischargeContext, WitnessResolverSpec};
 pub mod domain_claim_shape_report;
 pub mod effects;
 pub mod fol_render;
