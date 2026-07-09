@@ -147,16 +147,39 @@ fn rpc_line(id: u64, result: &Value) -> String {
     serde_json::to_string(&json!({"jsonrpc": "2.0", "id": id, "result": result})).unwrap()
 }
 
+/// Valid `sugar.plugin.kit_declaration` result (rendezvous handshake).
+/// Mock lifters that only answered `initialize`/`lift` timed out after
+/// SEAM 6b made declaration required (`Kit::rendezvous`).
+fn mock_kit_declaration_result(surface: &str) -> Value {
+    json!({
+        "kit": {"id": surface, "language": "mock", "version": "0.0.1"},
+        "rpc": {"methods": [
+            {"name": "initialize", "required": true},
+            {"name": "sugar.plugin.kit_declaration", "required": true},
+            {"name": "lift", "required": true},
+            {"name": "shutdown", "required": false}
+        ]},
+        "proofResolution": {"strategy": "none"},
+        "residueCategories": []
+    })
+}
+
 /// A STATIC mock lifter: always returns the SAME canned `lift` response
 /// regardless of request content (used for the vendor project, which is
 /// minted once, ahead of time).
 fn write_static_mock_lifter(project: &Path, surface: &str, lift_result: &Value) {
     let init_line = rpc_line(1, &json!({"name": surface, "protocol_version": "pep/1.7.0"}));
+    // Handshake uses id=2 for kit_declaration; mint lift uses id=2 on a
+    // fresh process (initialize=1, lift=2) — same as historical fixture.
+    let decl_line = rpc_line(2, &mock_kit_declaration_result(surface));
     let lift_line = rpc_line(2, lift_result);
     let script = format!(
         r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
+    *sugar.plugin.kit_declaration*)
+      printf '%s\n' '{decl_line}'
+      ;;
     *'"method":"initialize"'*|*'"method": "initialize"'*)
       printf '%s\n' '{init_line}'
       ;;
@@ -170,6 +193,7 @@ while IFS= read -r line; do
 done
 "#,
         init_line = init_line.replace('\'', "'\\''"),
+        decl_line = decl_line.replace('\'', "'\\''"),
         lift_line = lift_line.replace('\'', "'\\''"),
     );
     let script_path = write_script(project, surface, &script);
@@ -184,6 +208,7 @@ done
 /// edit, the same way a REAL lift kit would re-read its own project tree.
 fn write_dynamic_mock_lifter(project: &Path, surface: &str, good_result: &Value, bad_result: &Value) {
     let init_line = rpc_line(1, &json!({"name": surface, "protocol_version": "pep/1.7.0"}));
+    let decl_line = rpc_line(2, &mock_kit_declaration_result(surface));
     let good_line = rpc_line(2, good_result).replace('\'', "'\\''");
     let bad_line = rpc_line(2, bad_result).replace('\'', "'\\''");
     let script = format!(
@@ -192,6 +217,9 @@ GOOD='{good_line}'
 BAD='{bad_line}'
 while IFS= read -r line; do
   case "$line" in
+    *sugar.plugin.kit_declaration*)
+      printf '%s\n' '{decl_line}'
+      ;;
     *'"method":"initialize"'*|*'"method": "initialize"'*)
       printf '%s\n' '{init_line}'
       ;;
@@ -210,6 +238,7 @@ while IFS= read -r line; do
 done
 "#,
         init_line = init_line.replace('\'', "'\\''"),
+        decl_line = decl_line.replace('\'', "'\\''"),
     );
     let script_path = write_script(project, surface, &script);
     write_lift_manifest(project, surface, &script_path);
