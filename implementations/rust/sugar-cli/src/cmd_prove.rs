@@ -19,7 +19,7 @@ use sugar_proof_envelope::cid_from_proof_stem;
 use walkdir::WalkDir;
 
 use sugar_verifier::{
-    LegacyZ3Fallback, MementoCid, PlanArtifactInput, ProofRunArtifact, Runner, RunnerConfig,
+    LegacyZ3Fallback, MementoCid, PlanArtifactInput, ProofRunArtifact, RunnerConfig,
 };
 
 use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
@@ -230,8 +230,14 @@ pub(crate) fn build_prove_artifact_with_options(
         &component_plan,
         &component_plan::VerifierComponentRegistry,
     );
-    Runner::new_with_compilers(cfg, compilers)
-        .run_with_proof_run()
+    // The ONE production solve door (sugar#3859): `solve_project` runs the
+    // real `Runner::run_with_proof_run` pipeline as beat 2 and wraps it in a
+    // typed view. We extract `.artifact` for behavior parity -- report bytes
+    // and the exit-code path are unchanged; the new `link_errors` /
+    // `outcome_class` dimensions are available but not consumed here (link
+    // errors ANNOTATE, they never gate; see `solve_project`'s doc).
+    sugar_compiler::orchestrate::solve_project(cfg, compilers)
+        .map(|proven| proven.artifact)
         .map_err(|error| error.to_string())
 }
 

@@ -37,7 +37,9 @@ use sugar_proof_envelope::{
 };
 use sugar_verifier::load_all_proofs::{load_proof_bytes_into_pool, ProofBytes};
 use sugar_verifier::solvers::registry;
-use sugar_verifier::{MementoPool, SolverPlan, SolverSeat, Speaker};
+use sugar_verifier::{
+    LegacyZ3Fallback, MementoPool, Runner, RunnerConfig, SolverPlan, SolverSeat, Speaker,
+};
 
 const SEED: Ed25519Seed = [0x57; 32]; // 'W' for #3857
 
@@ -291,6 +293,87 @@ fn unresolved_callee_is_vacuous_in_verify_consistency_but_link_error_via_derivat
              (frontier-masked green): {v:?}"
         ),
     }
+}
+
+/// Seal `graph` through the production envelope path and write it as a
+/// `.proof` file under a fresh temp project dir, so `load_all_proofs::run`
+/// (and therefore `solve_project`'s `load_pool`) picks it up exactly as it
+/// picks up any on-disk project proof.
+fn seal_to_temp_project(graph: &ProofGraph) -> tempfile::TempDir {
+    let proof_input = ProofEnvelopeInput {
+        name: "seam-3859-fixture".to_string(),
+        version: "1.0.0".to_string(),
+        binary_cid: None,
+        metadata: None,
+        graph: graph.clone(),
+        signer_cid: sugar_proof_envelope::ed25519_pubkey_string(&SEED),
+        signer_seed: SEED,
+        declared_at: "1970-01-01T00:00:00.000Z".to_string(),
+        manifest: None,
+    };
+    let sealed = build_proof_envelope(&proof_input);
+    // v1.1.0 load rule 1: the `.proof` filename stem must be the hex
+    // `blake3-512` CID, so the on-disk loader can content-address it.
+    let stem = sealed
+        .cid
+        .strip_prefix("blake3-512:")
+        .expect("sealed cid is blake3-512");
+    let dir = tempfile::tempdir().expect("temp project dir");
+    std::fs::write(dir.path().join(format!("{stem}.proof")), &sealed.bytes)
+        .expect("write fixture proof");
+    dir
+}
+
+/// sugar#3859 "annotate not block" receipt: `solve_project` over a pool with
+/// an UNBRIDGED callsite must (1) carry a non-empty `link_errors` (beat 1
+/// annotated the unresolved edge) AND (2) return an `artifact.report`
+/// BYTE-IDENTICAL to a direct `Runner::run_with_proof_run` over the SAME
+/// on-disk pool -- proving the link errors neither suppress nor alter the
+/// real pipeline's output. If beat 1 short-circuited on the non-empty
+/// link_errors, the report would be absent/empty and this would fail.
+#[test]
+fn solve_project_annotates_link_errors_without_altering_the_report() {
+    let mut graph = ProofGraph::new();
+    push_caller_contract(&mut graph, "seam3859::caller#unbridged");
+    let dir = seal_to_temp_project(&graph);
+
+    let make_cfg = || RunnerConfig {
+        project_root: dir.path().to_path_buf(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+        ..Default::default()
+    };
+
+    // Production door.
+    let proven = sugar_compiler::orchestrate::solve_project(make_cfg(), test_compilers())
+        .expect("solve_project must stage this well-formed on-disk pool");
+
+    // (1) beat 1 ANNOTATED the unbridged callsite.
+    assert!(
+        proven.has_link_errors(),
+        "an unbridged callsite must surface as a non-empty link_errors annotation: {:?}",
+        proven.link_errors
+    );
+    assert!(
+        proven
+            .link_errors
+            .iter()
+            .any(|e| e.kind == LinkerErrorKind::UnresolvedSymbol
+                && e.target_symbol == CALLEE_SYMBOL),
+        "expected an UnresolvedSymbol naming {CALLEE_SYMBOL}: {:?}",
+        proven.link_errors
+    );
+
+    // (2) beat 2's report is byte-identical to a direct Runner run over the
+    // SAME on-disk pool -- the link errors did NOT block or alter it.
+    let direct = Runner::new_with_compilers(make_cfg(), test_compilers())
+        .run_with_proof_run()
+        .expect("direct run over the same pool");
+    assert_eq!(
+        format!("{:?}", proven.artifact.report),
+        format!("{:?}", direct.report),
+        "solve_project's report must be byte-identical to a direct Runner run \
+         over the same pool (annotate-not-block)"
+    );
 }
 
 /// (b) RESOLVED arm: a real bridge memento names `CALLEE_SYMBOL` and points

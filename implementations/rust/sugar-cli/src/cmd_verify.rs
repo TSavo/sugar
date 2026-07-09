@@ -64,7 +64,7 @@ use sugar_verifier::solvers::registry;
 use sugar_verifier::{
     classify, enumerate_callsites, instantiate, load_all_proofs, resolve_target,
     run_plan_with_compilers, DispatchConfig, FormulaTheory, LegacyZ3Fallback, MementoPool,
-    ObligationVerdict, Runner, RunnerConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
+    ObligationVerdict, RunnerConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
     WitnessVerificationOutcome,
 };
 use tracing::{debug, info};
@@ -658,9 +658,15 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         &component_plan,
         &component_plan::VerifierComponentRegistry,
     );
-    let runner = Runner::new_with_compilers(cfg, compilers);
-    let run_artifact = match runner.run_with_proof_run() {
-        Ok(artifact) => artifact,
+    // The ONE production solve door (sugar#3859): `solve_project` runs the
+    // real `Runner::run_with_proof_run` pipeline as beat 2 and wraps it in a
+    // typed view. We extract `.artifact` and feed the existing report/gate
+    // logic exactly as before -- exit codes are byte-identical (the mapping
+    // still lives in `proof_report_gate`). The new `link_errors` /
+    // `outcome_class` dimensions are available but not consumed here; link
+    // errors ANNOTATE and never gate (see `solve_project`'s doc).
+    let run_artifact = match sugar_compiler::orchestrate::solve_project(cfg, compilers) {
+        Ok(proven) => proven.artifact,
         Err(error) => {
             eprintln!("{}: {error}", "error".red().bold());
             return EXIT_USER_ERROR;

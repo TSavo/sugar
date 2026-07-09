@@ -55,13 +55,15 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
-use sugar_linker::{link, LinkerErrorKind, LinkerInputs};
+use sugar_linker::{link, LinkerError, LinkerErrorKind, LinkerInputs};
 use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph};
 use sugar_verifier::consistency::verify_consistency;
 use sugar_verifier::load_all_proofs::{load_proof_bytes_into_pool, ProofBytes};
-use sugar_verifier::{MementoPool, SolverHandle, SolverPlan, SolverSeat, Speaker};
+use sugar_verifier::runner::{load_pool, ProofRunArtifact, ProofRunArtifactError, Runner};
+use sugar_verifier::{MementoPool, RunnerConfig, SolverHandle, SolverPlan, SolverSeat, Speaker};
 
-use crate::outcome::Outcome;
+use crate::linker_inputs::derive_linker_inputs;
+use crate::outcome::{Outcome, OutcomeClass};
 
 /// Throwaway seed for the internal graph->pool self-load round trip `solve`
 /// performs to reach beat 2. This is never a real signature over anything
@@ -158,6 +160,118 @@ impl Orchestrate for ProofGraph {
     }
 }
 
+/// A production solve, classified. Beat 1 (`link_errors`, derived from the
+/// pool's real bridge data) ANNOTATES the run; beat 2 (`artifact`, the
+/// untouched `ProofRunArtifact` from the real `Runner` pipeline) IS the run.
+/// `outcome_class` partitions `artifact.report` onto today's exit-code law.
+///
+/// # Why beat 1 ANNOTATES and never blocks (do not relitigate)
+///
+/// `solve_project` runs the full `Runner` pipeline REGARDLESS of whether
+/// `link_errors` is empty. It does NOT short-circuit the way
+/// `Orchestrate::solve`/`solve_deriving_links` do. The reason is empirical:
+/// `derive_linker_inputs` turns every unbridged callsite in the pool into an
+/// `UnresolvedSymbol` link error (see `linker_inputs.rs`), and real
+/// production pools routinely carry unbridged callsites (prior work measured
+/// ~5 bridges against ~44k pool members). Short-circuiting on a non-empty
+/// `link_errors` would therefore brick nearly every real `prove`/`verify`
+/// run. So the link errors are carried ALONGSIDE the artifact as typed data,
+/// a distinct dimension from the report's verdicts, and they do NOT affect
+/// the exit code today.
+///
+/// Whether unresolved edges SHOULD one day tighten the exit code (closing the
+/// silent-vacuous soundness gap #3857 names) is an exit-code-law question that
+/// is deliberately OUT OF SCOPE here: this door keeps exit codes byte-identical
+/// to the pre-`solve_project` faces. Evolving the law is T's call, not this
+/// wrapper's.
+#[derive(Debug, Clone)]
+pub struct ProvenOutcome {
+    /// Beat 1: unresolved / signature-mismatched cross-kit edges the pool's
+    /// bridge data left unbound. ANNOTATION ONLY -- non-empty here does NOT
+    /// suppress or alter `artifact`, and does NOT change the exit code today.
+    pub link_errors: Vec<LinkerError>,
+    /// Beat 2: the untouched rich artifact from the real `Runner` pipeline
+    /// (witnesses, stages, report). Report bytes are identical to a direct
+    /// `Runner::run_with_proof_run` over the same pool.
+    pub artifact: ProofRunArtifact,
+    /// The report-derived verdict class; `outcome_class.exit_code()`
+    /// reproduces today's CLI exit code bit-for-bit.
+    pub outcome_class: OutcomeClass,
+}
+
+impl ProvenOutcome {
+    /// `true` iff beat 1 surfaced at least one unbound/mismatched edge. Pure
+    /// annotation -- see the type doc: this never gates the pipeline.
+    pub fn has_link_errors(&self) -> bool {
+        !self.link_errors.is_empty()
+    }
+}
+
+/// THE production solve door (sugar#3859). Runs the real
+/// `Runner::run_with_proof_run` pipeline as beat 2 -- the one, unchanged
+/// production discharge body -- and wraps it in a typed VIEW:
+///
+///   - beat 1 derives `LinkerInputs` from the SAME pool the run discharges
+///     (`load_pool` once, threaded into both beats -- no second pool decode)
+///     and binds it, carrying any unresolved/mismatched edges as
+///     `link_errors`;
+///   - beat 2 is the untouched `ProofRunArtifact` (report bytes byte-identical
+///     to a direct `run_with_proof_run` over the same pool);
+///   - `outcome_class` classifies `artifact.report` onto today's exit-code law.
+///
+/// Beat 1 ANNOTATES, it does not block: the run happens regardless of
+/// `link_errors` (see `ProvenOutcome`'s doc for the empirical reason -- real
+/// pools are mostly unbridged, so a short-circuit would brick real runs).
+pub fn solve_project(
+    cfg: RunnerConfig,
+    compilers: CompilerRegistry,
+) -> Result<ProvenOutcome, SolveError> {
+    // ONE pool decode, shared by both beats. `load_pool` is the exact
+    // construction `run_with_proof_run` uses inline, so deriving beat-1 links
+    // from it and discharging beat 2 over it read the SAME production truth.
+    let pool = load_pool(&cfg);
+
+    // Beat 1 -- LINK (annotate). Derive real edges from the pool's bridge data
+    // and bind; keep only the genuine LINK-class failures (mirrors
+    // `link_beat`'s filter). This never short-circuits beat 2.
+    let links = derive_linker_inputs(&pool)?;
+    let link_errors = link_class_errors(links);
+
+    // Beat 2 -- DISCHARGE. The real pipeline, over the SAME pool.
+    let runner = Runner::new_with_compilers(cfg, compilers);
+    let artifact = runner.run_with_proof_run_with_pool(pool)?;
+
+    let outcome_class = OutcomeClass::from_report(&artifact.report);
+    Ok(ProvenOutcome {
+        link_errors,
+        artifact,
+        outcome_class,
+    })
+}
+
+impl From<ProofRunArtifactError> for SolveError {
+    fn from(error: ProofRunArtifactError) -> Self {
+        SolveError::ProofRun(error.to_string())
+    }
+}
+
+/// Run `link()` over `links` and keep only the genuine LINK-class failures
+/// (`UnresolvedSymbol` / `SignatureMismatch`) -- the same filter
+/// [`link_beat`] applies. Returns them as a plain vec (annotation), rather
+/// than the short-circuit `Outcome` `link_beat` produces.
+fn link_class_errors(links: LinkerInputs) -> Vec<LinkerError> {
+    link(links)
+        .linker_errors
+        .into_iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                LinkerErrorKind::UnresolvedSymbol | LinkerErrorKind::SignatureMismatch
+            )
+        })
+        .collect()
+}
+
 /// Beat 1 -- LINK. Plain `link()` (no solver registry): its only job here is
 /// symbol/signature resolution (`bind`'s two failure arms). The obligation-
 /// discharge arms `link()` can also emit (`UnprovableObligation`/
@@ -218,6 +332,11 @@ pub enum SolveError {
     /// precondition failure, same class as `SelfLoad`/`PartialLoad`.
     #[error("solve: refusing to derive linker inputs over malformed contract data: {0}")]
     MalformedContract(#[from] crate::linker_inputs::MalformedContractField),
+    /// The real `Runner` pipeline (beat 2) failed to build its proof-run
+    /// artifact. Surfaced as a typed precondition failure, same class as the
+    /// others -- distinct from either red (link error or verdict).
+    #[error("solve: proof-run pipeline failed: {0}")]
+    ProofRun(String),
 }
 
 /// KNOWN LIMITATION (macroscope on #3858, matches the SEAM 2 finding):
