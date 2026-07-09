@@ -109,6 +109,43 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 ctx=ctx,
             )
             return _coordinate_outcome(self.name, argument, outcome)
+        if self.name == "sum":
+            # Builtin sum(iterable) — distinct from method .sum(). Coordinate is
+            # always call:sum(arg). Fold concrete int arrays (after dig of
+            # CallSiteValue bodies) into computed; never invent a total for
+            # opaque/symbolic iterables. Do not use wrap_builtin_operator: it
+            # leaves CallSiteValue unwrapped and drops the sum coordinate.
+            from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+            from sugar_lift_py_tests.floor import ArrayLiteral, CallSiteValue, TermValue
+            from sugar_lift_py_tests.floor.call_site_value import force_floor
+            from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+            from sugar_lift_py_tests.outcome import Complete
+
+            fold_arg = argument
+            if isinstance(argument, CallSiteValue):
+                try:
+                    fold_arg = force_floor(
+                        argument,
+                        ctx,
+                        owner="BuiltinCallSugar.sum dig",
+                        project_callsite=False,
+                    )
+                except FactoryGap:
+                    fold_arg = argument
+            folded: TermValue | None = None
+            if isinstance(fold_arg, ArrayLiteral):
+                total = 0
+                ok = True
+                for item in fold_arg.items:
+                    if not isinstance(item, TermValue) or type(item.value) is not int:
+                        ok = False
+                        break
+                    total += item.value
+                if ok:
+                    folded = TermValue(total)
+            return Complete(
+                OpaqueOpCallsite(callee="sum", arg=argument, computed=folded)
+            )
         method_name = _BUILTIN_DUNDER_METHODS.get(self.name)
         if method_name is not None:
             outcome = perform_operation(
@@ -475,13 +512,15 @@ _COORDINATE_BUILTIN_OPS = frozenset(
         "bytes",
         "str",
         "format",
-        # divmod held: pair+subscript residual (see DivmodBuiltinSugar._build)
+        "sum",
+        # divmod: DivmodBuiltinSugar + call:divmod wrap
     }
 )
 _OWNED_BUILTIN_CALLS = frozenset(
     {
         "next",
         "str",
+        "sum",
         *_BUILTIN_DUNDER_METHODS,
     }
 ) - {_OPERATOR_INDEX_CALL}
