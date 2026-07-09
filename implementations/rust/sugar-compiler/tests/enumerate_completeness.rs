@@ -239,15 +239,20 @@ fn universe_probe_from_tree(
     (call_sites, not_modeled, names)
 }
 
-/// First-class identity strings visible on a tree call-site node: audit
-/// fields + memento JSON values that are already `call:` / `method:` forms.
-/// Does NOT dig into fact FOL for EUF ctor heads — those are formula shape,
-/// not call-site bridge identity (Task 2 / Campaign A).
+/// First-class identity strings visible on a tree call-site node:
+/// `CallSite.bridge_source_symbol`, plus audit/memento JSON values that are
+/// already `call:` / `method:` forms. Does NOT dig into fact FOL for EUF
+/// ctor heads — those are formula shape, not call-site bridge identity.
 fn identity_symbols_from_tree(kit: &Kit, workspace_root: &Path) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for file in kit.source_files(workspace_root).expect("source_files") {
         for function in file.functions().expect("functions") {
             for call_site in function.call_sites().expect("call_sites") {
+                if let Some(sym) = call_site.bridge_source_symbol() {
+                    if is_bridge_identity(sym) {
+                        out.insert(sym.to_string());
+                    }
+                }
                 collect_bridge_identity_strings(&call_site.source_memento().to_json(), &mut out);
                 if let Some(audit) = call_site.audit_row() {
                     for candidate in [

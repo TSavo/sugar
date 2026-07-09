@@ -269,6 +269,19 @@ impl AuditRow {
     }
 }
 
+/// Decode first-class bridge identity from a call_sites/assertions wire audit.
+/// Expects `call:` / `method:` forms; empty/missing → `None`.
+fn decode_bridge_source_symbol(audit: Option<&Value>) -> Option<String> {
+    let value = audit?;
+    value
+        .get("bridgeSourceSymbol")
+        .or_else(|| value.get("bridge_source_symbol"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceFile {
     conn: KitConn,
@@ -287,6 +300,9 @@ pub struct CallSite {
     conn: KitConn,
     memento: SourceMemento,
     audit: Option<AuditRow>,
+    /// Join key for universe/bridge, e.g. `"call:len"` | `"method:count"`.
+    /// Decoded from the wire audit's `bridgeSourceSymbol` (prefix preserved).
+    bridge_source_symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -335,6 +351,13 @@ impl Function {
 impl CallSite {
     pub fn audit_row(&self) -> Option<&AuditRow> {
         self.audit.as_ref()
+    }
+
+    /// First-class `call:` / `method:` bridge identity for this call site
+    /// (e.g. `"call:len"`, `"method:count"`). Join key for
+    /// `CallSite::universe()` linkage and completeness fold identity.
+    pub fn bridge_source_symbol(&self) -> Option<&str> {
+        self.bridge_source_symbol.as_deref()
     }
 }
 impl Assertion {
@@ -707,6 +730,7 @@ impl Function {
             .map(|n| CallSite {
                 conn: self.conn.clone(),
                 memento: n.memento,
+                bridge_source_symbol: decode_bridge_source_symbol(n.audit.as_ref()),
                 audit: n.audit.as_ref().map(AuditRow::from_json),
             })
             .collect())
@@ -736,6 +760,7 @@ impl Function {
         Ok(CallSite {
             conn: self.conn.clone(),
             memento: node.memento,
+            bridge_source_symbol: decode_bridge_source_symbol(node.audit.as_ref()),
             audit: node.audit.as_ref().map(AuditRow::from_json),
         })
     }
