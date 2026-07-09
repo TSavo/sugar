@@ -85,6 +85,57 @@ class CallSiteValue(FloorValue):
             ctx=ctx,
         )
 
+    def call_method_with(self, operation: Any, ctx: Any):
+        """Dig the callsite floor, then re-dispatch — enables composition.
+
+        `len(a())` / `f().sum()` need the dug return (ArrayLiteral / coordinate)
+        so outer call:len / call:sum can fold or join by congruence. When dig
+        fails, emit an opaque method coordinate (never invent a value).
+        """
+        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.factory import FactoryGap
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+        from sugar_lift_py_tests.operations import perform_operation
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        try:
+            floor = force_floor(
+                self,
+                ctx,
+                owner=f"{operation.owner} callsite method receiver",
+                project_callsite=False,
+            )
+        except FactoryGap as exc:
+            observed = exc.info.observed
+            # Opaque residual: coordinate for pure methods, else typed red.
+            if operation.name == "__len__" and not operation.arguments:
+                return Complete(
+                    OpaqueOpCallsite(callee="len", arg=self, computed=None)
+                )
+            if not operation.name.startswith("__") and not operation.arguments:
+                return Complete(
+                    OpaqueOpCallsite(
+                        callee=operation.name, arg=self, computed=None
+                    )
+                )
+            return Incomplete(
+                RuntimeEffect(
+                    "callsite method runtime boundary: callsite value "
+                    f"`{self.target_name}` cannot be reduced before applying "
+                    f"`.{operation.name}`. Python evaluates the call result at "
+                    "runtime before the method; keep as typed red until a "
+                    "narrower callsite floor owns this shape. "
+                    f"force_floor={observed}; blame={operation.blame}"
+                )
+            )
+        return perform_operation(
+            owner=operation.owner,
+            blame=operation.blame,
+            receiver=floor,
+            operation=operation,
+            ctx=ctx,
+        )
+
     def force_floor(
         self,
         ctx: Any,
