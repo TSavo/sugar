@@ -74,6 +74,24 @@ class SymbolicValue(FloorValue):
 
             # Pure-value builtins on an opaque receiver: non-concrete marker for wrap.
             return Complete(self)
+        # Vendor / opaque method call on a symbolic coordinate receiver
+        # (`call:numpy.array(...).sum()` → `call:sum(call:numpy.array(...))`).
+        # Same opaque-coordinate family as attributes (#3905) and builtins
+        # (#3908): never invent a return value (computed=None).
+        if not operation.name.startswith("__") and all(
+            isinstance(arg, FloorValue) for arg in operation.arguments
+        ):
+            from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                OpaqueOpCallsite(
+                    callee=operation.name,
+                    arg=self,
+                    computed=None,
+                    extra_args=tuple(operation.arguments),
+                )
+            )
         from sugar_lift_py_tests.effect import FactoryGapEffect
         from sugar_lift_py_tests.outcome import Incomplete
 
