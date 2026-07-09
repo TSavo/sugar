@@ -2298,14 +2298,23 @@ def _emit_euf_fact(
         target_symbol = edge_target_symbol or f"call:{callee_name}"
         if (
             callee_name in _AXIOMATIC_BUILTIN_UNIVERSE_CALLEES
-            and builtin_universes_emitted is not None
-            and callee_name not in builtin_universes_emitted
+            # A None dedup set means "no cross-call dedup available" (a direct
+            # caller below build_literal_call_report) -- the universe still
+            # MINTS (gitar on #3886: silent skip = the annotation that never
+            # fires); it just cannot dedup across sibling calls.
+            and callee_name
+            not in (
+                builtin_universes_emitted
+                if builtin_universes_emitted is not None
+                else ()
+            )
         ):
             # ONE operator-level universe per symbol per lift, not one per assertion
             # instance -- the set is threaded from `build_literal_call_report` and
             # shared across every assertion in this file, so the second and later
             # `len(...)` callsites see the symbol already claimed and mint nothing.
-            builtin_universes_emitted.add(callee_name)
+            if builtin_universes_emitted is not None:
+                builtin_universes_emitted.add(callee_name)
             (
                 universe_contracts,
                 universe_mementos,
