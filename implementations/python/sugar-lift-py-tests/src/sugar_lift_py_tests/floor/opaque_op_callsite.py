@@ -57,6 +57,11 @@ class OpaqueOpCallsite(FloorValue):
 
         return SymbolicValue(self.to_term(owner="OpaqueOpCallsite.symbolic"))
 
+    def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
+        # Project as a literal-shaped floor: the coordinate is the term
+        # (`call:len(<arg>)`). Same path as TermValue / ArrayLiteral.
+        return operation.project_literal(self, ctx)
+
     def call_method_with(self, operation: Any, ctx: Any) -> Any:
         # A nested `len` ALWAYS wraps into another opaque coordinate --
         # `len(len(x))` -> `call:len(call:len(<x>))` -- and never delegates to the

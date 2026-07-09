@@ -31,6 +31,10 @@ class ControlFlowBodySugar(FunctionBodyUniverse):
     paths: tuple[tuple[tuple[Formula, ...], Term], ...]
     formals: tuple[str, ...]
     statements: tuple[SugarBody, ...] = ()
+    # Counted OpaqueOpCallsite return floors from the body walk (PR #3900 A).
+    # Path post stays `out == call:len(...)`; each counted return is also emitted
+    # as a separate Derived companion fact `call:len(...) == N` at universe mint.
+    opaque_returns: tuple[object, ...] = ()
 
     def _clauses(self) -> list[Formula]:
         clauses: list[Formula] = []
@@ -45,5 +49,6 @@ class ControlFlowBodySugar(FunctionBodyUniverse):
         return clauses
 
     def constraint_formulas(self) -> list[Formula]:
+        # Path clauses only — companions are separate Derived facts.
         clauses = self._clauses()
         return [clauses[0] if len(clauses) == 1 else and_(clauses)]
