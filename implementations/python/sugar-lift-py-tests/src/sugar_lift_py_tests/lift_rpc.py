@@ -641,6 +641,103 @@ def _find_item_by_memento(
     return None
 
 
+def _first_bridge_ctor_name(node: Any) -> Optional[str]:
+    """First `call:` / `method:` ctor head in a FOL term tree (depth-first)."""
+    if not isinstance(node, dict):
+        return None
+    name = node.get("name")
+    if (
+        node.get("kind") == "ctor"
+        and isinstance(name, str)
+        and (name.startswith("call:") or name.startswith("method:"))
+    ):
+        return name
+    for value in node.values():
+        if isinstance(value, dict):
+            found = _first_bridge_ctor_name(value)
+            if found is not None:
+                return found
+        elif isinstance(value, list):
+            for child in value:
+                found = _first_bridge_ctor_name(child)
+                if found is not None:
+                    return found
+    return None
+
+
+def _contract_bridge_identity(item: Dict[str, Any]) -> Optional[str]:
+    """Callee identity for a `kind=contract` assertion: FOL ctor head, else name.
+
+    Used to join a call-site record to a `function-contract` universe via
+    `bridgeSourceSymbol` (e.g. `call:add` → `mathy::add::callable`).
+    """
+    formula = _item_fact_formula(item)
+    if isinstance(formula, dict):
+        # Prefer the left-hand side of an equality assertion (the call).
+        if formula.get("kind") == "atomic" and formula.get("name") == "=":
+            args = formula.get("args")
+            if isinstance(args, list) and args:
+                found = _first_bridge_ctor_name(args[0])
+                if found is not None:
+                    return found
+        found = _first_bridge_ctor_name(formula)
+        if found is not None:
+            return found
+    raw_name = item.get("name")
+    if isinstance(raw_name, str):
+        for prefix in ("call:", "method:"):
+            idx = raw_name.find(prefix)
+            if idx < 0:
+                continue
+            rest = raw_name[idx:]
+            end = 0
+            while end < len(rest) and (
+                rest[end].isalnum() or rest[end] in (":", "_")
+            ):
+                end += 1
+            if end > len(prefix):
+                return rest[:end]
+    return None
+
+
+def _universe_node_from_item(
+    item: Dict[str, Any], file_rel: str
+) -> Dict[str, Any]:
+    """Build a `level=universe` wire node from a function-contract IR row.
+
+    Stamps the batch `name` (e.g. `len::builtin-universe`) onto the memento's
+    function_name fields so client-side collectors that only see
+    `SourceMemento::to_json()` still recover the universe member key.
+    """
+    name = item.get("name") if isinstance(item.get("name"), str) else ""
+    base = _item_memento(item)
+    if base is None:
+        memento: Dict[str, Any] = {
+            "kind": "source-memento",
+            "file": file_rel,
+            "function_name": name,
+            "source_function_name": name,
+            "sourceFunctionName": name,
+            "span": None,
+            "param_names": [],
+            "source_cid": None,
+            "template_cid": None,
+        }
+    else:
+        memento = dict(base)
+    if name:
+        # Batch universe member key — must survive decode_memento → to_json.
+        memento["function_name"] = name
+        memento["source_function_name"] = name
+        memento["sourceFunctionName"] = name
+        memento["name"] = name
+    return {
+        "memento": memento,
+        "audit": item,
+        "payload": _item_fact_formula(item),
+    }
+
+
 def _send_enumerate_result(
     msg_id: Any,
     nodes: List[Dict[str, Any]],
@@ -684,7 +781,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             _send_enumerate_result(msg_id, nodes, [])
             return
 
-        if level in ("functions", "call_sites", "assertions", "facts"):
+        if level in ("functions", "call_sites", "assertions", "facts", "universe"):
             file_rel = _enumerate_file_of(at)
             if file_rel is None:
                 _send_enumerate_result(
@@ -896,6 +993,78 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     ],
                     [],
                 )
+                return
+
+            if level == "universe":
+                # Body/operator universes are `kind="function-contract"` rows
+                # (including `len::builtin-universe`). CallSite::universe seeks
+                # the universe linked to a call-site memento via
+                # bridgeSourceSymbol / FOL callee identity. File-level scan
+                # (`seek=false`) lists every universe in the file.
+                universe_items = [
+                    item
+                    for item in ir_items
+                    if isinstance(item, dict)
+                    and item.get("kind") == "function-contract"
+                ]
+
+                if seek and at is not None:
+                    # Call-site linkage path first: match a kind=contract
+                    # assertion, then join on bridge identity.
+                    call_item = None
+                    for item in ir_items:
+                        if item.get("kind") != "contract":
+                            continue
+                        memento = _item_memento(item)
+                        if memento is not None and _memento_matches(memento, at):
+                            call_item = item
+                            break
+                    if call_item is not None:
+                        bridge = _contract_bridge_identity(call_item)
+                        matched = None
+                        if bridge:
+                            for universe_item in universe_items:
+                                if universe_item.get("bridgeSourceSymbol") == bridge:
+                                    matched = universe_item
+                                    break
+                        if matched is not None:
+                            _send_enumerate_result(
+                                msg_id,
+                                [_universe_node_from_item(matched, file_rel)],
+                                [],
+                            )
+                            return
+                        callee = bridge if bridge else "unknown"
+                        _send_enumerate_result(
+                            msg_id,
+                            [],
+                            [
+                                {
+                                    "memento": at,
+                                    "reason": (
+                                        f"no universe sugar for callee {callee}"
+                                    ),
+                                }
+                            ],
+                        )
+                        return
+
+                    # Direct universe seek (scan/seek coherence on a universe
+                    # node's own memento, including the stamped name).
+                    nodes = []
+                    for universe_item in universe_items:
+                        node = _universe_node_from_item(universe_item, file_rel)
+                        if _memento_matches(node["memento"], at):
+                            nodes.append(node)
+                    _send_enumerate_result(msg_id, nodes, [])
+                    return
+
+                # Scan: every function-contract universe in the file.
+                nodes = [
+                    _universe_node_from_item(universe_item, file_rel)
+                    for universe_item in universe_items
+                ]
+                _send_enumerate_result(msg_id, nodes, [])
                 return
 
         _send(

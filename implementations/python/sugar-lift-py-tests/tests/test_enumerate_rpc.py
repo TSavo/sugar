@@ -226,3 +226,38 @@ def test_enumerate_empty_file_is_an_empty_level_not_an_error(project) -> None:
     response = _enumerate_raw("assertions", project, at={"file": "empty_mod.py"})
     assert "error" not in response, response
     assert response["result"]["nodes"] == []
+
+
+def test_universe_scan_lists_function_contract_rows(project: Path) -> None:
+    """File-level universe scan surfaces batch function-contract names."""
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    result = _enumerate("universe", project, at=file_memento, seek=False)
+    names = sorted(
+        (n["audit"] or {}).get("name")
+        or n["memento"].get("name")
+        or n["memento"].get("function_name")
+        for n in result["nodes"]
+    )
+    assert any(n and "add" in n and "callable" in n for n in names), names
+    assert result["gaps"] == []
+
+
+def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
+    """CallSite-style seek: call:add → mathy::add::callable universe."""
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    functions = {
+        n["memento"].get("function_name") or n["memento"].get("source_function_name"): n[
+            "memento"
+        ]
+        for n in _enumerate("functions", project, at=file_memento)["nodes"]
+    }
+    call_site_memento = _enumerate(
+        "call_sites", project, at=functions["test_add"]
+    )["nodes"][0]["memento"]
+    result = _enumerate("universe", project, at=call_site_memento, seek=True)
+    assert len(result["nodes"]) == 1
+    node = result["nodes"][0]
+    name = (node["audit"] or {}).get("name") or node["memento"].get("function_name")
+    assert name and "callable" in name
+    assert node["memento"].get("function_name") == name
+    assert result["gaps"] == []

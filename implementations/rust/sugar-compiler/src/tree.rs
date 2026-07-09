@@ -28,10 +28,10 @@
 //
 // CLAIM vs OBLIGATION (plan's "two halves meeting at the callsite"):
 // `universe`/`assertions`/`facts` are the claim side, kit-enumerated over
-// the wire. `contract`/`implication` are LINK-time (#3831) -- this pass
-// lands them as `EdgeTarget::Unbound`/`None` stubs; no RPC is made for
-// them, since binding them is a `solve()`-time concern (SEAM 5), out of
-// scope here.
+// the wire (`universe` joins function-contract rows by bridgeSourceSymbol).
+// `contract`/`implication` are LINK-time (#3831) -- this pass lands them
+// as `EdgeTarget::Unbound`/`None` stubs; no RPC is made for them, since
+// binding them is a `solve()`-time concern (SEAM 5), out of scope here.
 
 use std::path::{Path, PathBuf};
 
@@ -180,18 +180,25 @@ pub struct Implication {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrFormulaPlaceholder(pub IrFormula);
 
-/// The claim side's sort-domain view of a call site. `universe()` is a
-/// stub in this pass (see `EnumerateError::NotModeled`): the shipping
-/// python kit does not expose a distinct sort-domain answer separate from
-/// the call site's own audit row today.
+/// The claim side's sort-domain view of a call site: the operator /
+/// function-contract universe linked to this call via `bridgeSourceSymbol`
+/// (e.g. `call:add` → `mathy::add::callable`, `call:len` →
+/// `len::builtin-universe`). Served by `sugar.enumerate` `level=universe`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Universe {
     memento: SourceMemento,
+    audit: Option<AuditRow>,
 }
 
 impl Sourced for Universe {
     fn source_memento(&self) -> &SourceMemento {
         &self.memento
+    }
+}
+
+impl Universe {
+    pub fn audit_row(&self) -> Option<&AuditRow> {
+        self.audit.as_ref()
     }
 }
 
@@ -784,18 +791,34 @@ impl CallSite {
         })
     }
 
-    /// LIFT-time claim side, per the plan: the operator's sort-domain.
-    /// Stub this pass (module doc) -- the kit-side audit does not expose a
-    /// distinct universe answer yet, so this is an honest `NotModeled`
-    /// error, never a fabricated empty `Universe`.
-    pub fn universe(&self) -> Result<Universe, KitError> {
-        Err(KitError::from(EnumerateError::NotModeled {
-            plugin: self.conn.surface.clone(),
-            level: "universe",
-            reason: "the shipping python kit's factory audit does not expose a sort-domain \
-                     answer separate from the call site's own audit row yet"
-                .to_string(),
+    /// LIFT-time claim side: the operator / function-contract universe
+    /// linked to this call site. `sugar.enumerate` `level=universe`,
+    /// `at=<this call site's memento>`, `seek=true`. Returns `Ok(None)`
+    /// when the kit reports a gap (no universe sugar for the callee) so
+    /// absence stays a link-class signal, not a walk panic.
+    pub fn universe(&self) -> Result<Option<Universe>, KitError> {
+        let (nodes, _gaps) = enumerate_rpc(
+            &self.conn,
+            Level::Universe,
+            Some(self.memento.to_json()),
+            true,
+        )?;
+        Ok(nodes.into_iter().next().map(|n| Universe {
+            memento: n.memento,
+            audit: n.audit.as_ref().map(AuditRow::from_json),
         }))
+    }
+
+    /// Gaps alongside `universe()` for this call site (e.g.
+    /// `no universe sugar for callee call:count`).
+    pub fn universe_gaps(&self) -> Result<Vec<GapInfo>, KitError> {
+        let (_nodes, gaps) = enumerate_rpc(
+            &self.conn,
+            Level::Universe,
+            Some(self.memento.to_json()),
+            true,
+        )?;
+        Ok(gaps)
     }
 
     /// LINK-time obligation side (#3831): never bound by this pass. See

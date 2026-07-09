@@ -194,9 +194,10 @@ fn is_universe_not_modeled(err: &KitError) -> bool {
 }
 
 /// Walk the tree; for every call site, try `universe()`. Collects
-/// NotModeled hits and any universe **member names** that succeed (none
-/// today — `universe()` is NotModeled). Names are function-contract style
-/// (`len::builtin-universe`, `mathy::add::callable`), not bridge identities.
+/// NotModeled hits and any universe **member names** that succeed.
+/// Names are function-contract style (`len::builtin-universe`,
+/// `mathy::add::callable`), not bridge identities. `Ok(None)` is a
+/// legitimate gap (no universe sugar for that callee), not NotModeled.
 fn universe_probe_from_tree(
     kit: &Kit,
     workspace_root: &Path,
@@ -209,19 +210,21 @@ fn universe_probe_from_tree(
             for call_site in function.call_sites().expect("call_sites") {
                 call_sites += 1;
                 match call_site.universe() {
-                    Ok(universe) => {
-                        // Universe is memento-only today (no audit_row yet).
-                        // When Task 1 serves level=universe, member names must
-                        // match batch function-contract `name` keys. Collect
-                        // from memento JSON including non-bridge name strings
-                        // (e.g. memento `name` / `function_name` / any string
-                        // equal to a batch universe name). Do NOT filter
-                        // through is_bridge_identity — those are call:/method:
-                        // forms for failure mode 3 only.
+                    Ok(Some(universe)) => {
+                        // Member names must match batch function-contract
+                        // `name` keys. Collect from memento JSON including
+                        // non-bridge name strings (stamped `function_name` /
+                        // `source_function_name` / any string equal to a
+                        // batch universe name). Do NOT filter through
+                        // is_bridge_identity — those are call:/method: forms
+                        // for failure mode 3 only.
                         collect_universe_member_name_strings(
                             &universe.source_memento().to_json(),
                             &mut names,
                         );
+                    }
+                    Ok(None) => {
+                        // Legitimate gap: call site has no linked universe.
                     }
                     Err(err) if is_universe_not_modeled(&err) => {
                         not_modeled += 1;

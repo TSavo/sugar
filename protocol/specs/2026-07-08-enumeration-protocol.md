@@ -70,8 +70,9 @@ level to the tree means adding a `level` value here, not a new RPC method.
 - `nodes` are BUILT nodes: their own `memento` (this node's primary key --
   usable as `at` in the NEXT step down, or replayed back as a seek `at` at
   THIS level), an `audit` object (the factory's construction record for
-  this node, when the kit tracks one), and a `payload` (only populated at
-  `level="facts"`: the node's FOL).
+  this node, when the kit tracks one), and a `payload` (populated at
+  `level="facts"` with the assertion FOL, and at `level="universe"` with
+  the function-contract `inv`/`post` formula when present).
 - `gaps` are FIRST-CLASS, in the SAME address space as `nodes` (plan's
   "GAPS ARE NODES" rule): a level's enumeration can find a memento with no
   usable child at all (an unresolved call, a construction the factory
@@ -95,7 +96,7 @@ level to the tree means adding a `level` value here, not a new RPC method.
 | `call_sites` | a `functions` memento | a call site's own memento | `payload.ir` entries, `kind="contract"`, scoped by `source_function_name` |
 | `assertions` | -- (seek only) | a call site's own memento | same `kind="contract"` item (1:1 with its call site -- Section 4) |
 | `facts` | -- (seek only) | an assertion's own memento | the item's `inv` (else `post`) field, as the FOL payload |
-| `universe` | -- | -- | **not modeled this pass** -- always answered `NotModeled` client-side; no kit-side handler exists for this level yet (Section 4) |
+| `universe` | a file memento (`seek=false`: every universe in the file) | a call site's own memento (`seek=true`: the universe linked to that callsite) or a universe node's own memento | `payload.ir` entries, `kind="function-contract"` (body universes + operator builtin universes such as `len::builtin-universe`). Seek from a call site joins via `bridgeSourceSymbol` / FOL `call:`·`method:` ctor identity; missing link is a gap (`no universe sugar for callee <name>`). Node mementos stamp the batch `name` onto `function_name` so member keys survive `SourceMemento` round-trip. |
 
 ## Section 4. Granularity landed (report, not hidden)
 
@@ -117,12 +118,18 @@ Two further simplifications, both flagged rather than silently narrowed:
    `CallSite`. A true multi-assertion-per-call-site split (e.g. more than
    one claim about the same call expression) is not representable by this
    landing; it needs a kit-side change, not a protocol change.
-2. **`universe` is not modeled.** The plan's `CallSite::universe()`
-   (the operator's sort-domain) has no kit-side answer distinct from the
-   call site's own audit row today. `CallSite::universe()` therefore
-   always returns `KitError::Enumerate(EnumerateError::NotModeled)`,
-   never a fabricated empty `Universe`. No `sugar.enumerate` request is
-   even sent for this level from the Rust client.
+2. **`universe` is function-contract IR, linked by bridge identity.**
+   `CallSite::universe()` issues `sugar.enumerate` at `level=universe`
+   with the call site's memento and `seek=true`. The kit finds the
+   matching `kind="contract"` row, extracts the callee's `call:` /
+   `method:` identity from its FOL (or name), and returns the
+   `kind="function-contract"` row whose `bridgeSourceSymbol` matches
+   (body law or builtin universe). No match → gap node
+   (`no universe sugar for callee <name>`); the Rust client maps empty
+   nodes to `Ok(None)`. File-level scan (`seek=false`) lists every
+   function-contract universe in the file for completeness auditing.
+   First-class `bridgeSourceSymbol` on call-site nodes themselves is a
+   separate Campaign A task (identity), not this level.
 3. **`Function::call_sites()` scoping is name-based.** A call site is
    attributed to its enclosing function by matching the assertion
    record's own `source_function_name` against the target function's
