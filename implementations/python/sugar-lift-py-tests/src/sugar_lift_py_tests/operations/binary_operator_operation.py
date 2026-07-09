@@ -122,19 +122,31 @@ class BinaryOperatorOperation:
         self, receiver: StringValue, ctx: FactoryBuildContext | None
     ) -> Outcome:
         del ctx
-        if self.operator == "+" and isinstance(self.right, StringValue):
-            return Complete(StringValue(receiver.value + self.right.value))
-        if self.operator == "*" and isinstance(self.right, TermValue):
-            return self._repeat_string(receiver, self.right)
-        if self.operator == "*" and isinstance(self.right, SymbolicValue):
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+
+        # OpaqueOp (e.g. str(x) → call:str(...)) participates via its folded
+        # value when counted, else as a symbolic coordinate — never invent a
+        # string payload for an opaque op.
+        right = self.right
+        if isinstance(right, OpaqueOpCallsite):
+            right = right._downstream()
+        if self.operator == "+" and isinstance(right, StringValue):
+            return Complete(StringValue(receiver.value + right.value))
+        if self.operator == "*" and isinstance(right, TermValue):
+            return self._repeat_string(receiver, right)
+        if self.operator == "*" and isinstance(right, SymbolicValue):
             return self._symbolic_sequence_repeat_effect(receiver="StringValue")
-        if self.operator == "+" and isinstance(self.right, SymbolicValue):
+        if self.operator == "+" and isinstance(right, SymbolicValue):
             return self._symbolic_string_concat_effect(
-                observed="StringValue + SymbolicValue",
+                observed=(
+                    "StringValue + OpaqueOpCallsite"
+                    if isinstance(self.right, OpaqueOpCallsite)
+                    else "StringValue + SymbolicValue"
+                ),
                 carrier="right operand's runtime __radd__ carrier",
             )
-        if isinstance(self.right, StringValue) and self.operator in {"==", "!="}:
-            equal = receiver.value == self.right.value
+        if isinstance(right, StringValue) and self.operator in {"==", "!="}:
+            equal = receiver.value == right.value
             return Complete(BoolValue(equal if self.operator == "==" else not equal))
         self._floor_gap(receiver="StringValue")
 

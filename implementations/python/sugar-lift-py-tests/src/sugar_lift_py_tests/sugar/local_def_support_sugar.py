@@ -3,11 +3,13 @@
 
 Option A widened body dig to zero-parameter functions (`def A(): return
 len([...])`). A body can also contain nested `class` / `def` / `async def`
-statements (e.g. numpy's `new_and_old_dlpack` nests `class OldDLPack`). Those
-local defs are scaffolding for the body's runtime — they are not evaluated as
-part of the return-contract universe the dig builds. Treating them as
-`SupportValue` accounts for them without inventing class/function sugars that
-would wrongly lift definitions as proof content.
+statements (e.g. numpy's `new_and_old_dlpack` nests `class OldDLPack`) and
+nested `import` / `from … import` (e.g. pandas `iris_table_metadata` imports
+sqlalchemy inside the function). Those local defs/imports are scaffolding for
+the body's runtime — they are not evaluated as part of the return-contract
+universe the dig builds. Treating them as `SupportValue` accounts for them
+without inventing class/function/import sugars that would wrongly lift
+definitions as proof content.
 """
 
 from __future__ import annotations
@@ -21,12 +23,20 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import inert_statement_return_witness
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
 
-_LOCAL_DEF_OBSERVED = frozenset({"FunctionDef", "AsyncFunctionDef", "ClassDef"})
+_LOCAL_DEF_OBSERVED = frozenset(
+    {
+        "FunctionDef",
+        "AsyncFunctionDef",
+        "ClassDef",
+        "Import",
+        "ImportFrom",
+    }
+)
 
 
 @dataclass(frozen=True)
 class LocalDefSupportSugar(Sugar, role=SugarRole.STATEMENT):
-    """A nested local def/class inside a function body: inert for the return universe."""
+    """A nested local def/class/import inside a function body: inert for the return universe."""
 
     kind: str
 
@@ -41,8 +51,8 @@ class LocalDefSupportSugar(Sugar, role=SugarRole.STATEMENT):
                 sugar_name=cls.__name__,
                 floor_name="SupportValue",
                 reason=(
-                    "nested FunctionDef/AsyncFunctionDef/ClassDef are local "
-                    "definitions, not part of the body return universe"
+                    "nested FunctionDef/AsyncFunctionDef/ClassDef/Import/ImportFrom "
+                    "are local definitions, not part of the body return universe"
                 ),
             ),
             inert_statement_return_witness(

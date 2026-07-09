@@ -20,11 +20,22 @@ class ReduceContext:
     # A bridge without its enqueued dig is a dangling uninterpreted symbol, a false
     # discharge. None when no driver is draining (a plain reduce).
     dig_sink: Any = None
+    # Optional external-bridge recorder (same field on FactoryBuildContext).
+    # CallSugar.ExternalBridgeStrategy reads this during body dig reduce; missing
+    # the attribute crashed the numpy/pandas package audit as unstructured exit=2
+    # after opaque body dig started reducing vendor-bridged bodies.
+    external_bridge_sink: Any = None
 
     @classmethod
-    def root(cls, *, owner: str, dig_sink=None) -> "ReduceContext":
+    def root(
+        cls, *, owner: str, dig_sink=None, external_bridge_sink=None
+    ) -> "ReduceContext":
         """Front door for a fresh reduction environment."""
-        return cls(temporal=TemporalContext.empty(), dig_sink=dig_sink)
+        return cls(
+            temporal=TemporalContext.empty(),
+            dig_sink=dig_sink,
+            external_bridge_sink=external_bridge_sink,
+        )
 
     @classmethod
     def derived(
@@ -39,6 +50,7 @@ class ReduceContext:
             factory_audit_sink=source.factory_audit_sink,
             operation_log=source.operation_log,
             dig_sink=source.dig_sink,
+            external_bridge_sink=getattr(source, "external_bridge_sink", None),
         )
 
     def record_operation(
@@ -55,4 +67,5 @@ class ReduceContext:
             factory_audit_sink=self.factory_audit_sink,
             operation_log=self.operation_log,
             dig_sink=self.dig_sink,
+            external_bridge_sink=self.external_bridge_sink,
         )
