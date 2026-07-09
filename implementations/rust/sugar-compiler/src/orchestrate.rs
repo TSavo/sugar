@@ -190,6 +190,13 @@ pub struct ProvenOutcome {
     /// bridge data left unbound. ANNOTATION ONLY -- non-empty here does NOT
     /// suppress or alter `artifact`, and does NOT change the exit code today.
     pub link_errors: Vec<LinkerError>,
+    /// Beat 1 could not even derive edges (e.g. a malformed contract body,
+    /// #3869's strict decode). ANNOTATION ONLY, same law as `link_errors`:
+    /// production discharge (beat 2) still runs -- a pool that proves today
+    /// must not brick because its LINK VIEW is undecodable (gitar/Devin on
+    /// #3891). The strict doors (`solve`/`solve_deriving_links`) keep their
+    /// hard Err; this production wrapper annotates.
+    pub link_derivation_error: Option<String>,
     /// Beat 2: the untouched rich artifact from the real `Runner` pipeline
     /// (witnesses, stages, report). Report bytes are identical to a direct
     /// `Runner::run_with_proof_run` over the same pool.
@@ -234,8 +241,13 @@ pub fn solve_project(
     // Beat 1 -- LINK (annotate). Derive real edges from the pool's bridge data
     // and bind; keep only the genuine LINK-class failures (mirrors
     // `link_beat`'s filter). This never short-circuits beat 2.
-    let links = derive_linker_inputs(&pool)?;
-    let link_errors = link_class_errors(links);
+    let (link_errors, link_derivation_error) = match derive_linker_inputs(&pool) {
+        Ok(links) => (link_class_errors(links), None),
+        // Annotate-not-block, applied to the derivation itself: a malformed
+        // contract makes the LINK VIEW undecodable, not the discharge
+        // invalid. Beat 2 proceeds; the refusal rides as typed data.
+        Err(reason) => (Vec::new(), Some(reason.to_string())),
+    };
 
     // Beat 2 -- DISCHARGE. The real pipeline, over the SAME pool.
     let runner = Runner::new_with_compilers(cfg, compilers);
@@ -244,6 +256,7 @@ pub fn solve_project(
     let outcome_class = OutcomeClass::from_report(&artifact.report);
     Ok(ProvenOutcome {
         link_errors,
+        link_derivation_error,
         artifact,
         outcome_class,
     })

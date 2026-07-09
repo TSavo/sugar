@@ -354,11 +354,9 @@ fn solve_project_annotates_link_errors_without_altering_the_report() {
         proven.link_errors
     );
     assert!(
-        proven
-            .link_errors
-            .iter()
-            .any(|e| e.kind == LinkerErrorKind::UnresolvedSymbol
-                && e.target_symbol == CALLEE_SYMBOL),
+        proven.link_errors.iter().any(
+            |e| e.kind == LinkerErrorKind::UnresolvedSymbol && e.target_symbol == CALLEE_SYMBOL
+        ),
         "expected an UnresolvedSymbol naming {CALLEE_SYMBOL}: {:?}",
         proven.link_errors
     );
@@ -511,9 +509,7 @@ fn malformed_formal_sort_is_typed_error_naming_the_contract() {
                 "SolveError must carry the typed field naming: {e}"
             );
         }
-        other => panic!(
-            "expected SolveError::MalformedContract naming {CONTRACT}, got {other:?}"
-        ),
+        other => panic!("expected SolveError::MalformedContract naming {CONTRACT}, got {other:?}"),
     }
 }
 
@@ -551,4 +547,42 @@ fn well_formed_formal_sort_derives_unchanged() {
         Err(e) => panic!("well-formed contract data must never refuse derivation: {e}"),
         Ok(outcome) => eprintln!("well-formed-arm outcome: {outcome:?}"),
     }
+}
+
+/// gitar/Devin on #3891: a MALFORMED contract must not brick production
+/// prove/verify -- the link VIEW becomes undecodable (annotated), the
+/// discharge still runs. Mirrors malformed_formal_sort_is_typed_error
+/// (the strict door keeps its hard Err) through the PRODUCTION door.
+#[test]
+fn solve_project_annotates_malformed_derivation_and_still_discharges() {
+    let mut graph = ProofGraph::new();
+    push_contract_with_formal_sorts(
+        &mut graph,
+        "seam3891::malformed_sort",
+        &serde_json::json!({"kind": "no-such-sort-kind"}),
+    );
+    let dir = seal_to_temp_project(&graph);
+
+    let cfg = RunnerConfig {
+        project_root: dir.path().to_path_buf(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+        ..Default::default()
+    };
+    let proven = sugar_compiler::orchestrate::solve_project(cfg, test_compilers())
+        .expect("a malformed LINK VIEW must not brick the production run");
+
+    // The derivation refusal is ANNOTATED, typed, naming the contract...
+    let note = proven
+        .link_derivation_error
+        .as_deref()
+        .expect("derivation error must be annotated, not silent");
+    assert!(
+        note.contains("malformed_sort") || note.contains("formalSorts") || note.contains("Sort"),
+        "annotation should name the malformed field/contract: {note}"
+    );
+    // ...and beat 2 still produced the real artifact.
+    assert!(
+        !format!("{:?}", proven.artifact.report).is_empty(),
+        "discharge must still run"
+    );
 }
