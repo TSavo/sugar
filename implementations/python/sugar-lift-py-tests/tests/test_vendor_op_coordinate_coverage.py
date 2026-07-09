@@ -15,7 +15,7 @@ Coverage snapshot (coords = call:<op> present in IR):
 | Series.mean/max/min/sum/count/std | yes | yes | mean/max/min/sum/count yes |
 | Series.head/tail/astype | yes | partial | — |
 | DataFrame.shape/empty | yes | yes (shape) | shape dual: unsat (tuple injectivity) |
-| DataFrame.dtypes/columns/index/values | yes | columns via list() | — |
+| DataFrame.dtypes/columns/index/values/T | yes call:<attr> (Batch C) | yes value-eq dig | via len(attr) dual |
 | chain dropna().shape | yes | yes | shape dual unsat |
 | chain reshape().sum | yes | yes | yes |
 | chain groupby().sum | yes (direct) | yes (value eq A()==…) | identity still weak |
