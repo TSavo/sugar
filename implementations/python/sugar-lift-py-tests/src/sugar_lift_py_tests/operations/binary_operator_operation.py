@@ -85,6 +85,10 @@ class BinaryOperatorOperation:
             return Complete(TermValue(folder(receiver.value, self.right.value)))
         if isinstance(self.right, SymbolicValue):
             return self._emit_symbolic(receiver, self.right)
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+
+        if isinstance(self.right, OpaqueOpCallsite):
+            return self._emit_symbolic(receiver, self.right._downstream())
         if isinstance(self.right, ObjectValue):
             return self._reflect_binary(receiver, self.right, ctx)
         self._floor_gap(receiver="TermValue")
@@ -93,8 +97,14 @@ class BinaryOperatorOperation:
         self, receiver: SymbolicValue, ctx: FactoryBuildContext | None
     ) -> Outcome:
         del ctx
-        if isinstance(self.right, (TermValue, SymbolicValue)):
-            return self._emit_symbolic(receiver, self.right)
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+
+        right = self.right
+        if isinstance(right, OpaqueOpCallsite):
+            # OpaqueOp participates as its coordinate term (or computed value).
+            right = right._downstream()
+        if isinstance(right, (TermValue, SymbolicValue)):
+            return self._emit_symbolic(receiver, right)
         if isinstance(self.right, StringValue) and self.operator in {"==", "!="}:
             formula = (
                 eq(receiver.term, str_const(self.right.value))
@@ -345,6 +355,10 @@ def _operand_term(value: FloorValue):
     Concrete floats still wait on the Real refinement when paired with symbolic
     operands; preserve the prior operator boundary instead of widening it here.
     """
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+
+    if isinstance(value, OpaqueOpCallsite):
+        return value.to_term(owner="binary_operand")
     if isinstance(value, SymbolicValue):
         return value.term
     if (

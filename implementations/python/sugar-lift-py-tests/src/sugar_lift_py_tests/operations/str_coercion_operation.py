@@ -10,7 +10,6 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
     TermValue,
 )
-from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Complete, Outcome
 
 from .object_method_call import call_object_method_value
@@ -32,11 +31,13 @@ class StrCoercionOperation:
 
     def str_symbolic(self, receiver: SymbolicValue, ctx: object) -> Outcome:
         del ctx
-        return Complete(SymbolicValue(ctor("py.str", [receiver.term])))
+        # Non-concrete marker; BuiltinCallSugar wrap attaches call:str(<x>).
+        return Complete(receiver)
 
     def str_bv32(self, receiver: Bv32Value, ctx: object) -> Outcome:
         del ctx
-        return Complete(SymbolicValue(ctor("py.str", [receiver.term])))
+        # Non-concrete marker; BuiltinCallSugar wrap attaches call:str(<x>).
+        return Complete(receiver)
 
     def str_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         del ctx

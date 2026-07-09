@@ -11,22 +11,29 @@ from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     Bv32Value,
     OpaqueOpCallsite,
+    StringValue,
     SymbolicValue,
     TermValue,
 )
-from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
+from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
 
 
-def test_str_builtin_folds_concrete_number() -> None:
-    assert fol(reduce_term("str(12)")) == fol(str_const("12"))
+def test_str_builtin_concrete_number_is_coordinate_carrying_folded_string() -> None:
+    # str(12) is call:str(12) carrying computed "12" — never bare "12".
+    value, _log = _reduce_value_with_log("str(12)")
+
+    assert isinstance(value, OpaqueOpCallsite)
+    assert value.callee == "str"
+    assert value.computed == StringValue("12")
+    assert fol(reduce_term("str(12)")) == fol(ctor("call:str", [num(12)]))
 
 
-def test_str_builtin_symbolic_argument_emits_structural_term() -> None:
+def test_str_builtin_symbolic_argument_emits_call_coordinate() -> None:
     result = reduce_term("str(x)", {"x": SymbolicValue(make_var("x"))})
 
-    assert fol(result) == fol(ctor("py.str", [make_var("x")]))
+    assert fol(result) == fol(ctor("call:str", [make_var("x")]))
 
 
 def test_str_builtin_dispatches_bv32_argument_to_floor_operation() -> None:
@@ -34,7 +41,9 @@ def test_str_builtin_dispatches_bv32_argument_to_floor_operation() -> None:
         "str(x)", {"x": Bv32Value(make_var("x"))}
     )
 
-    assert result == SymbolicValue(ctor("py.str", [make_var("x")]))
+    assert result == OpaqueOpCallsite(
+        callee="str", arg=Bv32Value(make_var("x")), computed=None
+    )
     assert operation_log == [("BuiltinCallSugar", "str_with", "StrCoercionOperation")]
 
 

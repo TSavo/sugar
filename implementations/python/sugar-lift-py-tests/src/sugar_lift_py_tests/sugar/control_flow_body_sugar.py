@@ -31,9 +31,12 @@ class ControlFlowBodySugar(FunctionBodyUniverse):
     paths: tuple[tuple[tuple[Formula, ...], Term], ...]
     formals: tuple[str, ...]
     statements: tuple[SugarBody, ...] = ()
-    # Counted OpaqueOpCallsite return floors from the body walk (PR #3900 A).
-    # Path post stays `out == call:len(...)`; each counted return is also emitted
-    # as a separate Derived companion fact `call:len(...) == N` at universe mint.
+    # OpaqueOpCallsite return floors from the body walk (PR #3900 A / #3906).
+    # Path post is always `out == call:<op>(...)` for both foldable and opaque
+    # returns. Counted returns (`computed is not None`) also mint a Derived
+    # companion `call:len(...) == N` at universe mint; opaque returns
+    # (`computed is None`, e.g. hash) get the universe post only — the sworn
+    # assertion grounds the coordinate via the shared call:A() euf key.
     opaque_returns: tuple[object, ...] = ()
 
     def _clauses(self) -> list[Formula]:

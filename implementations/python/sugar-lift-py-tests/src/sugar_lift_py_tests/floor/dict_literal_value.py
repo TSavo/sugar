@@ -44,13 +44,8 @@ class DictLiteralValue(FloorValue):
         if operation.name == "__len__" and not operation.arguments:
             from sugar_lift_py_tests.outcome import Complete
 
-            from .opaque_op_callsite import OpaqueOpCallsite
-
-            return Complete(
-                OpaqueOpCallsite(
-                    callee="len", arg=self, computed=TermValue(len(self.entries))
-                )
-            )
+            # Bare folded count; BuiltinCallSugar wrap re-attaches call:len.
+            return Complete(TermValue(len(self.entries)))
         return _call_method_effect(
             blame=operation.blame,
             observed=f"DictLiteralValue.{operation.name}",

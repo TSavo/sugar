@@ -163,7 +163,12 @@ def build_control_flow_body_sugar(site, ctx):
         if isinstance(outcome, ReturnValue):
             ret_value = outcome.value
             paths.append(((), floor_to_term(ret_value, owner="control-flow body")))
-            if isinstance(ret_value, OpaqueOpCallsite) and ret_value.computed is not None:
+            # Foldable (computed is not None) AND opaque (computed is None) both
+            # belong on opaque_returns: the path post is always
+            # `out == call:<op>(...)`; companions are minted only for counted
+            # returns (see _opaque_op_companion_facts). Dropping opaque used to
+            # leave hash/str-of-symbolic body digs with no coordinate at all.
+            if isinstance(ret_value, OpaqueOpCallsite):
                 opaque_returns.append(ret_value)
         elif isinstance(outcome, GuardedReturn):
             ret_value = outcome.value
@@ -173,7 +178,7 @@ def build_control_flow_body_sugar(site, ctx):
                     floor_to_term(ret_value, owner="control-flow body"),
                 )
             )
-            if isinstance(ret_value, OpaqueOpCallsite) and ret_value.computed is not None:
+            if isinstance(ret_value, OpaqueOpCallsite):
                 opaque_returns.append(ret_value)
         else:
             raise TypeError(
