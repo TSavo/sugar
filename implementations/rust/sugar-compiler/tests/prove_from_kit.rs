@@ -352,6 +352,132 @@ fn prove_from_kit_runs_solver_path_on_enumerate_fixture() {
     );
 }
 
+/// #3809 DoD (a) — engine project-`.proof` FS reads during the fold prove path.
+///
+/// Measure: `prove_from_kit` must **not** scan/load `project_root/**/*.proof`
+/// (that is the cold disk face, `solve_project`/`load_all_proofs`). A poisoned
+/// `.proof` that *would* fail rule-1 trust-root on disk load must be invisible
+/// to the fold path: no load_error naming the poison, and discharge still runs.
+///
+/// Discrimination (instrument is live, not a no-op): the same poison under
+/// `solve_project` (disk face) **must** appear in `report.load_errors`.
+///
+/// Remaining non-zero engine FS classes (honest, not claimed zero here):
+/// config/component-plan manifests, kit spawn argv, throwaway seal is in-memory
+/// only (`pool_from_graph_with_speaker`). Kit-side source reads live in the
+/// kit process, not the engine. Full warm DoD (0 engine opens of any project
+/// file at pure-solve time, ~145ms scoped) is still open — this pins the
+/// local-proof scan seam only.
+#[test]
+fn prove_from_kit_ignores_project_root_proof_files() {
+    if !python_blake3_available() {
+        eprintln!("skip: python3/blake3 unavailable");
+        return;
+    }
+    if !z3_available() {
+        eprintln!("skip: z3 unavailable (solver path)");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+
+    // Poison: any *.proof under the project is walked by load_all_proofs.
+    // Content hash will not match the filename CID → rule-1 load_error on disk.
+    let poison_stem = format!("blake3-512_{}", "a".repeat(128));
+    let poison_name = format!("{poison_stem}.proof");
+    let poison_path = project.join(&poison_name);
+    fs::write(&poison_path, b"this is not a sugar proof envelope").expect("write poison");
+
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+    let speaker = Speaker::consumer("prove-from-kit:poison-gate");
+    let cfg = runner_cfg(&project);
+    let compilers = test_compilers();
+
+    let proven = prove_from_kit(
+        &kit,
+        &project,
+        speaker,
+        cfg.clone(),
+        compilers.clone(),
+    )
+    .expect("prove_from_kit must stage + discharge without reading project .proof files");
+
+    let poison_load_errors: Vec<_> = proven
+        .artifact
+        .report
+        .load_errors
+        .iter()
+        .filter(|e| {
+            e.proof_path.contains(&poison_name)
+                || e.proof_path.ends_with(&poison_name)
+                || e.reason.contains(&poison_name)
+        })
+        .collect();
+
+    eprintln!(
+        "poison-proof gate (fold path):\n\
+         \tpoison={}\n\
+         \treport_load_errors={}\n\
+         \tpoison_named_errors={}\n\
+         \toutcome_class={:?}",
+        poison_path.display(),
+        proven.artifact.report.load_errors.len(),
+        poison_load_errors.len(),
+        proven.outcome_class,
+    );
+    for err in &proven.artifact.report.load_errors {
+        eprintln!("  load_error: path={} reason={}", err.proof_path, err.reason);
+    }
+
+    assert!(
+        poison_load_errors.is_empty(),
+        "prove_from_kit must NOT load project-root .proof files (DoD warm local scan=0). \
+         Poison was named in load_errors: {poison_load_errors:?}. \
+         R = count of poison-named load_errors (want 0)."
+    );
+
+    // Discrimination: disk face sees the poison. Without this, a green
+    // fold-path assert could mean "load_errors never surface" rather than
+    // "fold path skipped the scan".
+    let disk = solve_project(cfg, compilers).expect("disk solve_project must return an artifact");
+    let disk_poison: Vec<_> = disk
+        .artifact
+        .report
+        .load_errors
+        .iter()
+        .filter(|e| {
+            e.proof_path.contains(&poison_name)
+                || e.proof_path.ends_with(&poison_name)
+                || e.reason.contains("trust root")
+                || e.reason.contains("rule 1")
+        })
+        .collect();
+
+    eprintln!(
+        "poison-proof gate (disk face):\n\
+         \tdisk_load_errors={}\n\
+         \tdisk_poison_related={}\n\
+         \tdisk_outcome={:?}",
+        disk.artifact.report.load_errors.len(),
+        disk_poison.len(),
+        disk.outcome_class,
+    );
+    for err in &disk.artifact.report.load_errors {
+        eprintln!(
+            "  disk load_error: path={} reason={}",
+            err.proof_path, err.reason
+        );
+    }
+
+    assert!(
+        !disk_poison.is_empty(),
+        "discrimination failed: disk solve_project did not report a load_error for the \
+         poison .proof (instrument would be a no-op). disk load_errors={:?}",
+        disk.artifact.report.load_errors
+    );
+}
+
 /// Multi-speaker residual of Task 7: when a second graph is loaded as vendor
 /// and merged, roles stay distinct through solve_project_with_pool (no second map).
 #[test]

@@ -330,14 +330,31 @@ pub fn prove_from_kit(
     // 3. Vendor testimony when the kit implements resolve_dependency_proofs.
     // Unavailable is a LINK-class absence (local-only prove still runs), not
     // a hard error — same law as Kit::testimony / resolve_testimony.
+    //
+    // Diagnostics are NOT silent (#3901): the kit may have partially resolved
+    // proofs and still have something to say. Surface them at warn so a
+    // dropped byte is greppable; do not fold them into load_errors (those
+    // are pool-decode failures, a different class).
     let resolution = kit.testimony(workspace_root)?;
+    for diagnostic in &resolution.diagnostics {
+        tracing::warn!(
+            target: "sugar_compiler::prove_from_kit",
+            "testimony diagnostic: {diagnostic}"
+        );
+    }
     match resolution.outcome {
         TestimonyOutcome::Proofs(proofs) => {
             load_proof_bytes_into_pool(&proofs, &mut pool);
         }
         TestimonyOutcome::Unavailable { plugin, reason } => {
             // Honest empty vendor feed: discharge over local members only.
-            let _ = (plugin, reason);
+            // Name the absence — same law as gaps-are-nodes (never silent empty).
+            tracing::warn!(
+                target: "sugar_compiler::prove_from_kit",
+                plugin = %plugin,
+                reason = %reason,
+                "vendor testimony unavailable; proving over local fold only"
+            );
         }
     }
 
