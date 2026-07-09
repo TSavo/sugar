@@ -24,6 +24,7 @@ from .lambda_callable import LambdaCallable
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
 from .object_value import ObjectValue
+from .opaque_op_callsite import OpaqueOpCallsite
 from .predicate_value import PredicateValue
 from .raise_value import RaiseValue
 from .return_value import ReturnValue
@@ -53,6 +54,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     LambdaCallable,
     ObjectMethodValue,
     ObjectValue,
+    OpaqueOpCallsite,
     PredicateValue,
     RaiseValue,
     ReturnValue,
@@ -92,6 +94,7 @@ __all__ = [
     "ObjectField",
     "ObjectMethodValue",
     "ObjectValue",
+    "OpaqueOpCallsite",
     "PredicateValue",
     "RaiseValue",
     "ReturnValue",
