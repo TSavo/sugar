@@ -107,8 +107,8 @@ def build_control_flow_body_sugar(site, ctx):
     if site.observed != "FunctionDef":
         raise TypeError("ControlFlowBodySugar claim built a non-function")
     params = site.function_params()
-    if not params:
-        raise TypeError("ControlFlowBodySugar requires at least one parameter")
+    # Zero-parameter bodies are legal dig targets (`def A(): return len([...])`).
+    # Formals may be empty; only EncoderBodySugar still needs a named parameter.
     reduce_ctx = ctx.with_temporal(TemporalContext.empty())
     for param_name in params:
         reduce_ctx = bind_temporal(
@@ -148,22 +148,33 @@ def build_control_flow_body_sugar(site, ctx):
     ):
         from sugar_lift_py_tests.sugar.encoder_body_sugar import EncoderBodySugar
 
+        if not params:
+            raise TypeError("EncoderBodySugar requires at least one parameter")
         return EncoderBodySugar(
             parameter=params[0],
             encoded=stmts[0].value,
             statements=statements,
         )
     paths: list = []
+    opaque_returns: list = []
+    from sugar_lift_py_tests.floor import OpaqueOpCallsite
+
     for outcome in stmts:
         if isinstance(outcome, ReturnValue):
-            paths.append(((), floor_to_term(outcome.value, owner="control-flow body")))
+            ret_value = outcome.value
+            paths.append(((), floor_to_term(ret_value, owner="control-flow body")))
+            if isinstance(ret_value, OpaqueOpCallsite) and ret_value.computed is not None:
+                opaque_returns.append(ret_value)
         elif isinstance(outcome, GuardedReturn):
+            ret_value = outcome.value
             paths.append(
                 (
                     tuple(outcome.guards),
-                    floor_to_term(outcome.value, owner="control-flow body"),
+                    floor_to_term(ret_value, owner="control-flow body"),
                 )
             )
+            if isinstance(ret_value, OpaqueOpCallsite) and ret_value.computed is not None:
+                opaque_returns.append(ret_value)
         else:
             raise TypeError(
                 f"control-flow body: unexpected outcome `{type(outcome).__name__}`"
@@ -171,10 +182,11 @@ def build_control_flow_body_sugar(site, ctx):
     if not paths:
         raise TypeError("ControlFlowBodySugar found no return paths")
     return ControlFlowBodySugar(
-        parameter=params[0],
+        parameter=params[0] if params else "",
         paths=tuple(paths),
         formals=tuple(params),
         statements=statements,
+        opaque_returns=tuple(opaque_returns),
     )
 
 

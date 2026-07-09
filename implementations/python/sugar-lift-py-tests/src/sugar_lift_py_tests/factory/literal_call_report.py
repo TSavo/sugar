@@ -1680,6 +1680,70 @@ def _numeric_floor_for_numpy_literal_arg(
     return value.value
 
 
+def _opaque_op_companion_formula(value) -> Formula | None:
+    """FOL form of the derived companion for a counted OpaqueOpCallsite.
+
+    `call:len(array(...)) == 3` grounds the coordinate without collapsing it.
+    Returns None when the value is not an OpaqueOpCallsite or has no computed
+    scalar (opaque vendor args). Shared by assertion RHS, body-dig floor, and
+    control-flow universe construction so every emission site uses one law.
+    """
+    from sugar_lift_py_tests.floor import OpaqueOpCallsite
+    from sugar_lift_py_tests.ir import eq
+
+    if not isinstance(value, OpaqueOpCallsite) or value.computed is None:
+        return None
+    return eq(
+        floor_to_term(value, owner="literal_call_report.opaque_op_coordinate"),
+        floor_to_term(
+            value.computed, owner="literal_call_report.opaque_op_computed"
+        ),
+    )
+
+
+def _opaque_op_companion_facts(
+    value,
+    stmt: SourceFragment,
+    fn: SourceFragment,
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> list[LiftResult]:
+    """The DERIVED companion fact for a builtin-operator callsite over a counted
+    construction. `len([1,2,3])` carries the coordinate `call:len(array(1,2,3))` AND
+    the computed value `3`; this emits `call:len(array(1,2,3)) == 3` as a Derived
+    fact so the coordinate is grounded by the solver without ever collapsing. An
+    opaque argument (`len(pd.Series())`, `computed is None`) emits nothing -- the
+    coordinate stands alone, its value only pinned by whatever the vendor swears.
+
+    Emitted on the assertion RHS *and* wherever body-dig / force_floor yields an
+    OpaqueOpCallsite with a computed value (PR #3900 body-path gap)."""
+    from sugar_lift_py_tests.floor import OpaqueOpCallsite
+
+    if not isinstance(value, OpaqueOpCallsite) or value.computed is None:
+        return []
+    arg_term = floor_to_term(value.arg, owner="literal_call_report.opaque_op_arg")
+    computed_term = floor_to_term(
+        value.computed, owner="literal_call_report.opaque_op_computed"
+    )
+    return [
+        _emit_euf_fact(
+            stmt,
+            fn,
+            value.callee,
+            [arg_term],
+            computed_term,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            warrant=Derived(floor_chain=(f"builtin-operator:{value.callee}",)),
+            call_return_sort=_known_term_sort(computed_term)
+            or UnknownSort(reason=f"no declared return sort for call:{value.callee}"),
+        )
+    ]
+
+
 def _lift_callsite_assertion(
     stmt: SourceFragment,
     *,
@@ -1743,6 +1807,19 @@ def _lift_callsite_assertion(
             source_lines=source_lines,
         )
     expected_term = floor_to_term(expected_value, owner="literal_call_report")
+    # If the RHS is a builtin-operator callsite over a counted construction
+    # (`len([1,2,3])`), its coordinate `call:len(array(...))` is kept as the term
+    # above and the COMPUTED value is emitted as a separate DERIVED companion fact
+    # `call:len(array(...)) == 3`. The coordinate never collapses to the scalar; the
+    # solver grounds it by transitivity. See OpaqueOpCallsite.
+    companion_facts = _opaque_op_companion_facts(
+        expected_value,
+        stmt,
+        fn,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+    )
     # Each arg composes through the factory's literal sugars (string, int, array,
     # ...) -- the same path as the expected. A literal the catalog reduces but can't
     # yet shape into a term is kept as typed red so one opaque arg cannot kill the
@@ -1952,7 +2029,7 @@ def _lift_callsite_assertion(
             include_whole_call_fact=True,
             edge_target_symbol=edge_target_symbol,
         )
-    return _emit_euf_fact(
+    stated = _emit_euf_fact(
         stmt,
         fn,
         callee_name,
@@ -1968,6 +2045,7 @@ def _lift_callsite_assertion(
         contract_bindings=contract_bindings or [],
         edge_target_symbol=edge_target_symbol,
     )
+    return _merge_many([stated, *companion_facts])
 
 
 def _emit_dict_literal_callsite_facts(
@@ -2793,10 +2871,18 @@ def _construct_callsite_from_factory_term(
             )
 
         nested_sink_start = len(sink)
-        immediate = emit_immediate_fallback()
-        if isinstance(immediate, _BridgeProjectionRefused):
-            return
-        immediate_emitted = immediate
+        # Option A (PR #3900): dig the body floor FIRST. A counted
+        # OpaqueOpCallsite (`return len([1,2,3])`) must NOT go through the
+        # immediate coordinate projection — that would emit `A() == call:len(...)`
+        # which same-name-coalesces ahead of the stated `A() == N` and leaves
+        # lying twins undischarged. Instead:
+        #   - universe post stays `out == call:len(...)` (coordinate)
+        #   - Derived companion `call:len(...) == N` grounds the coordinate
+        #   - floor fact is ONLY `A() == N` (computed) so stated vs derived
+        #     share the euf key and lying twins refute
+        # Agreement is skipped: `N` does not byte-model `out == call:len(...)`,
+        # but the companion is the grounding law (same as pre-opaque collapse
+        # without collapsing the universe post).
         try:
             floor = force_floor(
                 call_value,
@@ -2808,7 +2894,35 @@ def _construct_callsite_from_factory_term(
             call_return_sort = (
                 callable_contract.out_sort if callable_contract is not None else None
             )
+            from sugar_lift_py_tests.floor import OpaqueOpCallsite
+
+            if isinstance(floor, OpaqueOpCallsite) and floor.computed is not None:
+                facts.extend(
+                    _opaque_op_companion_facts(
+                        floor,
+                        stmt,
+                        caller_fn,
+                        filename=filename,
+                        memento_file=memento_file,
+                        source_lines=source_lines,
+                    )
+                )
+                value_term = floor_to_term(
+                    floor.computed,
+                    owner="literal_call_report.opaque_op_body_computed",
+                )
+                emit_projected_fact(
+                    call_value,
+                    arg_terms,
+                    value_term,
+                    check_agreement=False,
+                )
+                return
             if isinstance(floor, DictLiteralValue):
+                immediate = emit_immediate_fallback()
+                if isinstance(immediate, _BridgeProjectionRefused):
+                    return
+                immediate_emitted = immediate
                 facts.append(
                     _emit_dict_literal_callsite_facts(
                         stmt,
@@ -2830,6 +2944,10 @@ def _construct_callsite_from_factory_term(
                     )
                 )
                 return
+            immediate = emit_immediate_fallback()
+            if isinstance(immediate, _BridgeProjectionRefused):
+                return
+            immediate_emitted = immediate
             projection = _formula_or_none(
                 perform_operation(
                     owner="literal_call_report.callsite_floor",
@@ -3173,7 +3291,23 @@ def _function_universe(
             zip(body_steps, body_mementos)
         )
     ]
-    return (
+    # Option A (PR #3900): body-walker return floors that are counted
+    # OpaqueOpCallsites also mint Derived companion facts
+    # (`call:len(...) == N`) — separate from the callable post so agreement
+    # still models `out == call:len(...)` while the solver is grounded.
+    companion_lifts: list[LiftResult] = []
+    for opaque in getattr(universe_sugar, "opaque_returns", ()):
+        companion_lifts.extend(
+            _opaque_op_companion_facts(
+                opaque,
+                return_stmt_frag,
+                callee,
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+            )
+        )
+    main: LiftResult = (
         [function_contract],
         [function_memento, *body_mementos],
         [audit],
@@ -3181,6 +3315,9 @@ def _function_universe(
         [],
         [],
     )
+    if not companion_lifts:
+        return main
+    return _merge_many([main, *companion_lifts])
 
 
 def _urlsafe_translate_function_universe(

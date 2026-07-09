@@ -229,6 +229,14 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="expression statements evaluate for effects and leave no FOL claim",
     ),
     NonFolOptOut(
+        sugar_name="LocalDefSupportSugar",
+        floor_name="SupportValue",
+        reason=(
+            "nested FunctionDef/AsyncFunctionDef/ClassDef are local "
+            "definitions, not part of the body return universe"
+        ),
+    ),
+    NonFolOptOut(
         sugar_name="PassSugar",
         floor_name="SupportValue",
         reason="pass is inert control-flow support",

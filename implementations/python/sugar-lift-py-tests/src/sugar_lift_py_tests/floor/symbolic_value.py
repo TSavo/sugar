@@ -43,10 +43,15 @@ class SymbolicValue(FloorValue):
                     SymbolicValue(ctor("py.format", [self.term, str_const(spec.value)]))
                 )
         if operation.name == "__len__" and not operation.arguments:
-            from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.outcome import Complete
 
-            return Complete(SymbolicValue(ctor("py.len", [self.term])))
+            from .opaque_op_callsite import OpaqueOpCallsite
+
+            # `len` of an opaque value is the opaque coordinate `call:len(<x>)` -- the
+            # SAME symbol the LHS emits -- not a `py.len` variant the LHS can never
+            # meet by congruence. No computed value: the argument is not a counted
+            # construction.
+            return Complete(OpaqueOpCallsite(callee="len", arg=self, computed=None))
         if operation.name == "__int__" and not operation.arguments:
             from sugar_lift_py_tests.ir import _ConstStr, _Ctor, ctor
             from sugar_lift_py_tests.outcome import Complete

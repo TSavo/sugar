@@ -756,9 +756,28 @@ fn manifests_carry_different_versions(
 }
 
 fn component_roots(project_root: &Path) -> Vec<PathBuf> {
+    // ONE DOOR for hermetic isolation: when `SUGAR_HOME` is set it is the
+    // exclusive non-project install root. System paths, the binary's own
+    // repo-relative kit tree, `~/.config/sugar/components`, and ancestor
+    // project roots are all suppressed. Witness harnesses (and any other
+    // caller that needs a private pool) point `SUGAR_HOME` at the staged
+    // `project/.sugar` so mint/prove cannot see a sibling test's components
+    // or a polluted checkout `.sugar`. Project-local components and an
+    // explicit `SUGAR_COMPONENT_PATH` remain available so a staged project
+    // can still declare its own surface and pin extra roots deliberately.
+    if let Some(home) = std::env::var_os("SUGAR_HOME") {
+        let mut roots = vec![
+            PathBuf::from(home).join("components"),
+            project_root.join(".sugar").join("components"),
+        ];
+        if let Some(paths) = std::env::var_os("SUGAR_COMPONENT_PATH") {
+            roots.extend(std::env::split_paths(&paths));
+        }
+        return dedupe_paths(roots);
+    }
+
     let mut roots = Vec::new();
     roots.extend(system_component_roots());
-    roots.extend(sugar_home_component_roots());
     roots.extend(exe_relative_component_roots());
     if let Some(home) = std::env::var_os("HOME") {
         roots.push(
@@ -781,16 +800,6 @@ fn system_component_roots() -> Vec<PathBuf> {
         PathBuf::from("/usr/local/share/sugar/components"),
         PathBuf::from("/usr/share/sugar/components"),
     ]
-}
-
-/// `SUGAR_HOME` names an install root that carries a `components/` directory
-/// alongside the binary (e.g. a shelf-published bundle). This is the escape
-/// hatch for installs that are not the sugar source checkout itself.
-fn sugar_home_component_roots() -> Vec<PathBuf> {
-    match std::env::var_os("SUGAR_HOME") {
-        Some(home) => vec![PathBuf::from(home).join("components")],
-        None => Vec::new(),
-    }
 }
 
 /// THE ONE DOOR TEST fix: a raw `git clone <vendor>; cd <vendor>; sugar lift`
@@ -2025,6 +2034,12 @@ mod tests {
             std::env::set_var(key, value);
             Self { key, previous }
         }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
     }
 
     impl Drop for EnvGuard {
@@ -2142,9 +2157,70 @@ done
     ) -> ComponentPlan {
         let _env_lock = TEST_ENV_LOCK.lock().unwrap();
         let _home = EnvGuard::set("HOME", project.join("home"));
+        // Tests that exercise multi-root discovery must not inherit a host
+        // SUGAR_HOME, which would collapse discovery to the exclusive door.
+        let _sugar_home = EnvGuard::remove("SUGAR_HOME");
         let _component_path = EnvGuard::set("SUGAR_COMPONENT_PATH", component_path);
         let _timeout = EnvGuard::set("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2");
         plan_workspace(project, PlanIntent::Lift)
+    }
+
+    #[test]
+    fn sugar_home_is_exclusive_component_discovery_door() {
+        let project = tempfile::tempdir().unwrap();
+        let sugar_home = tempfile::tempdir().unwrap();
+        let leaked = tempfile::tempdir().unwrap();
+
+        // Staged project-local component (the harness shape).
+        write_claiming_component(
+            &project.path().join(".sugar").join("components"),
+            "project-local",
+            "project-kit",
+            "project",
+            None,
+        );
+        // Exclusive home component.
+        write_claiming_component(
+            &sugar_home.path().join("components"),
+            "home-kit",
+            "home-kit",
+            "home",
+            None,
+        );
+        // Would leak under multi-root discovery (exe-relative / SUGAR_COMPONENT_PATH
+        // sibling pollution). Must be invisible when SUGAR_HOME is set.
+        write_claiming_component(leaked.path(), "leaked", "leaked-kit", "leaked", None);
+
+        let _env_lock = TEST_ENV_LOCK.lock().unwrap();
+        let _home = EnvGuard::set("HOME", project.path().join("home"));
+        let _sugar_home = EnvGuard::set("SUGAR_HOME", sugar_home.path());
+        let _component_path = EnvGuard::set("SUGAR_COMPONENT_PATH", leaked.path());
+        let _timeout = EnvGuard::set("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2");
+
+        // With SUGAR_HOME set, SUGAR_COMPONENT_PATH is still deliberate and
+        // wins for same-name collisions — but the point of this test is that
+        // system/exe/ancestor roots are gone. Assert the planned components
+        // are exactly the exclusive set (home + project-local + explicit path).
+        let roots = component_roots(project.path());
+        let root_set: std::collections::BTreeSet<_> = roots.iter().cloned().collect();
+        assert!(
+            root_set.contains(&sugar_home.path().join("components")),
+            "SUGAR_HOME/components must be a discovery root: {roots:?}"
+        );
+        assert!(
+            root_set.contains(&project.path().join(".sugar").join("components")),
+            "project-local components must remain: {roots:?}"
+        );
+        assert!(
+            root_set.contains(&leaked.path().to_path_buf()),
+            "explicit SUGAR_COMPONENT_PATH remains available: {roots:?}"
+        );
+        // No ambient system / config / ancestor pollution beyond the exclusive set.
+        assert_eq!(
+            roots.len(),
+            3,
+            "exclusive door must not pull system/exe/ancestor roots: {roots:?}"
+        );
     }
 
     #[test]
@@ -2640,6 +2716,7 @@ done
 
         let _env_lock = TEST_ENV_LOCK.lock().unwrap();
         let _home = EnvGuard::set("HOME", project.path().join("home"));
+        let _sugar_home = EnvGuard::remove("SUGAR_HOME");
         let _component_path = EnvGuard::set("SUGAR_COMPONENT_PATH", component_path);
         let _timeout = EnvGuard::set("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2");
 

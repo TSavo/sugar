@@ -67,7 +67,15 @@ class ArrayLiteral(FloorValue):
         if operation.name == "__len__" and not operation.arguments:
             from sugar_lift_py_tests.outcome import Complete
 
-            return Complete(TermValue(len(self.items)))
+            from .opaque_op_callsite import OpaqueOpCallsite
+
+            # `len([1,2,3])` is the opaque coordinate `call:len(array(...))` carrying
+            # the counted value `3`, NOT the bare scalar -- see OpaqueOpCallsite.
+            return Complete(
+                OpaqueOpCallsite(
+                    callee="len", arg=self, computed=TermValue(len(self.items))
+                )
+            )
         _call_method_gap(
             owner=operation.owner,
             blame=operation.blame,
