@@ -37,7 +37,9 @@ use sugar_proof_envelope::{
 };
 use sugar_verifier::load_all_proofs::{load_proof_bytes_into_pool, ProofBytes};
 use sugar_verifier::solvers::registry;
-use sugar_verifier::{MementoPool, SolverPlan, SolverSeat, Speaker};
+use sugar_verifier::{
+    LegacyZ3Fallback, MementoPool, Runner, RunnerConfig, SolverPlan, SolverSeat, Speaker,
+};
 
 const SEED: Ed25519Seed = [0x57; 32]; // 'W' for #3857
 
@@ -293,6 +295,85 @@ fn unresolved_callee_is_vacuous_in_verify_consistency_but_link_error_via_derivat
     }
 }
 
+/// Seal `graph` through the production envelope path and write it as a
+/// `.proof` file under a fresh temp project dir, so `load_all_proofs::run`
+/// (and therefore `solve_project`'s `load_pool`) picks it up exactly as it
+/// picks up any on-disk project proof.
+fn seal_to_temp_project(graph: &ProofGraph) -> tempfile::TempDir {
+    let proof_input = ProofEnvelopeInput {
+        name: "seam-3859-fixture".to_string(),
+        version: "1.0.0".to_string(),
+        binary_cid: None,
+        metadata: None,
+        graph: graph.clone(),
+        signer_cid: sugar_proof_envelope::ed25519_pubkey_string(&SEED),
+        signer_seed: SEED,
+        declared_at: "1970-01-01T00:00:00.000Z".to_string(),
+        manifest: None,
+    };
+    let sealed = build_proof_envelope(&proof_input);
+    // v1.1.0 load rule 1: the `.proof` filename stem must be the hex
+    // `blake3-512` CID, so the on-disk loader can content-address it.
+    let stem = sealed
+        .cid
+        .strip_prefix("blake3-512:")
+        .expect("sealed cid is blake3-512");
+    let dir = tempfile::tempdir().expect("temp project dir");
+    std::fs::write(dir.path().join(format!("{stem}.proof")), &sealed.bytes)
+        .expect("write fixture proof");
+    dir
+}
+
+/// sugar#3859 "annotate not block" receipt: `solve_project` over a pool with
+/// an UNBRIDGED callsite must (1) carry a non-empty `link_errors` (beat 1
+/// annotated the unresolved edge) AND (2) return an `artifact.report`
+/// BYTE-IDENTICAL to a direct `Runner::run_with_proof_run` over the SAME
+/// on-disk pool -- proving the link errors neither suppress nor alter the
+/// real pipeline's output. If beat 1 short-circuited on the non-empty
+/// link_errors, the report would be absent/empty and this would fail.
+#[test]
+fn solve_project_annotates_link_errors_without_altering_the_report() {
+    let mut graph = ProofGraph::new();
+    push_caller_contract(&mut graph, "seam3859::caller#unbridged");
+    let dir = seal_to_temp_project(&graph);
+
+    let make_cfg = || RunnerConfig {
+        project_root: dir.path().to_path_buf(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+        ..Default::default()
+    };
+
+    // Production door.
+    let proven = sugar_compiler::orchestrate::solve_project(make_cfg(), test_compilers())
+        .expect("solve_project must stage this well-formed on-disk pool");
+
+    // (1) beat 1 ANNOTATED the unbridged callsite.
+    assert!(
+        proven.has_link_errors(),
+        "an unbridged callsite must surface as a non-empty link_errors annotation: {:?}",
+        proven.link_errors
+    );
+    assert!(
+        proven.link_errors.iter().any(
+            |e| e.kind == LinkerErrorKind::UnresolvedSymbol && e.target_symbol == CALLEE_SYMBOL
+        ),
+        "expected an UnresolvedSymbol naming {CALLEE_SYMBOL}: {:?}",
+        proven.link_errors
+    );
+
+    // (2) beat 2's report is byte-identical to a direct Runner run over the
+    // SAME on-disk pool -- the link errors did NOT block or alter it.
+    let direct = Runner::new_with_compilers(make_cfg(), test_compilers())
+        .run_with_proof_run()
+        .expect("direct run over the same pool");
+    assert_eq!(
+        format!("{:?}", proven.artifact.report),
+        format!("{:?}", direct.report),
+        "solve_project's report must be byte-identical to a direct Runner run \
+         over the same pool (annotate-not-block)"
+    );
+}
+
 /// (b) RESOLVED arm: a real bridge memento names `CALLEE_SYMBOL` and points
 /// at a real contract member. The edge binds; `LinkError` must be EMPTY and
 /// discharge must proceed to `Outcome::Verdicts`.
@@ -428,9 +509,7 @@ fn malformed_formal_sort_is_typed_error_naming_the_contract() {
                 "SolveError must carry the typed field naming: {e}"
             );
         }
-        other => panic!(
-            "expected SolveError::MalformedContract naming {CONTRACT}, got {other:?}"
-        ),
+        other => panic!("expected SolveError::MalformedContract naming {CONTRACT}, got {other:?}"),
     }
 }
 
@@ -468,4 +547,42 @@ fn well_formed_formal_sort_derives_unchanged() {
         Err(e) => panic!("well-formed contract data must never refuse derivation: {e}"),
         Ok(outcome) => eprintln!("well-formed-arm outcome: {outcome:?}"),
     }
+}
+
+/// gitar/Devin on #3891: a MALFORMED contract must not brick production
+/// prove/verify -- the link VIEW becomes undecodable (annotated), the
+/// discharge still runs. Mirrors malformed_formal_sort_is_typed_error
+/// (the strict door keeps its hard Err) through the PRODUCTION door.
+#[test]
+fn solve_project_annotates_malformed_derivation_and_still_discharges() {
+    let mut graph = ProofGraph::new();
+    push_contract_with_formal_sorts(
+        &mut graph,
+        "seam3891::malformed_sort",
+        &serde_json::json!({"kind": "no-such-sort-kind"}),
+    );
+    let dir = seal_to_temp_project(&graph);
+
+    let cfg = RunnerConfig {
+        project_root: dir.path().to_path_buf(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+        ..Default::default()
+    };
+    let proven = sugar_compiler::orchestrate::solve_project(cfg, test_compilers())
+        .expect("a malformed LINK VIEW must not brick the production run");
+
+    // The derivation refusal is ANNOTATED, typed, naming the contract...
+    let note = proven
+        .link_derivation_error
+        .as_deref()
+        .expect("derivation error must be annotated, not silent");
+    assert!(
+        note.contains("malformed_sort") || note.contains("formalSorts") || note.contains("Sort"),
+        "annotation should name the malformed field/contract: {note}"
+    );
+    // ...and beat 2 still produced the real artifact.
+    assert!(
+        !format!("{:?}", proven.artifact.report).is_empty(),
+        "discharge must still run"
+    );
 }

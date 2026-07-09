@@ -231,13 +231,30 @@ impl Runner {
     }
 
     pub fn run_with_proof_run(&self) -> Result<ProofRunArtifact, ProofRunArtifactError> {
+        self.run_with_proof_run_with_pool(load_pool(&self.cfg))
+    }
+
+    /// Same discharge as [`run_with_proof_run`](Runner::run_with_proof_run) but
+    /// over a caller-supplied `pool` (already built via [`load_pool`], the SAME
+    /// construction `run_with_proof_run` uses inline). Lets an orchestration
+    /// layer derive its linker inputs from the SAME pool this run discharges,
+    /// rather than decoding the pool twice (sugar#3859). The returned
+    /// `ProofRunArtifact` -- report bytes included -- is identical to
+    /// `run_with_proof_run` given the same pool.
+    pub fn run_with_proof_run_with_pool(
+        &self,
+        pool: MementoPool,
+    ) -> Result<ProofRunArtifact, ProofRunArtifactError> {
         match build_solve_pool() {
-            Some(pool) => pool.install(|| self.run_with_proof_run_inner()),
-            None => self.run_with_proof_run_inner(),
+            Some(rayon_pool) => rayon_pool.install(move || self.run_with_proof_run_inner(pool)),
+            None => self.run_with_proof_run_inner(pool),
         }
     }
 
-    fn run_with_proof_run_inner(&self) -> Result<ProofRunArtifact, ProofRunArtifactError> {
+    fn run_with_proof_run_inner(
+        &self,
+        mut pool: MementoPool,
+    ) -> Result<ProofRunArtifact, ProofRunArtifactError> {
         let input_artifact_cids = discover_input_artifact_cids(&self.cfg);
         let proof_envelope_cid = input_artifact_cids
             .iter()
@@ -258,13 +275,9 @@ impl Runner {
             "load_all_proofs",
             input_artifact_cids.iter().cloned().collect(),
         );
-        let mut pool = load_all_proofs::run(&self.cfg.project_root);
-        for extra in &self.cfg.extra_projects {
-            let extra_pool = load_all_proofs::run(extra);
-            pool.merge(extra_pool);
-        }
-        load_all_proofs::load_files_into_pool(&self.cfg.extra_proof_files, &mut pool);
-        load_all_proofs::load_proof_bytes_into_pool(&self.cfg.extra_proofs, &mut pool);
+        // `pool` is supplied by the caller (built via `load_pool`, the same
+        // construction this method used inline before sugar#3859) so a solve
+        // orchestration layer can derive linker inputs from the SAME pool.
         let loaded_cids = sorted_keys(&pool.mementos);
         let load_diagnostics: Vec<Json> = pool
             .load_errors
