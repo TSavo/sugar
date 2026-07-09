@@ -476,7 +476,7 @@ def _fold_numeric_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
             return args[0].args[index]
         return None
     if (
-        name == "divmod"
+        name in {"divmod", "call:divmod"}
         and len(args) == 2
         and all(isinstance(arg, _ConstInt) for arg in args)
     ):
