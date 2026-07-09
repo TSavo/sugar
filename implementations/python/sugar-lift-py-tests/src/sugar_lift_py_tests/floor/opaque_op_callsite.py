@@ -92,6 +92,16 @@ class OpaqueOpCallsite(FloorValue):
             )
         )
 
+    def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
+        """Tuple-unpack of an opaque coordinate: ``a, b = opaque_call(…)``.
+
+        Same floor totalizer hole as attribute_with — not a missing AST
+        recognizer. SymbolicValue already projects via ``py.unpack(term, i)``;
+        route opaque (or fold-computed) results through ``_downstream()`` so
+        unpack never invents element values.
+        """
+        return self._downstream().project_sequence_with(operation, ctx)
+
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().binary_operator_with(operation, ctx)
 
