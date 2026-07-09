@@ -7,7 +7,13 @@ from factory_reduce import fol, reduce_term
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import ArrayLiteral, Bv32Value, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import (
+    ArrayLiteral,
+    Bv32Value,
+    OpaqueOpCallsite,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
@@ -32,10 +38,13 @@ def test_str_builtin_dispatches_bv32_argument_to_floor_operation() -> None:
     assert operation_log == [("BuiltinCallSugar", "str_with", "StrCoercionOperation")]
 
 
-def test_len_builtin_symbolic_argument_emits_structural_term() -> None:
+def test_len_builtin_symbolic_argument_emits_call_coordinate() -> None:
+    # `len(x)` over an opaque argument is the callsite coordinate `call:len(x)` --
+    # the SAME symbol the LHS/assertion surface emits -- not a `py.len` variant that
+    # could never join it by congruence.
     result = reduce_term("len(x)", {"x": SymbolicValue(make_var("x"))})
 
-    assert fol(result) == fol(ctor("py.len", [make_var("x")]))
+    assert fol(result) == fol(ctor("call:len", [make_var("x")]))
 
 
 def test_len_builtin_symbolic_argument_is_not_concretized() -> None:
@@ -43,7 +52,9 @@ def test_len_builtin_symbolic_argument_is_not_concretized() -> None:
         "len(x)", {"x": SymbolicValue(make_var("x"))}
     )
 
-    assert result == SymbolicValue(ctor("py.len", [make_var("x")]))
+    assert result == OpaqueOpCallsite(
+        callee="len", arg=SymbolicValue(make_var("x")), computed=None
+    )
     assert not isinstance(result, TermValue)
     assert operation_log == [
         ("BuiltinCallSugar", "call_method_with", "MethodCallOperation")
@@ -55,13 +66,26 @@ def test_len_builtin_symbolic_argument_preserves_receiver_identity() -> None:
     right = reduce_term("len(y)", {"y": SymbolicValue(make_var("y"))})
 
     assert fol(left) != fol(right)
-    assert fol(right) == fol(ctor("py.len", [make_var("y")]))
+    assert fol(right) == fol(ctor("call:len", [make_var("y")]))
 
 
-def test_len_builtin_array_literal_still_folds_concrete_length() -> None:
-    result = reduce_term("len(xs)", {"xs": ArrayLiteral((TermValue(1), TermValue(2)))})
+def test_len_builtin_array_literal_is_coordinate_carrying_counted_length() -> None:
+    # `len([1,2])` is the opaque coordinate `call:len(array(1,2))` carrying the
+    # counted value 2 in `computed` -- NOT the bare scalar. The coordinate is what
+    # the term projects to; the count rides along so the emission layer can emit the
+    # derived companion `call:len(array(1,2)) == 2` (grounding by transitivity),
+    # never collapsing the coordinate.
+    value, _log = _reduce_value_with_log(
+        "len(xs)", {"xs": ArrayLiteral((TermValue(1), TermValue(2)))}
+    )
 
-    assert fol(result) == fol(num(2))
+    assert isinstance(value, OpaqueOpCallsite)
+    assert value.callee == "len"
+    assert value.computed == TermValue(2)
+
+    # The projected term is the coordinate, never the bare scalar.
+    term = reduce_term("len(xs)", {"xs": ArrayLiteral((TermValue(1), TermValue(2)))})
+    assert fol(term) == fol(ctor("call:len", [ctor("array", [num(1), num(2)])]))
 
 
 def _reduce_value_with_log(expr: str, binds: dict | None = None):
