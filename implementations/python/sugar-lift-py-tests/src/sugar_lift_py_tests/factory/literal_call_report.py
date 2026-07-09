@@ -324,10 +324,6 @@ def build_literal_call_report(
     effects: list[EffectDto] = []
     dig_refusals: list[DigBoundary] = []
     agreement_violations: list[FloorContractAgreementViolation] = []
-    # ONE operator-level universe per axiomatic builtin symbol per lift (see
-    # `_builtin_call_universe`) -- shared across every assert in this file so a
-    # second/third `len(...)` callsite never mints a duplicate.
-    builtin_universes_emitted: set[str] = set()
     local_functions = {
         frag.function_name(): frag
         for frag in root_frag.walk()
@@ -366,7 +362,6 @@ def build_literal_call_report(
                 from_imports=from_imports,
                 contract_bindings=contract_bindings or [],
                 module_statements=module_statements,
-                builtin_universes_emitted=builtin_universes_emitted,
                 dig_refusals=dig_refusals,
                 agreement_violations=agreement_violations,
                 factory_audits=factory_audits,
@@ -520,7 +515,6 @@ def _lift_assert(
     dig_refusals: list[DigBoundary],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
-    builtin_universes_emitted: set[str] | None = None,
 ) -> LiftResult:
     """One mechanism. An assertion `callee(args) == expected` is a fact -- a debt on
     `callee` -- and it WARRANTS a dig for `callee`'s contract.
@@ -713,7 +707,6 @@ def _lift_assert(
             universe=universe,
             derived_literal_call=derived_literal_call,
         ),
-        builtin_universes_emitted=builtin_universes_emitted,
     )
     factory_audits.extend(universe_factory_audits)
     return _merge_many(
@@ -1445,14 +1438,6 @@ def _open_equality_fact_vars(arg_terms: list[Term], value_term: Term) -> frozens
     )
 
 
-# Builtins with NO Python body anywhere to dig (C-implemented) but whose vendor-suite
-# assertions are, by the vendor-tests-ARE-the-spec doctrine, the only spec available.
-# `len(x) == N` mints a `call:len::universe` FunctionContract restating that SAME
-# stated equality as a formals-bearing universe, so `collect_ambient_posts` gets a
-# genuine bridge target instead of the callsite going bridge-dark forever (issue #3864).
-_AXIOMATIC_BUILTIN_UNIVERSE_CALLEES = frozenset({"len"})
-
-
 _COMPUTABLE_NUMPY_INTEGER_UFUNCS = frozenset(
     {
         "numpy.add",
@@ -1711,7 +1696,6 @@ def _lift_callsite_assertion(
     call_return_sort: ProofSort | None = None,
     contract_bindings: list | None = None,
     emit_call_edge: bool = True,
-    builtin_universes_emitted: set[str] | None = None,
 ) -> LiftResult:
     """The fact. `callee(args) == expected` lifts to the euf callsite obligation
     `eq(call:callee(args), expected)`, contract-named `callee#euf#<arg_sig>::assertion`.
@@ -1985,7 +1969,6 @@ def _lift_callsite_assertion(
         call_return_sort=call_return_sort,
         contract_bindings=contract_bindings or [],
         edge_target_symbol=edge_target_symbol,
-        builtin_universes_emitted=builtin_universes_emitted,
     )
 
 
@@ -2078,110 +2061,6 @@ def _dict_read_sort(term: Term, *, callee_name: str) -> ProofSort:
     )
 
 
-def _builtin_call_universe_axiom(callee_name: str) -> tuple[tuple[str, ...], Formula, ProofSort]:
-    """The AXIOM for a no-body builtin: what's true of the OPERATOR itself, not any
-    one call's instance value. `len` has no Python body anywhere to dig, but its
-    signature IS known and stated: it takes one argument and returns a non-negative
-    Int. `(formal_names, post_formula, out_sort)` -- `post_formula` is independent of
-    the formals (same shape as `_urlsafe_translate_function_universe`'s `post`, which
-    also declares formals it never references in the body): a universe states what
-    holds for EVERY call, not a per-instance value."""
-    if callee_name == "len":
-        return (
-            ("x",),
-            gte(make_var("out"), num(0)),
-            IntSort(),
-        )
-    raise TypeError(f"no axiom registered for builtin call universe {callee_name!r}")
-
-
-def _builtin_call_universe(
-    stmt: SourceFragment,
-    fn: SourceFragment,
-    callee_name: str,
-    *,
-    filename: str,
-    memento_file: str,
-    source_lines: list[str],
-) -> LiftResult:
-    """Mint the ONE `call:<callee>::universe` FunctionContract for an axiomatic
-    builtin (see `_AXIOMATIC_BUILTIN_UNIVERSE_CALLEES`). This is OPERATOR-level, not
-    instance-level: T's correction after the first cut of this function wrongly
-    promoted a single assertion's instance equality (`eq(out, N)`) into a "universe" --
-    a category error. The vendor's `len(x) == 0` is a FACT (per callsite, already
-    carried by the ground `EqualityFact`/`AmbientGroundCallsiteFact` path -- the
-    'Vendor fact' line already renders today without this function). The UNIVERSE is
-    what's true of `len` ITSELF, independent of any call's arguments -- exactly like
-    the 5 dig-derived universes (`custom_series_function` et al.) state a forall-shaped
-    law over their formals, and exactly like `_urlsafe_translate_function_universe`
-    states urlsafe_b64encode's axiom without a body-dig. Minted ONCE PER SYMBOL PER
-    LIFT (see the caller's dedup set), never once per assertion -- one operator
-    universe legitimately attaches to every len callsite (that's what a universe is);
-    it was the earlier per-instance-post design that was unsound, not many callsites
-    sharing one universe."""
-    formal_names, post_formula, out_sort = _builtin_call_universe_axiom(callee_name)
-    scope_sorts: dict[str, ProofSort] = {
-        name: UnknownSort(reason=f"no declared sort for formal {name!r}")
-        for name in formal_names
-    }
-    scope_sorts["out"] = out_sort
-    post = _post_condition_from_ir(
-        post_formula, scope_sorts=scope_sorts, formal_names=formal_names
-    )
-    contract_name = f"{callee_name}::builtin-universe"
-    memento = _statement_source_memento(
-        stmt,
-        fn,
-        memento_file,
-        source_lines,
-        contract_name=contract_name,
-        role="python.builtin-call-universe",
-    )
-    site = _proofir_construction_site(stmt, memento_file)
-    contract = FunctionContract(
-        symbol=contract_name,
-        formals=tuple(
-            FunctionContract.formal(name, scope_sorts[name]) for name in formal_names
-        ),
-        post=post,
-        warrants=(
-            Provenance(
-                node_class=FunctionContract.node_class,
-                construction_site=site,
-                warrant=Stated(locus=site),
-            ),
-        ),
-        out_binding="out",
-        out_sort=out_sort,
-        source_warrants=[memento],
-        bridge_source_symbol=f"call:{callee_name}",
-    )
-    audit = _source_audit(
-        fn,
-        stmt,
-        memento_file,
-        contract_name,
-        memento,
-        role="python.builtin-call-universe",
-        ast_kind="Assert",
-    )
-    walk = _walk_row(
-        "BuiltinCallUniverseSugar",
-        "Assert",
-        stmt,
-        filename,
-        memento,
-        "predicate",
-        requested_role="FunctionBodyConstraint",
-        emitted_formula=_typed_formula_to_rpc(post_formula, scope_sorts),
-        reason=(
-            "no Python body to dig for this builtin -- its signature/domain axiom "
-            f"is stated directly (no per-instance fabrication): {callee_name!r}"
-        ),
-    )
-    return ([contract], [memento], [audit], [walk], [], [])
-
-
 def _emit_euf_fact(
     stmt: SourceFragment,
     fn: SourceFragment,
@@ -2198,7 +2077,6 @@ def _emit_euf_fact(
     call_return_sort: ProofSort | None = None,
     contract_bindings: list | None = None,
     edge_target_symbol: str | None = None,
-    builtin_universes_emitted: set[str] | None = None,
 ) -> LiftResult:
     """Emit one `<callee>#euf#<args>::assertion` fact: `eq(call:callee(args), value)`.
 
@@ -2287,49 +2165,11 @@ def _emit_euf_fact(
         role="python.literal-call-sugar",
         ast_kind="Assert",
     )
-    universe_contracts: list[Any] = []
-    universe_mementos: list[SourceMementoDto] = []
-    universe_audits: list[SourceAuditDto] = []
-    universe_walk: list[FactoryWalkRowDto] = []
     edges: list[CallEdgeDto] = []
     if emit_call_edge:
         if callsite is None:
             raise TypeError("emit_call_edge requires callsite")
         target_symbol = edge_target_symbol or f"call:{callee_name}"
-        if (
-            callee_name in _AXIOMATIC_BUILTIN_UNIVERSE_CALLEES
-            # A None dedup set means "no cross-call dedup available" (a direct
-            # caller below build_literal_call_report) -- the universe still
-            # MINTS (gitar on #3886: silent skip = the annotation that never
-            # fires); it just cannot dedup across sibling calls.
-            and callee_name
-            not in (
-                builtin_universes_emitted
-                if builtin_universes_emitted is not None
-                else ()
-            )
-        ):
-            # ONE operator-level universe per symbol per lift, not one per assertion
-            # instance -- the set is threaded from `build_literal_call_report` and
-            # shared across every assertion in this file, so the second and later
-            # `len(...)` callsites see the symbol already claimed and mint nothing.
-            if builtin_universes_emitted is not None:
-                builtin_universes_emitted.add(callee_name)
-            (
-                universe_contracts,
-                universe_mementos,
-                universe_audits,
-                universe_walk,
-                _,
-                _,
-            ) = _builtin_call_universe(
-                stmt,
-                fn,
-                callee_name,
-                filename=filename,
-                memento_file=memento_file,
-                source_lines=source_lines,
-            )
         binding = _binding_for_bridge_symbol(
             contract_bindings or [], target_symbol, arg_terms=list(arg_terms)
         )
@@ -2359,10 +2199,10 @@ def _emit_euf_fact(
             ).to_declaration()
         )
     return (
-        [EqualityFactEmission(member, (memento,)), *universe_contracts],
-        [memento, *universe_mementos],
-        [audit, *universe_audits],
-        [walk, *universe_walk],
+        [EqualityFactEmission(member, (memento,))],
+        [memento],
+        [audit],
+        [walk],
         edges,
         [],
     )
