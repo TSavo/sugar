@@ -553,6 +553,53 @@ def _enumerate_file_of(at: Optional[Dict[str, Any]]) -> Optional[str]:
     return file_name if isinstance(file_name, str) and file_name else None
 
 
+def _span_is_degenerate(span: Any) -> bool:
+    """All-zero / missing span is a degenerate (file/name-only) locator."""
+    if not isinstance(span, dict):
+        return True
+    return all(span.get(key) in (0, None) for key in ("start_line", "start_col", "end_line", "end_col"))
+
+
+def _span_contains(outer: Any, inner: Any) -> bool:
+    """True when inner span lies within outer (line/col order). Degenerate → False."""
+    if _span_is_degenerate(outer) or _span_is_degenerate(inner):
+        return False
+    outer_start = (int(outer.get("start_line") or 0), int(outer.get("start_col") or 0))
+    outer_end = (int(outer.get("end_line") or 0), int(outer.get("end_col") or 0))
+    inner_start = (int(inner.get("start_line") or 0), int(inner.get("start_col") or 0))
+    inner_end = (int(inner.get("end_line") or 0), int(inner.get("end_col") or 0))
+    return inner_start >= outer_start and inner_end <= outer_end
+
+
+def _call_site_under_function(
+    site_memento: Dict[str, Any],
+    target_fn: Any,
+    target_span: Any,
+) -> bool:
+    """Whether a contract memento is under the parent function for call_sites.
+
+    Prefer span containment when the parent memento has a non-degenerate span
+    (SourceMemento[path] address). Fall back to function-name match when span
+    is absent so degenerate locators still work.
+    """
+    if not _span_is_degenerate(target_span):
+        site_span = site_memento.get("span")
+        if _span_contains(target_span, site_span):
+            return True
+        # Parent has a real span but site is outside it — not under this fn.
+        # Still allow name match only when site span is also degenerate (no locus).
+        if not _span_is_degenerate(site_span):
+            return False
+    if target_fn:
+        item_fn = (
+            site_memento.get("source_function_name")
+            or site_memento.get("sourceFunctionName")
+            or site_memento.get("function_name")
+        )
+        return item_fn == target_fn
+    return True
+
+
 def _memento_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
     """Primary-key equality for the tree's locator (the plan's "memento is
     the primary key"): same file + same span + same source_cid. Only span
@@ -909,18 +956,37 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # real assertions inside it). Both are real functions in the
                 # source; a driver walking source_files -> functions must be
                 # able to reach either kind of call site underneath.
-                seen_names: set = set()
+                # Dedup key is (name, span) so same-named nested functions with
+                # distinct spans each get a node (SourceMemento[path] address).
+                seen_keys: set = set()
                 nodes = []
 
-                def _emit(memento, audit):
+                def _fn_key(memento):
                     fn_name = memento.get("source_function_name") or memento.get(
                         "sourceFunctionName"
+                    ) or memento.get("function_name")
+                    span = memento.get("span") if isinstance(memento.get("span"), dict) else {}
+                    if _span_is_degenerate(span):
+                        return (fn_name, None)
+                    return (
+                        fn_name,
+                        (
+                            span.get("start_line"),
+                            span.get("start_col"),
+                            span.get("end_line"),
+                            span.get("end_col"),
+                        ),
                     )
-                    if fn_name in seen_names:
+
+                def _emit(memento, audit):
+                    key = _fn_key(memento)
+                    if key[0] is None:
+                        return
+                    if key in seen_keys:
                         return
                     if seek and at is not None and not _memento_matches(memento, at):
                         return
-                    seen_names.add(fn_name)
+                    seen_keys.add(key)
                     nodes.append({"memento": memento, "audit": audit, "payload": None})
 
                 for item in ir_items:
@@ -947,8 +1013,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     fn_name = memento.get("source_function_name") or memento.get(
                         "sourceFunctionName"
                     )
-                    if not fn_name or fn_name in seen_names:
+                    if not fn_name:
                         continue
+                    # Degenerate span: enclosing-only functions have no body
+                    # contract locus; call_sites falls back to name scoping.
                     _emit(
                         {
                             "kind": "source-memento",
@@ -971,20 +1039,21 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 return
 
             if level == "call_sites":
-                # GRANULARITY (reported, not hidden): `Function::call_sites()`
-                # scopes to `kind="contract"` items whose own memento's
-                # `source_function_name` matches the enclosing function's
-                # name from `at` -- there is no per-function AST-scope index
-                # kit-side yet beyond that name match, so two same-named
-                # nested functions in one file would collide (flagged, not
-                # hidden; out of scope for this fixture-sized cut).
+                # Scope under parent function (`at`): prefer SPAN containment when
+                # `at.span` is non-degenerate (SourceMemento[path] law — path is
+                # address). Fall back to function-name match when span is absent
+                # (degenerate file/fn locators). Same-named nested functions with
+                # distinct spans no longer cross-contaminate.
                 target_fn = (
-                    at.get("function_name")
-                    or at.get("sourceFunctionName")
-                    or at.get("source_function_name")
+                    (
+                        at.get("function_name")
+                        or at.get("sourceFunctionName")
+                        or at.get("source_function_name")
+                    )
                     if at
                     else None
                 )
+                target_span = at.get("span") if isinstance(at, dict) else None
                 built = []
                 for item in ir_items:
                     if item.get("kind") != "contract":
@@ -992,14 +1061,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     memento = _item_memento(item)
                     if memento is None:
                         continue
-                    if target_fn:
-                        item_fn = (
-                            memento.get("source_function_name")
-                            or memento.get("sourceFunctionName")
-                            or memento.get("function_name")
-                        )
-                        if item_fn != target_fn:
-                            continue
+                    if not _call_site_under_function(memento, target_fn, target_span):
+                        continue
                     if seek and at is not None and not _memento_matches(memento, at):
                         continue
                     # First-class bridge identity on the wire audit
