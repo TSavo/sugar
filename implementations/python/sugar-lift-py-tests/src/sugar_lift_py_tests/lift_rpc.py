@@ -579,7 +579,7 @@ def _call_site_under_function(
     """Whether a contract memento is under the parent function for call_sites.
 
     Prefer span containment when the parent memento has a non-degenerate span
-    (SourceMemento[path] address). Fall back to function-name match when span
+    (self-locating SourceMemento locus). Fall back to function-name match when span
     is absent so degenerate locators still work.
     """
     if not _span_is_degenerate(target_span):
@@ -957,7 +957,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # source; a driver walking source_files -> functions must be
                 # able to reach either kind of call site underneath.
                 # Dedup key is (name, span) so same-named nested functions with
-                # distinct spans each get a node (SourceMemento[path] address).
+                # distinct spans each get a node (self-locating SourceMemento).
                 seen_keys: set = set()
                 nodes = []
 
@@ -1040,8 +1040,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
             if level == "call_sites":
                 # Scope under parent function (`at`): prefer SPAN containment when
-                # `at.span` is non-degenerate (SourceMemento[path] law — path is
-                # address). Fall back to function-name match when span is absent
+                # `at.span` is non-degenerate (self-locating memento locus).
+                # Fall back to function-name match when span is absent
                 # (degenerate file/fn locators). Same-named nested functions with
                 # distinct spans no longer cross-contaminate.
                 target_fn = (
