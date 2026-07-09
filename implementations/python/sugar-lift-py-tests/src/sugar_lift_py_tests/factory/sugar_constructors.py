@@ -99,32 +99,16 @@ def _walk_control_flow(stmts, guards, paths, build_ctx, reduce_ctx):
 
 
 def build_control_flow_body_sugar(site, ctx):
-    from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.sugar.control_flow_body_sugar import ControlFlowBodySugar
-    from sugar_lift_py_tests.temporal import TemporalContext, bind_temporal
 
     if site.observed != "FunctionDef":
         raise TypeError("ControlFlowBodySugar claim built a non-function")
     params = site.function_params()
     # Zero-parameter bodies are legal dig targets (`def A(): return len([...])`).
     # Formals may be empty; only EncoderBodySugar still needs a named parameter.
-    #
-    # Formals must be temporally bound on the BUILD ctx, not only on reduce:
-    # CallSugar selects MethodCallStrategy for Name receivers via
-    # `_method_receiver_is_temporally_bound` at build time. Without build-time
-    # formal binds, `def A(df): return df.groupby("k").sum()` gaps as
-    # call-method:groupby / call-builtin:sum and never mints the nested
-    # coordinate `call:sum(call:groupby(df, "k"))` (Batch A formal body dig).
-    body_ctx = ctx.with_temporal(TemporalContext.empty())
-    for param_name in params:
-        body_ctx = bind_temporal(
-            body_ctx,
-            param_name,
-            SymbolicValue(make_var(param_name)),
-            owner="sugar_constructors.control_flow_body",
-            blame=site.blame,
-        )
+    # Formal binds on the BUILD ctx: see `_ctx_with_formal_binds` (Batch A / formal
+    # method body dig).
+    body_ctx = _ctx_with_formal_binds(site, ctx)
     from sugar_lift_py_tests.factory.block import Block
     from sugar_lift_py_tests.floor import (
         BlockValue,
@@ -202,10 +186,41 @@ def build_control_flow_body_sugar(site, ctx):
     )
 
 
+def _ctx_with_formal_binds(site: SourceFragment, ctx):
+    """Factory build ctx with formals bound as SymbolicValue(<name>).
+
+    CallSugar selects MethodCallStrategy for bare Name receivers only when the
+    name is temporally bound at *build* time (`_method_receiver_is_temporally_bound`).
+    Universe dig already binds via `build_control_flow_body_sugar`; the single-return
+    bridge shortcut must bind too, or `def A(s): return s.mean()` builds as
+    FactoryGap(call-method:mean) while the universe post correctly states
+    `out == call:mean(s)`.
+    """
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.temporal import TemporalContext, bind_temporal
+
+    body_ctx = ctx.with_temporal(TemporalContext.empty())
+    for param_name in site.function_params():
+        body_ctx = bind_temporal(
+            body_ctx,
+            param_name,
+            SymbolicValue(make_var(param_name)),
+            owner="sugar_constructors.formal_binds",
+            blame=site.blame,
+        )
+    return body_ctx
+
+
 def build_bridge_body(site: SourceFragment, ctx):
     body_frags = site.function_body()
     if len(body_frags) == 1:
         body_frag = body_frags[0]
         if body_frag.observed == "Return" and body_frag.return_value() is not None:
-            return ctx.build_body(body_frag.return_value(), SugarRole.TERM)
+            # Same formal binds as build_control_flow_body_sugar — required so
+            # method-on-formal returns mint MethodCallStrategy (call:mean(s)),
+            # not call-method:mean FactoryGap on the force_floor / bridge path.
+            return _ctx_with_formal_binds(site, ctx).build_body(
+                body_frag.return_value(), SugarRole.TERM
+            )
     return build_control_flow_body_sugar(site, ctx)
