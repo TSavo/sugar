@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use libsugar::core::{
-    address, ConformanceDeclaration, Dialect, DomainClaim, HashMapInputCatalog, Input,
-    Path as CorePath, PathAlgebra, Term, Verb,
+    address, Dialect, DomainClaim, HashMapInputCatalog, Input, Path as CorePath, PathAlgebra,
+    Term, Verb,
 };
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
@@ -19,8 +19,9 @@ use serde_json::{json, Value};
 use sugar_ir_types::CompositionBoundaryMemento;
 
 use crate::component_plan::PlannedLiftManifest;
+use sugar_compiler::kit::{Kit, KitError as SugarKitError, LiftManifest, RendezvousError};
 use sugar_compiler::kit_path::{
-    execute_path, KitRegistry, LiftKit, LiftPluginKit, LiftPluginKitError, PathExecutionError,
+    execute_path, KitRegistry, LiftPluginKit, LiftPluginKitError, PathExecutionError,
 };
 
 #[derive(Debug, Clone)]
@@ -290,6 +291,13 @@ pub(crate) fn dispatch_lift(
     LiftPluginSession::from_claim(core_session.claim)
 }
 
+/// SEAM 6b sentence: `sugar lift` = `rendezvous(surface).lift(project) ->
+/// render`. Folds the manifest resolution the CLI's census already
+/// performs (`find_manifest`/`resolved_working_dir`) into a `LiftManifest`
+/// and hands it to `Kit::rendezvous`, which performs the LIVE handshake
+/// (`initialize` + `sugar.plugin.kit_declaration`, now bounded by
+/// `kit_declaration.rs`'s read timeout) before this call's own `Kit::lift`
+/// runs the `kit_path` engine's `execute_path` internally.
 pub(crate) fn dispatch_lift_path(
     project_root: &Path,
     surface: &str,
@@ -318,55 +326,38 @@ pub(crate) fn dispatch_lift_path(
 
     let lift_params = build_lift_params(project_root, surface, options);
     let dialect = dialect_for_surface(surface);
-    let kit_name = lift_kit_name(surface);
-    let source = Input::Source {
-        dialect: dialect.clone(),
-        bytes: serde_json::to_vec(&lift_params)
-            .map_err(|error| {
-                LiftPluginError::diagnostic(
-                    LiftPluginDiagnosticKind::RequestEncoding,
-                    "lift.request",
-                    format!("encode lift request: {error}"),
-                    "Inspect LiftPluginOptions and build_lift_params; every request value must be JSON-serializable before it enters the lift-plugin transport.",
-                )
-            })?,
-    };
-    let source_cid = address(&source);
-    let mut inputs = HashMapInputCatalog::default();
-    inputs.put(source_cid.clone(), source);
-    let path_input = Input::Path(Box::new(CorePath {
-        algebra: vec![PathAlgebra {
-            name: "lift".to_string(),
-            kit: kit_name.clone(),
-            inputs: vec![source_cid],
-            depends_on: vec![],
-            verb: Verb::Transform,
-        }],
-    }));
-    let mut registry = KitRegistry::default();
-    if let Ok(manifest) = &manifest {
-        registry.register(
-            kit_name,
-            LiftKit::new(
-                dialect,
-                surface,
-                manifest.command.clone(),
-                resolved_working_dir(project_root, manifest),
-            ),
-            ConformanceDeclaration::NonCarrier {
-                reason: "lifts source bytes to DomainClaim; no target source produced",
-            },
-        );
-    }
 
-    trace_log(format!("lift path execute surface={surface}"));
-    let chain = execute_path(&path_input, &registry, &inputs).map_err(lift_error_from_path)?;
-    let terminal_claim = chain.terminal_claim();
-    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.after_execute_path", terminal_claim);
+    // No manifest resolved for this surface: there is no command to
+    // rendezvous with (`Kit::rendezvous` requires a real, spawnable
+    // command). Fall through to `execute_path` against an EMPTY registry so
+    // callers still see the path executor's own `composition-refusal` /
+    // `kit-registry` memento for the unregistered dialect, exactly what
+    // pre-SEAM-6b `dispatch_lift_path` produced -- not a bare manifest-
+    // resolution diagnostic, which would be a silent behavior change for
+    // `lift_kit_path_integration::lift_cli_refuses_unregistered_dialect_with_composition_refusal_memento`.
+    let Ok(manifest) = manifest else {
+        return dispatch_lift_path_unregistered(surface, dialect, lift_params);
+    };
+    let lift_manifest = LiftManifest {
+        surface: surface.to_string(),
+        name: manifest.name.clone(),
+        dialect,
+        command: manifest.command.clone(),
+        working_dir: resolved_absolute_working_dir(project_root, &manifest),
+        method: manifest.method.clone(),
+    };
+
+    trace_log(format!("lift path rendezvous surface={surface}"));
+    let kit = Kit::rendezvous(lift_manifest).map_err(lift_error_from_rendezvous)?;
+    trace_log(format!(
+        "lift path rendezvous'd surface={surface} elapsed={:?}",
+        started.elapsed()
+    ));
+
     let before = current_rss_kib();
-    let claim = chain.into_terminal_claim();
+    let claim = kit.lift(lift_params).map_err(lift_error_from_kit)?;
     trace_lift_plugin_claim_checkpoint_with_delta(
-        "dispatch_lift_path.after_terminal_claim_move",
+        "dispatch_lift_path.after_kit_lift",
         &claim,
         rss_delta_kib(before, current_rss_kib()),
     );
@@ -376,6 +367,77 @@ pub(crate) fn dispatch_lift_path(
     ));
     trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_response_projection", &claim);
     LiftPluginSession::from_claim(claim)
+}
+
+/// Unregistered-dialect fallback: builds the same source/path input the
+/// registered branch would, but against an empty `KitRegistry`, so
+/// `execute_path` itself produces the `composition-refusal` /
+/// `kit-registry` memento rather than a bespoke diagnostic.
+fn dispatch_lift_path_unregistered(
+    surface: &str,
+    dialect: Dialect,
+    lift_params: Value,
+) -> Result<LiftPluginSession, LiftPluginError> {
+    let source = Input::Source {
+        dialect: dialect.clone(),
+        bytes: serde_json::to_vec(&lift_params).map_err(|error| {
+            LiftPluginError::diagnostic(
+                LiftPluginDiagnosticKind::RequestEncoding,
+                "lift.request",
+                format!("encode lift request: {error}"),
+                "Inspect LiftPluginOptions and build_lift_params; every request value must be JSON-serializable before it enters the lift-plugin transport.",
+            )
+        })?,
+    };
+    let source_cid = address(&source);
+    let mut inputs = HashMapInputCatalog::default();
+    inputs.put(source_cid.clone(), source);
+    let path_input = Input::Path(Box::new(CorePath {
+        algebra: vec![PathAlgebra {
+            name: "lift".to_string(),
+            kit: format!("lift-{surface}"),
+            inputs: vec![source_cid],
+            depends_on: vec![],
+            verb: Verb::Transform,
+        }],
+    }));
+    let registry = KitRegistry::default();
+    let chain = execute_path(&path_input, &registry, &inputs).map_err(lift_error_from_path)?;
+    LiftPluginSession::from_claim(chain.into_terminal_claim())
+}
+
+fn lift_error_from_rendezvous(error: RendezvousError) -> LiftPluginError {
+    LiftPluginError::diagnostic(
+        LiftPluginDiagnosticKind::PathExecution,
+        "lift.rendezvous",
+        error.to_string(),
+        "Inspect the lift manifest's resolved command and working_dir; rendezvous failures mean the kit process never answered its declaration handshake.",
+    )
+}
+
+fn lift_error_from_kit(error: SugarKitError) -> LiftPluginError {
+    match error {
+        SugarKitError::PathExecution(path_error) => lift_error_from_path(path_error),
+        other => LiftPluginError::diagnostic(
+            LiftPluginDiagnosticKind::PathExecution,
+            "lift.path",
+            other.to_string(),
+            "Inspect the lift PathAlgebra step and registered LiftKit; path execution failures must stay structured at the lift-plugin seam.",
+        ),
+    }
+}
+
+/// `resolved_working_dir`'s output, but guaranteed ABSOLUTE:
+/// `Kit::rendezvous`'s contract refuses a relative `working_dir`
+/// (`RendezvousError::RelativeWorkingDir`) because "relative to what" must be
+/// answered once, at the census, not left for the spawned kit's ambient cwd.
+/// `project_root` itself may be relative (e.g. `sugar lift .`), so canonicalize
+/// the joined path rather than trusting the caller's cwd.
+fn resolved_absolute_working_dir(
+    project_root: &Path,
+    manifest: &PlannedLiftManifest,
+) -> Option<PathBuf> {
+    resolved_working_dir(project_root, manifest).map(|dir| dir.canonicalize().unwrap_or(dir))
 }
 
 fn lift_error_from_path(error: PathExecutionError) -> LiftPluginError {
@@ -450,10 +512,6 @@ fn dialect_for_surface(surface: &str) -> Dialect {
         "smt-lib" => Dialect::SmtLib,
         other => Dialect::Other(other.to_string()),
     }
-}
-
-fn lift_kit_name(surface: &str) -> String {
-    format!("lift-{surface}")
 }
 
 /// Parse a manifest.toml at the given path. Exposed pub(crate) for doctor.

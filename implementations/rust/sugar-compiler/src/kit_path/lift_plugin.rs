@@ -609,6 +609,17 @@ impl LiftKit {
         }
     }
 
+    /// Override the JSON-RPC method used for the lift request, forwarding to
+    /// the underlying `LiftPluginKit::with_method` (e.g. consumer surfaces
+    /// like `rust-implications` whose manifest declares
+    /// `method = "sugar.plugin.lift_implications"`). Without this, `Kit::lift`
+    /// would silently call every kit's default `lift` method regardless of
+    /// what its manifest declared.
+    pub fn with_method(mut self, method: impl Into<String>) -> Self {
+        self.transport = self.transport.with_method(method);
+        self
+    }
+
     fn lift_params_from_source(&self, input: &Input) -> Result<Value, LiftPluginKitError> {
         let Input::Source { dialect, bytes } = input else {
             return Err(LiftPluginKitError::Failed(

@@ -71,6 +71,11 @@ pub struct LiftManifest {
     pub dialect: Dialect,
     pub command: Vec<String>,
     pub working_dir: Option<PathBuf>,
+    /// Optional JSON-RPC method override (manifest.toml's `method = "..."`),
+    /// e.g. consumer surfaces such as `rust-implications` that answer
+    /// `sugar.plugin.lift_implications` instead of the default `lift`.
+    /// `None` keeps the transport's default method.
+    pub method: Option<String>,
 }
 
 /// Failure to mint a `Kit`. Every arm names a concrete rendezvous-stage
@@ -175,14 +180,18 @@ impl Kit {
             })?;
         let kit_name = format!("lift-{}", manifest.surface);
         let mut registry = KitRegistry::default();
+        let mut lift_kit = LiftKit::new(
+            manifest.dialect.clone(),
+            manifest.surface.clone(),
+            manifest.command.clone(),
+            manifest.working_dir.clone(),
+        );
+        if let Some(method) = manifest.method.as_deref() {
+            lift_kit = lift_kit.with_method(method);
+        }
         registry.register(
             kit_name.clone(),
-            LiftKit::new(
-                manifest.dialect.clone(),
-                manifest.surface.clone(),
-                manifest.command.clone(),
-                manifest.working_dir.clone(),
-            ),
+            lift_kit,
             ConformanceDeclaration::NonCarrier {
                 reason: "lifts source bytes to DomainClaim; no target source produced",
             },
@@ -299,6 +308,7 @@ mod rendezvous_tests {
             dialect: Dialect::Rust,
             command: vec!["/bin/false".to_string()],
             working_dir: None,
+            method: None,
         };
         match Kit::rendezvous(forged) {
             Err(RendezvousError::Handshake { surface, .. }) => {
@@ -320,6 +330,7 @@ mod rendezvous_tests {
             dialect: Dialect::Rust,
             command: vec!["/bin/false".to_string()],
             working_dir: Some(PathBuf::from(".")),
+            method: None,
         };
         assert!(matches!(
             Kit::rendezvous(forged),
@@ -336,6 +347,7 @@ mod rendezvous_tests {
             dialect: Dialect::Rust,
             command: vec![],
             working_dir: None,
+            method: None,
         };
         assert!(matches!(
             Kit::rendezvous(forged),

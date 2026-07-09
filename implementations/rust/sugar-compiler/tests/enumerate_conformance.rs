@@ -102,6 +102,7 @@ fn python_kit_manifest(dir: &Path) -> LiftManifest {
         dialect: Dialect::Other("python".to_string()),
         command: vec![script.display().to_string()],
         working_dir: None,
+        method: None,
     }
 }
 
