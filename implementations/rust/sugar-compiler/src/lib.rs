@@ -56,6 +56,11 @@ pub mod resolve;
 /// membrane. See `tree` module docs.
 pub mod tree;
 
+/// Campaign B: fold the enumerate tree into a `ProofGraph` via `feed`.
+/// Task 5 ships the red instrument surface; Task 6 implements the walk.
+/// See `feed_from_tree` module docs.
+pub mod feed_from_tree;
+
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed,
     ProofEnvelopeInput, ProofGraph,

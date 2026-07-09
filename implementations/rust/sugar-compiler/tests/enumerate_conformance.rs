@@ -4,11 +4,13 @@
 // (`protocol/specs/2026-07-08-enumeration-protocol.md`), against a real
 // spawned python kit (`sugar_lift_py_tests.lift_rpc`).
 //
-// Gate A -- fold == blob: folding the enumeration tree
-// (`source_files -> functions -> call_sites -> assertions -> facts`) over
-// the fixture must produce the SAME fact set (memento + formula content) as
-// the existing whole-project `Kit::lift`'s `DomainClaim.payload` (the raw
-// `ir` entries the lift RPC response embeds verbatim as `Term::Const`).
+// Gate A -- fold == blob (Campaign A floor): folding the enumeration tree
+// over the fixture must match whole-project `Kit::lift` IR for:
+//   - facts (inv/post formulas + warrants)
+//   - universes (`kind="function-contract"` member names)
+//   - bridge_source_symbols (`call:` / `method:` identities)
+// Fold path: source_files → functions → call_sites →
+//   (assertions → facts | universe | bridge_source_symbol).
 //
 // Gate B -- scan/seek coherence: for every level, `plural()[i]` and
 // `singular(plural()[i].memento)` must return a byte-identical node.
@@ -17,6 +19,7 @@
 // existing `sugar-cli` python integration tests' convention
 // (`python_blake3_available` in `sugar-cli/tests/cli_surface.rs`).
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write as _;
 #[cfg(unix)]
@@ -161,30 +164,35 @@ fn fact_key(memento: &Value, formula: &Value) -> (String, String, String) {
     (file, canonical_string(&span), canonical_string(formula))
 }
 
-/// Extract the fact set from a whole-project `Kit::lift`'s
-/// `DomainClaim.payload` (a `Term::Const{value, ..}` carrying the RPC
-/// response's raw `ir` array verbatim -- see `kit_path/lift_plugin.rs`'s
-/// `claim_from_response_term`).
-fn facts_from_whole_project_lift(
-    kit: &Kit,
-    workspace_root: &Path,
-) -> Vec<(String, String, String)> {
+/// Whole-project `Kit::lift` payload as JSON (`DomainClaim.payload` Const).
+fn whole_project_lift_payload(kit: &Kit, workspace_root: &Path) -> Value {
     let request = json!({
         "workspace_root": workspace_root.display().to_string(),
         "source_paths": ["."],
     });
     let claim = kit.lift(request).expect("Kit::lift");
-    let value = match claim.payload {
+    match claim.payload {
         Some(libsugar::core::Term::Const { value, .. }) => value,
         other => panic!("expected Term::Const lift payload, got {other:?}"),
-    };
-    let ir = value
+    }
+}
+
+fn ir_items(payload: &Value) -> Vec<Value> {
+    payload
         .get("ir")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+fn is_bridge_identity(sym: &str) -> bool {
+    sym.starts_with("call:") || sym.starts_with("method:")
+}
+
+/// Fact set from batch `payload.ir` kind=contract inv/post + warrants.
+fn facts_from_blob(payload: &Value) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
-    for item in &ir {
+    for item in ir_items(payload) {
         if item.get("kind").and_then(Value::as_str) != Some("contract") {
             continue;
         }
@@ -207,7 +215,45 @@ fn facts_from_whole_project_lift(
     out
 }
 
-/// Extract the SAME fact set by walking the enumeration tree end to end.
+/// Universe member names from batch `kind="function-contract"` rows.
+fn universes_from_blob(payload: &Value) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for item in ir_items(payload) {
+        if item.get("kind").and_then(Value::as_str) != Some("function-contract") {
+            continue;
+        }
+        if let Some(name) = item.get("name").and_then(Value::as_str) {
+            if !name.is_empty() {
+                out.insert(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// First-class `call:` / `method:` identities from batch IR + callEdges.
+fn bridge_source_symbols_from_blob(payload: &Value) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for item in ir_items(payload) {
+        if let Some(sym) = item.get("bridgeSourceSymbol").and_then(Value::as_str) {
+            if is_bridge_identity(sym) {
+                out.insert(sym.to_string());
+            }
+        }
+    }
+    if let Some(edges) = payload.get("callEdges").and_then(Value::as_array) {
+        for edge in edges {
+            if let Some(sym) = edge.get("targetSymbol").and_then(Value::as_str) {
+                if is_bridge_identity(sym) {
+                    out.insert(sym.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Fact set by walking the enumeration tree end to end.
 fn facts_from_tree(kit: &Kit, workspace_root: &Path) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     for file in kit.source_files(workspace_root).expect("source_files") {
@@ -228,6 +274,89 @@ fn facts_from_tree(kit: &Kit, workspace_root: &Path) -> Vec<(String, String, Str
     out
 }
 
+/// Universe member names folded from successful `CallSite::universe()` links.
+/// Uses stamped `SourceMemento.function_name` (batch contract `name`).
+fn universes_from_tree(kit: &Kit, workspace_root: &Path) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for file in kit.source_files(workspace_root).expect("source_files") {
+        for function in file.functions().expect("functions") {
+            for call_site in function.call_sites().expect("call_sites") {
+                if let Ok(Some(universe)) = call_site.universe() {
+                    let name = universe.source_memento().function_name.clone();
+                    if !name.is_empty() {
+                        out.insert(name);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// First-class bridge identities folded from `CallSite.bridge_source_symbol`.
+fn bridge_source_symbols_from_tree(kit: &Kit, workspace_root: &Path) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for file in kit.source_files(workspace_root).expect("source_files") {
+        for function in file.functions().expect("functions") {
+            for call_site in function.call_sites().expect("call_sites") {
+                if let Some(sym) = call_site.bridge_source_symbol() {
+                    if is_bridge_identity(sym) {
+                        out.insert(sym.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Campaign A floor: fold of enumerate levels equals batch IR for
+/// facts + universes + bridge_source_symbols (not inv/post only).
+fn assert_fold_matches_blob(kit: &Kit, project: &Path) {
+    let payload = whole_project_lift_payload(kit, project);
+
+    let facts_blob = facts_from_blob(&payload);
+    let facts_fold = facts_from_tree(kit, project);
+    assert!(
+        !facts_blob.is_empty(),
+        "fixture must produce at least one fact via Kit::lift"
+    );
+    assert_eq!(
+        facts_fold, facts_blob,
+        "fold facts must equal blob facts (fold == blob)"
+    );
+
+    let universes_blob = universes_from_blob(&payload);
+    let universes_fold = universes_from_tree(kit, project);
+    assert!(
+        !universes_blob.is_empty(),
+        "fixture must produce at least one function-contract / universe via Kit::lift"
+    );
+    assert_eq!(
+        universes_fold, universes_blob,
+        "fold universes must equal blob function-contract names (fold == blob). \
+         fold={universes_fold:?} blob={universes_blob:?}"
+    );
+
+    let idents_blob = bridge_source_symbols_from_blob(&payload);
+    let idents_fold = bridge_source_symbols_from_tree(kit, project);
+    assert!(
+        !idents_blob.is_empty(),
+        "fixture must produce at least one call:/method: bridge symbol via Kit::lift"
+    );
+    assert_eq!(
+        idents_fold, idents_blob,
+        "fold bridge_source_symbols must equal blob identities (fold == blob). \
+         fold={idents_fold:?} blob={idents_blob:?}"
+    );
+
+    eprintln!(
+        "fold==blob ok: facts={} universes={universes_fold:?} \
+         bridge_source_symbols={idents_fold:?}",
+        facts_fold.len()
+    );
+}
+
 #[test]
 fn enumeration_fold_matches_whole_project_lift() {
     if !python_blake3_available() {
@@ -236,20 +365,21 @@ fn enumeration_fold_matches_whole_project_lift() {
     }
     let dir = tempfile::tempdir().expect("tempdir");
     let project = stage_fixture(dir.path());
-    let manifest = python_kit_manifest(dir.path());
-    let kit = Kit::rendezvous(manifest).expect("rendezvous with python kit");
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+    assert_fold_matches_blob(&kit, &project);
+}
 
-    let from_lift = facts_from_whole_project_lift(&kit, &project);
-    let from_tree = facts_from_tree(&kit, &project);
-
-    assert!(
-        !from_lift.is_empty(),
-        "fixture must produce at least one fact via Kit::lift"
-    );
-    assert_eq!(
-        from_tree, from_lift,
-        "enumeration tree's fact set must equal Kit::lift's fact set (fold == blob)"
-    );
+/// Same floor under the `enumerate_` filter prefix used by Campaign A CI.
+#[test]
+fn enumerate_fold_matches_batch_facts_universes_identities() {
+    if !python_blake3_available() {
+        eprintln!("python3/blake3 not on PATH: skipping enumeration conformance test");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+    assert_fold_matches_blob(&kit, &project);
 }
 
 #[test]

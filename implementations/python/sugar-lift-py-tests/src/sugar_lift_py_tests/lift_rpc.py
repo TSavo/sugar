@@ -596,16 +596,22 @@ def _memento_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
 
 def _lift_file_for_enumeration(
     workspace_root: str, root: Path, file_rel: str
-) -> List[Dict[str, Any]]:
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Lift ONE file server-side (Part 6 Phase 3: "it is ACCEPTABLE ... for
     the first cut to lift the WHOLE file ... and slice/serve the requested
     level from that one parse" -- file-granular laziness, not per-node wire
-    laziness). Returns `payload.ir` (`BodyUniverseDto` rows, already through
-    `to_rpc_value`): `kind="function-contract"` entries ARE the function
-    level; `kind="contract"` entries are the per-call-site claims (this
-    kit's construction collapses call-site and assertion into ONE record --
-    see the module note by `_handle_enumerate`), each carrying its own
-    `sourceWarrants[0]` memento and `post`/`inv` FOL.
+    laziness).
+
+    Returns `(ir_items, call_edges)` already through `to_rpc_value`:
+    - `ir`: `kind="function-contract"` = function/universe rows;
+      `kind="contract"` = claim rows that already bundle locus + formula
+      (call-site ≡ assertion is **factory truth**, not a protocol fold —
+      see protocol Section 4 / `_handle_enumerate`)
+    - `callEdges`: batch join keys with first-class `targetSymbol`
+      (`call:len`, `method:count`) — sliced onto call_sites audit as
+      `bridgeSourceSymbol` (do not re-invent prefixes from FOL alone;
+      method calls are `method:` on the edge even when FOL uses `call:`).
+      Edges are join metadata, not a second site-record set.
     """
     full_path = (root / file_rel).resolve()
     source = full_path.read_text(encoding="utf-8")
@@ -613,9 +619,11 @@ def _lift_file_for_enumeration(
         result = lift_source(str(full_path), source, memento_file=file_rel)
     except ValueError as exc:
         if "no source sites" in str(exc):
-            return []
+            return [], []
         raise
-    return [to_rpc_value(item) for item in result.payload.ir]
+    ir_items = [to_rpc_value(item) for item in result.payload.ir]
+    call_edges = [to_rpc_value(edge) for edge in result.payload.call_edges]
+    return ir_items, call_edges
 
 
 def _item_memento(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -639,6 +647,164 @@ def _find_item_by_memento(
         if memento is not None and _memento_matches(memento, target):
             return item
     return None
+
+
+def _first_bridge_ctor_name(node: Any) -> Optional[str]:
+    """First `call:` / `method:` ctor head in a FOL term tree (depth-first)."""
+    if not isinstance(node, dict):
+        return None
+    name = node.get("name")
+    if (
+        node.get("kind") == "ctor"
+        and isinstance(name, str)
+        and (name.startswith("call:") or name.startswith("method:"))
+    ):
+        return name
+    for value in node.values():
+        if isinstance(value, dict):
+            found = _first_bridge_ctor_name(value)
+            if found is not None:
+                return found
+        elif isinstance(value, list):
+            for child in value:
+                found = _first_bridge_ctor_name(child)
+                if found is not None:
+                    return found
+    return None
+
+
+def _contract_bridge_identity(item: Dict[str, Any]) -> Optional[str]:
+    """Callee identity for a `kind=contract` assertion: FOL ctor head, else name.
+
+    Used to join a call-site record to a `function-contract` universe via
+    `bridgeSourceSymbol` (e.g. `call:add` → `mathy::add::callable`).
+    Returns the `call:` / `method:` form with prefix preserved — never a bare
+    name when a first-class bridge identity is available.
+    """
+    formula = _item_fact_formula(item)
+    if isinstance(formula, dict):
+        # Prefer the left-hand side of an equality assertion (the call).
+        if formula.get("kind") == "atomic" and formula.get("name") == "=":
+            args = formula.get("args")
+            if isinstance(args, list) and args:
+                found = _first_bridge_ctor_name(args[0])
+                if found is not None:
+                    return found
+        found = _first_bridge_ctor_name(formula)
+        if found is not None:
+            return found
+    raw_name = item.get("name")
+    if isinstance(raw_name, str):
+        for prefix in ("call:", "method:"):
+            idx = raw_name.find(prefix)
+            if idx < 0:
+                continue
+            rest = raw_name[idx:]
+            end = 0
+            while end < len(rest) and (
+                rest[end].isalnum() or rest[end] in (":", "_")
+            ):
+                end += 1
+            if end > len(prefix):
+                return rest[:end]
+    return None
+
+
+def _edge_target_symbol_for_contract(
+    item: Dict[str, Any], call_edges: Optional[List[Dict[str, Any]]]
+) -> Optional[str]:
+    """Batch `callEdges.targetSymbol` for this contract, if any.
+
+    Joined by `sourceContract == item.name`. This is the first-class
+    free-call vs method-call identity (`call:len` vs `method:count`);
+    FOL ctor heads alone can say `call:count` for a method site.
+    """
+    if not call_edges:
+        return None
+    name = item.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    for edge in call_edges:
+        if not isinstance(edge, dict):
+            continue
+        source = edge.get("sourceContract") or edge.get("source_contract")
+        if source != name:
+            continue
+        target = edge.get("targetSymbol") or edge.get("target_symbol")
+        if isinstance(target, str) and (
+            target.startswith("call:") or target.startswith("method:")
+        ):
+            return target
+    return None
+
+
+def _call_site_node_audit(
+    item: Dict[str, Any],
+    call_edges: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Enumerate audit for `call_sites` / `assertions` nodes.
+
+    Stamps first-class `bridgeSourceSymbol` (`call:len`, `method:count`, …)
+    onto the wire audit so the tree client can decode
+    `CallSite.bridge_source_symbol` without re-mining FOL. Precedence:
+    1. batch `callEdges.targetSymbol` for this contract (authoritative
+       method:/call: split — do not invent prefixes)
+    2. IR-stamped `bridgeSourceSymbol` already in call:/method: form
+    3. FOL / name via `_contract_bridge_identity`
+    The prefix is never normalized away. `name` rides along from the IR item.
+    """
+    audit = dict(item)
+    edge_sym = _edge_target_symbol_for_contract(item, call_edges)
+    if edge_sym is not None:
+        audit["bridgeSourceSymbol"] = edge_sym
+        return audit
+    existing = audit.get("bridgeSourceSymbol")
+    if isinstance(existing, str) and (
+        existing.startswith("call:") or existing.startswith("method:")
+    ):
+        return audit
+    bridge = _contract_bridge_identity(item)
+    if bridge is not None:
+        audit["bridgeSourceSymbol"] = bridge
+    return audit
+
+
+def _universe_node_from_item(
+    item: Dict[str, Any], file_rel: str
+) -> Dict[str, Any]:
+    """Build a `level=universe` wire node from a function-contract IR row.
+
+    Stamps the batch `name` (e.g. `len::builtin-universe`) onto the memento's
+    function_name fields so client-side collectors that only see
+    `SourceMemento::to_json()` still recover the universe member key.
+    """
+    name = item.get("name") if isinstance(item.get("name"), str) else ""
+    base = _item_memento(item)
+    if base is None:
+        memento: Dict[str, Any] = {
+            "kind": "source-memento",
+            "file": file_rel,
+            "function_name": name,
+            "source_function_name": name,
+            "sourceFunctionName": name,
+            "span": None,
+            "param_names": [],
+            "source_cid": None,
+            "template_cid": None,
+        }
+    else:
+        memento = dict(base)
+    if name:
+        # Batch universe member key — must survive decode_memento → to_json.
+        memento["function_name"] = name
+        memento["source_function_name"] = name
+        memento["sourceFunctionName"] = name
+        memento["name"] = name
+    return {
+        "memento": memento,
+        "audit": item,
+        "payload": _item_fact_formula(item),
+    }
 
 
 def _send_enumerate_result(
@@ -684,7 +850,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             _send_enumerate_result(msg_id, nodes, [])
             return
 
-        if level in ("functions", "call_sites", "assertions", "facts"):
+        if level in ("functions", "call_sites", "assertions", "facts", "universe"):
             file_rel = _enumerate_file_of(at)
             if file_rel is None:
                 _send_enumerate_result(
@@ -730,7 +896,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     [{"memento": at, "reason": f"no such file: {file_rel}"}],
                 )
                 return
-            ir_items = _lift_file_for_enumeration(workspace_root, root, file_rel)
+            ir_items, call_edges = _lift_file_for_enumeration(
+                workspace_root, root, file_rel
+            )
 
             if level == "functions":
                 # A function gets a node either because it OWNS a
@@ -834,14 +1002,23 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             continue
                     if seek and at is not None and not _memento_matches(memento, at):
                         continue
-                    built.append({"memento": memento, "audit": item, "payload": None})
+                    # First-class bridge identity on the wire audit
+                    # (`call:` / `method:` — prefix preserved from callEdges).
+                    built.append(
+                        {
+                            "memento": memento,
+                            "audit": _call_site_node_audit(item, call_edges),
+                            "payload": None,
+                        }
+                    )
                 _send_enumerate_result(msg_id, built, [])
                 return
 
             if level == "assertions":
-                # Seek-only: a call site's own contract item IS its
-                # assertion (1:1 in this cut's granularity -- see tree.rs
-                # module doc's CLAIM-side note).
+                # Seek-only: a call site's own kind=contract item IS its
+                # assertion. 1:1 is factory truth (batch IR has no dual
+                # site/claim records) — protocol Section 4, not a collapse.
+                # Same bridgeSourceSymbol stamp as call_sites.
                 item = _find_item_by_memento(ir_items, at)
                 if item is None:
                     _send_enumerate_result(
@@ -855,7 +1032,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     [
                         {
                             "memento": _item_memento(item),
-                            "audit": item,
+                            "audit": _call_site_node_audit(item, call_edges),
                             "payload": None,
                         }
                     ],
@@ -896,6 +1073,100 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     ],
                     [],
                 )
+                return
+
+            if level == "universe":
+                # Body/operator universes are `kind="function-contract"` rows
+                # (including `len::builtin-universe`). CallSite::universe seeks
+                # the universe linked to a call-site memento via
+                # bridgeSourceSymbol / FOL callee identity. File-level scan
+                # (`seek=false`) lists every universe in the file.
+                universe_items = [
+                    item
+                    for item in ir_items
+                    if isinstance(item, dict)
+                    and item.get("kind") == "function-contract"
+                ]
+
+                if seek and at is not None:
+                    # Call-site linkage path first: match a kind=contract
+                    # assertion, then join on bridge identity.
+                    #
+                    # Dual-candidate (Task 9 / Important residual): try
+                    # callEdges BSS first (`method:count`) and FOL
+                    # `_contract_bridge_identity` second (`call:count`). A
+                    # method site whose FOL ctor says `call:count` must still
+                    # join a universe stamped `method:count` (and vice versa).
+                    call_item = None
+                    for item in ir_items:
+                        if item.get("kind") != "contract":
+                            continue
+                        memento = _item_memento(item)
+                        if memento is not None and _memento_matches(memento, at):
+                            call_item = item
+                            break
+                    if call_item is not None:
+                        candidates: List[str] = []
+                        edge_sym = _edge_target_symbol_for_contract(
+                            call_item, call_edges
+                        )
+                        if edge_sym is not None:
+                            candidates.append(edge_sym)
+                        fol_sym = _contract_bridge_identity(call_item)
+                        if fol_sym is not None and fol_sym not in candidates:
+                            candidates.append(fol_sym)
+                        matched = None
+                        matched_bridge = None
+                        for bridge in candidates:
+                            for universe_item in universe_items:
+                                if universe_item.get("bridgeSourceSymbol") == bridge:
+                                    matched = universe_item
+                                    matched_bridge = bridge
+                                    break
+                            if matched is not None:
+                                break
+                        if matched is not None:
+                            _send_enumerate_result(
+                                msg_id,
+                                [_universe_node_from_item(matched, file_rel)],
+                                [],
+                            )
+                            return
+                        callee = (
+                            matched_bridge
+                            if matched_bridge
+                            else (candidates[0] if candidates else "unknown")
+                        )
+                        _send_enumerate_result(
+                            msg_id,
+                            [],
+                            [
+                                {
+                                    "memento": at,
+                                    "reason": (
+                                        f"no universe sugar for callee {callee}"
+                                    ),
+                                }
+                            ],
+                        )
+                        return
+
+                    # Direct universe seek (scan/seek coherence on a universe
+                    # node's own memento, including the stamped name).
+                    nodes = []
+                    for universe_item in universe_items:
+                        node = _universe_node_from_item(universe_item, file_rel)
+                        if _memento_matches(node["memento"], at):
+                            nodes.append(node)
+                    _send_enumerate_result(msg_id, nodes, [])
+                    return
+
+                # Scan: every function-contract universe in the file.
+                nodes = [
+                    _universe_node_from_item(universe_item, file_rel)
+                    for universe_item in universe_items
+                ]
+                _send_enumerate_result(msg_id, nodes, [])
                 return
 
         _send(

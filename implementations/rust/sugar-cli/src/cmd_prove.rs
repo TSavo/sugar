@@ -22,9 +22,9 @@ use sugar_verifier::{
     LegacyZ3Fallback, MementoCid, PlanArtifactInput, ProofRunArtifact, RunnerConfig,
 };
 
-use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
 #[cfg(test)]
 use crate::component_plan::PlannedLiftManifest;
+use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
 use crate::project_config::{read_project_config, ProjectConfig, WitnessEntry};
 use crate::report_fmt;
 use crate::report_witness::{
@@ -230,15 +230,78 @@ pub(crate) fn build_prove_artifact_with_options(
         &component_plan,
         &component_plan::VerifierComponentRegistry,
     );
-    // The ONE production solve door (sugar#3859): `solve_project` runs the
-    // real `Runner::run_with_proof_run` pipeline as beat 2 and wraps it in a
-    // typed view. We extract `.artifact` for behavior parity -- report bytes
-    // and the exit-code path are unchanged; the new `link_errors` /
-    // `outcome_class` dimensions are available but not consumed here (link
-    // errors ANNOTATE, they never gate; see `solve_project`'s doc).
+
+    // Task 9 (#3809): when a lift kit can rendezvous for the project surface,
+    // prove through the fold path (`prove_from_kit`) instead of requiring a
+    // prior `sugar mint` + disk `.proof` load. Mint remains the door for
+    // sealed `.proof` publish; local project prove is fold + discharge.
+    //
+    // Fail-loud (PR #3897 High): if a kit **did** rendezvous, a fold/solve
+    // failure is the prove result — never silent-fallback to disk. Disk
+    // `solve_project` is only for projects with no planned lift kit (or
+    // rendezvous skipped), where the fold path was never the chosen face.
+    if let Some(kit) = try_rendezvous_prove_kit(project_root, &component_plan) {
+        let speaker = sugar_verifier::Speaker::consumer("sugar-cli:prove");
+        return sugar_compiler::orchestrate::prove_from_kit(
+            &kit,
+            project_root,
+            speaker,
+            cfg,
+            compilers,
+        )
+        .map(|proven| proven.artifact)
+        .map_err(|error| error.to_string());
+    }
+
+    // Disk-load face (sugar#3859): no lift kit for this project — prove over
+    // minted `.proof` files. Link errors ANNOTATE, they never gate.
     sugar_compiler::orchestrate::solve_project(cfg, compilers)
         .map(|proven| proven.artifact)
         .map_err(|error| error.to_string())
+}
+
+/// Build a live `Kit` from the first planned lift manifest, when present.
+/// Returns `None` when the plan has no lift surface or rendezvous fails —
+/// caller falls back to disk `.proof` prove.
+fn try_rendezvous_prove_kit(
+    project_root: &Path,
+    component_plan: &ComponentPlan,
+) -> Option<sugar_compiler::kit::Kit> {
+    use sugar_compiler::kit::LiftManifest;
+
+    let planned = component_plan.lift_manifests.first()?;
+    if planned.command.is_empty() {
+        return None;
+    }
+    let working_dir =
+        crate::lift_plugin::resolved_working_dir_for(project_root, planned).map(|dir| {
+            // Kit::rendezvous requires absolute working_dir.
+            dir.canonicalize().unwrap_or(dir)
+        });
+    let dialect = match planned.surface.as_str() {
+        "rust" => libsugar::core::Dialect::Rust,
+        "c" => libsugar::core::Dialect::C,
+        "python" => libsugar::core::Dialect::Other("python".into()),
+        other => libsugar::core::Dialect::Other(other.to_string()),
+    };
+    let manifest = LiftManifest {
+        surface: planned.surface.clone(),
+        name: planned.name.clone(),
+        dialect,
+        command: planned.command.clone(),
+        working_dir,
+        method: planned.method.clone(),
+    };
+    match sugar_compiler::kit::Kit::rendezvous(manifest) {
+        Ok(kit) => Some(kit),
+        Err(error) => {
+            eprintln!(
+                "{}: lift kit rendezvous for prove skipped ({error})",
+                "warning".yellow().bold()
+            );
+            None
+        }
+    }
 }
 
 fn check_component_plan_errors(component_plan: &ComponentPlan) -> Result<(), String> {
