@@ -2918,6 +2918,16 @@ def _construct_callsite_from_factory_term(
                     check_agreement=False,
                 )
                 return
+            if isinstance(floor, OpaqueOpCallsite) and floor.computed is None:
+                # Opaque body return (hash, str/repr of symbolic arg, …).
+                # Universe post already states `out == call:<op>(...)` via the
+                # body walk; there is no value to emit as a Derived companion
+                # and no computed scalar for `A() == N`. Emitting
+                # `A() == call:<op>(...)` as a projected fact would same-name
+                # coalesce with the stated assertion key without adding a
+                # refutation twin — leave the coordinate to the universe + the
+                # sworn assertion (shared euf key). Never fabricate a value.
+                return
             if isinstance(floor, DictLiteralValue):
                 immediate = emit_immediate_fallback()
                 if isinstance(immediate, _BridgeProjectionRefused):
@@ -3291,10 +3301,10 @@ def _function_universe(
             zip(body_steps, body_mementos)
         )
     ]
-    # Option A (PR #3900): body-walker return floors that are counted
-    # OpaqueOpCallsites also mint Derived companion facts
-    # (`call:len(...) == N`) — separate from the callable post so agreement
-    # still models `out == call:len(...)` while the solver is grounded.
+    # Option A (PR #3900 / #3906): body-walker OpaqueOpCallsite returns mint
+    # Derived companions only when counted (`call:len(...) == N`). Opaque
+    # returns (`computed is None`) yield [] from _opaque_op_companion_facts —
+    # the universe post alone carries `out == call:<op>(...)`.
     companion_lifts: list[LiftResult] = []
     for opaque in getattr(universe_sugar, "opaque_returns", ()):
         companion_lifts.extend(

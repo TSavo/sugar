@@ -60,6 +60,29 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(int(self.value)))
+        if operation.name == "__hash__" and not operation.arguments:
+            from sugar_lift_py_tests.outcome import Complete
+
+            # Non-folding pure builtin: marker only → call:hash, no companion.
+            # Never fabricate Python's hash() of a number.
+            return Complete(self)
+        if operation.name == "__repr__" and not operation.arguments:
+            from sugar_lift_py_tests.floor.string_value import StringValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(StringValue(repr(self.value)))
+        if operation.name == "__bytes__" and not operation.arguments:
+            from sugar_lift_py_tests.effect import RuntimeEffect
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            # int/float have no __bytes__; keep typed red (don't fabricate).
+            return Incomplete(
+                RuntimeEffect(
+                    "numeric bytes conversion runtime boundary: "
+                    f"TermValue.__bytes__ is not defined for {type(self.value).__name__}; "
+                    f"blame={operation.blame}"
+                )
+            )
         _call_method_gap(
             owner=operation.owner,
             blame=operation.blame,

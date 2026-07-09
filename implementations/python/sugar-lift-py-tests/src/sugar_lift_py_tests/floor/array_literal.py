@@ -70,6 +70,12 @@ class ArrayLiteral(FloorValue):
             # Bare folded count; BuiltinCallSugar's one wrap re-attaches the
             # `call:len(...)` coordinate with this value as `computed`.
             return Complete(TermValue(len(self.items)))
+        if operation.name == "__hash__" and not operation.arguments:
+            from sugar_lift_py_tests.outcome import Complete
+
+            # Non-folding pure builtin: marker only. BuiltinCallSugar wrap →
+            # call:hash(...), computed=None (never fabricate a Python hash).
+            return Complete(self)
         _call_method_gap(
             owner=operation.owner,
             blame=operation.blame,

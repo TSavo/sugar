@@ -33,6 +33,11 @@ class TupleLiteralValue(FloorValue):
 
             # Bare folded count; BuiltinCallSugar wrap re-attaches call:len.
             return Complete(TermValue(len(self.items)))
+        if operation.name == "__hash__" and not operation.arguments:
+            from sugar_lift_py_tests.outcome import Complete
+
+            # Non-folding pure builtin: marker only → call:hash, no companion.
+            return Complete(self)
         _call_method_gap(
             owner=operation.owner,
             blame=operation.blame,
