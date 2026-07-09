@@ -604,12 +604,14 @@ def _lift_file_for_enumeration(
 
     Returns `(ir_items, call_edges)` already through `to_rpc_value`:
     - `ir`: `kind="function-contract"` = function/universe rows;
-      `kind="contract"` = per-call-site claims (call-site ≡ assertion in
-      this kit — see `_handle_enumerate`)
+      `kind="contract"` = claim rows that already bundle locus + formula
+      (call-site ≡ assertion is **factory truth**, not a protocol fold —
+      see protocol Section 4 / `_handle_enumerate`)
     - `callEdges`: batch join keys with first-class `targetSymbol`
       (`call:len`, `method:count`) — sliced onto call_sites audit as
       `bridgeSourceSymbol` (do not re-invent prefixes from FOL alone;
       method calls are `method:` on the edge even when FOL uses `call:`).
+      Edges are join metadata, not a second site-record set.
     """
     full_path = (root / file_rel).resolve()
     source = full_path.read_text(encoding="utf-8")
@@ -1013,10 +1015,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 return
 
             if level == "assertions":
-                # Seek-only: a call site's own contract item IS its
-                # assertion (1:1 in this cut's granularity -- see tree.rs
-                # module doc's CLAIM-side note). Same bridgeSourceSymbol
-                # stamp as call_sites so claim-side nodes share identity.
+                # Seek-only: a call site's own kind=contract item IS its
+                # assertion. 1:1 is factory truth (batch IR has no dual
+                # site/claim records) — protocol Section 4, not a collapse.
+                # Same bridgeSourceSymbol stamp as call_sites.
                 item = _find_item_by_memento(ir_items, at)
                 if item is None:
                     _send_enumerate_result(

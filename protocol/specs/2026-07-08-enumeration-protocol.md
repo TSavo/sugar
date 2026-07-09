@@ -47,8 +47,9 @@ level to the tree means adding a `level` value here, not a new RPC method.
 - `seek` disambiguates scan-vs-seek at levels where the SAME `level` value
   is used both ways (`source_files`, `functions`, `call_sites` are
   well-defined as scans; `assertions` and `facts` are always answered
-  seek-style in this landing, since a call site's own contract item IS its
-  one assertion in the granularity landed -- see Section 4).
+  seek-style here, since factory IR makes a call site's own `kind="contract"`
+  item its one assertion — **factory truth**, not a protocol collapse; see
+  Section 4).
 
 ## Section 2. Response
 
@@ -94,7 +95,7 @@ level to the tree means adding a `level` value here, not a new RPC method.
 | `source_files` | `null` (whole workspace) | a file-only memento | `_iter_python_files` |
 | `functions` | a `source_files` memento | a function's own memento | `payload.ir` entries (`BodyUniverseDto`), `kind="function-contract"`, plus synthesized nodes for functions that merely enclose a `kind="contract"` assertion with no contract of their own (Section 4) |
 | `call_sites` | a `functions` memento | a call site's own memento | `payload.ir` entries, `kind="contract"`, scoped by `source_function_name`. Wire audit stamps first-class `bridgeSourceSymbol` (`call:` / `method:` form, prefix preserved) decoded client-side as `CallSite.bridge_source_symbol` |
-| `assertions` | -- (seek only) | a call site's own memento | same `kind="contract"` item (1:1 with its call site -- Section 4); same `bridgeSourceSymbol` stamp as `call_sites` |
+| `assertions` | -- (seek only) | a call site's own memento | same `kind="contract"` item (1:1 with its call site — **factory truth**, Section 4); same `bridgeSourceSymbol` stamp as `call_sites` |
 | `facts` | -- (seek only) | an assertion's own memento | the item's `inv` (else `post`) field, as the FOL payload |
 | `universe` | a file memento (`seek=false`: every universe in the file) | a call site's own memento (`seek=true`: the universe linked to that callsite) or a universe node's own memento | `payload.ir` entries, `kind="function-contract"` (body universes + operator builtin universes such as `len::builtin-universe`). Seek from a call site joins via `bridgeSourceSymbol` / FOL `call:`·`method:` ctor identity; missing link is a gap (`no universe sugar for callee <name>`). Node mementos stamp the batch `name` onto `function_name` so member keys survive `SourceMemento` round-trip. |
 
@@ -108,16 +109,41 @@ ONE target file server-side (`lift_source`) and slices the in-memory
 result. `source_files` alone is genuinely workspace-scanned without a
 per-file lift.
 
-Two further simplifications, both flagged rather than silently narrowed:
+Further facts, flagged rather than silently narrowed:
 
-1. **Call site == assertion, 1:1.** The shipping python kit's
-   `payload.ir` has no distinct "call site" node separate from the
-   assertion it carries (`kind="contract"` entries already bundle locus +
-   claim formula in one record). `CallSite::assertions()` therefore always
-   returns exactly the one `Assertion` built from the same record as its
-   `CallSite`. A true multi-assertion-per-call-site split (e.g. more than
-   one claim about the same call expression) is not representable by this
-   landing; it needs a kit-side change, not a protocol change.
+1. **Call site ≡ assertion is factory truth, not a protocol collapse.**
+   Measured on shipping python-kit batch IR (`Kit::lift` / `lift_source`
+   `payload.ir` + `callEdges`) for the enumerate fixture and realistic
+   consumer samples (numpy/pandas demos, synthetic multi-assert sources):
+
+   - `payload.ir` kinds in play are only `kind="contract"` (claim rows)
+     and `kind="function-contract"` (body/operator universes). There is
+     **no** distinct call-site-only IR kind and no dual record pair
+     (site locus vs claim row) to split across `level=call_sites` and
+     `level=assertions`.
+   - Each `kind="contract"` row already bundles source locus (memento
+     `span` / warrants) + claim formula (`inv`/`post`) in **one** record.
+     Distinct assert statements get distinct spans; multi-assert about an
+     SSA-bound call (e.g. `r = np.add(2,3); assert r==5; assert r==6`)
+     still emits **one contract per assert locus**, not N claims under a
+     shared site node. Same contract `name` may repeat when two assert
+     spans name the same EUF form; spans still differ.
+   - `callEdges` are join metadata (`sourceContract` → `targetSymbol`
+     `call:`/`method:`), not a second site record set. They hang off the
+     contract name; they do not introduce a parallel site hierarchy.
+
+   Therefore `CallSite::assertions()` returns exactly the one `Assertion`
+   built from the same `kind="contract"` record as its `CallSite`, and
+   both levels share memento + `bridgeSourceSymbol`. This is **not** the
+   protocol folding two factory levels into one: the factory does not
+   emit two levels. Inventing dual records on the wire without a factory
+   dual would be a lie. A true multi-assertion-per-call-site tree
+   (call_sites lists loci; assertions lists claim rows under a site
+   memento) requires a **kit/factory** change that emits distinct site vs
+   claim records (or multi-claim per span); only then does the protocol
+   split those levels. Measurement receipt:
+   `sugar-compiler/tests/enumerate_completeness.rs::enumerate_callsite_assertion_is_factory_one_to_one`.
+
 2. **`universe` is function-contract IR, linked by bridge identity.**
    `CallSite::universe()` issues `sugar.enumerate` at `level=universe`
    with the call site's memento and `seek=true`. The kit finds the

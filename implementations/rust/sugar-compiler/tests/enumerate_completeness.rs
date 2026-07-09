@@ -479,3 +479,148 @@ fn enumerate_callsite_identity_carries_bridge_symbol() {
          decode CallSite.bridge_source_symbol (Campaign A Task 2)."
     );
 }
+
+/// Task 3 measurement receipt: call_site ≡ assertion is **factory truth**.
+///
+/// Shipping batch IR has no dual records (distinct site vs claim kinds, or
+/// multiple `kind=contract` rows sharing one span). The protocol therefore
+/// must not invent a split. If the factory later emits duals, this test
+/// reds and Section 4's "factory truth" claim must be re-opened for a real
+/// level split — not silently collapsed.
+#[test]
+fn enumerate_callsite_assertion_is_factory_one_to_one() {
+    if !python_blake3_available() {
+        eprintln!("python3/blake3 not on PATH: skipping enumerate completeness test");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+
+    let payload = whole_project_lift_payload(&kit, &project);
+    let items = ir_items(&payload);
+
+    // --- Batch IR: kinds and span uniqueness ---
+    let mut kinds: BTreeSet<String> = BTreeSet::new();
+    let mut contract_count = 0usize;
+    let mut spans: BTreeSet<String> = BTreeSet::new();
+    let mut span_collisions: Vec<String> = Vec::new();
+    for item in &items {
+        let kind = item
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>")
+            .to_string();
+        kinds.insert(kind.clone());
+        if kind != "contract" {
+            continue;
+        }
+        contract_count += 1;
+        let span_key = contract_span_key(item);
+        if !spans.insert(span_key.clone()) {
+            span_collisions.push(span_key);
+        }
+    }
+    eprintln!(
+        "factory_one_to_one batch: kinds={kinds:?} contracts={contract_count} \
+         unique_spans={} collisions={span_collisions:?}",
+        spans.len()
+    );
+    assert!(
+        contract_count > 0,
+        "fixture must emit at least one kind=contract row; ir kinds={kinds:?}"
+    );
+    // Only claim + universe kinds — no call-site-only dual record kind.
+    for kind in &kinds {
+        assert!(
+            kind == "contract" || kind == "function-contract",
+            "batch IR introduced kind={kind:?} outside {{contract, function-contract}}. \
+             If this is a distinct call-site record, reopen Task 3 / protocol Section 4 \
+             and split call_sites vs assertions for real duals — do not invent a fold. \
+             kinds={kinds:?}"
+        );
+    }
+    assert!(
+        span_collisions.is_empty(),
+        "batch IR has multiple kind=contract rows on the same span (multi-claim per locus). \
+         That is the dual-record signal for splitting assertions under a site memento. \
+         collisions={span_collisions:?}. Reopen protocol Section 4 level split."
+    );
+
+    // callEdges are join metadata hanging off contract names, not a site hierarchy.
+    if let Some(edges) = payload.get("callEdges").and_then(Value::as_array) {
+        let contract_names: BTreeSet<String> = items
+            .iter()
+            .filter(|i| i.get("kind").and_then(Value::as_str) == Some("contract"))
+            .filter_map(|i| i.get("name").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        for edge in edges {
+            if let Some(src) = edge.get("sourceContract").and_then(Value::as_str) {
+                assert!(
+                    contract_names.contains(src),
+                    "callEdge sourceContract={src:?} is not a kind=contract name; \
+                     edges must join off assertion contracts, not invent a parallel site set. \
+                     contract_names={contract_names:?}"
+                );
+            }
+        }
+    }
+
+    // --- Tree: every call_site has exactly one assertion; same memento ---
+    let mut tree_sites = 0usize;
+    for file in kit.source_files(&project).expect("source_files") {
+        for function in file.functions().expect("functions") {
+            for call_site in function.call_sites().expect("call_sites") {
+                tree_sites += 1;
+                let assertions = call_site.assertions().expect("assertions");
+                assert_eq!(
+                    assertions.len(),
+                    1,
+                    "factory truth: CallSite::assertions() must be 1:1 with the site \
+                     (same kind=contract record). got {} assertions for memento={:?}. \
+                     If batch now has multi-claim per site, split levels per Section 4.",
+                    assertions.len(),
+                    call_site.source_memento().to_json()
+                );
+                let assertion = &assertions[0];
+                assert_eq!(
+                    assertion.source_memento().to_json(),
+                    call_site.source_memento().to_json(),
+                    "call_site and its sole assertion must share the same memento \
+                     (one factory record). site={:?} assertion={:?}",
+                    call_site.source_memento().to_json(),
+                    assertion.source_memento().to_json()
+                );
+            }
+        }
+    }
+    assert_eq!(
+        tree_sites, contract_count,
+        "tree call_sites count must equal batch kind=contract count \
+         (each contract is both site and assertion). tree={tree_sites} batch={contract_count}"
+    );
+    eprintln!(
+        "factory_one_to_one tree: call_sites={tree_sites} each has exactly 1 assertion; \
+         R_dual_records=0 (factory truth receipt for protocol Section 4)"
+    );
+}
+
+/// Stable span key from a kind=contract item's sourceWarrants[0].span.
+/// Falls back to the whole warrant object when span is absent so uniqueness
+/// still measures "same locus record" rather than inventing line numbers.
+fn contract_span_key(item: &Value) -> String {
+    let warrant = item
+        .get("sourceWarrants")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first());
+    if let Some(w) = warrant {
+        if let Some(span) = w.get("span") {
+            return span.to_string();
+        }
+        return format!("warrant:{}", w);
+    }
+    format!(
+        "name:{}",
+        item.get("name").and_then(Value::as_str).unwrap_or("?")
+    )
+}

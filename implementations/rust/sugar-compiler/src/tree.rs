@@ -767,10 +767,14 @@ impl Function {
 }
 
 impl CallSite {
-    /// Claim side: the assertions made about this call's result. In the
-    /// granularity landed this pass, a call site's own factory-walk row
-    /// IS its assertion (1:1) -- there is no further per-assertion split
-    /// in the kit-side audit yet; flagged, not hidden.
+    /// Claim side: the assertions made about this call's result.
+    ///
+    /// **Factory truth (not a protocol collapse):** shipping kit batch IR
+    /// has no distinct call-site record separate from the claim
+    /// (`kind="contract"` bundles locus + formula). So this returns exactly
+    /// one `Assertion` built from the same record as this `CallSite`. See
+    /// protocol Section 4 and
+    /// `enumerate_callsite_assertion_is_factory_one_to_one`.
     pub fn assertions(&self) -> Result<Vec<Assertion>, KitError> {
         let (nodes, _gaps) = enumerate_rpc(
             &self.conn,
