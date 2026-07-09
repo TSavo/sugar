@@ -44,6 +44,7 @@ class SubscriptOperation:
             ctx,
             owner=f"{self.owner} index",
         )
+        index = _unwrap_index(index)
         if isinstance(index, SliceValue):
             return _subscript_string_slice(receiver, index, self.blame)
         if isinstance(index, TermValue) and type(index.value) is int:
@@ -63,7 +64,7 @@ class SubscriptOperation:
         )
         return _subscript_sequence(
             receiver.items,
-            index,
+            _unwrap_index(index),
             owner=self.owner,
             blame=self.blame,
             observed_name="ArrayLiteral",
@@ -77,7 +78,7 @@ class SubscriptOperation:
         )
         return _subscript_sequence(
             receiver.items,
-            index,
+            _unwrap_index(index),
             owner=self.owner,
             blame=self.blame,
             observed_name="TupleLiteralValue",
@@ -108,6 +109,21 @@ class SubscriptOperation:
         )
 
 
+def _unwrap_index(index: FloorValue) -> FloorValue:
+    """Sequence indices consume the downstream value of an opaque-op coordinate.
+
+    `hash(Box())` / `len(xs)` as an index is `OpaqueOpCallsite` with a concrete
+    `computed` when the op folded; subscript needs the TermValue/BoolValue, not
+    the coordinate wrapper. Without this, body dig of
+    `[10,20,30][hash(Box())]` refuses with "concrete sequence index".
+    """
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+
+    if isinstance(index, OpaqueOpCallsite):
+        return index._downstream()
+    return index
+
+
 def _subscript_sequence(
     items: tuple[FloorValue, ...],
     index: FloorValue,
@@ -116,6 +132,7 @@ def _subscript_sequence(
     blame: str,
     observed_name: str,
 ) -> Outcome:
+    index = _unwrap_index(index)
     if isinstance(index, BoolValue):
         index = TermValue(1 if index.value else 0)
     if isinstance(index, TermValue) and type(index.value) is int:

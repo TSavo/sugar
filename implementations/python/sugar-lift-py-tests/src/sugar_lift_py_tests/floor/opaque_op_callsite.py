@@ -122,14 +122,27 @@ def wrap_builtin_operator(
     result: FloorValue,
     *,
     extra_args: tuple[FloorValue, ...] = (),
-) -> OpaqueOpCallsite:
-    """THE one wrap: pure-value builtin result → `call:<op>(args)` coordinate.
+) -> FloorValue:
+    """THE one wrap: foldable pure-value builtin result → `call:<op>(args)`.
 
-    - Already-coordinate result for the same callee is returned as-is (idempotent;
-      also covers nested `len(len(x))` produced at the floor).
-    - Concrete folded result becomes `computed` (companion ground).
-    - Symbolic / non-folding result → `computed=None` (never fabricate).
+    Partition is *foldable vs diggable/opaque*, not merely pure-value vs stateful:
+
+    - **CallSiteValue** (e.g. `hash(Box())` / `repr(Box())` after ObjectValue
+      method dispatch): diggable user-method body. Do NOT wrap — dig must still
+      see the callsite. Wrapping to ungrounded `call:hash(...)` with
+      `computed=None` is the refuse regression the witness corpus caught.
+    - **Already-coordinate** same callee: idempotent pass-through.
+    - **Concrete fold** (TermValue/StringValue/BoolValue/…): wrap with
+      `computed=result` (companion ground).
+    - **Symbolic non-fold**: wrap with `computed=None` (joinable uninterpreted
+      op like `len(x)` / `str(x)` — never fabricate a value).
     """
+    from .call_site_value import CallSiteValue
+
+    # Diggable method body (Box.__hash__, Box.__repr__, …): leave for dig.
+    # These behave like vendor attributes (sworn/dug), not foldable builtins.
+    if isinstance(result, CallSiteValue):
+        return result
     if (
         isinstance(result, OpaqueOpCallsite)
         and result.callee == callee
