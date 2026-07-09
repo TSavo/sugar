@@ -20,10 +20,10 @@
 // memento CIDs are the sealed wire currency. Fragment stays LOCAL (kit/oracle);
 // memento crosses. See [`MementoPath`] / [`SourceMementoAtPath`].
 //
-// TYPED PATH LEVELS: `CallSite`, `Assertion`, `Fact`, and `Universe` store a
-// stamped [`MementoPath`]; `Function` exposes computed `path()` /
-// `memento_at_path()` as `file[fn]`. `SourceFile` remains flat (file-only
-// path shape already exists via [`MementoPath::file`] — next step).
+// TYPED PATH LEVELS (descent complete): every navigable node exposes
+// `SourceMemento[path]`. `SourceFile` / `CallSite` / `Assertion` / `Fact` /
+// `Universe` store a stamped [`MementoPath`]; `Function` computes
+// `path()` / `memento_at_path()` as `file[fn]`. Kit entry is not a path node.
 //
 // GRANULARITY: `Function::call_sites` is span-scoped when the parent function
 // memento carries a non-degenerate span; otherwise name-scoped (degenerate
@@ -55,12 +55,14 @@ use crate::kit::{Kit, KitError};
 /// Display form: `file`, `file[fn]`, or `file[fn[leaf]]` (spans in debug).
 /// Does not replace [`SourceMemento`] content-address; it indexes the sealed
 /// memento in the typed descent
-/// `rendezvous → kit → source → functions → assertions → facts → SourceMemento[path]`.
+/// `rendezvous → source[file] → functions[file[fn]] → call_sites/assertions/facts
+/// [file[fn[leaf]]] → universe (site-stamped)`.
 ///
 /// **No deeper nesting for fact/universe:** factory truth is site ≡ assertion ≡
 /// fact (same kind=contract memento / leaf span). Universe is linked off the
 /// call site (claim-side join), not a nested leaf under assertion — its path
 /// is the owning site's path; its memento is the function-contract seal.
+/// Source path is bare `file` only (no invented segments).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MementoPath {
     pub file: String,
@@ -492,6 +494,8 @@ fn decode_bridge_source_symbol(audit: Option<&Value>) -> Option<String> {
 pub struct SourceFile {
     conn: KitConn,
     memento: SourceMemento,
+    /// Top-of-tree path address: `SourceMemento[file]` (T #3809).
+    path: MementoPath,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -867,9 +871,13 @@ impl Kit {
         let (nodes, _gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
         Ok(nodes
             .into_iter()
-            .map(|n| SourceFile {
-                conn: conn.clone(),
-                memento: n.memento,
+            .map(|n| {
+                let path = MementoPath::file(n.memento.file.clone());
+                SourceFile {
+                    conn: conn.clone(),
+                    path,
+                    memento: n.memento,
+                }
             })
             .collect())
     }
@@ -902,14 +910,26 @@ impl Kit {
             plugin: conn.surface.clone(),
             level: "source_files",
         })?;
+        let path = MementoPath::file(node.memento.file.clone());
         Ok(SourceFile {
             conn,
+            path,
             memento: node.memento,
         })
     }
 }
 
 impl SourceFile {
+    /// Top-of-tree path index: bare `file` (`SourceMemento[file]`).
+    pub fn path(&self) -> &MementoPath {
+        &self.path
+    }
+
+    /// Source node address: sealed memento keyed by file path.
+    pub fn memento_at_path(&self) -> SourceMementoAtPath {
+        SourceMementoAtPath::new(self.path.clone(), self.memento.clone())
+    }
+
     /// `level="functions"`, `at=<this file's memento>`. See module doc's
     /// GRANULARITY note: functions come from `payload.ir`'s
     /// function-contract entries, one per `fnName`.
