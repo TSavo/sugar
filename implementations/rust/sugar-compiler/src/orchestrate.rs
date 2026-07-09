@@ -327,7 +327,10 @@ pub fn prove_from_kit(
     // Warm DoD (#3809 batch): discharge must not re-walk project_root for
     // proofs / call-edges / named artifacts / config.toml. Claim bytes are
     // the folded pool + RPC testimony / extra_proofs only.
+    // Also clear cache_dir so tier-2 never read_dir/write under a project
+    // cache path (#9); mint-and-cache is likewise skipped when pool_only.
     cfg.pool_only_inputs = true;
+    cfg.cache_dir = None;
 
     // 1. Local claim walk. Speaker is typed through fold so walk face and
     // pool intake share one identity; stamping happens at step 2.

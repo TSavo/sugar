@@ -73,7 +73,9 @@ use crate::effects::{VerifyEffect, WitnessDischargeGround};
 use crate::solvers::{
     run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan, SolverSeat,
 };
-use crate::types::{MementoCid, MementoPool, ObligationVerdict, SourceLocus, StoredMember};
+use crate::types::{
+    MementoCid, MementoPool, ObligationVerdict, SourceLocus, SpeakerRole, StoredMember,
+};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_ir_compiler::CompilerInput;
@@ -1078,7 +1080,55 @@ fn json_str_list(data: &Json, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+// Thread-local warm-path flag for witness resolution: set for the duration
+// of `verify_consistency_from_indexes` so deep call sites (par_iter group
+// solve → `try_witness_discharge`) can refuse project `read_dir` without
+// threading a bool through every private helper.
+thread_local! {
+    static POOL_ONLY_WITNESS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+struct PoolOnlyWitnessGuard {
+    prev: bool,
+}
+
+impl PoolOnlyWitnessGuard {
+    fn enter(pool_only: bool) -> Self {
+        let prev = POOL_ONLY_WITNESS.with(|c| c.replace(pool_only));
+        Self { prev }
+    }
+}
+
+impl Drop for PoolOnlyWitnessGuard {
+    fn drop(&mut self) {
+        POOL_ONLY_WITNESS.with(|c| c.set(self.prev));
+    }
+}
+
+/// Scope membership without mandatory disk stats.
+/// Cold: `scope_root.join(file).exists()` (absolute file replaces join).
+/// Warm: relative path OR absolute path under `scope_root` (prefix only).
+fn locus_in_scope(scope_root: &Path, file: &str, pool_only_inputs: bool) -> bool {
+    let p = Path::new(file);
+    if pool_only_inputs {
+        if p.is_relative() {
+            return true;
+        }
+        return p.starts_with(scope_root);
+    }
+    let candidate = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        scope_root.join(p)
+    };
+    candidate.exists()
+}
+
 fn find_witness_resolvers(project_root: &Path) -> Vec<WitnessResolver> {
+    // Warm path: never read_dir `.sugar/lift/*/manifest.toml` (#3809 #8).
+    if POOL_ONLY_WITNESS.with(|c| c.get()) {
+        return Vec::new();
+    }
     let lift_dir = project_root.join(".sugar").join("lift");
     let mut found = witness_resolvers_from_env();
     if let Ok(entries) = std::fs::read_dir(&lift_dir) {
@@ -3082,6 +3132,10 @@ pub fn build_manifest_from_pool(
 /// thin convenience over the door for callers that hold a pool directly (the
 /// referee wrapper and the in-module tests); production `prove` and the daemon
 /// call the door themselves.
+///
+/// Cold-disk policy (`pool_only_inputs = false`): may `Path::exists` for locus
+/// preference and read witness lift manifests. Prefer
+/// [`verify_consistency_with_policy`] on the warm path.
 pub fn verify_consistency(
     pool: &MementoPool,
     plan: &SolverPlan,
@@ -3089,8 +3143,35 @@ pub fn verify_consistency(
     compilers: &CompilerRegistry,
     project_root: &Path,
 ) -> Vec<ConsistencyResult> {
+    verify_consistency_with_policy(pool, plan, registry, compilers, project_root, false)
+}
+
+/// Like [`verify_consistency`], with an explicit warm/cold disk policy.
+///
+/// When `pool_only_inputs` is true (#3809):
+/// - locus preference uses pool **speaker role** (Consumer beats Vendor), never
+///   `Path::exists`
+/// - scope filters use pure path-prefix checks, never `Path::exists`
+/// - custom-witness resolver discovery does not `read_dir` project manifests
+pub fn verify_consistency_with_policy(
+    pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    project_root: &Path,
+    pool_only_inputs: bool,
+) -> Vec<ConsistencyResult> {
     let index = build_consistency_index(pool);
-    verify_consistency_from_indexes(&index, None, plan, registry, compilers, project_root, None)
+    verify_consistency_from_indexes(
+        &index,
+        None,
+        plan,
+        registry,
+        compilers,
+        project_root,
+        None,
+        pool_only_inputs,
+    )
 }
 
 /// Pool-derived consistency inputs, computed once per pool and reusable
@@ -3109,11 +3190,13 @@ pub struct ConsistencyIndex {
     ambient_foralls: Vec<Json>,
     ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact>,
     ambient_posts: Vec<AmbientPost>,
-    /// Raw (contract/property name, locus) pairs in pool iteration order.
-    /// The project-local preference merge (consumer file beats vendor file
-    /// for the squiggle anchor) happens at solve time in
-    /// `verify_consistency_from_indexes` because it needs `project_root`.
-    locus_entries: Vec<(String, SourceLocus)>,
+    /// Raw (contract/property name, locus, optional speaker role) triples in
+    /// pool iteration order. The project-local preference merge (consumer
+    /// file beats vendor file for the squiggle anchor) happens at solve time
+    /// in `verify_consistency_from_indexes`. On the warm path
+    /// (`pool_only_inputs`) speaker role replaces `Path::exists` so we never
+    /// stat the project tree (#3809 #8).
+    locus_entries: Vec<(String, SourceLocus, Option<SpeakerRole>)>,
 }
 
 impl ConsistencyIndex {
@@ -3225,8 +3308,8 @@ fn build_consistency_index_filtered(
     // every rust consumer group -- the daemon then answered 0 rows with
     // degraded=false (the false green). Scan BOTH kinds; `locus_from_body`
     // applies the identical field contract to each.
-    let mut locus_entries: Vec<(String, SourceLocus)> = Vec::new();
-    for (_cid, member) in pool.source_memento_members().chain(
+    let mut locus_entries: Vec<(String, SourceLocus, Option<SpeakerRole>)> = Vec::new();
+    for (cid, member) in pool.source_memento_members().chain(
         pool.members_by_kind(sugar_proof_envelope::MemberKind::AssertionSurfaceMemento),
     ) {
         let Some(body) = pool
@@ -3236,7 +3319,8 @@ fn build_consistency_index_filtered(
             continue;
         };
         if let Some(l) = locus_from_body(&body) {
-            locus_entries.push((contract_property_name(&body).to_string(), l));
+            let role = pool.member_speaker(cid).map(|s| s.role);
+            locus_entries.push((contract_property_name(&body).to_string(), l, role));
         }
     }
 
@@ -3279,6 +3363,7 @@ pub fn verify_consistency_scoped_with_base_index(
         )
         .collect();
     let overlay = build_consistency_index_filtered(overlay_pool, Some(&skip));
+    // Editor daemon is a cold-disk face today (scope + project files).
     verify_consistency_from_indexes(
         base,
         Some(&overlay),
@@ -3287,6 +3372,7 @@ pub fn verify_consistency_scoped_with_base_index(
         compilers,
         project_root,
         Some(scope),
+        /* pool_only_inputs = */ false,
     )
 }
 
@@ -3297,6 +3383,9 @@ pub fn verify_consistency_scoped_with_base_index(
 /// this one function; `overlay` supplies the daemon's per-request scratch
 /// index (or `None` for a whole-pool run) and `scope` restricts which groups
 /// are solved (or `None` for the full CLI pass).
+///
+/// `pool_only_inputs`: when true, never `Path::exists` / witness `read_dir`
+/// (#3809 #8). Locus preference uses speaker role; scope uses path prefix.
 #[allow(clippy::too_many_arguments)]
 pub fn verify_consistency_from_indexes(
     base: &ConsistencyIndex,
@@ -3306,7 +3395,9 @@ pub fn verify_consistency_from_indexes(
     compilers: &CompilerRegistry,
     project_root: &Path,
     scope: Option<&Path>,
+    pool_only_inputs: bool,
 ) -> Vec<ConsistencyResult> {
+    let _witness_guard = PoolOnlyWitnessGuard::enter(pool_only_inputs);
     let candidates: Vec<&ConsistencyCandidate> = base
         .candidates
         .iter()
@@ -3389,12 +3480,14 @@ pub fn verify_consistency_from_indexes(
     // collide on the same euf coordinate. First-write-wins would anchor the
     // squiggle at the VENDOR's source file (pandas' internal
     // `tests/frame/test_constructors.py`) instead of the user's line.
-    // Overwrite only when the NEW locus's file EXISTS under project_root on
-    // disk and the CURRENT one does not -- the consumer's `test_consumer.py`
-    // lives under the project; the vendor's path does not. Fail-open: if
-    // neither or both exist, keep first-write (no worse than before).
+    //
+    // Cold path: overwrite when the NEW locus's file EXISTS under project_root
+    // on disk and the CURRENT one does not.
+    // Warm path (`pool_only_inputs`): never stat — prefer Consumer-stamped
+    // locus over Vendor-stamped (#3809 #8). Fail-open if both/neither.
     let mut locus_by_name: HashMap<String, SourceLocus> = HashMap::new();
-    for (name, l) in base
+    let mut locus_role: HashMap<String, Option<SpeakerRole>> = HashMap::new();
+    for (name, l, role) in base
         .locus_entries
         .iter()
         .chain(overlay.iter().flat_map(|o| o.locus_entries.iter()))
@@ -3402,24 +3495,33 @@ pub fn verify_consistency_from_indexes(
         match locus_by_name.entry(name.clone()) {
             std::collections::hash_map::Entry::Vacant(e) => {
                 e.insert(l.clone());
+                locus_role.insert(name.clone(), *role);
             }
             std::collections::hash_map::Entry::Occupied(mut e) => {
-                let new_local = project_root.join(&l.file).exists();
-                let cur_local = project_root.join(&e.get().file).exists();
-                if new_local && !cur_local {
+                let prefer_new = if pool_only_inputs {
+                    let new_consumer = matches!(role, Some(SpeakerRole::Consumer));
+                    let cur_consumer =
+                        matches!(locus_role.get(name), Some(Some(SpeakerRole::Consumer)));
+                    new_consumer && !cur_consumer
+                } else {
+                    let new_local = project_root.join(&l.file).exists();
+                    let cur_local = project_root.join(&e.get().file).exists();
+                    new_local && !cur_local
+                };
+                if prefer_new {
                     e.insert(l.clone());
+                    locus_role.insert(name.clone(), *role);
                 }
             }
         }
     }
 
     // EDITOR SCOPE (the daemon's `Some(scope)` door call): keep only groups whose
-    // anchor locus resolves inside `scope` ON DISK. Whole groups are kept or
-    // dropped -- never individual members -- so a kept group's conjunct set
-    // (vendor sworn facts included) is identical to the unscoped run's, and
-    // its solved row is therefore identical too. Ambient sets stay pool-wide.
-    // Members are CLONED only for KEPT groups (post-filter), never for the
-    // vendor-internal thousands the editor never paints.
+    // anchor locus resolves inside `scope`. Whole groups are kept or dropped —
+    // never individual members — so a kept group's conjunct set (vendor sworn
+    // facts included) is identical to the unscoped run's, and its solved row
+    // is therefore identical too. Ambient sets stay pool-wide.
+    // Cold: ON DISK via Path::exists. Warm: pure path prefix / relative, no stat.
     let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name
         .into_iter()
         .filter(|(property_name, members)| match scope {
@@ -3428,7 +3530,7 @@ pub fn verify_consistency_from_indexes(
                 let anchored_in_scope = |name: &str| {
                     locus_by_name
                         .get(name)
-                        .map(|l| scope_root.join(&l.file).exists())
+                        .map(|l| locus_in_scope(scope_root, &l.file, pool_only_inputs))
                         .unwrap_or(false)
                 };
                 anchored_in_scope(property_name)
