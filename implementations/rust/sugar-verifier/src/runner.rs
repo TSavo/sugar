@@ -524,12 +524,13 @@ impl Runner {
         // refuses their internal consistency. Discharged => PROVEN-consistent;
         // Unsatisfied => REFUSED-contradictory; Undecidable => encoding STOP
         // surfaced as a violation (never silently passed).
-        let consistency_results = crate::consistency::verify_consistency(
+        let consistency_results = crate::consistency::verify_consistency_with_policy(
             &pool,
             &self.plan,
             &self.registry,
             &self.compilers,
             &self.cfg.project_root,
+            self.cfg.pool_only_inputs,
         );
         for cr in &consistency_results {
             match cr.verdict {
@@ -840,12 +841,13 @@ impl Runner {
 
         // Receipt 1: test-assertion consistency pass (see the matching block
         // in the primary run path).
-        let consistency_results = crate::consistency::verify_consistency(
+        let consistency_results = crate::consistency::verify_consistency_with_policy(
             &pool,
             plan,
             registry,
             compilers,
             &self.cfg.project_root,
+            self.cfg.pool_only_inputs,
         );
         for cr in &consistency_results {
             match cr.verdict {
@@ -1855,24 +1857,28 @@ fn work_one(
                 None,
             );
         }
-        if let Some(cache_dir) = &cfg.cache_dir {
-            if let Some(impl_cid) = try_tier2(
-                cache_dir,
-                post_hash,
-                pre_hash,
-                &cfg.trusted_implication_signers,
-            ) {
-                n_cache.fetch_add(1, Ordering::Relaxed);
-                return (
-                    cs.clone(),
-                    ObligationVerdict::Discharged,
-                    format!(
-                        "tier2: cache hit (implication memento {})",
-                        short(&impl_cid)
-                    ),
-                    Some("hash-tier".to_string()),
-                    None,
-                );
+        // Tier 2 disk cache: cold path only. Warm `pool_only_inputs` never
+        // read_dir/reads under cache_dir (#3809 #9).
+        if !cfg.pool_only_inputs {
+            if let Some(cache_dir) = &cfg.cache_dir {
+                if let Some(impl_cid) = try_tier2(
+                    cache_dir,
+                    post_hash,
+                    pre_hash,
+                    &cfg.trusted_implication_signers,
+                ) {
+                    n_cache.fetch_add(1, Ordering::Relaxed);
+                    return (
+                        cs.clone(),
+                        ObligationVerdict::Discharged,
+                        format!(
+                            "tier2: cache hit (implication memento {})",
+                            short(&impl_cid)
+                        ),
+                        Some("hash-tier".to_string()),
+                        None,
+                    );
+                }
             }
         }
     }
@@ -2059,8 +2065,9 @@ fn work_one(
     }
 
     // Mint per-solver mementos for every solver that returned unsat
-    // when the implication form was used.
-    if used_implication_form {
+    // when the implication form was used. Warm path never writes the
+    // tier-2 cache (#3809 #9).
+    if used_implication_form && !cfg.pool_only_inputs {
         if let (Some(post_hash), Some(pre_hash), Some(cache_dir), Some(seed), Some(producer)) = (
             producer_post.as_ref().map(|(_, h)| h.clone()),
             consumer_pre_hash.clone(),

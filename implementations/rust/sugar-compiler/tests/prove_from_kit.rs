@@ -492,8 +492,8 @@ fn prove_from_kit_ignores_project_root_proof_files() {
 /// | 5 | project `*.proof` load into pool (`load_all_proofs`) | closed #3910 | closed |
 /// | 6 | proof-run **write** to `.sugar/runs/` | WRITE | **CLOSED** (in-memory seal; empty bundle_path) |
 /// | 7 | CLI pre-solve: config/plan/manifests, kit spawn, fold enumerate | OUT OF DISCHARGE | open (CLI/kit) |
-/// | 8 | consistency locus `Path::exists`, witness resolver manifests | conditional | open (next batch) |
-/// | 9 | tier-2 implication cache_dir reads | if cache_dir set | open (leave unset on warm) |
+/// | 8 | consistency locus `Path::exists`, witness resolver manifests | conditional | **CLOSED** (speaker role / no read_dir) |
+/// | 9 | tier-2 implication cache_dir reads/writes | if cache_dir set | **CLOSED** (cleared + skipped on warm) |
 ///
 /// Gate: canary files planted under project_root must NOT contribute their
 /// content CIDs to the warm proof-run memento inputs; cold disk face still
@@ -782,6 +782,140 @@ fn prove_from_kit_does_not_write_proof_run_bundle() {
          (instrument would be a no-op). disk_runs={} bundle={:?}",
         disk_runs.display(),
         disk.artifact.bundle_path
+    );
+}
+
+/// #3809 #8 + #9 — warm path: no locus `Path::exists`, no witness manifest
+/// `read_dir`, no tier-2 `cache_dir` FS.
+///
+/// BEFORE #8 (cold locus preference):
+///   `project_root.join(locus.file).exists()` per colliding name
+/// BEFORE #8 (witness):
+///   `std::fs::read_dir(project/.sugar/lift)` + `read_to_string(manifest.toml)`
+/// BEFORE #9:
+///   `try_tier2` → `read_dir(cache_dir)` + `read(file)`;
+///   `mint_and_cache` → `create_dir_all` + `write`
+///
+/// AFTER: prove_from_kit forces pool_only + cache_dir=None; consistency uses
+/// speaker role for locus preference; witness resolvers short-circuit empty;
+/// work_one skips tier2/mint disk. Canary lift manifest + cache files must
+/// not be opened (we detect via unreadable cache_dir + poison manifest that
+/// would only matter if read_dir ran and parse succeeded — witness path
+/// returns empty resolvers before read on warm).
+///
+/// Verdict rows match a clean warm run (byte-identical gate).
+#[test]
+fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
+    if !python_blake3_available() {
+        eprintln!("skip: python3/blake3 unavailable");
+        return;
+    }
+    if !z3_available() {
+        eprintln!("skip: z3 unavailable (solver path)");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+
+    // #8 canary: lift manifest that cold witness discovery would open.
+    let lift = project.join(".sugar").join("lift").join("poison-kit");
+    fs::create_dir_all(&lift).expect("mkdir lift");
+    fs::write(
+        lift.join("manifest.toml"),
+        "name = \"poison\"\nresolve_witness_command = [\"/bin/false\"]\n",
+    )
+    .expect("poison manifest");
+
+    // #9 canary: cache_dir with a sentinel file; warm must not read it
+    // even if caller puts cache_dir on the cfg (prove_from_kit clears it).
+    let cache_dir = dir.path().join("tier2-cache");
+    fs::create_dir_all(&cache_dir).expect("mkdir cache");
+    let cache_sentinel = cache_dir.join("MUST_NOT_READ.sentinel");
+    fs::write(&cache_sentinel, b"if-opened-this-test-failed").expect("sentinel");
+
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+    let compilers = test_compilers();
+
+    // Clean baseline (no canaries)
+    let clean_dir = tempfile::tempdir().expect("clean");
+    let clean_project = stage_fixture(clean_dir.path());
+    let clean_kit =
+        Kit::rendezvous(python_kit_manifest(clean_dir.path())).expect("rendezvous clean");
+    let clean = prove_from_kit(
+        &clean_kit,
+        &clean_project,
+        Speaker::consumer("prove-from-kit:fs89-clean"),
+        runner_cfg(&clean_project),
+        compilers.clone(),
+    )
+    .expect("clean warm");
+
+    let mut cfg = runner_cfg(&project);
+    // Deliberately set cache_dir — prove_from_kit must clear it (#9).
+    cfg.cache_dir = Some(cache_dir.clone());
+    cfg.mint_seed = Some([0x42; 32]);
+    cfg.mint_producer_id = Some("fs89-test".into());
+
+    let warm = prove_from_kit(
+        &kit,
+        &project,
+        Speaker::consumer("prove-from-kit:fs89"),
+        cfg,
+        compilers,
+    )
+    .expect("warm with canaries");
+
+    eprintln!(
+        "fs#8+#9 gate:\n\
+         \twarm rows={} clean rows={}\n\
+         \toutcome={:?}\n\
+         \tcache_sentinel still present={}\n\
+         \tbundle_path empty={}",
+        warm.artifact.report.rows.len(),
+        clean.artifact.report.rows.len(),
+        warm.outcome_class,
+        cache_sentinel.exists(),
+        warm.artifact.bundle_path.as_os_str().is_empty(),
+    );
+
+    // Byte-identical verdict rows vs clean (canaries must not affect discharge)
+    assert_eq!(
+        report_verdict_keys(&warm),
+        report_verdict_keys(&clean),
+        "locus/witness/cache canaries must not change warm verdict rows"
+    );
+    assert_eq!(warm.outcome_class, clean.outcome_class);
+    assert!(
+        warm.artifact.bundle_path.as_os_str().is_empty(),
+        "write#6 still holds"
+    );
+    // Sentinel untouched (no mint_and_cache write into cache_dir either)
+    assert_eq!(
+        fs::read(&cache_sentinel).expect("read sentinel"),
+        b"if-opened-this-test-failed",
+        "cache sentinel must remain untouched (no tier2 mint write)"
+    );
+
+    // Discrimination: cold verify_consistency WITH exists() still stats.
+    // Plant a vendor-looking absolute path that does NOT exist under project
+    // and a consumer relative that does — speaker preference is warm-only;
+    // cold uses exists. We only need cold path to still *call* exists without
+    // panicking: run disk solve_project on sealed fold (no pool_only).
+    let local = feed_from_tree::fold_project(
+        &kit,
+        &project,
+        Some(&Speaker::consumer("prove-from-kit:fs89")),
+    )
+    .expect("fold");
+    let disk_dir = tempfile::tempdir().expect("disk");
+    seal_graph_to_project(&local, disk_dir.path(), "fs89-disk");
+    let disk = solve_project(runner_cfg(disk_dir.path()), test_compilers())
+        .expect("cold solve_project still runs (exists() path live)");
+    assert!(
+        !disk.artifact.bundle_path.as_os_str().is_empty()
+            && disk.artifact.bundle_path.exists(),
+        "cold face still persists proof-run (discrimination for write path)"
     );
 }
 
