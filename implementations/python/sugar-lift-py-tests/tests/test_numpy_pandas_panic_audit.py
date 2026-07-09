@@ -362,6 +362,33 @@ def test_installed_numpy_totality_gate_is_stable_zero() -> None:
     assert not report.records
 
 
+def test_installed_pandas_totality_gate_is_stable_zero() -> None:
+    """Installed pandas package audit stays at R=0 construction/unexpected panics.
+
+    Companion to the numpy totality gate. Closes the residual BinOp OpaqueOp
+    and nested-import support gaps drained after #3908/#3909 body dig widened.
+    """
+    import pandas
+
+    report = collect_panic_audit(
+        ROOT,
+        installed_packages=("pandas",),
+        include_showcases=False,
+    )
+
+    assert report.r.values == {
+        "numpy_sugar_panics": 0,
+        "numpy_floor_panics": 0,
+        "pandas_sugar_panics": 0,
+        "pandas_floor_panics": 0,
+        "unexpected_panics": 0,
+    }, (
+        f"pandas {pandas.__version__} construction-gap gate reopened: "
+        f"{render_text(report)}"
+    )
+    assert not report.records
+
+
 def test_extracts_audit_only_loud_floor_type_error() -> None:
     def failing_runner(command: list[str], cwd: Path) -> CommandResult:
         return CommandResult(

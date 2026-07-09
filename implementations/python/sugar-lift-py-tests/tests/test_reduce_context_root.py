@@ -26,3 +26,24 @@ def test_derived_carries_dig_sink_forward() -> None:
     derived = ReduceContext.derived(base, owner="test")
 
     assert derived.dig_sink is sink
+
+
+def test_root_exposes_external_bridge_sink() -> None:
+    """CallSugar.ExternalBridgeStrategy reads ctx.external_bridge_sink on reduce.
+
+    Missing the attribute crashed the numpy/pandas package audit as unstructured
+    exit=2 once body dig reduced vendor-bridged callees through ReduceContext.
+    """
+    ctx = ReduceContext.root(owner="test")
+    assert hasattr(ctx, "external_bridge_sink")
+    assert ctx.external_bridge_sink is None
+
+
+def test_derived_carries_external_bridge_sink_forward() -> None:
+    sink: list[dict] = []
+    base = ReduceContext.root(owner="test", external_bridge_sink=sink)
+
+    derived = ReduceContext.derived(base, owner="test")
+
+    assert derived.external_bridge_sink is sink
+    assert derived.with_temporal(derived.temporal).external_bridge_sink is sink
