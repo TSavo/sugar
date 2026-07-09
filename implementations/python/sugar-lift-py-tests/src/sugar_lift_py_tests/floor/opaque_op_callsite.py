@@ -73,6 +73,25 @@ class OpaqueOpCallsite(FloorValue):
             return Complete(OpaqueOpCallsite(callee="len", arg=self, computed=None))
         return self._downstream().call_method_with(operation, ctx)
 
+    def attribute_with(self, operation: Any, ctx: Any) -> Any:
+        """Attr on an opaque coordinate: nest ``call:<attr>(call:<op>(…))``.
+
+        Temporal binds of vendor method results (`x = s.cumsum(); x.shape`)
+        reduce the receiver to OpaqueOpCallsite; AttributeSugar then dispatches
+        here. Mint a nested opaque attribute coordinate (computed=None) — same
+        family as direct ``call:shape(call:cumsum(…))`` — never invent a value.
+        """
+        del ctx
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            OpaqueOpCallsite(
+                callee=operation.name,
+                arg=self,
+                computed=None,
+            )
+        )
+
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().binary_operator_with(operation, ctx)
 
