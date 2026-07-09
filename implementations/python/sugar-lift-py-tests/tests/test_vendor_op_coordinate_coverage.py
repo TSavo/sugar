@@ -35,22 +35,20 @@ congruence with len/str/chains. Edge ``method:`` is the method-locus only.
 | **Formal-receiver body dig** ``def A(s): return s.mean()`` | universe ``out == call:mean(s)`` | n/a | yes (build + bridge binds) | dual unsat | #3933 |
 | **Composition chain** ``len(A())`` / ``groupby().sum`` nest in dig | outer over dug coord | yes | full nest in universe | dual unsat | #3914, #3937 |
 | **Multi-arg method** ``left.merge(right)`` | ``call:merge(left, right)`` | yes | formal ``out==call:merge(l,r)`` | shape dual (tuple path) | lift-probed green |
-| **Keyword method (direct)** ``s.sum(axis=0)`` | ``call:sum(…, kw:axis(0))``; edge ``method:sum`` | yes (symbolic_term) | **GAP** refuse | dual possible when direct | residual below |
+| **Keyword method** ``s.sum(axis=0)`` | ``call:sum(…, kw:axis(0))``; edge ``method:sum`` | yes | formal + constructed dig yes | dual-assert unsat | kwarg body dig PR |
 | **Nested attr chain** ``df.T.shape`` | ``call:shape(call:T(df))`` | yes | formal dig yes | via len projection | #3932 |
 | **Numpy ufunc** ``np.sqrt(…)`` | ``call:numpy.sqrt(…)`` | yes | formal dig yes | via outer fold/dual | lift-probed green |
 
-### Residual gaps (lift-probed, not fixed in this map PR)
+### Residual notes
 
-| seed | observed | notes |
-|------|----------|-------|
-| ``def A(s): return s.mean(axis=0)`` | dig refuse ``call-method:mean`` | CallSugar gates MethodCallStrategy on ``not call_has_keywords()`` |
-| ``def A(): return Series(…).sum(axis=0)`` | dig refuse ``call-builtin:sum`` | same keyword gate; sum collides with builtin name in gap spelling |
-| ``def A(s): return s.sum(axis=0)`` | dig refuse ``call-builtin:sum`` | formal + keyword |
-| ``pivot_table(values=…, index=…)`` direct | coords in inv (``call:pivot_table`` + ``kw:*``) | projected-equality path; not always euf-stamped name |
-| ``groupby(k, as_index=False)`` direct | nest + ``kw:as_index`` in inv | same; chain still ``call:sum(call:groupby(…))`` |
+| seed | status | notes |
+|------|--------|-------|
+| ``def A(s): return s.mean(axis=0)`` | **green** dig | ``out == call:mean(s, kw:axis(0))`` |
+| ``def A(): return Series(…).sum(axis=0)`` | **green** dig | constructed + kwargs |
+| ``pivot_table(…kwargs…)`` direct | green inv coords | projected-equality path; not always euf-stamped name |
+| ``groupby(k, as_index=False)`` direct | green | nest + ``kw:as_index`` in inv |
 
-Honest residual pins live in ``TestResidualKeywordMethodBodyDig`` so a silent
-flip to green (or a different refuse spelling) is loud.
+Keyword body dig instruments: ``test_kwarg_method_coordinate_body_dig.py``.
 
 Instruments in sibling modules (do not delete when editing this map):
 
@@ -579,20 +577,14 @@ class TestMapNumpyUfunc:
 
 
 # ---------------------------------------------------------------------------
-# Residual gap pins: keyword-arg method body dig (lift-probed refuse)
+# Keyword method body dig (was residual refuse; now green dig + kw: carry)
 # ---------------------------------------------------------------------------
 
 
-class TestResidualKeywordMethodBodyDig:
-    """CallSugar refuses method calls with keywords at body dig.
+class TestKeywordMethodBodyDigMap:
+    """Body dig matches direct: call:<m>(receiver, …, kw:…)."""
 
-    Direct asserts work via symbolic_term (see TestMapKeywordMethodDirect).
-    Body dig goes through CallSugar, which requires ``not call_has_keywords()``
-    for MethodCallStrategy / formal / constructed receivers. Pin the refuse
-    spelling so a silent fix or wrong locator is loud.
-    """
-
-    def test_formal_mean_axis_refuses_call_method_mean(self) -> None:
+    def test_formal_mean_axis_body_dig_emits_call_mean_kw_axis(self) -> None:
         src = (
             "import pandas as pd\n"
             "def A(s):\n"
@@ -604,14 +596,13 @@ class TestResidualKeywordMethodBodyDig:
             source=src, filename="t.py", memento_file="t.py"
         )
         assert report is not None
-        # No universe dig when body refuses
-        assert not _has_callable(report), [r.name for r in report.payload.ir]
-        refuses = _dig_body_refuses(report)
-        assert refuses, "expected dig refuse for keyword method on formal"
-        joined = " ".join(refuses)
-        assert "call-method:mean" in joined, joined
+        assert _has_callable(report), [r.name for r in report.payload.ir]
+        post = _callable_post(report)
+        assert "call:mean" in post, post
+        assert "kw:axis" in post, post
+        assert not _dig_body_refuses(report), _dig_body_refuses(report)
 
-    def test_constructed_sum_axis_refuses_body_dig(self) -> None:
+    def test_constructed_sum_axis_body_dig_emits_call_sum_kw_axis(self) -> None:
         src = (
             "import pandas as pd\n"
             "def A():\n"
@@ -623,9 +614,8 @@ class TestResidualKeywordMethodBodyDig:
             source=src, filename="t.py", memento_file="t.py"
         )
         assert report is not None
-        assert not _has_callable(report), [r.name for r in report.payload.ir]
-        refuses = _dig_body_refuses(report)
-        assert refuses, "expected dig refuse for keyword method on constructed receiver"
-        joined = " ".join(refuses)
-        # sum collides with builtin name in gap observed spelling
-        assert "call-builtin:sum" in joined or "call-method:sum" in joined, joined
+        assert _has_callable(report), [r.name for r in report.payload.ir]
+        post = _callable_post(report)
+        assert "call:sum" in post, post
+        assert "kw:axis" in post, post
+        assert not _dig_body_refuses(report), _dig_body_refuses(report)
