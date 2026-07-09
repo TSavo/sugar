@@ -664,8 +664,24 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             try:
                 body = build_bridge_body(function, body_ctx)
             except IncompleteFunctionBody as exc:
+                # Opt-in nested dig orientation (ctx.nested_external_bridge): keep
+                # outer composition as call:f(...) so towers can finish. Default
+                # off — force_floor must stay Incomplete on nested gaps or ambient
+                # strip posts encoding-STOP (str.suffixof sort mismatch).
+                if getattr(ctx, "nested_external_bridge", False):
+                    return cls(
+                        strategy=_build_external_bridge_strategy(
+                            fragment, ctx, import_target or target, target
+                        )
+                    )
                 return cls(strategy=TypedEffectStrategy(exc.incomplete))
             except TypeError as exc:
+                if getattr(ctx, "nested_external_bridge", False):
+                    return cls(
+                        strategy=_build_external_bridge_strategy(
+                            fragment, ctx, import_target or target, target
+                        )
+                    )
                 return cls(
                     strategy=FactoryGapStrategy(
                         FactoryGapInfo(
@@ -681,6 +697,12 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     )
                 )
             if isinstance(body, Incomplete):
+                if getattr(ctx, "nested_external_bridge", False):
+                    return cls(
+                        strategy=_build_external_bridge_strategy(
+                            fragment, ctx, import_target or target, target
+                        )
+                    )
                 return cls(strategy=RuntimeEffectStrategy(body))
             return cls(
                 strategy=BridgeStrategy(
