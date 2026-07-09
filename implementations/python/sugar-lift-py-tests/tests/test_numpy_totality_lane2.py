@@ -19,7 +19,10 @@ from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
 
 
-def test_symbolic_method_call_is_registered_runtime_effect():
+def test_symbolic_method_call_is_opaque_op_coordinate():
+    """#3809 / #3943: symbolic receiver methods are OpaqueOpCallsite, not FactoryGap."""
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+
     outcome = perform_operation(
         owner="CallSugar",
         blame="numpy/_core/tests/test_scalar_ctors.py:148:15",
@@ -33,17 +36,19 @@ def test_symbolic_method_call_is_registered_runtime_effect():
         ctx=ReduceContext(temporal=TemporalContext.empty()),
     )
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, FactoryGapEffect)
-    assert outcome.effect.owner == "CallSugar"
-    assert outcome.effect.blame == "numpy/_core/tests/test_scalar_ctors.py:148:15"
-    assert outcome.effect.observed == "SymbolicValue.astype"
-    assert outcome.effect.requested == "symbolic receiver method floor"
-    assert outcome.effect.gap_kind is GapKind.FLOOR
-    assert outcome.effect.gap_locus is GapLocus.CONSTRUCTION
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, OpaqueOpCallsite)
+    assert outcome.value.callee == "astype"
+    assert outcome.value.arg == SymbolicValue(make_var("arr"))
+    assert outcome.value.extra_args == (StringValue("int64"),)
+    # Coordinate only — no concrete value invented for a symbolic receiver.
+    assert outcome.value.computed is None
 
 
-def test_symbolic_method_effect_does_not_green_by_fiat():
+def test_symbolic_method_coordinate_is_not_a_concrete_fiat_value():
+    """OpaqueOpCallsite completes, but computed stays None (not a green number by fiat)."""
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+
     outcome = perform_operation(
         owner="CallSugar",
         blame="numpy/_core/tests/test_scalar_ctors.py:148:15",
@@ -57,8 +62,10 @@ def test_symbolic_method_effect_does_not_green_by_fiat():
         ctx=ReduceContext(temporal=TemporalContext.empty()),
     )
 
-    with pytest.raises(RuntimeError, match="cannot read completed value"):
-        complete_value(outcome, owner="numpy lane2 symbolic method")
+    value = complete_value(outcome, owner="numpy lane2 symbolic method")
+    assert isinstance(value, OpaqueOpCallsite)
+    assert value.computed is None
+    assert not isinstance(value, TermValue)
 
 
 def test_concrete_method_call_still_uses_existing_green_floor():

@@ -105,15 +105,30 @@ def test_factory_gap_strategy_emits_a_named_factory_gap_effect_on_reduce():
 
 
 def test_factory_gap_strategy_classifies_builtin_call_frontier():
-    body, ctx = _build("sum(value)")
+    # `sum` is a coordinate OpaqueOpCallsite now (#3918) — not a call-builtin gap.
+    # Probe a still-uncoordinated builtin frontier for the gap classification law.
+    body, ctx = _build("open(path)")
 
     effect = _reduce_gap_effect(body, ctx)
 
-    assert effect.observed == "call-builtin:sum"
+    assert effect.observed == "call-builtin:open"
     assert effect.fix == (
-        "add builtin call sugar for `sum`, resolve a local body, "
+        "add builtin call sugar for `open`, resolve a local body, "
         "link an imported .proof, or emit a real effect"
     )
+
+
+def test_builtin_sum_is_coordinate_opaque_op_not_call_builtin_gap():
+    """#3918: sum(...) mints call:sum coordinate, not FactoryGap call-builtin:sum."""
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+    from sugar_lift_py_tests.outcome import Complete
+
+    body, ctx = _build("sum([1, 2])")
+    outcome = body.reduce(ctx)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, OpaqueOpCallsite)
+    assert outcome.value.callee == "sum"
+    assert outcome.value.computed is not None  # concrete list → computed sum
 
 
 def test_factory_gap_strategy_classifies_method_call_frontier():
