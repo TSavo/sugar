@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use sugar_compiler::feed_from_tree;
 use sugar_compiler::kit::{Kit, LiftManifest};
 use sugar_compiler::tree::Sourced;
-use sugar_proof_envelope::{ProofGraph, typed_member::Member};
+use sugar_proof_envelope::{typed_member::Member, ProofGraph};
 use sugar_verifier::Speaker;
 
 fn repo_root() -> PathBuf {
@@ -265,6 +265,10 @@ fn universes_from_mint_ir(payload: &Value) -> BTreeSet<String> {
 /// `ProofGraph::contract_slot_json` for the body-linked atom.
 /// Keys use (warrant file, warrant span, inv|post formula) when warrants
 /// exist; otherwise (contract_name, "", formula).
+///
+/// Universe / function-contract members (formals present, or universe-shaped
+/// names without assertion FOL warrants on inv-only facts) are skipped so
+/// mint-complete universe `post` bodies do not pollute the fact axis.
 fn facts_from_feed_graph(graph: &ProofGraph) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     for (cid, member_res) in graph.typed_members_iter() {
@@ -275,6 +279,11 @@ fn facts_from_feed_graph(graph: &ProofGraph) -> Vec<(String, String, String)> {
         let Member::Contract(c) = member.as_ref() else {
             continue;
         };
+        // Task 9: universe / function-contract members carry formals (possibly
+        // empty when body-bearing zero-arg). Fact assertion contracts omit formals.
+        if c.formals.is_some() {
+            continue;
+        }
         let formula = c
             .inv
             .as_ref()
@@ -293,7 +302,7 @@ fn facts_from_feed_graph(graph: &ProofGraph) -> Vec<(String, String, String)> {
                 continue;
             }
         }
-        // No warrant — count under contract name (partial / universe-shaped).
+        // No warrant — count under contract name (partial).
         out.push((
             c.contract_name.clone(),
             String::new(),
@@ -306,7 +315,9 @@ fn facts_from_feed_graph(graph: &ProofGraph) -> Vec<(String, String, String)> {
 
 /// Universe / function-contract names recovered from fold graph members.
 /// Task 6 stamps batch universe keys onto `contract_name` (e.g.
-/// `mathy::add::callable`, `len::builtin-universe`).
+/// `mathy::add::callable`, `len::builtin-universe`). Task 9 also stamps
+/// formals on those members — prefer formals; do not treat
+/// `…#euf#…::assertion` fact names as universes just because they contain `::`.
 fn universes_from_feed_graph(graph: &ProofGraph) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for (cid, member_res) in graph.typed_members_iter() {
@@ -316,11 +327,18 @@ fn universes_from_feed_graph(graph: &ProofGraph) -> BTreeSet<String> {
         };
         match member.as_ref() {
             Member::Contract(c) => {
-                // function-contract rows mint as contracts whose name is the
-                // universe member key (e.g. `mathy::add::callable`). Without
-                // a distinct kind on the typed path yet, Task 6 uses
-                // contract_name; accept names that look like universe keys.
-                if c.contract_name.contains("::") {
+                if c.formals.is_some() {
+                    out.insert(c.contract_name.clone());
+                    continue;
+                }
+                let name = c.contract_name.as_str();
+                if name.ends_with("::assertion") || name.contains("#euf#") {
+                    continue;
+                }
+                if name.contains("::callable")
+                    || name.contains("::builtin-universe")
+                    || name.ends_with("::universe")
+                {
                     out.insert(c.contract_name.clone());
                 }
             }
@@ -377,12 +395,9 @@ fn walk_and_feed_matches_minted_member_cids() {
     // The door under test: tree → ProofGraph via feed.
     // Speaker is typed through fold_project for pool intake (Task 7); graph
     // content is unchanged — stamp happens in pool_from_graph_with_speaker.
-    let folded = feed_from_tree::fold_project(
-        &kit,
-        &project,
-        Some(&Speaker::consumer("consumer:test")),
-    )
-    .expect("fold_project");
+    let folded =
+        feed_from_tree::fold_project(&kit, &project, Some(&Speaker::consumer("consumer:test")))
+            .expect("fold_project");
     let folded_alias = feed_from_tree::fold_claim_tree(&kit, &project).expect("fold_claim_tree");
     assert_eq!(
         member_cids(&folded),
@@ -477,6 +492,12 @@ fn graph_from_fact_builds_claim_fragment() {
     );
     let payload_json = serde_json::to_value(fact.payload()).expect("encode IrFormula");
     let expected = fact_key(&fact.source_memento().to_json(), &payload_json);
-    assert_eq!(keys[0], expected, "fragment FOL must match fact payload+warrant");
-    eprintln!("R_graph_from_fact=0 — fragment members={:?}", member_cids(&fragment));
+    assert_eq!(
+        keys[0], expected,
+        "fragment FOL must match fact payload+warrant"
+    );
+    eprintln!(
+        "R_graph_from_fact=0 — fragment members={:?}",
+        member_cids(&fragment)
+    );
 }

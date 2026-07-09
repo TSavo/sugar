@@ -122,8 +122,8 @@ fn pool_from_graph_with_speaker_stamps_consumer_and_vendor_roles() {
 
     let vendor_pool =
         pool_from_graph_with_speaker(&vendor_graph, vendor.clone()).expect("vendor graph→pool");
-    let consumer_pool =
-        pool_from_graph_with_speaker(&consumer_graph, consumer.clone()).expect("consumer graph→pool");
+    let consumer_pool = pool_from_graph_with_speaker(&consumer_graph, consumer.clone())
+        .expect("consumer graph→pool");
 
     assert!(
         vendor_pool.load_errors.is_empty(),
@@ -208,8 +208,8 @@ fn graph_pool_intake_labels_match_utterance_speak_path() {
 
     let mut graph_pool =
         pool_from_graph_with_speaker(&vendor_graph, vendor.clone()).expect("vendor graph→pool");
-    let consumer_graph_pool =
-        pool_from_graph_with_speaker(&consumer_graph, consumer.clone()).expect("consumer graph→pool");
+    let consumer_graph_pool = pool_from_graph_with_speaker(&consumer_graph, consumer.clone())
+        .expect("consumer graph→pool");
     graph_pool.merge(consumer_graph_pool);
 
     let mut spoken_pool = MementoPool::default();
@@ -254,12 +254,14 @@ fn graph_pool_intake_labels_match_utterance_speak_path() {
     // the label source). Exact IR may differ when re-seal thins envelope
     // metadata; presence of both sides is the Task 7 contract.
     assert!(
-        !g_client.is_empty() || graph_rows.iter().any(|r| {
-            r.verification
-                .as_ref()
-                .and_then(|v| v.to_json().get("clientFactIr").cloned())
-                .is_some()
-        }) || !spoken_rows.is_empty(),
+        !g_client.is_empty()
+            || graph_rows.iter().any(|r| {
+                r.verification
+                    .as_ref()
+                    .and_then(|v| v.to_json().get("clientFactIr").cloned())
+                    .is_some()
+            })
+            || !spoken_rows.is_empty(),
         "solve must run on graph-loaded pool (rows={})",
         graph_rows.len()
     );

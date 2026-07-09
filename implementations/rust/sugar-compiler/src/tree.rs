@@ -184,10 +184,18 @@ pub struct IrFormulaPlaceholder(pub IrFormula);
 /// function-contract universe linked to this call via `bridgeSourceSymbol`
 /// (e.g. `call:add` → `mathy::add::callable`, `call:len` →
 /// `len::builtin-universe`). Served by `sugar.enumerate` `level=universe`.
+///
+/// When the kit stamps the full `kind=function-contract` IR row on the wire
+/// audit (pre/post/inv/formals/bridgeSourceSymbol), [`Self::ir_row`] carries
+/// it so feed construction can mint mint-complete members — not name shells.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Universe {
     memento: SourceMemento,
     audit: Option<AuditRow>,
+    /// Full function-contract IR object from the wire `audit` when present.
+    ir_row: Option<Value>,
+    /// Reduced formula payload (`inv` else `post`) when the kit set `payload`.
+    payload: Option<Value>,
 }
 
 impl Sourced for Universe {
@@ -199,6 +207,16 @@ impl Sourced for Universe {
 impl Universe {
     pub fn audit_row(&self) -> Option<&AuditRow> {
         self.audit.as_ref()
+    }
+
+    /// Full IR row from wire audit (formals, post/pre/inv, bridgeSourceSymbol).
+    pub fn ir_row(&self) -> Option<&Value> {
+        self.ir_row.as_ref()
+    }
+
+    /// Wire formula payload when present (inv-else-post reduction).
+    pub fn payload(&self) -> Option<&Value> {
+        self.payload.as_ref()
     }
 }
 
@@ -269,6 +287,26 @@ impl AuditRow {
     }
 }
 
+/// True when a wire `audit` object still carries the kit IR contract row
+/// (not a thin factory-walk row). Feed construction reads name/slots/formals
+/// from this object; factory-only audits must not be treated as IR.
+fn looks_like_ir_contract_row(value: &Value) -> bool {
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    let kind = obj.get("kind").and_then(Value::as_str).unwrap_or("");
+    if kind == "contract" || kind == "function-contract" {
+        return true;
+    }
+    // IR rows always carry at least one body slot or formals even if kind is
+    // missing under a future kit dialect.
+    obj.contains_key("inv")
+        || obj.contains_key("post")
+        || obj.contains_key("pre")
+        || obj.contains_key("formals")
+        || obj.contains_key("bridgeSourceSymbol")
+}
+
 /// Decode first-class bridge identity from a call_sites/assertions wire audit.
 /// Expects `call:` / `method:` forms; empty/missing → `None`.
 fn decode_bridge_source_symbol(audit: Option<&Value>) -> Option<String> {
@@ -317,6 +355,10 @@ pub struct Fact {
     memento: SourceMemento,
     audit: Option<AuditRow>,
     payload: IrFormula,
+    /// Full `kind=contract` IR object from the wire `audit` when present
+    /// (mint `name`, inv/post slots, sourceWarrants). Used by feed to build
+    /// mint-complete claim members with unique names and correct body slots.
+    ir_row: Option<Value>,
 }
 
 macro_rules! impl_sourced {
@@ -340,6 +382,11 @@ impl Fact {
     }
     pub fn payload(&self) -> &IrFormula {
         &self.payload
+    }
+
+    /// Full IR row from wire audit when the kit stamped the contract item.
+    pub fn ir_row(&self) -> Option<&Value> {
+        self.ir_row.as_ref()
     }
 }
 
@@ -835,6 +882,10 @@ impl CallSite {
         Ok(nodes.into_iter().next().map(|n| Universe {
             memento: n.memento,
             audit: n.audit.as_ref().map(AuditRow::from_json),
+            // Preserve full function-contract IR (pre/post/inv/formals) for
+            // mint-complete feed construction (Task 9). AuditRow alone drops them.
+            ir_row: n.audit.clone().filter(looks_like_ir_contract_row),
+            payload: n.payload,
         }))
     }
 
@@ -886,6 +937,8 @@ impl Assertion {
                 memento: n.memento,
                 audit: n.audit.as_ref().map(AuditRow::from_json),
                 payload: formula,
+                // Preserve full kind=contract IR (unique mint name, inv/post).
+                ir_row: n.audit.clone().filter(looks_like_ir_contract_row),
             });
         }
         Ok(out)

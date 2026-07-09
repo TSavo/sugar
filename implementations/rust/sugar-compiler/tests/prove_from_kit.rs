@@ -148,7 +148,9 @@ fn runner_cfg(project_root: &Path) -> RunnerConfig {
 /// Sorted (property_name, status) pairs from a prove artifact — the gate
 /// surface for fold→pool solve vs disk solve_project (member envelope CIDs
 /// may differ across re-seal paths; verdict rows are the contract).
-fn report_verdict_keys(proven: &sugar_compiler::orchestrate::ProvenOutcome) -> Vec<(String, String)> {
+fn report_verdict_keys(
+    proven: &sugar_compiler::orchestrate::ProvenOutcome,
+) -> Vec<(String, String)> {
     let mut keys: Vec<_> = proven
         .artifact
         .report
@@ -260,8 +262,14 @@ fn prove_from_kit_runs_solver_path_on_enumerate_fixture() {
     let cfg = runner_cfg(&project);
     let compilers = test_compilers();
 
-    let proven = prove_from_kit(&kit, &project, speaker.clone(), cfg.clone(), compilers.clone())
-        .expect("prove_from_kit must stage + discharge the enumerate fixture");
+    let proven = prove_from_kit(
+        &kit,
+        &project,
+        speaker.clone(),
+        cfg.clone(),
+        compilers.clone(),
+    )
+    .expect("prove_from_kit must stage + discharge the enumerate fixture");
 
     eprintln!(
         "prove_from_kit instrument:\n\
@@ -287,8 +295,8 @@ fn prove_from_kit_runs_solver_path_on_enumerate_fixture() {
     // explicit fold → pool_from_graph_with_speaker → solve_project_with_pool.
     let local = feed_from_tree::fold_project(&kit, &project, Some(&speaker)).expect("fold");
     let pool = pool_from_graph_with_speaker(&local, speaker.clone()).expect("pool");
-    let direct =
-        solve_project_with_pool(cfg.clone(), compilers.clone(), pool).expect("solve_project_with_pool");
+    let direct = solve_project_with_pool(cfg.clone(), compilers.clone(), pool)
+        .expect("solve_project_with_pool");
 
     assert_eq!(
         proven.outcome_class, direct.outcome_class,
@@ -305,7 +313,8 @@ fn prove_from_kit_runs_solver_path_on_enumerate_fixture() {
     // agree on verdict row statuses (member content, not envelope CID).
     let disk_dir = tempfile::tempdir().expect("disk project");
     seal_graph_to_project(&local, disk_dir.path(), "enumerate-local");
-    let disk_proven = solve_project(runner_cfg(disk_dir.path()), compilers).expect("solve_project disk");
+    let disk_proven =
+        solve_project(runner_cfg(disk_dir.path()), compilers).expect("solve_project disk");
 
     let from_kit_statuses: BTreeSet<_> = report_verdict_keys(&proven)
         .into_iter()
@@ -367,7 +376,8 @@ fn multi_speaker_pool_survives_solve_project_with_pool() {
     let mut pool =
         pool_from_graph_with_speaker(&fixture("base64_vendor.proof"), vendor).expect("vendor");
     pool.merge(
-        pool_from_graph_with_speaker(&fixture("base64_consumer.proof"), consumer).expect("consumer"),
+        pool_from_graph_with_speaker(&fixture("base64_consumer.proof"), consumer)
+            .expect("consumer"),
     );
 
     let mut vendor_n = 0usize;
@@ -379,7 +389,10 @@ fn multi_speaker_pool_survives_solve_project_with_pool() {
             None => panic!("unattributed {cid}"),
         }
     }
-    assert!(vendor_n > 0 && consumer_n > 0, "need both roles before solve");
+    assert!(
+        vendor_n > 0 && consumer_n > 0,
+        "need both roles before solve"
+    );
 
     let dir = tempfile::tempdir().expect("temp project root");
     let proven = solve_project_with_pool(runner_cfg(dir.path()), test_compilers(), pool)

@@ -1091,6 +1091,12 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 if seek and at is not None:
                     # Call-site linkage path first: match a kind=contract
                     # assertion, then join on bridge identity.
+                    #
+                    # Dual-candidate (Task 9 / Important residual): try
+                    # callEdges BSS first (`method:count`) and FOL
+                    # `_contract_bridge_identity` second (`call:count`). A
+                    # method site whose FOL ctor says `call:count` must still
+                    # join a universe stamped `method:count` (and vice versa).
                     call_item = None
                     for item in ir_items:
                         if item.get("kind") != "contract":
@@ -1100,13 +1106,25 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             call_item = item
                             break
                     if call_item is not None:
-                        bridge = _contract_bridge_identity(call_item)
+                        candidates: List[str] = []
+                        edge_sym = _edge_target_symbol_for_contract(
+                            call_item, call_edges
+                        )
+                        if edge_sym is not None:
+                            candidates.append(edge_sym)
+                        fol_sym = _contract_bridge_identity(call_item)
+                        if fol_sym is not None and fol_sym not in candidates:
+                            candidates.append(fol_sym)
                         matched = None
-                        if bridge:
+                        matched_bridge = None
+                        for bridge in candidates:
                             for universe_item in universe_items:
                                 if universe_item.get("bridgeSourceSymbol") == bridge:
                                     matched = universe_item
+                                    matched_bridge = bridge
                                     break
+                            if matched is not None:
+                                break
                         if matched is not None:
                             _send_enumerate_result(
                                 msg_id,
@@ -1114,7 +1132,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                                 [],
                             )
                             return
-                        callee = bridge if bridge else "unknown"
+                        callee = (
+                            matched_bridge
+                            if matched_bridge
+                            else (candidates[0] if candidates else "unknown")
+                        )
                         _send_enumerate_result(
                             msg_id,
                             [],

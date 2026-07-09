@@ -197,7 +197,11 @@ fn is_universe_not_modeled(err: &KitError) -> bool {
 fn universe_probe_from_tree(
     kit: &Kit,
     workspace_root: &Path,
-) -> (usize /* call_sites */, usize /* not_modeled */, BTreeSet<String>) {
+) -> (
+    usize, /* call_sites */
+    usize, /* not_modeled */
+    BTreeSet<String>,
+) {
     let mut call_sites = 0usize;
     let mut not_modeled = 0usize;
     let mut names = BTreeSet::new();
@@ -225,9 +229,9 @@ fn universe_probe_from_tree(
                     Err(err) if is_universe_not_modeled(&err) => {
                         not_modeled += 1;
                     }
-                    Err(err) => panic!(
-                        "CallSite::universe unexpected error (not NotModeled): {err}"
-                    ),
+                    Err(err) => {
+                        panic!("CallSite::universe unexpected error (not NotModeled): {err}")
+                    }
                 }
             }
         }
@@ -361,9 +365,11 @@ fn enumerate_universe_level_not_modeled_while_batch_has_universes() {
             .collect::<Vec<_>>()
     );
     assert!(
-        batch_universes.iter().any(|n| n.contains("builtin-universe")
-            || n.contains("::callable")
-            || n.contains("universe")),
+        batch_universes
+            .iter()
+            .any(|n| n.contains("builtin-universe")
+                || n.contains("::callable")
+                || n.contains("universe")),
         "expected a builtin-universe or body-callable universe in batch, got {batch_universes:?}"
     );
 
@@ -453,7 +459,9 @@ fn enumerate_callsite_identity_carries_bridge_symbol() {
         .cloned()
         .collect();
     assert!(
-        required.iter().any(|s| s == "call:len" || s == "method:sum" || s.starts_with("method:")),
+        required
+            .iter()
+            .any(|s| s == "call:len" || s == "method:sum" || s.starts_with("method:")),
         "fixture batch IR must emit call:len and/or a method:… bridge symbol \
          (plan: method:sum or call:len); got batch_idents={batch_idents:?}"
     );
@@ -673,9 +681,7 @@ fn enumerate_universe_gap_names_callee_without_coverage() {
         }
     }
 
-    eprintln!(
-        "universe discrimination: covered={covered:?} gapped={gapped:?}"
-    );
+    eprintln!("universe discrimination: covered={covered:?} gapped={gapped:?}");
     assert!(
         !covered.is_empty(),
         "fixture must include at least one call site with universe coverage \

@@ -42,18 +42,12 @@ pub enum FeedError {
          check Fact/Universe payload + warrants shape against mint's \
          kind=contract / function-contract construction"
     )]
-    Mint {
-        what: &'static str,
-        detail: String,
-    },
+    Mint { what: &'static str, detail: String },
     #[error(
         "feed_from_tree::{what}: {detail} — \
          replacement: carry the missing field on the tree node or refuse at enumerate"
     )]
-    Incomplete {
-        what: &'static str,
-        detail: String,
-    },
+    Incomplete { what: &'static str, detail: String },
     #[error(transparent)]
     Kit(#[from] KitError),
 }
@@ -78,6 +72,27 @@ fn true_formula() -> Json {
     json!({"kind": "atomic", "name": "true", "args": []})
 }
 
+/// Optional IR fields that mint threads onto function-contract / claim members.
+struct ClaimExtras {
+    formals: Vec<String>,
+    /// When IR had an explicit `formals` field (even `[]`), emit empty formals.
+    emit_empty_formals: bool,
+    bridge_source_symbol: Option<String>,
+    out_binding: String,
+}
+
+impl Default for ClaimExtras {
+    fn default() -> Self {
+        Self {
+            formals: Vec::new(),
+            emit_empty_formals: false,
+            bridge_source_symbol: None,
+            // Match mint IR default for this kit (`outBinding: "out"`).
+            out_binding: "out".into(),
+        }
+    }
+}
+
 /// Push one claim-contract member: register body slots, mint layered
 /// envelope with bodyCid, `push_claim_contract`.
 fn push_claim_with_slots(
@@ -85,6 +100,7 @@ fn push_claim_with_slots(
     contract_name: &str,
     slots: Vec<(&str, Json)>,
     source_warrants: Vec<Arc<CValue>>,
+    extras: ClaimExtras,
 ) -> Result<(), FeedError> {
     if slots.is_empty() {
         return Err(FeedError::Incomplete {
@@ -125,11 +141,11 @@ fn push_claim_with_slots(
 
     let args = MintContractArgs {
         evidence_term: None,
-        formals: Vec::new(),
-        emit_empty_formals: false,
+        formals: extras.formals,
+        emit_empty_formals: extras.emit_empty_formals,
         formal_sorts: Vec::new(),
         library: None,
-        bridge_source_symbol: None,
+        bridge_source_symbol: extras.bridge_source_symbol,
         body_discharge_eligible: true,
         body_discharge_refusal_reason: None,
         panic_loci: Vec::new(),
@@ -140,7 +156,7 @@ fn push_claim_with_slots(
         pre,
         post,
         inv,
-        out_binding: "result".into(),
+        out_binding: extras.out_binding,
         produced_by: FEED_PRODUCED_BY.into(),
         produced_at: FEED_PRODUCED_AT.into(),
         input_cids: Vec::new(),
@@ -151,16 +167,88 @@ fn push_claim_with_slots(
         signer_seed: FEED_SIGNER_SEED,
     };
 
-    let minted = mint_contract_with_body_cid(&args, Some(&body_cid)).map_err(|e| FeedError::Mint {
-        what: "mint_contract_with_body_cid",
-        detail: e.to_string(),
-    })?;
+    let minted =
+        mint_contract_with_body_cid(&args, Some(&body_cid)).map_err(|e| FeedError::Mint {
+            what: "mint_contract_with_body_cid",
+            detail: e.to_string(),
+        })?;
     // mint_contract emits header.`name` but typed ContractMember requires
     // header.`contractName` (ContractMemento's dual-field shape). Stamp the
     // same string so feed recovery via typed_members_iter can read names.
     let memento = claim_memento_with_contract_name(minted.canonical_bytes, contract_name)?;
     graph.push_claim_contract(memento);
     Ok(())
+}
+
+/// Body slots present on an IR contract/function-contract row.
+fn slots_from_ir_row(ir: &Json) -> Vec<(&'static str, Json)> {
+    let mut slots = Vec::new();
+    for (key, name) in [("pre", "pre"), ("post", "post"), ("inv", "inv")] {
+        if let Some(v) = ir.get(key).filter(|v| !v.is_null()) {
+            slots.push((name, v.clone()));
+        }
+    }
+    slots
+}
+
+fn formals_from_ir_row(ir: &Json) -> (Vec<String>, bool) {
+    match ir.get("formals") {
+        Some(Json::Array(arr)) => {
+            let formals = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect::<Vec<_>>();
+            let present = true;
+            (formals, present)
+        }
+        _ => (Vec::new(), false),
+    }
+}
+
+fn bridge_from_ir_row(ir: &Json) -> Option<String> {
+    ir.get("bridgeSourceSymbol")
+        .or_else(|| ir.get("bridge_source_symbol"))
+        .and_then(Json::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn out_binding_from_ir_row(ir: &Json) -> String {
+    ir.get("outBinding")
+        .or_else(|| ir.get("out_binding"))
+        .and_then(Json::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("out")
+        .to_string()
+}
+
+/// Mint-aligned unique claim name: prefer IR `name` (already locus-unique on
+/// the batch path), else span-keyed function locus so duplicate `test_add`
+/// facts do not collide under one contractName at pool load.
+fn contract_name_for_fact(fact: &Fact) -> String {
+    if let Some(ir) = fact.ir_row() {
+        if let Some(name) = ir.get("name").and_then(Json::as_str) {
+            if !name.is_empty() {
+                return name.to_string();
+            }
+        }
+    }
+    let m = fact.source_memento();
+    let base = if m.function_name.is_empty() {
+        "feed::fact"
+    } else {
+        m.function_name.as_str()
+    };
+    // Span-keyed when IR name is absent — unique per fact locus.
+    if m.span.start_line == 0 && m.span.end_line == 0 {
+        format!("{base}@{}", m.file)
+    } else {
+        format!(
+            "{base}@{}:{}:{}",
+            m.file, m.span.start_line, m.span.start_col
+        )
+    }
 }
 
 /// Re-emit mint bytes with `header.contractName` filled from the contract
@@ -176,10 +264,11 @@ fn claim_memento_with_contract_name(
     minted_bytes: Vec<u8>,
     contract_name: &str,
 ) -> Result<ClaimContractMemento, FeedError> {
-    let mut envelope: Json = serde_json::from_slice(&minted_bytes).map_err(|e| FeedError::Mint {
-        what: "claim_memento_with_contract_name",
-        detail: format!("minted bytes are not JSON: {e}"),
-    })?;
+    let mut envelope: Json =
+        serde_json::from_slice(&minted_bytes).map_err(|e| FeedError::Mint {
+            what: "claim_memento_with_contract_name",
+            detail: format!("minted bytes are not JSON: {e}"),
+        })?;
     let header = envelope
         .get_mut("header")
         .and_then(Json::as_object_mut)
@@ -237,41 +326,65 @@ fn claim_memento_with_contract_name(
 
 /// Build a single-member graph from one enumerated claim node.
 ///
-/// Same contract member shape mint uses for `kind="contract"` rows: inv
-/// formula from the fact payload, source warrants from the fact memento.
+/// Aligns with mint's `kind="contract"` path: body slots from the IR row
+/// when present (post vs inv preserved), else inv from the fact payload;
+/// unique contract name from IR `name` or span locus; warrants from the
+/// fact memento / IR sourceWarrants.
 pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
-    let formula = serde_json::to_value(fact.payload()).map_err(|e| FeedError::Mint {
+    let payload_formula = serde_json::to_value(fact.payload()).map_err(|e| FeedError::Mint {
         what: "graph_from_fact",
         detail: format!("IrFormula serialize: {e}"),
     })?;
-    let warrant = fact.source_memento().to_json();
-    let contract_name = {
-        let name = &fact.source_memento().function_name;
-        if name.is_empty() {
-            // Stable placeholder when the memento carries no function name;
-            // FOL identity for parity is (warrant file, span, formula).
-            "feed::fact".to_string()
-        } else {
-            name.clone()
-        }
+    let contract_name = contract_name_for_fact(fact);
+
+    // Prefer full IR slots (preserves post vs inv). Fall back to inv-only
+    // payload when the tree node has no IR row (older kit / thin audit).
+    let slots: Vec<(&str, Json)> = match fact.ir_row().map(slots_from_ir_row) {
+        Some(from_ir) if !from_ir.is_empty() => from_ir,
+        _ => vec![("inv", payload_formula)],
     };
 
+    let warrants = warrants_for_fact(fact);
+    let extras = fact
+        .ir_row()
+        .map(|ir| {
+            let (formals, formals_present) = formals_from_ir_row(ir);
+            ClaimExtras {
+                emit_empty_formals: formals_present && formals.is_empty(),
+                formals,
+                bridge_source_symbol: bridge_from_ir_row(ir),
+                out_binding: out_binding_from_ir_row(ir),
+            }
+        })
+        .unwrap_or_default();
+
     let mut graph = ProofGraph::new();
-    push_claim_with_slots(
-        &mut graph,
-        &contract_name,
-        vec![("inv", formula)],
-        vec![json_to_cvalue(&warrant)],
-    )?;
+    push_claim_with_slots(&mut graph, &contract_name, slots, warrants, extras)?;
     Ok(graph)
+}
+
+fn warrants_for_fact(fact: &Fact) -> Vec<Arc<CValue>> {
+    if let Some(ir) = fact.ir_row() {
+        if let Some(arr) = ir
+            .get("sourceWarrants")
+            .or_else(|| ir.get("source_warrants"))
+            .and_then(Json::as_array)
+        {
+            if !arr.is_empty() {
+                return arr.iter().map(json_to_cvalue).collect();
+            }
+        }
+    }
+    vec![json_to_cvalue(&fact.source_memento().to_json())]
 }
 
 /// Build a graph fragment from one enumerated universe (function-contract).
 ///
 /// Member key is the memento's `function_name` (Task 1 stamps the batch
-/// `name`, e.g. `mathy::add::callable`, `len::builtin-universe`). Body is
-/// pre-only `true` so feed recovery that keys facts on inv|post does not
-/// invent extra claim FOL; universe identity is the contract name.
+/// `name`, e.g. `mathy::add::callable`, `len::builtin-universe`). When the
+/// wire audit carries the full IR row, body slots + formals + bridge match
+/// mint's function-contract construction. Otherwise fall back to a pre-only
+/// `true` shell so name identity still folds.
 pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
     let name = u.source_memento().function_name.clone();
     if name.is_empty() {
@@ -284,8 +397,53 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
     }
 
     let mut graph = ProofGraph::new();
-    // pre-only: typed-member recovery of inv|post stays empty → no extra facts.
-    push_claim_with_slots(&mut graph, &name, vec![("pre", true_formula())], Vec::new())?;
+
+    if let Some(ir) = u.ir_row() {
+        let mut slots = slots_from_ir_row(ir);
+        if slots.is_empty() {
+            // IR without body still needs a slot; use payload post if any.
+            if let Some(payload) = u.payload() {
+                slots.push(("post", payload.clone()));
+            } else {
+                slots.push(("pre", true_formula()));
+            }
+        }
+        let (formals, formals_present) = formals_from_ir_row(ir);
+        let warrants = ir
+            .get("sourceWarrants")
+            .or_else(|| ir.get("source_warrants"))
+            .and_then(Json::as_array)
+            .map(|arr| arr.iter().map(json_to_cvalue).collect())
+            .unwrap_or_default();
+        let extras = ClaimExtras {
+            emit_empty_formals: formals_present && formals.is_empty(),
+            formals,
+            bridge_source_symbol: bridge_from_ir_row(ir),
+            out_binding: out_binding_from_ir_row(ir),
+        };
+        push_claim_with_slots(&mut graph, &name, slots, warrants, extras)?;
+        return Ok(graph);
+    }
+
+    // No IR row: keep a name shell so walk fold still enumerates the universe.
+    // pre-only so fact recovery that keys on inv|post does not invent extras.
+    if let Some(payload) = u.payload() {
+        push_claim_with_slots(
+            &mut graph,
+            &name,
+            vec![("post", payload.clone())],
+            Vec::new(),
+            ClaimExtras::default(),
+        )?;
+    } else {
+        push_claim_with_slots(
+            &mut graph,
+            &name,
+            vec![("pre", true_formula())],
+            Vec::new(),
+            ClaimExtras::default(),
+        )?;
+    }
     Ok(graph)
 }
 

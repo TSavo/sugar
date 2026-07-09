@@ -322,7 +322,8 @@ pub fn prove_from_kit(
     let local = feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?;
 
     // 2. Graph→pool intake with the consumer speaker (Task 7 door).
-    let mut pool = pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
+    let mut pool =
+        pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
 
     // 3. Vendor testimony when the kit implements resolve_dependency_proofs.
     // Unavailable is a LINK-class absence (local-only prove still runs), not
@@ -463,13 +464,8 @@ pub fn pool_from_graph_with_speaker(
     };
     let sealed = build_proof_envelope(&proof_input);
     let mut pool = MementoPool::default();
-    let proof_bytes = ProofBytes::try_from_parts(
-        label,
-        sealed.cid.clone(),
-        sealed.bytes,
-        speaker,
-    )
-    .map_err(|e| format!("could not stage speaker-stamped proof bytes: {e}"))?;
+    let proof_bytes = ProofBytes::try_from_parts(label, sealed.cid.clone(), sealed.bytes, speaker)
+        .map_err(|e| format!("could not stage speaker-stamped proof bytes: {e}"))?;
     load_proof_bytes_into_pool(&[proof_bytes], &mut pool);
     Ok(pool)
 }
