@@ -628,26 +628,41 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     function_node,
                     getattr(function_node, "_sugar_file", ctx.filename),
                 )
-            parameters = tuple(function.function_params())
-            if len(parameters) != fragment.call_arg_count():
+            all_parameters = tuple(function.function_params())
+            min_args, max_args = function.function_positional_arity()
+            n_args = fragment.call_arg_count()
+            if not (min_args <= n_args <= max_args):
                 return cls(
                     strategy=FactoryGapStrategy(
                         FactoryGapInfo(
                             owner="python.factory",
                             blame=fragment.blame,
                             observed=f"{target}(...)",
-                            requested=f"{len(parameters)} call arguments",
+                            requested=f"{min_args}..{max_args} call arguments",
                             fix=f"add argument binding sugar for `{target}`",
                         )
                     )
                 )
+            # Bridge only the formals the callsite actually supplies (defaults remain
+            # callee-side; dig of the callee body still sees full formals).
+            parameters = all_parameters[:n_args]
             arguments = tuple(
                 ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args()
             )
+            # Import-resolved callees dig with sibling FunctionDefs from the same
+            # module in the resolver (``urlsafe_b64encode`` body calls local
+            # ``b64encode``). Without siblings the body walk gaps as call-local.
+            body_ctx = replace(ctx, building=building | {target})
+            if import_target is not None or (target is not None and "." in target):
+                module_name = (import_target or target).rsplit(".", 1)[0]
+                sibling_nodes = _module_sibling_function_nodes(module_name)
+                if sibling_nodes:
+                    body_ctx = replace(
+                        body_ctx,
+                        name_resolver={**(ctx.name_resolver or {}), **sibling_nodes},
+                    )
             try:
-                body = build_bridge_body(
-                    function, replace(ctx, building=building | {target})
-                )
+                body = build_bridge_body(function, body_ctx)
             except IncompleteFunctionBody as exc:
                 return cls(strategy=TypedEffectStrategy(exc.incomplete))
             except TypeError as exc:
@@ -1022,6 +1037,45 @@ def _module_attr_import_target(fragment) -> str | None:
     except Exception:
         return None
     return f"{mod}.{attr}"
+
+
+def _module_sibling_function_nodes(module_name: str) -> dict:
+    """AST FunctionDef nodes for every def in ``module_name``, bare + qualified keys.
+
+    Enables open dig of ``base64.urlsafe_b64encode`` to resolve same-module
+    ``b64encode`` (and itsdangerous ``want_bytes`` when digging encoding bodies).
+    """
+
+    import importlib
+    import inspect
+    from pathlib import Path
+
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    try:
+        module = importlib.import_module(module_name)
+        sourcefile = inspect.getsourcefile(module)
+        if not sourcefile:
+            return {}
+        source = Path(sourcefile).read_text(encoding="utf-8")
+    except (ImportError, OSError, TypeError, UnicodeError):
+        return {}
+    try:
+        parsed = SourceFragment.from_source(source, sourcefile)
+    except SyntaxError:
+        return {}
+    nodes: dict = {}
+    for child in parsed.walk():
+        if child.observed != "FunctionDef":
+            continue
+        name = child.function_name()
+        child.node.decorator_list = []  # type: ignore[attr-defined]
+        child.node._sugar_source = source  # type: ignore[attr-defined]
+        child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
+        child.node._sugar_bridge_name = f"{module_name}.{name}"  # type: ignore[attr-defined]
+        nodes[name] = child.node
+        nodes[f"{module_name}.{name}"] = child.node
+    return nodes
 
 
 def _resolve_install_source_funcdef(import_target: str):

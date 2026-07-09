@@ -430,6 +430,19 @@ class SourceFragment:
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         return [a.arg for a in self.node.args.args]  # type: ignore[attr-defined]
 
+    def function_positional_arity(self) -> "tuple[int, int]":
+        """Return ``(min_args, max_args)`` for positional parameters (with defaults).
+
+        ``want_bytes(s, encoding="utf-8", errors="strict")`` is arity (1, 3) so a
+        callsite ``want_bytes(string)`` bridges instead of FactoryGap on param count.
+        """
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        args = self.node.args  # type: ignore[attr-defined]
+        positional = [*args.posonlyargs, *args.args]
+        max_args = len(positional)
+        min_args = max_args - len(args.defaults)
+        return min_args, max_args
+
     def function_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the statements in a FunctionDef body."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)

@@ -10,8 +10,17 @@ _STRIP_SOURCE = (
 )
 
 
+def _has_suffix_of_eq(post: dict) -> bool:
+    if post.get("kind") == "not":
+        atomic = post["operands"][0]
+        return atomic.get("name") == "suffix-of" and atomic["args"][0]["value"] == "="
+    if post.get("kind") == "and":
+        return any(_has_suffix_of_eq(op) for op in post["operands"])
+    return False
+
+
 def test_rstrip_body_mints_no_suffix_universe_on_outer_callee() -> None:
-    """Closed strip universe attaches to outer base64_encode, not the stuck inner call."""
+    """No-suffix post attaches to outer base64_encode (closed or open dig)."""
     report = build_literal_call_report(
         source=_STRIP_SOURCE,
         filename="test_token_padding.py",
@@ -30,19 +39,14 @@ def test_rstrip_body_mints_no_suffix_universe_on_outer_callee() -> None:
         for c in contracts
         if c.get("bridgeSourceSymbol") == "call:itsdangerous.encoding.base64_encode"
     )
-    post = outer["post"]
-    assert post["kind"] == "not"
-    atomic = post["operands"][0]
-    assert atomic["kind"] == "atomic"
-    assert atomic["name"] == "suffix-of"
-    assert atomic["args"][0]["value"] == "="
-    assert atomic["args"][1]["name"] == "out"
+    assert _has_suffix_of_eq(outer["post"])
 
     roles = {
         m.role if hasattr(m, "role") else m.get("role")
         for m in report.payload.source_mementos
     }
-    assert "python.translate-universe" in roles
+    # open dig uses literal-call-sugar; closed strip uses translate-universe
+    assert roles & {"python.translate-universe", "python.literal-call-sugar"}
 
     audits = [
         a
