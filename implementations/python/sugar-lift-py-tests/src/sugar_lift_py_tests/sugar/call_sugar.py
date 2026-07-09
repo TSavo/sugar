@@ -537,10 +537,24 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             ctx.import_aliases or {},
             ctx.from_imports or {},
         )
+        # Module-attribute calls written as `base64.urlsafe_b64encode(...)` are
+        # import-bound even when the *callee module's* imports were not threaded
+        # into this build ctx (body dig of an installed vendor function only has
+        # the function source, not the surrounding `import base64`). Treat a bare
+        # Name receiver that importlib can load as a module as an import target so
+        # we Bridge+dig instead of call-method FactoryGap.
+        if import_target is None:
+            import_target = _module_attr_import_target(fragment)
         bare_target = fragment.call_target_name()
         target = import_target or bare_target
         resolver = ctx.name_resolver or {}
         function_node = resolver.get(target)
+        # Lazy install-source resolve: dig_functions only seeds top-level import
+        # call sites; nested module.attr inside a walked body must resolve here.
+        if function_node is None and import_target is not None:
+            resolved_fn = _resolve_install_source_funcdef(import_target)
+            if resolved_fn is not None:
+                function_node = resolved_fn.node
         building = ctx.building
         if function_node is not None and target is not None:
             resolved = SourceFragment.from_node(function_node, ctx.filename)
@@ -550,7 +564,11 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         fragment, ctx, target, resolved
                     )
                 )
-        if import_target is not None and _is_nested_import_target(import_target):
+        if (
+            import_target is not None
+            and function_node is None
+            and _is_nested_import_target(import_target)
+        ):
             return cls(
                 strategy=_build_external_bridge_strategy(
                     fragment, ctx, import_target, target
@@ -568,6 +586,11 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             and fragment.call_arg_count() in {0, 1}
         ):
             function = SourceFragment.from_node(function_node, ctx.filename)
+            if getattr(function_node, "_sugar_source", None) is not None:
+                function = SourceFragment.from_node(
+                    function_node,
+                    getattr(function_node, "_sugar_file", ctx.filename),
+                )
             parameters = tuple(function.function_params())
             if len(parameters) != fragment.call_arg_count():
                 return cls(
@@ -904,6 +927,67 @@ def _is_resolved_local_class_call(fragment, ctx) -> bool:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
     return SourceFragment.from_node(resolved_node, ctx.filename).observed == "ClassDef"
+
+
+def _module_attr_import_target(fragment) -> str | None:
+    """If ``mod.attr(...)`` and ``mod`` is an importable module, return ``mod.attr``.
+
+    Covers vendor bodies that reference stdlib/third-party modules by bare name
+    without the surrounding module's ``import`` statements being in the dig ctx.
+    """
+
+    if not fragment.call_is_method_call():
+        return None
+    receiver = fragment.call_receiver()
+    if receiver is None or receiver.observed != "Name":
+        return None
+    attr = fragment.call_target_name()
+    if not attr:
+        return None
+    mod = receiver.name_id()
+    try:
+        import importlib
+
+        importlib.import_module(mod)
+    except Exception:
+        return None
+    return f"{mod}.{attr}"
+
+
+def _resolve_install_source_funcdef(import_target: str):
+    """Resolve ``module.attr`` to an installed FunctionDef SourceFragment, or None."""
+
+    if "." not in import_target:
+        return None
+    module_name, attr = import_target.rsplit(".", 1)
+    import importlib
+    import inspect
+    import textwrap
+
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    try:
+        module = importlib.import_module(module_name)
+        obj = getattr(module, attr)
+        source = textwrap.dedent(inspect.getsource(obj))
+    except (ImportError, AttributeError, OSError, TypeError):
+        return None
+    try:
+        sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
+    except TypeError:
+        sourcefile = f"<{module_name}>"
+    try:
+        parsed = SourceFragment.from_source(source, sourcefile)
+    except SyntaxError:
+        return None
+    for child in parsed.walk():
+        if child.observed == "FunctionDef" and child.function_name() == attr:
+            child.node.decorator_list = []  # type: ignore[attr-defined]
+            child.node._sugar_source = source  # type: ignore[attr-defined]
+            child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
+            child.node._sugar_bridge_name = import_target  # type: ignore[attr-defined]
+            return child
+    return None
 
 
 def _is_nested_import_target(import_target: str) -> bool:
