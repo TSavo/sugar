@@ -296,7 +296,7 @@ pub enum ProveFromKitError {
     Solve(#[from] SolveError),
 }
 
-/// One walk entry for project prove (#3809 Task 8): fold the kit claim tree
+/// One walk entry for project prove (#3809 Task 8–9): fold the kit claim tree
 /// as the consumer speaker, fold in vendor testimony when available, and
 /// discharge through the production solve beats — **without** batch mint.
 ///
@@ -305,11 +305,13 @@ pub enum ProveFromKitError {
 /// 2. `pool = pool_from_graph_with_speaker(local, speaker)` — consumer stamp
 /// 3. `kit.testimony(root)` → when `Proofs`, `load_proof_bytes_into_pool`
 ///    (vendor speakers already on each `ProofBytes`; first-writer-wins merge)
-/// 4. [`solve_project_with_pool`] — same annotate + Runner path as disk prove
+/// 4. `cfg.extra_proofs` → same pool merge (CLI dependency-proof face; the
+///    preloaded-pool Runner path does not re-walk `extra_proofs`)
+/// 5. [`solve_project_with_pool`] — same annotate + Runner path as disk prove
 ///
-/// Does **not** delete batch mint. Full mint+prove verdict parity on pandas
-/// / enumerate fixtures is Task 9; this door is the thin face the harness
-/// and eventual CLI cutover share.
+/// Production face: `sugar prove` routes here when a lift kit can rendezvous
+/// for the project surface (Task 9). Batch mint remains for `.proof` sealing
+/// / publish; prove no longer requires a prior mint for the local surface.
 pub fn prove_from_kit(
     kit: &Kit,
     workspace_root: &Path,
@@ -339,7 +341,14 @@ pub fn prove_from_kit(
         }
     }
 
-    // 4. Production solve over the multi-speaker pool.
+    // 4. CLI / RunnerConfig dependency proofs (same merge disk load_pool uses).
+    // Must happen here: `run_with_proof_run_with_pool` does not re-apply
+    // `cfg.extra_proofs` (pool is already assembled).
+    if !cfg.extra_proofs.is_empty() {
+        load_proof_bytes_into_pool(&cfg.extra_proofs, &mut pool);
+    }
+
+    // 5. Production solve over the multi-speaker pool.
     Ok(solve_project_with_pool(cfg, compilers, pool)?)
 }
 

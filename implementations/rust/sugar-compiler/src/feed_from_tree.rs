@@ -18,10 +18,12 @@ use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{encode_jcs, Value as CValue};
-use sugar_claim_envelope::{mint_contract_with_body_cid, Authoring, MintContractArgs};
+use sugar_claim_envelope::{
+    mint_bridge, mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
+};
 use sugar_proof_envelope::{
-    ed25519_pubkey_string, ed25519_sign_string, ClaimContractMemento, ContractBody, Ed25519Seed,
-    FlatAtom, ProofGraph,
+    ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento, ContractBody,
+    ContractMementoRef, Ed25519Seed, FlatAtom, ProofGraph,
 };
 use sugar_verifier::Speaker;
 
@@ -139,6 +141,10 @@ fn push_claim_with_slots(
         }
     }
 
+    // Capture for PR-23 auto-bridge after the claim is stamped (attestation
+    // CID is the re-signed member's CID, not pre-stamp mint.cid).
+    let auto_bridge_symbol = extras.bridge_source_symbol.clone();
+
     let args = MintContractArgs {
         evidence_term: None,
         formals: extras.formals,
@@ -176,7 +182,35 @@ fn push_claim_with_slots(
     // header.`contractName` (ContractMemento's dual-field shape). Stamp the
     // same string so feed recovery via typed_members_iter can read names.
     let memento = claim_memento_with_contract_name(minted.canonical_bytes, contract_name)?;
+    // Member identity after contractName re-sign — bridge target must match
+    // the pool index key (`pool.mementos`), not the pre-stamp mint CID.
+    let attestation_cid = memento.cid().as_str().to_string();
     graph.push_claim_contract(memento);
+
+    // PR-23 production bridge-writer (parity with sugar-cli mint_ir_document):
+    // a body-bearing function-contract with bridgeSourceSymbol must also emit
+    // a co-member Bridge so verify/prove can join callsite → universe body.
+    // Without this, fold construction matches claim FOL but discharge stays
+    // Refused while mint+prove discharges via linkedPosts.
+    if let Some(source_symbol) = auto_bridge_symbol {
+        let bridge = mint_bridge(&MintBridgeArgs {
+            produced_by: FEED_PRODUCED_BY.into(),
+            produced_at: FEED_PRODUCED_AT.into(),
+            source_symbol,
+            source_layer: "source".into(),
+            target_contract: ContractMementoRef::new(attestation_cid),
+            target_layer: "kit".into(),
+            ir_arg_sorts: vec![],
+            ir_return_sort: String::new(),
+            notes: "auto-minted body-discharge bridge (feed_from_tree PR-23)".into(),
+            signer_seed: FEED_SIGNER_SEED,
+            // Self-pinned: target is a co-member of this feed fragment /
+            // folded graph (same law as mint: no external bundle pin).
+            target_proof_cid: None,
+            callsite: None,
+        });
+        graph.push_bridge(BridgeMemento::new(bridge.canonical_bytes));
+    }
     Ok(())
 }
 
