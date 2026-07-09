@@ -14,13 +14,14 @@ Coverage snapshot (coords = call:<op> present in IR):
 |---------|---------------|-----------------|-------------------|
 | Series.mean/max/min/sum/count/std | yes | yes | mean/max/min/sum/count yes |
 | Series.head/tail/astype | yes | partial | — |
-| DataFrame.shape/empty | yes | yes (shape) | shape dual: tuple sat* |
+| DataFrame.shape/empty | yes | yes (shape) | shape dual: unsat (tuple injectivity) |
 | DataFrame.dtypes/columns/index/values | yes | columns via list() | — |
-| chain dropna().shape | yes | yes | tuple sat* |
+| chain dropna().shape | yes | yes | shape dual unsat |
 | chain reshape().sum | yes | yes | yes |
 | chain groupby().sum | yes (direct) | weak (is not None) | identity refused |
 
-*tuple RHS dual-assert currently sat under z3 (tuple injectivity gap — known).
+Tuple RHS dual-assert is structural unsat via ground data-ctor values
+(see test_tuple_dual_assert_injectivity.py / sugar-verifier consistency).
 """
 
 from __future__ import annotations

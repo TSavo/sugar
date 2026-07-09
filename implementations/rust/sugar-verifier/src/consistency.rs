@@ -775,8 +775,27 @@ fn is_ground_term(node: &Json) -> bool {
     }
 }
 
+/// Ground *data value* for structural equality.
+///
+/// Primitive consts always count. Ground constructor trees (`tuple(0,0)`,
+/// `array(…)`, nested data ctors) also count so component-wise injectivity is
+/// free via distinct JCS keys: `tuple(0,0) ≠ tuple(1,1)` without SMT ADT
+/// theory. Callsites (`call:…`, `await`) are terms, not values — leaving them
+/// out keeps `ground_term_const_equality` oriented (term, value).
 fn is_const_value(node: &Json) -> bool {
-    node.get("kind").and_then(|k| k.as_str()) == Some("const")
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("const") => true,
+        Some("ctor") => {
+            let name = node.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if name.starts_with("call:") || name == "await" {
+                return false;
+            }
+            node.get("args")
+                .and_then(|v| v.as_array())
+                .is_some_and(|args| args.iter().all(is_const_value))
+        }
+        _ => false,
+    }
 }
 
 fn eval_ground_bool(node: &Json) -> Option<bool> {
@@ -4645,6 +4664,61 @@ mod tests {
             vendor,
             json!([says_6]),
             "flipped vendorFactIr must be EXACTLY the (now vendor-spoken) ==6 conjunct vector"
+        );
+    }
+
+    /// TUPLE / DATA-CTOR INJECTIVITY: a callsite equated to two distinct ground
+    /// constructor values (`tuple(0,0)` vs `tuple(1,1)`) is a structural
+    /// contradiction. Before this, `is_const_value` only accepted primitive
+    /// consts, so `df.shape == (0,0) ∧ df.shape == (1,1)` fell through to z3 as
+    /// sat (tuple injectivity gap). Component-wise injectivity is free via
+    /// distinct JCS keys of the ground ctor trees — no fabricated witness, no
+    /// solver ADT theory required.
+    #[test]
+    fn pure_callsite_tuple_value_contradiction_refuses_structurally() {
+        let (plan, reg) = z3_plan_and_registry();
+        let shape = json!({"kind":"ctor","name":"call:shape","args":[
+            {"kind":"ctor","name":"call:pandas.DataFrame","args":[]}
+        ]});
+        let tuple = |a: i64, b: i64| {
+            json!({"kind":"ctor","name":"tuple","args":[
+                {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":a},
+                {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":b},
+            ]})
+        };
+        let inv = json!({"kind":"and","operands":[
+            eqf(shape.clone(), tuple(0, 0)),
+            eqf(shape.clone(), tuple(1, 1)),
+        ]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:tuple-contradiction",
+            "shape#euf#c:call:shape(c:call:pandas.DataFrame())::assertion",
+            inv,
+        );
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "call:shape()==(0,0) ∧ call:shape()==(1,1) MUST refuse structurally: {res:?}"
+        );
+        assert!(
+            res[0].reason.contains("structural:"),
+            "must fire pre-SMT structural path (not z3 ADT): {}",
+            res[0].reason
+        );
+        assert!(
+            res[0].reason.contains("equals both"),
+            "reason should name the dual values: {}",
+            res[0].reason
         );
     }
 
