@@ -207,7 +207,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cargo-sugar"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "clap",
  "serde_json",
@@ -893,7 +893,7 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libsugar"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "libsugar-rpc"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "blake3",
  "serde_json",
@@ -1502,14 +1502,14 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sugar-arch-guard"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "toml 0.8.23",
 ]
 
 [[package]]
 name = "sugar-canonicalizer"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "blake3",
  "hex",
@@ -1519,7 +1519,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-claim-envelope"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "hex",
  "serde",
@@ -1532,7 +1532,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-cli"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -1571,7 +1571,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-compiler"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64",
  "libsugar",
@@ -1594,14 +1594,14 @@ dependencies = [
 
 [[package]]
 name = "sugar-floor-algebra"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "sugar-ir-symbolic",
 ]
 
 [[package]]
 name = "sugar-ir-compiler"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "libc",
  "serde",
@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-ir-compiler-coq"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde_json",
  "sugar-canonicalizer",
@@ -1623,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-ir-compiler-lean"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde_json",
  "sugar-canonicalizer",
@@ -1633,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-ir-compiler-maude"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1643,7 +1643,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-ir-compiler-smt-lib"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1654,7 +1654,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-ir-symbolic"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde_json",
  "sugar-canonicalizer",
@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-ir-types"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1675,7 +1675,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-lift"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64",
  "libsugar",
@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-lift-contracts"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1710,14 +1710,14 @@ dependencies = [
 
 [[package]]
 name = "sugar-lift-rpc-client"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "sugar-lift-rust-cargo-test-witness"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64",
  "serde_json",
@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-lift-rust-tests"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-linker"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-lsp"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "libc",
  "serde",
@@ -1785,7 +1785,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-lsp-rust"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "blake3",
  "serde_json",
@@ -1795,7 +1795,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-plugin-loader"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1807,7 +1807,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-proof-envelope"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1820,7 +1820,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-ra-oracle"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "libc",
@@ -1836,7 +1836,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-verifier"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64",
  "chrono",
@@ -1864,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "sugar-walk"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64",
  "libsugar",
