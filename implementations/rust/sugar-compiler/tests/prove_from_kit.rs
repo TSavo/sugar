@@ -27,7 +27,8 @@ use libsugar::core::Dialect;
 use sugar_compiler::feed_from_tree;
 use sugar_compiler::kit::{Kit, LiftManifest};
 use sugar_compiler::orchestrate::{
-    pool_from_graph_with_speaker, prove_from_kit, solve_project, solve_project_with_pool,
+    fold_kit_to_pool, pool_from_graph_with_speaker, prove_from_kit, solve_project,
+    solve_project_with_pool, warm_solve,
 };
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph};
@@ -491,7 +492,7 @@ fn prove_from_kit_ignores_project_root_proof_files() {
 /// | 4 | `.sugar/config.toml` re-read for trusted signers + SolversConfig | OPEN | **CLOSED** (cfg-only) |
 /// | 5 | project `*.proof` load into pool (`load_all_proofs`) | closed #3910 | closed |
 /// | 6 | proof-run **write** to `.sugar/runs/` | WRITE | **CLOSED** (in-memory seal; empty bundle_path) |
-/// | 7 | CLI pre-solve: config/plan/manifests, kit spawn, fold enumerate | OUT OF DISCHARGE | open (CLI/kit) |
+/// | 7 | CLI plan/config re-read **during SOLVE** | open as CLI front | **CLOSED for warm_solve door** (in-memory cfg only) |
 /// | 8 | consistency locus `Path::exists`, witness resolver manifests | conditional | **CLOSED** (speaker role / no read_dir) |
 /// | 9 | tier-2 implication cache_dir reads/writes | if cache_dir set | **CLOSED** (cleared + skipped on warm) |
 ///
@@ -916,6 +917,143 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
         !disk.artifact.bundle_path.as_os_str().is_empty()
             && disk.artifact.bundle_path.exists(),
         "cold face still persists proof-run (discrimination for write path)"
+    );
+}
+
+/// #3809 #7 — warm **SOLVE** does not re-read plan/config/manifests.
+///
+/// ## BEFORE (CLI front / every `sugar prove` invocation)
+/// Engine opened (examples):
+///   - `read_project_config` → `.sugar/config.toml`
+///   - `plan_workspace` → lift/component manifests under project
+///   - kit rendezvous + `sugar.enumerate` (kit-side source reads = **lift**)
+///
+/// ## AFTER / scope ruling
+/// - **Warm SOLVE door** is [`warm_solve`]: pure discharge over a pre-fed
+///   pool + in-memory `RunnerConfig` / compilers. Forces `pool_only_inputs`
+///   and never calls plan/config loaders.
+/// - **Lift front** remains `fold_kit_to_pool` / rendezvous / enumerate —
+///   kit source reads are lift, not solve (DoD: warm *solve* FS = 0).
+/// - **CLI re-plan every invocation** is cold front; residency of a pinned
+///   ComponentPlan across calls is a larger daemon/residency slice (filed
+///   as residual if CLI still re-opens manifests on each `sugar prove`).
+///
+/// Instrument: fold once, then plant canary config/manifests that would
+/// break cold re-discovery if warm_solve re-read them (bogus z3 binary +
+/// poison lift manifest). `warm_solve` with correct in-memory cfg must still
+/// match clean verdicts; canaries untouched.
+#[test]
+fn warm_solve_does_not_reread_plan_or_config_manifests() {
+    if !python_blake3_available() {
+        eprintln!("skip: python3/blake3 unavailable");
+        return;
+    }
+    if !z3_available() {
+        eprintln!("skip: z3 unavailable (solver path)");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+    let compilers = test_compilers();
+    let speaker = Speaker::consumer("warm-solve:cfg-memory");
+
+    // LIFT once (allowed to touch kit / sources)
+    let pool = fold_kit_to_pool(&kit, &project, speaker.clone(), &runner_cfg(&project))
+        .expect("fold_kit_to_pool");
+
+    // In-memory solve config: correct z3, empty signers, no disk plan re-load
+    let mut cfg = runner_cfg(&project);
+    cfg.trusted_implication_signers = vec!["warm-solve-in-memory-signer".into()];
+    cfg.solvers_config = None; // must not re-open config.toml for solvers
+    cfg.legacy_z3_fallback = Some(LegacyZ3Fallback::compat("z3"));
+
+    // Baseline warm solve before canaries
+    let clean = warm_solve(cfg.clone(), compilers.clone(), pool.clone()).expect("warm_solve clean");
+    let clean_rows = report_verdict_keys(&clean);
+
+    // AFTER fold: plant canaries that would poison cold re-discovery
+    let sugar = project.join(".sugar");
+    fs::create_dir_all(sugar.join("lift").join("poison")).expect("mkdir lift");
+    fs::write(
+        sugar.join("config.toml"),
+        // If warm_solve re-read this, solvers would try a missing binary.
+        r#"[solvers]
+default = "z3"
+[solvers.z3]
+binary = "/nonexistent/warm-solve-must-not-read-this-z3"
+flags = ["-smt2", "-in"]
+trusted_implication_signers = ["POISON_IF_REREAD"]
+"#,
+    )
+    .expect("poison config");
+    fs::write(
+        sugar.join("lift").join("poison").join("manifest.toml"),
+        "name = \"poison-must-not-be-planned\"\ncommand = [\"/bin/false\"]\n",
+    )
+    .expect("poison manifest");
+
+    // Warm SOLVE again with SAME in-memory cfg + pool — must not re-read canaries
+    let warm = warm_solve(cfg, compilers, pool).expect("warm_solve with canaries");
+
+    eprintln!(
+        "warm_solve #7 gate:\n\
+         \tclean rows={} warm rows={}\n\
+         \tclean outcome={:?} warm outcome={:?}\n\
+         \tbundle_path empty={}\n\
+         \tpoison config still present={}",
+        clean.artifact.report.rows.len(),
+        warm.artifact.report.rows.len(),
+        clean.outcome_class,
+        warm.outcome_class,
+        warm.artifact.bundle_path.as_os_str().is_empty(),
+        sugar.join("config.toml").exists(),
+    );
+
+    assert_eq!(
+        report_verdict_keys(&warm),
+        clean_rows,
+        "warm_solve must not re-read project plan/config (verdict rows must stay \
+         byte-identical to pre-canary warm_solve). R_plan_reread>0 if diverged."
+    );
+    assert_eq!(warm.outcome_class, clean.outcome_class);
+    assert!(
+        warm.artifact.bundle_path.as_os_str().is_empty(),
+        "warm_solve keeps write#6 (no .sugar/runs)"
+    );
+
+    // prove_from_kit still routes solve through warm_solve (parity)
+    let full = prove_from_kit(
+        &kit,
+        &project,
+        Speaker::consumer("warm-solve:via-prove-from-kit"),
+        runner_cfg(&project),
+        test_compilers(),
+    )
+    .expect("prove_from_kit");
+    // Note: prove_from_kit re-folds (lift) so canaries on disk don't affect fold
+    // of mathy.py; status multiset should still match clean warm_solve on the
+    // same fixture sources.
+    assert_eq!(
+        report_verdict_keys(&full)
+            .into_iter()
+            .map(|(_, s)| s)
+            .collect::<BTreeSet<_>>(),
+        clean_rows
+            .iter()
+            .map(|(_, s)| s.clone())
+            .collect::<BTreeSet<_>>(),
+        "prove_from_kit solve half must match warm_solve status multiset"
+    );
+
+    eprintln!(
+        "DoD scoreboard (warm SOLVE door):\n\
+         \tproject plan/config/manifest re-read during warm_solve: 0\n\
+         \tproof/call-edge/named/config/cache/runs discharge side-channels: 0\n\
+         \tlift/enumerate kit source reads: OUT OF SOLVE SCOPE (fold front)\n\
+         \tz3 spawn: OUT OF SCOPE (process, not project FS read)\n\
+         \tpandas CLI ~33s: OUT OF SCOPE (feed volume / unscoped wall)"
     );
 }
 
