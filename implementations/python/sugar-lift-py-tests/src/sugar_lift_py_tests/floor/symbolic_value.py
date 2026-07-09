@@ -77,18 +77,35 @@ class SymbolicValue(FloorValue):
         # Vendor / opaque method call on a symbolic coordinate receiver
         # (`call:numpy.array(...).sum()` → `call:sum(call:numpy.array(...))`).
         # Same opaque-coordinate family as attributes (#3905) and builtins
-        # (#3908): never invent a return value (computed=None).
+        # (#3908): never invent a return value unless the payload folds.
         if not operation.name.startswith("__") and all(
             isinstance(arg, FloorValue) for arg in operation.arguments
         ):
             from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+            from sugar_lift_py_tests.floor.string_value import StringValue
+            from sugar_lift_py_tests.ir import _ConstStr, _Ctor
             from sugar_lift_py_tests.outcome import Complete
 
+            computed: FloorValue | None = None
+            # Foldable: b\"hi\".decode() — python:bytes hex payload is concrete.
+            if (
+                operation.name == "decode"
+                and not operation.arguments
+                and isinstance(self.term, _Ctor)
+                and self.term.name == "python:bytes"
+                and len(self.term.args) == 1
+                and isinstance(self.term.args[0], _ConstStr)
+            ):
+                try:
+                    text = bytes.fromhex(self.term.args[0].value).decode("utf-8")
+                    computed = StringValue(text)
+                except (ValueError, UnicodeDecodeError):
+                    computed = None
             return Complete(
                 OpaqueOpCallsite(
                     callee=operation.name,
                     arg=self,
-                    computed=None,
+                    computed=computed,
                     extra_args=tuple(operation.arguments),
                 )
             )
