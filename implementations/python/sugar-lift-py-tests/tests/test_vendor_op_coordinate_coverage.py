@@ -18,11 +18,12 @@ Coverage snapshot (coords = call:<op> present in IR):
 | DataFrame.dtypes/columns/index/values | yes | columns via list() | — |
 | chain dropna().shape | yes | yes | shape dual unsat |
 | chain reshape().sum | yes | yes | yes |
-| chain groupby().sum | yes (direct) | yes (value eq A()==…) | identity still weak |
+| chain groupby().sum | yes (direct) | yes formal+zero-arg (Batch A) | via len(...) dual |
+| chain dropna().mean | yes | yes formal body dig | yes dual |
 
 Body dig for groupby().sum() is the value-equality surface
 (`assert A() == A()` / shape projection), not `is not None` — see
-test_groupby_body_dig.py.
+test_groupby_body_dig.py and test_vendor_chain_coordinate_batch_a.py.
 
 Tuple RHS dual-assert is structural unsat via ground data-ctor values
 (see test_tuple_dual_assert_injectivity.py / sugar-verifier consistency).
