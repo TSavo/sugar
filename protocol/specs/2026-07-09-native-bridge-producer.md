@@ -362,8 +362,9 @@ is the join, unchanged:
 
 ```
 EdgeTarget::Unbound(sig) => name_kit_index
-    .get(&Symbol::qualified(sig.kit, sig.symbol))
-    .ok_or(UnresolvedSymbol)?
+    .get(&sig.symbol)          // sig.symbol is ALREADY the typed,
+    .ok_or(UnresolvedSymbol)?  // fully-qualified Symbol; the ':'-split
+                               // lives in Symbol::from_wire, not here
 ```
 
 For a producer-resolved edge, the driver populates
