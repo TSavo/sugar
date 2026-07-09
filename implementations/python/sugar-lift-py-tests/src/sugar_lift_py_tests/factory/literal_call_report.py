@@ -3315,10 +3315,30 @@ def _function_universe(
         build_control_flow_body_sugar,
     )
 
+    # Total strip/lstrip return: closed covering universe is the ambient post
+    # (solver-safe). Open dig of nested towers is verified separately; merging
+    # open-dig walk rows into the mint currently leaks EUF towers that
+    # encoding-STOP ambient strip specialization — do not merge yet.
+    closed_strip = _strip_literal_function_universe(
+        callee,
+        callee_name,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+    )
+    if closed_strip is not None:
+        return closed_strip
+
+    dig_functions = _with_module_sibling_functions(dict(functions_by_name))
+    if "." in callee_name:
+        module_name = callee_name.rsplit(".", 1)[0]
+        dig_functions = _with_module_sibling_functions(
+            dig_functions, module_hint=module_name
+        )
     build_ctx = FactoryBuildContext(
         filename=filename,
         catalog=default_catalog(),
-        name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
+        name_resolver=_resolver_nodes(dig_functions, classes_by_name),
         import_aliases=import_aliases or {},
         from_imports=from_imports or {},
         audit_sink=factory_audits,
@@ -3396,11 +3416,33 @@ def _function_universe(
         return None
     if not _universe_formulas:
         return None
+    # Total strip/lstrip on the return is the *covering ambient post*. Open dig
+    # may also emit EUF ``out == call:rstrip(call:urlsafe(...), ...)`` — that tower
+    # stays in walk/body formulas for orientation, but must NOT be the ambient post
+    # alone (too weak) or and-ed into ambient when nested call heads encoding-STOP
+    # the solver. Ambient = strip totality only when the return shape is total strip.
+    strip_shape = _strip_return_shape(callee)
+    strip_universe_kind: str | None = None
+    ambient_formulas = list(_universe_formulas)
+    if strip_shape is not None:
+        method, chars, _return_stmt = strip_shape
+        pred = "suffix-of" if method == "rstrip" else "prefix-of"
+        strip_universe_kind = (
+            "no-suffix-chars" if method == "rstrip" else "no-prefix-chars"
+        )
+        scope_sorts["out"] = StringSort()
+        strip_formulas = [
+            not_(atomic(pred, [str_const(ch), make_var("out")])) for ch in chars
+        ]
+        ambient_formulas = strip_formulas
+        for strip_atom in strip_formulas:
+            if strip_atom not in _universe_formulas:
+                _universe_formulas.append(strip_atom)
     function_post = _post_condition_from_ir(
         (
-            _universe_formulas[0]
-            if len(_universe_formulas) == 1
-            else and_(_universe_formulas)
+            ambient_formulas[0]
+            if len(ambient_formulas) == 1
+            else and_(ambient_formulas)
         ),
         scope_sorts=scope_sorts,
         formal_names=formal_names,
@@ -3459,6 +3501,8 @@ def _function_universe(
         role="python.literal-call-sugar",
         ast_kind="Return",
     )
+    if strip_universe_kind is not None:
+        audit["universe_kind"] = strip_universe_kind
     walk_rows = [
         _walk_row(
             selected,
@@ -4432,6 +4476,45 @@ def _import_bindings(
             for name, asname in frag.importfrom_names():
                 from_imports[asname or name] = (module, name)
     return aliases, from_imports
+
+
+def _with_module_sibling_functions(
+    functions_by_name: dict[str, SourceFragment],
+    *,
+    module_hint: str | None = None,
+) -> dict[str, SourceFragment]:
+    """Expand dig map with same-module FunctionDefs (bare + qualified keys).
+
+    Open dig of an imported callee must see sibling locals (``want_bytes`` next
+    to ``base64_encode``, ``b64encode`` next to ``urlsafe_b64encode``).
+    """
+
+    from sugar_lift_py_tests.sugar.call_sugar import _module_sibling_function_nodes
+
+    out = dict(functions_by_name)
+    modules: set[str] = set()
+    if module_hint:
+        modules.add(module_hint)
+    for key, frag in list(functions_by_name.items()):
+        if "." in key:
+            modules.add(key.rsplit(".", 1)[0])
+        bridge = getattr(frag.node, "_sugar_bridge_name", None)
+        if isinstance(bridge, str) and "." in bridge:
+            modules.add(bridge.rsplit(".", 1)[0])
+        sugar_file = getattr(frag.node, "_sugar_file", None)
+        if isinstance(sugar_file, str) and sugar_file.endswith(".py"):
+            # best-effort: derive package.module from installed path is hard;
+            # bridge/qualified keys cover the logo cases.
+            pass
+    for module_name in modules:
+        nodes = _module_sibling_function_nodes(module_name)
+        for name, node in nodes.items():
+            if name in out:
+                continue
+            out[name] = SourceFragment.from_node(
+                node, getattr(node, "_sugar_file", module_name)
+            )
+    return out
 
 
 def _source_funcdef(
