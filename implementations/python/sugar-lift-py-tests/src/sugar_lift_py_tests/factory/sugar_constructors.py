@@ -109,10 +109,17 @@ def build_control_flow_body_sugar(site, ctx):
     params = site.function_params()
     # Zero-parameter bodies are legal dig targets (`def A(): return len([...])`).
     # Formals may be empty; only EncoderBodySugar still needs a named parameter.
-    reduce_ctx = ctx.with_temporal(TemporalContext.empty())
+    #
+    # Formals must be temporally bound on the BUILD ctx, not only on reduce:
+    # CallSugar selects MethodCallStrategy for Name receivers via
+    # `_method_receiver_is_temporally_bound` at build time. Without build-time
+    # formal binds, `def A(df): return df.groupby("k").sum()` gaps as
+    # call-method:groupby / call-builtin:sum and never mints the nested
+    # coordinate `call:sum(call:groupby(df, "k"))` (Batch A formal body dig).
+    body_ctx = ctx.with_temporal(TemporalContext.empty())
     for param_name in params:
-        reduce_ctx = bind_temporal(
-            reduce_ctx,
+        body_ctx = bind_temporal(
+            body_ctx,
             param_name,
             SymbolicValue(make_var(param_name)),
             owner="sugar_constructors.control_flow_body",
@@ -129,8 +136,8 @@ def build_control_flow_body_sugar(site, ctx):
     from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
     body = site.node.body
-    block = ctx.build_body(Block.of(body), SugarRole.STATEMENT)
-    block_outcome = block.reduce(reduce_ctx)
+    block = body_ctx.build_body(Block.of(body), SugarRole.STATEMENT)
+    block_outcome = block.reduce(body_ctx)
     if isinstance(block_outcome, Incomplete):
         raise IncompleteFunctionBody(block_outcome)
     block_value = complete_value(block_outcome, owner="function body")
