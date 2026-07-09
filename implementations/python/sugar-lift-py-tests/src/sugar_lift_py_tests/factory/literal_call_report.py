@@ -3316,9 +3316,8 @@ def _function_universe(
     )
 
     # Total strip/lstrip return: closed covering universe is the ambient post
-    # (solver-safe). Open dig of nested towers is verified separately; merging
-    # open-dig walk rows into the mint currently leaks EUF towers that
-    # encoding-STOP ambient strip specialization — do not merge yet.
+    # (solver-safe). Open dig may add *orientation* factory_walk rows only —
+    # no dig_sink, no ambient EUF tower (that encoding-STOPs str.suffixof).
     closed_strip = _strip_literal_function_universe(
         callee,
         callee_name,
@@ -3327,7 +3326,26 @@ def _function_universe(
         source_lines=source_lines,
     )
     if closed_strip is not None:
-        return closed_strip
+        contracts, mementos, audits, walks, edges, effects = closed_strip
+        orientation = _open_dig_orientation_walk_rows(
+            callee,
+            callee_name,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            functions_by_name=functions_by_name,
+            classes_by_name=classes_by_name,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
+        )
+        return (
+            contracts,
+            mementos,
+            audits,
+            [*walks, *orientation],
+            edges,
+            effects,
+        )
 
     dig_functions = _with_module_sibling_functions(dict(functions_by_name))
     if "." in callee_name:
@@ -3816,6 +3834,81 @@ def _strip_literal_function_universe(
         [],
         [],
     )
+
+
+
+def _open_dig_orientation_walk_rows(
+    callee: SourceFragment,
+    callee_name: str,
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    functions_by_name: Mapping[str, SourceFragment],
+    classes_by_name: Mapping[str, SourceFragment],
+    import_aliases: Mapping[str, str] | None,
+    from_imports: Mapping[str, tuple[str, str]] | None,
+) -> list:
+    """Run open dig with nested ExternalBridge for factory_walk orientation only.
+
+    dig_sink is None — never enqueue nested dig from orientation.
+    emitted_formula is None on rows — formulas live in reason only so they
+    are not treated as warranted ambient constraints.
+    """
+    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+
+    from .build import default_catalog
+    from .sugar_constructors import IncompleteFunctionBody, build_control_flow_body_sugar
+
+    dig_functions = _with_module_sibling_functions(dict(functions_by_name))
+    if "." in callee_name:
+        dig_functions = _with_module_sibling_functions(
+            dig_functions, module_hint=callee_name.rsplit(".", 1)[0]
+        )
+    try:
+        build_ctx = FactoryBuildContext(
+            filename=filename,
+            catalog=default_catalog(),
+            name_resolver=_resolver_nodes(dig_functions, classes_by_name),
+            import_aliases=dict(import_aliases or {}),
+            from_imports=dict(from_imports or {}),
+            dig_sink=None,
+            nested_external_bridge=True,
+        )
+        sugar = build_control_flow_body_sugar(callee, build_ctx)
+        formulas = sugar.constraint_formulas()
+    except (TypeError, ValueError, FactoryGap, IncompleteFunctionBody, Exception):
+        return []
+    if not formulas:
+        return []
+    blob = str(formulas)
+    # Support-only row: orientation, not warrant.
+    try:
+        memento = _function_source_memento(
+            callee,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            role="python.open-dig-orientation",
+            contract_name=callee_name,
+        )
+    except Exception:
+        return []
+    return [
+        FactoryWalkCompleteRowDto(
+            file=filename,
+            line=callee.line,
+            requested_role="function",
+            ast_kind="FunctionDef",
+            selected="python.open-dig-orientation",
+            status="support",
+            output=blob[:500],
+            source_memento=memento,
+            span=None,
+            reason=f"open dig orientation (not ambient): {blob[:800]}",
+            emitted_formula=None,
+            extra={"orientation": True, "callee": callee_name},
+        )
+    ]
 
 
 def _strip_return_shape(
