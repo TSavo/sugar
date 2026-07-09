@@ -15,9 +15,14 @@
 // holds a `serde_json::Value`.
 //
 // LEAF ADDRESS (#3809 T resolution): the typed descent bottoms in
-// `SourceMemento[path]` — nested path is the address (`file[fn[site]]`),
+// `SourceMemento[path]` — nested path is the address (`file[fn[site]]` /
+// `file[fn[assertion]]`; factory 1:1 site ≡ assertion share the leaf),
 // memento CIDs are the sealed wire currency. Fragment stays LOCAL (kit/oracle);
 // memento crosses. See [`MementoPath`] / [`SourceMementoAtPath`].
+//
+// TYPED PATH LEVELS (so far): `CallSite` and `Assertion` store a stamped
+// [`MementoPath`]; `Function` exposes computed `path()` / `memento_at_path()`
+// as `file[fn]`. `SourceFile` / `Fact` / `Universe` remain flat memento nodes.
 //
 // GRANULARITY: `Function::call_sites` is span-scoped when the parent function
 // memento carries a non-degenerate span; otherwise name-scoped (degenerate
@@ -491,6 +496,9 @@ pub struct CallSite {
 pub struct Assertion {
     conn: KitConn,
     memento: SourceMemento,
+    /// Nested path address: `SourceMemento[file[fn[assertion]]]` (T #3809).
+    /// Factory 1:1 with CallSite — same leaf span under the enclosing function.
+    path: MementoPath,
     audit: Option<AuditRow>,
 }
 
@@ -564,6 +572,17 @@ impl CallSite {
 impl Assertion {
     pub fn audit_row(&self) -> Option<&AuditRow> {
         self.audit.as_ref()
+    }
+
+    /// Nested path index for this assertion (`file[fn[assertion]]`).
+    /// Same address shape as the owning call site (factory 1:1).
+    pub fn path(&self) -> &MementoPath {
+        &self.path
+    }
+
+    /// Claim-side leaf address: sealed memento keyed by nested path.
+    pub fn memento_at_path(&self) -> SourceMementoAtPath {
+        SourceMementoAtPath::new(self.path.clone(), self.memento.clone())
     }
 }
 
@@ -1013,10 +1032,16 @@ impl CallSite {
         )?;
         Ok(nodes
             .into_iter()
-            .map(|n| Assertion {
-                conn: self.conn.clone(),
-                memento: n.memento,
-                audit: n.audit.as_ref().map(AuditRow::from_json),
+            .map(|n| {
+                // Factory 1:1: assertion leaf path ≡ owning call-site path
+                // (`file[fn[leaf]]`). Path is a derived index; memento seals content.
+                let path = self.path.clone();
+                Assertion {
+                    conn: self.conn.clone(),
+                    path,
+                    memento: n.memento,
+                    audit: n.audit.as_ref().map(AuditRow::from_json),
+                }
             })
             .collect())
     }
@@ -1042,8 +1067,11 @@ impl CallSite {
             plugin: self.conn.surface.clone(),
             level: "assertions",
         })?;
+        // Same nested address as the site (factory 1:1 leaf under function).
+        let path = self.path.clone();
         Ok(Assertion {
             conn: self.conn.clone(),
+            path,
             memento: node.memento,
             audit: node.audit.as_ref().map(AuditRow::from_json),
         })
