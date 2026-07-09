@@ -62,8 +62,11 @@ use sugar_verifier::load_all_proofs::{load_proof_bytes_into_pool, ProofBytes};
 use sugar_verifier::runner::{load_pool, ProofRunArtifact, ProofRunArtifactError, Runner};
 use sugar_verifier::{MementoPool, RunnerConfig, SolverHandle, SolverPlan, SolverSeat, Speaker};
 
+use crate::feed_from_tree::{self, FeedError};
+use crate::kit::Kit;
 use crate::linker_inputs::derive_linker_inputs;
 use crate::outcome::{Outcome, OutcomeClass};
+use crate::resolve::{TestimonyError, TestimonyOutcome};
 
 /// Throwaway seed for the internal graph->pool self-load round trip `solve`
 /// performs to reach beat 2. This is never a real signature over anything
@@ -229,6 +232,10 @@ impl ProvenOutcome {
 /// Beat 1 ANNOTATES, it does not block: the run happens regardless of
 /// `link_errors` (see `ProvenOutcome`'s doc for the empirical reason -- real
 /// pools are mostly unbridged, so a short-circuit would brick real runs).
+///
+/// Disk-load face: builds the pool via [`load_pool`] then hands off to
+/// [`solve_project_with_pool`]. Callers that already hold a multi-speaker
+/// pool (e.g. [`prove_from_kit`]) use that door directly.
 pub fn solve_project(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
@@ -237,7 +244,20 @@ pub fn solve_project(
     // construction `run_with_proof_run` uses inline, so deriving beat-1 links
     // from it and discharging beat 2 over it read the SAME production truth.
     let pool = load_pool(&cfg);
+    solve_project_with_pool(cfg, compilers, pool)
+}
 
+/// Production solve beats over a **preloaded** pool (sugar#3809 Task 8).
+///
+/// Same annotate-not-block link + `Runner::run_with_proof_run_with_pool`
+/// discharge as [`solve_project`], without re-walking the project for
+/// `.proof` files. Use this when the pool was assembled with speakers via
+/// [`pool_from_graph_with_speaker`] and vendor `ProofBytes` merge.
+pub fn solve_project_with_pool(
+    cfg: RunnerConfig,
+    compilers: CompilerRegistry,
+    pool: MementoPool,
+) -> Result<ProvenOutcome, SolveError> {
     // Beat 1 -- LINK (annotate). Derive real edges from the pool's bridge data
     // and bind; keep only the genuine LINK-class failures (mirrors
     // `link_beat`'s filter). This never short-circuits beat 2.
@@ -260,6 +280,66 @@ pub fn solve_project(
         artifact,
         outcome_class,
     })
+}
+
+/// Failures staging the kit walk + testimony into a dischargeable pool —
+/// precondition class, distinct from either red (link error or verdict).
+#[derive(Debug, thiserror::Error)]
+pub enum ProveFromKitError {
+    #[error("prove_from_kit: fold claim tree failed: {0}")]
+    Fold(#[from] FeedError),
+    #[error("prove_from_kit: could not load local folded graph with speaker: {0}")]
+    LocalLoad(String),
+    #[error("prove_from_kit: vendor testimony resolve failed: {0}")]
+    Testimony(#[from] TestimonyError),
+    #[error(transparent)]
+    Solve(#[from] SolveError),
+}
+
+/// One walk entry for project prove (#3809 Task 8): fold the kit claim tree
+/// as the consumer speaker, fold in vendor testimony when available, and
+/// discharge through the production solve beats — **without** batch mint.
+///
+/// Algorithm:
+/// 1. `local = fold_project(kit, root, Some(&speaker))` — content only
+/// 2. `pool = pool_from_graph_with_speaker(local, speaker)` — consumer stamp
+/// 3. `kit.testimony(root)` → when `Proofs`, `load_proof_bytes_into_pool`
+///    (vendor speakers already on each `ProofBytes`; first-writer-wins merge)
+/// 4. [`solve_project_with_pool`] — same annotate + Runner path as disk prove
+///
+/// Does **not** delete batch mint. Full mint+prove verdict parity on pandas
+/// / enumerate fixtures is Task 9; this door is the thin face the harness
+/// and eventual CLI cutover share.
+pub fn prove_from_kit(
+    kit: &Kit,
+    workspace_root: &Path,
+    speaker: Speaker,
+    cfg: RunnerConfig,
+    compilers: CompilerRegistry,
+) -> Result<ProvenOutcome, ProveFromKitError> {
+    // 1. Local claim walk. Speaker is typed through fold so walk face and
+    // pool intake share one identity; stamping happens at step 2.
+    let local = feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?;
+
+    // 2. Graph→pool intake with the consumer speaker (Task 7 door).
+    let mut pool = pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
+
+    // 3. Vendor testimony when the kit implements resolve_dependency_proofs.
+    // Unavailable is a LINK-class absence (local-only prove still runs), not
+    // a hard error — same law as Kit::testimony / resolve_testimony.
+    let resolution = kit.testimony(workspace_root)?;
+    match resolution.outcome {
+        TestimonyOutcome::Proofs(proofs) => {
+            load_proof_bytes_into_pool(&proofs, &mut pool);
+        }
+        TestimonyOutcome::Unavailable { plugin, reason } => {
+            // Honest empty vendor feed: discharge over local members only.
+            let _ = (plugin, reason);
+        }
+    }
+
+    // 4. Production solve over the multi-speaker pool.
+    Ok(solve_project_with_pool(cfg, compilers, pool)?)
 }
 
 impl From<ProofRunArtifactError> for SolveError {

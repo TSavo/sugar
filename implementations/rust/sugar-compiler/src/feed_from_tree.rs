@@ -20,7 +20,8 @@ use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{encode_jcs, Value as CValue};
 use sugar_claim_envelope::{mint_contract_with_body_cid, Authoring, MintContractArgs};
 use sugar_proof_envelope::{
-    ClaimContractMemento, ContractBody, Ed25519Seed, FlatAtom, ProofGraph,
+    ed25519_pubkey_string, ed25519_sign_string, ClaimContractMemento, ContractBody, Ed25519Seed,
+    FlatAtom, ProofGraph,
 };
 use sugar_verifier::Speaker;
 
@@ -165,6 +166,12 @@ fn push_claim_with_slots(
 /// Re-emit mint bytes with `header.contractName` filled from the contract
 /// name (mint already put `header.name`). Preserves all other header fields
 /// including `bodyCid` and `sourceWarrants`.
+///
+/// When `contractName` is inserted, the layered envelope is **re-signed** with
+/// [`FEED_SIGNER_SEED`]: the Ed25519 covers JCS(`{header, metadata}`), so a
+/// post-mint header mutation without re-sign fails `verify_member_signature`
+/// at pool load (`pool_from_graph_with_speaker` / prove). That broke Task 8's
+/// fold→solve path while Task 6 only inspected in-graph typed recovery.
 fn claim_memento_with_contract_name(
     minted_bytes: Vec<u8>,
     contract_name: &str,
@@ -180,11 +187,48 @@ fn claim_memento_with_contract_name(
             what: "claim_memento_with_contract_name",
             detail: "minted envelope missing header object".into(),
         })?;
-    if !header.contains_key("contractName") {
+    let stamped = if !header.contains_key("contractName") {
         header.insert(
             "contractName".to_string(),
             Json::String(contract_name.to_string()),
         );
+        true
+    } else {
+        false
+    };
+    if stamped {
+        // Spec R2: signature covers JCS({header, metadata}). Re-sign so pool
+        // load accepts these members (same seed as mint_contract_with_body_cid).
+        let header_json = envelope
+            .get("header")
+            .cloned()
+            .ok_or_else(|| FeedError::Mint {
+                what: "claim_memento_with_contract_name",
+                detail: "header missing after stamp".into(),
+            })?;
+        let metadata_json = envelope
+            .get("metadata")
+            .cloned()
+            .ok_or_else(|| FeedError::Mint {
+                what: "claim_memento_with_contract_name",
+                detail: "minted envelope missing metadata object".into(),
+            })?;
+        let signing_value = json!({
+            "header": header_json,
+            "metadata": metadata_json,
+        });
+        let signing_canonical = encode_jcs(&json_to_cvalue(&signing_value));
+        let signature = ed25519_sign_string(&FEED_SIGNER_SEED, signing_canonical.as_bytes());
+        let signer = ed25519_pubkey_string(&FEED_SIGNER_SEED);
+        let env_obj = envelope
+            .get_mut("envelope")
+            .and_then(Json::as_object_mut)
+            .ok_or_else(|| FeedError::Mint {
+                what: "claim_memento_with_contract_name",
+                detail: "minted envelope missing envelope object".into(),
+            })?;
+        env_obj.insert("signature".to_string(), Json::String(signature));
+        env_obj.insert("signer".to_string(), Json::String(signer));
     }
     // Re-JCS the full envelope so member bytes stay order-stable.
     let bytes = encode_jcs(&json_to_cvalue(&envelope)).into_bytes();
