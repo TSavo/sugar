@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.operations import AddOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -52,8 +51,9 @@ class AddSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         )
 
     def _build(self, ctx, *, receiver, operand) -> Outcome:
-        if not isinstance(operand, TermValue):
-            raise TypeError("AddSugar operand must reduce to TermValue")
+        # Non-TermValue operands (e.g. py.unpack of OpaqueOpCallsite) must not
+        # TypeError-crash package audit-only. perform_operation / AddOperation
+        # emit a structured FactoryGap instead.
         return perform_operation(
             owner="AddSugar",
             blame=self.blame,
