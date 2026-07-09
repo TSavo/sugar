@@ -63,6 +63,7 @@ help:
 	@echo "  make test-all       the acid test: test-rust + test-python"
 	@echo "  make test-showcases run the checked-in end-to-end showcase receipts"
 	@echo "  make test-real-python-kit-lsp  real pandas kit through LSP (battleaxe; skip=red)"
+	@echo "  make test-3809-dod-scoreboard  consolidated #3809 DoD (warm+LSP+golden; skip=red)"
 	@echo "  make examples-gate  run public example smoke scripts against the ratchet fixture"
 	@echo ""
 	@echo "Per-language build:"
@@ -481,12 +482,24 @@ coretests-invariants:
 # Same battleaxe family as the witness corpus (bcargo/brun + remote kit env).
 # Implementation lives in scripts/test-real-python-kit-lsp.sh so skip=red and
 # the RAN receipt assertion stay shell-testable without Makefile quoting pain.
+# Standalone leg; the consolidated #3809 scoreboard also runs this path.
 .PHONY: test-real-python-kit-lsp
 test-real-python-kit-lsp:
 	@bash scripts/test-real-python-kit-lsp.sh
 
+# Consolidated #3809 DoD scoreboard (ONE gated receipt):
+#   warm_solve FS=0 + byte-identical + timing (#3923)
+#   real-kit LSP RAN / lie→UNSAT / truth→clear (#3934/#3936)
+#   golden NDJSON conversation byte-identical (#3938)
+# Extends existing targets; does not reimplement their assertions.
+# Wired into `make ci` in place of the narrower test-real-python-kit-lsp alone
+# so the full acceptance story is one recomputable gate (LSP still covered).
+.PHONY: test-3809-dod-scoreboard
+test-3809-dod-scoreboard:
+	@bash scripts/test-3809-dod-scoreboard.sh
+
 .PHONY: ci
-ci: check-cargo-entrypoint check-lift-refusal-vocabulary test-python-format test-all test-showcases test-real-python-kit-lsp self-attest coretests-source-audit coretests-invariants
+ci: check-cargo-entrypoint check-lift-refusal-vocabulary test-python-format test-all test-showcases test-3809-dod-scoreboard self-attest coretests-source-audit coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 
