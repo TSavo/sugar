@@ -13,6 +13,7 @@ libsugar = { path = "../libsugar" }
 sugar-ir-types = { path = "../sugar-ir-types" }
 sugar-walk = { path = "../sugar-walk" }
 sugar-claim-envelope = { path = "../sugar-claim-envelope" }
+sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-linker = { path = "../sugar-linker" }
 sugar-ir-compiler = { path = "../sugar-ir-compiler" }
 serde = { workspace = true }
@@ -23,6 +24,5 @@ base64 = { workspace = true }
 
 [dev-dependencies]
 trybuild = "1"
-sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
 tempfile = { workspace = true }

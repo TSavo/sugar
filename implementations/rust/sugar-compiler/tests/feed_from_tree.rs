@@ -3,12 +3,12 @@
 // Campaign B red instrument: tree-fold feed must match the claim set the
 // enumerate walk (and batch mint IR) already knows about the fixture.
 //
-// Axes (Task 5 red; Task 6 greens):
+// Axes (Task 6 green):
 //   R_feed_fact_missing     — fold graph missing fact FOL keys from the tree
 //   R_feed_universe_missing — fold graph missing universe member names
-//   R_feed_members          — fold graph claim-contract member count (0 stub)
+//   R_feed_members          — fold graph claim-contract member count
 //
-// Replacement: `feed_from_tree::{graph_from_fact, graph_from_universe,
+// Door: `feed_from_tree::{graph_from_fact, graph_from_universe,
 // fold_claim_tree}` builds the same member content mint builds for
 // kind=contract / function-contract rows, then `ProofGraph::feed` merges.
 //
@@ -258,9 +258,12 @@ fn universes_from_mint_ir(payload: &Value) -> BTreeSet<String> {
 }
 
 /// Claim-contract fact FOL keys recovered from a folded `ProofGraph`.
+///
+/// Mint-with-bodyCid embeds pre/post/inv in the graph body map, not the
+/// layered header, so recovery prefers header inv|post then falls back to
+/// `ProofGraph::contract_slot_json` for the body-linked atom.
 /// Keys use (warrant file, warrant span, inv|post formula) when warrants
-/// exist; otherwise (contract_name, "", formula) so empty graphs still
-/// report a stable empty set.
+/// exist; otherwise (contract_name, "", formula).
 fn facts_from_feed_graph(graph: &ProofGraph) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     for (cid, member_res) in graph.typed_members_iter() {
@@ -275,20 +278,25 @@ fn facts_from_feed_graph(graph: &ProofGraph) -> Vec<(String, String, String)> {
             .inv
             .as_ref()
             .filter(|v| !v.is_null())
-            .or_else(|| c.post.as_ref().filter(|v| !v.is_null()));
+            .cloned()
+            .or_else(|| c.post.as_ref().filter(|v| !v.is_null()).cloned())
+            .or_else(|| {
+                graph
+                    .contract_slot_json(&cid, "inv")
+                    .or_else(|| graph.contract_slot_json(&cid, "post"))
+            });
         let Some(formula) = formula else { continue };
         if let Some(warrants) = c.source_warrants.as_ref() {
             if let Some(memento) = warrants.first() {
-                out.push(fact_key(memento, formula));
+                out.push(fact_key(memento, &formula));
                 continue;
             }
         }
-        // No warrant yet — still count the formula under the contract name
-        // so Task 6 partial progress is visible.
+        // No warrant — count under contract name (partial / universe-shaped).
         out.push((
             c.contract_name.clone(),
             String::new(),
-            canonical_string(formula),
+            canonical_string(&formula),
         ));
     }
     out.sort();
@@ -296,7 +304,8 @@ fn facts_from_feed_graph(graph: &ProofGraph) -> Vec<(String, String, String)> {
 }
 
 /// Universe / function-contract names recovered from fold graph members.
-/// Until Task 6 emits function-contract members, this stays empty.
+/// Task 6 stamps batch universe keys onto `contract_name` (e.g.
+/// `mathy::add::callable`, `len::builtin-universe`).
 fn universes_from_feed_graph(graph: &ProofGraph) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for (cid, member_res) in graph.typed_members_iter() {
@@ -308,9 +317,8 @@ fn universes_from_feed_graph(graph: &ProofGraph) -> BTreeSet<String> {
             Member::Contract(c) => {
                 // function-contract rows mint as contracts whose name is the
                 // universe member key (e.g. `mathy::add::callable`). Without
-                // a distinct kind on the typed path yet, Task 6 may use
-                // contract_name; accept either when non-empty and not a pure
-                // FOL claim name already counted via facts.
+                // a distinct kind on the typed path yet, Task 6 uses
+                // contract_name; accept names that look like universe keys.
                 if c.contract_name.contains("::") {
                     out.insert(c.contract_name.clone());
                 }
@@ -328,15 +336,12 @@ fn member_cids(graph: &ProofGraph) -> BTreeSet<String> {
         .collect()
 }
 
-/// Red instrument: walk facts (+ universes), fold via `feed_from_tree`,
-/// compare claim FOL / universe names to mint IR on the same fixture.
-///
-/// Until Task 6 implements the fold, the stub returns an empty graph and
-/// this test fails with measured `R_feed_*`.
+/// Walk facts (+ universes), fold via `feed_from_tree`, compare claim FOL /
+/// universe names to mint IR on the same fixture (Campaign B green).
 #[test]
 fn walk_and_feed_matches_minted_member_cids() {
     if !python_blake3_available() {
-        eprintln!("python3/blake3 not on PATH: skipping feed_from_tree red instrument");
+        eprintln!("python3/blake3 not on PATH: skipping feed_from_tree instrument");
         return;
     }
     let dir = tempfile::tempdir().expect("tempdir");
@@ -368,10 +373,9 @@ fn walk_and_feed_matches_minted_member_cids() {
         "precondition: tree universes must equal mint-IR function-contract names"
     );
 
-    // The door under test: tree → ProofGraph via feed (stub returns empty).
+    // The door under test: tree → ProofGraph via feed.
     let folded = feed_from_tree::fold_project(&kit, &project, Some("consumer:test"))
-        .expect("fold_project must not hard-error while stubbed; empty graph is the red signal");
-    // Also exercise the Task 6 name.
+        .expect("fold_project");
     let folded_alias = feed_from_tree::fold_claim_tree(&kit, &project).expect("fold_claim_tree");
     assert_eq!(
         member_cids(&folded),
@@ -401,7 +405,7 @@ fn walk_and_feed_matches_minted_member_cids() {
         "feed_from_tree instrument:\n\
          \tR_feed_fact_missing={r_feed_fact_missing}\n\
          \tR_feed_universe_missing={r_feed_universe_missing}\n\
-         \tR_feed_members={r_feed_members} (stub empty until Task 6)\n\
+         \tR_feed_members={r_feed_members}\n\
          \texpected_facts={}\n\
          \tactual_facts={}\n\
          \tmissing_facts={missing_facts:?}\n\
@@ -409,36 +413,34 @@ fn walk_and_feed_matches_minted_member_cids() {
          \texpected_universes={mint_universes:?}\n\
          \tactual_universes={feed_universes:?}\n\
          \tmissing_universes={missing_universes:?}\n\
-         \tmember_cids={feed_member_cids:?}\n\
-         replacement: implement graph_from_fact / graph_from_universe / \
-         fold_claim_tree walk+feed (Task 6) so fold members carry the same \
-         claim FOL (and later sealed CIDs) as mint IR on this fixture",
+         \tmember_cids={feed_member_cids:?}",
         expected_facts.len(),
         actual_facts.len(),
     );
 
     assert!(
         r_feed_fact_missing == 0 && extra_facts.is_empty() && r_feed_universe_missing == 0,
-        "feed fold must match mint IR claim set (Campaign B red until Task 6).\n\
+        "feed fold must match mint IR claim set.\n\
          R_feed_fact_missing={r_feed_fact_missing}\n\
          R_feed_universe_missing={r_feed_universe_missing}\n\
          R_feed_members={r_feed_members}\n\
          missing_facts={missing_facts:?}\n\
          extra_facts={extra_facts:?}\n\
-         missing_universes={missing_universes:?}\n\
-         fix: sugar-compiler/src/feed_from_tree.rs — graph_from_fact builds \
-         kind=contract members from Fact payload+warrants; graph_from_universe \
-         builds function-contract members; fold_claim_tree walks \
-         source_files→functions→call_sites→(universe|assertions→facts) and \
-         ProofGraph::feed merges fragments"
+         missing_universes={missing_universes:?}"
+    );
+    assert!(
+        r_feed_members >= expected_facts.len(),
+        "fold must emit at least one member per fact (got {r_feed_members}, facts {})",
+        expected_facts.len()
     );
 }
 
-/// Unit-level red: `graph_from_fact` is still NotImplemented (Task 6).
+/// Unit: `graph_from_fact` returns a fragment whose inv slot matches the
+/// fact payload (Task 6 green; replaces the Task 5 NotImplemented pin).
 #[test]
-fn graph_from_fact_not_implemented_yet() {
+fn graph_from_fact_builds_claim_fragment() {
     if !python_blake3_available() {
-        eprintln!("python3/blake3 not on PATH: skipping graph_from_fact stub check");
+        eprintln!("python3/blake3 not on PATH: skipping graph_from_fact unit check");
         return;
     }
     let dir = tempfile::tempdir().expect("tempdir");
@@ -459,12 +461,15 @@ fn graph_from_fact_not_implemented_yet() {
         }
     }
     let fact = first_fact.expect("fixture must yield at least one fact");
-    let err = feed_from_tree::graph_from_fact(&fact)
-        .expect_err("Task 5 stub: graph_from_fact must be NotImplemented until Task 6");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("graph_from_fact") && msg.contains("not implemented"),
-        "error must name the stub and Task 6 fix path, got: {msg}"
+    let fragment = feed_from_tree::graph_from_fact(&fact).expect("graph_from_fact");
+    let keys = facts_from_feed_graph(&fragment);
+    assert_eq!(
+        keys.len(),
+        1,
+        "single fact must yield exactly one claim FOL key, got {keys:?}"
     );
-    eprintln!("R_graph_from_fact=1 (NotImplemented) — {msg}");
+    let payload_json = serde_json::to_value(fact.payload()).expect("encode IrFormula");
+    let expected = fact_key(&fact.source_memento().to_json(), &payload_json);
+    assert_eq!(keys[0], expected, "fragment FOL must match fact payload+warrant");
+    eprintln!("R_graph_from_fact=0 — fragment members={:?}", member_cids(&fragment));
 }
