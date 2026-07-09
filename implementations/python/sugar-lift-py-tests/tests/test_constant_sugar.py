@@ -25,15 +25,8 @@ def test_constant_sugar_lifts_bytes_literal_in_projected_equality() -> None:
         "args": [
             {
                 "kind": "ctor",
-                "name": "py.attr",
-                "args": [
-                    {"kind": "var", "name": "p"},
-                    {
-                        "kind": "const",
-                        "sort": {"kind": "primitive", "name": "String"},
-                        "value": "stdout",
-                    },
-                ],
+                "name": "call:stdout",
+                "args": [{"kind": "var", "name": "p"}],
             },
             {
                 "kind": "ctor",

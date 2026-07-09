@@ -228,15 +228,8 @@ def test_call_truth_assertion_lifts_method_receiver_call() -> None:
                 "args": [
                     {
                         "kind": "ctor",
-                        "name": "py.attr",
-                        "args": [
-                            {"kind": "var", "name": "exc"},
-                            {
-                                "kind": "const",
-                                "sort": {"kind": "primitive", "name": "String"},
-                                "value": "args",
-                            },
-                        ],
+                        "name": "call:args",
+                        "args": [{"kind": "var", "name": "exc"}],
                     },
                     {
                         "kind": "const",
@@ -492,18 +485,8 @@ def test_call_truth_assertion_lifts_generator_membership_predicate() -> None:
                             {"kind": "var", "name": "key"},
                             {
                                 "kind": "ctor",
-                                "name": "py.attr",
-                                "args": [
-                                    {"kind": "var", "name": "self"},
-                                    {
-                                        "kind": "const",
-                                        "sort": {
-                                            "kind": "primitive",
-                                            "name": "String",
-                                        },
-                                        "value": "REQUIRED_CONFIG_KEYS",
-                                    },
-                                ],
+                                "name": "call:REQUIRED_CONFIG_KEYS",
+                                "args": [{"kind": "var", "name": "self"}],
                             },
                         ],
                     },

@@ -151,7 +151,7 @@ def test_chained_assertion_keeps_call_and_attribute_terms_symbolic() -> None:
                     },
                     {
                         "kind": "ctor",
-                        "name": "py.attr",
+                        "name": "call:device",
                         "args": [
                             {
                                 "kind": "ctor",
@@ -163,12 +163,7 @@ def test_chained_assertion_keeps_call_and_attribute_terms_symbolic() -> None:
                                         "value": 0,
                                     }
                                 ],
-                            },
-                            {
-                                "kind": "const",
-                                "sort": {"kind": "primitive", "name": "String"},
-                                "value": "device",
-                            },
+                            }
                         ],
                     },
                 ],

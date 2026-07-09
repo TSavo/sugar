@@ -248,15 +248,8 @@ def test_truthy_assertion_lifts_attribute_fact() -> None:
         "args": [
             {
                 "kind": "ctor",
-                "name": "py.attr",
-                "args": [
-                    {"kind": "var", "name": "arr"},
-                    {
-                        "kind": "const",
-                        "sort": {"kind": "primitive", "name": "String"},
-                        "value": "shape",
-                    },
-                ],
+                "name": "call:shape",
+                "args": [{"kind": "var", "name": "arr"}],
             }
         ],
     }

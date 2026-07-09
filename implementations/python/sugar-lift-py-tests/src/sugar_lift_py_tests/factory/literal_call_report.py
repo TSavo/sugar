@@ -528,6 +528,26 @@ def _lift_assert(
 
     Either way the verifier's ambient-post specialization joins the post (local or
     imported) to the fact and z3 decides `and(universe, fact)`."""
+    # Vendor attribute access (`df.shape`, `arr.ndim`) is a coordinate, not a
+    # location-keyed py.attr surface. Prefer the callsite-euf door before the
+    # projected-equality factory path so truthful and lying swears share one key.
+    attribute_coordinate = _try_lift_attribute_coordinate_assertion(
+        stmt,
+        fn=fn,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+        functions_by_name=functions_by_name,
+        classes_by_name=classes_by_name,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        contract_bindings=contract_bindings,
+        module_statements=module_statements,
+        factory_audits=factory_audits,
+    )
+    if attribute_coordinate is not None:
+        return attribute_coordinate
+
     assertion_sugar = _lift_assertion_via_factory(
         stmt,
         fn=fn,
@@ -651,6 +671,8 @@ def _lift_assert(
             dig_refusals=dig_refusals,
             agreement_violations=agreement_violations,
             factory_audits=universe_factory_audits,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
         )
     call_return_sort = _call_return_sort_from_universe(universe, callee_name)
     assertion_ctx = _assertion_factory_ctx(
@@ -944,6 +966,8 @@ def _factory_assertion_derived_context(
             dig_refusals=dig_refusals,
             agreement_violations=agreement_violations,
             factory_audits=factory_audits,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
         )
     comparison = test
     if comparison.observed != "Compare":
@@ -967,6 +991,8 @@ def _factory_assertion_derived_context(
         dig_refusals=dig_refusals,
         agreement_violations=agreement_violations,
         factory_audits=factory_audits,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
     )
 
 
@@ -1742,6 +1768,134 @@ def _opaque_op_companion_facts(
             or UnknownSort(reason=f"no declared return sort for call:{value.callee}"),
         )
     ]
+
+
+def _attribute_coordinate_name(frag: SourceFragment) -> str | None:
+    """Bare attribute head for the unary coordinate `call:<attr>(receiver)`.
+
+    Mirrors method naming (`call:sum`); congruence lives in the receiver arg, not a
+    type-qualified head like `call:DataFrame.shape`.
+    """
+    if frag.observed != "Attribute":
+        return None
+    return frag.attr_name()
+
+
+def _try_lift_attribute_coordinate_assertion(
+    stmt: SourceFragment,
+    *,
+    fn: SourceFragment,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+    contract_bindings: list,
+    module_statements: list[SourceFragment],
+    factory_audits: list[FactoryAuditDto],
+) -> LiftResult | None:
+    """Route `receiver.attr == expected` through the callsite-euf door.
+
+    Opaque-only: no computed value, no companion. Returns None when the LHS is not an
+    Attribute equality, the receiver/RHS cannot be closed terms, or open free vars
+    would refuse EqualityFact — those fall through to projected equality.
+    """
+    if stmt.observed != "Assert":
+        return None
+    comparison = stmt.assert_test()
+    if comparison.observed != "Compare":
+        return None
+    if (
+        len(comparison.compare_ops()) != 1
+        or comparison.compare_ops()[0] != "Eq"
+        or len(comparison.compare_comparators()) != 1
+    ):
+        return None
+    comparison_left = _resolve_bound_lhs(comparison.compare_left(), fn)
+    attr_name = _attribute_coordinate_name(comparison_left)
+    if attr_name is None:
+        return None
+
+    assertion_ctx = _assertion_factory_ctx(
+        stmt=stmt,
+        fn=fn,
+        filename=filename,
+        functions_by_name=functions_by_name,
+        classes_by_name=classes_by_name,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        contract_bindings=contract_bindings,
+        module_statements=module_statements,
+        factory_audits=factory_audits,
+    )
+    if isinstance(assertion_ctx, _PriorAssignmentEffect):
+        return _prior_assignment_effect_lift(
+            assertion_ctx,
+            fn=fn,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+        )
+
+    receiver = comparison_left.attr_receiver()
+    try:
+        receiver_value = _literal_floor_via_factory(
+            receiver, filename, ctx=assertion_ctx
+        )
+    except (OverflowError, RuntimeError, TypeError, ValueError):
+        return None
+    if isinstance(receiver_value, Incomplete):
+        return None
+    if isinstance(receiver_value, PredicateValue):
+        return None
+    try:
+        receiver_term = floor_to_term(
+            receiver_value, owner="literal_call_report.attr_receiver"
+        )
+    except (OverflowError, RuntimeError, TypeError, ValueError):
+        return None
+
+    expected_frag = comparison.compare_comparators()[0]
+    try:
+        expected_value = _literal_floor_via_factory(
+            expected_frag, filename, ctx=assertion_ctx
+        )
+    except (OverflowError, RuntimeError, TypeError, ValueError):
+        return None
+    if isinstance(expected_value, Incomplete):
+        return None
+    if isinstance(expected_value, PredicateValue):
+        return None
+    try:
+        expected_term = floor_to_term(
+            expected_value, owner="literal_call_report.attr_expected"
+        )
+    except (OverflowError, RuntimeError, TypeError, ValueError):
+        return None
+
+    # Open free variables refuse EqualityFact; leave those to projected equality.
+    if _open_equality_fact_vars([receiver_term], expected_term):
+        return None
+
+    # Opaque-only: never mint a computed companion for the attribute coordinate.
+    return _emit_euf_fact(
+        stmt,
+        fn,
+        attr_name,
+        [receiver_term],
+        expected_term,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+        warrant=Stated(locus=_proofir_construction_site(stmt, memento_file)),
+        callsite=None,
+        emit_call_edge=False,
+        call_return_sort=None,
+        contract_bindings=contract_bindings or [],
+        edge_target_symbol=None,
+    )
 
 
 def _lift_callsite_assertion(
@@ -2723,6 +2877,8 @@ def _construct_callsite_from_factory_term(
     dig_refusals: list[DigBoundary],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
+    import_aliases: dict[str, str] | None = None,
+    from_imports: dict[str, tuple[str, str]] | None = None,
 ) -> LiftResult:
     """Construct floor facts by reading the factory's CallSiteValue term.
 
@@ -2741,10 +2897,14 @@ def _construct_callsite_from_factory_term(
     )
     from sugar_lift_py_tests.outcome import Complete
 
+    import_aliases = import_aliases or {}
+    from_imports = from_imports or {}
     build_ctx = FactoryBuildContext(
         filename=filename,
         catalog=default_catalog(),
         name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
+        import_aliases=import_aliases,
+        from_imports=from_imports,
         audit_sink=factory_audits,
     )
     sink: list[CallSiteValue] = []
@@ -2774,6 +2934,8 @@ def _construct_callsite_from_factory_term(
             source_lines=source_lines,
             dig_refusals=dig_refusals,
             factory_audits=factory_audits,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
         )
         if uni is None:
             return
@@ -3126,6 +3288,8 @@ def _function_universe(
     source_lines: list[str],
     dig_refusals: list[DigBoundary],
     factory_audits: list[FactoryAuditDto],
+    import_aliases: dict[str, str] | None = None,
+    from_imports: dict[str, tuple[str, str]] | None = None,
 ) -> LiftResult | None:
     """The `::callable` universe for ONE resolved function, walked from its DEFINITION.
 
@@ -3135,7 +3299,13 @@ def _function_universe(
     control-flow walker DIRECTLY (which now lifts `return x + 1` to `out == +(x, 1)` via the
     symbolic-op emission), bypassing build_bridge_body's string-only single-return shortcut.
     Returns None if the body cannot be walked -- the construction still stands; only the
-    source-line warrant is absent."""
+    source-line warrant is absent.
+
+    ``import_aliases`` / ``from_imports`` must be threaded from the module: body dig of
+    ``return pd.DataFrame().shape`` symbolizes to ``call:shape(call:pandas.DataFrame())``
+    only when ``pd`` resolves; without aliases the open free var ``pd`` refuses the
+    universe (opaque attr body-dig gap, same family as opaque builtin body dig).
+    """
     from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 
     from .build import default_catalog
@@ -3148,6 +3318,8 @@ def _function_universe(
         filename=filename,
         catalog=default_catalog(),
         name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
+        import_aliases=import_aliases or {},
+        from_imports=from_imports or {},
         audit_sink=factory_audits,
     )
     try:

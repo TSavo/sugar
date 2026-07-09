@@ -74,31 +74,19 @@ def test_projected_equality_lifts_call_result_attribute_fact() -> None:
         "args": [
             {
                 "kind": "ctor",
-                "name": "py.attr",
+                "name": "call:dtype",
                 "args": [
                     {
                         "kind": "ctor",
                         "name": "call:numpy.any",
                         "args": [{"kind": "var", "name": "arr"}],
-                    },
-                    {
-                        "kind": "const",
-                        "sort": {"kind": "primitive", "name": "String"},
-                        "value": "dtype",
-                    },
+                    }
                 ],
             },
             {
                 "kind": "ctor",
-                "name": "py.attr",
-                "args": [
-                    {"kind": "var", "name": "np"},
-                    {
-                        "kind": "const",
-                        "sort": {"kind": "primitive", "name": "String"},
-                        "value": "bool",
-                    },
-                ],
+                "name": "call:bool",
+                "args": [{"kind": "var", "name": "np"}],
             },
         ],
     }
@@ -124,27 +112,13 @@ def test_projected_equality_lifts_attribute_to_attribute_fact() -> None:
     assert fact["args"] == [
         {
             "kind": "ctor",
-            "name": "py.attr",
-            "args": [
-                {"kind": "var", "name": "actual"},
-                {
-                    "kind": "const",
-                    "sort": {"kind": "primitive", "name": "String"},
-                    "value": "dtype",
-                },
-            ],
+            "name": "call:dtype",
+            "args": [{"kind": "var", "name": "actual"}],
         },
         {
             "kind": "ctor",
-            "name": "py.attr",
-            "args": [
-                {"kind": "var", "name": "expected"},
-                {
-                    "kind": "const",
-                    "sort": {"kind": "primitive", "name": "String"},
-                    "value": "dtype",
-                },
-            ],
+            "name": "call:dtype",
+            "args": [{"kind": "var", "name": "expected"}],
         },
     ]
 
@@ -167,15 +141,8 @@ def test_projected_equality_lifts_attribute_to_tuple_fact() -> None:
         "args": [
             {
                 "kind": "ctor",
-                "name": "py.attr",
-                "args": [
-                    {"kind": "var", "name": "arr"},
-                    {
-                        "kind": "const",
-                        "sort": {"kind": "primitive", "name": "String"},
-                        "value": "shape",
-                    },
-                ],
+                "name": "call:shape",
+                "args": [{"kind": "var", "name": "arr"}],
             },
             {
                 "kind": "ctor",
@@ -215,10 +182,9 @@ def test_projected_equality_keeps_non_constructor_bound_attribute_symbolic() -> 
     assert report is not None
     left = report.payload.ir[0].inv["args"][0]
     assert left["kind"] == "ctor"
-    assert left["name"] == "py.attr"
+    assert left["name"] == "call:dtype"
     assert left["args"][0]["kind"] == "var"
     assert left["args"][0]["name"] == "arr"
-    assert left["args"][1]["value"] == "dtype"
 
 
 def test_projected_equality_emits_external_bridge_edge_for_import_without_source() -> (
@@ -242,15 +208,8 @@ def test_projected_equality_emits_external_bridge_edge_for_import_without_source
         "args": [
             {
                 "kind": "ctor",
-                "name": "py.attr",
-                "args": [
-                    {"kind": "var", "name": "actual"},
-                    {
-                        "kind": "const",
-                        "sort": {"kind": "primitive", "name": "String"},
-                        "value": "value",
-                    },
-                ],
+                "name": "call:value",
+                "args": [{"kind": "var", "name": "actual"}],
             },
             {
                 "kind": "ctor",
@@ -727,19 +686,12 @@ def test_projected_equality_lifts_fstring_rhs_attribute() -> None:
         "args": [
             {
                 "kind": "ctor",
-                "name": "py.attr",
-                "args": [
-                    {"kind": "var", "name": "arr"},
-                    {
-                        "kind": "const",
-                        "sort": {"kind": "primitive", "name": "String"},
-                        "value": "dtype",
-                    },
-                ],
+                "name": "call:dtype",
+                "args": [{"kind": "var", "name": "arr"}],
             },
             {
                 "kind": "ctor",
-                "name": "py.attr",
+                "name": "call:itemsize",
                 "args": [
                     {
                         "kind": "ctor",
@@ -761,12 +713,7 @@ def test_projected_equality_lifts_fstring_rhs_attribute() -> None:
                                 ],
                             }
                         ],
-                    },
-                    {
-                        "kind": "const",
-                        "sort": {"kind": "primitive", "name": "String"},
-                        "value": "itemsize",
-                    },
+                    }
                 ],
             },
         ],
