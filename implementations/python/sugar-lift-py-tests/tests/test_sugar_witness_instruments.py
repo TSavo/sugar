@@ -128,6 +128,7 @@ EXPECTED_OPT_OUT_SUGARS = {
     "CommentSugar",
     "DictCompSugar",
     "ExprSugar",
+    "LocalDefSupportSugar",
     "PassSugar",
     "SetCompSugar",
     "SetSugar",
