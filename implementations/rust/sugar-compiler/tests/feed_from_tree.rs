@@ -28,6 +28,7 @@ use sugar_compiler::feed_from_tree;
 use sugar_compiler::kit::{Kit, LiftManifest};
 use sugar_compiler::tree::Sourced;
 use sugar_proof_envelope::{ProofGraph, typed_member::Member};
+use sugar_verifier::Speaker;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -374,8 +375,14 @@ fn walk_and_feed_matches_minted_member_cids() {
     );
 
     // The door under test: tree → ProofGraph via feed.
-    let folded = feed_from_tree::fold_project(&kit, &project, Some("consumer:test"))
-        .expect("fold_project");
+    // Speaker is typed through fold_project for pool intake (Task 7); graph
+    // content is unchanged — stamp happens in pool_from_graph_with_speaker.
+    let folded = feed_from_tree::fold_project(
+        &kit,
+        &project,
+        Some(&Speaker::consumer("consumer:test")),
+    )
+    .expect("fold_project");
     let folded_alias = feed_from_tree::fold_claim_tree(&kit, &project).expect("fold_claim_tree");
     assert_eq!(
         member_cids(&folded),

@@ -8,8 +8,10 @@
 // without depending on sugar-cli. `ProofGraph::feed` is the merge; content
 // CIDs make walk order irrelevant.
 //
-// Speaker attribution is Task 7 (`fold_project`'s speaker is accepted and
-// ignored until pool intake stamps first-writer-wins).
+// Speaker attribution lives at pool intake (`orchestrate::pool_from_graph_with_speaker`
+// stamps `MementoPool.member_speaker`, first-writer-wins — same as utterance).
+// `fold_project` accepts a `Speaker` so the walk face and pool load share one
+// typed identity; the graph itself still carries content only.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -20,6 +22,7 @@ use sugar_claim_envelope::{mint_contract_with_body_cid, Authoring, MintContractA
 use sugar_proof_envelope::{
     ClaimContractMemento, ContractBody, Ed25519Seed, FlatAtom, ProofGraph,
 };
+use sugar_verifier::Speaker;
 
 use crate::kit::{Kit, KitError};
 use crate::tree::{Fact, Sourced, Universe};
@@ -265,16 +268,21 @@ pub fn fold_claim_tree(kit: &Kit, workspace_root: &Path) -> Result<ProofGraph, F
     Ok(g)
 }
 
-/// Brief alias for `fold_claim_tree` (speaker attribution is Task 7).
+/// Brief alias for `fold_claim_tree`.
 ///
-/// `speaker` is accepted and ignored until pool intake stamps speakers
-/// (`pool_from_graph_with_speaker` / utterance first-writer-wins).
+/// `speaker` is the typed identity the caller will stamp at pool intake via
+/// [`crate::orchestrate::pool_from_graph_with_speaker`] — the graph returns
+/// content only (no second attribution map on members). Pass the same
+/// `Speaker` through fold and load so client vs vendor roles stay coherent
+/// for multi-speaker merges (first-writer-wins on `member_speaker`).
 pub fn fold_project(
     kit: &Kit,
     workspace_root: &Path,
-    _speaker: Option<&str>,
+    speaker: Option<&Speaker>,
 ) -> Result<ProofGraph, FeedError> {
-    // TODO(Task 7): stamp speaker attribution at pool intake; do not invent
-    // a second speaker field on members here.
+    // Attribution is a pool-intake fact, not a graph field. The speaker is
+    // accepted here so the walk face types match the load door; stamping
+    // happens in `pool_from_graph_with_speaker`.
+    let _ = speaker;
     fold_claim_tree(kit, workspace_root)
 }

@@ -352,17 +352,26 @@ pub enum SolveError {
     ProofRun(String),
 }
 
-/// KNOWN LIMITATION (macroscope on #3858, matches the SEAM 2 finding):
-/// the self-load stamps EVERY member `Speaker::consumer("solve-self-load")`.
-/// ProofGraph does not carry per-member attribution -- attribution is a
-/// property of the feed EVENT (`feed(other, speaker)`, the open design seam)
-/// -- so vendor members are misattributed as consumer here. Harmless for the
-/// two-reds discrimination (conjoin still fires), but Tier-2 signer-trust
-/// attribution through THIS door is not meaningful until the feed-attribution
-/// seam lands. Documented, not hidden.
-fn pool_from_graph(graph: &ProofGraph) -> Result<MementoPool, String> {
+/// Load a `ProofGraph` into a fresh `MementoPool`, stamping **every** member
+/// CID with `speaker` via the one attribution map
+/// (`MementoPool.member_speaker`, first-writer-wins — same policy as
+/// `utterance::speak_*` and pool `merge`).
+///
+/// This is the graph→pool intake door for speaker attribution (#3809 Task 7).
+/// ProofGraph itself carries no attribution (content only); who spoke is a
+/// property of the feed **event**, recorded at pool intake. For multi-speaker
+/// conversations, load each speaker's graph separately and `merge` the pools
+/// (first speaker wins on CID collision — do not invent a second map).
+///
+/// Uses the same throwaway-seal + `load_proof_bytes_into_pool` path as the
+/// Orchestrate self-load fixture; only the stamped `Speaker` differs.
+pub fn pool_from_graph_with_speaker(
+    graph: &ProofGraph,
+    speaker: Speaker,
+) -> Result<MementoPool, String> {
+    let label = speaker.id.clone();
     let proof_input = ProofEnvelopeInput {
-        name: "solve-self-load".to_string(),
+        name: label.clone(),
         version: "1.0.0".to_string(),
         binary_cid: None,
         metadata: None,
@@ -375,12 +384,25 @@ fn pool_from_graph(graph: &ProofGraph) -> Result<MementoPool, String> {
     let sealed = build_proof_envelope(&proof_input);
     let mut pool = MementoPool::default();
     let proof_bytes = ProofBytes::try_from_parts(
-        "solve-self-load",
+        label,
         sealed.cid.clone(),
         sealed.bytes,
-        Speaker::consumer("solve-self-load"),
+        speaker,
     )
-    .map_err(|e| format!("could not stage self-sealed proof bytes: {e}"))?;
+    .map_err(|e| format!("could not stage speaker-stamped proof bytes: {e}"))?;
     load_proof_bytes_into_pool(&[proof_bytes], &mut pool);
     Ok(pool)
+}
+
+/// Fixture-only self-load for `Orchestrate::solve` / `solve_deriving_links`:
+/// stamps every member `Speaker::consumer("solve-self-load")`.
+///
+/// KNOWN LIMITATION (macroscope on #3858, SEAM 2): ProofGraph does not carry
+/// per-member attribution, so this door cannot distinguish vendor vs consumer
+/// inside one graph. Harmless for two-reds discrimination (conjoin still
+/// fires), but Tier-2 signer-trust attribution through THIS door is not
+/// meaningful. Callers that know the real speaker must use
+/// [`pool_from_graph_with_speaker`] (and multi-speaker merge when needed).
+fn pool_from_graph(graph: &ProofGraph) -> Result<MementoPool, String> {
+    pool_from_graph_with_speaker(graph, Speaker::consumer("solve-self-load"))
 }
