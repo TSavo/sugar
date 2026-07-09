@@ -19,7 +19,8 @@ use std::sync::Arc;
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{encode_jcs, Value as CValue};
 use sugar_claim_envelope::{
-    mint_bridge, mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
+    body_discharge_policy_from_fields_with_default, mint_bridge, mint_contract_with_body_cid,
+    Authoring, MintBridgeArgs, MintContractArgs,
 };
 use sugar_proof_envelope::{
     ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento, ContractBody,
@@ -54,20 +55,48 @@ pub enum FeedError {
     Kit(#[from] KitError),
 }
 
-/// serde_json → canonical Value (same bridge mint / solve_two_reds use).
-fn json_to_cvalue(j: &Json) -> Arc<CValue> {
-    match j {
+/// serde_json → canonical Value for content-addressed feed members.
+///
+/// Integer numbers widen losslessly into the i128 carrier (`i64` / `u64`).
+/// Floats and other non-integer JSON numbers are a **typed refusal** — never
+/// `unwrap_or(0)`. Collapsing `3.14` / `u64::MAX+` into integer(0) would
+/// forge a different formula, collide member CIDs, and green fold==blob only
+/// because fixtures used small ints (PR #3897 review blocker).
+fn json_to_cvalue(j: &Json) -> Result<Arc<CValue>, FeedError> {
+    Ok(match j {
         Json::Null => CValue::null(),
         Json::Bool(b) => CValue::boolean(*b),
-        Json::Number(n) => CValue::integer(i128::from(n.as_i64().unwrap_or(0))),
+        Json::Number(n) => {
+            // Mirror libsugar::canonical: i64/u64 widen; only non-integers refuse.
+            let i = n
+                .as_i64()
+                .map(i128::from)
+                .or_else(|| n.as_u64().map(i128::from))
+                .ok_or_else(|| FeedError::Incomplete {
+                    what: "json_to_cvalue",
+                    detail: format!(
+                        "non-integer JSON number cannot enter a content-addressed \
+                         feed atom (refusing silent zero): {n}"
+                    ),
+                })?;
+            CValue::integer(i)
+        }
         Json::String(s) => CValue::string(s.clone()),
-        Json::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
-        Json::Object(map) => CValue::object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), json_to_cvalue(v)))
-                .collect::<Vec<_>>(),
-        ),
-    }
+        Json::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(json_to_cvalue(item)?);
+            }
+            CValue::array(out)
+        }
+        Json::Object(map) => {
+            let mut entries = Vec::with_capacity(map.len());
+            for (key, item) in map {
+                entries.push((key.clone(), json_to_cvalue(item)?));
+            }
+            CValue::object(entries)
+        }
+    })
 }
 
 fn true_formula() -> Json {
@@ -81,6 +110,11 @@ struct ClaimExtras {
     emit_empty_formals: bool,
     bridge_source_symbol: Option<String>,
     out_binding: String,
+    /// Must track mint's body-discharge policy. Default **false**: never claim
+    /// body-discharge eligibility on synthetic shells or inv-only assertions
+    /// without IR policy (PR #3897 High).
+    body_discharge_eligible: bool,
+    body_discharge_refusal_reason: Option<String>,
 }
 
 impl Default for ClaimExtras {
@@ -91,8 +125,29 @@ impl Default for ClaimExtras {
             bridge_source_symbol: None,
             // Match mint IR default for this kit (`outBinding: "out"`).
             out_binding: "out".into(),
+            body_discharge_eligible: false,
+            body_discharge_refusal_reason: Some(
+                "feed_from_tree: body discharge not claimed (no IR policy)".into(),
+            ),
         }
     }
+}
+
+/// Read mint's body-discharge policy fields from an IR row. When absent, use
+/// `default_eligible` (assertions default false; function-contracts true).
+fn body_policy_from_ir(ir: &Json, default_eligible: bool) -> (bool, Option<String>) {
+    let policy = body_discharge_policy_from_fields_with_default(
+        ir.get("bodyDischargeEligible")
+            .or_else(|| ir.get("body_discharge_eligible")),
+        ir.get("bodyDischargeRefusalReason")
+            .or_else(|| ir.get("body_discharge_refusal_reason")),
+        ir.get("dischargePolicy"),
+        default_eligible,
+    );
+    (
+        policy.body_discharge_eligible,
+        policy.body_discharge_refusal_reason,
+    )
 }
 
 /// Push one claim-contract member: register body slots, mint layered
@@ -113,7 +168,7 @@ fn push_claim_with_slots(
 
     let mut registered: Vec<(String, sugar_proof_envelope::AtomMemento)> = Vec::new();
     for (slot, formula) in &slots {
-        let atom = graph.register_atom(FlatAtom::new(json_to_cvalue(formula)));
+        let atom = graph.register_atom(FlatAtom::new(json_to_cvalue(formula)?));
         registered.push(((*slot).to_string(), atom));
     }
     let slot_refs: Vec<(&str, &sugar_proof_envelope::AtomMemento)> = registered
@@ -127,7 +182,7 @@ fn push_claim_with_slots(
     let mut post = None;
     let mut inv = None;
     for (slot, formula) in &slots {
-        let v = json_to_cvalue(formula);
+        let v = json_to_cvalue(formula)?;
         match *slot {
             "pre" => pre = Some(v),
             "post" => post = Some(v),
@@ -143,7 +198,12 @@ fn push_claim_with_slots(
 
     // Capture for PR-23 auto-bridge after the claim is stamped (attestation
     // CID is the re-signed member's CID, not pre-stamp mint.cid).
-    let auto_bridge_symbol = extras.bridge_source_symbol.clone();
+    // Auto-bridge only when body-discharge eligible (same law as mint PR-23).
+    let auto_bridge_symbol = if extras.body_discharge_eligible {
+        extras.bridge_source_symbol.clone()
+    } else {
+        None
+    };
 
     let args = MintContractArgs {
         evidence_term: None,
@@ -152,8 +212,8 @@ fn push_claim_with_slots(
         formal_sorts: Vec::new(),
         library: None,
         bridge_source_symbol: extras.bridge_source_symbol,
-        body_discharge_eligible: true,
-        body_discharge_refusal_reason: None,
+        body_discharge_eligible: extras.body_discharge_eligible,
+        body_discharge_refusal_reason: extras.body_discharge_refusal_reason,
         panic_loci: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants,
@@ -340,7 +400,7 @@ fn claim_memento_with_contract_name(
             "header": header_json,
             "metadata": metadata_json,
         });
-        let signing_canonical = encode_jcs(&json_to_cvalue(&signing_value));
+        let signing_canonical = encode_jcs(json_to_cvalue(&signing_value)?.as_ref());
         let signature = ed25519_sign_string(&FEED_SIGNER_SEED, signing_canonical.as_bytes());
         let signer = ed25519_pubkey_string(&FEED_SIGNER_SEED);
         let env_obj = envelope
@@ -354,7 +414,7 @@ fn claim_memento_with_contract_name(
         env_obj.insert("signer".to_string(), Json::String(signer));
     }
     // Re-JCS the full envelope so member bytes stay order-stable.
-    let bytes = encode_jcs(&json_to_cvalue(&envelope)).into_bytes();
+    let bytes = encode_jcs(json_to_cvalue(&envelope)?.as_ref()).into_bytes();
     Ok(ClaimContractMemento::new(bytes))
 }
 
@@ -378,16 +438,21 @@ pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
         _ => vec![("inv", payload_formula)],
     };
 
-    let warrants = warrants_for_fact(fact);
+    let warrants = warrants_for_fact(fact)?;
+    // Assertion contracts (kind=contract / inv-only claims) are not body-discharged
+    // unless IR explicitly claims eligibility — default false.
     let extras = fact
         .ir_row()
         .map(|ir| {
             let (formals, formals_present) = formals_from_ir_row(ir);
+            let (eligible, reason) = body_policy_from_ir(ir, /*default_eligible=*/ false);
             ClaimExtras {
                 emit_empty_formals: formals_present && formals.is_empty(),
                 formals,
                 bridge_source_symbol: bridge_from_ir_row(ir),
                 out_binding: out_binding_from_ir_row(ir),
+                body_discharge_eligible: eligible,
+                body_discharge_refusal_reason: reason,
             }
         })
         .unwrap_or_default();
@@ -397,7 +462,7 @@ pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
     Ok(graph)
 }
 
-fn warrants_for_fact(fact: &Fact) -> Vec<Arc<CValue>> {
+fn warrants_for_fact(fact: &Fact) -> Result<Vec<Arc<CValue>>, FeedError> {
     if let Some(ir) = fact.ir_row() {
         if let Some(arr) = ir
             .get("sourceWarrants")
@@ -405,11 +470,15 @@ fn warrants_for_fact(fact: &Fact) -> Vec<Arc<CValue>> {
             .and_then(Json::as_array)
         {
             if !arr.is_empty() {
-                return arr.iter().map(json_to_cvalue).collect();
+                let mut out = Vec::with_capacity(arr.len());
+                for w in arr {
+                    out.push(json_to_cvalue(w)?);
+                }
+                return Ok(out);
             }
         }
     }
-    vec![json_to_cvalue(&fact.source_memento().to_json())]
+    Ok(vec![json_to_cvalue(&fact.source_memento().to_json())?])
 }
 
 /// Build a graph fragment from one enumerated universe (function-contract).
@@ -443,31 +512,50 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             }
         }
         let (formals, formals_present) = formals_from_ir_row(ir);
-        let warrants = ir
+        let warrants = match ir
             .get("sourceWarrants")
             .or_else(|| ir.get("source_warrants"))
             .and_then(Json::as_array)
-            .map(|arr| arr.iter().map(json_to_cvalue).collect())
-            .unwrap_or_default();
+        {
+            Some(arr) => {
+                let mut out = Vec::with_capacity(arr.len());
+                for w in arr {
+                    out.push(json_to_cvalue(w)?);
+                }
+                out
+            }
+            None => Vec::new(),
+        };
+        // Function-contracts are body-bearing by default; IR can refuse.
+        let (eligible, reason) = body_policy_from_ir(ir, /*default_eligible=*/ true);
         let extras = ClaimExtras {
             emit_empty_formals: formals_present && formals.is_empty(),
             formals,
             bridge_source_symbol: bridge_from_ir_row(ir),
             out_binding: out_binding_from_ir_row(ir),
+            body_discharge_eligible: eligible,
+            body_discharge_refusal_reason: reason,
         };
         push_claim_with_slots(&mut graph, &name, slots, warrants, extras)?;
         return Ok(graph);
     }
 
-    // No IR row: keep a name shell so walk fold still enumerates the universe.
-    // pre-only so fact recovery that keys on inv|post does not invent extras.
+    // No IR row: name shell only — never body-discharge eligible (no policy).
+    let shell_extras = ClaimExtras {
+        body_discharge_eligible: false,
+        body_discharge_refusal_reason: Some(
+            "feed_from_tree: universe shell without IR row is not body-discharge eligible"
+                .into(),
+        ),
+        ..ClaimExtras::default()
+    };
     if let Some(payload) = u.payload() {
         push_claim_with_slots(
             &mut graph,
             &name,
             vec![("post", payload.clone())],
             Vec::new(),
-            ClaimExtras::default(),
+            shell_extras,
         )?;
     } else {
         push_claim_with_slots(
@@ -475,7 +563,7 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             &name,
             vec![("pre", true_formula())],
             Vec::new(),
-            ClaimExtras::default(),
+            shell_extras,
         )?;
     }
     Ok(graph)
@@ -521,4 +609,55 @@ pub fn fold_project(
     // happens in `pool_from_graph_with_speaker`.
     let _ = speaker;
     fold_claim_tree(kit, workspace_root)
+}
+
+#[cfg(test)]
+mod json_to_cvalue_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn json_to_cvalue_accepts_i64_and_u64_integers() {
+        let i = json_to_cvalue(&json!(42)).expect("i64");
+        assert_eq!(
+            encode_jcs(i.as_ref()),
+            encode_jcs(CValue::integer(42).as_ref())
+        );
+        // u64 that fits i128 but not i64
+        let big = u64::MAX;
+        let u = json_to_cvalue(&Json::Number(serde_json::Number::from(big))).expect("u64");
+        assert_eq!(
+            encode_jcs(u.as_ref()),
+            encode_jcs(CValue::integer(i128::from(big)).as_ref())
+        );
+    }
+
+    #[test]
+    fn json_to_cvalue_refuses_float_with_typed_incomplete() {
+        let err = json_to_cvalue(&json!(3.14)).expect_err("float must refuse");
+        match err {
+            FeedError::Incomplete { what, detail } => {
+                assert_eq!(what, "json_to_cvalue");
+                assert!(
+                    detail.contains("non-integer") && detail.contains("3.14"),
+                    "expected loud non-integer refusal, got: {detail}"
+                );
+            }
+            other => panic!("expected FeedError::Incomplete, got {other}"),
+        }
+    }
+
+    #[test]
+    fn json_to_cvalue_refuses_nested_float_in_formula() {
+        let formula = json!({
+            "kind": "atomic",
+            "name": "eq",
+            "args": [{"kind": "const", "value": 1.5}]
+        });
+        let err = json_to_cvalue(&formula).expect_err("nested float");
+        assert!(
+            matches!(err, FeedError::Incomplete { what: "json_to_cvalue", .. }),
+            "got {err}"
+        );
+    }
 }

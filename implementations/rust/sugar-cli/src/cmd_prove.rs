@@ -235,30 +235,26 @@ pub(crate) fn build_prove_artifact_with_options(
     // prove through the fold path (`prove_from_kit`) instead of requiring a
     // prior `sugar mint` + disk `.proof` load. Mint remains the door for
     // sealed `.proof` publish; local project prove is fold + discharge.
-    // Fall back to disk `solve_project` when no lift kit is planned or
-    // rendezvous fails (pre-mint-only projects, broken plugin, etc.).
+    //
+    // Fail-loud (PR #3897 High): if a kit **did** rendezvous, a fold/solve
+    // failure is the prove result — never silent-fallback to disk. Disk
+    // `solve_project` is only for projects with no planned lift kit (or
+    // rendezvous skipped), where the fold path was never the chosen face.
     if let Some(kit) = try_rendezvous_prove_kit(project_root, &component_plan) {
         let speaker = sugar_verifier::Speaker::consumer("sugar-cli:prove");
-        match sugar_compiler::orchestrate::prove_from_kit(
+        return sugar_compiler::orchestrate::prove_from_kit(
             &kit,
             project_root,
             speaker,
-            cfg.clone(),
-            compilers.clone(),
-        ) {
-            Ok(proven) => return Ok(proven.artifact),
-            Err(error) => {
-                eprintln!(
-                    "{}: prove_from_kit failed ({error}); falling back to disk .proof load",
-                    "warning".yellow().bold()
-                );
-            }
-        }
+            cfg,
+            compilers,
+        )
+        .map(|proven| proven.artifact)
+        .map_err(|error| error.to_string());
     }
 
-    // Disk-load face (sugar#3859): `solve_project` runs the real
-    // `Runner::run_with_proof_run` pipeline as beat 2 over minted `.proof`
-    // files. Link errors ANNOTATE, they never gate (see `solve_project` doc).
+    // Disk-load face (sugar#3859): no lift kit for this project — prove over
+    // minted `.proof` files. Link errors ANNOTATE, they never gate.
     sugar_compiler::orchestrate::solve_project(cfg, compilers)
         .map(|proven| proven.artifact)
         .map_err(|error| error.to_string())

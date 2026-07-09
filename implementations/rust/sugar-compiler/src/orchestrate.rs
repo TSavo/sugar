@@ -476,6 +476,18 @@ pub fn pool_from_graph_with_speaker(
     let proof_bytes = ProofBytes::try_from_parts(label, sealed.cid.clone(), sealed.bytes, speaker)
         .map_err(|e| format!("could not stage speaker-stamped proof bytes: {e}"))?;
     load_proof_bytes_into_pool(&[proof_bytes], &mut pool);
+    // Fail-loud (PR #3897 Medium→fix with Highs): never return Ok over a
+    // partial pool. self_load_pool already refuses load_errors; this door must
+    // too so vendor/local load failures cannot green as empty attribution.
+    if !pool.load_errors.is_empty() {
+        return Err(format!(
+            "loader rejected part of the graph; refusing to discharge a partial pool: {:?}",
+            pool.load_errors
+                .iter()
+                .map(|e| format!("{e:?}"))
+                .collect::<Vec<_>>()
+        ));
+    }
     Ok(pool)
 }
 
