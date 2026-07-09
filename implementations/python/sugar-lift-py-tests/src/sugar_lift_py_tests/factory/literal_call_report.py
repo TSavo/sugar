@@ -1680,6 +1680,46 @@ def _numeric_floor_for_numpy_literal_arg(
     return value.value
 
 
+def _opaque_op_companion_facts(
+    value,
+    stmt: SourceFragment,
+    fn: SourceFragment,
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> list[LiftResult]:
+    """The DERIVED companion fact for a builtin-operator callsite over a counted
+    construction. `len([1,2,3])` carries the coordinate `call:len(array(1,2,3))` AND
+    the computed value `3`; this emits `call:len(array(1,2,3)) == 3` as a Derived
+    fact so the coordinate is grounded by the solver without ever collapsing. An
+    opaque argument (`len(pd.Series())`, `computed is None`) emits nothing -- the
+    coordinate stands alone, its value only pinned by whatever the vendor swears."""
+    from sugar_lift_py_tests.floor import OpaqueOpCallsite
+
+    if not isinstance(value, OpaqueOpCallsite) or value.computed is None:
+        return []
+    arg_term = floor_to_term(value.arg, owner="literal_call_report.opaque_op_arg")
+    computed_term = floor_to_term(
+        value.computed, owner="literal_call_report.opaque_op_computed"
+    )
+    return [
+        _emit_euf_fact(
+            stmt,
+            fn,
+            value.callee,
+            [arg_term],
+            computed_term,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            warrant=Derived(floor_chain=(f"builtin-operator:{value.callee}",)),
+            call_return_sort=_known_term_sort(computed_term)
+            or UnknownSort(reason=f"no declared return sort for call:{value.callee}"),
+        )
+    ]
+
+
 def _lift_callsite_assertion(
     stmt: SourceFragment,
     *,
@@ -1743,6 +1783,19 @@ def _lift_callsite_assertion(
             source_lines=source_lines,
         )
     expected_term = floor_to_term(expected_value, owner="literal_call_report")
+    # If the RHS is a builtin-operator callsite over a counted construction
+    # (`len([1,2,3])`), its coordinate `call:len(array(...))` is kept as the term
+    # above and the COMPUTED value is emitted as a separate DERIVED companion fact
+    # `call:len(array(...)) == 3`. The coordinate never collapses to the scalar; the
+    # solver grounds it by transitivity. See OpaqueOpCallsite.
+    companion_facts = _opaque_op_companion_facts(
+        expected_value,
+        stmt,
+        fn,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+    )
     # Each arg composes through the factory's literal sugars (string, int, array,
     # ...) -- the same path as the expected. A literal the catalog reduces but can't
     # yet shape into a term is kept as typed red so one opaque arg cannot kill the
@@ -1952,7 +2005,7 @@ def _lift_callsite_assertion(
             include_whole_call_fact=True,
             edge_target_symbol=edge_target_symbol,
         )
-    return _emit_euf_fact(
+    stated = _emit_euf_fact(
         stmt,
         fn,
         callee_name,
@@ -1968,6 +2021,7 @@ def _lift_callsite_assertion(
         contract_bindings=contract_bindings or [],
         edge_target_symbol=edge_target_symbol,
     )
+    return _merge_many([stated, *companion_facts])
 
 
 def _emit_dict_literal_callsite_facts(
