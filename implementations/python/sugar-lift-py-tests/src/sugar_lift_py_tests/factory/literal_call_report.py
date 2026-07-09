@@ -29,9 +29,7 @@ from sugar_lift_py_tests.ir import (
     atomic,
     ctor,
     eq,
-    gte,
     make_var,
-    num,
     str_const,
     term_to_value,
 )
