@@ -51,11 +51,26 @@ fn z3_available() -> bool {
 }
 
 fn python3() -> Option<PathBuf> {
-    for candidate in ["python3", "python"] {
-        if let Ok(out) = Command::new(candidate).arg("--version").output() {
+    // Prefer the battleaxe / bcargo provisioned interpreter when present
+    // (`bin/brun` exports `PYTHON` to the remote kit venv).
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(py) = std::env::var("PYTHON") {
+        if !py.is_empty() {
+            candidates.push(PathBuf::from(py));
+        }
+    }
+    candidates.push(PathBuf::from("python3"));
+    candidates.push(PathBuf::from("python"));
+
+    for candidate in candidates {
+        if let Ok(out) = Command::new(&candidate).arg("--version").output() {
             if out.status.success() {
                 // Prefer an absolute path so the staged wrapper survives cwd changes.
-                if let Ok(which) = Command::new("which").arg(candidate).output() {
+                if candidate.is_absolute() {
+                    return Some(candidate);
+                }
+                let name = candidate.to_string_lossy().to_string();
+                if let Ok(which) = Command::new("which").arg(&name).output() {
                     if which.status.success() {
                         let p = String::from_utf8_lossy(&which.stdout).trim().to_string();
                         if !p.is_empty() {
@@ -63,11 +78,27 @@ fn python3() -> Option<PathBuf> {
                         }
                     }
                 }
-                return Some(PathBuf::from(candidate));
+                return Some(candidate);
             }
         }
     }
     None
+}
+
+/// Gate mode: skip must be red. Armed by:
+/// - `SUGAR_REAL_KIT_LSP_REQUIRED=1` (battleaxe Makefile gate / explicit), or
+/// - `CI=true` (self-hosted acid CI — a silent skip is not a pass).
+fn real_kit_required() -> bool {
+    fn truthy(v: &str) -> bool {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    }
+    std::env::var("SUGAR_REAL_KIT_LSP_REQUIRED")
+        .map(|v| truthy(&v))
+        .unwrap_or(false)
+        || std::env::var("CI").map(|v| truthy(&v)).unwrap_or(false)
 }
 
 /// Real kit reachable: `import sugar_lift_py_tests.lift_rpc` and `import pandas`.
@@ -408,21 +439,41 @@ fn diag_messages(params: &Value) -> Vec<String> {
         .collect()
 }
 
-/// Returns `None` when the environment cannot drive the real kit (caller returns).
+/// Resolve the real kit or skip (soft) / fail (gate).
+///
+/// Always emits an observable receipt line:
+///   `real-kit LSP: RAN`     — kit present; test body will execute
+///   `real-kit LSP: SKIPPED: <reason>` — kit/z3 missing
+///
+/// When `real_kit_required()` (battleaxe gate / CI), SKIPPED is a hard red,
+/// never a silent green.
 fn require_real_kit_or_skip() -> Option<PathBuf> {
-    if !z3_available() {
-        eprintln!("SKIP: z3 not on PATH; real-kit LSP prove needs z3 discharge");
-        return None;
+    let outcome: Result<PathBuf, String> = (|| {
+        if !z3_available() {
+            return Err("z3 not on PATH; real-kit LSP prove needs z3 discharge".into());
+        }
+        let py = python3().ok_or_else(|| "python3 not on PATH".to_string())?;
+        real_python_kit_available(&py)?;
+        Ok(py)
+    })();
+
+    match outcome {
+        Ok(py) => {
+            eprintln!("real-kit LSP: RAN");
+            Some(py)
+        }
+        Err(reason) => {
+            eprintln!("real-kit LSP: SKIPPED: {reason}");
+            if real_kit_required() {
+                panic!(
+                    "real-kit LSP: SKIPPED on a gate that requires RUN \
+                     (SUGAR_REAL_KIT_LSP_REQUIRED=1 or CI=true); \
+                     silent skip is not a pass: {reason}"
+                );
+            }
+            None
+        }
     }
-    let Some(py) = python3() else {
-        eprintln!("SKIP: python3 not on PATH");
-        return None;
-    };
-    if let Err(err) = real_python_kit_available(&py) {
-        eprintln!("SKIP: real python/pandas kit not available: {err}");
-        return None;
-    }
-    Some(py)
 }
 
 // ---------------------------------------------------------------------------
@@ -489,6 +540,7 @@ fn real_python_kit_did_open_lying_twin_reports_unsat() {
         joined.contains("sum") || joined.contains("pandas") || joined.contains("DataFrame"),
         "lying twin diagnostic must mention the real sum/pandas claim; messages:\n{joined}"
     );
+    eprintln!("real-kit LSP: RECEIPT lying twin -> UNSAT (ok)");
 
     lsp.kill();
     fs::remove_dir_all(&project).ok();
@@ -572,6 +624,7 @@ fn real_python_kit_did_change_to_truthful_twin_clears_diagnostics() {
         changed_msgs.is_empty(),
         "truthful twin must clear the contradiction diagnostic; still red: {changed_msgs:?}"
     );
+    eprintln!("real-kit LSP: RECEIPT truthful twin -> clear (ok)");
 
     lsp.kill();
     fs::remove_dir_all(&project).ok();

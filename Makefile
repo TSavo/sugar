@@ -62,6 +62,7 @@ help:
 	@echo "  make ci             check-cargo-entrypoint + the acid test + showcase receipts"
 	@echo "  make test-all       the acid test: test-rust + test-python"
 	@echo "  make test-showcases run the checked-in end-to-end showcase receipts"
+	@echo "  make test-real-python-kit-lsp  real pandas kit through LSP (battleaxe; skip=red)"
 	@echo "  make examples-gate  run public example smoke scripts against the ratchet fixture"
 	@echo ""
 	@echo "Per-language build:"
@@ -126,6 +127,7 @@ build-python:
 	# same interpreter so those cross-language tests find it.
 	$(PYTHON_KIT_PIP) install --quiet --no-cache-dir \
 		blake3 \
+		pandas \
 		-e implementations/python/sugar-build-witness \
 		-e implementations/python/sugar-lift-py-tests \
 		-e implementations/python/sugar-lift-python-source \
@@ -137,7 +139,9 @@ bcargo-python-kit-env: $(BCARGO_PYTHON_ENV_STAMP)
 $(BCARGO_PYTHON_ENV_STAMP): Makefile $(wildcard implementations/python/*/pyproject.toml)
 	$(PYTHON) -m venv $(BCARGO_PYTHON_VENV)
 	$(BCARGO_PYTHON) -m pip install --quiet --upgrade pip
-	$(BCARGO_PYTHON) -m pip install --quiet --no-cache-dir pytest $(PYTHON_KIT_EDITABLES)
+	# pandas is required so the real-kit LSP gate (and witness pandas corpus)
+	# can RUN on battleaxe; a skip there is a red, not a green.
+	$(BCARGO_PYTHON) -m pip install --quiet --no-cache-dir pytest pandas $(PYTHON_KIT_EDITABLES)
 	mkdir -p $(dir $(BCARGO_PYTHON_ENV_STAMP))
 	touch $(BCARGO_PYTHON_ENV_STAMP)
 
@@ -473,8 +477,16 @@ coretests-invariants:
 	implementations/rust/target/release/coretests_sweep "$$CORPUS" --rustc-cfg > /tmp/coretests-hermetic.out; \
 	python3 scripts/check-coretests-invariants.py /tmp/coretests-hermetic.out implementations/rust/coretests-invariants.json
 
+# Real python/pandas kit through sugar-lsp --in-process (PyCon demo path).
+# Same battleaxe family as the witness corpus (bcargo/brun + remote kit env).
+# Implementation lives in scripts/test-real-python-kit-lsp.sh so skip=red and
+# the RAN receipt assertion stay shell-testable without Makefile quoting pain.
+.PHONY: test-real-python-kit-lsp
+test-real-python-kit-lsp:
+	@bash scripts/test-real-python-kit-lsp.sh
+
 .PHONY: ci
-ci: check-cargo-entrypoint check-lift-refusal-vocabulary test-python-format test-all test-showcases self-attest coretests-source-audit coretests-invariants
+ci: check-cargo-entrypoint check-lift-refusal-vocabulary test-python-format test-all test-showcases test-real-python-kit-lsp self-attest coretests-source-audit coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 
