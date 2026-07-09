@@ -250,10 +250,20 @@ class ExternalBridgeStrategy:
 
 @dataclass(frozen=True)
 class MethodCallStrategy:
+    """Receiver-dispatched method → ``call:<m>(receiver, …args, kw:…)``.
+
+    Positional multi-arg (``left.merge(right)``) and keyword args
+    (``s.sum(axis=0)``) share this strategy so body dig matches the direct
+    symbolic_term shape. Keywords become ``kw:<name>(value)`` FloorValues in
+    the operation argument list (same ctor family as ExternalBridgeStrategy /
+    symbolic_term). Opaque vendor methods keep ``computed=None``.
+    """
+
     method_name: str
     receiver: SugarBody
     arguments: tuple[SugarBody, ...]
     blame: str
+    keywords: tuple[tuple[str, SugarBody], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.receiver, SugarBody):
@@ -261,13 +271,20 @@ class MethodCallStrategy:
         for argument in self.arguments:
             if not isinstance(argument, SugarBody):
                 raise TypeError("MethodCallStrategy arguments must be factory-built")
+        for _name, value in self.keywords:
+            if not isinstance(value, SugarBody):
+                raise TypeError(
+                    "MethodCallStrategy keyword value must be factory-built"
+                )
 
     def emit(self, sugar: "CallSugar", ctx) -> Outcome:
         del sugar
+        from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.operations import (
             MethodCallOperation,
             perform_operation,
         )
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         receiver_outcome = self.receiver.reduce(ctx)
         if isinstance(receiver_outcome, Incomplete):
@@ -280,6 +297,26 @@ class MethodCallStrategy:
                 return argument_outcome
             arguments.append(
                 complete_value(argument_outcome, owner="MethodCallStrategy argument")
+            )
+        for name, keyword in self.keywords:
+            keyword_outcome = keyword.reduce(ctx)
+            if isinstance(keyword_outcome, Incomplete):
+                return keyword_outcome
+            value = complete_value(
+                keyword_outcome, owner=f"MethodCallStrategy keyword {name}"
+            )
+            # kw:<name>(value) — matches symbolic_term / ExternalBridgeStrategy
+            arguments.append(
+                SymbolicValue(
+                    ctor(
+                        f"kw:{name}",
+                        [
+                            floor_to_term(
+                                value, owner=f"MethodCallStrategy keyword {name}"
+                            )
+                        ],
+                    )
+                )
             )
         operation = MethodCallOperation(
             name=self.method_name,
@@ -647,7 +684,6 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         if (
             fragment.call_is_method_call()
             and target is not None
-            and not fragment.call_has_keywords()
             and (
                 _resolver_has_method(ctx, target)
                 or _method_receiver_is_temporally_bound(fragment, ctx)
@@ -657,11 +693,16 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 # Attribute receivers need the same MethodCallStrategy so the
                 # reduce path can mint call:<method>(receiver) (opaque
                 # coordinate, computed=None) instead of call-builtin:sum gap.
+                # Keywords (`s.sum(axis=0)`) and multi-arg (`left.merge(right)`)
+                # ride the same path so dig matches the direct call: + kw: shape.
                 or _method_receiver_is_constructed_expression(fragment)
             )
         ):
             receiver = fragment.call_receiver()
             if receiver is not None:
+                keywords = _method_call_keywords(fragment, ctx, target)
+                if isinstance(keywords, FactoryGapStrategy):
+                    return cls(strategy=keywords)
                 return cls(
                     strategy=MethodCallStrategy(
                         method_name=target,
@@ -671,6 +712,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                             for arg in fragment.call_args()
                         ),
                         blame=fragment.blame,
+                        keywords=keywords,
                     )
                 )
         if target is None and not fragment.call_has_keywords():
@@ -705,8 +747,11 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
 
 def _method_receiver_is_temporally_bound(fragment, ctx) -> bool:
-    if fragment.call_has_keywords():
-        return False
+    """True when the method receiver Name is temporally bound (formal dig).
+
+    Keywords are allowed — ``s.mean(axis=0)`` on a formal still qualifies for
+    MethodCallStrategy (body dig must match direct ``call:mean(s, kw:axis(0))``).
+    """
     receiver = fragment.call_receiver()
     if receiver is None or receiver.observed != "Name":
         return False
@@ -717,12 +762,11 @@ def _method_receiver_is_temporally_bound(fragment, ctx) -> bool:
 def _method_receiver_is_constructed_expression(fragment) -> bool:
     """True when the method receiver is a constructed expression (not a bare Name).
 
-    `np.array([1,2,3]).sum()` / `b\"hi\".decode()` — receiver is Call, Attribute,
-    Constant, etc. Bare `buffer.decode()` stays on the Name frontier so
-    unresolved locals still gap as call-method:decode.
+    `np.array([1,2,3]).sum()` / `b\"hi\".decode()` / ``Series(…).sum(axis=0)`` —
+    receiver is Call, Attribute, Constant, etc. Bare `buffer.decode()` stays on
+    the Name frontier so unresolved locals still gap as call-method:decode.
+    Keywords do not disqualify — dig carries them as ``kw:`` extras.
     """
-    if fragment.call_has_keywords():
-        return False
     receiver = fragment.call_receiver()
     if receiver is None:
         return False
@@ -738,6 +782,32 @@ def _method_receiver_is_constructed_expression(fragment) -> bool:
         "Set",
         "JoinedStr",
     }
+
+
+def _method_call_keywords(
+    fragment, ctx, target: str
+) -> tuple[tuple[str, SugarBody], ...] | FactoryGapStrategy:
+    """Build named keyword sugar for MethodCallStrategy, or gap on ``**kwargs``."""
+    keywords: list[tuple[str, SugarBody]] = []
+    for keyword in fragment.call_keywords():
+        name = keyword.keyword_arg_name()
+        if name is None:
+            return FactoryGapStrategy(
+                FactoryGapInfo(
+                    owner="python.factory",
+                    blame=fragment.blame,
+                    observed=f"call-method:{target}",
+                    requested="term",
+                    fix=(
+                        f"resolve method `{target}` with explicit keyword names; "
+                        "add **kwargs method sugar"
+                    ),
+                )
+            )
+        keywords.append(
+            (name, ctx.build_body(keyword.keyword_value(), SugarRole.TERM))
+        )
+    return tuple(keywords)
 
 
 def _build_constructor_strategy(fragment, ctx, target: str, class_site):

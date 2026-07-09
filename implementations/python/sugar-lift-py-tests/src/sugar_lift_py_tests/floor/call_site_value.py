@@ -108,14 +108,22 @@ class CallSiteValue(FloorValue):
         except FactoryGap as exc:
             observed = exc.info.observed
             # Opaque residual: coordinate for pure methods, else typed red.
+            # Multi-arg / kwarg methods (merge(other), sum(axis=0)) carry
+            # operation.arguments as OpaqueOpCallsite.extra_args so dig mints
+            # call:<m>(receiver, …, kw:…) — never invent a vendor value.
             if operation.name == "__len__" and not operation.arguments:
                 return Complete(
                     OpaqueOpCallsite(callee="len", arg=self, computed=None)
                 )
-            if not operation.name.startswith("__") and not operation.arguments:
+            if not operation.name.startswith("__") and all(
+                isinstance(arg, FloorValue) for arg in operation.arguments
+            ):
                 return Complete(
                     OpaqueOpCallsite(
-                        callee=operation.name, arg=self, computed=None
+                        callee=operation.name,
+                        arg=self,
+                        computed=None,
+                        extra_args=tuple(operation.arguments),
                     )
                 )
             return Incomplete(
