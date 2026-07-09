@@ -164,13 +164,34 @@ def _resolve_audit_sugar_bin(sugar_bin: Optional[Path]) -> Path:
 
 
 def _run_subprocess(command: List[str], cwd: Path) -> CommandResult:
+    # ONE door: when sugar is invoked against a staged audit workspace, pin
+    # SUGAR_HOME so ambient checkout/.sugar components cannot pollute the lift.
+    env = _hermetic_env_for_sugar_command(command)
     try:
         completed = subprocess.run(
-            command, cwd=cwd, text=True, capture_output=True, check=False
+            command, cwd=cwd, text=True, capture_output=True, check=False, env=env
         )
     except FileNotFoundError as exc:
         return CommandResult(127, "", f"unable to execute {command[0]}: {exc}")
     return CommandResult(completed.returncode, completed.stdout, completed.stderr)
+
+
+def _hermetic_env_for_sugar_command(command: List[str]) -> dict:
+    env = dict(os.environ)
+    env.pop("SUGAR_COMPONENT_PATH", None)
+    if len(command) < 2:
+        return env
+    # Prefer an explicit path arg that already stages `.sugar` (workspace),
+    # scanning right-to-left so trailing workspace paths win over flags.
+    for part in reversed(command[1:]):
+        if not part or str(part).startswith("-"):
+            continue
+        candidate = Path(part)
+        if candidate.is_dir() and (candidate / ".sugar").is_dir():
+            from sugar_lift_py_tests.witness_harness import hermetic_sugar_env
+
+            return hermetic_sugar_env(candidate, base=env)
+    return env
 
 
 def _prepare_audit_workspace(
@@ -251,9 +272,22 @@ def _audit_workspace_cache_hit(metadata: Path, workspace: Path, cache_key: str) 
 
 
 def _audit_workspace_cache_key(target: Path, root: Path) -> str:
+    """Content-addressed cell for a panic-audit workspace.
+
+    Keys on the installed package *tree* (so a numpy/pandas version bump that
+    changes any hashed .py invalidates the cell), the audit config/manifest,
+    and the Python kit sources that drive the lift. This is a legitimate
+    content-addressed cache — not the mint/prove pool — and must NOT be
+    isolated per-test; only rekeyed when its inputs change.
+    """
     hasher = hashlib.sha256()
     _hash_text(hasher, "version", _CACHE_VERSION)
     _hash_text(hasher, "target-name", target.name)
+    # Explicit package version when available so a same-tree metadata-only
+    # bump still rekeys (belt + suspenders over the tree hash below).
+    package_version = _installed_package_version(target)
+    if package_version is not None:
+        _hash_text(hasher, "package-version", package_version)
     _hash_text(hasher, "config", _audit_config_toml())
     _hash_text(hasher, "manifest", _audit_manifest_toml(root))
     _hash_tree(hasher, "target", target)
@@ -268,6 +302,19 @@ def _audit_workspace_cache_key(target: Path, root: Path) -> str:
         root / "implementations/python/sugar-lift-python-source/src",
     )
     return hasher.hexdigest()
+
+
+def _installed_package_version(target: Path) -> Optional[str]:
+    """Best-effort version for an installed package directory (numpy/pandas)."""
+    name = target.name
+    if name.endswith(".py"):
+        name = target.parent.name
+    try:
+        from importlib import metadata
+
+        return metadata.version(name)
+    except Exception:
+        return None
 
 
 def _hash_tree(hasher: Any, label: str, root: Path) -> None:

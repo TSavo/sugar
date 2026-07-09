@@ -39,7 +39,7 @@ from sugar_lift_py_tests.sugar.witnesses import (
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
-from sugar_lift_py_tests.witness_harness import _ensure_sugar_bin, _stage_cli_project
+from sugar_lift_py_tests.witness_harness import _stage_cli_project
 
 
 def _term_outcome(expr: str, binds: dict[str, FloorValue] | None = None):
@@ -1343,18 +1343,13 @@ def _callsite_floor(target_name: str) -> CallSiteValue:
 
 
 def _mint_lift_document(project: Path, source: str) -> dict:
+    # ONE door: hermetic mint via witness_harness (SUGAR_HOME isolation).
+    from sugar_lift_py_tests.witness_harness import mint_project
+
     _stage_cli_project(project, source)
-    sugar = _ensure_sugar_bin()
-    capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"
-    completed = subprocess.run(
-        [str(sugar), "mint", "--out", ".", "--quiet"],
-        cwd=project,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=120,
-    )
+    completed = mint_project(project)
     assert completed.returncode == 0, completed.stderr
+    capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"
     responses = [
         json.loads(line) for line in capture.read_text(encoding="utf-8").splitlines()
     ]
