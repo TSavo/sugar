@@ -30,9 +30,22 @@ def _is_sugar_project_cli(cmd: object) -> bool:
     parts = [str(part) for part in cmd]
     for index, part in enumerate(parts):
         name = Path(part).name
-        if name == "sugar" or name.startswith("sugar-darwin") or name.startswith(
-            "sugar-linux"
-        ):
+        # Match: `sugar`, stamped `sugar-darwin-…`/`sugar-linux-…`, and any
+        # other resolved binary whose basename starts with `sugar-` but is not
+        # a non-CLI helper (sugarbin, sugar-ir-*, sugar-walk-rpc, …). Project
+        # subcommands mint/prove/lift/verify only appear on the main CLI.
+        is_main_cli = name == "sugar" or (
+            name.startswith("sugar-")
+            and not name.startswith("sugar-ir-")
+            and name
+            not in {
+                "sugarbin",
+                "sugar-walk-rpc",
+                "sugar-lsp",
+                "sugar-ra-oracle",
+            }
+        )
+        if is_main_cli:
             if index + 1 < len(parts) and parts[index + 1] in _SUGAR_PROJECT_SUBCOMMANDS:
                 return True
     return False

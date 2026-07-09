@@ -21,11 +21,16 @@ def _completed(stdout: str, *, stderr: str = "", returncode: int = 0):
 def _stub_sugar_cli(monkeypatch, completed) -> None:
     monkeypatch.setattr(verifier, "find_sugar_cli", lambda: "/fake/sugar")
 
-    def fake_run(cmd, *, capture_output, text, check):
+    def fake_run(cmd, *, capture_output, text, check, env=None, cwd=None, **_kwargs):
         assert cmd[0] == "/fake/sugar"
         assert capture_output is True
         assert text is True
         assert check is False
+        # Hermetic door: every verify/prove must pin SUGAR_HOME.
+        assert env is not None and env.get("SUGAR_HOME"), (
+            "verifier must invoke sugar with hermetic SUGAR_HOME"
+        )
+        assert cwd is not None
         return completed
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)

@@ -105,7 +105,10 @@ def verify_project(
             "set SUGAR_BIN or repair the repository binary hand-off"
         )
 
-    cmd = [cli, "verify", project_root]
+    # Resolve once so relative project roots (".", "myproj") stay correct when
+    # we both cwd into the project and pass it as the CLI target.
+    project = Path(project_root).resolve()
+    cmd = [cli, "verify", str(project)]
     if extra_args:
         cmd.extend(extra_args)
 
@@ -117,8 +120,8 @@ def verify_project(
         capture_output=True,
         text=True,
         check=False,
-        env=hermetic_sugar_env(Path(project_root)),
-        cwd=project_root,
+        env=hermetic_sugar_env(project),
+        cwd=str(project),
     )
 
     # The CLI outputs a JSON report on stdout in --json mode.
@@ -155,16 +158,15 @@ def prove_contract(
             "sugar CLI could not be resolved through bin/sugarbin"
         )
 
-    cmd = [cli, "prove", contract_file]
-    if extra_args:
-        cmd.extend(extra_args)
-
     # Prove a lone contract file: hermetic home is the contract's parent
     # project root if it carries .sugar, else the parent directory.
     contract_path = Path(contract_file).resolve()
     project = contract_path.parent
     if not (project / ".sugar").is_dir() and (project.parent / ".sugar").is_dir():
         project = project.parent
+    cmd = [cli, "prove", str(contract_path)]
+    if extra_args:
+        cmd.extend(extra_args)
     from .witness_harness import hermetic_sugar_env
 
     result = subprocess.run(
@@ -173,7 +175,7 @@ def prove_contract(
         text=True,
         check=False,
         env=hermetic_sugar_env(project),
-        cwd=project,
+        cwd=str(project),
     )
     if result.returncode == 0:
         try:

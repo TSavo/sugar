@@ -181,12 +181,16 @@ def _hermetic_env_for_sugar_command(command: List[str]) -> dict:
     env.pop("SUGAR_COMPONENT_PATH", None)
     if len(command) < 2:
         return env
-    # sugar lift ... <workspace>
-    candidate = Path(command[-1])
-    if candidate.is_dir() and (candidate / ".sugar").is_dir():
-        from sugar_lift_py_tests.witness_harness import hermetic_sugar_env
+    # Prefer an explicit path arg that already stages `.sugar` (workspace),
+    # scanning right-to-left so trailing workspace paths win over flags.
+    for part in reversed(command[1:]):
+        if not part or str(part).startswith("-"):
+            continue
+        candidate = Path(part)
+        if candidate.is_dir() and (candidate / ".sugar").is_dir():
+            from sugar_lift_py_tests.witness_harness import hermetic_sugar_env
 
-        return hermetic_sugar_env(candidate, base=env)
+            return hermetic_sugar_env(candidate, base=env)
     return env
 
 

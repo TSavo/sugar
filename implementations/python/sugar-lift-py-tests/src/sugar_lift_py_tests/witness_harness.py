@@ -262,9 +262,10 @@ def hermetic_sugar_env(project: Path, *, base: dict[str, str] | None = None) -> 
     `run_sugar_cli` or an equivalent that calls this function).
     """
     env = dict(os.environ if base is None else base)
-    sugar_home = (project / ".sugar").resolve()
-    sugar_home.mkdir(parents=True, exist_ok=True)
-    env["SUGAR_HOME"] = str(sugar_home)
+    # Pure env builder: do not mkdir. Callers that need a staged project
+    # (run_sugar_cli / mint) create `.sugar` themselves; verifying a missing
+    # project must not silently create one.
+    env["SUGAR_HOME"] = str((project / ".sugar").resolve())
     # Drop any ambient component path the host shell may carry; the staged
     # project is the sole authority for this invocation.
     env.pop("SUGAR_COMPONENT_PATH", None)
@@ -307,6 +308,7 @@ def run_sugar_cli(
     sugar = sugar_bin if sugar_bin is not None else _ensure_sugar_bin()
     project = project.resolve()
     project.mkdir(parents=True, exist_ok=True)
+    (project / ".sugar").mkdir(parents=True, exist_ok=True)
     env = hermetic_sugar_env(project)
     return subprocess.run(
         [str(sugar), *args],
