@@ -239,7 +239,7 @@ def build_pandas_wall(
     package_path = resolver("pandas").resolve()
     cached = _workspace_for_mode(package_path, root, output_dir, floors, cache_root)
     workspace = cached.workspace
-    env = _wall_env(root, sugar_bin)
+    env = _wall_env(root, sugar_bin, workspace)
 
     workspace_receipt = output_dir / "workspace.json"
     workspace_receipt.write_text(

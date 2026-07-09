@@ -225,29 +225,11 @@ flags = ["-smt2", "-in"]
 
 
 def _mint_and_prove(project: Path) -> tuple[dict, dict]:
-    sugar = _ensure_sugar_bin()
-    capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"
-    capture.unlink(missing_ok=True)
-    mint = subprocess.run(
-        [str(sugar), "mint", "--out", ".", "--quiet"],
-        cwd=project,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=120,
-    )
-    assert mint.returncode == 0, f"stdout:\n{mint.stdout}\nstderr:\n{mint.stderr}"
-    lift_doc = _captured_lift_document(capture)
-    prove = subprocess.run(
-        [str(sugar), "prove", ".", "--json", "--z3", "z3"],
-        cwd=project,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=120,
-    )
-    assert prove.stdout.strip(), prove.stderr
-    return lift_doc, json.loads(prove.stdout)
+    # ONE door: hermetic mint/prove via witness_harness (SUGAR_HOME isolation).
+    from sugar_lift_py_tests.witness_harness import mint_and_prove
+
+    result = mint_and_prove(project)
+    return result.lift_doc, result.prove_doc
 
 
 def _captured_lift_document(capture: Path) -> dict:

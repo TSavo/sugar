@@ -250,58 +250,101 @@ def _run_lift_rpc(project: Path) -> dict:
     return run_lift_rpc(project)
 
 
-def _hermetic_sugar_env(project: Path) -> dict[str, str]:
+def hermetic_sugar_env(project: Path, *, base: dict[str, str] | None = None) -> dict[str, str]:
     """Point the sugar binary at this project's staged `.sugar` only.
 
     `SUGAR_HOME` is the exclusive component-discovery door (see
     `component_roots` in sugar-cli). Setting it to `project/.sugar` keeps
-    mint/prove from reading the binary's repo-root kit tree or any ancestor
-    `.sugar` — the pre-existing non-hermeticity that made aggregate witness
-    runs lie. One door; no dual path.
+    mint/prove/lift from reading the binary's repo-root kit tree or any
+    ancestor `.sugar` — the pre-existing non-hermeticity that made aggregate
+    witness runs lie. **One door; no dual path.** Every suite invocation of
+    the sugar binary against a project must go through this env (via
+    `run_sugar_cli` or an equivalent that calls this function).
     """
-    env = dict(os.environ)
-    env["SUGAR_HOME"] = str((project / ".sugar").resolve())
+    env = dict(os.environ if base is None else base)
+    sugar_home = (project / ".sugar").resolve()
+    sugar_home.mkdir(parents=True, exist_ok=True)
+    env["SUGAR_HOME"] = str(sugar_home)
     # Drop any ambient component path the host shell may carry; the staged
     # project is the sole authority for this invocation.
     env.pop("SUGAR_COMPONENT_PATH", None)
     return env
 
 
-def mint_and_prove(project: Path) -> WitnessPipelineResult:
-    sugar = _ensure_sugar_bin()
-    capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"
-    capture.unlink(missing_ok=True)
-    # Content-addressed proofs accumulate under --out .; a reused project
-    # directory would otherwise load stale sibling catalogs into the pool.
+# Back-compat alias used by early hermeticity patches.
+_hermetic_sugar_env = hermetic_sugar_env
+
+
+def clear_stale_project_proofs(project: Path) -> None:
+    """Remove content-addressed proof catalogs that would alias across runs.
+
+    Mint writes `*.proof` under the project root; prove may also write under
+    `.sugar/runs`. A reused project directory would otherwise load sibling
+    catalogs into the same pool.
+    """
     for stale in project.glob("*.proof"):
         stale.unlink(missing_ok=True)
     runs = project / ".sugar" / "runs"
     if runs.is_dir():
         for stale in runs.glob("*.proof"):
             stale.unlink(missing_ok=True)
-    hermetic_env = _hermetic_sugar_env(project)
-    mint = subprocess.run(
-        [str(sugar), "mint", "--out", ".", "--quiet"],
+
+
+def run_sugar_cli(
+    project: Path,
+    args: list[str],
+    *,
+    timeout: float | None = 120,
+    sugar_bin: Path | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """THE one door: invoke the sugar binary hermetically against `project`.
+
+    Always sets `SUGAR_HOME=project/.sugar` and drops ambient
+    `SUGAR_COMPONENT_PATH`. Callers that shell out to mint/prove/lift without
+    going through this (or `hermetic_sugar_env`) are a hermeticity bug.
+    """
+    sugar = sugar_bin if sugar_bin is not None else _ensure_sugar_bin()
+    project = project.resolve()
+    project.mkdir(parents=True, exist_ok=True)
+    env = hermetic_sugar_env(project)
+    return subprocess.run(
+        [str(sugar), *args],
         cwd=project,
         text=True,
         capture_output=True,
         check=False,
-        timeout=120,
-        env=hermetic_env,
+        timeout=timeout,
+        env=env,
+        input=input_text,
     )
+
+
+def mint_project(project: Path, *, sugar_bin: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Hermetic `sugar mint --out . --quiet` against a staged project."""
+    clear_stale_project_proofs(project)
+    capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"
+    capture.unlink(missing_ok=True)
+    return run_sugar_cli(
+        project,
+        ["mint", "--out", ".", "--quiet"],
+        sugar_bin=sugar_bin,
+    )
+
+
+def mint_and_prove(project: Path) -> WitnessPipelineResult:
+    sugar = _ensure_sugar_bin()
+    mint = mint_project(project, sugar_bin=sugar)
     if mint.returncode != 0:
         raise WitnessPipelineError(
             "sugar mint failed\n" f"stdout:\n{mint.stdout}\nstderr:\n{mint.stderr}"
         )
+    capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"
     lift_doc = _captured_lift_document(capture)
-    prove = subprocess.run(
-        [str(sugar), "prove", ".", "--json", "--z3", "z3"],
-        cwd=project,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=120,
-        env=hermetic_env,
+    prove = run_sugar_cli(
+        project,
+        ["prove", ".", "--json", "--z3", "z3"],
+        sugar_bin=sugar,
     )
     if not prove.stdout.strip():
         raise WitnessPipelineError(

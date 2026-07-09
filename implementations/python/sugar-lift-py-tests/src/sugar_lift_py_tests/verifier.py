@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional
 
 from .sugar_binary import SugarBinaryResolutionError, resolve_sugar_binary
@@ -108,11 +109,16 @@ def verify_project(
     if extra_args:
         cmd.extend(extra_args)
 
+    # ONE door: pin SUGAR_HOME to the project's staged .sugar.
+    from .witness_harness import hermetic_sugar_env
+
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         check=False,
+        env=hermetic_sugar_env(Path(project_root)),
+        cwd=project_root,
     )
 
     # The CLI outputs a JSON report on stdout in --json mode.
@@ -153,7 +159,22 @@ def prove_contract(
     if extra_args:
         cmd.extend(extra_args)
 
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    # Prove a lone contract file: hermetic home is the contract's parent
+    # project root if it carries .sugar, else the parent directory.
+    contract_path = Path(contract_file).resolve()
+    project = contract_path.parent
+    if not (project / ".sugar").is_dir() and (project.parent / ".sugar").is_dir():
+        project = project.parent
+    from .witness_harness import hermetic_sugar_env
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=hermetic_sugar_env(project),
+        cwd=project,
+    )
     if result.returncode == 0:
         try:
             data = json.loads(result.stdout)

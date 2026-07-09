@@ -152,7 +152,7 @@ def build_numpy_wall(
     package_path = resolver("numpy").resolve()
     workspace = output_dir / "workspace" / package_path.name
     _prepare_audit_workspace(package_path, root, workspace, audit_only=False)
-    env = _wall_env(root, sugar_bin)
+    env = _wall_env(root, sugar_bin, workspace)
 
     # Criterion 14 (#3706): the wall consumes `--report --json`'s
     # `lineAccounting` only. It no longer runs `--report --visual` at all --
@@ -305,8 +305,16 @@ def _resolve_sugar_bin(root: Path, profile: str, runner: RunCommand) -> Path:
     return sugar
 
 
-def _wall_env(root: Path, sugar_bin: Path) -> dict[str, str]:
-    env = os.environ.copy()
+def _wall_env(root: Path, sugar_bin: Path, workspace: Path | None = None) -> dict[str, str]:
+    # Hermetic pool: when a staged workspace is known, SUGAR_HOME is the one door
+    # so ambient checkout/.sugar components cannot poison the wall lift.
+    if workspace is not None:
+        from sugar_lift_py_tests.witness_harness import hermetic_sugar_env
+
+        env = hermetic_sugar_env(workspace)
+    else:
+        env = os.environ.copy()
+        env.pop("SUGAR_COMPONENT_PATH", None)
     env["SUGAR_BIN"] = os.fspath(sugar_bin)
     source_paths = [
         root / "implementations/python/sugar-lift-py-tests/src",
