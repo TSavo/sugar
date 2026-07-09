@@ -671,6 +671,8 @@ def _lift_assert(
             dig_refusals=dig_refusals,
             agreement_violations=agreement_violations,
             factory_audits=universe_factory_audits,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
         )
     call_return_sort = _call_return_sort_from_universe(universe, callee_name)
     assertion_ctx = _assertion_factory_ctx(
@@ -964,6 +966,8 @@ def _factory_assertion_derived_context(
             dig_refusals=dig_refusals,
             agreement_violations=agreement_violations,
             factory_audits=factory_audits,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
         )
     comparison = test
     if comparison.observed != "Compare":
@@ -987,6 +991,8 @@ def _factory_assertion_derived_context(
         dig_refusals=dig_refusals,
         agreement_violations=agreement_violations,
         factory_audits=factory_audits,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
     )
 
 
@@ -2871,6 +2877,8 @@ def _construct_callsite_from_factory_term(
     dig_refusals: list[DigBoundary],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
+    import_aliases: dict[str, str] | None = None,
+    from_imports: dict[str, tuple[str, str]] | None = None,
 ) -> LiftResult:
     """Construct floor facts by reading the factory's CallSiteValue term.
 
@@ -2889,10 +2897,14 @@ def _construct_callsite_from_factory_term(
     )
     from sugar_lift_py_tests.outcome import Complete
 
+    import_aliases = import_aliases or {}
+    from_imports = from_imports or {}
     build_ctx = FactoryBuildContext(
         filename=filename,
         catalog=default_catalog(),
         name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
+        import_aliases=import_aliases,
+        from_imports=from_imports,
         audit_sink=factory_audits,
     )
     sink: list[CallSiteValue] = []
@@ -2922,6 +2934,8 @@ def _construct_callsite_from_factory_term(
             source_lines=source_lines,
             dig_refusals=dig_refusals,
             factory_audits=factory_audits,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
         )
         if uni is None:
             return
@@ -3264,6 +3278,8 @@ def _function_universe(
     source_lines: list[str],
     dig_refusals: list[DigBoundary],
     factory_audits: list[FactoryAuditDto],
+    import_aliases: dict[str, str] | None = None,
+    from_imports: dict[str, tuple[str, str]] | None = None,
 ) -> LiftResult | None:
     """The `::callable` universe for ONE resolved function, walked from its DEFINITION.
 
@@ -3273,7 +3289,13 @@ def _function_universe(
     control-flow walker DIRECTLY (which now lifts `return x + 1` to `out == +(x, 1)` via the
     symbolic-op emission), bypassing build_bridge_body's string-only single-return shortcut.
     Returns None if the body cannot be walked -- the construction still stands; only the
-    source-line warrant is absent."""
+    source-line warrant is absent.
+
+    ``import_aliases`` / ``from_imports`` must be threaded from the module: body dig of
+    ``return pd.DataFrame().shape`` symbolizes to ``call:shape(call:pandas.DataFrame())``
+    only when ``pd`` resolves; without aliases the open free var ``pd`` refuses the
+    universe (opaque attr body-dig gap, same family as opaque builtin body dig).
+    """
     from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 
     from .build import default_catalog
@@ -3286,6 +3308,8 @@ def _function_universe(
         filename=filename,
         catalog=default_catalog(),
         name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
+        import_aliases=import_aliases or {},
+        from_imports=from_imports or {},
         audit_sink=factory_audits,
     )
     try:

@@ -182,3 +182,83 @@ def test_vendor_attribute_discrimination_through_real_solver(
     ]
     reason = result.prove_doc.get("rows", [{}])[0].get("reason", "")
     assert "contradictory" in reason
+
+
+_VENDOR_SHAPE_BODY_DIG = (
+    "import pandas as pd\n"
+    "\n"
+    "def A():\n"
+    "    return pd.DataFrame().shape\n"
+    "\n"
+    "def test_a():\n"
+    "    assert A() == (0, 0)\n"
+)
+
+_VENDOR_SHAPE_BODY_DIG_LIE = (
+    "import pandas as pd\n"
+    "\n"
+    "def A():\n"
+    "    return pd.DataFrame().shape\n"
+    "\n"
+    "def test_a():\n"
+    "    assert A() == (1, 1)\n"
+)
+
+
+def test_vendor_shape_body_dig_emits_universe_coordinate() -> None:
+    """Body dig of `return pd.DataFrame().shape` must state out == call:shape(...).
+
+    #3905 routes direct `df.shape == expected` through the assertion euf door.
+    Without import aliases on the body universe mint, symbolic_term left free
+    var `pd` and the universe was refused — call:shape never appeared (same
+    refuse family as opaque hash-in-body).
+    """
+    report = build_literal_call_report(
+        source=_VENDOR_SHAPE_BODY_DIG,
+        filename="probe.py",
+        memento_file="probe.py",
+    )
+    assert report is not None
+    names = [row.name for row in report.payload.ir]
+    assert any((name or "").endswith("::callable") for name in names), names
+    callable_row = next(
+        row for row in report.payload.ir if (row.name or "").endswith("::callable")
+    )
+    post_blob = repr(callable_row.post)
+    assert "call:shape" in post_blob, post_blob
+    assert "call:pandas.DataFrame" in post_blob, post_blob
+    assert "py.attr" not in post_blob
+    dig_reasons = [
+        item.get("reason", "")
+        for item in (report.payload.diagnostics or [])
+        if isinstance(item, dict) and item.get("kind") == "dig-boundary"
+    ]
+    assert not any("open non-formal" in reason for reason in dig_reasons), dig_reasons
+
+
+def test_vendor_shape_body_dig_truthful_sat_through_real_solver(
+    tmp_path: Path,
+) -> None:
+    """Body dig of opaque attr: universe coordinate + sworn A()==(0,0) → sat.
+
+    Opaque-only (no companion). Lying A()==(1,1) alone also stays sat — there is
+    no fabricated shape value to form a refutation twin (same honest limit as
+    free hash body dig). Refuse regression is the gate this seed pins.
+    """
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", _VENDOR_SHAPE_BODY_DIG
+    )
+    statuses = [
+        row.get("status") for row in truthful.prove_doc.get("rows", [])
+    ]
+    assert truthful.verdict == "sat", (truthful.verdict, statuses)
+    assert "refused" not in statuses
+    ir_blob = repr(truthful.lift_doc.get("ir", []))
+    assert "call:shape" in ir_blob
+
+    lying = run_source_through_real_solver(tmp_path / "lying", _VENDOR_SHAPE_BODY_DIG_LIE)
+    lying_statuses = [row.get("status") for row in lying.prove_doc.get("rows", [])]
+    # Honest limitation: no companion → no refutation twin for free opaque shape.
+    assert lying.verdict == "sat", (lying.verdict, lying_statuses)
+    assert "refused" not in lying_statuses
+    assert "call:shape" in repr(lying.lift_doc.get("ir", []))
