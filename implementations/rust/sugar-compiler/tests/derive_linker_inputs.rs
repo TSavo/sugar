@@ -428,9 +428,7 @@ fn malformed_formal_sort_is_typed_error_naming_the_contract() {
                 "SolveError must carry the typed field naming: {e}"
             );
         }
-        other => panic!(
-            "expected SolveError::MalformedContract naming {CONTRACT}, got {other:?}"
-        ),
+        other => panic!("expected SolveError::MalformedContract naming {CONTRACT}, got {other:?}"),
     }
 }
 

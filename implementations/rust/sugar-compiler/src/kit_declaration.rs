@@ -77,7 +77,10 @@ pub enum KitDeclarationLoadError {
     #[error(
         "kit `{command:?}` does not implement `sugar.plugin.kit_declaration` (missing or invalid declaration): {detail}"
     )]
-    MissingDeclaration { command: Vec<String>, detail: String },
+    MissingDeclaration {
+        command: Vec<String>,
+        detail: String,
+    },
 }
 
 pub fn load_kit_declaration_with_command(
@@ -154,20 +157,20 @@ pub fn load_kit_declaration_with_command(
     drop(stdin);
     let _ = child.wait();
 
-    let result = response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| KitDeclarationLoadError::MissingDeclaration {
+    let result = response.get("result").cloned().ok_or_else(|| {
+        KitDeclarationLoadError::MissingDeclaration {
             command: command.to_vec(),
             detail: format!(
                 "response missing `result` for {KIT_DECLARATION_RPC_METHOD}: {response}"
             ),
-        })?;
-    let declaration: KitDeclaration =
-        serde_json::from_value(result).map_err(|error| KitDeclarationLoadError::MissingDeclaration {
+        }
+    })?;
+    let declaration: KitDeclaration = serde_json::from_value(result).map_err(|error| {
+        KitDeclarationLoadError::MissingDeclaration {
             command: command.to_vec(),
             detail: format!("declaration shape invalid: {error}"),
-        })?;
+        }
+    })?;
     declaration
         .validate()
         .map_err(|error| KitDeclarationLoadError::MissingDeclaration {
@@ -252,13 +255,20 @@ impl LineReader {
         Self { rx }
     }
 
-    fn next_line(&self, timeout: Duration) -> Result<Option<String>, mpsc::RecvTimeoutError> {
+    fn next_line(&self, timeout: Duration) -> Result<Option<String>, LineReadFailure> {
         match self.rx.recv_timeout(timeout) {
             Ok(Ok(line)) => Ok(line),
-            Ok(Err(_io_error)) => Ok(None),
-            Err(error) => Err(error),
+            // A real I/O error is NOT "the kit closed its stdout" -- carry
+            // the cause so the refusal names it (gitar on #3885).
+            Ok(Err(io_error)) => Err(LineReadFailure::Io(io_error.to_string())),
+            Err(error) => Err(LineReadFailure::Timeout(error)),
         }
     }
+}
+
+enum LineReadFailure {
+    Io(String),
+    Timeout(mpsc::RecvTimeoutError),
 }
 
 fn read_response(
@@ -269,19 +279,24 @@ fn read_response(
 ) -> Result<Value, KitDeclarationLoadError> {
     let line = match lines.next_line(HANDSHAKE_READ_TIMEOUT) {
         Ok(Some(line)) => line,
+        Err(LineReadFailure::Io(cause)) => {
+            return Err(KitDeclarationLoadError::Io(format!(
+                "kit `{command:?}` stdout read failed while awaiting {method}: {cause}"
+            )))
+        }
         Ok(None) => {
             return Err(KitDeclarationLoadError::Io(format!(
                 "kit `{command:?}` closed its stdout before answering {method}"
             )))
         }
-        Err(mpsc::RecvTimeoutError::Timeout) => {
+        Err(LineReadFailure::Timeout(mpsc::RecvTimeoutError::Timeout)) => {
             return Err(KitDeclarationLoadError::Timeout {
                 command: command.to_vec(),
                 method,
                 timeout_secs: HANDSHAKE_READ_TIMEOUT.as_secs(),
             })
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
+        Err(LineReadFailure::Timeout(mpsc::RecvTimeoutError::Disconnected)) => {
             return Err(KitDeclarationLoadError::Io(format!(
                 "kit `{command:?}` reader disconnected before answering {method}"
             )))
