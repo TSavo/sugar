@@ -353,12 +353,10 @@ class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
             return right_outcome
         left = complete_value(left_outcome, owner="DivmodBuiltinSugar left")
         right = complete_value(right_outcome, owner="DivmodBuiltinSugar right")
-        # Leave unwrapped: divmod returns a pair used via subscript
-        # (`divmod(z,2)[0]`). Coordinate-izing the pair needs a multi-value
-        # surface before call:divmod can be the sole join point without
-        # breaking residual py.subscript(divmod(...), i) digs. (Listed in
-        # the brief's pure-value set; held until that surface exists.)
-        return perform_operation(
+        # Coordinate: call:divmod(left, right). The pair surface is the
+        # OpaqueOpCallsite itself (computed = TupleLiteral when folded);
+        # subscript digs via _downstream → tuple or py.subscript(call:divmod(...), i).
+        outcome = perform_operation(
             owner="DivmodBuiltinSugar",
             blame=self.blame,
             receiver=left,
@@ -369,6 +367,9 @@ class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
                 blame=self.blame,
             ),
             ctx=ctx,
+        )
+        return _coordinate_outcome(
+            "divmod", left, outcome, extra_args=(right,)
         )
 
 
