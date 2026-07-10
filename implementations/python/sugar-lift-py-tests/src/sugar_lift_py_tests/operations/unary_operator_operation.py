@@ -60,7 +60,11 @@ class UnaryOperatorOperation:
         del ctx
         if self.operator == "py.pos":
             return Complete(receiver)
-        if self.operator == "py.neg":
+        # py.neg / py.invert: mint symbolic coordinate ctor(op, [operand]).
+        # TermValue already folds ~int; SymbolicValue is the open operand case
+        # (missing floor totalizer — UnaryOpSugar already owns Invert AST).
+        # Never invent a computed int for a free/open operand.
+        if self.operator in {"py.neg", "py.invert"}:
             return Complete(
                 SymbolicValue(
                     ctor(
