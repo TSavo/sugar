@@ -900,6 +900,15 @@ fn compact_json(value: &Json) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<json>".to_string())
 }
 
+/// Kit oracle RPC method: the ONE resolve door for discharge.
+///
+/// Conceptual `WitnessPool::get(packageCid)` over the wire — kit returns
+/// `.witness` bundle bytes (`body_b64`). Rust never trusts a kit verdict
+/// string; verify is always [`package_outcome`] (blake3 vs packageCid +
+/// committed outcomes). Do not invent a `WitnessPool` struct: the pool face
+/// is realized by this RPC + Rust seal.
+const ORACLE_RESOLVE_METHOD: &str = "sugar.plugin.resolve_witness";
+
 #[derive(Debug, Clone)]
 struct WitnessResolver {
     argv: Vec<String>,
@@ -907,14 +916,18 @@ struct WitnessResolver {
     method: String,
 }
 
-/// SEAM 7 (#3809 witness-as-verb step 1): typed witness-discharge context.
+/// SEAM 7 (#3809 witness-as-verb): typed witness-discharge context.
 ///
 /// **CID-idempotency (protocol law):** a witness `ObligationVerdict` is a pure
 /// function of content-addressed inputs (`packageCid` on the claim + contract
 /// identity + resolver body bytes). Two paths that feed the same inputs MUST
 /// return byte-identical verdicts; disagreement is a red test, not a
 /// "double-entry" hazard. Env dies because those inputs are spoken/typed —
-/// env has nothing left to carry.
+/// env has nothing left to carry (step 3 retires env fallback).
+///
+/// **Trust boundary (step 2):** resolve = kit oracle RPC
+/// ([`ORACLE_RESOLVE_METHOD`]); verify = Rust [`package_outcome`]. Discharge
+/// is speak-packageCid-to-oracle → seal outcome. One resolve door only.
 ///
 /// Carries what used to ride `SUGAR_WITNESS_PROJECT_DIR` / `SUGAR_WITNESS_RESOLVERS`.
 /// Package CID stays on the claim (`evidence.certificate.proofData`).
@@ -932,7 +945,8 @@ pub struct WitnessDischargeContext {
     pub resolvers: Vec<WitnessResolverSpec>,
 }
 
-/// One kit oracle that answers `sugar.plugin.resolve_witness`.
+/// One kit oracle that answers [`ORACLE_RESOLVE_METHOD`]
+/// (`sugar.plugin.resolve_witness`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitnessResolverSpec {
     pub argv: Vec<String>,
@@ -976,7 +990,7 @@ impl WitnessDischargeContext {
                 argv: r.argv.clone(),
                 working_dir: r.working_dir.clone(),
                 method: if r.method.is_empty() {
-                    "sugar.plugin.resolve_witness".to_string()
+                    ORACLE_RESOLVE_METHOD.to_string()
                 } else {
                     r.method.clone()
                 },
@@ -1004,12 +1018,15 @@ struct WitnessPackageOutcome {
 }
 
 /// Settle a contract carrying a `custom` execution-witness EvidenceTerm from
-/// authenticated package bytes, not from the kit's verdict string. The kit is
-/// allowed to RESOLVE bytes over RPC. Rust recomputes the package CID, parses the
-/// committed per-test `outcome` facts, and derives Discharged or Unsatisfied
-/// from those facts. Returns None when there is no custom witness (caller falls
-/// through to symbolic solving). FAIL-CLOSED: missing config / malformed schema /
-/// unparseable bytes is Undecidable or Unsatisfied, never Discharged.
+/// authenticated package bytes, not from the kit's verdict string.
+///
+/// **One door (step 2):** resolution goes only through the kit oracle RPC
+/// ([`ORACLE_RESOLVE_METHOD`] via [`oracle_resolve_body`]); verification is
+/// always Rust [`package_outcome`] (blake3 vs packageCid + committed outcomes).
+/// Never kit verdict strings. Returns None when there is no custom witness
+/// (caller falls through to symbolic solving). FAIL-CLOSED: missing config /
+/// malformed schema / unparseable bytes is Undecidable or Unsatisfied, never
+/// Discharged.
 fn try_witness_discharge(
     body: &Json,
     contract_cid: String,
@@ -1066,16 +1083,67 @@ fn try_witness_discharge(
                 .to_string(),
         ));
     }
-    let outcome = match resolve_witness_package(&resolvers, &project, &claim) {
-        Ok(o) => o,
-        Err(e) => {
+    // ONE resolve door: kit oracle RPC → Rust package_outcome. No side path.
+    Some(seal_witness_package_outcome(
+        witness_package_via_oracle(&resolvers, &project, &claim),
+        contract_cid,
+        property_name,
+    ))
+}
+
+/// Mint a [`ConsistencyResult`] from the oracle+verify outcome (or recompute
+/// error). Shared by the discharge arm so arm-path and explicit-oracle-path
+/// cannot drift.
+fn seal_witness_package_outcome(
+    outcome: Result<WitnessPackageOutcome, String>,
+    contract_cid: String,
+    property_name: String,
+) -> ConsistencyResult {
+    match outcome {
+        Ok(outcome) if outcome.failed == 0 => {
+            let reason = format!(
+                "witness package verified by rust via {}; all {} outcomes passed",
+                outcome.resolved_by, outcome.count
+            );
+            ConsistencyResult {
+                contract_cid,
+                property_name,
+                verdict: ObligationVerdict::Discharged,
+                reason: reason.clone(),
+                effect: None,
+                witnessed: true,
+                locus: None,
+                verification: Some(VerificationDetail::Witness {
+                    witnessed: true,
+                    verdict: ObligationVerdict::Discharged.as_str().to_string(),
+                    resolved_by: Some(outcome.resolved_by.clone()),
+                    outcomes: Some(outcome.count as u64),
+                    failed: Some(outcome.failed as u64),
+                    failed_tests: None,
+                    reason,
+                }),
+            }
+        }
+        Ok(outcome) => {
+            let shown = outcome
+                .failed_tests
+                .iter()
+                .take(6)
+                .cloned()
+                .collect::<Vec<_>>();
             let effect = VerifyEffect::UnwitnessedDischarge {
                 contract_cid: contract_cid.clone(),
                 property_name: property_name.clone(),
-                ground: WitnessDischargeGround::PackageRecompute { error: e },
+                ground: WitnessDischargeGround::PackageBody {
+                    resolved_by: outcome.resolved_by,
+                    failed: outcome.failed,
+                    count: outcome.count,
+                    failed_tests: shown,
+                    omitted: outcome.failed_tests.len().saturating_sub(6),
+                },
             };
             let boundary = effect.to_legacy_boundary();
-            return Some(ConsistencyResult {
+            ConsistencyResult {
                 contract_cid,
                 property_name,
                 verdict: boundary.verdict,
@@ -1084,62 +1152,27 @@ fn try_witness_discharge(
                 witnessed: false,
                 locus: None,
                 verification: verification_from_boundary(boundary.verification),
-            });
+            }
         }
-    };
-    Some(if outcome.failed == 0 {
-        let reason = format!(
-            "witness package verified by rust via {}; all {} outcomes passed",
-            outcome.resolved_by, outcome.count
-        );
-        ConsistencyResult {
-            contract_cid,
-            property_name,
-            verdict: ObligationVerdict::Discharged,
-            reason: reason.clone(),
-            effect: None,
-            witnessed: true,
-            locus: None,
-            verification: Some(VerificationDetail::Witness {
-                witnessed: true,
-                verdict: ObligationVerdict::Discharged.as_str().to_string(),
-                resolved_by: Some(outcome.resolved_by.clone()),
-                outcomes: Some(outcome.count as u64),
-                failed: Some(outcome.failed as u64),
-                failed_tests: None,
-                reason,
-            }),
+        Err(e) => {
+            let effect = VerifyEffect::UnwitnessedDischarge {
+                contract_cid: contract_cid.clone(),
+                property_name: property_name.clone(),
+                ground: WitnessDischargeGround::PackageRecompute { error: e },
+            };
+            let boundary = effect.to_legacy_boundary();
+            ConsistencyResult {
+                contract_cid,
+                property_name,
+                verdict: boundary.verdict,
+                reason: boundary.reason,
+                effect: Some(effect),
+                witnessed: false,
+                locus: None,
+                verification: verification_from_boundary(boundary.verification),
+            }
         }
-    } else {
-        let shown = outcome
-            .failed_tests
-            .iter()
-            .take(6)
-            .cloned()
-            .collect::<Vec<_>>();
-        let effect = VerifyEffect::UnwitnessedDischarge {
-            contract_cid: contract_cid.clone(),
-            property_name: property_name.clone(),
-            ground: WitnessDischargeGround::PackageBody {
-                resolved_by: outcome.resolved_by,
-                failed: outcome.failed,
-                count: outcome.count,
-                failed_tests: shown,
-                omitted: outcome.failed_tests.len().saturating_sub(6),
-            },
-        };
-        let boundary = effect.to_legacy_boundary();
-        ConsistencyResult {
-            contract_cid,
-            property_name,
-            verdict: boundary.verdict,
-            reason: boundary.reason,
-            effect: Some(effect),
-            witnessed: false,
-            locus: None,
-            verification: verification_from_boundary(boundary.verification),
-        }
-    })
+    }
 }
 
 fn witness_package_claim(evidence: &Json, tool: &str) -> Result<WitnessPackageClaim, String> {
@@ -1340,7 +1373,7 @@ fn witness_resolvers_from_env_fallback() -> Vec<WitnessResolver> {
             let method = item
                 .get("method")
                 .and_then(|v| v.as_str())
-                .unwrap_or("sugar.plugin.resolve_witness")
+                .unwrap_or(ORACLE_RESOLVE_METHOD)
                 .to_string();
             Some(WitnessResolver {
                 argv,
@@ -1378,7 +1411,7 @@ fn parse_witness_resolver(manifest: &Path, project_root: &Path) -> Option<Witnes
     let method = value
         .get("resolve_witness_method")
         .and_then(|v| v.as_str())
-        .unwrap_or("sugar.plugin.resolve_witness")
+        .unwrap_or(ORACLE_RESOLVE_METHOD)
         .to_string();
     Some(WitnessResolver {
         argv,
@@ -1387,13 +1420,17 @@ fn parse_witness_resolver(manifest: &Path, project_root: &Path) -> Option<Witnes
     })
 }
 
-fn resolve_witness_package(
+/// Speak `packageCid` to the kit oracle (resolve bytes) then Rust-verify
+/// ([`package_outcome`]). The only discharge resolve+verify composition —
+/// no parallel route that seals a verdict from kit strings or raw FS reads.
+fn witness_package_via_oracle(
     resolvers: &[WitnessResolver],
     project_root: &Path,
     claim: &WitnessPackageClaim,
 ) -> Result<WitnessPackageOutcome, String> {
     let mut mismatches = Vec::new();
     let mut errors = Vec::new();
+    // packageCid is the pool key (conceptual WitnessPool::get).
     let memento = json!({
         "kind": "witness-memento",
         "witness_cid": claim.package_cid,
@@ -1404,7 +1441,7 @@ fn resolve_witness_package(
         "passed": claim.expected_passed,
     });
     for resolver in resolvers {
-        match resolve_witness_body(resolver, project_root, &memento) {
+        match oracle_resolve_body(resolver, project_root, &memento) {
             Ok((resolved_by, bytes)) => match package_outcome(&bytes, &resolved_by, claim) {
                 Ok(outcome) => return Ok(outcome),
                 Err(e) => mismatches.push(e),
@@ -1422,7 +1459,14 @@ fn resolve_witness_package(
     }
 }
 
-fn resolve_witness_body(
+/// **ONE resolve door:** spawn the kit oracle and call
+/// [`ORACLE_RESOLVE_METHOD`] (`sugar.plugin.resolve_witness`).
+///
+/// Returns `(resolved_by, body_bytes)` — CONTENT only, never a verdict.
+/// Callers must run [`package_outcome`] (blake3 vs packageCid) themselves.
+/// Warm FS=0: package file lookup lives inside the kit when `package_dir` is
+/// staged; this function does not `read_dir` the project for resolvers.
+fn oracle_resolve_body(
     resolver: &WitnessResolver,
     project_root: &Path,
     memento: &Json,
@@ -1442,10 +1486,16 @@ fn resolve_witness_body(
     if package_dir.exists() {
         params["package_dir"] = json!(package_dir.display().to_string());
     }
+    // Force the oracle method: discharge resolve is ONE door, not a free-form RPC.
+    let method = if resolver.method.is_empty() {
+        ORACLE_RESOLVE_METHOD
+    } else {
+        resolver.method.as_str()
+    };
     let req = json!({
         "jsonrpc": "2.0",
         "id": 1,
-        "method": resolver.method,
+        "method": method,
         "params": params,
     });
 
@@ -1528,6 +1578,9 @@ fn resolve_witness_body(
     Ok((resolved_by, bytes))
 }
 
+/// Rust VERIFY half of the trust boundary: blake3(bytes) vs claim.packageCid,
+/// then seal committed per-test `outcome` fields. Never trusts kit verdict
+/// strings. Kit only RESOLVES; this is the only path that mints pass/fail counts.
 fn package_outcome(
     bytes: &[u8],
     resolved_by: &str,
@@ -4679,11 +4732,27 @@ mod tests {
         let manifest = format!(
             "name = \"fake-witness\"\n\
              working_dir = \".\"\n\
-             resolve_witness_command = [\"{}\"]\n\
-             resolve_witness_method = \"sugar.plugin.resolve_witness\"\n",
-            script.display()
+             resolve_witness_command = [\"{script}\"]\n\
+             resolve_witness_method = \"{method}\"\n",
+            script = script.display(),
+            method = ORACLE_RESOLVE_METHOD,
         );
         std::fs::write(manifest_dir.join("manifest.toml"), manifest).unwrap();
+    }
+
+    /// Assert two discharge rows are CID-idempotent (same packageCid → same seal).
+    fn assert_verdict_byte_identical(a: &ConsistencyResult, b: &ConsistencyResult, label: &str) {
+        assert_eq!(a.verdict, b.verdict, "{label}: verdict");
+        assert_eq!(a.witnessed, b.witnessed, "{label}: witnessed");
+        assert_eq!(a.reason, b.reason, "{label}: reason");
+        assert_eq!(a.contract_cid, b.contract_cid, "{label}: contract_cid");
+        assert_eq!(a.property_name, b.property_name, "{label}: property_name");
+        // verification detail must also match (resolved_by / outcomes / etc.)
+        assert_eq!(
+            format!("{:?}", a.verification),
+            format!("{:?}", b.verification),
+            "{label}: verification detail"
+        );
     }
 
     #[test]
@@ -4693,7 +4762,7 @@ mod tests {
         let encoded = json!([{
             "argv": ["/bin/echo"],
             "working_dir": cwd.display().to_string(),
-            "method": "sugar.plugin.resolve_witness",
+            "method": ORACLE_RESOLVE_METHOD,
         }])
         .to_string();
         std::env::set_var("SUGAR_WITNESS_RESOLVERS", encoded);
@@ -4703,7 +4772,7 @@ mod tests {
         assert_eq!(resolvers.len(), 1);
         assert_eq!(resolvers[0].argv, vec!["/bin/echo".to_string()]);
         assert_eq!(resolvers[0].working_dir, cwd);
-        assert_eq!(resolvers[0].method, "sugar.plugin.resolve_witness");
+        assert_eq!(resolvers[0].method, ORACLE_RESOLVE_METHOD);
 
         std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
     }
@@ -4717,7 +4786,7 @@ mod tests {
             json!([{
                 "argv": ["/bin/from-env"],
                 "working_dir": cwd.display().to_string(),
-                "method": "sugar.plugin.resolve_witness",
+                "method": ORACLE_RESOLVE_METHOD,
             }])
             .to_string(),
         );
@@ -4726,7 +4795,7 @@ mod tests {
             resolvers: vec![WitnessResolverSpec {
                 argv: vec!["/bin/from-typed".to_string()],
                 working_dir: cwd.clone(),
-                method: "sugar.plugin.resolve_witness".to_string(),
+                method: ORACLE_RESOLVE_METHOD.to_string(),
             }],
         };
         let _guard = WitnessCtxGuard::enter(&typed);
@@ -6927,7 +6996,7 @@ mod tests {
             resolvers: vec![WitnessResolverSpec {
                 argv: vec![script.display().to_string()],
                 working_dir: project.clone(),
-                method: "sugar.plugin.resolve_witness".to_string(),
+                method: ORACLE_RESOLVE_METHOD.to_string(),
             }],
         };
         let _typed_guard = WitnessCtxGuard::enter(&typed);
@@ -6935,17 +7004,7 @@ mod tests {
             try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
         drop(_typed_guard);
 
-        assert_eq!(
-            via_env.verdict, via_typed.verdict,
-            "CID-idempotent: same packageCid must not fork verdict env vs typed"
-        );
-        assert_eq!(via_env.witnessed, via_typed.witnessed);
-        assert_eq!(
-            via_env.reason, via_typed.reason,
-            "byte-identical reason string for same recompute inputs"
-        );
-        assert_eq!(via_env.contract_cid, via_typed.contract_cid);
-        assert_eq!(via_env.property_name, via_typed.property_name);
+        assert_verdict_byte_identical(&via_env, &via_typed, "env vs typed");
         assert_eq!(
             via_env.verdict,
             ObligationVerdict::Discharged,
@@ -6954,6 +7013,104 @@ mod tests {
         eprintln!(
             "RECEIPT seam7_idempotent packageCid={} verdict={:?} reason={}",
             package_cid, via_typed.verdict, via_typed.reason
+        );
+
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// Step 2 receipt: kit oracle is the ONE resolve door.
+    ///
+    /// Path A (arm): `try_witness_discharge` — the consistency arm entry.
+    /// Path B (oracle door): speak packageCid via `witness_package_via_oracle`
+    /// then `seal_witness_package_outcome` — the explicit resolve+verify composition.
+    /// Path C (warm face): same typed resolvers with `POOL_ONLY_WITNESS` (no
+    /// cold `read_dir` for manifests) — CID-cache-hit face of the same recompute.
+    ///
+    /// All three MUST seal byte-identical `ObligationVerdict` for one packageCid.
+    /// Two different results = failing test (the whole invariant).
+    #[test]
+    fn witness_verdict_byte_identical_arm_vs_oracle_door() {
+        let _env = witness_env_lock();
+        let package_bytes =
+            b"{\"outcome\":\"passed\",\"test\":\"one\"}\n{\"outcome\":\"passed\",\"test\":\"two\"}\n";
+        let package_cid = blake3_512_of(package_bytes);
+        let project = unique_temp_dir("step2-oracle-door");
+        write_resolver_manifest(&project, package_bytes);
+        let script = project
+            .join(".sugar")
+            .join("lift")
+            .join("fake-witness")
+            .join("resolve.sh");
+        let contract_cid = "blake3-512:step2-oracle-door-contract".to_string();
+        let property = "test_x".to_string();
+        let body = package_contract("pytest", &package_cid, 2, 2);
+
+        // Kill env so typed context is the sole config (env untouched as *fallback*
+        // machinery — still present in code; this test simply does not stage it).
+        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
+        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
+
+        let typed = WitnessDischargeContext {
+            project_dir: Some(project.clone()),
+            resolvers: vec![WitnessResolverSpec {
+                argv: vec![script.display().to_string()],
+                working_dir: project.clone(),
+                method: ORACLE_RESOLVE_METHOD.to_string(),
+            }],
+        };
+        let claim = witness_package_claim(
+            body.get("evidence").expect("evidence"),
+            "pytest",
+        )
+        .expect("claim");
+        let resolvers: Vec<WitnessResolver> = typed
+            .resolvers
+            .iter()
+            .map(|r| WitnessResolver {
+                argv: r.argv.clone(),
+                working_dir: r.working_dir.clone(),
+                method: r.method.clone(),
+            })
+            .collect();
+
+        // Path A — consistency arm (cold resolver discovery off; typed only).
+        let _pool_cold = PoolOnlyWitnessGuard::enter(false);
+        let _typed_guard = WitnessCtxGuard::enter(&typed);
+        let via_arm =
+            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
+        drop(_typed_guard);
+        drop(_pool_cold);
+
+        // Path B — explicit oracle door (resolve via kit RPC + package_outcome seal).
+        let via_oracle = seal_witness_package_outcome(
+            witness_package_via_oracle(&resolvers, &project, &claim),
+            contract_cid.clone(),
+            property.clone(),
+        );
+
+        // Path C — warm face (pool-only: no lift read_dir; same oracle door).
+        let _pool_warm = PoolOnlyWitnessGuard::enter(true);
+        let _typed_warm = WitnessCtxGuard::enter(&typed);
+        let via_warm =
+            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
+        drop(_typed_warm);
+        drop(_pool_warm);
+
+        assert_verdict_byte_identical(&via_arm, &via_oracle, "arm vs oracle door");
+        assert_verdict_byte_identical(&via_arm, &via_warm, "cold arm vs warm arm");
+        assert_eq!(
+            via_arm.verdict,
+            ObligationVerdict::Discharged,
+            "all-passed package must discharge via oracle door"
+        );
+        assert!(
+            via_arm.reason.contains("verified by rust via package"),
+            "reason must cite rust-side package_outcome, not kit verdict: {}",
+            via_arm.reason
+        );
+        eprintln!(
+            "RECEIPT step2_oracle_door packageCid={} method={} verdict={:?} reason={}",
+            package_cid, ORACLE_RESOLVE_METHOD, via_arm.verdict, via_arm.reason
         );
 
         let _ = std::fs::remove_dir_all(&project);
