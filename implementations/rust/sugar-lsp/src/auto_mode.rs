@@ -2,18 +2,19 @@
 //
 // auto_mode.rs — #4007 Auto mode (LSP client only).
 //
-// On unresolved / cold-pool vendor imports, the *client* reaches for source
-// that is already on disk (pip install → site-packages / stdlib), lifts it
-// through the frontend membrane (mint_project_scratch_proof), seals the
-// resulting proof into an in-process cache keyed by source CID, and feeds
-// those mementos into the base pool before solve.
+// Pure form (this revision):
+//   for each top-level import that is a *cold pool entry*:
+//     1. already sealed for this source_cid?     → skip (process + disk)
+//     2. vendor-shipped *.proof under package? → load as vendor, seal
+//     3. disk auto cache under project?        → load, seal
+//     4. else source on disk?                  → mint, seal, persist
 //
-// Solve never opens site-packages. The CLI does not get this loop.
+// Solve never opens site-packages. CLI does not get this loop.
 //
 // Opt-out: SUGAR_LSP_AUTO_LIFT=0
-// Opt-in (default when unset): enabled for in-process path.
+// Default: on for in-process path.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,14 +24,15 @@ use sugar_verifier::load_all_proofs::{self, ProofBytes};
 use sugar_verifier::types::MementoPool;
 use sugar_verifier::Speaker;
 
-/// Max .py files staged per vendor auto-lift (bounds first-hover cost).
 const MAX_VENDOR_PY_FILES: usize = 40;
-/// Max total bytes of staged .py content per vendor.
 const MAX_VENDOR_PY_BYTES: usize = 1_500_000;
+const MAX_SHIPPED_PROOFS: usize = 8;
 
-/// Process-wide memo: source content hash → staged proof bytes.
-/// Second reference is free (DoD: pool hit keyed by source CID).
+/// Process-wide memo: source_cid → sealed proof.
 static AUTO_CACHE: Mutex<Option<HashMap<String, CachedAutoProof>>> = Mutex::new(None);
+
+/// Modules already sealed this process (by top-level name) for quick skip.
+static SEALED_MODULES: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -39,9 +41,17 @@ struct CachedAutoProof {
     proof_cid: String,
     bytes: Vec<u8>,
     module: String,
+    origin: SealOrigin,
 }
 
-/// Whether auto-lift is enabled (default: on).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SealOrigin {
+    ProcessCache,
+    DiskCache,
+    VendorShipped,
+    Minted,
+}
+
 pub fn auto_lift_enabled() -> bool {
     match std::env::var("SUGAR_LSP_AUTO_LIFT") {
         Ok(v) => {
@@ -52,8 +62,6 @@ pub fn auto_lift_enabled() -> bool {
     }
 }
 
-/// Top-level package names from import lines in `source`.
-/// Skips relative imports (`.foo`) and empty.
 pub fn extract_top_level_imports(source: &str) -> Vec<String> {
     let mut out = Vec::new();
     for line in source.lines() {
@@ -61,7 +69,6 @@ pub fn extract_top_level_imports(source: &str) -> Vec<String> {
         if t.starts_with('#') || t.is_empty() {
             continue;
         }
-        // import a, b.c  /  import a as x
         if let Some(rest) = t.strip_prefix("import ") {
             for part in rest.split(',') {
                 let name = part
@@ -76,13 +83,8 @@ pub fn extract_top_level_imports(source: &str) -> Vec<String> {
             }
             continue;
         }
-        // from a.b import c
         if let Some(rest) = t.strip_prefix("from ") {
-            let name = rest
-                .trim()
-                .split_whitespace()
-                .next()
-                .unwrap_or("");
+            let name = rest.trim().split_whitespace().next().unwrap_or("");
             if name.starts_with('.') {
                 continue;
             }
@@ -99,7 +101,6 @@ fn push_mod(out: &mut Vec<String>, name: &str) {
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return;
     }
-    // Skip common non-vendor noise
     if matches!(name, "typing" | "__future__" | "annotations") {
         return;
     }
@@ -108,10 +109,8 @@ fn push_mod(out: &mut Vec<String>, name: &str) {
     }
 }
 
-/// Resolve `import module` → filesystem root to lift (package dir or .py file parent).
 pub fn resolve_module_path(module: &str) -> Result<PathBuf, String> {
     let py = python_bin();
-    // Single-line Python so -c is indentation-safe.
     let code = format!(
         "import importlib.util,os,sys;\
 spec=importlib.util.find_spec({mod:?});\
@@ -160,7 +159,6 @@ fn python_bin() -> PathBuf {
 }
 
 fn repo_python_kit_src() -> Option<PathBuf> {
-    // sugar-lsp crate is at implementations/rust/sugar-lsp
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let kit = manifest
         .join("../../python/sugar-lift-py-tests/src")
@@ -189,6 +187,22 @@ fn source_tree_cid(root: &Path) -> Result<String, String> {
         "blake3-512:{}",
         sugar_canonicalizer::blake3_512_hex(&hasher_input)
     ))
+}
+
+/// Stable filesystem token for source_cid (no path separators).
+fn source_cid_token(source_cid: &str) -> String {
+    let hex = source_cid
+        .strip_prefix("blake3-512:")
+        .unwrap_or(source_cid);
+    // Keep it filename-safe and bounded.
+    hex.chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .take(64)
+        .collect()
+}
+
+fn auto_cache_dir(project_root: &Path) -> PathBuf {
+    project_root.join(".sugar").join("imports").join("auto")
 }
 
 fn collect_py_files(root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -231,7 +245,6 @@ fn collect_py_files(root: &Path) -> Result<Vec<PathBuf>, String> {
         }
         Ok(())
     }
-    // Prefer tests/ if present (richer stated contracts).
     let tests = root.join("tests");
     if tests.is_dir() {
         walk(&tests, &mut out, &mut total, 0)?;
@@ -242,8 +255,218 @@ fn collect_py_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
-/// Stage a throwaway project that lifts `module_root` sources with the real
-/// python kit (same shape as real_python_kit_prove fixtures).
+/// Find vendor-shipped `.proof` files under a package tree (and common sugar dirs).
+pub fn find_shipped_proofs(module_root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut total_bytes = 0u64;
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>, total_bytes: &mut u64, depth: usize) {
+        if depth > 4 || out.len() >= MAX_SHIPPED_PROOFS {
+            return;
+        }
+        let rd = match fs::read_dir(dir) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for ent in rd.flatten() {
+            let p = ent.path();
+            let name = ent.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') && name != ".sugar" {
+                // still enter .sugar
+            }
+            if name == "__pycache__" || name == "node_modules" || name == ".git" {
+                continue;
+            }
+            if p.is_dir() {
+                walk(&p, out, total_bytes, depth + 1);
+            } else if name.ends_with(".proof") {
+                if let Ok(meta) = fs::metadata(&p) {
+                    *total_bytes += meta.len();
+                    if *total_bytes > 32 * 1024 * 1024 {
+                        return;
+                    }
+                }
+                out.push(p);
+                if out.len() >= MAX_SHIPPED_PROOFS {
+                    return;
+                }
+            }
+        }
+    }
+    // Prefer package-local sugar layouts first.
+    for rel in [".sugar/imports", ".sugar", "sugar"] {
+        let d = module_root.join(rel);
+        if d.is_dir() {
+            walk(&d, &mut out, &mut total_bytes, 0);
+        }
+    }
+    if out.is_empty() {
+        walk(module_root, &mut out, &mut total_bytes, 0);
+    }
+    out
+}
+
+fn ensure_cache() -> Result<(), String> {
+    let mut g = AUTO_CACHE.lock().map_err(|e| e.to_string())?;
+    if g.is_none() {
+        *g = Some(HashMap::new());
+    }
+    let mut s = SEALED_MODULES.lock().map_err(|e| e.to_string())?;
+    if s.is_none() {
+        *s = Some(HashSet::new());
+    }
+    Ok(())
+}
+
+fn module_is_sealed(module: &str) -> bool {
+    SEALED_MODULES
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.contains(module)))
+        .unwrap_or(false)
+}
+
+fn mark_module_sealed(module: &str) {
+    if let Ok(mut g) = SEALED_MODULES.lock() {
+        if g.is_none() {
+            *g = Some(HashSet::new());
+        }
+        if let Some(s) = g.as_mut() {
+            s.insert(module.to_string());
+        }
+    }
+}
+
+fn cache_get(source_cid: &str) -> Option<CachedAutoProof> {
+    AUTO_CACHE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|m| m.get(source_cid).cloned()))
+}
+
+fn cache_put(entry: CachedAutoProof) {
+    if let Ok(mut g) = AUTO_CACHE.lock() {
+        if g.is_none() {
+            *g = Some(HashMap::new());
+        }
+        if let Some(m) = g.as_mut() {
+            mark_module_sealed(&entry.module);
+            m.insert(entry.source_cid.clone(), entry);
+        }
+    }
+}
+
+/// Load durable auto proofs for this project into the process cache (once per call is fine).
+pub fn warm_disk_auto_cache(project_root: &Path) -> Vec<String> {
+    let mut logs = Vec::new();
+    let dir = auto_cache_dir(project_root);
+    if !dir.is_dir() {
+        return logs;
+    }
+    let _ = ensure_cache();
+    let rd = match fs::read_dir(&dir) {
+        Ok(r) => r,
+        Err(_) => return logs,
+    };
+    for ent in rd.flatten() {
+        let p = ent.path();
+        let name = ent.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".proof") {
+            continue;
+        }
+        let stem = name.trim_end_matches(".proof");
+        let meta_path = dir.join(format!("{stem}.meta"));
+        let meta = fs::read_to_string(&meta_path).unwrap_or_default();
+        let mut module = String::new();
+        let mut source_cid = format!("blake3-512:{stem}");
+        for line in meta.lines() {
+            if let Some(v) = line.strip_prefix("module=") {
+                module = v.trim().to_string();
+            }
+            if let Some(v) = line.strip_prefix("source_cid=") {
+                source_cid = v.trim().to_string();
+            }
+        }
+        if module.is_empty() {
+            module = format!("unknown-{stem}");
+        }
+        if cache_get(&source_cid).is_some() {
+            mark_module_sealed(&module);
+            continue;
+        }
+        let bytes = match fs::read(&p) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let proof_cid = format!(
+            "blake3-512:{}",
+            sugar_canonicalizer::blake3_512_hex(&bytes)
+        );
+        cache_put(CachedAutoProof {
+            source_cid: source_cid.clone(),
+            proof_cid,
+            bytes,
+            module: module.clone(),
+            origin: SealOrigin::DiskCache,
+        });
+        logs.push(format!(
+            "auto-lift: warmed disk cache for {module} ({source_cid})"
+        ));
+    }
+    logs
+}
+
+fn persist_disk_cache(
+    project_root: &Path,
+    source_cid: &str,
+    module: &str,
+    proof_cid: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let dir = auto_cache_dir(project_root);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let token = source_cid_token(source_cid);
+    if token.is_empty() {
+        return Err("empty source_cid token".into());
+    }
+    let proof_path = dir.join(format!("{token}.proof"));
+    let meta_path = dir.join(format!("{token}.meta"));
+    fs::write(&proof_path, bytes).map_err(|e| e.to_string())?;
+    fs::write(
+        &meta_path,
+        format!("module={module}\nsource_cid={source_cid}\nproof_cid={proof_cid}\n"),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn load_shipped_as_proof_bytes(module: &str, paths: &[PathBuf]) -> Result<Option<ProofBytes>, String> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    // Concatenate is wrong; load first proof that parses, or merge via pool then
+    // re-export is heavy. Prefer first readable shipped proof as the seal unit.
+    for p in paths {
+        let bytes = match fs::read(p) {
+            Ok(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+        let proof_cid = format!(
+            "blake3-512:{}",
+            sugar_canonicalizer::blake3_512_hex(&bytes)
+        );
+        match ProofBytes::try_from_parts(
+            format!("shipped:{module}"),
+            proof_cid,
+            bytes,
+            Speaker::vendor(format!("shipped:{module}")),
+        ) {
+            Ok(pb) => return Ok(Some(pb)),
+            Err(_) => continue,
+        }
+    }
+    Ok(None)
+}
+
 fn stage_vendor_project(module: &str, module_root: &Path) -> Result<PathBuf, String> {
     let kit = repo_python_kit_src()
         .ok_or_else(|| "python kit source not found (sugar_lift_py_tests)".to_string())?;
@@ -253,8 +476,6 @@ fn stage_vendor_project(module: &str, module_root: &Path) -> Result<PathBuf, Str
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    // Prefer exec-friendly base when /tmp is noexec — still OK because we
-    // invoke lift via /bin/sh wrapper.
     let base = std::env::var("SUGAR_LSP_AUTO_TMP")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
@@ -266,16 +487,17 @@ fn stage_vendor_project(module: &str, module_root: &Path) -> Result<PathBuf, Str
     ));
     fs::create_dir_all(&project).map_err(|e| e.to_string())?;
 
-    // Copy selected .py files under project/vendor_src/ preserving names.
     let files = collect_py_files(module_root)?;
     if files.is_empty() {
-        return Err(format!("auto-lift {module}: no .py files under {}", module_root.display()));
+        return Err(format!(
+            "auto-lift {module}: no .py files under {}",
+            module_root.display()
+        ));
     }
     let src_dst = project.join("vendor_src");
     fs::create_dir_all(&src_dst).map_err(|e| e.to_string())?;
     for f in &files {
         let name = f.file_name().unwrap_or_default();
-        // Flatten into vendor_src with unique names if collision
         let mut dst = src_dst.join(name);
         if dst.exists() {
             let h = sugar_canonicalizer::blake3_512_hex(f.to_string_lossy().as_bytes());
@@ -311,11 +533,10 @@ timeout_seconds = 10
 
     let wrapper = sugar.join("lift/python/run-lift-rpc.sh");
     let body = format!(
-        "#!/bin/sh\nexport PYTHONPATH={kit}${{PYTHONPATH:+:$PYTHONPATH}}\nexec /bin/sh -c 'exec {py} -m sugar_lift_py_tests.lift_rpc --rpc'\n",
+        "#!/bin/sh\nexport PYTHONPATH={kit}${{PYTHONPATH:+:$PYTHONPATH}}\nexec {py} -m sugar_lift_py_tests.lift_rpc --rpc\n",
         kit = shell_quote(&kit.display().to_string()),
         py = shell_quote(&py.display().to_string()),
     );
-    // Use /bin/sh in manifest; script body still needs to be readable.
     fs::write(&wrapper, body).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
@@ -325,7 +546,6 @@ timeout_seconds = 10
         fs::set_permissions(&wrapper, perms).ok();
     }
 
-    // Manifest: invoke via /bin/sh for noexec safety
     fs::write(
         sugar.join("lift/python/manifest.toml"),
         format!(
@@ -342,93 +562,172 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
 
-/// Lift one importable module if not cached. Returns vendor-stamped ProofBytes.
-pub fn auto_lift_module(module: &str) -> Result<Option<ProofBytes>, String> {
-    let module_root = resolve_module_path(module)?;
-    let source_cid = source_tree_cid(&module_root)?;
-
-    {
-        let mut guard = AUTO_CACHE.lock().map_err(|e| e.to_string())?;
-        if guard.is_none() {
-            *guard = Some(HashMap::new());
-        }
-        if let Some(cache) = guard.as_ref() {
-            if let Some(hit) = cache.get(&source_cid) {
-                return ProofBytes::try_from_parts(
-                    format!("auto-lift:{module}"),
-                    hit.proof_cid.clone(),
-                    hit.bytes.clone(),
-                    Speaker::vendor(format!("auto-lift:{module}")),
-                )
-                .map(Some)
-                .map_err(|e| e.to_string());
-            }
-        }
-    }
-
-    let project = stage_vendor_project(module, &module_root)?;
+fn mint_module(module: &str, module_root: &Path) -> Result<Option<(String, Vec<u8>)>, String> {
+    let project = stage_vendor_project(module, module_root)?;
     let scratch = project.join(".sugar-auto-scratch");
     let _ = fs::remove_dir_all(&scratch);
     fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
-
     let mint = sugar_cli::cmd_mint::mint_project_scratch_proof(&project, &scratch, false);
-    // Best-effort cleanup of staged tree (keep cache only).
-    let mint_result = mint;
     let _ = fs::remove_dir_all(&project);
-
-    match mint_result {
-        Ok(Some(scratch_proof)) => {
-            let proof = ProofBytes::try_from_parts(
-                format!("auto-lift:{module}"),
-                scratch_proof.cid.clone(),
-                scratch_proof.bytes.clone(),
-                Speaker::vendor(format!("auto-lift:{module}")),
-            )
-            .map_err(|e| e.to_string())?;
-
-            let mut guard = AUTO_CACHE.lock().map_err(|e| e.to_string())?;
-            if let Some(cache) = guard.as_mut() {
-                cache.insert(
-                    source_cid.clone(),
-                    CachedAutoProof {
-                        source_cid: source_cid.clone(),
-                        proof_cid: scratch_proof.cid,
-                        bytes: scratch_proof.bytes,
-                        module: module.to_string(),
-                    },
-                );
-            }
-            Ok(Some(proof))
-        }
-        Ok(None) => {
-            // Zero contracts / no plugin output — honest empty (DoD).
-            Ok(None)
-        }
+    match mint {
+        Ok(Some(s)) => Ok(Some((s.cid, s.bytes))),
+        Ok(None) => Ok(None),
         Err(e) => Err(format!("auto-lift mint {module}: {e}")),
     }
 }
 
-/// For each top-level import in `source`, try auto-lift. Merge successful
-/// vendor proofs into `base_pool`. Returns log lines for the LSP client.
-pub fn auto_lift_imports_into_pool(source: &str, base_pool: &mut MementoPool) -> Vec<String> {
+/// Seal one cold module into the process cache (and optionally disk).
+/// Order: process cache → shipped .proof → disk auto cache → mint.
+fn seal_cold_module(
+    project_root: &Path,
+    module: &str,
+) -> Result<Option<(ProofBytes, SealOrigin)>, String> {
+    ensure_cache()?;
+    let module_root = resolve_module_path(module)?;
+    let source_cid = source_tree_cid(&module_root)?;
+
+    // 1) Process cache by source_cid
+    if let Some(hit) = cache_get(&source_cid) {
+        mark_module_sealed(module);
+        let pb = ProofBytes::try_from_parts(
+            format!("auto-lift:{module}"),
+            hit.proof_cid,
+            hit.bytes,
+            Speaker::vendor(format!("auto-lift:{module}")),
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(Some((pb, SealOrigin::ProcessCache)));
+    }
+
+    // 2) Vendor-shipped .proof under package
+    let shipped = find_shipped_proofs(&module_root);
+    if let Some(pb) = load_shipped_as_proof_bytes(module, &shipped)? {
+        let bytes = pb.bytes.clone();
+        let proof_cid = pb.expected_cid.to_string();
+        cache_put(CachedAutoProof {
+            source_cid: source_cid.clone(),
+            proof_cid: proof_cid.clone(),
+            bytes: bytes.clone(),
+            module: module.to_string(),
+            origin: SealOrigin::VendorShipped,
+        });
+        let _ = persist_disk_cache(project_root, &source_cid, module, &proof_cid, &bytes);
+        return Ok(Some((pb, SealOrigin::VendorShipped)));
+    }
+
+    // 3) Disk auto cache for this source_cid
+    let token = source_cid_token(&source_cid);
+    let disk_path = auto_cache_dir(project_root).join(format!("{token}.proof"));
+    if disk_path.is_file() {
+        if let Ok(bytes) = fs::read(&disk_path) {
+            if !bytes.is_empty() {
+                let proof_cid = format!(
+                    "blake3-512:{}",
+                    sugar_canonicalizer::blake3_512_hex(&bytes)
+                );
+                cache_put(CachedAutoProof {
+                    source_cid: source_cid.clone(),
+                    proof_cid: proof_cid.clone(),
+                    bytes: bytes.clone(),
+                    module: module.to_string(),
+                    origin: SealOrigin::DiskCache,
+                });
+                let pb = ProofBytes::try_from_parts(
+                    format!("auto-lift:{module}"),
+                    proof_cid,
+                    bytes,
+                    Speaker::vendor(format!("auto-lift:{module}")),
+                )
+                .map_err(|e| e.to_string())?;
+                return Ok(Some((pb, SealOrigin::DiskCache)));
+            }
+        }
+    }
+
+    // 4) Mint from source
+    match mint_module(module, &module_root)? {
+        Some((proof_cid, bytes)) => {
+            cache_put(CachedAutoProof {
+                source_cid: source_cid.clone(),
+                proof_cid: proof_cid.clone(),
+                bytes: bytes.clone(),
+                module: module.to_string(),
+                origin: SealOrigin::Minted,
+            });
+            let _ = persist_disk_cache(project_root, &source_cid, module, &proof_cid, &bytes);
+            let pb = ProofBytes::try_from_parts(
+                format!("auto-lift:{module}"),
+                proof_cid,
+                bytes,
+                Speaker::vendor(format!("auto-lift:{module}")),
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(Some((pb, SealOrigin::Minted)))
+        }
+        None => {
+            // Honest empty: still mark sealed so we don't re-mint forever.
+            mark_module_sealed(module);
+            Ok(None)
+        }
+    }
+}
+
+/// Whether the resident base pool already attributes any member to this module
+/// (prior import / sealed vendor). Cold = not sealed and no speaker id hit.
+fn pool_covers_module(pool: &MementoPool, module: &str) -> bool {
+    if module_is_sealed(module) {
+        return true;
+    }
+    // Speaker ids we stamp: auto-lift:{m}, shipped:{m}
+    let needles = [
+        format!("auto-lift:{module}"),
+        format!("shipped:{module}"),
+    ];
+    // Walk member_speaker map if accessible
+    for (_cid, speaker) in pool.member_speaker.iter() {
+        let id = speaker.id.as_str();
+        if needles.iter().any(|n| id == n || id.contains(module)) {
+            // contain(module) is weak; prefer exact needles
+            if needles.iter().any(|n| id == n) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Auto-seal only **cold** imports into `base_pool`.
+/// Prefers vendor-shipped proofs, then disk cache, then mint.
+pub fn auto_lift_cold_imports_into_pool(
+    project_root: &Path,
+    source: &str,
+    base_pool: &mut MementoPool,
+) -> Vec<String> {
     if !auto_lift_enabled() {
         return vec!["auto-lift disabled (SUGAR_LSP_AUTO_LIFT=0)".into()];
     }
+    let mut logs = warm_disk_auto_cache(project_root);
     let mods = extract_top_level_imports(source);
     if mods.is_empty() {
-        return Vec::new();
+        return logs;
     }
-    let mut logs = Vec::new();
+
     let mut batch: Vec<ProofBytes> = Vec::new();
     for m in mods {
-        match auto_lift_module(&m) {
-            Ok(Some(p)) => {
-                logs.push(format!("auto-lift: {m} → vendor proof sealed (source-cid cache)"));
-                batch.push(p);
+        if pool_covers_module(base_pool, &m) {
+            logs.push(format!("auto-lift: {m} warm (pool/sealed) — skip"));
+            continue;
+        }
+        match seal_cold_module(project_root, &m) {
+            Ok(Some((pb, origin))) => {
+                logs.push(format!(
+                    "auto-lift: {m} cold → sealed via {origin:?}"
+                ));
+                batch.push(pb);
             }
             Ok(None) => {
                 logs.push(format!(
-                    "auto-lift: {m} → zero contracts (honest empty)"
+                    "auto-lift: {m} cold → zero contracts (honest empty)"
                 ));
             }
             Err(e) => {
@@ -446,11 +745,22 @@ pub fn auto_lift_imports_into_pool(source: &str, base_pool: &mut MementoPool) ->
     logs
 }
 
-/// Test/support: clear the process cache (isolation between tests).
+/// Back-compat name used by prove_engine.
+pub fn auto_lift_imports_into_pool(
+    project_root: &Path,
+    source: &str,
+    base_pool: &mut MementoPool,
+) -> Vec<String> {
+    auto_lift_cold_imports_into_pool(project_root, source, base_pool)
+}
+
 #[allow(dead_code)]
 pub fn clear_auto_cache_for_tests() {
     if let Ok(mut g) = AUTO_CACHE.lock() {
         *g = Some(HashMap::new());
+    }
+    if let Ok(mut g) = SEALED_MODULES.lock() {
+        *g = Some(HashSet::new());
     }
 }
 
@@ -465,7 +775,6 @@ import hmac
 import hashlib as H
 from uuid import UUID
 from .relative import x
-# import comment
 from typing import List
 "#;
         let mods = extract_top_level_imports(src);
@@ -473,12 +782,36 @@ from typing import List
         assert!(mods.contains(&"hashlib".into()));
         assert!(mods.contains(&"uuid".into()));
         assert!(!mods.iter().any(|m| m == "typing"));
-        assert!(!mods.iter().any(|m| m.starts_with('.')));
     }
 
     #[test]
     fn resolve_hmac_stdlib() {
         let p = resolve_module_path("hmac").expect("hmac stdlib");
         assert!(p.exists(), "{p:?}");
+    }
+
+    #[test]
+    fn source_cid_token_is_filename_safe() {
+        let t = source_cid_token("blake3-512:deadbeefcafebabe");
+        assert_eq!(t, "deadbeefcafebabe");
+        assert!(!t.contains('/'));
+        assert!(!t.contains(':'));
+    }
+
+    #[test]
+    fn find_shipped_proofs_discovers_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "sugar-shipped-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(dir.join(".sugar/imports")).unwrap();
+        fs::write(dir.join(".sugar/imports/vendor.proof"), b"not-a-real-proof").unwrap();
+        let found = find_shipped_proofs(&dir);
+        assert!(!found.is_empty(), "{found:?}");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

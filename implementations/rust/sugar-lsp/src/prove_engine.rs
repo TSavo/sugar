@@ -267,8 +267,11 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
     let owned_auto_index: Option<sugar_verifier::consistency::ConsistencyIndex> =
         if crate::auto_mode::auto_lift_enabled() {
             let mut working_base_pool = ctx.pool.clone();
-            auto_logs =
-                crate::auto_mode::auto_lift_imports_into_pool(source, &mut working_base_pool);
+            auto_logs = crate::auto_mode::auto_lift_imports_into_pool(
+                &ctx.project_root,
+                source,
+                &mut working_base_pool,
+            );
             Some(sugar_verifier::consistency::build_consistency_index(
                 &working_base_pool,
             ))
