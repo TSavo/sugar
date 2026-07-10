@@ -3,6 +3,7 @@ from __future__ import annotations
 from .coverage_gap_effect import CoverageGapEffect
 from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .effect import Effect, effect_kind, effect_reason, effect_status, require_effect
+from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .raise_effect import RaiseEffect
 from .runtime_effect import RuntimeEffect
@@ -12,6 +13,7 @@ __all__ = [
     "CoverageGapEffect",
     "DivisionByZeroRuntimeEffect",
     "Effect",
+    "ModuloByZeroRuntimeEffect",
     "OSExitRuntimeEffect",
     "RaiseEffect",
     "RuntimeEffect",
