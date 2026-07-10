@@ -431,6 +431,20 @@ def subtract_return_witness() -> SugarWitnessPair:
     )
 
 
+def multiply_return_witness() -> SugarWitnessPair:
+    # `*` folds concrete numbers on the multiplication floor; the product feeds
+    # `==`, and the True/False literal picks the if-face: the truthful twin rides
+    # the face the product comparison picked, the lying twin asserts the other --
+    # the pair proves the lift discriminates on the product.
+    prefix = (
+        "def A(z):\n"
+        "    if 2 * 3 == 6:\n"
+        "        return z\n"
+        "    return 0\n"
+        "\n"
+    )
+
+
 def set_literal_return_witness() -> SugarWitnessPair:
     # A bare set literal reduces as a statement body step, then returns z. Sets do
     # not compare by == to a literal easily in the witness harness, so the pair
