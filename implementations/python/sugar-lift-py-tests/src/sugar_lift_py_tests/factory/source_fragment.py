@@ -221,6 +221,11 @@ class SourceFragment:
         self._require(ast.List)
         return [SourceFragment.from_node(e, self.filename) for e in self.node.elts]  # type: ignore[attr-defined]
 
+    def tuple_elts(self) -> "list[SourceFragment]":
+        """Return SourceFragments for each element of a Tuple literal (ast.Tuple.elts)."""
+        self._require(ast.Tuple)
+        return [SourceFragment.from_node(e, self.filename) for e in self.node.elts]  # type: ignore[attr-defined]
+
     def call_arg_count(self) -> int:
         """Return the number of positional arguments."""
         self._require(ast.Call)
