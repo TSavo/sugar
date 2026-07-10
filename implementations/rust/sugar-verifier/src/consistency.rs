@@ -933,10 +933,9 @@ struct WitnessResolver {
 /// for project_dir + resolvers (CLI fills it via `WitnessDischargeConfig`).
 /// Package CID stays on the claim (`evidence.certificate.proofData`).
 ///
-/// Resolver discovery precedence:
-/// 1. Typed [`Self::resolvers`] (when non-empty)
-/// 2. Cold path only: `read_dir(.sugar/lift)` for resolvers (skipped when warm —
-///    warm is a CID-cache-hit face of the same recompute, not a second law)
+/// Resolvers are **client-fed only** (#3809 PR series, cut #6): faces (CLI
+/// `discharge_config`, LSP) load lift manifests and set [`Self::resolvers`].
+/// Solve never `read_dir(.sugar/lift)` for discovery.
 #[derive(Debug, Clone, Default)]
 pub struct WitnessDischargeContext {
     /// Project root for package resolve (typed only; no env fallback).
@@ -1070,11 +1069,11 @@ fn try_witness_discharge(
         Ok(c) => c,
         Err(e) => return Some(undecidable(e)),
     };
-    let resolvers = find_witness_resolvers(&project);
+    let resolvers = find_witness_resolvers();
     if resolvers.is_empty() {
         return Some(undecidable(
             "custom witness package present but no resolve_witness_command configured \
-             (fail-closed)"
+             (fail-closed; client must feed WitnessDischargeContext.resolvers)"
                 .to_string(),
         ));
     }
@@ -1304,67 +1303,9 @@ fn locus_in_scope(scope_root: &Path, file: &str, pool_only_inputs: bool) -> bool
     candidate.exists()
 }
 
-fn find_witness_resolvers(project_root: &Path) -> Vec<WitnessResolver> {
-    let ctx = active_witness_context();
-    // Typed resolvers first (sole spoken config; step 3 retired env channel).
-    let mut found = ctx.typed_resolvers();
-    // Warm path: never read_dir `.sugar/lift/*/manifest.toml` (#3809 #8).
-    if POOL_ONLY_WITNESS.with(|c| c.get()) {
-        return found;
-    }
-    // Cold path: discover resolvers from project lift manifests when typed
-    // list is empty (or additional cold plugins live under the project).
-    let lift_dir = project_root.join(".sugar").join("lift");
-    if let Ok(entries) = std::fs::read_dir(&lift_dir) {
-        for entry in entries.flatten() {
-            let manifest = entry.path().join("manifest.toml");
-            if let Some(resolver) = parse_witness_resolver(&manifest, project_root) {
-                // Prefer typed when present; still allow cold discovery of
-                // additional project-local plugins only when typed is empty
-                // so cold==warm for the same typed list does not fork.
-                if found.is_empty() {
-                    found.push(resolver);
-                }
-            }
-        }
-    }
-    found
-}
-
-fn parse_witness_resolver(manifest: &Path, project_root: &Path) -> Option<WitnessResolver> {
-    let text = std::fs::read_to_string(manifest).ok()?;
-    let value: toml::Value = toml::from_str(&text).ok()?;
-    let argv: Vec<String> = value
-        .get("resolve_witness_command")?
-        .as_array()?
-        .iter()
-        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-        .collect();
-    if argv.is_empty() {
-        return None;
-    }
-    let working_dir = value
-        .get("working_dir")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .map(|p| {
-            if p.is_absolute() {
-                p
-            } else {
-                project_root.join(p)
-            }
-        })
-        .unwrap_or_else(|| project_root.to_path_buf());
-    let method = value
-        .get("resolve_witness_method")
-        .and_then(|v| v.as_str())
-        .unwrap_or(ORACLE_RESOLVE_METHOD)
-        .to_string();
-    Some(WitnessResolver {
-        argv,
-        working_dir,
-        method,
-    })
+/// Client-fed resolvers only (#3809 cut #6). Never `read_dir(.sugar/lift)`.
+fn find_witness_resolvers() -> Vec<WitnessResolver> {
+    active_witness_context().typed_resolvers()
 }
 
 /// Speak `packageCid` to the kit oracle (resolve bytes) then Rust-verify
@@ -3322,8 +3263,9 @@ pub fn verify_consistency(
 /// - locus preference uses pool **speaker role** (Consumer beats Vendor), never
 ///   `Path::exists`
 /// - scope filters use pure path-prefix checks, never `Path::exists`
-/// - custom-witness resolver discovery does not `read_dir` project manifests
-///   (typed/env resolvers only)
+///
+/// Witness resolvers are always client-fed (`WitnessDischargeContext`); cut #6
+/// deleted lift `read_dir` regardless of this flag.
 pub fn verify_consistency_with_policy(
     pool: &MementoPool,
     plan: &SolverPlan,
@@ -4689,9 +4631,7 @@ mod tests {
             }],
         };
         let _guard = WitnessCtxGuard::enter(&typed);
-        // Warm: typed only (no cold lift discovery).
-        let _warm = PoolOnlyWitnessGuard::enter(true);
-        let resolvers = find_witness_resolvers(&cwd);
+        let resolvers = find_witness_resolvers();
         assert_eq!(resolvers.len(), 1);
         assert_eq!(resolvers[0].argv, vec!["/bin/echo".to_string()]);
         assert_eq!(resolvers[0].working_dir, cwd);
@@ -4699,8 +4639,20 @@ mod tests {
     }
 
     #[test]
-    fn witness_resolvers_typed_list_is_sole_config_on_warm() {
+    fn witness_resolvers_typed_list_is_sole_config_never_read_dir() {
         let cwd = std::env::current_dir().unwrap();
+        // Even with empty typed list, solve must not walk lift manifests.
+        let empty = WitnessDischargeContext {
+            project_dir: Some(cwd.clone()),
+            resolvers: Vec::new(),
+        };
+        let _guard = WitnessCtxGuard::enter(&empty);
+        let resolvers = find_witness_resolvers();
+        assert!(
+            resolvers.is_empty(),
+            "empty client-fed list must stay empty (no lift read_dir)"
+        );
+
         let typed = WitnessDischargeContext {
             project_dir: Some(cwd.clone()),
             resolvers: vec![WitnessResolverSpec {
@@ -4709,10 +4661,10 @@ mod tests {
                 method: ORACLE_RESOLVE_METHOD.to_string(),
             }],
         };
+        drop(_guard);
         let _guard = WitnessCtxGuard::enter(&typed);
-        let _warm = PoolOnlyWitnessGuard::enter(true);
-        let resolvers = find_witness_resolvers(&cwd);
-        assert_eq!(resolvers.len(), 1, "warm face uses typed resolvers only");
+        let resolvers = find_witness_resolvers();
+        assert_eq!(resolvers.len(), 1, "typed resolvers are the sole config");
         assert_eq!(resolvers[0].argv, vec!["/bin/from-typed".to_string()]);
     }
 
@@ -6877,40 +6829,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&project);
     }
 
-    /// Step 3 receipt (reframed SEAM 7): env-as-config is gone.
-    /// Typed cold face (project_dir + cold lift discovery of the same
-    /// resolver script) vs typed warm face (explicit resolvers, no read_dir)
-    /// MUST seal byte-identical `ObligationVerdict` for one packageCid.
+    /// #3809 cut #6: empty typed resolvers must NOT discover lift manifests.
+    /// Client must feed resolvers; cold read_dir is deleted.
     #[test]
-    fn witness_verdict_byte_identical_typed_cold_vs_warm() {
+    fn witness_empty_typed_resolvers_does_not_read_dir_lift() {
         let package_bytes =
             b"{\"outcome\":\"passed\",\"test\":\"one\"}\n{\"outcome\":\"passed\",\"test\":\"two\"}\n";
         let package_cid = blake3_512_of(package_bytes);
-        let project = unique_temp_dir("step3-typed-cold-warm");
+        let project = unique_temp_dir("step3-no-lift-read-dir");
         write_resolver_manifest(&project, package_bytes);
+        let contract_cid = "blake3-512:step3-no-read-dir-contract".to_string();
+        let property = "test_x".to_string();
+        let body = package_contract("pytest", &package_cid, 2, 2);
+
+        // Manifest exists on disk, but typed list is empty — must fail-closed
+        // without reading lift (undecidable: no resolvers configured).
+        let empty_ctx = WitnessDischargeContext {
+            project_dir: Some(project.clone()),
+            resolvers: Vec::new(),
+        };
+        let _pool = PoolOnlyWitnessGuard::enter(false); // even "cold" flag: no read_dir
+        let _guard = WitnessCtxGuard::enter(&empty_ctx);
+        let via_empty =
+            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
+        drop(_guard);
+        drop(_pool);
+
+        assert_eq!(
+            via_empty.verdict,
+            ObligationVerdict::Undecidable,
+            "empty client-fed resolvers must not discover lift manifests: {:?}",
+            via_empty
+        );
+        assert!(
+            via_empty.reason.contains("no resolve_witness_command")
+                || via_empty.reason.contains("fail-closed"),
+            "reason must cite missing client-fed resolvers: {}",
+            via_empty.reason
+        );
+
+        // Same package with client-fed resolvers discharges (control).
         let script = project
             .join(".sugar")
             .join("lift")
             .join("fake-witness")
             .join("resolve.sh");
-        let contract_cid = "blake3-512:step3-cold-warm-contract".to_string();
-        let property = "test_x".to_string();
-        let body = package_contract("pytest", &package_cid, 2, 2);
-
-        // Path A: typed project_dir only; cold discovers resolver from lift manifest.
-        let cold_ctx = WitnessDischargeContext {
-            project_dir: Some(project.clone()),
-            resolvers: Vec::new(),
-        };
-        let _pool_cold = PoolOnlyWitnessGuard::enter(false);
-        let _cold_guard = WitnessCtxGuard::enter(&cold_ctx);
-        let via_cold =
-            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
-        drop(_cold_guard);
-        drop(_pool_cold);
-
-        // Path B: typed project_dir + explicit resolvers; warm (no lift read_dir).
-        let warm_ctx = WitnessDischargeContext {
+        let fed = WitnessDischargeContext {
             project_dir: Some(project.clone()),
             resolvers: vec![WitnessResolverSpec {
                 argv: vec![script.display().to_string()],
@@ -6918,22 +6882,14 @@ mod tests {
                 method: ORACLE_RESOLVE_METHOD.to_string(),
             }],
         };
-        let _pool_warm = PoolOnlyWitnessGuard::enter(true);
-        let _warm_guard = WitnessCtxGuard::enter(&warm_ctx);
-        let via_warm =
-            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
-        drop(_warm_guard);
-        drop(_pool_warm);
-
-        assert_verdict_byte_identical(&via_cold, &via_warm, "typed cold vs typed warm");
+        let _guard = WitnessCtxGuard::enter(&fed);
+        let via_fed = try_witness_discharge(&body, contract_cid, property).unwrap();
+        drop(_guard);
         assert_eq!(
-            via_cold.verdict,
+            via_fed.verdict,
             ObligationVerdict::Discharged,
-            "package is all-passed; both faces must discharge"
-        );
-        eprintln!(
-            "RECEIPT step3_typed_cold_warm packageCid={} verdict={:?} reason={}",
-            package_cid, via_warm.verdict, via_warm.reason
+            "client-fed resolvers must discharge: {:?}",
+            via_fed
         );
 
         let _ = std::fs::remove_dir_all(&project);
