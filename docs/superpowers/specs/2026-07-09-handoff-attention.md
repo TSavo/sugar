@@ -22,7 +22,7 @@ The collapse: delete the disk-read branches; delete `warm_solve` as a separate f
 
 ### 1. Implication, steps 2+ (paused). Step 1 landed (#3972: seal the linker's `post ⊃ pre` Obligation as the existing implication memento — one CID, pure function, byte-identical, no parallel type). Remaining: un-stub `CallSite::implication()` (tree still returns `None`) and the feed-fold that produces implications from real link-time Obligations into the pool, so implications are produced end-to-end, not just speakable in tests. Execution, not a decision. Same discipline: CID-idempotent, byte-identical, corpus 55/55. Resume once 97105 is clear of the shared files.
 
-### 2. #3958 free-name bad-twin. Module-constant binding (#3958) rides on free-name resolution. A *shadowed* (local re-binds the name) or *conditionally-defined* module constant could be mis-bound or missed. Needs one bad-twin: a module constant shadowed by a local, confirm the dig binds the right one. Small, real.
+### 2. #3958 free-name bad-twin — **CLOSED** (local/formal shadow instruments). Local assign and formal named like a module constant both win over the free-name seed; unshadowed module GLOBAL still seeds. See `tests/test_module_global_shadow_bad_twin.py`. Conditional/if-defined module constants remain open if someone needs them.
 
 ### 3. numpy totality-at-zero ratchet. The wall is at R≈0 (worker 97102 finishing). After R=0, add a **gate that asserts numpy+pandas construction-gap R == 0 on battleaxe** so it can't silently climb — drains have unmasked deeper gaps mid-lane, so honest-0 needs a guard, not just a one-time measurement.
 
@@ -51,7 +51,7 @@ So: **one-solve goes first, alone in that cluster.** After it lands, implication
 - Real-pandas red squiggle proven + gated (#3934/#3936/#3940): FS=0, byte-identical, ~3.4 ms, golden NDJSON byte-identical (#3938). (An earlier *mock*-sourced version was wrongly called "the demo" — caught, replaced.)
 - Enumeration typed descent complete; an over-encoded `SourceMemento[path]` layer built then reverted (#3950, −1042 lines — a memento is already self-locating).
 - Witness-as-verb complete (#3959/#3962/#3964): `WitnessPool<CID,WitnessMemento>` made real — oracle resolves, Rust verifies, no env, no cache-invalidation.
-- Implication step 1 (#3972). numpy wall 182→≈0 (#3948–#3976). Logo real-name proof CI-ratcheted (#3960) + padding-boundary scoped (#3977, `SCOPE.md`).
+- Implication step 1 (#3972). numpy wall 182→≈0 (#3948–#3976). Logo real-name proof CI-ratcheted (#3960) + padding-boundary scoped (#3977, `SCOPE.md`). #3958 free-name shadow bad-twin instrumented.
 
 ---
 
