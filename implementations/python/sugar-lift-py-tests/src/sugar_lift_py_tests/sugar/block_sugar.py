@@ -6,7 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import block_return_witness
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -41,7 +41,13 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def witnesses(cls):
-        return block_return_witness()
+        prefix = "def A(z):\n    x = z\n    y = x\n    return y\n\n"
+        return _call_pair(
+            name="block_return",
+            owner_sugar="BlockSugar",
+            truthful=prefix + "def test_a():\n    assert A(2) == 2\n",
+            lying=prefix + "def test_a():\n    assert A(2) == 3\n",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         return Complete(BlockValue(self._collect(self.statements, ctx)))

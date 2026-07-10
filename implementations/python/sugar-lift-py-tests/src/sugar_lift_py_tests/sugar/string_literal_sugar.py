@@ -6,7 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import string_literal_return_witness
+from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,13 @@ class StringLiteralSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        return string_literal_return_witness()
+        return _call_return_pair(
+            name="string_literal_return",
+            owner_sugar="StringLiteralSugar",
+            body='"abc"',
+            truthful="'abc'",
+            lying="'xyz'",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx  # the string stands as a term

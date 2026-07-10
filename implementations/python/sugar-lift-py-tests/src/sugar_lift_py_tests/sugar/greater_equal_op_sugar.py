@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import greater_equal_return_witness
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -36,7 +36,19 @@ class GreaterEqualOpSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        return greater_equal_return_witness()
+        # `>=` is `not (a < b)`: folds concrete operands to the True/False literal, and
+        # the literal picks the if-face: the truthful twin rides the face `>=` picked,
+        # the lying twin asserts the other -- the pair proves the lift discriminates
+        # on order.
+        prefix = (
+            "def A(z):\n" "    if 2 >= 2:\n" "        return z\n" "    return 0\n" "\n"
+        )
+        return _call_pair(
+            name="greater_equal_return",
+            owner_sugar="GreaterEqualOpSugar",
+            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.left.reduce(ctx).and_then(

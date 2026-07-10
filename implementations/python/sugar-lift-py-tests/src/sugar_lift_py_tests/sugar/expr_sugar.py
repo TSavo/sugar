@@ -6,7 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import SupportValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import inert_statement_return_witness
+from sugar_lift_py_tests.sugar.witnesses import inert_statement_return_witness
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
