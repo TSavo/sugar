@@ -1,4 +1,4 @@
-# Handoff (2026-07-09, rev 4)
+# Handoff (2026-07-09, rev 5)
 
 Main is green; ~55 PRs merged. Live queue: what I'm driving (fleet) + **independent tasks T can grab now** (python/doc-side, zero rust-core collision).
 
@@ -26,11 +26,10 @@ Solve reads NOTHING from the project filesystem. Every input arrives as a conten
 
 ### D. A SECOND real-name logo. itsdangerous is proven (#3960/#3977). Pick another real library with a real bug shape and prove it end-to-end the same way — a new "logos are the product" artifact, CI-ratcheted, with a SCOPE.md. High value, PyCon material.
 
-### E. More loud coordinate bad-twins (the #3982/#3986 pattern) for surfaces #3986 didn't cover: multi-arg vendor methods (`df.merge(other)`, `df.pivot_table(...)`) — lying-arg discrimination pinned loud.
-
 **DONE (off the list):**
 - #3958 free-name bad-twin → #3982 (T). Dig already correct; pinned loud.
 - B coordinate discrimination bad-twins (kwarg/chain/method/attr) → #3986 (T). Verify-before-ship applied.
+- E multi-arg loud discrimination bad-twins (`df.merge(other, on=...)`, `df.pivot_table(...)`) → T. Membrane already discriminates; pinned 8 instruments (shared euf + dual-assert unsat + arg-identity guards). Instrument: `tests/test_multiarg_loud_discrimination.py`.
 - A numpy totality-at-zero ratchet → 97102 building it now (R=0 reached). If T wants it instead, tell me so I stop 97102.
 
 ---
