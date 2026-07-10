@@ -540,10 +540,11 @@ fn prove_from_kit_ignores_project_root_proof_files() {
 /// | 9 | tier-2 implication cache_dir reads/writes | if cache_dir set | **CLOSED** (cleared + skipped on warm) |
 ///
 /// Gate: canary files planted under project_root must NOT contribute their
-/// content CIDs to the warm proof-run memento inputs; cold disk face still
-/// sees canary proof CID (discrimination). Verdict rows must match a clean
-/// (no-canary) prove_from_kit on the same sources (byte-identical status
-/// multiset / property names).
+/// content CIDs to run-input CIDs even with `pool_only_inputs=false` (cut #1:
+/// pool keys only). Client-fed pool membership is the discrimination path.
+/// Named link/plugin CIDs are client-fed only (cut #2). Verdict rows must
+/// match a clean (no-canary) prove_from_kit on the same sources
+/// (byte-identical status multiset / property names).
 #[test]
 fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     if !python_blake3_available() {
@@ -684,7 +685,7 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
 
     // Discrimination (#3809 cut #2): named CIDs only when **client feeds** them.
     // Solve never reads link-bundle.json; unfed path uses placeholders (warm).
-    let fed_cfg = RunnerConfig {
+    let fed_named_cfg = RunnerConfig {
         project_root: project.clone(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
         pool_only_inputs: false,
@@ -692,21 +693,19 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
         plugin_registry_cid: Some(plugin_reg_cid.clone()),
         ..Default::default()
     };
-    let cold_pool = MementoPool::default();
-    let fed_runner = Runner::new_with_compilers(fed_cfg, test_compilers());
-    let fed = fed_runner
-        .run_with_proof_run_with_pool(cold_pool)
+    let fed_named = Runner::new_with_compilers(fed_named_cfg, test_compilers())
+        .run_with_proof_run_with_pool(MementoPool::default())
         .expect("client-fed named inputs still build a memento");
     eprintln!(
         "client-fed discrimination: link={} reg={}",
-        fed.memento.header.link_bundle_cid, fed.memento.header.plugin_registry_cid
+        fed_named.memento.header.link_bundle_cid, fed_named.memento.header.plugin_registry_cid
     );
     assert_eq!(
-        &fed.memento.header.link_bundle_cid, &link_bundle_cid,
+        &fed_named.memento.header.link_bundle_cid, &link_bundle_cid,
         "discrimination: client-fed link_bundle_cid must stamp the header"
     );
     assert_eq!(
-        &fed.memento.header.plugin_registry_cid, &plugin_reg_cid,
+        &fed_named.memento.header.plugin_registry_cid, &plugin_reg_cid,
         "discrimination: client-fed plugin_registry_cid must stamp the header"
     );
 
@@ -723,6 +722,60 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     assert_ne!(
         &unfed.memento.header.link_bundle_cid, &link_bundle_cid,
         "unfed solve must not read link-bundle.json from project_root"
+    );
+
+    // Discrimination (#3809 cut #1): solve never WalkDirs *.proof — empty
+    // pool must not pick up canary CID even with pool_only_inputs=false.
+    let cold_cfg = RunnerConfig {
+        project_root: project.clone(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+        pool_only_inputs: false,
+        ..Default::default()
+    };
+    let cold = Runner::new_with_compilers(cold_cfg, test_compilers())
+        .run_with_proof_run_with_pool(MementoPool::default())
+        .expect("empty-pool run still builds a memento");
+    let cold_inputs = &cold.memento.header.input_artifact_cids;
+    eprintln!("cut#1 empty-pool inputs={cold_inputs:?}");
+    assert!(
+        !cold_inputs.iter().any(|c| c == &canary_proof_cid),
+        "solve must not WalkDir canary .proof into inputs when pool is empty \
+         (R_proof_walk>0). cold_inputs={cold_inputs:?}"
+    );
+    // Client-fed pool membership is the only way a CID lands in the header.
+    let mut fed_pool = MementoPool::default();
+    let fed_cid =
+        sugar_verifier::types::MementoCid::try_parse(canary_proof_cid.clone()).expect("canary cid");
+    fed_pool.insert_unanchored_for_tests(
+        fed_cid,
+        serde_json::json!({
+            "envelope": {
+                "header": {
+                    "kind": "contract",
+                    "contractName": "canary-fed",
+                    "inv": {"kind": "true"}
+                }
+            }
+        }),
+    );
+    let fed = Runner::new_with_compilers(
+        RunnerConfig {
+            project_root: project.clone(),
+            legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+            pool_only_inputs: false,
+            ..Default::default()
+        },
+        test_compilers(),
+    )
+    .run_with_proof_run_with_pool(fed_pool)
+    .expect("fed pool run");
+    assert!(
+        fed.memento
+            .header
+            .input_artifact_cids
+            .iter()
+            .any(|c| c == &canary_proof_cid),
+        "client-fed pool member CID must appear in run inputs"
     );
 }
 
