@@ -72,6 +72,8 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }
     assert len(report.records) == 3
@@ -135,6 +137,8 @@ def test_installed_package_audit_target_counts_against_language_axis(tmp_path) -
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }
     assert all(_is_visual_lift(command) for command in calls)
@@ -317,6 +321,8 @@ def test_extracts_audit_only_gaps_from_rust_wrapped_rpc_error() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }
 
@@ -365,6 +371,8 @@ def test_extracts_audit_only_gaps_when_rust_adds_trailing_context() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }
 
@@ -388,6 +396,8 @@ def test_installed_numpy_totality_gate_is_stable_zero() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }, f"numpy {numpy.__version__} construction-gap gate reopened: {render_text(report)}"
     assert not report.records
@@ -414,6 +424,8 @@ def test_installed_pandas_totality_gate_is_stable_zero() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }, (
         f"pandas {pandas.__version__} construction-gap gate reopened: "
@@ -474,6 +486,8 @@ def test_installed_statistics_totality_gate_is_stable_zero() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }, (
         f"statistics module construction-gap gate reopened (R={r_total}): "
@@ -512,6 +526,8 @@ def test_installed_decimal_totality_gate_is_stable_zero() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }, (
         f"decimal pure-python body construction-gap gate reopened (R={r_total}): "
@@ -554,6 +570,8 @@ def test_installed_fractions_totality_gate_is_stable_zero() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }, (
         f"fractions module construction-gap gate reopened (R={r_total}): "
@@ -577,6 +595,72 @@ def test_fractions_resolves_to_module_file_not_stdlib_dir() -> None:
     text = path.read_text(encoding="utf-8", errors="replace")
     assert "class Fraction" in text
     assert len(text) > 5_000, "expected full pure-python body"
+
+
+def test_installed_pathlib_totality_gate_is_stable_zero() -> None:
+    """Sixth-vendor pin: installed stdlib pathlib construction-gap R == 0.
+
+    Part of #3809. Pure-python ``pathlib`` — on 3.12 a single ``pathlib.py``;
+    on 3.13+ may be a ``pathlib/`` package. Never the parent stdlib directory
+    (the #4001 trap). Panic / R>0 is sacred.
+    """
+    path = panic_audit_module._resolve_installed_package_path("pathlib")
+
+    report = collect_panic_audit(
+        ROOT,
+        installed_packages=("pathlib",),
+        include_showcases=False,
+    )
+    r_total = sum(report.r.values.values())
+
+    assert report.r.values == {
+        "numpy_sugar_panics": 0,
+        "numpy_floor_panics": 0,
+        "pandas_sugar_panics": 0,
+        "pandas_floor_panics": 0,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
+        "decimal_sugar_panics": 0,
+        "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
+        "unexpected_panics": 0,
+    }, (
+        f"pathlib construction-gap gate reopened (R={r_total}): "
+        f"path={path} {render_text(report)}"
+    )
+    assert r_total == 0
+    assert report.is_zero
+    assert not report.records
+    assert [t.name for t in report.targets] == ["pathlib-all"]
+    assert path.name in ("pathlib.py", "pathlib"), path
+
+
+def test_pathlib_resolves_to_module_or_package_not_stdlib_dir() -> None:
+    """pathlib must not resolve to /usr/lib/pythonX.Y (entire stdlib).
+
+    3.12: single-module ``pathlib.py``. 3.13+: package dir ``pathlib/``.
+    Either is fine; the parent stdlib tree is not.
+    """
+    path = panic_audit_module._resolve_installed_package_path("pathlib")
+    assert path.name in ("pathlib.py", "pathlib"), path
+    assert not str(path).endswith((".so", ".pyd", ".dll"))
+    assert "lib-dynload" not in str(path)
+    # The #4001 trap: dirname of a module file → whole stdlib (asyncio lives there).
+    if path.is_file():
+        assert path.name == "pathlib.py", path
+        text = path.read_text(encoding="utf-8", errors="replace")
+        assert "class PurePath" in text or "class Path" in text
+        assert len(text) > 5_000, "expected full pure-python body"
+    else:
+        assert path.is_dir(), path
+        assert (path / "__init__.py").is_file(), path
+        # Must not be the stdlib root (would contain asyncio.py as a sibling file
+        # *inside* the resolved path only if we wrongly pointed at stdlib).
+        assert not (path / "asyncio.py").exists(), path
+        assert not (path / "inspect.py").exists(), path
 
 
 def test_single_module_package_resolves_to_module_file_not_stdlib_dir() -> None:
@@ -644,6 +728,8 @@ def test_extracts_audit_only_loud_floor_type_error() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }
 
