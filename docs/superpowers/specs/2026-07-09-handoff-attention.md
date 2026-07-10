@@ -19,7 +19,7 @@ Solve reads NOTHING from the project filesystem. Inputs arrive as content-addres
 ## INDEPENDENT — NEXT (T; python/doc-side, zero rust-core collision)
 
 **Ongoing (infinite runway):**
-- **F. More real-name logos.** 7 proven (itsdangerous, base64, base32, hashlib, hmac, binascii, zlib.crc32). Keep going — but see L: broaden the bug-shape.
+- **F. More real-name logos.** 11+ proven. Added length/bounds class: sha256 digest length, uuid.bytes length, md5 digest_size, struct.calcsize (also advances L). Keep going.
 - **G. More vendors (coordinate coverage).** numpy/pandas/statistics done (R=0); `decimal` in flight (97118). Next: `fractions`, `csv`, `datetime`, `pathlib`.
 - **H. PyCon demo narrative / README arc** (your voice) — the inline-editor moment + the wall of real-name proofs.
 
