@@ -1,54 +1,57 @@
-# Handoff (2026-07-09, rev 3)
+# Handoff (2026-07-09, rev 4)
 
-Main is green; ~50 PRs merged this session. This handoff is the live queue: what I'm driving (fleet), and **independent tasks T can pick up right now** without colliding.
-
----
-
-## THE TARGET I'm driving: solve is API-driven, CLI is a client
-
-Settled with T. Solve reads **nothing** from the project filesystem. Every input arrives as a content-addressed memento over the one API, like every other fact. The **CLI becomes a separate client** of that API — it does the disk-reading as a client and *feeds* it in, exactly the way the LSP is a client. Neither CLI nor LSP has a privileged path inside solve; both are faces talking to the one API. When solve only ever has what a client fed it, `pool_only_inputs` has nothing to decide and is deleted.
-
-**Progress:** #3981 deleted the separate `warm_solve` *function* (one door), but left `pool_only_inputs` as a "derived" flag with 8 disk-reads still inside cold solve. That's the partial step; the real target is above.
-
-**In flight (97105):** per-input plan (`docs/superpowers/specs/2026-07-09-solve-api-driven-plan.md`) for moving each of the 8 out to the CLI client or an existing API verb, flagging any that genuinely need a NEW protocol verb (those are T's calls). First cut is PR A (config signers/solvers → CLI client). One input-source per PR, byte-identical verdict rows, corpus 55/55.
-
-The 8 disk-reads to move: input artifact CID walk, link-bundle/plugin-registry discovery, `*.call-edges.json`, `config.toml` signers/solvers, `Path::exists` locus preference, witness `read_dir`, tier-2 cache, `.sugar/runs` write.
-
-**Coordinator note to self:** a second path that shouldn't exist gets fixed silently — not surfaced as a decision, not spent on T's attention. I failed that (burned a long exchange treating dead code as a mystery). Fix vestiges, don't narrate them.
+Main is green; ~55 PRs merged. Live queue: what I'm driving (fleet) + **independent tasks T can grab now** (python/doc-side, zero rust-core collision).
 
 ---
 
-## INDEPENDENT — T can grab these now (python/doc-side, zero rust-core collision)
+## Driving: solve is API-driven, CLI is a client
 
-### A. numpy totality-at-zero ratchet. Wall is at R≈0 (97102 finishing the last drains). After R=0, a gate asserting numpy+pandas construction-gap R == 0 on battleaxe so it can't silently climb — drains have unmasked deeper gaps mid-lane, so honest-0 needs a guard. **Coordinate with 97102 (it may land this) — if T takes it, tell me so I stop 97102 from duplicating.**
+Solve reads NOTHING from the project filesystem. Every input arrives as a content-addressed memento over the one API. The CLI becomes a client that feeds inputs (same as the LSP). When solve only has what a client fed it, `pool_only_inputs` has nothing to decide and is deleted.
 
-### B. Loud discrimination bad-twins — **CLOSED** (#3982 pattern). Instruments: lying kwarg (`.sum(axis=0)` dual unsat), lying chain (`.dropna().mean()` dual unsat), method vs attribute (`.sum()` / `.empty` dual unsat) + bare-sum vs `kw:axis` distinct euf keys. See `tests/test_coordinate_loud_discrimination.py`. Combined probe on branch: 41 related passed before merge.
+**Plan:** `docs/superpowers/specs/2026-07-09-solve-api-driven-plan.md` — 8 disk-reads to move. **Confirmed: NONE need a new protocol verb** (all CLI-client-fed or trivial-delete).
 
+**Cuts landed:** #4 config signers/solvers (#3983) · #6 witness resolvers (#3985) · #2 named run inputs / link-bundle+registry (#3987). All byte-identical (DoD FS=0, byte-identical=true) + corpus 55/55.
 
-### C. Real-scale numpy/pandas re-sweep. #3944 proved 187 real API shapes, 0 gaps — re-run it on current main to confirm the coverage held through all the R-drains. Pure python, a receipt not a change.
+**Remaining trivial cuts (97105 driving, one PR each):** #1 input-artifact CID walk · #8 `.sugar/runs` write · #5 `Path::exists` locus/scope. Then the two flagged items, then the final `delete pool_only_inputs`.
 
-**DONE (off the list): #3958 free-name bad-twin → #3982** (T). Dig already rebinds correctly for local shadow / formal shadow; pinned as a loud instrument. No production change needed.
+**Flagged — I investigate before touching, only surface to T if real:**
+- #3 call-edges: trivial-delete IF pool bridges + `enumerate_callsites` cover production; sidecar-only production = a lift/bridge emission gap (would come to T).
+- #7 tier-2 implication cache: no new verb, but needs a solve request/response feed path (design-shaped API surface). Report the shape before building.
 
 ---
 
-## Serialized behind one-solve (I drive, after 97105 lands)
-- **Implication steps 2+**: un-stub `CallSite::implication()` + the feed-fold producing implications from real link-time Obligations into the pool. Overlaps one-solve on `consistency.rs`/`orchestrate.rs`/`runner.rs`.
-- **Enumerate→LSP as one composition**: descent-through-enumerate feeding the LSP acceptance path end-to-end. Overlaps one-solve on the `sugar-lsp` files.
-Both rebase on post-one-solve main; then can run parallel to each other (tree/linker vs lsp).
+## INDEPENDENT — T can grab now (python/doc-side, no rust-core collision)
+
+### C. Real-scale numpy/pandas re-sweep. #3944 proved 187 real API shapes / 0 gaps. Re-run on current main to confirm the coverage held through all the R-drains (now R=0). A receipt, not a change.
+
+### D. A SECOND real-name logo. itsdangerous is proven (#3960/#3977). Pick another real library with a real bug shape and prove it end-to-end the same way — a new "logos are the product" artifact, CI-ratcheted, with a SCOPE.md. High value, PyCon material.
+
+### E. More loud coordinate bad-twins (the #3982/#3986 pattern) for surfaces #3986 didn't cover: multi-arg vendor methods (`df.merge(other)`, `df.pivot_table(...)`) — lying-arg discrimination pinned loud.
+
+**DONE (off the list):**
+- #3958 free-name bad-twin → #3982 (T). Dig already correct; pinned loud.
+- B coordinate discrimination bad-twins (kwarg/chain/method/attr) → #3986 (T). Verify-before-ship applied.
+- A numpy totality-at-zero ratchet → 97102 building it now (R=0 reached). If T wants it instead, tell me so I stop 97102.
+
+---
+
+## Serialized behind one-solve (I drive, after 97105 finishes the cuts)
+- Implication steps 2+: un-stub `CallSite::implication()` + feed-fold producing implications from real link-time Obligations into the pool. Overlaps one-solve on `consistency.rs`/`orchestrate.rs`/`runner.rs`.
+- Enumerate→LSP as one composition: descent-through-enumerate feeding the LSP acceptance path end-to-end. Overlaps one-solve on the `sugar-lsp` files.
 
 ---
 
 ## Landed this session (context, not to-do)
-- Real-pandas red squiggle proven + gated (#3934/#3936/#3940): FS=0, byte-identical, ~3.4 ms. (An earlier mock-sourced version was wrongly called "the demo" — caught, replaced.)
-- Enumeration typed descent complete; over-encoded `SourceMemento[path]` built then reverted (#3950, −1042 lines).
-- Witness-as-verb complete (#3959/#3962/#3964): `WitnessPool<CID,WitnessMemento>` made real — oracle resolves, Rust verifies, no env, no cache-invalidation.
-- Implication step 1 (#3972). numpy wall 182→≈0. Logo CI-ratcheted (#3960) + padding-boundary scoped (#3977). #3958 pinned (#3982).
+- Real-pandas red squiggle proven + gated (#3934/#3936/#3940): FS=0, byte-identical, ~3.4 ms. (A mock-sourced version was wrongly called "the demo" — caught, replaced.)
+- Enumeration typed descent complete; over-encoded `SourceMemento[path]` reverted (#3950, -1042 lines).
+- Witness-as-verb complete (#3959/#3962/#3964): `WitnessPool<CID,WitnessMemento>` — oracle resolves, Rust verifies, no env, no invalidation.
+- Implication step 1 (#3972). numpy wall 182→0. Logo CI-ratcheted (#3960) + scoped (#3977). #3958 pinned (#3982). Coordinate bad-twins pinned (#3986). Solve-API cuts #4/#6/#2 (#3983/#3985/#3987).
 
 ---
 
 ## Process
-- `watch_worker` unreliable — poll for idle. Dispatch to a *busy* worker fails silently (brief stays unsent). Swap workers fresh at ~180k context; long reports scroll off past ~200k — write to a file and read it.
+- `watch_worker` unreliable — poll for idle. Dispatch to a busy worker fails silently. Swap workers fresh at ~180k context; long reports scroll off past ~200k — write to a file and read it.
 - Merge-on-sight on green/known-baseline; read the mechanism on grounding/soundness PRs.
-- Receipt discipline: paste the actual `55 passed` count, not just the command. Corpus BETWEEN grounding-path merges (#3924 lesson).
-- ONE PR per doc change (I made a three-PR mess of an earlier handoff — don't).
-- The unifying doctrine: idempotency + no-double-entry + warm-FS=0 + no-invalidation are ONE thing — a CID-keyed pool. "The existing thing already IS the pool," never "build the abstraction" or "add a second path."
+- Receipt discipline: paste the actual `55 passed` count. Verify-before-ship: combined corpus on branch BEFORE merge, not ship-then-corpus (kevlar applied this in #3986).
+- ONE PR per doc change.
+- Doctrine: idempotency + no-double-entry + warm-FS=0 + no-invalidation are ONE thing — a CID-keyed pool. "The existing thing already IS the pool," never "add a second path."
