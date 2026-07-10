@@ -376,6 +376,22 @@ def greater_than_return_witness() -> SugarWitnessPair:
     )
 
 
+def less_equal_return_witness() -> SugarWitnessPair:
+    # `<=` is `not (b < a)`: folds concrete operands to the True/False literal, and
+    # the literal picks the if-face: the truthful twin rides the face `<=` picked,
+    # the lying twin asserts the other -- the pair proves the lift discriminates
+    # on order (including equality).
+    prefix = (
+        "def A(z):\n" "    if 2 <= 2:\n" "        return z\n" "    return 0\n" "\n"
+    )
+    return _call_pair(
+        name="less_equal_return",
+        owner_sugar="LessEqualOpSugar",
+        truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+        lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+    )
+
+
 def if_return_witness() -> SugarWitnessPair:
     prefix = "def A(z):\n" "    if z == 1:\n" "        return 7\n" "    return 0\n" "\n"
     return _call_pair(
