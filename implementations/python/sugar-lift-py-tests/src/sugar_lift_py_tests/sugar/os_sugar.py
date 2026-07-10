@@ -8,14 +8,17 @@ from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import typed_red_effect_witness
 from sugar_lift_py_tests.sugar.witnesses import SugarRedEffectWitnessPair
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
 class OsSugar(Sugar, role=SugarRole.TERM):
     """`os.exit(...)` halts the program at runtime. It is a runtime effect: its value
     does not exist until the program runs, so it reduces to an Incomplete, not a fact.
-    It owns the whole call and does not lift the argument -- the effect is atomic."""
+    The effect is atomic at reduce time, but the arguments are factory-built like any
+    other child -- an unowned node inside them panics at construction."""
 
+    args: tuple[SugarBody, ...]
     blame: str
 
     @classmethod
@@ -27,8 +30,13 @@ class OsSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def new(cls, site, ctx) -> "OsSugar":
-        del ctx  # a runtime effect: the argument is not lifted
-        return cls(blame=site.blame)
+        # The arguments are factory-built (audited), never reduced here.
+        return cls(
+            args=tuple(
+                ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
+            ),
+            blame=site.blame,
+        )
 
     @classmethod
     def witnesses(cls) -> SugarRedEffectWitnessPair:
