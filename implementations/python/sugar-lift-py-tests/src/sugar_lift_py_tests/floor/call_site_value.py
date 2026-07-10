@@ -85,6 +85,45 @@ class CallSiteValue(FloorValue):
             ctx=ctx,
         )
 
+    def binary_operator_with(self, operation, ctx):
+        """Binary op on a callsite result (e.g. ``f() + g()``, ``x + y`` after dig).
+
+        Same totalizer shape as unary_operator_with: dig the floor when
+        possible; else mint a joinable symbolic coordinate
+        ``call:<op>(callsite, right)`` via OpaqueOp / SymbolicValue path —
+        never invent a numeric fold for an undiggable body.
+        """
+        from sugar_lift_py_tests.factory import FactoryGap
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.operations import perform_operation
+
+        try:
+            floor = force_floor(
+                self,
+                ctx,
+                owner=f"{operation.owner} callsite binary operand",
+                project_callsite=False,
+            )
+        except FactoryGap as exc:
+            # Opaque residual: treat the undiggable callsite as its term
+            # coordinate and re-dispatch so BinaryOperatorOperation can mint
+            # a joinable symbolic op (never fabricate a concrete fold).
+            del exc
+            return perform_operation(
+                owner=operation.owner,
+                blame=operation.blame,
+                receiver=SymbolicValue(self.term),
+                operation=operation,
+                ctx=ctx,
+            )
+        return perform_operation(
+            owner=operation.owner,
+            blame=operation.blame,
+            receiver=floor,
+            operation=operation,
+            ctx=ctx,
+        )
+
     def call_method_with(self, operation: Any, ctx: Any):
         """Dig the callsite floor, then re-dispatch — enables composition.
 
