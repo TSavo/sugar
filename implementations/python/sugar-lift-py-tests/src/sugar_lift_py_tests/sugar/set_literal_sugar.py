@@ -6,7 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import SetValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import set_literal_return_witness
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -35,7 +35,16 @@ class SetLiteralSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        return set_literal_return_witness()
+        # A bare set literal reduces as a statement body step, then returns z. Sets do
+        # not compare by == to a literal easily in the witness harness, so the pair
+        # discriminates on the returned face -- the set itself is just present.
+        prefix = "def A(z):\n    {1}\n    return z\n\n"
+        return _call_pair(
+            name="set_literal_return",
+            owner_sugar="SetLiteralSugar",
+            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         # Reduce each element; the result is a set of them.

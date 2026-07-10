@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import multiply_return_witness
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -33,7 +33,23 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        return multiply_return_witness()
+        # `*` folds concrete numbers on the multiplication floor; the product feeds
+        # `==`, and the True/False literal picks the if-face: the truthful twin rides
+        # the face the product comparison picked, the lying twin asserts the other --
+        # the pair proves the lift discriminates on the product.
+        prefix = (
+            "def A(z):\n"
+            "    if 2 * 3 == 6:\n"
+            "        return z\n"
+            "    return 0\n"
+            "\n"
+        )
+        return _call_pair(
+            name="multiply_return",
+            owner_sugar="MultiplyOpSugar",
+            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.left.reduce(ctx).and_then(

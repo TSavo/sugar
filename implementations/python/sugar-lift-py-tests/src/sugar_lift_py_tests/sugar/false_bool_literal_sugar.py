@@ -7,7 +7,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import false_bool_literal_return_witness
+from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.sugar_body import SugarBody
@@ -32,7 +32,13 @@ class FalseBoolLiteralSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        return false_bool_literal_return_witness()
+        return _call_return_pair(
+            name="false_bool_literal_return",
+            owner_sugar="FalseBoolLiteralSugar",
+            body="False",
+            truthful="False",
+            lying="True",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx  # the literal is its own floor value

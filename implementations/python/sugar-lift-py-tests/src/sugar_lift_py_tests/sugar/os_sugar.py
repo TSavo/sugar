@@ -6,7 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import OSExitRuntimeEffect
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import typed_red_effect_witness
+from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 from sugar_lift_py_tests.sugar.witnesses import SugarRedEffectWitnessPair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
