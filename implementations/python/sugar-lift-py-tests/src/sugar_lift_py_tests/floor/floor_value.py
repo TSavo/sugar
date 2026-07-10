@@ -425,6 +425,42 @@ class FloorValue:
             ),
         )
 
+    def add(self, other, blame):
+        # Default: this value does not stand on the addition floor -- it cannot answer
+        # what it is to add another value. The None arm: a value that CAN implements
+        # add and gives back the sum (or concat); absence here is the honest "no".
+        del other
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="add",
+            blame=blame,
+            observed=observed,
+            requested="stand on the addition floor",
+            fix=f"write more Floor: implement {observed}.add",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="add",
+                status="floor-gap",
+                observed=observed,
+                blame=blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow, factory_panic,

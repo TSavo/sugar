@@ -54,6 +54,15 @@ class TermValue(FloorValue):
             )
         return super().less_than(other, blame)
 
+    def add(self, other, blame):
+        # The collapsed Number adds: two numbers fold to their sum -- one value type
+        # for int and float. Anything else falls to the honest addition-floor gap.
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value + other.value))
+        return super().add(other, blame)
+
     def to_term(self, *, owner: str):
         del owner
         # Int embeds in Real losslessly (3 and 3.0 are the same number), but the
