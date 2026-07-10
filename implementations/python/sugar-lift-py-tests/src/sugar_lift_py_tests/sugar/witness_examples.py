@@ -412,6 +412,24 @@ def add_return_witness() -> SugarWitnessPair:
     )
 
 
+def subtract_return_witness() -> SugarWitnessPair:
+    # `-` folds concrete operands on the subtraction floor, and the equals fold
+    # picks the if-face: the truthful twin rides the face `3 - 1 == 2` picked,
+    # the lying twin asserts the other -- the pair proves the lift discriminates.
+    prefix = (
+        "def A(z):\n"
+        "    if 3 - 1 == 2:\n"
+        "        return z\n"
+        "    return 0\n"
+        "\n"
+    )
+    return _call_pair(
+        name="subtract_return",
+        owner_sugar="SubtractOpSugar",
+        truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+        lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+    )
+
 
 def set_literal_return_witness() -> SugarWitnessPair:
     # A bare set literal reduces as a statement body step, then returns z. Sets do
