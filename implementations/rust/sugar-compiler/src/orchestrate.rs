@@ -234,10 +234,10 @@ impl ProvenOutcome {
 /// pools are mostly unbridged, so a short-circuit would brick real runs).
 ///
 /// Disk-load face: builds the pool via [`load_pool`] then runs the **one**
-/// discharge body. Residual side-channels gated by `pool_only_inputs` (tier-2
-/// cache_dir, …) stay available when the caller leaves the flag false.
-/// Call-edges / named inputs / input CIDs / config / runs-seal no longer
-/// WalkDir inside solve (#3809 series).
+/// discharge body. Residual side-channels gated by `pool_only_inputs` (locus
+/// exists preference) stay available when the caller leaves the flag false.
+/// Call-edges / named inputs / input CIDs / config / runs-seal / tier-2
+/// cache no longer do project FS inside solve (#3809 series).
 ///
 /// Callers that already hold a multi-speaker pool (e.g. [`prove_from_kit`])
 /// use [`solve_project_with_pool`] — same body; warmth derived from the
@@ -264,15 +264,15 @@ pub fn solve_project(
 ///
 /// There is no separate `warm_solve`. The caller already holds claim facts in
 /// `pool` (fold / prior load). This single preloaded entry **derives** the
-/// zero project-FS discharge policy (`pool_only_inputs = true`,
-/// `cache_dir = None`) from that residency: discharge must not re-open
-/// plan/config/manifests or write tier-2 cache. Input CIDs, call-edges,
-/// named artifacts, and runs-seal are already non-FS in solve. Claim bytes +
+/// residual zero-FS policy (`pool_only_inputs = true`) from that residency
+/// (locus exists preference). Tier-2 `cache_dir` I/O is deleted from
+/// discharge entirely (#3809 cut #7). Input CIDs, call-edges, named
+/// artifacts, and runs-seal are already non-FS in solve. Claim bytes +
 /// solvers + signers + plan_artifact must already ride on `cfg` / `pool` /
 /// `compilers`.
 ///
 /// Cold disk face remains [`solve_project`] (load then discharge without
-/// forcing the flag — residual side-channels still resolve).
+/// forcing the flag — residual locus side-channel still resolves).
 ///
 /// ## Out of scope (not "warm solve FS")
 ///
@@ -297,8 +297,8 @@ pub fn solve_project_with_pool(
 }
 
 /// THE solve body: annotate-not-block LINK + Runner discharge over one pool.
-/// Policy rides on `cfg` (`pool_only_inputs` / `cache_dir` / …) — set by the
-/// cold disk face or derived by [`solve_project_with_pool`] for a preloaded pool.
+/// Policy rides on `cfg` (`pool_only_inputs`, …) — set by the cold disk face
+/// or derived by [`solve_project_with_pool`] for a preloaded pool.
 fn discharge_with_pool(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
