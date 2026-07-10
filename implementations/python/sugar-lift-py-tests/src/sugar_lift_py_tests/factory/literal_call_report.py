@@ -56,7 +56,6 @@ from sugar_lift_py_tests.effect import effect_status
 from sugar_lift_py_tests.floor import (
     DictLiteralValue,
     ImportAliasValue,
-    LambdaCallable,
     PredicateValue,
 )
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
@@ -2123,29 +2122,8 @@ def _lift_callsite_assertion(
                     memento_file=memento_file,
                     source_lines=source_lines,
                 )
-            if isinstance(keyword_value, LambdaCallable):
-                return _effect_lift(
-                    keyword_frag,
-                    fn,
-                    Incomplete(
-                        RuntimeEffect(
-                            "callsite keyword runtime boundary: "
-                            "crime=callsite keyword could not be projected to a "
-                            "ProofIR term; "
-                            "owner=literal_call_report; "
-                            f"shape=kw:{name}:LambdaCallable-unliftable; "
-                            "replacement=add a cited callable identity floor for "
-                            "keyword values or keep the assertion as typed red; "
-                            f"blame={memento_file}:{keyword_frag.line}:{keyword_frag.col}"
-                        )
-                    ),
-                    stmt=stmt,
-                    selected="CallsiteKeywordRuntimeEffect",
-                    requested_role="CallsiteKeywordActual",
-                    filename=filename,
-                    memento_file=memento_file,
-                    source_lines=source_lines,
-                )
+            # LambdaCallable (and every other floor) projects via to_term —
+            # no isinstance bypass. Callable identity is LambdaCallable.to_term.
             arg_terms.append(
                 ctor(
                     f"kw:{name}",
