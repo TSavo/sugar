@@ -341,6 +341,37 @@ def test_statistics_minority_bodies_are_visible_scope(statistics_report: dict) -
     assert "file" in sample and "line" in sample and "name" in sample
 
 
+def test_statistics_human_report_contains_literal_minority_report_header() -> None:
+    """Human --report must emit the verbatim header `Minority Report` when un_asserted > 0.
+
+    No "MAJORITY" label anywhere. Default assertion accounting has no section title.
+    """
+    path = _resolve_installed_package_path("statistics")
+    sugar = _resolve_audit_sugar_bin(None)
+    with tempfile.TemporaryDirectory(prefix="lift-cov-human-") as td:
+        ws = Path(td) / "statistics"
+        _prepare_audit_workspace(path, ROOT, ws, audit_only=False)
+        cmd = [os.fspath(sugar), "lift", "--report", str(ws)]
+        env = _hermetic_env_for_sugar_command(cmd)
+        completed = subprocess.run(
+            cmd, cwd=ROOT, text=True, capture_output=True, check=False, env=env
+        )
+        assert completed.returncode == 0, (
+            f"lift --report failed exit={completed.returncode}\n"
+            f"stdout={completed.stdout[:1500]}\nstderr={completed.stderr[:1500]}"
+        )
+        human = (completed.stdout or "") + (completed.stderr or "")
+        assert "Minority Report" in human, (
+            f"literal header `Minority Report` missing from human report:\n{human[:2500]}"
+        )
+        # No "MAJORITY" label anywhere in the human output.
+        assert "MAJORITY" not in human, (
+            f"human report must not contain MAJORITY; got:\n{human[:2500]}"
+        )
+        assert "lift coverage (majority" not in human.lower()
+        assert "lift coverage (minority" not in human.lower()
+
+
 def test_discrimination_inject_unaccounted_construct_reds_majority(tmp_path: Path) -> None:
     """Live lift: source with 2 asserts, only one cited-capable shape still
     measures silent residue via independent census (unit twin above is pure).
