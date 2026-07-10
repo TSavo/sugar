@@ -345,6 +345,19 @@ def block_return_witness() -> SugarWitnessPair:
     )
 
 
+def return_value_witness() -> SugarWitnessPair:
+    # `return <expr>` reduces the value and wraps it in a ReturnValue; the truthful
+    # twin asserts the returned face, the lying twin asserts another -- the pair
+    # proves the lift discriminates on the returned value.
+    prefix = "def A(z):\n    return z\n\n"
+    return _call_pair(
+        name="return_value",
+        owner_sugar="ReturnSugar",
+        truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+        lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+    )
+
+
 def less_than_return_witness() -> SugarWitnessPair:
     # `<` folds concrete operands to the True/False literal, and the literal picks
     # the if-face: the truthful twin rides the face `<` picked, the lying twin

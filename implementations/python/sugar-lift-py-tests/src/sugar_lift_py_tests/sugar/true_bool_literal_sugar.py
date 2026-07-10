@@ -37,6 +37,10 @@ class TrueBoolLiteralSugar(Sugar, role=SugarRole.TERM):
         del ctx  # the literal is its own floor value
         return Complete(self)
 
+    def contribution(self):
+        # Its own floor value: contributes itself to the block record.
+        return (self,)
+
     def binary_conditional(
         self, then: "SugarBody", else_body: "SugarBody | None", ctx: object = None
     ) -> Outcome:

@@ -19,6 +19,10 @@ class Complete:
         # A completed statement lets the run go on: reduce the rest of the block.
         return reduce(rest)
 
+    def contribution(self):
+        # The value owns its contribution to the block record -- no interrogation.
+        return self.value.contribution()
+
     def and_then(self, step):
         # A completed value keeps going: hand the value to the next step.
         return step(self.value)
