@@ -71,6 +71,15 @@ class TermValue(FloorValue):
             return Complete(TermValue(self.value - other.value))
         return super().subtract(other, blame)
 
+    def multiply(self, other, blame):
+        # A number stands on the multiplication floor: two numbers multiply, and the
+        # product is a TermValue -- the collapsed Number.
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value * other.value))
+        return super().multiply(other, blame)
+
     def to_term(self, *, owner: str):
         del owner
         # Int embeds in Real losslessly (3 and 3.0 are the same number), but the

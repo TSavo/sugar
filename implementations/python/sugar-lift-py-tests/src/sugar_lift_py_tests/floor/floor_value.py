@@ -497,6 +497,42 @@ class FloorValue:
             ),
         )
 
+    def multiply(self, other, blame):
+        # Default: this value does not stand on the multiplication floor -- it cannot
+        # answer what it multiplies by another value to. The None arm: a value that CAN
+        # implements multiply and gives back a product; absence here is the honest "no".
+        del other
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="multiply",
+            blame=blame,
+            observed=observed,
+            requested="stand on the multiplication floor",
+            fix=f"write more Floor: implement {observed}.multiply",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="multiply",
+                status="floor-gap",
+                observed=observed,
+                blame=blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow, factory_panic,
