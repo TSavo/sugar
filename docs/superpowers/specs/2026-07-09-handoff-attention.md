@@ -22,13 +22,19 @@ Solve reads NOTHING from the project filesystem. Every input arrives as a conten
 
 ## INDEPENDENT — T can grab now (python/doc-side, no rust-core collision)
 
-### C. Real-scale numpy/pandas re-sweep. #3944 proved 187 real API shapes / 0 gaps. Re-run on current main to confirm the coverage held through all the R-drains (now R=0). A receipt, not a change.
+### C. Real-scale numpy/pandas re-sweep — **CLOSED**. Receipt: `docs/receipts/2026-07-10-vendor-op-scale-sweep.md` — **187/187 gap=0** on current main.
 
-### D. A SECOND real-name logo. itsdangerous is proven (#3960/#3977). Pick another real library with a real bug shape and prove it end-to-end the same way — a new "logos are the product" artifact, CI-ratcheted, with a SCOPE.md. High value, PyCon material.
+
+### D. SECOND real-name logo — **CLOSED**. `examples/stdlib-base64-padding` (stdlib encode_nopad), CI `run-logo-receipt.sh`, SCOPE.md. GOOD discharged / BAD unsatisfied / WRONG-UNPADDED discharged.
+
+
+### E. Multi-arg loud bad-twins — **CLOSED**. `tests/test_multiarg_loud_discrimination.py`.
 
 **DONE (off the list):**
 - #3958 free-name bad-twin → #3982 (T). Dig already correct; pinned loud.
 - B coordinate discrimination bad-twins (kwarg/chain/method/attr) → #3986 (T). Verify-before-ship applied.
+- C scale re-sweep 187/187 gap=0 (receipt).
+- D stdlib encode_nopad logo.
 - E multi-arg loud discrimination bad-twins (`df.merge(other, on=...)`, `df.pivot_table(...)`) → T. Membrane already discriminates; pinned 8 instruments (shared euf + dual-assert unsat + arg-identity guards). Instrument: `tests/test_multiarg_loud_discrimination.py`.
 - A numpy totality-at-zero ratchet → 97102 building it now (R=0 reached). If T wants it instead, tell me so I stop 97102.
 
