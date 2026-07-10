@@ -4,30 +4,25 @@
 // over REAL LSP stdio (Content-Length framed JSON-RPC) against a
 // self-contained fixture project:
 //
-//   * a VENDOR proof staged at `.sugar/imports/` (minted in-process via
-//     `sugar_cli::cmd_mint::mint_project_scratch_proof` against a throwaway
-//     vendor project with a mock lift plugin -- no python/rust kit required)
+//   * a VENDOR proof staged at `.sugar/imports/` (minted once offline via
+//     `mint_project_scratch_proof` against a throwaway vendor project —
+//     mint remains the *seal/publish* door, not the LSP solve feed)
 //     swearing `demo.check(2,3) == 5`.
-//   * a CONSUMER project with its own mock lift plugin that reads the
-//     CURRENTLY OPEN buffer's own source file (via the `workspace_root` the
-//     in-process overlay passes at lift time) and asserts either
-//     `== 6` (contradicts the vendor -> RED) or `== 5` (agrees -> GREEN).
+//   * a CONSUMER project with a mock kit that answers `sugar.enumerate`
+//     from the CURRENTLY OPEN buffer (overlay workspace_root) and asserts
+//     either `== 6` (contradicts the vendor -> RED) or `== 5` (agrees -> GREEN).
 //
 // `didOpen` the bad-shaped buffer -> expect `publishDiagnostics` carrying the
 // three-fact message (`Vendor fact:` / `Vendor universe:` / `Your fact:` /
 // `Conjoined:` / `→ UNSAT`). `didChange` to the good twin -> diagnostics
 // clear.
 //
-// HONESTY NOTE (per the lane brief): this exercises the REAL construction
-// (`build_prove_context_for` -> `mint_project_scratch_proof` ->
+// HONESTY NOTE: this exercises the REAL #3809 composition
+// (`build_prove_context_for` -> enumerate→fold feed ->
 // `verify_consistency_scoped_with_base_index` -> `row_to_json` ->
-// `fol_format::format_detail`) end to end, but the "lifter" on both sides is
-// a fixture shell script speaking the lift-plugin wire protocol directly
-// (the SAME pattern `sugar-cli/tests/cmd_verify_rust_division_unsound.rs`
-// uses), not a real language kit. The pandas/python witness happens at flip
-// time, per the lane brief -- this fixture proves the LSP's OWN plumbing
-// (in-process pool build, overlay mint, solve door, diagnostic rendering),
-// not a specific language's lift fidelity.
+// `fol_format::format_detail`) end to end. The kit is a fixture Python RPC
+// mock speaking `sugar.enumerate` (not a real language kit). The
+// pandas/python witness is `real_python_kit_*` + the golden LSP-vs-API test.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -69,35 +64,6 @@ fn unique_dir(label: &str) -> PathBuf {
 // `sugar-cli/tests/cmd_verify_rust_division_unsound.rs::write_mock_lifter`
 // uses: NDJSON `initialize` / `lift` / `shutdown`, matched by substring).
 // ---------------------------------------------------------------------------
-
-fn write_lift_manifest(project: &Path, surface: &str, script_path: &Path) {
-    let lift_dir = project.join(".sugar").join("lift").join(surface);
-    fs::create_dir_all(&lift_dir).expect("mkdir lift surface dir");
-    // Invoke via /bin/sh so the fixture works when the script lives on a
-    // noexec mount (common for Docker tmpfs /tmp). Direct exec of the .sh
-    // path fails with EACCES even when mode is 0755; the shell is on an
-    // executable FS and only *reads* the script.
-    let manifest = format!(
-        "name = \"{surface}\"\ncommand = [\"/bin/sh\", \"{}\"]\nworking_dir = \".\"\n",
-        script_path.display()
-    );
-    fs::write(lift_dir.join("manifest.toml"), manifest).expect("write manifest.toml");
-}
-
-fn write_script(project: &Path, surface: &str, body: &str) -> PathBuf {
-    let lift_dir = project.join(".sugar").join("lift").join(surface);
-    fs::create_dir_all(&lift_dir).expect("mkdir lift surface dir");
-    let script_path = lift_dir.join("mock-lifter.sh");
-    fs::write(&script_path, body).expect("write mock lifter script");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&script_path).unwrap().permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script_path, perms).expect("chmod mock lifter");
-    }
-    script_path
-}
 
 fn hex128(ch: char) -> String {
     std::iter::repeat(ch).take(128).collect()
@@ -147,19 +113,15 @@ fn contract_ir_document(name: &str, file: &str, rhs: i64) -> Value {
     })
 }
 
-fn rpc_line(id: u64, result: &Value) -> String {
-    serde_json::to_string(&json!({"jsonrpc": "2.0", "id": id, "result": result})).unwrap()
-}
-
 /// Valid `sugar.plugin.kit_declaration` result (rendezvous handshake).
-/// Mock lifters that only answered `initialize`/`lift` timed out after
-/// SEAM 6b made declaration required (`Kit::rendezvous`).
+/// Must advertise `sugar.enumerate` — the LSP solve feed walks that method.
 fn mock_kit_declaration_result(surface: &str) -> Value {
     json!({
         "kit": {"id": surface, "language": "mock", "version": "0.0.1"},
         "rpc": {"methods": [
             {"name": "initialize", "required": true},
             {"name": "sugar.plugin.kit_declaration", "required": true},
+            {"name": "sugar.enumerate", "required": true},
             {"name": "lift", "required": true},
             {"name": "shutdown", "required": false}
         ]},
@@ -168,84 +130,175 @@ fn mock_kit_declaration_result(surface: &str) -> Value {
     })
 }
 
-/// A STATIC mock lifter: always returns the SAME canned `lift` response
-/// regardless of request content (used for the vendor project, which is
-/// minted once, ahead of time).
-fn write_static_mock_lifter(project: &Path, surface: &str, lift_result: &Value) {
-    let init_line = rpc_line(1, &json!({"name": surface, "protocol_version": "pep/1.7.0"}));
-    // Handshake uses id=2 for kit_declaration; mint lift uses id=2 on a
-    // fresh process (initialize=1, lift=2) — same as historical fixture.
-    let decl_line = rpc_line(2, &mock_kit_declaration_result(surface));
-    let lift_line = rpc_line(2, lift_result);
-    let script = format!(
-        r#"#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *sugar.plugin.kit_declaration*)
-      printf '%s\n' '{decl_line}'
-      ;;
-    *'"method":"initialize"'*|*'"method": "initialize"'*)
-      printf '%s\n' '{init_line}'
-      ;;
-    *'"method":"lift"'*|*'"method": "lift"'*)
-      printf '%s\n' '{lift_line}'
-      ;;
-    *'"method":"shutdown"'*|*'"method": "shutdown"'*)
-      exit 0
-      ;;
-  esac
-done
-"#,
-        init_line = init_line.replace('\'', "'\\''"),
-        decl_line = decl_line.replace('\'', "'\\''"),
-        lift_line = lift_line.replace('\'', "'\\''"),
+/// Write a Python mock kit that speaks `sugar.enumerate` (+ `lift` for vendor
+/// mint seal). `mode`:
+/// - `"static"`: always serves `bad_or_static` IR (vendor seal path)
+/// - `"dynamic"`: picks good vs bad IR by scanning workspace `src/lib.rs`
+///   for GOOD_MARKER (consumer LSP feed path)
+fn write_enumerate_mock_kit(
+    project: &Path,
+    surface: &str,
+    mode: &str,
+    good_or_static: &Value,
+    bad: &Value,
+) {
+    let lift_dir = project.join(".sugar").join("lift").join(surface);
+    fs::create_dir_all(&lift_dir).expect("mkdir lift surface dir");
+    let py_path = lift_dir.join("mock_enumerate_kit.py");
+    // IR document for lift (vendor mint) is the same shape as contract_ir_document.
+    let good_json = serde_json::to_string(good_or_static).expect("serialize good IR");
+    let bad_json = serde_json::to_string(bad).expect("serialize bad IR");
+    let decl = mock_kit_declaration_result(surface);
+    let decl_json = serde_json::to_string(&decl).expect("serialize decl");
+    // Embed fixtures as JSON literals; avoid Python !r inside Rust format! braces.
+    let body = format!(
+        r##"#!/usr/bin/env python3
+import json, sys, os
+
+SURFACE = {surface}
+MODE = {mode}
+GOOD = json.loads({good_json})
+BAD = json.loads({bad_json})
+DECL = json.loads({decl_json})
+
+def inv_from_doc(doc):
+    return doc["ir"][0]["inv"]
+
+def contract_from_doc(doc):
+    return doc["ir"][0]
+
+def pick_doc(workspace_root):
+    if MODE == "static":
+        return GOOD
+    path = os.path.join(workspace_root or "", "src", "lib.rs")
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        text = ""
+    return GOOD if "GOOD_MARKER" in text else BAD
+
+def memento(file, fn="check", line=1):
+    return {{
+        "kind": "source-memento",
+        "file": file,
+        "function_name": fn,
+        "sourceFunctionName": fn,
+        "span": {{"start_line": line, "start_col": 0, "end_line": line, "end_col": 10}},
+        "param_names": [],
+        "paramNames": [],
+        "source_cid": "blake3-512:" + ("a" * 128),
+        "template_cid": "blake3-512:" + ("b" * 128),
+    }}
+
+def reply(msg_id, result):
+    sys.stdout.write(json.dumps({{"jsonrpc": "2.0", "id": msg_id, "result": result}}) + "\n")
+    sys.stdout.flush()
+
+def enumerate_nodes(level, at, seek, workspace_root):
+    doc = pick_doc(workspace_root)
+    contract = contract_from_doc(doc)
+    inv = inv_from_doc(doc)
+    warrants = contract.get("sourceWarrants") or [{{}}]
+    file = warrants[0].get("file") or "src/lib.rs"
+    site = memento(file)
+    if level == "source_files":
+        return [{{"memento": memento(file, fn=""), "audit": None, "payload": None}}]
+    if level == "functions":
+        return [{{"memento": memento(file, fn="check"), "audit": None, "payload": None}}]
+    if level == "call_sites":
+        return [{{
+            "memento": site,
+            "audit": {{
+                "kind": "contract",
+                "name": contract["name"],
+                "bridgeSourceSymbol": "call:check",
+                "inv": inv,
+                "outBinding": "out",
+                "sourceWarrants": contract.get("sourceWarrants", []),
+            }},
+            "payload": None,
+        }}]
+    if level in ("assertions", "facts"):
+        node = {{
+            "memento": site,
+            "audit": {{
+                "kind": "contract",
+                "name": contract["name"],
+                "inv": inv,
+                "outBinding": "out",
+                "sourceWarrants": contract.get("sourceWarrants", []),
+            }},
+            "payload": inv if level == "facts" else None,
+        }}
+        return [node]
+    if level == "universe":
+        return []
+    return []
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    method = msg.get("method") or ""
+    msg_id = msg.get("id")
+    params = msg.get("params") or {{}}
+    if method == "initialize":
+        reply(msg_id, {{"name": SURFACE, "protocol_version": "pep/1.7.0"}})
+    elif method == "sugar.plugin.kit_declaration":
+        reply(msg_id, DECL)
+    elif method == "sugar.enumerate":
+        level = params.get("level") or ""
+        at = params.get("at")
+        seek = bool(params.get("seek"))
+        wr = params.get("workspace_root") or ""
+        nodes = enumerate_nodes(level, at, seek, wr)
+        reply(msg_id, {{"nodes": nodes, "gaps": []}})
+    elif method == "lift":
+        wr = (params.get("workspace_root")
+              or (params.get("options") or {{}}).get("workspaceRoot")
+              or "")
+        reply(msg_id, pick_doc(wr))
+    elif method in ("shutdown", "sugar.plugin.shutdown"):
+        if msg_id is not None:
+            reply(msg_id, {{}})
+        break
+"##,
+        surface = serde_json::to_string(surface).unwrap(),
+        mode = serde_json::to_string(mode).unwrap(),
+        // good_json/bad_json/decl_json are already JSON text; re-encode as
+        // Python string literals so json.loads(...) receives valid text.
+        good_json = serde_json::to_string(&good_json).unwrap(),
+        bad_json = serde_json::to_string(&bad_json).unwrap(),
+        decl_json = serde_json::to_string(&decl_json).unwrap(),
     );
-    let script_path = write_script(project, surface, &script);
-    write_lift_manifest(project, surface, &script_path);
+    fs::write(&py_path, body).expect("write mock enumerate kit");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&py_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&py_path, perms).expect("chmod mock kit");
+    }
+    // Invoke via python3 so noexec /tmp is fine.
+    let manifest = format!(
+        "name = \"{surface}\"\ncommand = [\"python3\", \"{}\"]\nworking_dir = \".\"\n",
+        py_path.display()
+    );
+    fs::write(lift_dir.join("manifest.toml"), manifest).expect("write manifest.toml");
 }
 
-/// A DYNAMIC mock lifter: reads the CURRENT content of `<workspace_root>/src/lib.rs`
-/// off disk at request time (the overlay directory the in-process engine
-/// substitutes the edited buffer into) and picks between two precomputed
-/// `lift` responses depending on whether it finds the "good" marker. This is
-/// how a single mock lifter can honestly reflect a real didOpen/didChange
-/// edit, the same way a REAL lift kit would re-read its own project tree.
+/// STATIC mock: always serves the same IR (vendor seal via mint).
+fn write_static_mock_lifter(project: &Path, surface: &str, lift_result: &Value) {
+    write_enumerate_mock_kit(project, surface, "static", lift_result, lift_result);
+}
+
+/// DYNAMIC mock: GOOD_MARKER in overlay `src/lib.rs` selects good IR.
 fn write_dynamic_mock_lifter(project: &Path, surface: &str, good_result: &Value, bad_result: &Value) {
-    let init_line = rpc_line(1, &json!({"name": surface, "protocol_version": "pep/1.7.0"}));
-    let decl_line = rpc_line(2, &mock_kit_declaration_result(surface));
-    let good_line = rpc_line(2, good_result).replace('\'', "'\\''");
-    let bad_line = rpc_line(2, bad_result).replace('\'', "'\\''");
-    let script = format!(
-        r#"#!/bin/sh
-GOOD='{good_line}'
-BAD='{bad_line}'
-while IFS= read -r line; do
-  case "$line" in
-    *sugar.plugin.kit_declaration*)
-      printf '%s\n' '{decl_line}'
-      ;;
-    *'"method":"initialize"'*|*'"method": "initialize"'*)
-      printf '%s\n' '{init_line}'
-      ;;
-    *'"method":"lift"'*|*'"method": "lift"'*)
-      wr=$(printf '%s' "$line" | sed -n 's/.*"workspace_root": *"\([^"]*\)".*/\1/p')
-      if grep -q GOOD_MARKER "$wr/src/lib.rs" 2>/dev/null; then
-        printf '%s\n' "$GOOD"
-      else
-        printf '%s\n' "$BAD"
-      fi
-      ;;
-    *'"method":"shutdown"'*|*'"method": "shutdown"'*)
-      exit 0
-      ;;
-  esac
-done
-"#,
-        init_line = init_line.replace('\'', "'\\''"),
-        decl_line = decl_line.replace('\'', "'\\''"),
-    );
-    let script_path = write_script(project, surface, &script);
-    write_lift_manifest(project, surface, &script_path);
+    write_enumerate_mock_kit(project, surface, "dynamic", good_result, bad_result);
 }
 
 const CONTRACT_NAME: &str = "demo.check#euf#c:1(2,3)::assertion";

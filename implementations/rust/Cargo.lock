@@ -1769,11 +1769,14 @@ name = "sugar-lsp"
 version = "0.0.1"
 dependencies = [
  "libc",
+ "libsugar",
  "serde",
  "serde_json",
  "sugar-canonicalizer",
  "sugar-cli",
+ "sugar-compiler",
  "sugar-ir-compiler",
+ "sugar-ir-compiler-smt-lib",
  "sugar-verifier",
  "tempfile",
  "tokio",

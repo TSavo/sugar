@@ -24,7 +24,7 @@ use sugar_claim_envelope::{
 };
 use sugar_proof_envelope::{
     ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento, ContractBody,
-    ContractMementoRef, Ed25519Seed, FlatAtom, ProofGraph,
+    ContractMementoRef, Ed25519Seed, FlatAtom, ProofGraph, SourceMemento,
 };
 use sugar_verifier::Speaker;
 
@@ -274,6 +274,117 @@ fn push_claim_with_slots(
     Ok(())
 }
 
+/// Mint-parity: lower each IR `sourceWarrants[]` entry to a lean
+/// `source-memento` graph member keyed by `contractName`.
+///
+/// Consistency locus preference (#3809 cut #5) indexes **source-memento
+/// members** (not embedded warrants on claim bodies). Without co-members,
+/// consumer feed has `sources=0`, the row anchors on the vendor locus, and
+/// editor-scope diagnostics for the open buffer vanish.
+fn push_source_mementos_from_warrants(
+    graph: &mut ProofGraph,
+    warrants: &[Json],
+    contract_name: &str,
+) -> Result<(), FeedError> {
+    for decl in warrants {
+        push_one_source_memento(graph, decl, contract_name)?;
+    }
+    Ok(())
+}
+
+fn push_one_source_memento(
+    graph: &mut ProofGraph,
+    decl: &Json,
+    contract_name: &str,
+) -> Result<(), FeedError> {
+    // Accept either a bare source-memento object or a wrapped `{source_memento: ...}`.
+    let mut body = decl
+        .get("source_memento")
+        .or_else(|| decl.get("sourceMemento"))
+        .cloned()
+        .unwrap_or_else(|| decl.clone());
+    let body_obj = body.as_object_mut().ok_or_else(|| FeedError::Incomplete {
+        what: "push_source_memento",
+        detail: "source warrant must be a JSON object".into(),
+    })?;
+    body_obj
+        .entry("kind".to_string())
+        .or_insert_with(|| json!("source-memento"));
+    if body_obj.get("kind").and_then(Json::as_str) != Some("source-memento") {
+        return Err(FeedError::Incomplete {
+            what: "push_source_memento",
+            detail: format!(
+                "source warrant kind must be source-memento, got {:?}",
+                body_obj.get("kind")
+            ),
+        });
+    }
+    for forbidden in ["body_text", "ast_template", "bodyText", "astTemplate"] {
+        if body_obj.contains_key(forbidden) {
+            return Err(FeedError::Incomplete {
+                what: "push_source_memento",
+                detail: format!(
+                    "source-memento must be lean; forbidden inline field `{forbidden}`"
+                ),
+            });
+        }
+    }
+    // Stamp claim identity so consistency locus map keys match the claim name.
+    body_obj
+        .entry("contractName".to_string())
+        .or_insert_with(|| json!(contract_name));
+    body_obj
+        .entry("claimName".to_string())
+        .or_insert_with(|| json!(contract_name));
+    // Wire/tree SourceMemento uses function_name; mint also accepts source_function_name.
+    if !body_obj.contains_key("source_function_name") {
+        if let Some(fn_name) = body_obj
+            .get("function_name")
+            .or_else(|| body_obj.get("sourceFunctionName"))
+            .cloned()
+        {
+            body_obj.insert("source_function_name".to_string(), fn_name);
+        }
+    }
+
+    let source_cid = body_obj
+        .get("source_cid")
+        .or_else(|| body_obj.get("sourceCid"))
+        .and_then(Json::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| FeedError::Incomplete {
+            what: "push_source_memento",
+            detail: "source-memento missing non-empty source_cid".into(),
+        })?
+        .to_string();
+
+    let mut header = serde_json::Map::new();
+    header.insert("kind".to_string(), json!("source-memento"));
+    header.insert("sourceCid".to_string(), json!(source_cid));
+    for (header_field, body_field) in [
+        ("claimName", "claimName"),
+        ("contractName", "contractName"),
+        ("eufName", "eufName"),
+        ("file", "file"),
+        ("role", "role"),
+        ("sourceFunctionName", "source_function_name"),
+        ("universeKind", "universe_kind"),
+    ] {
+        if let Some(value) = body_obj.get(body_field).cloned() {
+            header.insert(header_field.to_string(), value);
+        }
+    }
+
+    let envelope = json!({
+        "body": body,
+        "header": Json::Object(header),
+        "schemaVersion": "1",
+    });
+    let bytes = encode_jcs(json_to_cvalue(&envelope)?.as_ref()).into_bytes();
+    graph.push_source(SourceMemento::new(bytes));
+    Ok(())
+}
+
 /// Body slots present on an IR contract/function-contract row.
 fn slots_from_ir_row(ir: &Json) -> Vec<(&'static str, Json)> {
     let mut slots = Vec::new();
@@ -438,7 +549,7 @@ pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
         _ => vec![("inv", payload_formula)],
     };
 
-    let warrants = warrants_for_fact(fact)?;
+    let (warrant_jsons, warrants) = warrants_for_fact(fact)?;
     // Assertion contracts (kind=contract / inv-only claims) are not body-discharged
     // unless IR explicitly claims eligibility — default false.
     let extras = fact
@@ -459,10 +570,13 @@ pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
 
     let mut graph = ProofGraph::new();
     push_claim_with_slots(&mut graph, &contract_name, slots, warrants, extras)?;
+    // Co-member source-mementos (mint parity) — editor locus map keys.
+    push_source_mementos_from_warrants(&mut graph, &warrant_jsons, &contract_name)?;
     Ok(graph)
 }
 
-fn warrants_for_fact(fact: &Fact) -> Result<Vec<Arc<CValue>>, FeedError> {
+/// Returns (JSON warrants for source co-members, CValue warrants for claim slots).
+fn warrants_for_fact(fact: &Fact) -> Result<(Vec<Json>, Vec<Arc<CValue>>), FeedError> {
     if let Some(ir) = fact.ir_row() {
         if let Some(arr) = ir
             .get("sourceWarrants")
@@ -470,15 +584,17 @@ fn warrants_for_fact(fact: &Fact) -> Result<Vec<Arc<CValue>>, FeedError> {
             .and_then(Json::as_array)
         {
             if !arr.is_empty() {
-                let mut out = Vec::with_capacity(arr.len());
+                let mut cvals = Vec::with_capacity(arr.len());
                 for w in arr {
-                    out.push(json_to_cvalue(w)?);
+                    cvals.push(json_to_cvalue(w)?);
                 }
-                return Ok(out);
+                return Ok((arr.clone(), cvals));
             }
         }
     }
-    Ok(vec![json_to_cvalue(&fact.source_memento().to_json())?])
+    let memento_json = fact.source_memento().to_json();
+    let cval = json_to_cvalue(&memento_json)?;
+    Ok((vec![memento_json], vec![cval]))
 }
 
 /// Build a graph fragment from one enumerated universe (function-contract).
@@ -512,20 +628,16 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             }
         }
         let (formals, formals_present) = formals_from_ir_row(ir);
-        let warrants = match ir
+        let warrant_jsons: Vec<Json> = ir
             .get("sourceWarrants")
             .or_else(|| ir.get("source_warrants"))
             .and_then(Json::as_array)
-        {
-            Some(arr) => {
-                let mut out = Vec::with_capacity(arr.len());
-                for w in arr {
-                    out.push(json_to_cvalue(w)?);
-                }
-                out
-            }
-            None => Vec::new(),
-        };
+            .cloned()
+            .unwrap_or_default();
+        let mut warrants = Vec::with_capacity(warrant_jsons.len());
+        for w in &warrant_jsons {
+            warrants.push(json_to_cvalue(w)?);
+        }
         // Function-contracts are body-bearing by default; IR can refuse.
         let (eligible, reason) = body_policy_from_ir(ir, /*default_eligible=*/ true);
         let extras = ClaimExtras {
@@ -537,6 +649,7 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             body_discharge_refusal_reason: reason,
         };
         push_claim_with_slots(&mut graph, &name, slots, warrants, extras)?;
+        push_source_mementos_from_warrants(&mut graph, &warrant_jsons, &name)?;
         return Ok(graph);
     }
 

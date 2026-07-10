@@ -7,6 +7,11 @@ authors = ["Sugar Contributors"]
 description = "Language Server Protocol implementation for Sugar. Delegates verification to configurable JSON-RPC backends."
 license = "MIT OR Apache-2.0"
 
+[lib]
+name = "sugar_lsp"
+path = "src/lib.rs"
+doctest = false
+
 [[bin]]
 name = "sugar-lsp"
 path = "src/main.rs"
@@ -21,12 +26,14 @@ toml = "0.8"
 # the engine directly -- no daemon RPC, no subprocess solver (the daemon this
 # once routed through, sugar-linkerd, is retired; see #3844 + daemon-3-delete):
 # sugar-verifier owns the resident pool / consistency index / solve door;
-# sugar-cli's lib target owns the source-overlay scratch mint
-# (`cmd_mint::mint_project_scratch_proof`).
+# sugar-compiler owns enumerate→fold feed (`fold_project` / `pool_from_graph_with_speaker`);
+# sugar-cli owns project config + lift manifest resolution for kit rendezvous.
 sugar-verifier = { path = "../sugar-verifier" }
 sugar-cli = { path = "../sugar-cli" }
+sugar-compiler = { path = "../sugar-compiler" }
 sugar-ir-compiler = { path = "../sugar-ir-compiler" }
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
+libsugar = { path = "../libsugar" }
 walkdir = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -34,3 +41,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tempfile = "3.14"
 libc = "0.2"
+sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }

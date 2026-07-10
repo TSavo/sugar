@@ -610,11 +610,22 @@ fn find_manifest(project_root: &Path, surface: &str) -> Result<PlannedLiftManife
     ))
 }
 
-pub(crate) fn find_manifest_for_surface(
+/// Resolve the lift manifest for `surface` (project-local, user-global, or plan).
+/// Public for faces that rendezvous a kit without going through mint dispatch
+/// (e.g. LSP enumerate→fold feed, #3809).
+pub fn find_manifest_for_surface(
     project_root: &Path,
     surface: &str,
 ) -> Result<PlannedLiftManifest, String> {
     find_manifest(project_root, surface)
+}
+
+/// Absolute working_dir for `Kit::rendezvous` from a planned manifest.
+pub fn absolute_working_dir_for_manifest(
+    project_root: &Path,
+    manifest: &PlannedLiftManifest,
+) -> Option<PathBuf> {
+    resolved_absolute_working_dir(project_root, manifest)
 }
 
 fn resolved_working_dir(project_root: &Path, manifest: &PlannedLiftManifest) -> Option<PathBuf> {
