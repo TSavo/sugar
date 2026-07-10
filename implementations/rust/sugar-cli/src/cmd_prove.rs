@@ -19,7 +19,7 @@ use sugar_proof_envelope::cid_from_proof_stem;
 use walkdir::WalkDir;
 
 use sugar_verifier::{
-    LegacyZ3Fallback, MementoCid, PlanArtifactInput, ProofRunArtifact, RunnerConfig,
+    LegacyZ3Fallback, MementoCid, PlanArtifactInput, ProofRunArtifact, RunnerConfig, SolversConfig,
 };
 
 #[cfg(test)]
@@ -209,12 +209,19 @@ pub(crate) fn build_prove_artifact_with_options(
         }
     };
 
+    // #3809 PR A: CLI is the client that reads config.toml. Solve receives
+    // signers + solvers already on RunnerConfig — never re-opens config.
+    let solvers_config = SolversConfig::load(project_root).map_err(|e| {
+        format!("load solvers from .sugar/config.toml: {e}")
+    })?;
+
     let cfg = RunnerConfig {
         project_root: project_root.to_path_buf(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat(z3.to_string())),
         extra_projects,
         extra_proofs: dependency_proofs,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
+        solvers_config,
         plan_artifact: plan_artifact.as_ref().map(|artifact| PlanArtifactInput {
             plan_cid: artifact.plan_cid.clone(),
             member_cid: artifact.member_cid.clone(),
