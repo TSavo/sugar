@@ -683,15 +683,17 @@ def _function_source_memento(
 
 def _statement_source_memento(
     stmt: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     memento_file: str,
     source_lines: list[str],
     *,
     contract_name: str,
     role: str = "python.array-map-sugar",
 ) -> SourceMementoDto:
+    """Statement memento; ``fn is None`` means module-parent assert (#4024)."""
     statement_source = _statement_source_locator(stmt, fn, memento_file, source_lines)
     span = statement_source["span"]
+    parent_name = fn.function_name() if fn is not None else "<module>"
     return SourceMementoDto(
         file=memento_file,
         span=SourceSpanDto(
@@ -702,7 +704,7 @@ def _statement_source_memento(
         ),
         source_cid=statement_source["source_cid"],
         template_cid=statement_source["template_cid"],
-        source_function_name=fn.function_name(),
+        source_function_name=parent_name,
         role=role,
         contract_name=contract_name,
         param_names=statement_source.get("param_names", []),
@@ -729,7 +731,7 @@ def _body_source_locator(
 
 def _statement_source_locator(
     stmt: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     memento_file: str,
     source_lines: list[str],
 ) -> dict[str, Any]:
@@ -740,8 +742,11 @@ def _statement_source_locator(
     function_param_names, stmt_to_template, blake3_512_of, template_cid_of_json = (
         _statement_source_api()
     )
-    fn_node = fn.function_node()
-    ast_template = stmt_to_template(stmt.stmt_node(), function_param_names(fn_node))
+    # Module-parent asserts have no FunctionDef; template with empty params.
+    param_names = (
+        function_param_names(fn.function_node()) if fn is not None else []
+    )
+    ast_template = stmt_to_template(stmt.stmt_node(), param_names)
     return {
         "file": memento_file.replace(os.sep, "/"),
         "source_cid": blake3_512_of(source_text.encode("utf-8")),
@@ -752,7 +757,7 @@ def _statement_source_locator(
             "end_col": stmt.end_col,
         },
         "template_cid": template_cid_of_json(ast_template),
-        "param_names": function_param_names(fn_node),
+        "param_names": param_names,
     }
 
 
