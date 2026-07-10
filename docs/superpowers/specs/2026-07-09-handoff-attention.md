@@ -22,7 +22,8 @@ The 8 disk-reads to move: input artifact CID walk, link-bundle/plugin-registry d
 
 ### A. numpy totality-at-zero ratchet. Wall is at R≈0 (97102 finishing the last drains). After R=0, a gate asserting numpy+pandas construction-gap R == 0 on battleaxe so it can't silently climb — drains have unmasked deeper gaps mid-lane, so honest-0 needs a guard. **Coordinate with 97102 (it may land this) — if T takes it, tell me so I stop 97102 from duplicating.**
 
-### B. Loud discrimination bad-twins for the coordinate lane (the #3982 pattern). The vendor-op coordinates work but several discriminations are unproven-with-teeth: a **lying kwarg** (`df.sum(axis=0) == wrong`), a **lying chained call** (`df.groupby().sum() == wrong`), a **method-vs-attribute** confusion. Each: a bad-twin proving the lie refutes, pinned as a loud regression instrument. Python lift tests, disjoint from everything.
+### B. Loud discrimination bad-twins — **CLOSED** (#3982 pattern). Instruments: lying kwarg (`.sum(axis=0)` dual unsat), lying chain (`.dropna().mean()` dual unsat), method vs attribute (`.sum()` / `.empty` dual unsat) + bare-sum vs `kw:axis` distinct euf keys. See `tests/test_coordinate_loud_discrimination.py`. Combined probe on branch: 41 related passed before merge.
+
 
 ### C. Real-scale numpy/pandas re-sweep. #3944 proved 187 real API shapes, 0 gaps — re-run it on current main to confirm the coverage held through all the R-drains. Pure python, a receipt not a change.
 
