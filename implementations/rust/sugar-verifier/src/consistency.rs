@@ -3291,8 +3291,9 @@ pub fn build_manifest_from_pool(
 /// call the door themselves.
 ///
 /// Cold-disk policy (`pool_only_inputs = false`): may `Path::exists` for locus
-/// preference and read witness lift manifests. Prefer
-/// [`verify_consistency_with_policy`] on the warm path.
+/// preference and read witness lift manifests. Resident-base / preloaded-pool
+/// faces derive pool-only via
+/// [`verify_consistency_scoped_with_base_index`] / runner `pool_only_inputs`.
 ///
 /// Witness discharge config defaults empty (typed context required for
 /// custom-witness package recompute; no env config channel).
@@ -3507,8 +3508,8 @@ fn build_consistency_index_filtered(
 }
 
 /// CACHED-BASE solve body: base index + overlay pool, scoped groups.
-/// Policy is explicit — callers must choose [`warm_solve`] (zero project FS)
-/// or [`verify_consistency_scoped_with_base_index`] (cold disk face).
+/// Shared by the public scoped entry and discrimination helpers; policy is
+/// explicit so instruments can compare pool-only vs cold-disk faces.
 fn verify_consistency_scoped_with_base_index_policy(
     base: &ConsistencyIndex,
     overlay_pool: &MementoPool,
@@ -3544,12 +3545,15 @@ fn verify_consistency_scoped_with_base_index_policy(
     )
 }
 
-/// #3809 warm **SOLVE** door — resident base index + overlay pool face.
+/// Scoped consistency over a **resident** base index + overlay pool (#3809).
 ///
-/// This is the in-process warm path used by `sugar-lsp` (and any daemon that
-/// holds a prebuilt [`ConsistencyIndex`]). Answers "cold or warm?" **once**:
-/// forces `pool_only_inputs = true` so discharge never `Path::exists` /
-/// witness `read_dir` under the project tree.
+/// ## One door — warmth is derived cache state
+///
+/// There is no separate `warm_solve`. The caller already holds a prebuilt
+/// [`ConsistencyIndex`] (daemon/LSP residency). That residency **derives**
+/// `pool_only_inputs = true`: discharge never `Path::exists` / witness
+/// `read_dir` under the project tree. Typed [`WitnessDischargeContext`]
+/// is the sole resolver config surface.
 ///
 /// ## What this is / is not
 ///
@@ -3557,12 +3561,14 @@ fn verify_consistency_scoped_with_base_index_policy(
 ///   pool + in-memory plan/registry/compilers. Zero project FS reads.
 /// - **Is not:** kit fold / mint / source overlay construction (lift face,
 ///   happens *before* this door). Not the full `Runner`/`proof-run` face —
-///   that is [`crate`]-adjacent `sugar_compiler::orchestrate::warm_solve`
-///   over a complete pool (same vocabulary, different arity).
+///   that is `sugar_compiler::orchestrate::solve_project_with_pool` over a
+///   complete pool (same vocabulary, different arity).
 ///
-/// Prefer this over [`verify_consistency_scoped_with_base_index`] for any
-/// warm re-solve. The cold scoped face remains for discrimination tests.
-pub fn warm_solve(
+/// Cold-disk discrimination (may `Path::exists` / `read_dir`) goes through
+/// [`verify_consistency_from_indexes`] with `pool_only_inputs = false` (or
+/// [`verify_consistency_with_policy`]) — same THE door body, not a second
+/// named warm function.
+pub fn verify_consistency_scoped_with_base_index(
     base: &ConsistencyIndex,
     overlay_pool: &MementoPool,
     plan: &SolverPlan,
@@ -3571,7 +3577,7 @@ pub fn warm_solve(
     project_root: &Path,
     scope: &Path,
 ) -> Vec<ConsistencyResult> {
-    verify_consistency_scoped_with_base_index_policy(
+    verify_consistency_scoped_with_base_index_with_witness(
         base,
         overlay_pool,
         plan,
@@ -3579,13 +3585,13 @@ pub fn warm_solve(
         compilers,
         project_root,
         scope,
-        /* pool_only_inputs = */ true,
         &WitnessDischargeContext::default(),
     )
 }
 
-/// Warm solve with typed witness discharge context (SEAM 7).
-pub fn warm_solve_with_witness(
+/// Scoped resident-base solve with typed witness discharge context (SEAM 7).
+/// Same derived pool-only policy as [`verify_consistency_scoped_with_base_index`].
+pub fn verify_consistency_scoped_with_base_index_with_witness(
     base: &ConsistencyIndex,
     overlay_pool: &MementoPool,
     plan: &SolverPlan,
@@ -3595,6 +3601,7 @@ pub fn warm_solve_with_witness(
     scope: &Path,
     witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
+    // Derived warmth: base index is already resident in the caller's hands.
     verify_consistency_scoped_with_base_index_policy(
         base,
         overlay_pool,
@@ -3608,36 +3615,6 @@ pub fn warm_solve_with_witness(
     )
 }
 
-/// Cold-disk scoped face (may `Path::exists` / witness `read_dir` for locus
-/// preference and scope). Prefer [`warm_solve`] for the LSP/daemon warm path
-/// (#3809). Kept public so discrimination instruments can prove warm ≡ cold
-/// on speaker-stamped pools (byte-identical rows).
-///
-/// Semantics (cold): identical to loading `overlay_pool`'s members onto the
-/// base pool and running the solve door with `Some(scope)` — adjudicated by
-/// historical differential tests — but the base index is prebuilt.
-pub fn verify_consistency_scoped_with_base_index(
-    base: &ConsistencyIndex,
-    overlay_pool: &MementoPool,
-    plan: &SolverPlan,
-    registry: &HashMap<SolverSeat, SolverHandle>,
-    compilers: &CompilerRegistry,
-    project_root: &Path,
-    scope: &Path,
-) -> Vec<ConsistencyResult> {
-    verify_consistency_scoped_with_base_index_policy(
-        base,
-        overlay_pool,
-        plan,
-        registry,
-        compilers,
-        project_root,
-        scope,
-        /* pool_only_inputs = */ false,
-        &WitnessDischargeContext::default(),
-    )
-}
-
 /// THE consistency solve door. Grouping, scoping, and the per-group solve,
 /// over the merged (base + optional overlay) index. Every consistency verdict
 /// -- production `prove` (via `verify_consistency`), the editor daemon (via
@@ -3648,6 +3625,9 @@ pub fn verify_consistency_scoped_with_base_index(
 ///
 /// `pool_only_inputs`: when true, never `Path::exists` / witness `read_dir`
 /// (#3809 #8). Locus preference uses speaker role; scope uses path prefix.
+/// Resident-base callers ([`verify_consistency_scoped_with_base_index`])
+/// derive this as true; cold disk faces pass false explicitly — not a second
+/// named warm function.
 ///
 /// `witness`: typed discharge context (project_dir + resolvers). Sole config
 /// surface for package recompute (step 3 retired the env channel).
@@ -7517,15 +7497,17 @@ mod tests {
         assert_eq!(results[0].verdict, ObligationVerdict::Unsatisfied);
     }
 
-    /// #3809 GAP 3 instrument: named [`warm_solve`] must produce **byte-identical**
-    /// wire rows to the cold scoped face on a speaker-free base+overlay pool
-    /// (same merge/group/solve; warm forces pool_only without changing the
-    /// conjoin when locus preference has no FS/speaker discrimination).
+    /// #3809 GAP 3 instrument: resident-base scoped solve (derived pool-only)
+    /// must produce **byte-identical** wire rows to the cold-disk face on a
+    /// speaker-free base+overlay pool (same merge/group/solve; pool_only does
+    /// not change the conjoin when locus preference has no FS/speaker
+    /// discrimination). One door body — cold passes `pool_only_inputs=false`
+    /// to the shared policy helper; warm is the public scoped entry.
     ///
     /// Layout mirrors the LSP face: resident **base** index (vendor) +
     /// **overlay** pool (consumer) over one euf property with a contradiction.
     #[test]
-    fn warm_solve_byte_identical_to_cold_scoped_face() {
+    fn resident_base_solve_byte_identical_to_cold_disk_face() {
         let z3_ok = std::process::Command::new("z3")
             .arg("--version")
             .output()
@@ -7538,7 +7520,7 @@ mod tests {
         let prop = "demo.check#euf#c:1(2,3)::assertion";
         // Project tree so cold scope (Path::exists) keeps the group; warm
         // keeps relative loci by prefix rule without statting.
-        let project = unique_temp_dir("warm-solve-gap3-project");
+        let project = unique_temp_dir("one-solve-gap3-project");
         std::fs::create_dir_all(project.join("src")).unwrap();
         std::fs::write(project.join("src").join("lib.rs"), b"// fixture\n").unwrap();
 
@@ -7595,7 +7577,8 @@ mod tests {
         let compilers = test_compilers();
         let base_index = build_consistency_index(&base_pool);
 
-        let cold = verify_consistency_scoped_with_base_index(
+        // Cold discrimination face: same body, pool_only=false (may Path::exists).
+        let cold = verify_consistency_scoped_with_base_index_policy(
             &base_index,
             &overlay,
             &plan,
@@ -7603,8 +7586,11 @@ mod tests {
             &compilers,
             &project,
             &project,
+            /* pool_only_inputs = */ false,
+            &WitnessDischargeContext::default(),
         );
-        let warm = warm_solve(
+        // Public resident-base door: derives pool_only=true.
+        let warm = verify_consistency_scoped_with_base_index(
             &base_index,
             &overlay,
             &plan,
@@ -7616,10 +7602,10 @@ mod tests {
 
         // Second warm pass with project_root as a FILE trap — zero project FS.
         // Relative locus "src/lib.rs" stays in-scope on warm without exists().
-        let trap = unique_temp_dir("warm-solve-gap3-trap");
+        let trap = unique_temp_dir("one-solve-gap3-trap");
         let trap_file = trap.join("project_root_is_a_file");
-        std::fs::write(&trap_file, b"warm_solve must not open children\n").unwrap();
-        let warm_trap = warm_solve(
+        std::fs::write(&trap_file, b"resident-base solve must not open children\n").unwrap();
+        let warm_trap = verify_consistency_scoped_with_base_index(
             &base_index,
             &overlay,
             &plan,
@@ -7655,7 +7641,7 @@ mod tests {
         let warm_wire = wire(&warm);
         let trap_wire = wire(&warm_trap);
         eprintln!(
-            "warm_solve byte-identity gate:\n\
+            "one-solve byte-identity gate:\n\
              \tcold rows={} warm rows={} trap rows={}\n\
              \tcold={cold_wire:?}\n\
              \twarm={warm_wire:?}\n\
@@ -7666,11 +7652,11 @@ mod tests {
         );
         assert_eq!(
             warm_wire, cold_wire,
-            "warm_solve must be byte-identical to cold scoped face (row_to_json)"
+            "resident-base solve must be byte-identical to cold disk face (row_to_json)"
         );
         assert_eq!(
             trap_wire, warm_wire,
-            "warm_solve with file-trap project_root must match (zero project FS)"
+            "resident-base solve with file-trap project_root must match (zero project FS)"
         );
         assert!(
             !warm.is_empty(),

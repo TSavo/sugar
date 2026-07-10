@@ -29,7 +29,7 @@ use sugar_compiler::feed_from_tree;
 use sugar_compiler::kit::{Kit, LiftManifest};
 use sugar_compiler::orchestrate::{
     fold_kit_to_pool, pool_from_graph_with_speaker, prove_from_kit, solve_project,
-    solve_project_with_pool, warm_solve,
+    solve_project_with_pool,
 };
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph};
@@ -535,7 +535,7 @@ fn prove_from_kit_ignores_project_root_proof_files() {
 /// | 4 | `.sugar/config.toml` re-read for trusted signers + SolversConfig | OPEN | **CLOSED** (cfg-only) |
 /// | 5 | project `*.proof` load into pool (`load_all_proofs`) | closed #3910 | closed |
 /// | 6 | proof-run **write** to `.sugar/runs/` | WRITE | **CLOSED** (in-memory seal; empty bundle_path) |
-/// | 7 | CLI plan/config re-read **during SOLVE** | open as CLI front | **CLOSED for warm_solve door** (in-memory cfg only) |
+/// | 7 | CLI plan/config re-read **during SOLVE** | open as CLI front | **CLOSED for preloaded-pool solve door** (in-memory cfg only) |
 /// | 8 | consistency locus `Path::exists`, witness resolver manifests | conditional | **CLOSED** (speaker role / no read_dir) |
 /// | 9 | tier-2 implication cache_dir reads/writes | if cache_dir set | **CLOSED** (cleared + skipped on warm) |
 ///
@@ -972,8 +972,8 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
 ///   - kit rendezvous + `sugar.enumerate` (kit-side source reads = **lift**)
 ///
 /// ## AFTER / scope ruling
-/// - **Warm SOLVE door** is [`warm_solve`]: pure discharge over a pre-fed
-///   pool + in-memory `RunnerConfig` / compilers. Forces `pool_only_inputs`
+/// - **Preloaded SOLVE** is [`solve_project_with_pool`]: pure discharge over a pre-fed
+///   pool + in-memory `RunnerConfig` / compilers. Derives `pool_only_inputs`
 ///   and never calls plan/config loaders.
 /// - **Lift front** remains `fold_kit_to_pool` / rendezvous / enumerate —
 ///   kit source reads are lift, not solve (DoD: warm *solve* FS = 0).
@@ -982,11 +982,11 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
 ///   as residual if CLI still re-opens manifests on each `sugar prove`).
 ///
 /// Instrument: fold once, then plant canary config/manifests that would
-/// break cold re-discovery if warm_solve re-read them (bogus z3 binary +
-/// poison lift manifest). `warm_solve` with correct in-memory cfg must still
+/// break cold re-discovery if preloaded solve re-read them (bogus z3 binary +
+/// poison lift manifest). `solve_project_with_pool` with correct in-memory cfg must still
 /// match clean verdicts; canaries untouched.
 #[test]
-fn warm_solve_does_not_reread_plan_or_config_manifests() {
+fn solve_project_with_pool_does_not_reread_plan_or_config_manifests() {
     if !python_blake3_available() {
         eprintln!("skip: python3/blake3 unavailable");
         return;
@@ -1013,7 +1013,7 @@ fn warm_solve_does_not_reread_plan_or_config_manifests() {
     cfg.legacy_z3_fallback = Some(LegacyZ3Fallback::compat("z3"));
 
     // Baseline warm solve before canaries
-    let clean = warm_solve(cfg.clone(), compilers.clone(), pool.clone()).expect("warm_solve clean");
+    let clean = solve_project_with_pool(cfg.clone(), compilers.clone(), pool.clone()).expect("solve_project_with_pool clean");
     let clean_rows = report_verdict_keys(&clean);
 
     // AFTER fold: plant canaries that would poison cold re-discovery
@@ -1021,7 +1021,7 @@ fn warm_solve_does_not_reread_plan_or_config_manifests() {
     fs::create_dir_all(sugar.join("lift").join("poison")).expect("mkdir lift");
     fs::write(
         sugar.join("config.toml"),
-        // If warm_solve re-read this, solvers would try a missing binary.
+        // If solve re-read this, solvers would try a missing binary.
         r#"[solvers]
 default = "z3"
 [solvers.z3]
@@ -1038,10 +1038,10 @@ trusted_implication_signers = ["POISON_IF_REREAD"]
     .expect("poison manifest");
 
     // Warm SOLVE again with SAME in-memory cfg + pool — must not re-read canaries
-    let warm = warm_solve(cfg, compilers, pool).expect("warm_solve with canaries");
+    let warm = solve_project_with_pool(cfg, compilers, pool).expect("solve_project_with_pool with canaries");
 
     eprintln!(
-        "warm_solve #7 gate:\n\
+        "solve_project_with_pool #7 gate:\n\
          \tclean rows={} warm rows={}\n\
          \tclean outcome={:?} warm outcome={:?}\n\
          \tbundle_path empty={}\n\
@@ -1057,16 +1057,16 @@ trusted_implication_signers = ["POISON_IF_REREAD"]
     assert_eq!(
         report_verdict_keys(&warm),
         clean_rows,
-        "warm_solve must not re-read project plan/config (verdict rows must stay \
-         byte-identical to pre-canary warm_solve). R_plan_reread>0 if diverged."
+        "solve_project_with_pool must not re-read project plan/config (verdict rows must stay \
+         byte-identical to pre-canary solve). R_plan_reread>0 if diverged."
     );
     assert_eq!(warm.outcome_class, clean.outcome_class);
     assert!(
         warm.artifact.bundle_path.as_os_str().is_empty(),
-        "warm_solve keeps write#6 (no .sugar/runs)"
+        "solve_project_with_pool keeps write#6 (no .sugar/runs)"
     );
 
-    // prove_from_kit still routes solve through warm_solve (parity)
+    // prove_from_kit still routes solve through solve_project_with_pool (parity)
     let full = prove_from_kit(
         &kit,
         &project,
@@ -1076,7 +1076,7 @@ trusted_implication_signers = ["POISON_IF_REREAD"]
     )
     .expect("prove_from_kit");
     // Note: prove_from_kit re-folds (lift) so canaries on disk don't affect fold
-    // of mathy.py; status multiset should still match clean warm_solve on the
+    // of mathy.py; status multiset should still match clean preloaded solve on the
     // same fixture sources.
     assert_eq!(
         report_verdict_keys(&full)
@@ -1087,12 +1087,12 @@ trusted_implication_signers = ["POISON_IF_REREAD"]
             .iter()
             .map(|(_, s)| s.clone())
             .collect::<BTreeSet<_>>(),
-        "prove_from_kit solve half must match warm_solve status multiset"
+        "prove_from_kit solve half must match solve_project_with_pool status multiset"
     );
 
     eprintln!(
         "DoD scoreboard (warm SOLVE door):\n\
-         \tproject plan/config/manifest re-read during warm_solve: 0\n\
+         \tproject plan/config/manifest re-read during preloaded solve: 0\n\
          \tproof/call-edge/named/config/cache/runs discharge side-channels: 0\n\
          \tlift/enumerate kit source reads: OUT OF SOLVE SCOPE (fold front)\n\
          \tz3 spawn: OUT OF SCOPE (process, not project FS read)\n\
@@ -1110,15 +1110,15 @@ trusted_implication_signers = ["POISON_IF_REREAD"]
 ///     `project_root` is replaced by a **file** trap (not a directory). Any
 ///     residual `project_root.join(...).read/exists/walk` would hit ENOTDIR
 ///     or fail discrimination. Success + byte-identical rows ⇒ inventoryed
-///     project side-channel opens during `warm_solve` = **0**.
+///     project side-channel opens during preloaded solve = **0**.
 ///
 /// (b) **verdict rows BYTE-IDENTICAL to the filesystem path**
 ///     Sorted `row_to_json` blobs (the one wire renderer) for
-///     trap-`warm_solve` vs seal-to-disk `solve_project` over the same fold
+///     trap preloaded solve vs seal-to-disk `solve_project` over the same fold
 ///     graph must be equal string-for-string.
 ///
 /// (c) **warm timing same order as ~145ms**
-///     Wall clock of pure `warm_solve` only (not fold/lift). Reported in ms;
+///     Wall clock of pure preloaded solve only (not fold/lift). Reported in ms;
 ///     order gate: < 2000ms on debug (same order of magnitude as ~145ms
 ///     scoped warm; not the unscoped pandas CLI ~33s feed wall).
 ///
@@ -1167,15 +1167,15 @@ fn dod_3809_pandas_warm_solve_scoreboard() {
     let disk_blobs = report_row_wire_blobs(&disk);
     let disk_keys = report_verdict_keys(&disk);
 
-    // ---- (c) timing: pure warm_solve with readable project (pre-trap) ----
+    // ---- (c) timing: pure preloaded solve with readable project (pre-trap) ----
     let mut cfg_live = runner_cfg(&project);
     cfg_live.legacy_z3_fallback = Some(LegacyZ3Fallback::compat("z3"));
     // Warm-up (solver process / page cache); not counted.
-    let _ = warm_solve(cfg_live.clone(), compilers.clone(), pool.clone())
-        .expect("warm_solve warmup");
+    let _ = solve_project_with_pool(cfg_live.clone(), compilers.clone(), pool.clone())
+        .expect("solve_project_with_pool warmup");
     let t0 = Instant::now();
-    let warm_live = warm_solve(cfg_live.clone(), compilers.clone(), pool.clone())
-        .expect("warm_solve timed");
+    let warm_live = solve_project_with_pool(cfg_live.clone(), compilers.clone(), pool.clone())
+        .expect("solve_project_with_pool timed");
     let warm_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ---- (a) hard FS trap: remove project tree; project_root becomes a FILE ----
@@ -1184,7 +1184,7 @@ fn dod_3809_pandas_warm_solve_scoreboard() {
     fs::remove_dir_all(&project).expect("remove project tree after fold");
     fs::write(
         &trap_path,
-        b"DOD_TRAP: warm_solve must not open project_root children\n",
+        b"DOD_TRAP: preloaded solve must not open project_root children\n",
     )
     .expect("write trap file");
 
@@ -1192,8 +1192,8 @@ fn dod_3809_pandas_warm_solve_scoreboard() {
     cfg_trap.legacy_z3_fallback = Some(LegacyZ3Fallback::compat("z3"));
     cfg_trap.trusted_implication_signers = vec!["dod-in-memory".into()];
 
-    let warm_trap = warm_solve(cfg_trap, compilers, pool).expect(
-        "warm_solve must discharge with project_root as a non-directory trap \
+    let warm_trap = solve_project_with_pool(cfg_trap, compilers, pool).expect(
+        "solve_project_with_pool must discharge with project_root as a non-directory trap \
          (any residual project FS open under root would fail or diverge)",
     );
 
@@ -1234,7 +1234,7 @@ fn dod_3809_pandas_warm_solve_scoreboard() {
              warm rows={} disk rows={}\n\
              warm keys={warm_keys:?}\n\
              disk keys={disk_keys:?}\n\
-         (c) warm_solve wall = {warm_ms:.1} ms (target order ~145ms; gate <2000ms)\n\
+         (c) preloaded solve wall = {warm_ms:.1} ms (target order ~145ms; gate <2000ms)\n\
          outcome warm={:?} disk={:?}\n\
          pool members={pool_members}\n\
          OUT OF SCOPE: kit fold source reads, CLI re-plan, z3 spawn, daemon residency\n\
@@ -1288,7 +1288,7 @@ fn dod_3809_pandas_warm_solve_scoreboard() {
     }
     assert_eq!(
         warm_blobs, disk_blobs,
-        "DoD (b) FAILED: warm_solve vs disk solve_project verdict rows not byte-identical"
+        "DoD (b) FAILED: preloaded solve vs disk solve_project verdict rows not byte-identical"
     );
     assert_eq!(
         warm_trap.outcome_class, disk.outcome_class,
@@ -1299,13 +1299,13 @@ fn dod_3809_pandas_warm_solve_scoreboard() {
     // 2s ceiling is still two orders below unscoped pandas CLI wall.
     assert!(
         warm_ms < 2000.0,
-        "DoD (c) FAILED: warm_solve took {warm_ms:.1}ms (want same order as ~145ms; \
+        "DoD (c) FAILED: preloaded solve took {warm_ms:.1}ms (want same order as ~145ms; \
          ceiling 2000ms). Unscoped CLI feed wall is out of scope."
     );
     // Soft notice if far above the historic ~145ms (still pass if <2s)
     if warm_ms > 500.0 {
         eprintln!(
-            "NOTE: warm_solve {warm_ms:.1}ms is above historic ~145ms (debug/load); \
+            "NOTE: preloaded solve {warm_ms:.1}ms is above historic ~145ms (debug/load); \
              still within same-order gate (<2000ms)."
         );
     }
