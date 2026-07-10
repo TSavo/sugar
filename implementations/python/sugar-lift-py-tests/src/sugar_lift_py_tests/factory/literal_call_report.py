@@ -106,6 +106,52 @@ from .proofir_provenance_diagnostic import proofir_formula_provenance_diagnostic
 from .factory_build_context import FactoryBuildContext
 from .source_fragment import SourceFragment
 
+# Nested def/class scopes are separate assertion surfaces (own FunctionDef in
+# local_functions). Do not re-collect their asserts under the outer function.
+_NESTED_SCOPE_OBSERVED = frozenset(
+    {
+        "FunctionDef",
+        "AsyncFunctionDef",
+        "ClassDef",
+        "Lambda",
+    }
+)
+
+
+def _iter_function_assertion_surfaces(fn: SourceFragment) -> list[SourceFragment]:
+    """Every ``Assert`` under ``fn``, including nested control-flow suites.
+
+    #4017 option A — assertion-surface enumeration must be total. The previous
+    walk only visited direct ``FunctionDef.body`` children, so asserts under
+    ``if`` / ``try`` / ``except`` / ``for`` / ``while`` / ``with`` / ``match``
+    were silently dropped corpus-wide.
+
+    Nested function/class/lambda bodies are **not** collected here: they appear
+    as their own entries in ``local_functions`` / class walk and keep their
+    own ``fn`` parent for prior-assign / dig context.
+
+    Uses ``SourceFragment.fragments()`` (the same suite/Block gateway dig uses)
+    rather than guessing control-flow field layout per node kind.
+    """
+    if fn.observed not in {"FunctionDef", "AsyncFunctionDef"}:
+        raise TypeError(
+            f"_iter_function_assertion_surfaces requires FunctionDef, got {fn.observed}"
+        )
+    found: list[SourceFragment] = []
+
+    def visit(frag: SourceFragment) -> None:
+        if frag.observed == "Assert":
+            found.append(frag)
+            return
+        if frag.observed in _NESTED_SCOPE_OBSERVED:
+            return
+        for child in frag.fragments():
+            visit(child)
+
+    for stmt in fn.function_body():
+        visit(stmt)
+    return found
+
 
 def _canonical_term_sig(term) -> str:
     """Deterministic canonical signature for a Term, argument-keying the callsite
@@ -324,10 +370,17 @@ def build_literal_call_report(
     dig_refusals: list[DigBoundary] = []
     dig_floors: list[DigFloorRecord] = []
     agreement_violations: list[FloorContractAgreementViolation] = []
-    local_functions = {
-        frag.function_name(): frag
+    # Dig / name-resolver map is keyed by bare function name (call resolution).
+    # Assertion-surface enumeration must NOT use that map alone: duplicate names
+    # (many methods named __init__/apply/transform) would drop all but one def
+    # and silently unaccount their nested asserts (#4017 / corpus-wide).
+    local_function_defs = [
+        frag
         for frag in root_frag.walk()
-        if frag.observed == "FunctionDef"
+        if frag.observed in {"FunctionDef", "AsyncFunctionDef"}
+    ]
+    local_functions = {
+        frag.function_name(): frag for frag in local_function_defs
     }
     local_classes = {
         frag.class_name(): frag
@@ -339,17 +392,19 @@ def build_literal_call_report(
     # IMPORT SUGAR: a callee reached through `import numpy as np` / `from mod import f`
     # is not local, so the dig cannot see its body. Resolve each imported callee to
     # its installed source FunctionDef so the SAME dig walks it like a local function.
-    # Locals win on name collision; the assert-iteration below stays local-only.
+    # Locals win on name collision for dig-by-name; assert surfaces visit every def.
     dig_functions = {
         **_resolve_imported_callees(
             root_frag, import_aliases, from_imports, dig_refusals=dig_refusals
         ),
         **local_functions,
     }
-    for fn in local_functions.values():
-        for stmt in fn.function_body():
-            if stmt.observed != "Assert":
-                continue
+    for fn in local_function_defs:
+        # Total assertion-surface enumeration (#4017): every Assert under the
+        # function, including nested if/try/except/for/while/with/match — not
+        # only direct FunctionDef.body children. Nested FunctionDef/ClassDef
+        # scopes are their own def entries (no double-collect under the outer).
+        for stmt in _iter_function_assertion_surfaces(fn):
             lifted = _lift_assert(
                 stmt,
                 fn=fn,
@@ -947,6 +1002,25 @@ def _factory_assertion_derived_context(
     if stmt.observed != "Assert":
         return None
     test = stmt.assert_test()
+    # Peel assertion polarity so dig fires for `assert not callee(...)` the same
+    # way it does for `assert callee(...)`. NotSugar owns the formula; dig still
+    # needs the Call/Compare operand (enumeration totality alone is not dig).
+    if test.observed == "UnaryOp" and test.operator_kind() == "Not":
+        return _factory_assertion_derived_context(
+            stmt.assert_with_test(test.unaryop_operand()),
+            fn=fn,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            functions_by_name=functions_by_name,
+            classes_by_name=classes_by_name,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
+            dig_refusals=dig_refusals,
+            dig_floors=dig_floors,
+            agreement_violations=agreement_violations,
+            factory_audits=factory_audits,
+        )
     if test.observed == "BoolOp":
         contexts = [
             context

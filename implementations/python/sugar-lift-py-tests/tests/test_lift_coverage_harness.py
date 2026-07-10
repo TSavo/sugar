@@ -5,8 +5,8 @@ Two divergent axes — never one folded coverage number.
 * Assertions (default report body): silently_unaccounted is RED (lifter bug if > 0).
 * Minority: un_asserted is VISIBLE scope (not a bug; dig is assertion-triggered).
 
-Headline from the pre-build probe on statistics (battleaxe):
-  on-disk asserts stated=4, report accounted=1, silently_unaccounted=3.
+Headline after #4017 (total assertion-surface enumeration):
+  on-disk asserts stated=4, silently_unaccounted=0 (was 3 nested under if/except).
 """
 
 from __future__ import annotations
@@ -280,26 +280,27 @@ def test_statistics_report_emits_dual_axis_lift_coverage(statistics_report: dict
 
 
 def test_statistics_headline_delta_matches_probe(statistics_report: dict) -> None:
-    """Re-paste the pre-build headline: stated vs silently_unaccounted.
+    """Post-#4017 headline: all 4 on-disk asserts are spoken for (silent=0).
 
-    Probe (battleaxe): on-disk asserts=4, report accounted=1, silent=3.
+    Pre-fix residual (enumeration non-totality) was silent=3 nested under
+    if/except; that was the first Minority Report indictment. After total
+    assertion-surface enumeration the three `assert not _isfinite(...)` loci
+    lift via existing NotSugar — do not re-pin silent=3.
     """
     path = _resolve_installed_package_path("statistics")
     disk = census_paths([path], root=path.parent)
     cov = statistics_report["liftCoverage"]
     ax = cov["assertions"]
     assert ax["stated"] == len(disk.asserts) == 4
-    # At least the one _coerce assert is cited; three remain silent (headline).
-    assert ax["lifted_cited"] >= 1
-    assert ax["silently_unaccounted"] == 3, (
-        f"expected 3 silent asserts on statistics; got {ax['silently_unaccounted']}: "
-        f"{ax['silent_loci']}"
+    assert ax["lifted_cited"] + ax["refused_loud"] == 4
+    assert ax["silently_unaccounted"] == 0, (
+        f"expected 0 silent asserts on statistics after #4017; got "
+        f"{ax['silently_unaccounted']}: {ax['silent_loci']}"
     )
-    silent_lines = sorted(a["line"] for a in ax["silent_loci"])
-    assert silent_lines == [200, 237, 323], silent_lines
+    assert ax["silent_loci"] == []
     # Totals headline
     assert cov["totals"]["stated"] == 4
-    assert cov["totals"]["silently_unaccounted"] == 3
+    assert cov["totals"]["silently_unaccounted"] == 0
 
 
 def test_statistics_silent_unaccounted_gate_is_zero(
@@ -307,9 +308,9 @@ def test_statistics_silent_unaccounted_gate_is_zero(
 ) -> None:
     """Totality ratchet: RED while any assert is silently unaccounted.
 
-    This is the mandatory-fix instrument for #4013 assertion accounting. Current
-    statistics residual is 3 (lines 200, 237, 323) — the test FAILS loud until
-    those asserts are lifted+cited or refused-loud. Do not fabricate zero.
+    #4017: statistics nested `assert not _isfinite` loci now testify via total
+    assertion-surface enumeration. Gate stays RED on any silent residue; do not
+    fabricate zero.
     """
     ax = statistics_report["liftCoverage"]["assertions"]
     silent = int(ax["silently_unaccounted"])
@@ -322,7 +323,7 @@ def test_statistics_silent_unaccounted_gate_is_zero(
         pytest.fail(
             f"silently_unaccounted={silent} (must be 0).\n"
             f"Silent assert loci (mandatory-fix finding):\n{detail}\n"
-            f"Probe headline: stated=4 accounted=1 delta=3 on statistics.py"
+            f"Post-#4017: nested control-flow asserts must be enumerated."
         )
 
 
