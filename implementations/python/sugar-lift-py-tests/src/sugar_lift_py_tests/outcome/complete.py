@@ -19,6 +19,13 @@ class Complete:
         # A completed statement lets the run go on: reduce the rest of the block.
         return reduce(rest)
 
+    def contribution(self):
+        # A completed statement contributes its floor value to the block record.
+        # Support (inert) contributes nothing -- absorbed.
+        if self.value.non_fol_support:
+            return ()
+        return (self.value,)
+
     def and_then(self, step):
         # A completed value keeps going: hand the value to the next step.
         return step(self.value)

@@ -28,6 +28,11 @@ class Incomplete:
         del reduce
         return rest
 
+    def contribution(self):
+        # An effect contributes itself to the block record; the unresolved tail rides
+        # beside it via follow.
+        return (self,)
+
     def and_then(self, step):
         # An effect never continues: it propagates by returning itself, the next step
         # never runs.

@@ -52,4 +52,9 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
         head, *rest = statements
         rest = tuple(rest)
         outcome = head.reduce(ctx)
-        return (outcome, *outcome.follow(rest, lambda more: self._collect(more, ctx)))
+        # The outcome owns what joins the record (floor value, or itself if incomplete)
+        # and whether the rest reduces. Support contributes nothing and is absorbed.
+        return (
+            *outcome.contribution(),
+            *outcome.follow(rest, lambda more: self._collect(more, ctx)),
+        )
