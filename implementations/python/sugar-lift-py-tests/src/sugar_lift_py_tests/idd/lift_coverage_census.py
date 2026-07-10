@@ -5,7 +5,7 @@ Used as ground truth against ``sugar lift --report`` accounting.
 
 Two axes stay divergent (do not fold into one coverage number):
 
-* **Majority** — assertions stated on disk (``ast.Assert``).
+* **Assertions** — claims stated on disk (``ast.Assert``); default report body.
 * **Minority** — function bodies present on disk (``FunctionDef`` /
   ``AsyncFunctionDef``). Dig is assertion-triggered; un-asserted bodies
   are scope, not a lifter bug.

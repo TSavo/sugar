@@ -1,8 +1,8 @@
-"""Partition lift-coverage: majority (assertions) vs minority (bodies).
+"""Partition lift-coverage: assertions (default report) vs minority (bodies).
 
 #4013 — two divergent axes; do NOT fold into one coverage number.
 
-Majority (claim layer, silent-loss detector):
+Assertions (claim layer, silent-loss detector — the report's default body):
   stated / lifted+cited / refused-loud / silently-unaccounted
   Gate: silently-unaccounted == 0 (RED if > 0).
 
@@ -29,7 +29,7 @@ _REFUSED = frozenset({"unresolved", "refused", "refuted", "unclassified"})
 
 
 @dataclass
-class MajorityAxis:
+class AssertionAxis:
     stated: int = 0
     lifted_cited: int = 0
     refused_loud: int = 0
@@ -41,7 +41,7 @@ class MajorityAxis:
 
     def to_json(self) -> dict:
         return {
-            "axis": "majority-assertions",
+            "axis": "assertions",
             "stated": self.stated,
             "lifted_cited": self.lifted_cited,
             "refused_loud": self.refused_loud,
@@ -84,7 +84,7 @@ class MinorityAxis:
 
 @dataclass
 class LiftCoverageReport:
-    majority: MajorityAxis
+    assertions: AssertionAxis
     minority: MinorityAxis
     files: list[str] = field(default_factory=list)
 
@@ -93,15 +93,15 @@ class LiftCoverageReport:
             "kind": "lift-coverage",
             "version": "4013.v1",
             "files": list(self.files),
-            "majority": self.majority.to_json(),
+            "assertions": self.assertions.to_json(),
             "minority": self.minority.to_json(),
             # Headline dual totals — never a single folded coverage number.
             "totals": {
-                "majority_stated": self.majority.stated,
-                "majority_accounted": (
-                    self.majority.lifted_cited + self.majority.refused_loud
+                "stated": self.assertions.stated,
+                "accounted": (
+                    self.assertions.lifted_cited + self.assertions.refused_loud
                 ),
-                "majority_silently_unaccounted": self.majority.silently_unaccounted,
+                "silently_unaccounted": self.assertions.silently_unaccounted,
                 "minority_present": self.minority.present,
                 "minority_dug": self.minority.dug,
                 "minority_un_asserted": self.minority.un_asserted,
@@ -119,18 +119,18 @@ def account_lift_coverage(
     (sourceAudits, sourceMementos, diagnostics, …).
     """
     payload = report_payload or {}
-    majority = _account_majority(disk.asserts, payload)
+    assertions = _account_assertions(disk.asserts, payload)
     minority = _account_minority(disk.bodies, disk.asserts, payload)
     return LiftCoverageReport(
-        majority=majority,
+        assertions=assertions,
         minority=minority,
         files=list(disk.files),
     )
 
 
-def _account_majority(
+def _account_assertions(
     asserts: list[AssertLocus], payload: Mapping[str, Any]
-) -> MajorityAxis:
+) -> AssertionAxis:
     lifted_keys: set[tuple[str, int, int]] = set()
     refused_keys: set[tuple[str, int, int]] = set()
     lifted_loci: list[dict] = []
@@ -170,7 +170,7 @@ def _account_majority(
             continue
         silent.append(a)
 
-    return MajorityAxis(
+    return AssertionAxis(
         stated=len(asserts),
         # Counts are over on-disk asserts classified by the report — not raw
         # report row counts (a report may re-emit the same locus).
@@ -220,7 +220,7 @@ def _iter_report_assertion_loci(
             if not isinstance(locus, Mapping):
                 continue
             ast_kind = str(locus.get("ast_kind") or locus.get("astKind") or "")
-            # Assertion loci only for majority axis.
+            # Assertion loci only for the default assertion axis.
             if ast_kind and ast_kind not in {"Assert", "assert"}:
                 if "assert" not in contract.lower() and "assert" not in role.lower():
                     continue
@@ -281,7 +281,8 @@ def _account_minority(
       - the report names it as a dig target / source function of a cited claim, OR
       - an on-disk assert falls inside its span (assertion targets that body).
 
-    Un-asserted = present − dug. Visible scope remainder, never folded into majority.
+    Un-asserted = present − dug. Visible scope remainder, never folded into
+    the default assertion accounting.
     """
     dug_keys: set[tuple[str, int, str]] = set()
     dug_loci: list[dict] = []
@@ -373,13 +374,13 @@ def paint_lines(
                 tags[line - 1] = tag
 
     base = Path_basename(file)
-    for a in coverage.majority.lifted_loci:
+    for a in coverage.assertions.lifted_loci:
         if Path_basename(str(a.get("file", ""))) in {base, file}:
             _mark(int(a["line"]), "lifted+cited")
-    for a in coverage.majority.refused_loci:
+    for a in coverage.assertions.refused_loci:
         if Path_basename(str(a.get("file", ""))) in {base, file}:
             _mark(int(a["line"]), "refused-loud")
-    for a in coverage.majority.silent_loci:
+    for a in coverage.assertions.silent_loci:
         if Path_basename(str(a.get("file", ""))) in {base, file}:
             _mark(int(a["line"]), "silently-unaccounted")
     for b in coverage.minority.dug_loci:

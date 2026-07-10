@@ -51,7 +51,7 @@ class LiftReportPayloadDto:
         default_factory=list[VendorConjoinDto]
     )
     diagnostics: list[DiagnosticDto] = field(default_factory=list[DiagnosticDto])
-    # #4013 dual-axis lift coverage (majority assertions / minority bodies).
+    # #4013 dual-axis lift coverage (assertions default / minority bodies).
     # Optional: filled by lift_rpc after the independent AST census.
     lift_coverage: dict[str, Any] | None = None
 
