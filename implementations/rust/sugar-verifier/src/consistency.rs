@@ -1232,34 +1232,16 @@ fn json_str_list(data: &Json, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-// Thread-local warm-path flag + typed discharge context: set for the duration
-// of `verify_consistency_from_indexes` so deep call sites (par_iter group
+// Thread-local typed discharge context: set for the duration of
+// `verify_consistency_from_indexes` so deep call sites (par_iter group
 // solve → `try_witness_discharge`) see the same session config without
 // threading every arg through private helpers.
 thread_local! {
-    static POOL_ONLY_WITNESS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static ACTIVE_WITNESS_CTX: std::cell::RefCell<WitnessDischargeContext> =
         std::cell::RefCell::new(WitnessDischargeContext {
             project_dir: None,
             resolvers: Vec::new(),
         });
-}
-
-struct PoolOnlyWitnessGuard {
-    prev: bool,
-}
-
-impl PoolOnlyWitnessGuard {
-    fn enter(pool_only: bool) -> Self {
-        let prev = POOL_ONLY_WITNESS.with(|c| c.replace(pool_only));
-        Self { prev }
-    }
-}
-
-impl Drop for PoolOnlyWitnessGuard {
-    fn drop(&mut self) {
-        POOL_ONLY_WITNESS.with(|c| c.set(self.prev));
-    }
 }
 
 struct WitnessCtxGuard {
@@ -3223,10 +3205,8 @@ pub fn build_manifest_from_pool(
 /// referee wrapper and the in-module tests); production `prove` and the daemon
 /// call the door themselves.
 ///
-/// Cold-disk policy (`pool_only_inputs = false`): may `Path::exists` for locus
-/// preference and read witness lift manifests. Resident-base / preloaded-pool
-/// faces derive pool-only via
-/// [`verify_consistency_scoped_with_base_index`] / runner `pool_only_inputs`.
+/// Zero project FS (#3809 series). Locus preference is speaker role only;
+/// scope is path-prefix only; witness resolvers are client-fed.
 ///
 /// Witness discharge config defaults empty (typed context required for
 /// custom-witness package recompute; no env config channel).
@@ -3243,28 +3223,20 @@ pub fn verify_consistency(
         registry,
         compilers,
         project_root,
-        false,
         &WitnessDischargeContext::default(),
     )
 }
 
-/// Like [`verify_consistency`], with an explicit warm/cold disk policy and
-/// typed [`WitnessDischargeContext`] (SEAM 7).
+/// Like [`verify_consistency`], with typed [`WitnessDischargeContext`] (SEAM 7).
 ///
-/// When `pool_only_inputs` is true (#3809):
-/// - locus preference uses pool **speaker role** (Consumer beats Vendor), never
-///   `Path::exists`
-/// - scope filters use pure path-prefix checks, never `Path::exists`
-///
-/// Witness resolvers are always client-fed (`WitnessDischargeContext`); cut #6
-/// deleted lift `read_dir` regardless of this flag.
+/// One path (#3809): no `pool_only_inputs` flag. Locus = speaker role;
+/// scope = path prefix; witnesses = client-fed context only.
 pub fn verify_consistency_with_policy(
     pool: &MementoPool,
     plan: &SolverPlan,
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
     project_root: &Path,
-    pool_only_inputs: bool,
     witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
     let index = build_consistency_index(pool);
@@ -3276,7 +3248,6 @@ pub fn verify_consistency_with_policy(
         compilers,
         project_root,
         None,
-        pool_only_inputs,
         witness,
     )
 }
@@ -3300,9 +3271,7 @@ pub struct ConsistencyIndex {
     /// Raw (contract/property name, locus, optional speaker role) triples in
     /// pool iteration order. The project-local preference merge (consumer
     /// file beats vendor file for the squiggle anchor) happens at solve time
-    /// in `verify_consistency_from_indexes`. On the warm path
-    /// (`pool_only_inputs`) speaker role replaces `Path::exists` so we never
-    /// stat the project tree (#3809 #8).
+    /// in `verify_consistency_from_indexes` via speaker role only (#3809).
     locus_entries: Vec<(String, SourceLocus, Option<SpeakerRole>)>,
 }
 
@@ -3452,7 +3421,6 @@ fn verify_consistency_scoped_with_base_index_policy(
     compilers: &CompilerRegistry,
     project_root: &Path,
     scope: &Path,
-    pool_only_inputs: bool,
     witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
     let skip: std::collections::HashSet<String> = base
@@ -3474,34 +3442,20 @@ fn verify_consistency_scoped_with_base_index_policy(
         compilers,
         project_root,
         Some(scope),
-        pool_only_inputs,
         witness,
     )
 }
 
 /// Scoped consistency over a **resident** base index + overlay pool (#3809).
 ///
-/// ## One door — warmth is derived cache state
-///
-/// There is no separate `warm_solve`. The caller already holds a prebuilt
-/// [`ConsistencyIndex`] (daemon/LSP residency). That residency **derives**
-/// `pool_only_inputs = true`: discharge never `Path::exists` / witness
-/// `read_dir` under the project tree. Typed [`WitnessDischargeContext`]
-/// is the sole resolver config surface.
-///
-/// ## What this is / is not
+/// One solve door, zero project FS: speaker-role locus preference, path-prefix
+/// scope, client-fed witness resolvers. No `pool_only_inputs` flag.
 ///
 /// - **Is:** pure discharge over a resident base index + pre-fed overlay
-///   pool + in-memory plan/registry/compilers. Zero project FS reads.
-/// - **Is not:** kit fold / mint / source overlay construction (lift face,
-///   happens *before* this door). Not the full `Runner`/`proof-run` face —
-///   that is `sugar_compiler::orchestrate::solve_project_with_pool` over a
-///   complete pool (same vocabulary, different arity).
-///
-/// Cold-disk discrimination (may `Path::exists` / `read_dir`) goes through
-/// [`verify_consistency_from_indexes`] with `pool_only_inputs = false` (or
-/// [`verify_consistency_with_policy`]) — same THE door body, not a second
-/// named warm function.
+///   pool + in-memory plan/registry/compilers.
+/// - **Is not:** kit fold / mint / source overlay construction (lift face).
+///   Full `Runner`/`proof-run` face is
+///   `sugar_compiler::orchestrate::solve_project_with_pool`.
 pub fn verify_consistency_scoped_with_base_index(
     base: &ConsistencyIndex,
     overlay_pool: &MementoPool,
@@ -3524,7 +3478,6 @@ pub fn verify_consistency_scoped_with_base_index(
 }
 
 /// Scoped resident-base solve with typed witness discharge context (SEAM 7).
-/// Same derived pool-only policy as [`verify_consistency_scoped_with_base_index`].
 pub fn verify_consistency_scoped_with_base_index_with_witness(
     base: &ConsistencyIndex,
     overlay_pool: &MementoPool,
@@ -3535,7 +3488,6 @@ pub fn verify_consistency_scoped_with_base_index_with_witness(
     scope: &Path,
     witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
-    // Derived warmth: base index is already resident in the caller's hands.
     verify_consistency_scoped_with_base_index_policy(
         base,
         overlay_pool,
@@ -3544,7 +3496,6 @@ pub fn verify_consistency_scoped_with_base_index_with_witness(
         compilers,
         project_root,
         scope,
-        /* pool_only_inputs = */ true,
         witness,
     )
 }
@@ -3557,11 +3508,8 @@ pub fn verify_consistency_scoped_with_base_index_with_witness(
 /// index (or `None` for a whole-pool run) and `scope` restricts which groups
 /// are solved (or `None` for the full CLI pass).
 ///
-/// `pool_only_inputs`: when true, never `Path::exists` / witness `read_dir`
-/// (#3809 #8). Locus preference uses speaker role; scope uses path prefix.
-/// Resident-base callers ([`verify_consistency_scoped_with_base_index`])
-/// derive this as true; cold disk faces pass false explicitly — not a second
-/// named warm function.
+/// Zero project FS (#3809): locus preference = speaker role; scope = path
+/// prefix; witnesses = client-fed context. No `pool_only_inputs` flag.
 ///
 /// `witness`: typed discharge context (project_dir + resolvers). Sole config
 /// surface for package recompute (step 3 retired the env channel).
@@ -3574,13 +3522,11 @@ pub fn verify_consistency_from_indexes(
     compilers: &CompilerRegistry,
     project_root: &Path,
     scope: Option<&Path>,
-    pool_only_inputs: bool,
     witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
-    // project_root retained on the signature for API stability; cut #5 no longer
-    // stats it for locus/scope (speaker + path-prefix only).
+    // project_root retained on the signature for API stability; never stats
+    // for locus/scope (speaker + path-prefix only).
     let _project_root = project_root;
-    let _pool_only_guard = PoolOnlyWitnessGuard::enter(pool_only_inputs);
     let _witness_ctx_guard = WitnessCtxGuard::enter(witness);
     let candidates: Vec<&ConsistencyCandidate> = base
         .candidates
@@ -6832,12 +6778,10 @@ mod tests {
             project_dir: Some(project.clone()),
             resolvers: Vec::new(),
         };
-        let _pool = PoolOnlyWitnessGuard::enter(false); // even "cold" flag: no read_dir
         let _guard = WitnessCtxGuard::enter(&empty_ctx);
         let via_empty =
             try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
         drop(_guard);
-        drop(_pool);
 
         assert_eq!(
             via_empty.verdict,
@@ -6884,8 +6828,7 @@ mod tests {
     /// Path A (arm): `try_witness_discharge` — the consistency arm entry.
     /// Path B (oracle door): speak packageCid via `witness_package_via_oracle`
     /// then `seal_witness_package_outcome` — the explicit resolve+verify composition.
-    /// Path C (warm face): same typed resolvers with `POOL_ONLY_WITNESS` (no
-    /// cold `read_dir` for manifests) — CID-cache-hit face of the same recompute.
+    /// Path C (repeat arm): same typed resolvers — byte-identical recompute.
     ///
     /// All three MUST seal byte-identical `ObligationVerdict` for one packageCid.
     /// Two different results = failing test (the whole invariant).
@@ -6928,13 +6871,11 @@ mod tests {
             })
             .collect();
 
-        // Path A — consistency arm (cold; typed resolvers, no env).
-        let _pool_cold = PoolOnlyWitnessGuard::enter(false);
+        // Path A — consistency arm (typed resolvers, no env).
         let _typed_guard = WitnessCtxGuard::enter(&typed);
         let via_arm =
             try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
         drop(_typed_guard);
-        drop(_pool_cold);
 
         // Path B — explicit oracle door (resolve via kit RPC + package_outcome seal).
         let via_oracle = seal_witness_package_outcome(
@@ -6943,16 +6884,14 @@ mod tests {
             property.clone(),
         );
 
-        // Path C — warm face (pool-only: no lift read_dir; same oracle door).
-        let _pool_warm = PoolOnlyWitnessGuard::enter(true);
+        // Path C — repeat arm (one path; same typed resolvers).
         let _typed_warm = WitnessCtxGuard::enter(&typed);
         let via_warm =
             try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
         drop(_typed_warm);
-        drop(_pool_warm);
 
         assert_verdict_byte_identical(&via_arm, &via_oracle, "arm vs oracle door");
-        assert_verdict_byte_identical(&via_arm, &via_warm, "cold arm vs warm arm");
+        assert_verdict_byte_identical(&via_arm, &via_warm, "arm vs repeat arm");
         assert_eq!(
             via_arm.verdict,
             ObligationVerdict::Discharged,
@@ -6995,7 +6934,6 @@ mod tests {
             &reg,
             &test_compilers(),
             std::path::Path::new("."),
-            false,
             &typed,
         );
 
@@ -7437,12 +7375,9 @@ mod tests {
         assert_eq!(results[0].verdict, ObligationVerdict::Unsatisfied);
     }
 
-    /// #3809 GAP 3 instrument: resident-base scoped solve (derived pool-only)
-    /// must produce **byte-identical** wire rows to the cold-disk face on a
-    /// speaker-free base+overlay pool (same merge/group/solve; pool_only does
-    /// not change the conjoin when locus preference has no FS/speaker
-    /// discrimination). One door body — cold passes `pool_only_inputs=false`
-    /// to the shared policy helper; warm is the public scoped entry.
+    /// #3809 instrument: resident-base scoped solve must produce **byte-
+    /// identical** wire rows to a second call of the same one-door body on a
+    /// speaker-free base+overlay pool. One path, no `pool_only_inputs` flag.
     ///
     /// Layout mirrors the LSP face: resident **base** index (vendor) +
     /// **overlay** pool (consumer) over one euf property with a contradiction.
@@ -7458,8 +7393,8 @@ mod tests {
             return;
         }
         let prop = "demo.check#euf#c:1(2,3)::assertion";
-        // Project tree so cold scope (Path::exists) keeps the group; warm
-        // keeps relative loci by prefix rule without statting.
+        // Project tree retained for fixture realism; scope uses path-prefix
+        // (relative loci) without Path::exists.
         let project = unique_temp_dir("one-solve-gap3-project");
         std::fs::create_dir_all(project.join("src")).unwrap();
         std::fs::write(project.join("src").join("lib.rs"), b"// fixture\n").unwrap();
@@ -7517,7 +7452,7 @@ mod tests {
         let compilers = test_compilers();
         let base_index = build_consistency_index(&base_pool);
 
-        // Cold discrimination face: same body, pool_only=false (may Path::exists).
+        // Same one-door body via policy helper and public resident-base entry.
         let cold = verify_consistency_scoped_with_base_index_policy(
             &base_index,
             &overlay,
@@ -7526,10 +7461,8 @@ mod tests {
             &compilers,
             &project,
             &project,
-            /* pool_only_inputs = */ false,
             &WitnessDischargeContext::default(),
         );
-        // Public resident-base door: derives pool_only=true.
         let warm = verify_consistency_scoped_with_base_index(
             &base_index,
             &overlay,
@@ -7540,8 +7473,8 @@ mod tests {
             &project,
         );
 
-        // Second warm pass with project_root as a FILE trap — zero project FS.
-        // Relative locus "src/lib.rs" stays in-scope on warm without exists().
+        // project_root as a FILE trap — zero project FS.
+        // Relative locus "src/lib.rs" stays in-scope without exists().
         let trap = unique_temp_dir("one-solve-gap3-trap");
         let trap_file = trap.join("project_root_is_a_file");
         std::fs::write(&trap_file, b"resident-base solve must not open children\n").unwrap();

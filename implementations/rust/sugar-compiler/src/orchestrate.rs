@@ -234,14 +234,10 @@ impl ProvenOutcome {
 /// pools are mostly unbridged, so a short-circuit would brick real runs).
 ///
 /// Disk-load face: builds the pool via [`load_pool`] then runs the **one**
-/// discharge body. Residual side-channels gated by `pool_only_inputs` (locus
-/// exists preference) stay available when the caller leaves the flag false.
-/// Call-edges / named inputs / input CIDs / config / runs-seal / tier-2
-/// cache no longer do project FS inside solve (#3809 series).
+/// discharge body. Solve is one path, zero project FS (#3809 series).
 ///
 /// Callers that already hold a multi-speaker pool (e.g. [`prove_from_kit`])
-/// use [`solve_project_with_pool`] — same body; warmth derived from the
-/// preloaded pool, not a second function door.
+/// use [`solve_project_with_pool`] — same body, preloaded pool, one path.
 pub fn solve_project(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
@@ -260,19 +256,14 @@ pub fn solve_project(
 /// `.proof` files. Use this when the pool was assembled with speakers via
 /// [`pool_from_graph_with_speaker`] and vendor `ProofBytes` merge.
 ///
-/// ## Warmth is derived cache state, not a second door
+/// ## One path — zero project FS
 ///
-/// There is no separate `warm_solve`. The caller already holds claim facts in
-/// `pool` (fold / prior load). This single preloaded entry **derives** the
-/// residual zero-FS policy (`pool_only_inputs = true`) from that residency
-/// (locus exists preference). Tier-2 `cache_dir` I/O is deleted from
-/// discharge entirely (#3809 cut #7). Input CIDs, call-edges, named
-/// artifacts, and runs-seal are already non-FS in solve. Claim bytes +
-/// solvers + signers + plan_artifact must already ride on `cfg` / `pool` /
-/// `compilers`.
+/// There is no separate `warm_solve` and no `pool_only_inputs` flag. The
+/// caller already holds claim facts in `pool` (fold / prior load). Solve
+/// never WalkDirs or opens project FS for claim inputs. Claim bytes +
+/// solvers + signers + plan_artifact ride on `cfg` / `pool` / `compilers`.
 ///
-/// Cold disk face remains [`solve_project`] (load then discharge without
-/// forcing the flag — residual locus side-channel still resolves).
+/// Disk-load face remains [`solve_project`] (load then the same discharge).
 ///
 /// ## Out of scope (not "warm solve FS")
 ///
@@ -285,20 +276,15 @@ pub fn solve_project(
 /// - **Full pandas CLI wall (~33s)** — vendor-feed volume / unscoped solve,
 ///   not residual plan/manifest I/O on this door.
 pub fn solve_project_with_pool(
-    mut cfg: RunnerConfig,
+    cfg: RunnerConfig,
     compilers: CompilerRegistry,
     pool: MementoPool,
 ) -> Result<ProvenOutcome, SolveError> {
-    // Derived warmth: pool is already resident in the caller's hands.
-    // Callers do not pre-force `pool_only_inputs` via a second door.
-    cfg.pool_only_inputs = true;
-    cfg.cache_dir = None;
+    // One path: pool is already resident; no flag to derive.
     discharge_with_pool(cfg, compilers, pool)
 }
 
 /// THE solve body: annotate-not-block LINK + Runner discharge over one pool.
-/// Policy rides on `cfg` (`pool_only_inputs`, …) — set by the cold disk face
-/// or derived by [`solve_project_with_pool`] for a preloaded pool.
 fn discharge_with_pool(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
