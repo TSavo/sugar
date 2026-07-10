@@ -18,10 +18,10 @@ Solve reads NOTHING from the project filesystem. Inputs arrive as content-addres
 
 ## INDEPENDENT — NEXT (T can grab now, python/doc-side, zero rust-core collision)
 
-### F. MORE REAL-NAME LOGOS (the north star — logos ARE the product). Two proven so far (itsdangerous #3960/#3977, stdlib base64 #3993). This is open-ended, highest-value, PyCon material. Each: a real library + a real bug shape + good/bad/wrong twins + `SCOPE.md` + a CI ratchet (`run-logo-receipt.sh` + Makefile target), same shape as the two done. Concrete candidates to pick from:
-- **PyJWT `alg=none` / algorithm confusion** — a stated-vector or strip-class shape for token verification.
-- **hashlib/hmac digest-length or `compare_digest` confusion** — a real comparison bug shape.
-- **Another encoding library** with the padding/strip class (`¬suffix-of`) that reuses the proven ambient.
+### F. MORE REAL-NAME LOGOS — **partial CLOSE** (two more shipped). Still open-ended north star.
+- **stdlib base32 nopad** (`examples/stdlib-base32-padding`) — strip ambient, same membrane as base64 logo. GOOD discharged / BAD unsatisfied / WRONG-UNPADDED discharged.
+- **hashlib.sha256 hexdigest** (`examples/hashlib-sha256-hexdigest`) — dual-assert unsat on shared euf (digest lie).
+Remaining candidates: PyJWT `alg=none`, hmac `compare_digest` length/confusion, more encoding libraries.
 
 ### G. Coordinate coverage for a THIRD vendor library. The coordinate model + real-scale sweep is proven for numpy/pandas (187/187, R=0). Extend to a new vendor — a stdlib module (`statistics`, `fractions`) or `scipy` — lift-probe the surface, prove 0 construction gaps, pin a totality ratchet. New "the model generalizes" receipt.
 
