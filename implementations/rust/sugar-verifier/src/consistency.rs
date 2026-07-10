@@ -1284,23 +1284,15 @@ fn active_witness_context() -> WitnessDischargeContext {
     ACTIVE_WITNESS_CTX.with(|c| c.borrow().clone())
 }
 
-/// Scope membership without mandatory disk stats.
-/// Cold: `scope_root.join(file).exists()` (absolute file replaces join).
-/// Warm: relative path OR absolute path under `scope_root` (prefix only).
-fn locus_in_scope(scope_root: &Path, file: &str, pool_only_inputs: bool) -> bool {
+/// Scope membership from memento locus metadata only (#3809 cut #5).
+/// Never `Path::exists`. Relative loci are in-scope; absolute loci must be
+/// under `scope_root` by path prefix.
+fn locus_in_scope(scope_root: &Path, file: &str) -> bool {
     let p = Path::new(file);
-    if pool_only_inputs {
-        if p.is_relative() {
-            return true;
-        }
-        return p.starts_with(scope_root);
+    if p.is_relative() {
+        return true;
     }
-    let candidate = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        scope_root.join(p)
-    };
-    candidate.exists()
+    p.starts_with(scope_root)
 }
 
 /// Client-fed resolvers only (#3809 cut #6). Never `read_dir(.sugar/lift)`.
@@ -3585,6 +3577,9 @@ pub fn verify_consistency_from_indexes(
     pool_only_inputs: bool,
     witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
+    // project_root retained on the signature for API stability; cut #5 no longer
+    // stats it for locus/scope (speaker + path-prefix only).
+    let _project_root = project_root;
     let _pool_only_guard = PoolOnlyWitnessGuard::enter(pool_only_inputs);
     let _witness_ctx_guard = WitnessCtxGuard::enter(witness);
     let candidates: Vec<&ConsistencyCandidate> = base
@@ -3670,10 +3665,9 @@ pub fn verify_consistency_from_indexes(
     // squiggle at the VENDOR's source file (pandas' internal
     // `tests/frame/test_constructors.py`) instead of the user's line.
     //
-    // Cold path: overwrite when the NEW locus's file EXISTS under project_root
-    // on disk and the CURRENT one does not.
-    // Warm path (`pool_only_inputs`): never stat — prefer Consumer-stamped
-    // locus over Vendor-stamped (#3809 #8). Fail-open if both/neither.
+    // Locus preference (#3809 cut #5): pool speaker role only — Consumer beats
+    // Vendor. Never Path::exists. Fail-open (first-write-wins) if both/neither
+    // are Consumer-stamped.
     let mut locus_by_name: HashMap<String, SourceLocus> = HashMap::new();
     let mut locus_role: HashMap<String, Option<SpeakerRole>> = HashMap::new();
     for (name, l, role) in base
@@ -3687,16 +3681,10 @@ pub fn verify_consistency_from_indexes(
                 locus_role.insert(name.clone(), *role);
             }
             std::collections::hash_map::Entry::Occupied(mut e) => {
-                let prefer_new = if pool_only_inputs {
-                    let new_consumer = matches!(role, Some(SpeakerRole::Consumer));
-                    let cur_consumer =
-                        matches!(locus_role.get(name), Some(Some(SpeakerRole::Consumer)));
-                    new_consumer && !cur_consumer
-                } else {
-                    let new_local = project_root.join(&l.file).exists();
-                    let cur_local = project_root.join(&e.get().file).exists();
-                    new_local && !cur_local
-                };
+                let new_consumer = matches!(role, Some(SpeakerRole::Consumer));
+                let cur_consumer =
+                    matches!(locus_role.get(name), Some(Some(SpeakerRole::Consumer)));
+                let prefer_new = new_consumer && !cur_consumer;
                 if prefer_new {
                     e.insert(l.clone());
                     locus_role.insert(name.clone(), *role);
@@ -3705,12 +3693,8 @@ pub fn verify_consistency_from_indexes(
         }
     }
 
-    // EDITOR SCOPE (the daemon's `Some(scope)` door call): keep only groups whose
-    // anchor locus resolves inside `scope`. Whole groups are kept or dropped —
-    // never individual members — so a kept group's conjunct set (vendor sworn
-    // facts included) is identical to the unscoped run's, and its solved row
-    // is therefore identical too. Ambient sets stay pool-wide.
-    // Cold: ON DISK via Path::exists. Warm: pure path prefix / relative, no stat.
+    // EDITOR SCOPE: keep groups whose anchor locus is in scope by path
+    // metadata only (relative or prefix under scope_root) — never Path::exists.
     let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name
         .into_iter()
         .filter(|(property_name, members)| match scope {
@@ -3719,7 +3703,7 @@ pub fn verify_consistency_from_indexes(
                 let anchored_in_scope = |name: &str| {
                     locus_by_name
                         .get(name)
-                        .map(|l| locus_in_scope(scope_root, &l.file, pool_only_inputs))
+                        .map(|l| locus_in_scope(scope_root, &l.file))
                         .unwrap_or(false)
                 };
                 anchored_in_scope(property_name)
