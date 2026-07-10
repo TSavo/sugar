@@ -14,9 +14,9 @@ import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment_stack import SourceFragmentStack
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.outcome import complete_value
@@ -73,5 +73,5 @@ def test_block_sugar_panics_on_a_statement_with_no_sugar_yet():
     # a delete statement has no statement sugar yet -> the block's composition asks the
     # catalog, finds nothing, and the factory panics (names the next sugar). Never an
     # ad-hoc raise, never a silent skip. (`x += 1` used to live here, until AugAssign.)
-    with pytest.raises(FactoryGap):
+    with pytest.raises(FactoryPanic):
         _compose_block('    "doc"\n    del x\n')

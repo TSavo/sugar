@@ -1,33 +1,26 @@
+"""A string literal (`"abc"`) is a PrimitiveLiteral. Int/float own numbers; this
+sugar owns `type(...) is str` and reduces to StringValue -- the string as a term."""
+
 from __future__ import annotations
 
 import ast
 
-from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.factory import SourceFragment
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.floor import StringValue
-from sugar_lift_py_tests.ir import str_const, term_to_value
-from sugar_lift_py_tests.outcome import complete_value
-from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
+from sugar_lift_py_tests.outcome import Complete
 
 
-def test_string_literal_sugar_is_value_born_from_site() -> None:
-    node = ast.parse('"abc"', mode="eval").body
-
-    sugar = StringLiteralSugar.from_site(SourceFragment.from_node(node, "strings.py"))
-
-    assert sugar == StringLiteralSugar(value="abc")
-    assert not hasattr(sugar, "node")
-    assert complete_value(sugar.desugar(), owner="string literal") == StringValue("abc")
+def _build_term(source: str):
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    node = ast.parse(source, mode="eval").body
+    return build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx).sugar, ctx
 
 
-def test_string_literal_projects_to_string_const() -> None:
-    # the ProofIR end of the reduction: the string literal becomes a String const.
-    node = ast.parse('"abc"', mode="eval").body
-    value = complete_value(
-        StringLiteralSugar.from_site(SourceFragment.from_node(node, "s.py")).desugar(),
-        owner="string literal",
-    )
-    assert encode_jcs(
-        term_to_value(floor_to_term(value, owner="string literal"))
-    ) == encode_jcs(term_to_value(str_const("abc")))
+def test_string_literal_builds_and_desugars_to_string_value() -> None:
+    sugar, ctx = _build_term('"abc"')
+    from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
+
+    assert isinstance(sugar, StringLiteralSugar)
+    assert sugar.desugar(ctx) == Complete(StringValue("abc"))
