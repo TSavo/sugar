@@ -12,12 +12,14 @@
 // a face-to-face reach-in. Both faces now call the ONE function in this
 // module instead.
 //
-// SEAM 7 (#3809 witness-as-verb step 1): this struct converts to
+// #3809 witness-as-verb: this struct converts to
 // `sugar_verifier::WitnessDischargeContext` and is passed as a typed
-// argument into the verifier. Env is optional fallback only (legacy tests);
-// it dies as a live channel because verdict inputs are content-addressed
-// (packageCid + contract + resolver body) — env has nothing left to carry.
-// CID-idempotency: typed path and env path must emit the same ObligationVerdict.
+// argument into the verifier. Step 3 retires `SUGAR_WITNESS_PROJECT_DIR` /
+// `SUGAR_WITNESS_RESOLVERS` as a live config channel — typed context is the
+// sole surface for project_dir + resolvers. Verdict inputs are
+// content-addressed (packageCid + contract + resolver body).
+// Optional `SUGAR_WITNESS_DISCHARGE_<TOOL>` staging remains for showcase lie
+// scripts that pollute process env; the package-recompute path never reads it.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -27,13 +29,12 @@ use serde_json::{json, Value};
 use crate::component_plan::{self, ComponentPlan, PlannedLiftManifest};
 use crate::project_config::ProjectConfig;
 
-/// Typed capture of the `SUGAR_WITNESS_*` env-var channel.
+/// Typed witness-discharge config (project_dir + resolvers + optional lie-env keys).
 ///
-/// - `project_dir` -> `SUGAR_WITNESS_PROJECT_DIR`
-/// - `resolvers` -> `SUGAR_WITNESS_RESOLVERS` (JSON-encoded array)
-/// - `discharge_commands` -> one `SUGAR_WITNESS_DISCHARGE_<TOOL>` per entry,
-///   keyed by the already-formatted env var name (uppercased,
-///   non-alphanumeric replaced with `_`)
+/// - `project_dir` / `resolvers` → typed `WitnessDischargeContext` only (step 3;
+///   no `SUGAR_WITNESS_PROJECT_DIR` / `SUGAR_WITNESS_RESOLVERS` staging)
+/// - `discharge_commands` → optional `SUGAR_WITNESS_DISCHARGE_<TOOL>` process
+///   pollution for showcase lie scripts (not a package-recompute input)
 #[derive(Debug, Clone, Default)]
 pub struct WitnessDischargeConfig {
     pub project_dir: Option<PathBuf>,
@@ -124,32 +125,19 @@ impl WitnessDischargeConfig {
         }
     }
 
-    /// Apply this config to the process environment, PRESERVING the exact
-    /// precedence the pre-SEAM-6 code had: a pre-existing caller-set env var
-    /// ALWAYS wins over the derived value (`var_os(...).is_none()` guard on
-    /// every write). Do not invert this -- it is what lets a caller override
-    /// any single derived setting without disabling the rest.
-    ///
-    /// SEAM 7: primary path is [`Self::to_verifier_context`]; env is fallback.
+    /// Stage optional `SUGAR_WITNESS_DISCHARGE_<TOOL>` process env for
+    /// showcase lie scripts. Does **not** stage `PROJECT_DIR` / `RESOLVERS`
+    /// (retired step 3 — those flow only via [`Self::to_verifier_context`]).
+    /// Pre-existing caller-set values win (`var_os(...).is_none()` guard).
     pub fn apply_env(&self) {
-        if let Some(project_dir) = &self.project_dir {
-            if std::env::var_os("SUGAR_WITNESS_PROJECT_DIR").is_none() {
-                std::env::set_var("SUGAR_WITNESS_PROJECT_DIR", project_dir);
-            }
-        }
         for (key, argv) in &self.discharge_commands {
             if std::env::var_os(key).is_none() {
                 std::env::set_var(key, argv);
             }
         }
-        if !self.resolvers.is_empty() && std::env::var_os("SUGAR_WITNESS_RESOLVERS").is_none() {
-            if let Ok(encoded) = serde_json::to_string(&self.resolvers) {
-                std::env::set_var("SUGAR_WITNESS_RESOLVERS", encoded);
-            }
-        }
     }
 
-    /// SEAM 7: typed context for `sugar_verifier` discharge (no env required).
+    /// Typed context for `sugar_verifier` discharge (sole project_dir/resolvers channel).
     pub fn to_verifier_context(&self) -> sugar_verifier::consistency::WitnessDischargeContext {
         use sugar_verifier::consistency::{WitnessDischargeContext, WitnessResolverSpec};
         let resolvers = self
@@ -195,13 +183,8 @@ impl WitnessDischargeConfig {
     }
 }
 
-/// Shared entry point: compute the config from the project's manifest plan
-/// and apply it to the environment. Both `cmd_prove::build_prove_artifact_with_options`
-/// and `cmd_verify::run_artifact_project_verify` call this ONE function --
-/// this is what closes the SEAM 6 face-to-face coupling (`cmd_verify` used
-/// to call `cmd_prove::configure_witness_discharge_env_with_plan` directly).
-///
-/// Prefer [`witness_discharge_for_plan`] when filling `RunnerConfig` (SEAM 7).
+/// Legacy name: stage optional DISCHARGE_* lie-env only (not project_dir/resolvers).
+/// Prefer [`witness_discharge_for_plan`] when filling `RunnerConfig`.
 pub(crate) fn configure_witness_discharge_env_with_plan(
     project_root: &Path,
     cfg_doc: &ProjectConfig,
@@ -210,14 +193,16 @@ pub(crate) fn configure_witness_discharge_env_with_plan(
     WitnessDischargeConfig::from_plan(project_root, cfg_doc, component_plan).apply_env();
 }
 
-/// SEAM 7: compute typed verifier context + stage env fallback in one place.
+/// Compute typed verifier context from the project's manifest plan.
+/// `project_dir` + resolvers flow typed-only (step 3); optional DISCHARGE_*
+/// process pollution for showcase lie scripts is staged as a side effect.
 pub(crate) fn witness_discharge_for_plan(
     project_root: &Path,
     cfg_doc: &ProjectConfig,
     component_plan: Option<&ComponentPlan>,
 ) -> sugar_verifier::consistency::WitnessDischargeContext {
     let config = WitnessDischargeConfig::from_plan(project_root, cfg_doc, component_plan);
-    config.apply_env();
+    config.apply_env(); // DISCHARGE_* only; not PROJECT_DIR/RESOLVERS
     config.to_verifier_context()
 }
 

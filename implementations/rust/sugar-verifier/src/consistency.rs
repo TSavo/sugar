@@ -916,32 +916,32 @@ struct WitnessResolver {
     method: String,
 }
 
-/// SEAM 7 (#3809 witness-as-verb): typed witness-discharge context.
+/// Typed witness-discharge context (#3809 witness-as-verb).
 ///
 /// **CID-idempotency (protocol law):** a witness `ObligationVerdict` is a pure
 /// function of content-addressed inputs (`packageCid` on the claim + contract
 /// identity + resolver body bytes). Two paths that feed the same inputs MUST
 /// return byte-identical verdicts; disagreement is a red test, not a
-/// "double-entry" hazard. Env dies because those inputs are spoken/typed —
-/// env has nothing left to carry (step 3 retires env fallback).
+/// "double-entry" hazard.
 ///
-/// **Trust boundary (step 2):** resolve = kit oracle RPC
-/// ([`ORACLE_RESOLVE_METHOD`]); verify = Rust [`package_outcome`]. Discharge
-/// is speak-packageCid-to-oracle → seal outcome. One resolve door only.
+/// **Trust boundary:** resolve = kit oracle RPC ([`ORACLE_RESOLVE_METHOD`]);
+/// verify = Rust [`package_outcome`]. Discharge is speak-packageCid-to-oracle
+/// → seal outcome. One resolve door only.
 ///
-/// Carries what used to ride `SUGAR_WITNESS_PROJECT_DIR` / `SUGAR_WITNESS_RESOLVERS`.
+/// **Step 3:** `SUGAR_WITNESS_PROJECT_DIR` / `SUGAR_WITNESS_RESOLVERS` are
+/// retired as a live config channel. This struct is the sole config surface
+/// for project_dir + resolvers (CLI fills it via `WitnessDischargeConfig`).
 /// Package CID stays on the claim (`evidence.certificate.proofData`).
 ///
-/// Precedence in [`try_witness_discharge`] / resolver discovery:
-/// 1. Typed fields on this struct (when set / non-empty)
-/// 2. Optional env fallback (legacy tests / caller override; step 3 retires)
-/// 3. Cold path only: `read_dir(.sugar/lift)` for resolvers (skipped when warm —
+/// Resolver discovery precedence:
+/// 1. Typed [`Self::resolvers`] (when non-empty)
+/// 2. Cold path only: `read_dir(.sugar/lift)` for resolvers (skipped when warm —
 ///    warm is a CID-cache-hit face of the same recompute, not a second law)
 #[derive(Debug, Clone, Default)]
 pub struct WitnessDischargeContext {
-    /// Project root for package resolve (was `SUGAR_WITNESS_PROJECT_DIR`).
+    /// Project root for package resolve (typed only; no env fallback).
     pub project_dir: Option<PathBuf>,
-    /// Kit resolve plugins (was `SUGAR_WITNESS_RESOLVERS` JSON array).
+    /// Kit resolve plugins (typed only; no env fallback).
     pub resolvers: Vec<WitnessResolverSpec>,
 }
 
@@ -969,17 +969,12 @@ impl WitnessResolverSpec {
 }
 
 impl WitnessDischargeContext {
-    /// Project dir: typed first, else env fallback.
+    /// Project dir from typed config only (step 3: no env fallback).
     pub fn project_dir_resolved(&self) -> Option<PathBuf> {
-        if let Some(ref p) = self.project_dir {
-            if !p.as_os_str().is_empty() {
-                return Some(p.clone());
-            }
-        }
-        std::env::var("SUGAR_WITNESS_PROJECT_DIR")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .map(PathBuf::from)
+        self.project_dir
+            .as_ref()
+            .filter(|p| !p.as_os_str().is_empty())
+            .cloned()
     }
 
     fn typed_resolvers(&self) -> Vec<WitnessResolver> {
@@ -1059,13 +1054,13 @@ fn try_witness_discharge(
         .and_then(|c| c.get("tool"))
         .and_then(|t| t.as_str())
         .unwrap_or("");
-    // SEAM 7: typed WitnessDischargeContext first; env only as optional fallback.
+    // Typed WitnessDischargeContext only (step 3: env config channel retired).
     let project = match active_witness_context().project_dir_resolved() {
         Some(p) => p,
         None => {
             return Some(undecidable(
                 "custom witness present but witness project_dir unset \
-                 (typed WitnessDischargeContext / SUGAR_WITNESS_PROJECT_DIR fallback; fail-closed)"
+                 (typed WitnessDischargeContext required; fail-closed)"
                     .into(),
             ))
         }
@@ -1311,77 +1306,29 @@ fn locus_in_scope(scope_root: &Path, file: &str, pool_only_inputs: bool) -> bool
 
 fn find_witness_resolvers(project_root: &Path) -> Vec<WitnessResolver> {
     let ctx = active_witness_context();
-    // SEAM 7: typed resolvers first.
+    // Typed resolvers first (sole spoken config; step 3 retired env channel).
     let mut found = ctx.typed_resolvers();
-    // Optional env fallback when typed list is empty (legacy tests / caller override).
-    if found.is_empty() {
-        found = witness_resolvers_from_env_fallback();
-    }
     // Warm path: never read_dir `.sugar/lift/*/manifest.toml` (#3809 #8).
     if POOL_ONLY_WITNESS.with(|c| c.get()) {
         return found;
     }
+    // Cold path: discover resolvers from project lift manifests when typed
+    // list is empty (or additional cold plugins live under the project).
     let lift_dir = project_root.join(".sugar").join("lift");
     if let Ok(entries) = std::fs::read_dir(&lift_dir) {
         for entry in entries.flatten() {
             let manifest = entry.path().join("manifest.toml");
             if let Some(resolver) = parse_witness_resolver(&manifest, project_root) {
-                found.push(resolver);
+                // Prefer typed when present; still allow cold discovery of
+                // additional project-local plugins only when typed is empty
+                // so cold==warm for the same typed list does not fork.
+                if found.is_empty() {
+                    found.push(resolver);
+                }
             }
         }
     }
     found
-}
-
-/// Env fallback for resolvers (SEAM 7 step 1). Prefer typed
-/// [`WitnessDischargeContext::resolvers`]. Retired as live primary in step 3.
-fn witness_resolvers_from_env_fallback() -> Vec<WitnessResolver> {
-    let Ok(raw) = std::env::var("SUGAR_WITNESS_RESOLVERS") else {
-        return Vec::new();
-    };
-    let Ok(value): Result<Json, _> = serde_json::from_str(&raw) else {
-        warn!("SUGAR_WITNESS_RESOLVERS was not valid JSON; ignoring configured witness resolvers");
-        return Vec::new();
-    };
-    let Some(items) = value.as_array() else {
-        warn!("SUGAR_WITNESS_RESOLVERS was not an array; ignoring configured witness resolvers");
-        return Vec::new();
-    };
-    items
-        .iter()
-        .filter_map(|item| {
-            let argv = item
-                .get("argv")
-                .and_then(|v| v.as_array())
-                .map(|values| {
-                    values
-                        .iter()
-                        .filter_map(|value| value.as_str().map(str::to_string))
-                        .filter(|value| !value.is_empty())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            if argv.is_empty() {
-                return None;
-            }
-            let working_dir = item
-                .get("working_dir")
-                .or_else(|| item.get("workingDir"))
-                .and_then(|v| v.as_str())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."));
-            let method = item
-                .get("method")
-                .and_then(|v| v.as_str())
-                .unwrap_or(ORACLE_RESOLVE_METHOD)
-                .to_string();
-            Some(WitnessResolver {
-                argv,
-                working_dir,
-                method,
-            })
-        })
-        .collect()
 }
 
 fn parse_witness_resolver(manifest: &Path, project_root: &Path) -> Option<WitnessResolver> {
@@ -3347,7 +3294,8 @@ pub fn build_manifest_from_pool(
 /// preference and read witness lift manifests. Prefer
 /// [`verify_consistency_with_policy`] on the warm path.
 ///
-/// Witness discharge config defaults empty (env fallback still available).
+/// Witness discharge config defaults empty (typed context required for
+/// custom-witness package recompute; no env config channel).
 pub fn verify_consistency(
     pool: &MementoPool,
     plan: &SolverPlan,
@@ -3701,8 +3649,8 @@ pub fn verify_consistency_scoped_with_base_index(
 /// `pool_only_inputs`: when true, never `Path::exists` / witness `read_dir`
 /// (#3809 #8). Locus preference uses speaker role; scope uses path prefix.
 ///
-/// `witness`: SEAM 7 typed discharge context (project_dir + resolvers). Env
-/// remains optional fallback when fields are empty.
+/// `witness`: typed discharge context (project_dir + resolvers). Sole config
+/// surface for package recompute (step 3 retired the env channel).
 #[allow(clippy::too_many_arguments)]
 pub fn verify_consistency_from_indexes(
     base: &ConsistencyIndex,
@@ -4165,16 +4113,7 @@ mod tests {
     use super::*;
     use crate::solvers::{registry, StubSolver};
     use serde_json::json;
-    use std::sync::{Arc, Mutex, OnceLock};
-
-    static WITNESS_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn witness_env_lock() -> std::sync::MutexGuard<'static, ()> {
-        WITNESS_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap()
-    }
+    use std::sync::Arc;
 
     // Attribution is the strong type that retired the "<client>" /
     // "<current-obligation>" sentinel strings. The soundness-load-bearing
@@ -4244,7 +4183,9 @@ mod tests {
             outcomes: None,
             failed: None,
             failed_tests: None,
-            reason: "custom witness present but SUGAR_WITNESS_PROJECT_DIR unset".to_string(),
+            reason: "custom witness present but witness project_dir unset \
+                 (typed WitnessDischargeContext required; fail-closed)"
+                .to_string(),
         };
         assert_wire_identity(
             &detail,
@@ -4252,7 +4193,8 @@ mod tests {
                 "kind": "witness",
                 "witnessed": false,
                 "verdict": ObligationVerdict::Undecidable.as_str(),
-                "reason": "custom witness present but SUGAR_WITNESS_PROJECT_DIR unset",
+                "reason": "custom witness present but witness project_dir unset \
+                 (typed WitnessDischargeContext required; fail-closed)",
             }),
         );
     }
@@ -4756,40 +4698,29 @@ mod tests {
     }
 
     #[test]
-    fn witness_resolvers_can_be_supplied_by_env_registry() {
-        let _env = witness_env_lock();
+    fn witness_resolvers_can_be_supplied_by_typed_context() {
         let cwd = std::env::current_dir().unwrap();
-        let encoded = json!([{
-            "argv": ["/bin/echo"],
-            "working_dir": cwd.display().to_string(),
-            "method": ORACLE_RESOLVE_METHOD,
-        }])
-        .to_string();
-        std::env::set_var("SUGAR_WITNESS_RESOLVERS", encoded);
-
-        // SEAM 7: env remains optional fallback when typed context is empty.
-        let resolvers = witness_resolvers_from_env_fallback();
+        let typed = WitnessDischargeContext {
+            project_dir: Some(cwd.clone()),
+            resolvers: vec![WitnessResolverSpec {
+                argv: vec!["/bin/echo".to_string()],
+                working_dir: cwd.clone(),
+                method: ORACLE_RESOLVE_METHOD.to_string(),
+            }],
+        };
+        let _guard = WitnessCtxGuard::enter(&typed);
+        // Warm: typed only (no cold lift discovery).
+        let _warm = PoolOnlyWitnessGuard::enter(true);
+        let resolvers = find_witness_resolvers(&cwd);
         assert_eq!(resolvers.len(), 1);
         assert_eq!(resolvers[0].argv, vec!["/bin/echo".to_string()]);
         assert_eq!(resolvers[0].working_dir, cwd);
         assert_eq!(resolvers[0].method, ORACLE_RESOLVE_METHOD);
-
-        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
     }
 
     #[test]
-    fn witness_resolvers_prefer_typed_context_over_env() {
-        let _env = witness_env_lock();
+    fn witness_resolvers_typed_list_is_sole_config_on_warm() {
         let cwd = std::env::current_dir().unwrap();
-        std::env::set_var(
-            "SUGAR_WITNESS_RESOLVERS",
-            json!([{
-                "argv": ["/bin/from-env"],
-                "working_dir": cwd.display().to_string(),
-                "method": ORACLE_RESOLVE_METHOD,
-            }])
-            .to_string(),
-        );
         let typed = WitnessDischargeContext {
             project_dir: Some(cwd.clone()),
             resolvers: vec![WitnessResolverSpec {
@@ -4799,10 +4730,10 @@ mod tests {
             }],
         };
         let _guard = WitnessCtxGuard::enter(&typed);
+        let _warm = PoolOnlyWitnessGuard::enter(true);
         let resolvers = find_witness_resolvers(&cwd);
-        assert_eq!(resolvers.len(), 1, "typed wins; env not mixed in");
+        assert_eq!(resolvers.len(), 1, "warm face uses typed resolvers only");
         assert_eq!(resolvers[0].argv, vec!["/bin/from-typed".to_string()]);
-        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
     }
 
     fn write_discharge_stdout(project: &std::path::Path, verdict: &str) -> std::path::PathBuf {
@@ -6765,10 +6696,6 @@ mod tests {
     /// against the symbolic point-claims.
     #[test]
     fn witness_member_forall_is_not_ambient() {
-        let _env = witness_env_lock();
-        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
-        std::env::remove_var("SUGAR_WITNESS_DISCHARGE");
-        std::env::remove_var("SUGAR_WITNESS_DISCHARGE_PYTEST");
         let (plan, reg) = z3_plan_and_registry();
         let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
         let guard = json!({"kind":"and","operands":[
@@ -6818,10 +6745,6 @@ mod tests {
     /// Critical / Codex P1 on the first-witnessed-member return.)
     #[test]
     fn witness_member_does_not_mask_a_contradictory_group() {
-        let _env = witness_env_lock();
-        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
-        std::env::remove_var("SUGAR_WITNESS_DISCHARGE");
-        std::env::remove_var("SUGAR_WITNESS_DISCHARGE_PYTEST");
         let (plan, reg) = z3_plan_and_registry();
         let name = "numpy.add#euf#c:callresult_numpy_add_a2(i:2,i:3)::assertion";
         let mut pool = MementoPool::default();
@@ -6892,25 +6815,41 @@ mod tests {
         );
     }
 
-    /// A lying discharge command cannot turn a failed witness package into a
-    /// discharge. The row verdict must be derived from the resolved package
-    /// bytes, whose CID is recomputed rust-side and whose per-test bodies commit
-    /// their real `outcome`.
+    /// Helper: typed discharge context pointing at a project-local fake oracle.
+    fn typed_ctx_for_project(project: &std::path::Path) -> WitnessDischargeContext {
+        let script = project
+            .join(".sugar")
+            .join("lift")
+            .join("fake-witness")
+            .join("resolve.sh");
+        WitnessDischargeContext {
+            project_dir: Some(project.to_path_buf()),
+            resolvers: vec![WitnessResolverSpec {
+                argv: vec![script.display().to_string()],
+                working_dir: project.to_path_buf(),
+                method: ORACLE_RESOLVE_METHOD.to_string(),
+            }],
+        }
+    }
+
+    /// A lying discharge-command stdout cannot turn a failed witness package
+    /// into a discharge. The row verdict is derived from package bytes only
+    /// (oracle resolve + package_outcome); kit verdict strings are ignored.
     #[test]
     fn lying_discharge_cannot_pass_failed_package_for_any_witness_kind() {
-        let _env = witness_env_lock();
         let package_bytes = b"{\"outcome\":\"passed\",\"test\":\"good\"}\n{\"outcome\":\"failed\",\"test\":\"bad\"}\n";
         let package_cid = blake3_512_of(package_bytes);
 
         for tool in ["pytest", "cargo-test", "junit", "testng"] {
             let project = unique_temp_dir(tool);
             write_resolver_manifest(&project, package_bytes);
+            // Pollute process env with a DISCHARGED lie: package path must ignore it.
             let lie = write_discharge_stdout(&project, "DISCHARGED");
             let env_key = tool_env_key(tool);
-            std::env::set_var("SUGAR_WITNESS_PROJECT_DIR", &project);
-            std::env::remove_var("SUGAR_WITNESS_DISCHARGE");
             std::env::set_var(&env_key, &lie);
 
+            let typed = typed_ctx_for_project(&project);
+            let _guard = WitnessCtxGuard::enter(&typed);
             let body = package_contract(tool, &package_cid, 2, 1);
             let result =
                 try_witness_discharge(&body, "blake3-512:cid".into(), "test_x".into()).unwrap();
@@ -6924,26 +6863,25 @@ mod tests {
                 "failed package is not a witness discharge"
             );
 
+            drop(_guard);
             std::env::remove_var(&env_key);
             let _ = std::fs::remove_dir_all(&project);
         }
-
-        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
-        std::env::remove_var("SUGAR_WITNESS_DISCHARGE");
     }
 
     #[test]
     fn all_passed_package_discharges_from_body_not_stdout() {
-        let _env = witness_env_lock();
         let package_bytes =
             b"{\"outcome\":\"passed\",\"test\":\"one\"}\n{\"outcome\":\"passed\",\"test\":\"two\"}\n";
         let package_cid = blake3_512_of(package_bytes);
         let project = unique_temp_dir("all-passed-package");
         write_resolver_manifest(&project, package_bytes);
         let lie = write_discharge_stdout(&project, "REFUSED");
-        std::env::set_var("SUGAR_WITNESS_PROJECT_DIR", &project);
+        // Lie on DISCHARGE env must not affect package recompute.
         std::env::set_var("SUGAR_WITNESS_DISCHARGE_PYTEST", &lie);
 
+        let typed = typed_ctx_for_project(&project);
+        let _guard = WitnessCtxGuard::enter(&typed);
         let body = package_contract("pytest", &package_cid, 2, 2);
         let result =
             try_witness_discharge(&body, "blake3-512:cid".into(), "test_x".into()).unwrap();
@@ -6954,44 +6892,45 @@ mod tests {
         );
         assert!(result.witnessed);
 
-        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
+        drop(_guard);
         std::env::remove_var("SUGAR_WITNESS_DISCHARGE_PYTEST");
         let _ = std::fs::remove_dir_all(&project);
     }
 
-    /// SEAM 7 receipt: witness(packageCid, contractCid) is CID-idempotent.
-    /// Env-staged config and typed `WitnessDischargeContext` are two paths to
-    /// the same recompute; they MUST emit byte-identical `ObligationVerdict`
-    /// (same verdict / witnessed / reason). Disagreement = broken non-determinism.
+    /// Step 3 receipt (reframed SEAM 7): env-as-config is gone.
+    /// Typed cold face (project_dir + cold lift discovery of the same
+    /// resolver script) vs typed warm face (explicit resolvers, no read_dir)
+    /// MUST seal byte-identical `ObligationVerdict` for one packageCid.
     #[test]
-    fn witness_verdict_byte_identical_env_vs_typed_context() {
-        let _env = witness_env_lock();
+    fn witness_verdict_byte_identical_typed_cold_vs_warm() {
         let package_bytes =
             b"{\"outcome\":\"passed\",\"test\":\"one\"}\n{\"outcome\":\"passed\",\"test\":\"two\"}\n";
         let package_cid = blake3_512_of(package_bytes);
-        let project = unique_temp_dir("seam7-idempotent");
+        let project = unique_temp_dir("step3-typed-cold-warm");
         write_resolver_manifest(&project, package_bytes);
         let script = project
             .join(".sugar")
             .join("lift")
             .join("fake-witness")
             .join("resolve.sh");
-        let contract_cid = "blake3-512:seam7-idempotent-contract".to_string();
+        let contract_cid = "blake3-512:step3-cold-warm-contract".to_string();
         let property = "test_x".to_string();
         let body = package_contract("pytest", &package_cid, 2, 2);
 
-        // Path A: env-only (empty typed TLS), cold disk resolver under project.
-        std::env::set_var("SUGAR_WITNESS_PROJECT_DIR", &project);
-        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
-        let _empty = WitnessCtxGuard::enter(&WitnessDischargeContext::default());
-        let via_env =
+        // Path A: typed project_dir only; cold discovers resolver from lift manifest.
+        let cold_ctx = WitnessDischargeContext {
+            project_dir: Some(project.clone()),
+            resolvers: Vec::new(),
+        };
+        let _pool_cold = PoolOnlyWitnessGuard::enter(false);
+        let _cold_guard = WitnessCtxGuard::enter(&cold_ctx);
+        let via_cold =
             try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
-        drop(_empty);
+        drop(_cold_guard);
+        drop(_pool_cold);
 
-        // Path B: typed context only — kill env, speak project_dir + resolver.
-        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
-        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
-        let typed = WitnessDischargeContext {
+        // Path B: typed project_dir + explicit resolvers; warm (no lift read_dir).
+        let warm_ctx = WitnessDischargeContext {
             project_dir: Some(project.clone()),
             resolvers: vec![WitnessResolverSpec {
                 argv: vec![script.display().to_string()],
@@ -6999,20 +6938,22 @@ mod tests {
                 method: ORACLE_RESOLVE_METHOD.to_string(),
             }],
         };
-        let _typed_guard = WitnessCtxGuard::enter(&typed);
-        let via_typed =
+        let _pool_warm = PoolOnlyWitnessGuard::enter(true);
+        let _warm_guard = WitnessCtxGuard::enter(&warm_ctx);
+        let via_warm =
             try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
-        drop(_typed_guard);
+        drop(_warm_guard);
+        drop(_pool_warm);
 
-        assert_verdict_byte_identical(&via_env, &via_typed, "env vs typed");
+        assert_verdict_byte_identical(&via_cold, &via_warm, "typed cold vs typed warm");
         assert_eq!(
-            via_env.verdict,
+            via_cold.verdict,
             ObligationVerdict::Discharged,
-            "package is all-passed; both paths must discharge"
+            "package is all-passed; both faces must discharge"
         );
         eprintln!(
-            "RECEIPT seam7_idempotent packageCid={} verdict={:?} reason={}",
-            package_cid, via_typed.verdict, via_typed.reason
+            "RECEIPT step3_typed_cold_warm packageCid={} verdict={:?} reason={}",
+            package_cid, via_warm.verdict, via_warm.reason
         );
 
         let _ = std::fs::remove_dir_all(&project);
@@ -7030,7 +6971,6 @@ mod tests {
     /// Two different results = failing test (the whole invariant).
     #[test]
     fn witness_verdict_byte_identical_arm_vs_oracle_door() {
-        let _env = witness_env_lock();
         let package_bytes =
             b"{\"outcome\":\"passed\",\"test\":\"one\"}\n{\"outcome\":\"passed\",\"test\":\"two\"}\n";
         let package_cid = blake3_512_of(package_bytes);
@@ -7044,11 +6984,6 @@ mod tests {
         let contract_cid = "blake3-512:step2-oracle-door-contract".to_string();
         let property = "test_x".to_string();
         let body = package_contract("pytest", &package_cid, 2, 2);
-
-        // Kill env so typed context is the sole config (env untouched as *fallback*
-        // machinery — still present in code; this test simply does not stage it).
-        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
-        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
 
         let typed = WitnessDischargeContext {
             project_dir: Some(project.clone()),
@@ -7073,7 +7008,7 @@ mod tests {
             })
             .collect();
 
-        // Path A — consistency arm (cold resolver discovery off; typed only).
+        // Path A — consistency arm (cold; typed resolvers, no env).
         let _pool_cold = PoolOnlyWitnessGuard::enter(false);
         let _typed_guard = WitnessCtxGuard::enter(&typed);
         let via_arm =
@@ -7118,12 +7053,10 @@ mod tests {
 
     #[test]
     fn stated_provenance_cannot_discharge_custom_execution_witness_package() {
-        let _env = witness_env_lock();
         let package_bytes = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
         let package_cid = blake3_512_of(package_bytes);
         let project = unique_temp_dir("stated-witness-package-kind");
         write_resolver_manifest(&project, package_bytes);
-        std::env::set_var("SUGAR_WITNESS_PROJECT_DIR", &project);
 
         let body = package_contract_with_provenance("cargo-test", &package_cid, 1, 1, "Stated");
         let mut pool = MementoPool::default();
@@ -7133,12 +7066,17 @@ mod tests {
             body,
         );
         let (plan, reg) = z3_plan_and_registry();
-        let res = verify_consistency(
+        let typed = typed_ctx_for_project(&project);
+        // Provenance-kind refusal happens before recompute; typed config still
+        // required so the arm can attempt discharge after kind checks.
+        let res = verify_consistency_with_policy(
             &pool,
             &plan,
             &reg,
             &test_compilers(),
             std::path::Path::new("."),
+            false,
+            &typed,
         );
 
         assert_eq!(res.len(), 1, "one witness-package obligation: {res:?}");
@@ -7159,7 +7097,6 @@ mod tests {
             "wrong-kind witness package must refuse before recompute can witness it"
         );
 
-        std::env::remove_var("SUGAR_WITNESS_PROJECT_DIR");
         let _ = std::fs::remove_dir_all(&project);
     }
 
