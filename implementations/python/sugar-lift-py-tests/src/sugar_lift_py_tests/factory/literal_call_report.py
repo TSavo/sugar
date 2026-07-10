@@ -90,6 +90,7 @@ from sugar_lift_py_tests.proofir.sorts import (
 )
 
 from .dig_boundary import DigBoundary
+from .dig_floor import DigFloorRecord, assert_locus_json, record_dig_floor
 from .floor_contract_agreement import (
     FloorContractAgreementViolation,
     enforce_floor_contract_agreement_gate,
@@ -321,6 +322,7 @@ def build_literal_call_report(
     implications: list[ImplicationDto] = []
     effects: list[EffectDto] = []
     dig_refusals: list[DigBoundary] = []
+    dig_floors: list[DigFloorRecord] = []
     agreement_violations: list[FloorContractAgreementViolation] = []
     local_functions = {
         frag.function_name(): frag
@@ -361,6 +363,7 @@ def build_literal_call_report(
                 contract_bindings=contract_bindings or [],
                 module_statements=module_statements,
                 dig_refusals=dig_refusals,
+                dig_floors=dig_floors,
                 agreement_violations=agreement_violations,
                 factory_audits=factory_audits,
             )
@@ -409,6 +412,9 @@ def build_literal_call_report(
             # rather than pretending pyright verified per-producer fields.
             diagnostics=[
                 cast(DiagnosticDto, refusal.to_json()) for refusal in dig_refusals
+            ]
+            + [
+                cast(DiagnosticDto, floor.to_json()) for floor in dig_floors
             ]
             + [
                 cast(
@@ -520,6 +526,7 @@ def _lift_assert(
     contract_bindings: list,
     module_statements: list[SourceFragment],
     dig_refusals: list[DigBoundary],
+    dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
 ) -> LiftResult:
@@ -571,6 +578,7 @@ def _lift_assert(
         module_statements=module_statements,
         factory_audits=factory_audits,
         dig_refusals=dig_refusals,
+        dig_floors=dig_floors,
         agreement_violations=agreement_violations,
     )
     if assertion_sugar is not None:
@@ -678,6 +686,7 @@ def _lift_assert(
             memento_file=memento_file,
             source_lines=source_lines,
             dig_refusals=dig_refusals,
+            dig_floors=dig_floors,
             agreement_violations=agreement_violations,
             factory_audits=universe_factory_audits,
             import_aliases=import_aliases,
@@ -794,6 +803,7 @@ def _lift_assertion_via_factory(
     module_statements: list[SourceFragment],
     factory_audits: list[FactoryAuditDto],
     dig_refusals: list[DigBoundary],
+    dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
 ) -> LiftResult | None:
     from .build import build_node, default_catalog
@@ -909,6 +919,7 @@ def _lift_assertion_via_factory(
         import_aliases=import_aliases,
         from_imports=from_imports,
         dig_refusals=dig_refusals,
+        dig_floors=dig_floors,
         agreement_violations=agreement_violations,
         factory_audits=factory_audits,
     )
@@ -929,6 +940,7 @@ def _factory_assertion_derived_context(
     import_aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
     dig_refusals: list[DigBoundary],
+    dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
 ) -> LiftResult | None:
@@ -951,6 +963,7 @@ def _factory_assertion_derived_context(
                     import_aliases=import_aliases,
                     from_imports=from_imports,
                     dig_refusals=dig_refusals,
+                    dig_floors=dig_floors,
                     agreement_violations=agreement_violations,
                     factory_audits=factory_audits,
                 )
@@ -973,6 +986,7 @@ def _factory_assertion_derived_context(
             memento_file=memento_file,
             source_lines=source_lines,
             dig_refusals=dig_refusals,
+            dig_floors=dig_floors,
             agreement_violations=agreement_violations,
             factory_audits=factory_audits,
             import_aliases=import_aliases,
@@ -998,6 +1012,7 @@ def _factory_assertion_derived_context(
         memento_file=memento_file,
         source_lines=source_lines,
         dig_refusals=dig_refusals,
+        dig_floors=dig_floors,
         agreement_violations=agreement_violations,
         factory_audits=factory_audits,
         import_aliases=import_aliases,
@@ -2861,6 +2876,38 @@ class _BridgeProjectionRefused:
 _BRIDGE_PROJECTION_REFUSED = _BridgeProjectionRefused()
 
 
+
+def _warranting_assert_json(stmt: SourceFragment, memento_file: str) -> dict:
+    """Stated assert locus that authorized this dig-floor emission."""
+    return assert_locus_json(
+        file=memento_file,
+        line=getattr(stmt, "line", 0) or 0,
+        col=getattr(stmt, "col", 0) or 0,
+    )
+
+
+def _stamp_dig_literal_floor(
+    dig_floors: list[DigFloorRecord],
+    *,
+    stmt: SourceFragment,
+    memento_file: str,
+    detail: str,
+    callee: str | None = None,
+) -> None:
+    """Record dig→literal floor stamped with the warranting assert locus."""
+    record_dig_floor(
+        dig_floors,
+        floor="literal",
+        file=memento_file,
+        line=getattr(stmt, "line", 0) or 0,
+        col=getattr(stmt, "col", 0) or 0,
+        blame=f"{memento_file}:{getattr(stmt, 'line', 0)}:{getattr(stmt, 'col', 0)}",
+        detail=detail,
+        callee=callee,
+        warranting_assert=_warranting_assert_json(stmt, memento_file),
+    )
+
+
 def _construct_callsite_from_factory_term(
     stmt: SourceFragment,
     callsite: SourceFragment,
@@ -2873,6 +2920,7 @@ def _construct_callsite_from_factory_term(
     memento_file: str,
     source_lines: list[str],
     dig_refusals: list[DigBoundary],
+    dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
     import_aliases: dict[str, str] | None = None,
@@ -3077,6 +3125,14 @@ def _construct_callsite_from_factory_term(
                     value_term,
                     check_agreement=False,
                 )
+                # Dig floored into a computed literal — stamp warranting assert.
+                _stamp_dig_literal_floor(
+                    dig_floors,
+                    stmt=stmt,
+                    memento_file=memento_file,
+                    detail="opaque-op-body-computed",
+                    callee=call_value.target_name,
+                )
                 return
             if isinstance(floor, OpaqueOpCallsite) and floor.computed is None:
                 # Opaque body return (hash, str/repr of symbolic arg, …).
@@ -3112,6 +3168,13 @@ def _construct_callsite_from_factory_term(
                         call_return_sort=call_return_sort,
                         include_whole_call_fact=not immediate_emitted,
                     )
+                )
+                _stamp_dig_literal_floor(
+                    dig_floors,
+                    stmt=stmt,
+                    memento_file=memento_file,
+                    detail="callsite-dict-literal-floor",
+                    callee=call_value.target_name,
                 )
                 return
             immediate = emit_immediate_fallback()
@@ -3167,6 +3230,14 @@ def _construct_callsite_from_factory_term(
             arg_terms,
             value_term,
             check_agreement=(not immediate_emitted and len(sink) == nested_sink_start),
+        )
+        # Dig force_floor projected to a concrete term — stamp warranting assert.
+        _stamp_dig_literal_floor(
+            dig_floors,
+            stmt=stmt,
+            memento_file=memento_file,
+            detail="callsite-floor-projection",
+            callee=call_value.target_name,
         )
 
     mint_universe(callee_name)

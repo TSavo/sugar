@@ -1,6 +1,7 @@
-"""Partition lift-coverage: assertions (default report) vs minority (bodies).
+"""Partition lift-coverage: assertions / minority / Crime 2 forged warrants.
 
-#4013 — two divergent axes; do NOT fold into one coverage number.
+#4013 — dual-axis; #4016 Crime 2 dig-floor warrant detector.
+#4019 — assertions are the default report body (no "majority" brand).
 
 Assertions (claim layer, silent-loss detector — the report's default body):
   stated / lifted+cited / refused-loud / silently-unaccounted
@@ -9,6 +10,10 @@ Assertions (claim layer, silent-loss detector — the report's default body):
 Minority (scope / dig report — NOT a bug when empty dig):
   present / dug / un_asserted
   un_asserted is VISIBLE, not red. Dig is assertion-triggered.
+
+Crime 2 (forged warrant):
+  dig floors (literal|effect) with no warrantingAssert stamp.
+  Gate: forged_warrant == 0 (RED if > 0). Definition made mechanical.
 """
 
 from __future__ import annotations
@@ -82,20 +87,54 @@ class MinorityAxis:
         }
 
 
+
+
+@dataclass
+class Crime2Axis:
+    """Dig floors with no warranting assertion (#4016 Crime 2)."""
+
+    dig_floors: int = 0
+    warranted: int = 0
+    forged_warrant: int = 0
+    forged_loci: list[dict] = field(default_factory=list)
+    dig_floor_loci: list[dict] = field(default_factory=list)
+
+    @property
+    def is_zero(self) -> bool:
+        return self.forged_warrant == 0
+
+    def to_json(self) -> dict:
+        return {
+            "axis": "crime2-forged-warrant",
+            "dig_floors": self.dig_floors,
+            "warranted": self.warranted,
+            "forged_warrant": self.forged_warrant,
+            "gate": "forged_warrant == 0",
+            "is_zero": self.forged_warrant == 0,
+            "forged_loci": list(self.forged_loci),
+            "dig_floor_loci": list(self.dig_floor_loci),
+            "note": (
+                "dig floor (literal|effect) with warrantingAssert=null is a "
+                "forged warrant — substrate produced a ground with no stated claim."
+            ),
+        }
+
 @dataclass
 class LiftCoverageReport:
     assertions: AssertionAxis
     minority: MinorityAxis
+    crime2: Crime2Axis = field(default_factory=Crime2Axis)
     files: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict:
         return {
             "kind": "lift-coverage",
-            "version": "4013.v1",
+            "version": "4016.crime2.v1",
             "files": list(self.files),
             "assertions": self.assertions.to_json(),
             "minority": self.minority.to_json(),
-            # Headline dual totals — never a single folded coverage number.
+            "crime2": self.crime2.to_json(),
+            # Headline totals — never a single folded coverage number.
             "totals": {
                 "stated": self.assertions.stated,
                 "accounted": (
@@ -105,6 +144,9 @@ class LiftCoverageReport:
                 "minority_present": self.minority.present,
                 "minority_dug": self.minority.dug,
                 "minority_un_asserted": self.minority.un_asserted,
+                "crime2_dig_floors": self.crime2.dig_floors,
+                "crime2_warranted": self.crime2.warranted,
+                "crime2_forged_warrant": self.crime2.forged_warrant,
             },
         }
 
@@ -121,9 +163,11 @@ def account_lift_coverage(
     payload = report_payload or {}
     assertions = _account_assertions(disk.asserts, payload)
     minority = _account_minority(disk.bodies, disk.asserts, payload)
+    crime2 = _account_crime2(payload)
     return LiftCoverageReport(
         assertions=assertions,
         minority=minority,
+        crime2=crime2,
         files=list(disk.files),
     )
 
@@ -342,6 +386,38 @@ def _report_named_functions(payload: Mapping[str, Any]) -> set[str]:
                 names.add(val)
                 names.add(val.rsplit(".", 1)[-1])
     return names
+
+
+
+
+def _account_crime2(payload: Mapping[str, Any]) -> Crime2Axis:
+    """Crime 2: dig-floor diagnostics with no warrantingAssert.
+
+    Dig-floor records are report-side provenance (kind=dig-floor), stamped at
+    emission. forged_warrant = floors where warrantingAssert is null/absent.
+    """
+    floors: list[dict] = []
+    forged: list[dict] = []
+    warranted = 0
+    for diag in payload.get("diagnostics") or []:
+        if not isinstance(diag, Mapping):
+            continue
+        if diag.get("kind") != "dig-floor":
+            continue
+        entry = dict(diag)
+        floors.append(entry)
+        wa = diag.get("warrantingAssert")
+        if wa is None:
+            forged.append(entry)
+        else:
+            warranted += 1
+    return Crime2Axis(
+        dig_floors=len(floors),
+        warranted=warranted,
+        forged_warrant=len(forged),
+        forged_loci=forged,
+        dig_floor_loci=floors,
+    )
 
 
 def paint_lines(

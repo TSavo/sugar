@@ -427,3 +427,172 @@ def test_discrimination_inject_unaccounted_construct_reds_assertions(tmp_path: P
     assert cov_full.assertions.silently_unaccounted == 0
     assert cov_partial.assertions.silently_unaccounted == 1
     assert cov_partial.assertions.silent_loci[0]["line"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Crime 2: forged warrant detector (#4016)
+# ---------------------------------------------------------------------------
+
+
+def test_crime2_account_forged_when_warranting_assert_null() -> None:
+    from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+    from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+
+    disk = census_source("def f():\n    return 0\n", file="t.py")
+    payload = {
+        "diagnostics": [
+            {
+                "kind": "dig-floor",
+                "floor": "literal",
+                "file": "t.py",
+                "line": 1,
+                "col": 0,
+                "blame": "t.py:1:0",
+                "detail": "test-forged",
+                "warrantingAssert": None,
+            },
+            {
+                "kind": "dig-floor",
+                "floor": "literal",
+                "file": "t.py",
+                "line": 2,
+                "col": 0,
+                "blame": "t.py:2:0",
+                "detail": "test-warranted",
+                "warrantingAssert": {"file": "t.py", "line": 2, "col": 4},
+            },
+        ]
+    }
+    cov = account_lift_coverage(disk, payload)
+    assert cov.crime2.dig_floors == 2
+    assert cov.crime2.warranted == 1
+    assert cov.crime2.forged_warrant == 1
+    assert cov.crime2.forged_loci[0]["detail"] == "test-forged"
+    assert cov.to_json()["totals"]["crime2_forged_warrant"] == 1
+    assert cov.crime2.is_zero is False
+
+
+def test_crime2_zero_when_all_floors_warranted() -> None:
+    from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+    from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+
+    disk = census_source("def f():\n    assert 1==1\n", file="t.py")
+    payload = {
+        "diagnostics": [
+            {
+                "kind": "dig-floor",
+                "floor": "literal",
+                "file": "t.py",
+                "line": 2,
+                "col": 4,
+                "blame": "t.py:2:4",
+                "detail": "opaque-op-body-computed",
+                "warrantingAssert": {"file": "t.py", "line": 2, "col": 4},
+            }
+        ]
+    }
+    cov = account_lift_coverage(disk, payload)
+    assert cov.crime2.forged_warrant == 0
+    assert cov.crime2.is_zero is True
+
+
+def test_crime2_bad_twin_inject_forged_floor_flips_red() -> None:
+    from sugar_lift_py_tests.factory.dig_floor import DigFloorRecord, record_dig_floor
+    from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+    from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+
+    disk = census_source("def f():\n    return 1\n", file="twin.py")
+    warranted_payload = {
+        "diagnostics": [
+            {
+                "kind": "dig-floor",
+                "floor": "literal",
+                "file": "twin.py",
+                "line": 1,
+                "col": 0,
+                "blame": "twin.py:1:0",
+                "detail": "callsite-floor-projection",
+                "warrantingAssert": {"file": "twin.py", "line": 10, "col": 4},
+            }
+        ]
+    }
+    green = account_lift_coverage(disk, warranted_payload)
+    assert green.crime2.forged_warrant == 0, green.crime2.to_json()
+
+    dig_floors: list[DigFloorRecord] = []
+    record_dig_floor(
+        dig_floors,
+        floor="literal",
+        file="twin.py",
+        line=1,
+        col=0,
+        blame="twin.py:1:0",
+        detail="injected-forged-warrant",
+        callee="forged",
+        warranting_assert=None,
+    )
+    forged_payload = {
+        "diagnostics": [d.to_json() for d in dig_floors]
+        + warranted_payload["diagnostics"]
+    }
+    red = account_lift_coverage(disk, forged_payload)
+    assert red.crime2.forged_warrant == 1, red.crime2.to_json()
+    assert red.crime2.forged_loci[0]["detail"] == "injected-forged-warrant"
+
+    green2 = account_lift_coverage(disk, warranted_payload)
+    assert green2.crime2.forged_warrant == 0
+
+
+def test_crime2_production_dig_floor_stamps_warranting_assert() -> None:
+    from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
+
+    src = (
+        "def A():\n"
+        "    return len([1, 2, 3])\n"
+        "def test_it():\n"
+        "    assert A() == 3\n"
+    )
+    built = build_literal_call_report(source=src, filename="stamp.py", memento_file="stamp.py")
+    assert built is not None
+    diags = list(built.payload.diagnostics or [])
+    floors = [d for d in diags if isinstance(d, dict) and d.get("kind") == "dig-floor"]
+    assert floors, f"expected dig-floor stamps; diagnostics={diags[:8]}"
+    for f in floors:
+        assert f.get("warrantingAssert") is not None, (
+            f"production dig-floor must stamp warranting assert; got {f}"
+        )
+        wa = f["warrantingAssert"]
+        assert wa.get("line") == 4, f"assert is on line 4; got {wa}"
+    from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+    from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+
+    disk = census_source(src, file="stamp.py")
+    cov = account_lift_coverage(disk, {"diagnostics": diags})
+    assert cov.crime2.forged_warrant == 0, cov.crime2.to_json()
+    assert cov.crime2.dig_floors >= 1
+
+
+def test_crime2_statistics_forged_warrant_gate_is_zero() -> None:
+    stats = _resolve_installed_package_path("statistics")
+    target = stats if stats.is_file() else (
+        stats / "statistics.py" if (stats / "statistics.py").exists() else stats
+    )
+    report, _ws = _stage_and_report(target if Path(target).is_file() else Path(str(stats)))
+    cov = report.get("liftCoverage") or report.get("lift_coverage") or {}
+    if not cov and "sources" in report:
+        for s in report.get("sources") or []:
+            if isinstance(s, dict) and (s.get("liftCoverage") or s.get("lift_coverage")):
+                cov = s.get("liftCoverage") or s.get("lift_coverage")
+                break
+    totals = (cov or {}).get("totals") or {}
+    crime2 = (cov or {}).get("crime2") or {}
+    forged = totals.get("crime2_forged_warrant", crime2.get("forged_warrant", 0))
+    if forged and int(forged) > 0:
+        loci = crime2.get("forged_loci") or []
+        lines = [
+            f"  - {x.get('file')}:{x.get('line')}  {x.get('detail')} {x.get('callee','')}"
+            for x in loci[:16]
+        ]
+        raise AssertionError(
+            f"crime2 forged_warrant={forged} (must be 0).\n" + "\n".join(lines)
+        )
