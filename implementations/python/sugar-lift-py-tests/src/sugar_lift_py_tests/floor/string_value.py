@@ -125,6 +125,13 @@ class StringValue(FloorValue):
             spec = operation.arguments[0]
             if isinstance(spec, StringValue):
                 return Complete(StringValue(format(self.value, spec.value)))
+        # Pure str methods: fold when args are static floors; otherwise mint
+        # call:<m>(self, …) with computed=None (joinable coordinate, never
+        # fabricate a result). Missing floor totalizer — not a missing AST
+        # recognizer (CallSugar already selects MethodCallStrategy).
+        folded = _fold_string_method(self, operation)
+        if folded is not None:
+            return folded
         _call_method_gap(
             owner=operation.owner,
             blame=operation.blame,
@@ -147,6 +154,130 @@ class StringValue(FloorValue):
 
     def binary_operator_with(self, operation, ctx):
         return operation.binary_string(self, ctx)
+
+
+def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
+    """Fold join/strip/split (and strip family) or mint an opaque coordinate.
+
+    Returns an Outcome when this method is owned, else None so the caller can
+    FactoryGap for unrelated names.
+    """
+    from sugar_lift_py_tests.floor.array_literal import ArrayLiteral
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    name = operation.name
+    args = operation.arguments
+
+    def opaque_coordinate() -> Complete:
+        return Complete(
+            OpaqueOpCallsite(
+                callee=name,
+                arg=receiver,
+                computed=None,
+                extra_args=tuple(args),
+            )
+        )
+
+    if name in {"strip", "lstrip", "rstrip"}:
+        if len(args) == 0:
+            return Complete(StringValue(getattr(receiver.value, name)()))
+        if len(args) == 1:
+            chars = args[0]
+            if isinstance(chars, StringValue):
+                return Complete(StringValue(getattr(receiver.value, name)(chars.value)))
+            # Opaque / symbolic chars: mint call:strip(self, chars), never invent.
+            return opaque_coordinate()
+        return None
+
+    if name == "join" and len(args) == 1:
+        iterable = args[0]
+        parts = _static_str_parts(iterable)
+        if parts is not None:
+            return Complete(StringValue(receiver.value.join(parts)))
+        # Opaque iterable (vendor columns, symbolic seq): coordinate only.
+        return opaque_coordinate()
+
+    if name == "split":
+        if len(args) == 0:
+            return Complete(
+                ArrayLiteral(
+                    tuple(StringValue(part) for part in receiver.value.split())
+                )
+            )
+        if len(args) == 1:
+            sep = args[0]
+            if isinstance(sep, StringValue):
+                return Complete(
+                    ArrayLiteral(
+                        tuple(
+                            StringValue(part)
+                            for part in receiver.value.split(sep.value)
+                        )
+                    )
+                )
+            if _is_none_floor(sep):
+                return Complete(
+                    ArrayLiteral(
+                        tuple(StringValue(part) for part in receiver.value.split(None))
+                    )
+                )
+            return opaque_coordinate()
+        if len(args) == 2:
+            sep, maxsplit = args
+            if isinstance(maxsplit, TermValue) and type(maxsplit.value) is int:
+                max_n = int(maxsplit.value)
+                if isinstance(sep, StringValue):
+                    return Complete(
+                        ArrayLiteral(
+                            tuple(
+                                StringValue(part)
+                                for part in receiver.value.split(sep.value, max_n)
+                            )
+                        )
+                    )
+                if _is_none_floor(sep):
+                    return Complete(
+                        ArrayLiteral(
+                            tuple(
+                                StringValue(part)
+                                for part in receiver.value.split(None, max_n)
+                            )
+                        )
+                    )
+            return opaque_coordinate()
+        return None
+
+    return None
+
+
+def _static_str_parts(iterable) -> list[str] | None:
+    """Extract a fully-static list of strings from a join iterable, or None."""
+    from sugar_lift_py_tests.floor.array_literal import ArrayLiteral
+    from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
+
+    if isinstance(iterable, StringValue):
+        # str.join over a string iterates characters.
+        return list(iterable.value)
+    if isinstance(iterable, (ArrayLiteral, TupleLiteralValue)):
+        parts: list[str] = []
+        for item in iterable.items:
+            if not isinstance(item, StringValue):
+                return None
+            parts.append(item.value)
+        return parts
+    return None
+
+
+def _is_none_floor(value) -> bool:
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import _Ctor
+
+    if not isinstance(value, SymbolicValue):
+        return False
+    term = value.term
+    return isinstance(term, _Ctor) and term.name == "None" and not term.args
 
 
 def _call_method_gap(
