@@ -317,6 +317,9 @@ SHOWCASE_RUNS = \
 	examples/itsdangerous-token-padding/run-logo-receipt.sh \
 	examples/stdlib-base64-padding/run-logo-receipt.sh \
 	examples/hashlib-sha256-hexdigest/run-logo-receipt.sh \
+	examples/zlib-crc32/run-logo-receipt.sh \
+	examples/binascii-hexlify/run-logo-receipt.sh \
+	examples/hmac-compare-digest/run-logo-receipt.sh \
 	examples/stdlib-base32-padding/run-logo-receipt.sh \
 	examples/itsdangerous-token-padding/run.sh \
 	examples/forall-vampire-showcase/run.sh \
