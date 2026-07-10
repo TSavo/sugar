@@ -383,6 +383,43 @@ class FloorValue:
             ),
         )
 
+    def less_than(self, other, blame):
+        # Default: this value does not stand on the ordering floor -- it cannot answer
+        # whether it is less than another value. The None arm: a value that CAN
+        # implements less_than and gives back a True/False literal; absence here is
+        # the honest "no".
+        del other
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="less_than",
+            blame=blame,
+            observed=observed,
+            requested="stand on the ordering floor",
+            fix=f"write more Floor: implement {observed}.less_than",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="less_than",
+                status="floor-gap",
+                observed=observed,
+                blame=blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow, factory_panic,
