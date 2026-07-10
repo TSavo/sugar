@@ -1,4 +1,4 @@
-# Handoff (2026-07-09, rev 7)
+# Handoff (2026-07-09, rev 8)
 
 Main is green (by per-PR battleaxe corpus receipts). Live queue below.
 
@@ -16,7 +16,26 @@ Solve reads NOTHING from the project filesystem. Inputs arrive as content-addres
 
 ---
 
-## INDEPENDENT — NEXT (T can grab now, python/doc-side, zero rust-core collision)
+## INDEPENDENT — NEXT (T; python/doc-side, zero rust-core collision)
+
+**Ongoing (infinite runway):**
+- **F. More real-name logos.** 7 proven (itsdangerous, base64, base32, hashlib, hmac, binascii, zlib.crc32). Keep going — but see L: broaden the bug-shape.
+- **G. More vendors (coordinate coverage).** numpy/pandas/statistics done (R=0); `decimal` in flight (97118). Next: `fractions`, `csv`, `datetime`, `pathlib`.
+- **H. PyCon demo narrative / README arc** (your voice) — the inline-editor moment + the wall of real-name proofs.
+
+**NEW lanes (higher-leverage than more-of-the-same):**
+- **L. A DIFFERENT bug-shape class.** Every logo so far is the padding/strip class (`¬suffix-of("=")`). Prove a genuinely different correctness property so the wall isn't one trick: a **stated-vector equality** (e.g. HMAC-SHA256 digest == expected hex), a **length/bounds invariant**, or an **ordering** property. This is the highest-value next logo — it shows breadth, not repetition.
+- **J. Cross-library COMPOSITION proof** (the "water through the pipe" story). A real chain where library A's output feeds library B and correctness threads end-to-end (e.g. `base64.urlsafe_b64encode(...)` then `itsdangerous` sign, good vs tampered). The Aug composition-story milestone; python-side.
+- **I. Logo gallery / index doc.** One page listing every proven logo: library · bug shape · receipt · SCOPE. The wall made legible — PyCon showcase + product front page.
+
+---
+
+## INDEPENDENT — DONE (T)
+- A numpy R==0 ratchet (#3997) · B coordinate bad-twins (#3986) · C re-sweep 187/187 (#3993) · D 2nd logo (#3993) · E multi-arg bad-twins (#3991) · #3958 free-name (#3982) · F logos 3-7 (#3998/#3999) · G statistics (#4001).
+
+---
+
+## INDEPENDENT — NEXT_OLD (T can grab now, python/doc-side, zero rust-core collision)
 
 ### F. MORE REAL-NAME LOGOS — **partial CLOSE** (two more shipped). Still open-ended north star.
 - **stdlib base32 nopad** (`examples/stdlib-base32-padding`) — strip ambient, same membrane as base64 logo. GOOD discharged / BAD unsatisfied / WRONG-UNPADDED discharged.
