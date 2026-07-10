@@ -1,4 +1,4 @@
-# Handoff (2026-07-09, rev 6)
+# Handoff (2026-07-09, rev 7)
 
 Main is green (by per-PR battleaxe corpus receipts). Live queue below.
 
@@ -13,6 +13,19 @@ Solve reads NOTHING from the project filesystem. Inputs arrive as content-addres
 **In flight (97109):** rebase #1 (#3989, conflicted on runner.rs); investigate #3 (sidecar call-edges) + #7 (tier-2 feed shape) and report; then the final `delete pool_only_inputs`.
 
 **Flags (I surface only if real):** #3 = lift/bridge gap only if sidecar-only production exists; #7 = design-shaped feed path, report shape before building.
+
+---
+
+## INDEPENDENT — NEXT (T can grab now, python/doc-side, zero rust-core collision)
+
+### F. MORE REAL-NAME LOGOS (the north star — logos ARE the product). Two proven so far (itsdangerous #3960/#3977, stdlib base64 #3993). This is open-ended, highest-value, PyCon material. Each: a real library + a real bug shape + good/bad/wrong twins + `SCOPE.md` + a CI ratchet (`run-logo-receipt.sh` + Makefile target), same shape as the two done. Concrete candidates to pick from:
+- **PyJWT `alg=none` / algorithm confusion** — a stated-vector or strip-class shape for token verification.
+- **hashlib/hmac digest-length or `compare_digest` confusion** — a real comparison bug shape.
+- **Another encoding library** with the padding/strip class (`¬suffix-of`) that reuses the proven ambient.
+
+### G. Coordinate coverage for a THIRD vendor library. The coordinate model + real-scale sweep is proven for numpy/pandas (187/187, R=0). Extend to a new vendor — a stdlib module (`statistics`, `fractions`) or `scipy` — lift-probe the surface, prove 0 construction gaps, pin a totality ratchet. New "the model generalizes" receipt.
+
+### H. PyCon demo narrative / README arc (T's voice). The story for the inline-editor moment: real pandas → red squiggle at typing speed, real-name proofs as the wall. Load-bearing for the talk; doc-only, no code collision.
 
 ---
 
