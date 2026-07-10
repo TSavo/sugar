@@ -1,118 +1,40 @@
-"""TupleLiteralSugar reduces a Python tuple literal to the `tuple` ctor."""
+"""TupleLiteralSugar: `(1, 2)` reduces each element and the result is a tuple of
+them. The tuple is its reduced elements on the floor -- construction order, no fork."""
 
 from __future__ import annotations
 
 import ast
 
-import pytest
+from factory_reduce import compose_block
 
-from factory_reduce import fol, reduce_term
-
-from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
-from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
-from sugar_lift_py_tests.factory import factory_panic
-from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
-from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
-from sugar_lift_py_tests.ir import ctor, num
-from sugar_lift_py_tests.outcome import complete_value
-from sugar_lift_py_tests.sugar.array_literal_sugar import ARRAY_LITERAL_CLAIM
-from sugar_lift_py_tests.sugar.primitive_literal_sugar import PRIMITIVE_LITERAL_CLAIM
-from sugar_lift_py_tests.sugar.sugar_base import registered_claims
-from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-from sugar_lift_py_tests.sugar.tuple_literal_sugar import (
-    TupleLiteralSugar,
-)  # noqa: F401
-from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue, TupleValue
+from sugar_lift_py_tests.outcome import Complete
 
 
-def _claim(name: str):
-    default_catalog()
-    return next(claim for claim in registered_claims() if claim.name == name)
+def test_tuple_literal_selects_and_reduces_elements() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    node = ast.parse("(1, 2)", mode="eval").body
+    result = build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
 
-
-def _reduce_with_log(expr: str):
-    build_ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    body = build_ctx.build_body(ast.parse(expr, mode="eval").body, SugarRole.TERM)
-    reduce_ctx = ReduceContext(temporal=TemporalContext.empty())
-    value = complete_value(body.reduce(reduce_ctx), owner="tuple literal dispatch")
-    return value, reduce_ctx.operation_log
-
-
-def _reduce_with_catalog_and_log(expr: str, catalog: SugarCatalog):
-    build_ctx = FactoryBuildContext(filename="t.py", catalog=catalog)
-    body = build_ctx.build_body(ast.parse(expr, mode="eval").body, SugarRole.TERM)
-    reduce_ctx = ReduceContext(temporal=TemporalContext.empty())
-    value = complete_value(body.reduce(reduce_ctx), owner="sequence literal dispatch")
-    return value, reduce_ctx.operation_log
-
-
-def test_tuple_reduces_to_tuple_ctor() -> None:
-    assert fol(reduce_term("(1, 1)")) == fol(ctor("tuple", [num(1), num(1)]))
-
-
-def test_singleton_tuple_reduces_to_tuple_ctor() -> None:
-    assert fol(reduce_term("(1,)")) == fol(ctor("tuple", [num(1)]))
-
-
-def test_tuple_literal_constructs_through_floor_operation_log() -> None:
-    value, operation_log = _reduce_with_log("(1, 2)")
-
-    assert fol(floor_to_term(value, owner="tuple literal dispatch")) == fol(
-        ctor("tuple", [num(1), num(2)])
-    )
-    assert operation_log == [
-        (
-            "TupleLiteralSugar",
-            "construct_sequence_with",
-            "SequenceConstructionOperation",
-        )
-    ]
-
-
-def test_list_literal_constructs_through_single_array_owner() -> None:
-    value, operation_log = _reduce_with_catalog_and_log(
-        "[1, 2]",
-        SugarCatalog([ARRAY_LITERAL_CLAIM, PRIMITIVE_LITERAL_CLAIM]),
+    assert result.audit_row.selected == "TupleLiteralSugar"
+    assert result.sugar.desugar(ctx) == Complete(
+        TupleValue((TermValue(1), TermValue(2)))
     )
 
-    assert value == ArrayLiteral((TermValue(1), TermValue(2)))
-    assert operation_log == []
+
+def test_empty_tuple_reduces_to_empty_tuple_value() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    node = ast.parse("()", mode="eval").body
+    result = build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
+
+    assert result.audit_row.selected == "TupleLiteralSugar"
+    assert result.sugar.desugar(ctx) == Complete(TupleValue(()))
 
 
-def test_list_literal_accepts_tuple_elements_through_array_owner() -> None:
-    value, operation_log = _reduce_with_catalog_and_log(
-        "[(1, 2)]",
-        SugarCatalog(
-            [ARRAY_LITERAL_CLAIM, _claim("TupleLiteralSugar"), PRIMITIVE_LITERAL_CLAIM]
-        ),
-    )
+def test_bare_tuple_statement_is_discarded_in_block() -> None:
+    outcome = compose_block("    (1, 2)\n    return 2\n")
 
-    assert value == ArrayLiteral((TupleLiteralValue((TermValue(1), TermValue(2))),))
-    assert operation_log == [
-        (
-            "TupleLiteralSugar",
-            "construct_sequence_with",
-            "SequenceConstructionOperation",
-        ),
-    ]
-
-
-def test_list_literal_bad_element_floor_is_named_by_array_owner() -> None:
-    with pytest.raises(FactoryGap) as raised:
-        _reduce_with_catalog_and_log(
-            "[{1}]",
-            SugarCatalog(
-                [ARRAY_LITERAL_CLAIM, _claim("SetSugar"), PRIMITIVE_LITERAL_CLAIM]
-            ),
-        )
-
-    assert raised.value.info.to_json() == {
-        "owner": "ArrayLiteralSugar",
-        "blame": "t.py:1:1",
-        "observed": "SetLiteralValue",
-        "requested": "array element floor",
-        "fix": "add ArrayLiteral element floor for SetLiteralValue",
-        "gap_kind": "Floor",
-        "gap_locus": "Construction",
-    }
+    assert outcome == BlockValue((ReturnValue(TermValue(2)),))
