@@ -159,3 +159,6 @@ implementations/ruby/ext/sugar_blake3/blake3_impl.h
 # on-disk dirs so they don't reappear as untracked.
 /sugar-warnings/
 /sugar-worktrees/
+provekit-worktrees/
+provekit-warnings/
+implementations/swift/.build/
