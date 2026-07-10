@@ -919,23 +919,21 @@ fn prove_from_kit_does_not_write_proof_run_bundle() {
     );
 }
 
-/// #3809 #8 + #9 — warm path: no locus `Path::exists`, no witness manifest
+/// #3809 #8 + #7 — warm path: no locus `Path::exists`, no witness manifest
 /// `read_dir`, no tier-2 `cache_dir` FS.
 ///
-/// BEFORE #8 (cold locus preference):
+/// BEFORE (cold locus preference):
 ///   `project_root.join(locus.file).exists()` per colliding name
-/// BEFORE #8 (witness):
+/// BEFORE (witness):
 ///   `std::fs::read_dir(project/.sugar/lift)` + `read_to_string(manifest.toml)`
-/// BEFORE #9:
+/// BEFORE cut #7:
 ///   `try_tier2` → `read_dir(cache_dir)` + `read(file)`;
 ///   `mint_and_cache` → `create_dir_all` + `write`
 ///
-/// AFTER: prove_from_kit forces pool_only + cache_dir=None; consistency uses
-/// speaker role for locus preference; witness resolvers short-circuit empty;
-/// work_one skips tier2/mint disk. Canary lift manifest + cache files must
-/// not be opened (we detect via unreadable cache_dir + poison manifest that
-/// would only matter if read_dir ran and parse succeeded — witness path
-/// returns empty resolvers before read on warm).
+/// AFTER cut #7: discharge never touches `cache_dir` (field is a no-op).
+/// prove_from_kit still clears it; consistency uses speaker role for locus
+/// preference; witness resolvers are client-fed only. Canary lift manifest +
+/// cache files must not be opened.
 ///
 /// Verdict rows match a clean warm run (byte-identical gate).
 #[test]
@@ -961,8 +959,8 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
     )
     .expect("poison manifest");
 
-    // #9 canary: cache_dir with a sentinel file; warm must not read it
-    // even if caller puts cache_dir on the cfg (prove_from_kit clears it).
+    // Cut #7 canary: cache_dir with a sentinel; discharge must not read/write
+    // it even if the caller leaves cache_dir set (solve ignores the field).
     let cache_dir = dir.path().join("tier2-cache");
     fs::create_dir_all(&cache_dir).expect("mkdir cache");
     let cache_sentinel = cache_dir.join("MUST_NOT_READ.sentinel");
@@ -986,7 +984,7 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
     .expect("clean warm");
 
     let mut cfg = runner_cfg(&project);
-    // Deliberately set cache_dir — prove_from_kit must clear it (#9).
+    // Deliberately set cache_dir — discharge ignores it (cut #7).
     cfg.cache_dir = Some(cache_dir.clone());
     cfg.mint_seed = Some([0x42; 32]);
     cfg.mint_producer_id = Some("fs89-test".into());

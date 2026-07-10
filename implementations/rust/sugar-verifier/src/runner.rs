@@ -7,11 +7,10 @@
 // legacy single-Z3 path is preserved when no `.sugar/config.toml`
 // is found.
 //
-// Stage 4 handshake is unchanged: Tier 1 (publisher-post hash ==
-// consumer-pre hash, zero solver work) -> Tier 2 (signed implication
-// memento in `cache_dir`) -> Tier 3 (the configured solver plan). On
-// Tier 3 unsat we mint+cache a fresh implication memento PER SOLVER
-// so the lattice records each independent witness.
+// Stage 4 handshake: Tier 0c in-pool implication (`pool.can_implies` /
+// ImplicationMemento) -> Tier 1 hash equality -> Tier 3 solver plan.
+// #3809 cut #7: no `cache_dir` disk lookup / mint (production never set
+// it; vestige deleted).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -29,7 +28,7 @@ use sugar_ir_compiler::CompilerInput;
 use tracing::{debug, info, warn};
 
 use crate::body_discharge::callee_post_guard_fact;
-use crate::handshake::{formula_hash, implication_property_hash, try_tier1, try_tier2};
+use crate::handshake::{formula_hash, try_tier1};
 use crate::solvers::{
     plan::SolverInvocation, registry, run_plan_with_compilers, SolverHandle, SolverPlan,
     SolverSeat, SolversConfig,
@@ -92,16 +91,16 @@ pub struct RunnerConfig {
     /// the long-term interface; command surfaces that still accept `--z3` must
     /// opt into this compat hatch explicitly.
     pub legacy_z3_fallback: Option<LegacyZ3Fallback>,
-    /// Per-project implication-memento cache directory.
+    /// Deprecated no-op (#3809 cut #7). Discharge no longer reads or writes
+    /// under any implication cache directory. Field kept for API stability
+    /// until the series deletes residual config surface with `pool_only_inputs`.
     pub cache_dir: Option<PathBuf>,
-    /// Ed25519 seed used to sign minted implication mementos.
+    /// Unused after cut #7 (no disk mint). Kept for API stability until flag cut.
     pub mint_seed: Option<[u8; 32]>,
-    /// Producer id stamped into minted implication mementos.
+    /// Unused after cut #7 (no disk mint). Kept for API stability until flag cut.
     pub mint_producer_id: Option<String>,
-    /// Client-fed trust anchors for Tier-2 implication cache entries
-    /// (#3809 PR A). Empty means the cache tier is skipped entirely.
-    /// Faces that want project config signers read config.toml themselves
-    /// and set this — solve never opens config for signers.
+    /// Client-fed trust anchors (config-fed by faces, cut #4). No longer used
+    /// for tier-2 disk scan after cut #7; retained for face config plumbing.
     pub trusted_implication_signers: Vec<String>,
     /// Client-fed SolversConfig (#3809 PR A). Solve never opens
     /// `.sugar/config.toml` for `[solvers]` — faces load and set this.
@@ -130,9 +129,9 @@ pub struct RunnerConfig {
     /// (#3809 cut #2). Solve never opens that file. `None` → placeholder CID.
     pub plugin_registry_cid: Option<String>,
     /// Residual pre-protocol side-channel gate (#3809). When true, skip
-    /// remaining project FS for claim-adjacent discovery (locus exists,
-    /// tier-2 cache_dir). Named artifacts, input CIDs, call-edges, signers,
-    /// solvers, witness resolvers, and runs-seal are already client-fed or
+    /// remaining project FS for claim-adjacent discovery (locus exists).
+    /// Input CIDs, call-edges, named artifacts, signers, solvers, witness
+    /// resolvers, runs-seal, and tier-2 cache are already client-fed or
     /// deleted. Series deletes this field once every other branch is gone.
     /// Derived by `solve_project_with_pool`.
     pub pool_only_inputs: bool,
@@ -1431,6 +1430,9 @@ fn work_one(
     invs_sink: &Mutex<Vec<SolverInvocation>>,
     minted_sink: &Mutex<Vec<(MementoCid, Json)>>,
 ) -> CallsiteResult {
+    // #3809 cut #7: disk tier-2 removed; counters/sinks/cfg cache fields unused.
+    let _ = (n_cache, minted_sink, cfg);
+
     if let Some(result) = crate::attribute_safety::try_discharge(cs, pool) {
         if result.verdict == ObligationVerdict::Discharged {
             n_solved.fetch_add(1, Ordering::Relaxed);
@@ -1741,30 +1743,8 @@ fn work_one(
                 None,
             );
         }
-        // Tier 2 disk cache: cold path only. Warm `pool_only_inputs` never
-        // read_dir/reads under cache_dir (#3809 #9).
-        if !cfg.pool_only_inputs {
-            if let Some(cache_dir) = &cfg.cache_dir {
-                if let Some(impl_cid) = try_tier2(
-                    cache_dir,
-                    post_hash,
-                    pre_hash,
-                    &cfg.trusted_implication_signers,
-                ) {
-                    n_cache.fetch_add(1, Ordering::Relaxed);
-                    return (
-                        cs.clone(),
-                        ObligationVerdict::Discharged,
-                        format!(
-                            "tier2: cache hit (implication memento {})",
-                            short(&impl_cid)
-                        ),
-                        Some("hash-tier".to_string()),
-                        None,
-                    );
-                }
-            }
-        }
+        // #3809 cut #7: no tier-2 `cache_dir` disk lookup. In-pool
+        // ImplicationMemento discharge is Tier 0c (`can_implies`) above.
     }
 
     // Tier 3: build the ProofIR obligation and run the configured plan.
@@ -1948,59 +1928,7 @@ fn work_one(
         n_residue.fetch_add(1, Ordering::Relaxed);
     }
 
-    // Mint per-solver mementos for every solver that returned unsat
-    // when the implication form was used. Warm path never writes the
-    // tier-2 cache (#3809 #9).
-    if used_implication_form && !cfg.pool_only_inputs {
-        if let (Some(post_hash), Some(pre_hash), Some(cache_dir), Some(seed), Some(producer)) = (
-            producer_post.as_ref().map(|(_, h)| h.clone()),
-            consumer_pre_hash.clone(),
-            cfg.cache_dir.as_ref(),
-            cfg.mint_seed.as_ref(),
-            cfg.mint_producer_id.as_ref(),
-        ) {
-            for inv in &invs {
-                if inv.result.verdict == ObligationVerdict::Discharged {
-                    let prover_tag =
-                        format!("{}@{}", inv.result.solver_name, inv.result.solver_version);
-                    let solver_input = compilers
-                        .compile(&formula_input, &inv.compiler)
-                        .map(|compiled| compiled.script())
-                        .unwrap_or_default();
-                    match mint_and_cache(
-                        cache_dir,
-                        seed,
-                        producer,
-                        &post_hash,
-                        &pre_hash,
-                        producer_post.as_ref().map(|(p, _)| p.clone()),
-                        consumer_pre.cloned(),
-                        &solver_input,
-                        &prover_tag,
-                        inv.result.wall_clock.as_millis() as i64,
-                    ) {
-                        Ok((cid, envelope)) => {
-                            // Queue for insertion into pool after parallel
-                            // work completes (pool is not Sync).
-                            match MementoCid::try_parse(cid.clone()) {
-                                Ok(cid) => {
-                                    if let Ok(mut g) = minted_sink.lock() {
-                                        g.push((cid, envelope));
-                                    }
-                                }
-                                Err(_) => {
-                                    warn!(bridge = %cs.bridge_ir_name, cid = %cid, "mint_and_cache returned an invalid memento CID");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!(bridge = %cs.bridge_ir_name, error = %e, "mint_and_cache failed");
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // #3809 cut #7: no `mint_and_cache` disk write (was gated on cache_dir).
 
     if verdict == ObligationVerdict::Discharged && used_implication_form {
         n_solved.fetch_add(1, Ordering::Relaxed);
@@ -2082,177 +2010,6 @@ fn build_implication_obligation(post_formula: &Json, pre_formula: &Json) -> Resu
             "operands": [post_body_renamed, pre_body_renamed]
         }
     }))
-}
-
-/// Mint an implication memento and cache it to disk.
-/// Returns (cid, envelope_json) so the caller can insert into the pool.
-#[allow(clippy::too_many_arguments)]
-fn mint_and_cache(
-    cache_dir: &std::path::Path,
-    seed: &[u8; 32],
-    producer_id: &str,
-    post_hash: &str,
-    pre_hash: &str,
-    post_formula: Option<Json>,
-    pre_formula: Option<Json>,
-    solver_input: &str,
-    prover_tag: &str,
-    prover_run_ms: i64,
-) -> Result<(String, Json), Box<dyn std::error::Error>> {
-    use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
-    use sugar_proof_envelope::{
-        build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, ImplicationMemento,
-        ProofEnvelopeInput, ProofGraph,
-    };
-
-    std::fs::create_dir_all(cache_dir)?;
-    let now = "2026-04-30T00:00:00.000Z";
-    let pubkey = ed25519_pubkey_string(seed);
-    let _ = (post_formula, pre_formula);
-
-    // Layered shape (v1.2). The verifier's own implication-extension
-    // mint emits the same `{envelope, header, metadata}` shape that
-    // `sugar-claim-envelope::mint_implication` produces; mirroring
-    // it inline keeps the runner free of an extra runtime dep on the
-    // claim-envelope crate.
-    let bh = Value::object([
-        ("antecedentHash", Value::string(post_hash.to_string())),
-        ("consequentHash", Value::string(pre_hash.to_string())),
-    ]);
-    let binding_hash = blake3_512_of(encode_jcs(&bh).as_bytes());
-    let property_hash = implication_property_hash(post_hash, pre_hash);
-
-    let mut input_cids = vec!["blake3-512:0000".to_string(), "blake3-512:0000".to_string()];
-    input_cids.sort();
-    let cids_arr: Vec<std::sync::Arc<Value>> = input_cids.into_iter().map(Value::string).collect();
-
-    // Header: schemaVersion / kind / cid + kind-specific REQUIRED.
-    // The header CID hashes the substrate-load-bearing claim content
-    // (antecedent/consequent hashes + slots).
-    let header_content = Value::object([
-        ("antecedentHash", Value::string(post_hash.to_string())),
-        ("consequentHash", Value::string(pre_hash.to_string())),
-        (
-            "antecedentCid",
-            Value::string("blake3-512:0000".to_string()),
-        ),
-        (
-            "consequentCid",
-            Value::string("blake3-512:0000".to_string()),
-        ),
-        ("antecedentSlot", Value::string("post".to_string())),
-        ("consequentSlot", Value::string("pre".to_string())),
-    ]);
-    let header_cid = blake3_512_of(encode_jcs(&header_content).as_bytes());
-
-    let header = Value::object([
-        ("schemaVersion", Value::string("2")),
-        ("kind", Value::string("implication")),
-        ("cid", Value::string(header_cid)),
-        ("antecedentHash", Value::string(post_hash.to_string())),
-        ("consequentHash", Value::string(pre_hash.to_string())),
-        (
-            "antecedentCid",
-            Value::string("blake3-512:0000".to_string()),
-        ),
-        (
-            "consequentCid",
-            Value::string("blake3-512:0000".to_string()),
-        ),
-        ("antecedentSlot", Value::string("post".to_string())),
-        ("consequentSlot", Value::string("pre".to_string())),
-        ("verdict", Value::string("holds")),
-        ("bindingHash", Value::string(binding_hash)),
-        ("propertyHash", Value::string(property_hash.clone())),
-        ("inputCids", Value::array(cids_arr)),
-    ]);
-
-    let mut metadata_kvs: Vec<(String, std::sync::Arc<Value>)> = vec![
-        ("producedBy".into(), Value::string(producer_id.to_string())),
-        ("producedAt".into(), Value::string(now.to_string())),
-        ("prover".into(), Value::string(prover_tag.to_string())),
-        (
-            "proverRunMs".into(),
-            Value::integer(i128::from(prover_run_ms)),
-        ),
-        ("producerPubkey".into(), Value::string(pubkey.clone())),
-    ];
-    if !solver_input.is_empty() {
-        metadata_kvs.push((
-            "solverInput".into(),
-            Value::string(solver_input.to_string()),
-        ));
-    }
-    metadata_kvs.push(("proofWitness".into(), Value::string("(unsat)".to_string())));
-    let metadata = std::sync::Arc::new(Value::Object(metadata_kvs));
-
-    // Sign over JCS({header, metadata}) per spec §2 R2.
-    let signing_msg = Value::object([("header", header.clone()), ("metadata", metadata.clone())]);
-    let signing_bytes = encode_jcs(&signing_msg);
-    let producer_sig = ed25519_sign_string(seed, signing_bytes.as_bytes());
-
-    // Envelope CID is blake3_512(JCS(envelope-with-signature)).
-    let envelope = Value::object([
-        ("signer", Value::string(pubkey.clone())),
-        ("declaredAt", Value::string(now.to_string())),
-        ("signature", Value::string(producer_sig)),
-    ]);
-    let envelope_jcs = encode_jcs(&envelope);
-    let cid = blake3_512_of(envelope_jcs.as_bytes());
-
-    let memento = Value::object([
-        ("envelope", envelope),
-        ("header", header),
-        ("metadata", metadata),
-    ]);
-    let final_canonical = encode_jcs(&memento).into_bytes();
-
-    let signer_cid = blake3_512_of(pubkey.as_bytes());
-    // Encode prover_tag into the filename to disambiguate per-solver
-    // mementos for the same (antecedent, consequent) pair.
-    let safe_prover: String = prover_tag
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-    let proof_input = ProofEnvelopeInput {
-        name: format!(
-            "@cache/implication-{}-{}",
-            short(&property_hash),
-            safe_prover
-        ),
-        version: "1.0.0".into(),
-        binary_cid: None,
-        metadata: None,
-        graph: {
-            let memento = ImplicationMemento::new(final_canonical.clone());
-            assert_eq!(
-                memento.cid().as_str(),
-                cid,
-                "implication cache memento CID disagrees with its envelope identity"
-            );
-            let mut graph = ProofGraph::new();
-            graph.push_implication(memento);
-            graph
-        },
-        signer_cid,
-        signer_seed: *seed,
-        declared_at: now.into(),
-        manifest: None,
-    };
-    let built = build_proof_envelope(&proof_input);
-
-    let fname = format!(
-        "{}-{}.proof",
-        sugar_proof_envelope::cid_filename_stem(&property_hash),
-        safe_prover
-    );
-    let path = cache_dir.join(fname);
-    std::fs::write(path, built.bytes)?;
-
-    // Convert the canonicalizer Value back to serde_json for pool insertion
-    let envelope_json: Json = serde_json::from_slice(&final_canonical)?;
-
-    Ok((cid, envelope_json))
 }
 
 #[cfg(test)]
@@ -2361,134 +2118,6 @@ mod consistency_owned_callsite_tests {
         json!({"kind": "atomic", "name": ">=", "args": [lhs, rhs]})
     }
 
-    fn tier2_pool_and_callsite() -> (MementoPool, CallSite, String, String) {
-        let producer_symbol = "call:trusted_producer";
-        let producer_cid = cid_string("tier2-producer");
-        let consumer_cid = cid_string("tier2-consumer");
-        let consumer_bundle_cid = cid_string("tier2-consumer-bundle");
-
-        let producer_post = int_ge(json!({"kind": "var", "name": "result"}), int_const(10));
-        let consumer_pre = int_ge(json!({"kind": "var", "name": "value"}), int_const(0));
-
-        let producer = json!({
-            "evidence": {
-                "kind": "contract",
-                "body": {
-                    "contractName": "producer",
-                    "post": producer_post
-                }
-            }
-        });
-        let consumer = json!({
-            "evidence": {
-                "kind": "contract",
-                "body": {
-                    "contractName": "consumer",
-                    "formals": ["value"],
-                    "formalSorts": [int_sort()],
-                    "pre": consumer_pre
-                }
-            }
-        });
-        let producer_bridge = json!({
-            "evidence": {
-                "kind": "bridge",
-                "body": {
-                    "sourceSymbol": producer_symbol,
-                    "targetContractCid": producer_cid.clone()
-                }
-            }
-        });
-
-        let mut pool = MementoPool::default();
-        pool.insert_unanchored_for_tests(memento_cid(&producer_cid), producer);
-        pool.insert_unanchored_for_tests(memento_cid(&consumer_cid), consumer);
-        pool.insert_bridge_by_symbol(
-            producer_symbol,
-            generated_cid("tier2-producer-bridge"),
-            producer_bridge,
-        );
-        pool.bundle_members
-            .entry(memento_cid(&consumer_bundle_cid))
-            .or_default()
-            .insert(memento_cid(&consumer_cid));
-
-        let producer_arg = json!({
-            "kind": "ctor",
-            "name": producer_symbol,
-            "args": [int_const(10)]
-        });
-        let cs = CallSite {
-            bridge_ir_name: "consumer_bridge".to_string(),
-            bridge_target_cid: Some(memento_cid(&consumer_cid)),
-            bridge_pin: BridgePin::Cross(memento_cid(&consumer_bundle_cid)),
-            property_name: "consumer_pre".to_string(),
-            property_cid: Some(generated_cid("tier2-property")),
-            arg_term: Some(producer_arg.clone()),
-            arg_terms: vec![producer_arg],
-            ..CallSite::default()
-        };
-
-        let (_, post_hash) = pool
-            .producer_post_for_arg_term(&cs.arg_term)
-            .expect("producer post resolves");
-        let pre_hash = resolve_target::run(&cs, &pool)
-            .expect("consumer target resolves")
-            .ir_formula
-            .as_ref()
-            .map(formula_hash)
-            .expect("consumer pre exists");
-
-        (pool, cs, post_hash, pre_hash)
-    }
-
-    fn run_tier2_fixture(
-        cache_dir: &Path,
-        trusted_implication_signers: Vec<String>,
-    ) -> CallsiteResult {
-        let (pool, cs, _post_hash, _pre_hash) = tier2_pool_and_callsite();
-        let cfg = RunnerConfig {
-            project_root: std::env::temp_dir(),
-            cache_dir: Some(cache_dir.to_path_buf()),
-            trusted_implication_signers,
-            ..Default::default()
-        };
-        let plan = SolverPlan::Single(SolverSeat::Z3);
-        let registry = HashMap::new();
-        let compilers = CompilerRegistry::new();
-        let n_hash = AtomicUsize::new(0);
-        let n_cache = AtomicUsize::new(0);
-        let n_vacuous = AtomicUsize::new(0);
-        let n_solved = AtomicUsize::new(0);
-        let n_residue = AtomicUsize::new(0);
-        let n_disagree = AtomicUsize::new(0);
-        let n_invoc = AtomicUsize::new(0);
-        let n_reflexive = AtomicUsize::new(0);
-        let n_substantive = AtomicUsize::new(0);
-        let invs_sink = Mutex::new(vec![]);
-        let minted_sink = Mutex::new(vec![]);
-
-        work_one(
-            &cs,
-            &pool,
-            &plan,
-            &registry,
-            &compilers,
-            &cfg,
-            &n_hash,
-            &n_cache,
-            &n_vacuous,
-            &n_solved,
-            &n_residue,
-            &n_disagree,
-            &n_invoc,
-            &n_reflexive,
-            &n_substantive,
-            &invs_sink,
-            &minted_sink,
-        )
-    }
-
     fn make_unique_cache_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "sugar-tier2-{label}-{}-{}",
@@ -2531,112 +2160,6 @@ mod consistency_owned_callsite_tests {
 
     fn jcs(value: &Json) -> String {
         sugar_canonicalizer::encode_jcs(&json_to_canonical_value(value))
-    }
-
-    fn write_self_signed_flat_implication_cache(
-        cache_dir: &Path,
-        seed: &[u8; 32],
-        post_hash: &str,
-        pre_hash: &str,
-    ) -> String {
-        let property_hash = implication_property_hash(post_hash, pre_hash);
-        let pubkey = sugar_proof_envelope::ed25519_pubkey_string(seed);
-        let mut env = json!({
-            "evidence": {
-                "kind": "implication",
-                "body": {
-                    "antecedentHash": post_hash,
-                    "consequentHash": pre_hash,
-                    "propertyHash": property_hash,
-                    "producerPubkey": pubkey,
-                    "verdict": "holds"
-                }
-            },
-            "antecedentHash": post_hash,
-            "consequentHash": pre_hash,
-            "propertyHash": property_hash
-        });
-        let signature = sugar_proof_envelope::ed25519_sign_string(seed, jcs(&env).as_bytes());
-        env.as_object_mut()
-            .expect("flat implication object")
-            .insert("producerSignature".to_string(), Json::String(signature));
-        let member_bytes = jcs(&env).into_bytes();
-        let member_cid = sugar_proof_envelope::recompute_member_cid(&env);
-
-        let mut proof_bytes = Vec::new();
-        sugar_proof_envelope::cbor_encode_map_head(&mut proof_bytes, 1);
-        sugar_proof_envelope::cbor_encode_tstr(&mut proof_bytes, "members");
-        sugar_proof_envelope::cbor_encode_map_head(&mut proof_bytes, 1);
-        sugar_proof_envelope::cbor_encode_tstr(&mut proof_bytes, &member_cid);
-        sugar_proof_envelope::cbor_encode_bstr(&mut proof_bytes, &member_bytes);
-
-        let path = cache_dir.join(format!(
-            "{}-forged-flat.proof",
-            sugar_proof_envelope::cid_filename_stem(&property_hash)
-        ));
-        std::fs::write(path, proof_bytes).expect("write forged cache proof");
-        pubkey
-    }
-
-    #[test]
-    fn tier2_ignores_self_signed_memento_without_trust_anchor() {
-        let cache_dir = make_unique_cache_dir("untrusted");
-        let (_pool, _cs, post_hash, pre_hash) = tier2_pool_and_callsite();
-        let attacker_seed = [0xA4; 32];
-        write_self_signed_flat_implication_cache(&cache_dir, &attacker_seed, &post_hash, &pre_hash);
-
-        let (_cs, verdict, reason, discharge_method, _body_tier) =
-            run_tier2_fixture(&cache_dir, Vec::new());
-
-        assert_ne!(
-            verdict,
-            ObligationVerdict::Discharged,
-            "self-signed cache memento must not discharge without a trust anchor: {reason}"
-        );
-        assert_ne!(
-            discharge_method.as_deref(),
-            Some("hash-tier"),
-            "self-signed cache memento must not report cache/hash discharge: {reason}"
-        );
-        assert!(
-            !reason.contains("tier2: cache hit"),
-            "self-signed cache memento must not report an n_cache hit: {reason}"
-        );
-
-        let _ = std::fs::remove_dir_all(cache_dir);
-    }
-
-    #[test]
-    fn tier2_accepts_trusted_signer() {
-        let cache_dir = make_unique_cache_dir("trusted");
-        let (_pool, _cs, post_hash, pre_hash) = tier2_pool_and_callsite();
-        let signer_seed = [0xB5; 32];
-        let pubkey = write_self_signed_flat_implication_cache(
-            &cache_dir,
-            &signer_seed,
-            &post_hash,
-            &pre_hash,
-        );
-
-        let (_cs, verdict, reason, discharge_method, _body_tier) =
-            run_tier2_fixture(&cache_dir, vec![pubkey]);
-
-        assert_eq!(
-            verdict,
-            ObligationVerdict::Discharged,
-            "trusted signer cache memento should discharge: {reason}"
-        );
-        assert_eq!(
-            discharge_method.as_deref(),
-            Some("hash-tier"),
-            "trusted cache memento should report hash-tier discharge: {reason}"
-        );
-        assert!(
-            reason.contains("tier2: cache hit"),
-            "trusted cache memento should report an n_cache hit: {reason}"
-        );
-
-        let _ = std::fs::remove_dir_all(cache_dir);
     }
 
     #[test]
