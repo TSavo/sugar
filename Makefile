@@ -321,6 +321,10 @@ SHOWCASE_RUNS = \
 	examples/binascii-hexlify/run-logo-receipt.sh \
 	examples/hmac-compare-digest/run-logo-receipt.sh \
 	examples/stdlib-base32-padding/run-logo-receipt.sh \
+	examples/struct-calcsize/run-logo-receipt.sh \
+	examples/hashlib-md5-digest-size/run-logo-receipt.sh \
+	examples/uuid-bytes-length/run-logo-receipt.sh \
+	examples/hashlib-sha256-digest-length/run-logo-receipt.sh \
 	examples/itsdangerous-token-padding/run.sh \
 	examples/forall-vampire-showcase/run.sh \
 	examples/url-showcase/run.sh \
