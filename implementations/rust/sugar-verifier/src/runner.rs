@@ -11,6 +11,12 @@
 // ImplicationMemento) -> Tier 1 hash equality -> Tier 3 solver plan.
 // #3809 cut #7: no `cache_dir` disk lookup / mint (production never set
 // it; vestige deleted).
+//
+// #3809 implication steps 2+ (prove-then-feed, D2 option 1):
+// After a REAL Tier-3 / tactic discharge of `post ⊃ pre`, mint an
+// ImplicationMemento and queue it for pool insert (reuse / federation by
+// CID). Never seal-without-discharge: lying twins must never enter the pool,
+// or Tier 0c would false-green. Seal is memoization of proven, never proof.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -1413,8 +1419,9 @@ fn work_one(
     invs_sink: &Mutex<Vec<SolverInvocation>>,
     minted_sink: &Mutex<Vec<(MementoCid, Json)>>,
 ) -> CallsiteResult {
-    // #3809 cut #7: disk tier-2 removed; counters/sinks/cfg cache fields unused.
-    let _ = (n_cache, minted_sink, cfg);
+    // #3809 cut #7: disk tier-2 removed; n_cache was tier-2 hit counter.
+    // minted_sink is live again for prove-then-feed (in-pool only, no disk).
+    let _ = (n_cache, cfg);
 
     if let Some(result) = crate::attribute_safety::try_discharge(cs, pool) {
         if result.verdict == ObligationVerdict::Discharged {
@@ -1755,6 +1762,18 @@ fn work_one(
         match formula_rewrite::apply_tactics(&implication, pool) {
             formula_rewrite::TacticResult::Discharged { reason } => {
                 n_solved.fetch_add(1, Ordering::Relaxed);
+                // Prove-then-feed: tactic discharge is real discharge.
+                if let (Some((_, post_hash)), Some(pre_hash)) =
+                    (producer_post.as_ref(), consumer_pre_hash.as_ref())
+                {
+                    queue_proven_implication(
+                        minted_sink,
+                        post_hash,
+                        pre_hash,
+                        "tier3a-tactic",
+                        0,
+                    );
+                }
                 return (
                     cs.clone(),
                     ObligationVerdict::Discharged,
@@ -1911,10 +1930,36 @@ fn work_one(
         n_residue.fetch_add(1, Ordering::Relaxed);
     }
 
-    // #3809 cut #7: no `mint_and_cache` disk write (was gated on cache_dir).
-
+    // Prove-then-feed (#3809 D2 option 1): ONLY after real discharge of the
+    // implication form, mint an ImplicationMemento keyed by the same
+    // formula_hash pair Tier 0c looks up. Never mint on unsat/refuse — a
+    // lying twin must not enter the pool (Tier 0c would false-green).
     if verdict == ObligationVerdict::Discharged && used_implication_form {
         n_solved.fetch_add(1, Ordering::Relaxed);
+        if let (Some((_, post_hash)), Some(pre_hash)) =
+            (producer_post.as_ref(), consumer_pre_hash.as_ref())
+        {
+            let prover_tag = invs
+                .first()
+                .map(|inv| {
+                    format!(
+                        "{}@{}",
+                        inv.result.solver_name, inv.result.solver_version
+                    )
+                })
+                .unwrap_or_else(|| "tier3-discharged".to_string());
+            let prover_run_ms = invs
+                .first()
+                .map(|inv| inv.result.wall_clock.as_millis() as i64)
+                .unwrap_or(0);
+            queue_proven_implication(
+                minted_sink,
+                post_hash,
+                pre_hash,
+                &prover_tag,
+                prover_run_ms,
+            );
+        }
     }
     if verdict != ObligationVerdict::Discharged && verdict != ObligationVerdict::Disagreement {
         n_residue.fetch_add(1, Ordering::Relaxed);
@@ -1936,6 +1981,77 @@ fn work_one(
     };
 
     (cs.clone(), verdict, reason, discharge_method, None)
+}
+
+/// Deterministic prove-then-feed seal (pure of endpoint hashes under fixed seed).
+/// Distinct from step-1 `OBLIGATION_SEAL_*` (edge identity utterance); this
+/// memento is minted only after discharge and is what Tier 0c treats as proven.
+const PROVE_THEN_FEED_SEED: sugar_proof_envelope::Ed25519Seed = [0x0cu8; 32];
+const PROVE_THEN_FEED_AT: &str = "1970-01-01T00:00:00.000Z";
+
+/// Mint an ImplicationMemento for a **already-discharged** `post ⊃ pre` edge.
+///
+/// Endpoint hashes MUST be the same `formula_hash` values Tier 0c uses
+/// (`runner` `post_hash` / `pre_hash`). Mint-convention `verdict: "holds"` is
+/// not itself proof — callers must only invoke this after real discharge.
+fn mint_proven_implication_memento(
+    post_hash: &str,
+    pre_hash: &str,
+    prover: &str,
+    prover_run_ms: i64,
+) -> Result<(MementoCid, Json), String> {
+    use sugar_claim_envelope::{mint_implication, MintImplicationArgs};
+    use sugar_proof_envelope::ContractMementoRef;
+
+    let args = MintImplicationArgs {
+        produced_by: "sugar-verifier/prove-then-feed".into(),
+        produced_at: PROVE_THEN_FEED_AT.into(),
+        antecedent_hash: post_hash.to_string(),
+        consequent_hash: pre_hash.to_string(),
+        // Formula-level endpoints: hash IS identity for Tier 0c lookup.
+        antecedent: ContractMementoRef::new(post_hash.to_string()),
+        consequent: ContractMementoRef::new(pre_hash.to_string()),
+        additional_inputs: Vec::new(),
+        antecedent_slot: "post".into(),
+        consequent_slot: "pre".into(),
+        prover: prover.to_string(),
+        prover_run_ms,
+        smt_lib_input: String::new(),
+        proof_witness: "(unsat)".into(),
+        signer_seed: PROVE_THEN_FEED_SEED,
+    };
+    let minted = mint_implication(&args);
+    let envelope: Json = serde_json::from_slice(&minted.canonical_bytes)
+        .map_err(|e| format!("prove-then-feed: decode minted memento: {e}"))?;
+    let cid = MementoCid::try_parse(minted.cid.clone())
+        .map_err(|e| format!("prove-then-feed: invalid minted CID {}: {e}", minted.cid))?;
+    Ok((cid, envelope))
+}
+
+/// Queue a proven implication for pool insert after parallel fan-out.
+/// No-op on mint failure (warn); discharge already succeeded — reuse is best-effort.
+fn queue_proven_implication(
+    minted_sink: &Mutex<Vec<(MementoCid, Json)>>,
+    post_hash: &str,
+    pre_hash: &str,
+    prover: &str,
+    prover_run_ms: i64,
+) {
+    match mint_proven_implication_memento(post_hash, pre_hash, prover, prover_run_ms) {
+        Ok((cid, envelope)) => {
+            if let Ok(mut g) = minted_sink.lock() {
+                g.push((cid, envelope));
+            }
+        }
+        Err(e) => {
+            warn!(
+                post = %short(post_hash),
+                pre = %short(pre_hash),
+                error = %e,
+                "prove-then-feed: mint after discharge failed (reuse skipped)"
+            );
+        }
+    }
 }
 
 fn callsite_actual_terms(cs: &CallSite) -> Vec<Json> {
@@ -2262,5 +2378,150 @@ mod consistency_owned_callsite_tests {
         );
 
         let _ = std::fs::remove_dir_all(project_root);
+    }
+}
+
+#[cfg(test)]
+mod prove_then_feed_teeth {
+    //! #3809 D2 prove-then-feed teeth: truthful edge seals and Tier 0c hits;
+    //! lying twin is never sealed so Tier 0c stays Unknown.
+    //! Force-sealing a lying twin would false-green Tier 0c — that path is
+    //! rejected; production only mints after Discharged.
+
+    use super::*;
+    use crate::handshake::formula_hash;
+    use crate::types::ImplicationResult;
+    use serde_json::json;
+
+    fn forall_ge(name: &str, n: i64) -> Json {
+        json!({
+            "kind": "forall",
+            "name": name,
+            "sort": {"kind": "primitive", "name": "Int"},
+            "body": {
+                "kind": "atomic",
+                "name": ">=",
+                "args": [
+                    {"kind": "var", "name": name},
+                    {"kind": "const", "value": n, "sort": {"kind": "primitive", "name": "Int"}}
+                ]
+            }
+        })
+    }
+
+    /// Truthful: after real discharge we mint; Tier 0c proves direct.
+    #[test]
+    fn truthful_post_implies_pre_seals_and_tier0c_hits() {
+        // Stronger post (x>=5) vs weaker pre (x>=0): hashes differ; need a
+        // sealed implication memento for Tier 0c (not mere reflexivity).
+        let post = forall_ge("x", 5);
+        let pre = forall_ge("x", 0);
+        let post_hash = formula_hash(&post);
+        let pre_hash = formula_hash(&pre);
+        assert_ne!(
+            post_hash, pre_hash,
+            "teeth need a non-reflexive edge so Tier 0c needs a memento"
+        );
+
+        // Simulate cold path: discharge succeeded → prove-then-feed mint.
+        let (cid, envelope) =
+            mint_proven_implication_memento(&post_hash, &pre_hash, "teeth-truthful", 0)
+                .expect("mint after discharge");
+
+        let mut pool = MementoPool::default();
+        // Production inserts via AnchoredMember after fan-out; tests use the
+        // same unanchored helper as other pool fixture paths.
+        pool.insert_unanchored_for_tests(cid, envelope);
+
+        match pool.can_implies(&post_hash, &pre_hash) {
+            ImplicationResult::ProvenDirect { memento_cid } => {
+                assert!(
+                    !memento_cid.is_empty(),
+                    "Tier 0c must cite the sealed memento"
+                );
+            }
+            other => panic!("truthful sealed edge must Tier 0c ProvenDirect, got {other:?}"),
+        }
+    }
+
+    /// Lying twin: never sealed → Tier 0c Unknown (must not short-circuit green).
+    #[test]
+    fn lying_twin_never_sealed_tier0c_unknown() {
+        let post = forall_ge("x", 0); // weaker
+        let pre = forall_ge("x", 5); // stronger — does NOT follow
+        let post_hash = formula_hash(&post);
+        let pre_hash = formula_hash(&pre);
+
+        // Production: Unsatisfied ⇒ no queue_proven_implication call.
+        let pool = MementoPool::default();
+        match pool.can_implies(&post_hash, &pre_hash) {
+            ImplicationResult::Unknown => {}
+            other => panic!(
+                "lying twin must not be in pool; Tier 0c must be Unknown, got {other:?}"
+            ),
+        }
+    }
+
+    /// If we violated D2 and sealed without discharge, Tier 0c would false-green.
+    /// This instrument proves the feed would be decorative/dangerous — and
+    /// documents why production only mints after Discharged.
+    #[test]
+    fn force_seal_lying_twin_would_false_green_tier0c_hence_prove_then_feed() {
+        let post = forall_ge("x", 0);
+        let pre = forall_ge("x", 5);
+        let post_hash = formula_hash(&post);
+        let pre_hash = formula_hash(&pre);
+
+        // Counterfactual: seal WITHOUT discharge (FORBIDDEN on production path).
+        let (cid, envelope) =
+            mint_proven_implication_memento(&post_hash, &pre_hash, "teeth-lying-force", 0)
+                .expect("mint machinery");
+        let mut pool = MementoPool::default();
+        pool.insert_unanchored_for_tests(cid, envelope);
+
+        // Tier 0c would wrongly ProvenDirect — this is the false green D2 prevents.
+        assert!(
+            matches!(
+                pool.can_implies(&post_hash, &pre_hash),
+                ImplicationResult::ProvenDirect { .. }
+            ),
+            "force-seal of lying twin false-greens Tier 0c — prove-then-feed is mandatory"
+        );
+    }
+
+    /// Mint is pure under fixed seed: same hashes → same CID (reuse by content).
+    #[test]
+    fn prove_then_feed_mint_is_deterministic_for_same_edge() {
+        let post_hash = formula_hash(&forall_ge("x", 5));
+        let pre_hash = formula_hash(&forall_ge("x", 0));
+        let a = mint_proven_implication_memento(&post_hash, &pre_hash, "p", 0).unwrap();
+        let b = mint_proven_implication_memento(&post_hash, &pre_hash, "p", 0).unwrap();
+        assert_eq!(a.0, b.0, "same discharged edge must mint identical CID");
+        assert_eq!(a.1, b.1, "same discharged edge must mint identical envelope bytes");
+    }
+
+    /// queue_proven_implication + post-fanout insert path (production insert shape).
+    #[test]
+    fn queue_then_insert_feeds_pool_for_tier0c() {
+        let post_hash = formula_hash(&forall_ge("r", 3));
+        let pre_hash = formula_hash(&forall_ge("r", 1));
+        let sink = Mutex::new(Vec::new());
+        queue_proven_implication(&sink, &post_hash, &pre_hash, "queue-test", 1);
+        let minted = sink.into_inner().unwrap();
+        assert_eq!(minted.len(), 1, "one proven edge → one memento queued");
+
+        let mut pool = MementoPool::default();
+        for (cid, envelope) in minted {
+            let member = AnchoredMember::new(cid, envelope)
+                .unwrap_or_else(|e| panic!("anchoring proven implication: {e}"));
+            pool.insert(member);
+        }
+        assert!(
+            matches!(
+                pool.can_implies(&post_hash, &pre_hash),
+                ImplicationResult::ProvenDirect { .. }
+            ),
+            "queued+inserted proven implication must Tier 0c hit"
+        );
     }
 }
