@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# itsdangerous logo dual-assert receipt (CI ratchet).
+# itsdangerous logo dual-assert receipt (CI ratchet) + scope boundary.
 #
-# Ambient: closed strip ¬suffix-of("=", out) on call:itsdangerous.encoding.base64_encode
-# (grounding path #3939 / #3949 / #3952). Same #euf# key, opposite RHS:
+# Ambient: closed strip not-suffix-of("=", out) on call:itsdangerous.encoding.base64_encode
+# (grounding path #3939 / #3949 / #3952 / #3956). Same #euf# key:
 #
-#   GOOD: unpadded b"cHJvdmVraXQ"  → base64_encode consistency discharged
-#   BAD:  padded   b"cHJvdmVraXQ=" → base64_encode consistency unsatisfied
+#   GOOD:            unpadded b"cHJvdmVraXQ"  -> base64_encode consistency discharged
+#   BAD:             padded   b"cHJvdmVraXQ=" -> base64_encode consistency unsatisfied
+#   WRONG-UNPADDED:  wrong last char, no "="  -> discharged (OUT OF SCOPE - not injectivity)
 #
-# Slim sibling of run.sh: only the logo property, parsed from sugar prove --json.
-# Full source-audit / multi-property suite stays in run.sh.
+# The third twin is the #3956 discrimination boundary: closed ambient does not
+# refute non-suffix corruption. See SCOPE.md.
+#
+# Slim sibling of run.sh: logo property + scope twin, from sugar prove --json.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -23,12 +26,12 @@ PYTHON="$VENV/bin/python"
 needs_python_env=0
 if [ ! -x "$PYTHON" ]; then
   needs_python_env=1
-elif ! "$PYTHON" - <<'PY' >/dev/null 2>&1
+elif ! "$PYTHON" - <<'INNER' >/dev/null 2>&1
 import blake3
 import cbor2
 import itsdangerous
 import nacl
-PY
+INNER
 then
   needs_python_env=1
 fi
@@ -37,22 +40,20 @@ if [ "$needs_python_env" = "1" ]; then
   python3 -m venv --clear "$VENV"
   "$PYTHON" -m pip install -q itsdangerous blake3 cbor2 pynacl
 fi
-if ! "$PYTHON" - <<'PY' >/dev/null 2>&1
+if ! "$PYTHON" - <<'INNER' >/dev/null 2>&1
 import blake3
 import cbor2
 import itsdangerous
 import nacl
-PY
+INNER
 then
   echo "FAIL: logo venv missing required packages after install" >&2
   exit 1
 fi
 
-# Workspace python component digs imported callees with system python3; ensure
-# itsdangerous is importable there so rstrip → closed-strip ambient posts mint.
-if ! python3 - <<'PY' >/dev/null 2>&1
+if ! python3 - <<'INNER' >/dev/null 2>&1
 import itsdangerous
-PY
+INNER
 then
   echo "== install itsdangerous for system python3 (workspace dig) =="
   python3 -m pip install -q itsdangerous
@@ -61,7 +62,6 @@ fi
 [ -x "$BIN" ] || { echo "FAIL: sugar binary missing at $BIN"; exit 1; }
 command -v z3 >/dev/null 2>&1 || { echo "FAIL: z3 is required for the logo receipt"; exit 1; }
 
-# SMT compiler used by prove; allow-failed-components tolerates missing coq/lean/maude.
 "$REPO/bin/sugarbin" --profile release --bin sugar-ir-smt-lib >/dev/null 2>&1 \
   || "$REPO/bin/sugarbin" --profile debug --bin sugar-ir-smt-lib >/dev/null 2>&1 \
   || true
@@ -71,7 +71,7 @@ export PATH="$(cd "$(dirname "$PYTHON")" && pwd):$PATH"
 export PYTHONPATH="$PYTHON_SRC:$SITE${PYTHONPATH:+:$PYTHONPATH}"
 
 extract_json_receipt() {
-  python3 - "$1" "$2" <<'PY'
+  python3 - "$1" "$2" <<'INNER'
 import json
 import re
 import sys
@@ -94,7 +94,7 @@ for index, char in enumerate(text):
         raise SystemExit(0)
 print(f"FAIL: no prove JSON receipt with rows in {raw_path}", file=sys.stderr)
 raise SystemExit(1)
-PY
+INNER
 }
 
 run_logo_twin() {
@@ -121,7 +121,7 @@ run_logo_twin() {
     return 1
   }
 
-  EXPECT="$expect" TWIN="$twin" python3 - "$dir/.prove.json" <<'PY' || return 1
+  EXPECT="$expect" TWIN="$twin" python3 - "$dir/.prove.json" <<'INNER' || return 1
 import json
 import os
 import sys
@@ -156,14 +156,12 @@ bad_words = {
 if expect == "discharged":
     ok = bool(statuses & ok_words) and not (statuses & bad_words)
 else:
-    # Logo BAD must be unsatisfied (contradiction under ambient ¬suffix-of).
     ok = "unsatisfied" in statuses or bool(statuses & bad_words)
 
 if not ok:
     print(f"FAIL({twin}): expected base64_encode {expect}, statuses={sorted(statuses)}")
     sys.exit(1)
 
-# Prefer the precise logo status when present.
 if expect == "unsatisfied" and "unsatisfied" not in statuses and statuses & bad_words:
     print(
         f"WARN({twin}): base64_encode is unsat-family {sorted(statuses)} "
@@ -171,16 +169,18 @@ if expect == "unsatisfied" and "unsatisfied" not in statuses and statuses & bad_
     )
 
 print(f"OK({twin}): base64_encode {expect}")
-PY
+INNER
 }
 
-echo "SCOPE: itsdangerous logo dual-assert — GOOD discharged / BAD unsatisfied on base64_encode"
-echo "SCOPE: ambient closed strip ¬suffix-of('=', out); unpadded vs padded RHS on provekit"
+echo "SCOPE: logo = padding/trailing-equals only (see SCOPE.md) - not full base64 injectivity"
+echo "SCOPE: GOOD discharged / BAD unsatisfied / WRONG-UNPADDED discharged (out of scope)"
 "$PYTHON" -c "import itsdangerous; print('vendor: itsdangerous', getattr(itsdangerous, '__version__', '(installed)'))"
 
 fail=0
 run_logo_twin good discharged || fail=1
 run_logo_twin bad unsatisfied || fail=1
+# #3956 boundary: non-suffix corruption stays consistent under closed strip ambient.
+run_logo_twin wrong-unpadded discharged || fail=1
 
 echo
 if [ "$fail" -ne 0 ]; then
@@ -188,4 +188,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 echo "==== itsdangerous logo receipt: PASS ===="
-echo "GOOD base64_encode discharged; BAD base64_encode unsatisfied (padded-token confusion)."
+echo "GOOD discharged; BAD unsatisfied (padding); WRONG-UNPADDED discharged (out of scope)."

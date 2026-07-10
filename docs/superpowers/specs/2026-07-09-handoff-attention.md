@@ -22,7 +22,7 @@ Both Grok agents. `watch_worker` is unreliable for them (false "finished"); **po
 - **Witness-as-verb — complete (F1-B).** SEAM 7 typed config (#3959), kit oracle is the one resolve door (#3962), env channel retired (#3964). `witness(packageCid)` is byte-identical across arm/oracle/warm/cold. This is `WitnessPool<CID, WitnessMemento>` made real — oracle RPC = resolve, Rust `package_outcome` = verify; no struct invented, no env, no cache-invalidation (CID-keyed cache never invalidates).
 - **numpy construction-gap wall: R 182 → ~4.** Drains #3948–#3971. Remaining: `next_with`, `SymbolicValue.add_with`, `binary_operator_with` floor totalizers.
 - **Coordinate/vendor-op coverage — done at real scale.** 187 real numpy/pandas API shapes, 0 gaps (#3944).
-- **Kevlar (T's) membrane arc.** itsdangerous logo real-name proof, CI-ratcheted (#3960); census ratchet (#3957); corpus receipt that caught 2 reds (#3955).
+- **Kevlar (T's) membrane arc.** itsdangerous logo real-name proof, CI-ratcheted (#3960); census ratchet (#3957); corpus receipt that caught 2 reds (#3955); **#3956 discrimination boundary closed** (padding-only claim + wrong-unpadded twin).
 
 ---
 
@@ -31,8 +31,8 @@ Both Grok agents. `watch_worker` is unreliable for them (false "finished"); **po
 ### 1. Implication seal-rule mismatch (BLOCKING, incoming)
 97086 found a mismatch mapping `Obligation::as_implies` → `mint_implication`/`ImplicationMember`. T chose **A (implication = spoken Obligation)**: one content-addressed seal, carried==checked==spoken, one CID. The mismatch is a seal-rule detail T must resolve — a field the memento needs that the Obligation doesn't carry (or vice versa). Read the report when it lands; do not let the worker paper over it. The invariant that matters: `seal(Obligation)` is a pure function → same CID; two CIDs for one `post⊃pre` = a failing test.
 
-### 2. #3956 discrimination boundary (real, unproven)
-The open-dig strip tower is now recorded as `status=support, no emitted_formula`, so the closed `¬suffix-of("=", out)` ambient does **all** the discrimination. Unproven: **is there a lie the full tower would catch that `¬suffix-of` alone does not?** The dual-assert proves a *padding* (suffix) lie refutes; a *non-suffix* base64 corruption (wrong-but-unpadded) would still discharge. Either (a) add a bad-twin flipping a non-suffix byte and confirm it's *intentionally* out of scope, or (b) state the logo's claim is specifically "no padding" and document the boundary. Right now it's an implicit scope.
+### 2. #3956 discrimination boundary — **CLOSED (claim of record)**
+Measured: wrong-but-unpadded RHS `b"cHJvdmVraXR"` (last char flipped, no trailing `=`) **discharges** under closed `¬suffix-of("=", out)`. Padding lie still unsat. Claim of record: logo is **padding / trailing-`=` only**, not full base64 injectivity. Instrument: `examples/itsdangerous-token-padding/{SCOPE.md,wrong-unpadded/,run-logo-receipt.sh}` — third twin expects **discharged** (out of scope ratchet). Stronger ambient (tower in ambient) still encoding-STOPs; do not silently expand the claim without a new twin.
 
 ### 3. #3958 free-name analysis (test gap)
 Binding module-level constants into the dig temporal is correct, but rides entirely on resolving free names. A *shadowed* (local re-binds the name) or *conditionally-defined* module constant could be mis-bound or missed. Needs a bad-twin: a module constant shadowed by a local, confirm the dig binds the right one.
