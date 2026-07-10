@@ -3,9 +3,9 @@
 // `sugar prove` / `sugar verify`: runs the six-stage pipeline.
 //
 // The witness-discharge path resolves each lift surface's manifest (the SAME
-// dispatch lift uses) to export SUGAR_WITNESS_DISCHARGE_<TOOL> per tool, so
-// witness recompute rides the manifest with no bespoke config. SEAM 6: that
-// resolution now lives in `crate::discharge_config`, shared with `cmd_verify`.
+// dispatch lift uses) into a typed `WitnessDischargeContext` (project_dir +
+// resolvers). SEAM 6 / #3809: that resolution lives in `crate::discharge_config`,
+// shared with `cmd_verify`. Step 3: no SUGAR_WITNESS_PROJECT_DIR/RESOLVERS env.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -32,12 +32,9 @@ use crate::report_witness::{
 };
 use crate::ProveArgs;
 
-// The witness-discharge path loads the lift surface manifest at
-// `<project>/.sugar/lift/<surface>/manifest.toml` to read its
-// `discharge_command` + `witness_tool`. No hardcoded `sugar-lift-<kit>`.
-// SEAM 6: this resolution + the `SUGAR_WITNESS_*` env staging it feeds now
-// live in `crate::discharge_config` (shared with `cmd_verify`, which used to
-// reach into this module's internals directly).
+// Witness-discharge config loads lift surface manifests for resolve plugins
+// (and optional DISCHARGE_* lie-env keys). No hardcoded `sugar-lift-<kit>`.
+// Lives in `crate::discharge_config` (shared with `cmd_verify`).
 
 // ---------------------------------------------------------------------------
 // pub fn run: entry point from main.rs
