@@ -914,11 +914,10 @@ def test_effectful_binary_dunder_body_refuses_without_fabricated_derived_fact(
     rows = _binary_dunder_euf_rows(result.lift_doc)
     assert len(rows) == 1
     assert _warrant_kinds(rows[0]) == {"Stated"}
-    assert any(
-        item.get("kind") == "dig-boundary"
-        and "callsite floor projection refused this callee" in item.get("reason", "")
-        for item in result.lift_doc["diagnostics"]
-    )
+    # Post-#4035: DigBoundary soft rows are gone. Effectful multi-statement
+    # dunders are typed red (RuntimeEffect Incomplete) — no Derived companion
+    # fabricated from the print-side-effect body. Stated-only is the pin.
+    assert "Derived" not in _warrant_kinds(rows[0])
 
 
 def test_display_conversion_trace_emits_derived_fact_and_refutes_lie(
@@ -999,11 +998,9 @@ def test_effectful_display_conversion_refuses_without_fabricated_derived_fact(
     rows = _euf_rows(result.lift_doc)
     assert len(rows) == 1
     assert _warrant_kinds(rows[0]) == {"Stated"}
-    assert any(
-        item.get("kind") == "dig-boundary"
-        and "callsite floor projection refused this callee" in item.get("reason", "")
-        for item in result.lift_doc["diagnostics"]
-    )
+    # Post-#4035: DigBoundary soft rows are gone. Effectful __repr__ (print) is
+    # typed red — no Derived companion fabricated. Stated-only is the pin.
+    assert "Derived" not in _warrant_kinds(rows[0])
 
 
 @pytest.mark.parametrize(

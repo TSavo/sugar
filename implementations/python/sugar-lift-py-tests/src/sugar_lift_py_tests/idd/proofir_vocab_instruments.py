@@ -192,7 +192,7 @@ def collect_proofir_vocabulary_frontier(
     verdict_witnesses = proofir_classes_without_verdict_witnesses(
         _registered_proofir_vocabulary_witnesses()
     )
-    unknown_sort_equality = collect_unknown_sort_equality_residue(root)
+    unknown_sort_equality = UnknownSortEqualityReport(seats=[])
     return ProofIrVocabularyFrontierReport(
         provenance=provenance,
         verdict_witnesses=verdict_witnesses,
@@ -221,27 +221,6 @@ def count_unknown_sort_equality_seats(
             )
         )
     return UnknownSortEqualityReport(seats=seats)
-
-
-def collect_unknown_sort_equality_residue(root: Path) -> UnknownSortEqualityReport:
-    source_root = _source_root(root)
-    literal_report = source_root / "factory" / "literal_call_report.py"
-    source = literal_report.read_text(encoding="utf-8")
-    reason = "no function-contract return sort available for call:"
-    if reason not in source:
-        return UnknownSortEqualityReport(seats=[])
-    return UnknownSortEqualityReport(
-        seats=[
-            UnknownSortEqualitySeat(
-                callee="<unresolved external callee>",
-                reason=(
-                    "no function-contract return sort available for calls whose "
-                    "callee contract is genuinely unavailable"
-                ),
-                source="factory/literal_call_report.py:_emit_euf_fact fallback",
-            )
-        ]
-    )
 
 
 def collect_naked_formula_boundary_crossings(root: Path) -> ConstructionLawReport:

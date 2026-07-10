@@ -109,27 +109,29 @@ def _reject_comes_before_cycles() -> None:
 
 
 class Sugar(ABC):
-    """One sugar is one class.
+    """One sugar is one class, with exactly two behaviors.
 
-    A leaf subclass declares its dispatch role and provides three things:
-      * ``owns(fragment)``  -- the recognizer over a SourceFragment (was a loose
-        module-level ``_owns``),
-      * ``build(fragment, ctx)`` -- the constructor that composes child fragments
-        through the factory (``ctx.build_body``) and hands them to ``__init__`` (was a
-        loose ``build_X`` in sugar_constructors),
-      * ``_build(ctx, ...)`` -- the post-child-reduction construction hook.
+      * ``owns(fragment)`` -- static recognition. A sugar owns exactly what it
+        lifts; it can never recognize-and-panic. This is the ``Some`` in
+        ``match(Sugar) { Some => cite_or_effect, None => panic }``.
+      * ``desugar(ctx)`` -- reduce this sugar (already constructed with its body
+        sugars) by dispatching operations onto floor values and recursively
+        desugaring its bodies. Returns ONE thing: ``Outcome`` = ``Complete`` (a
+        floor value) or ``Incomplete`` (a runtime effect that propagates itself).
+
+    There is no ``build`` and no ``_build``. Construction is just ``new``: the
+    factory recognizes, then constructs the sugar WITH its body sugars, then calls
+    ``desugar``. A sugar never asks "which arm are you" of any value -- floor
+    values and outcomes answer by being called (double dispatch). The only thing
+    that stops a lift is nothing recognizing the source: that is the ``None`` arm,
+    and it is a panic, never a soft third state.
 
     Declaring ``class XSugar(Sugar, role=SugarRole.TERM)`` SELF-REGISTERS the claim
     into the catalog. A base with no ``role=`` is an intermediate (not registrable).
-
-    Construction law: only ``build`` may call ``ctx.build_body`` (it constructs the
-    children). Subclasses do not override ``desugar``; the template method reduces
-    declared operands and propagates effects before calling ``_build``.
     """
 
     role: SugarRole
     effect_consumer_reason: ClassVar[str | None] = None
-    template_operand_names: ClassVar[tuple[str, ...] | None] = None
 
     def __init_subclass__(
         cls,
@@ -140,20 +142,25 @@ class Sugar(ABC):
         super().__init_subclass__(**kwargs)
         if role is None:
             return  # an intermediate base (e.g. a shared mixin), not a registrable leaf
-        if "witnesses" not in cls.__dict__:
-            raise TypeError(
-                f"{cls.__name__} is a registrable sugar but does not define "
-                "witnesses(); enrollment is existence"
-            )
+        for required in ("owns", "new", "desugar", "witnesses"):
+            if required not in cls.__dict__:
+                raise TypeError(
+                    f"{cls.__name__} is a registrable sugar but does not define "
+                    f"{required}(); a sugar owns exactly what it can lift, so to enroll "
+                    "it must recognize (owns), construct (new), reduce (desugar), and "
+                    "prove itself (witnesses). A sugar that cannot lift cannot own -- "
+                    "enrollment is existence, and a half-sugar is a recognize-and-panic "
+                    "side door."
+                )
         _reject_duplicate_claim(cls)
         cls.role = role
         claim = SugarClaim(
             name=cls.__name__,
             role=role,
             owns=cls.owns,
-            build=cls.build,
             comes_before=tuple(comes_before),
             witnesses=cls.witnesses,
+            new=cls.new,
         )
         _REGISTRY.append(claim)
         _REGISTRATION_SITES[claim.name] = _claimant(cls)
@@ -164,120 +171,19 @@ class Sugar(ABC):
         raise NotImplementedError(f"{cls.__name__} must define owns(fragment)")
 
     @classmethod
-    def build(cls, fragment, ctx) -> "Sugar":
-        raise NotImplementedError(f"{cls.__name__} must define build(fragment, ctx)")
+    def new(cls, site, ctx) -> "Sugar":
+        raise NotImplementedError(
+            f"{cls.__name__} must define new(site, ctx); construction builds its "
+            "child bodies through the factory (ctx.build_body) and news the sugar"
+        )
 
     @classmethod
     def witnesses(cls) -> SugarWitnesses:
         raise NotImplementedError(f"{cls.__name__} must define witnesses()")
 
-    def desugar(self, ctx=None) -> Outcome:
-        """Reduce declared operands once, then hand complete values to `_build`.
-
-        Ordinary sugars are monadic: their child `SugarBody` operands either reduce
-        to complete floor values, or the first `Incomplete` is returned unchanged.
-        Sugars that genuinely consume effects use `_desugar_with_effects`, named and
-        audited by tests, instead of shadowing this public entrypoint.
-        """
-
-        hook = getattr(self, "_desugar_with_effects", None)
-        if hook is not None:
-            if self.effect_consumer_reason is None:
-                raise TypeError(
-                    f"{type(self).__name__} defines _desugar_with_effects without "
-                    "effect_consumer_reason"
-                )
-            return cast(Callable[[Any], Outcome], hook)(ctx)
-
-        operands = _complete_declared_operands(self, ctx)
-        if isinstance(operands, Incomplete):
-            return operands
-        return _call_build(self, ctx, operands)
-
-    @abstractmethod
-    def _build(self, ctx, **complete_operands) -> Outcome:
-        raise NotImplementedError(f"{type(self).__name__} must define _build(ctx)")
-
-
-def _complete_declared_operands(sugar: Sugar, ctx) -> dict[str, Any] | Incomplete:
-    if not is_dataclass(sugar):
-        return {}
-    complete_operands: dict[str, Any] = {}
-    for field in fields(sugar):
-        if not _is_template_operand(type(sugar), field.name):
-            continue
-        value = getattr(sugar, field.name)
-        if not _contains_sugar_body(value):
-            continue
-        complete = _complete_operand(
-            value,
-            ctx,
-            owner=f"{type(sugar).__name__} {field.name}",
+    def desugar(self, ctx: object = None) -> Outcome:
+        raise NotImplementedError(
+            f"{type(self).__name__} must define desugar(ctx); a registered sugar "
+            "reduces itself to an Outcome (Complete floor value or Incomplete effect)"
         )
-        if isinstance(complete, Incomplete):
-            return complete
-        complete_operands[field.name] = complete
-    return complete_operands
 
-
-def _is_template_operand(cls: type[Sugar], name: str) -> bool:
-    declared = cls.template_operand_names
-    if declared is not None:
-        return name in declared
-    return False
-
-
-def _call_build(sugar: Sugar, ctx, operands: dict[str, Any]) -> Outcome:
-    build_hook = cast(Callable[..., Outcome], sugar._build)
-    signature = inspect.signature(build_hook)
-    params = signature.parameters
-    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
-        return build_hook(ctx, **operands)
-    build_params = [
-        param
-        for param in params.values()
-        if param.kind
-        in {
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        }
-    ]
-    if not build_params:
-        return build_hook()
-    if len(build_params) == 1 and build_params[0].name == "ctx":
-        return build_hook(ctx)
-    operand_names = {param.name for param in build_params if param.name != "ctx"}
-    if operand_names and operand_names.issubset(operands):
-        kwargs = {name: operands[name] for name in operand_names}
-        if "ctx" in {param.name for param in build_params}:
-            return build_hook(ctx, **kwargs)
-        return build_hook(**kwargs)
-    return build_hook(ctx)
-
-
-def _contains_sugar_body(value: Any) -> bool:
-    if isinstance(value, SugarBody):
-        return True
-    if isinstance(value, tuple):
-        return any(_contains_sugar_body(item) for item in value)
-    return False
-
-
-def _complete_operand(value: Any, ctx, *, owner: str) -> Any | Incomplete:
-    if isinstance(value, SugarBody):
-        outcome = value.reduce(ctx)
-        if isinstance(outcome, Incomplete):
-            return outcome
-        if isinstance(outcome, Complete):
-            return outcome.value
-        return outcome
-    if isinstance(value, tuple):
-        completed = []
-        for index, item in enumerate(value):
-            item_value = _complete_operand(item, ctx, owner=f"{owner}[{index}]")
-            if isinstance(item_value, Incomplete):
-                return item_value
-            completed.append(item_value)
-        return tuple(completed)
-    return value

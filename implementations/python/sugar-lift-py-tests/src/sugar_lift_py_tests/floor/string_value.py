@@ -163,7 +163,6 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
     FactoryGap for unrelated names.
     """
     from sugar_lift_py_tests.floor.array_literal import ArrayLiteral
-    from sugar_lift_py_tests.floor.bool_value import BoolValue
     from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
     from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.outcome import Complete
@@ -263,7 +262,7 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
             )
         if len(args) == 1:
             keep = args[0]
-            if isinstance(keep, BoolValue):
+            if isinstance(keep):
                 return Complete(
                     ArrayLiteral(
                         tuple(

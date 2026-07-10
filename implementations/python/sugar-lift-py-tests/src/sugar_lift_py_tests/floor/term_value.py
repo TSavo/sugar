@@ -16,6 +16,25 @@ class TermValue(FloorValue):
     def add_with(self, operation: Any, ctx: Any) -> Any:
         return operation.add_term(self, ctx)
 
+    def equals(self, other, blame):
+        # A number stands on the equals floor: two numbers are equal or not, and it
+        # gives back the True or False literal -- the boolean IS the type.
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(blame=blame)
+                if self.value == other.value
+                else FalseBoolLiteralSugar(blame=blame)
+            )
+        return super().equals(other, blame)
+
     def to_term(self, *, owner: str):
         del owner
         # Int embeds in Real losslessly (3 and 3.0 are the same number), but the

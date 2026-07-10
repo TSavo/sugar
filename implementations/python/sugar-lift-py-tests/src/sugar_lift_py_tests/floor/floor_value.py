@@ -310,6 +310,79 @@ class FloorValue:
         del ctx
         return self._operation_construction_gap(operation, "unary_operator_with")
 
+    def binary_conditional(self, then, else_body, ctx=None):
+        # Default: this value does not stand on the bool floor -- it cannot decide a
+        # two-way branch. That is the None arm, a construction gap. A value that CAN
+        # do the bool thing implements binary_conditional; its absence here is the
+        # honest "no", and this panic is that no.
+        del then, else_body, ctx
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="binary_conditional",
+            blame=observed,
+            observed=observed,
+            requested="stand on the bool floor",
+            fix=f"write more Floor: implement {observed}.binary_conditional",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="binary_conditional",
+                status="floor-gap",
+                observed=observed,
+                blame=observed,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
+    def equals(self, other, blame):
+        # Default: this value does not stand on the equals floor -- it cannot answer
+        # whether it equals another value. The None arm: a value that CAN implements
+        # equals and gives back a True/False literal; absence here is the honest "no".
+        del other
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="equals",
+            blame=blame,
+            observed=observed,
+            requested="stand on the equals floor",
+            fix=f"write more Floor: implement {observed}.equals",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="equals",
+                status="floor-gap",
+                observed=observed,
+                blame=blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow, factory_panic,

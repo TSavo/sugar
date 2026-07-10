@@ -98,44 +98,133 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.operations import perform_operation
 
-        # No-recognizer force_floor panics (process-terminal). Do not catch.
-        floor = force_floor(
-            self,
+        # Dig when the body floors; opaque residual re-dispatches on the EUF
+        # receiver term (SymbolicValue(self.term)) — honest uninterpreted join,
+        # not a catchable gap / dig-boundary third state.
+        floor = self._dig_floor_or_none(
             ctx,
             owner=f"{operation.owner} {owner_suffix}",
-            project_callsite=False,
+        )
+        receiver: FloorValue = (
+            floor if floor is not None else SymbolicValue(self.term)
         )
         return perform_operation(
             owner=operation.owner,
             blame=operation.blame,
-            receiver=floor,
+            receiver=receiver,
             operation=operation,
             ctx=ctx,
         )
 
     def call_method_with(self, operation: Any, ctx: Any):
-        """Dig the callsite floor, then re-dispatch — enables composition.
+        """Compose a method on a callsite receiver.
 
-        `len(a())` / `f().sum()` need the dug return (ArrayLiteral / coordinate)
-        so outer call:len / call:sum can fold or join by congruence. When dig
-        fails, emit an opaque method coordinate (never invent a value).
+        Prefer a dug floor when the body projects (``len(a())`` folds the
+        returned array). When the receiver is opaque (no diggable body / body
+        Incomplete), compose as an honest EUF join
+        ``call:<method>(call:<receiver>(…))`` — same uninterpreted family as
+        ``SymbolicValue.call_method_with`` / ``OpaqueOpCallsite``. Never invent
+        a numeric value; never soft-catch a panic into Incomplete.
         """
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.operations import perform_operation
+        from sugar_lift_py_tests.outcome import Complete
 
-        # No-recognizer force_floor panics (process-terminal). Do not catch.
-        floor = force_floor(
-            self,
+        floor = self._dig_floor_or_none(
             ctx,
             owner=f"{operation.owner} callsite method receiver",
-            project_callsite=False,
         )
-        return perform_operation(
+        if floor is not None:
+            return perform_operation(
+                owner=operation.owner,
+                blame=operation.blame,
+                receiver=floor,
+                operation=operation,
+                ctx=ctx,
+            )
+        # Opaque receiver with a real EUF term: join, do not force_floor-panic.
+        if operation.name == "__len__" and not operation.arguments:
+            return Complete(
+                OpaqueOpCallsite(callee="len", arg=self, computed=None)
+            )
+        if not operation.name.startswith("__") and all(
+            isinstance(arg, FloorValue) for arg in operation.arguments
+        ):
+            return Complete(
+                OpaqueOpCallsite(
+                    callee=operation.name,
+                    arg=self,
+                    computed=None,
+                    extra_args=tuple(operation.arguments),
+                )
+            )
+        # Genuinely non-composable (no method coordinate shape) — panic loud.
+        _force_floor_gap(
             owner=operation.owner,
-            blame=operation.blame,
-            receiver=floor,
-            operation=operation,
-            ctx=ctx,
+            target_name=self.target_name,
+            observed=f"non-composable method `{operation.name}` on opaque callsite",
+            fix=(
+                f"callsite `{self.target_name}.{operation.name}` has no diggable "
+                "floor and no EUF method-join shape; cite a warrant or keep red"
+            ),
         )
+
+    def _dig_floor_or_none(
+        self,
+        ctx: Any,
+        *,
+        owner: str,
+        seen: frozenset[str] = frozenset(),
+        depth: int = 0,
+        budget: int = _FORCE_FLOOR_BUDGET,
+    ) -> FloorValue | None:
+        """Return a concrete floor when dig succeeds; None when the receiver is opaque.
+
+        Opaque (missing body, Incomplete reduce) is an EUF-join residual — not a
+        panic and not a soft DigBoundary row. Budget / recursive demand still
+        panics: those are non-composable, not joinable coordinates.
+        """
+        key = repr(self.term)
+        if depth >= budget or len(seen) >= budget:
+            _force_floor_gap(
+                owner=owner,
+                target_name=self.target_name,
+                observed="callsite value demand budget exhausted",
+                fix=(
+                    f"callsite `{self.target_name}` exceeded force_floor dig budget "
+                    f"{budget}; leave the bridge as axiomatic"
+                ),
+            )
+        if key in seen:
+            _force_floor_gap(
+                owner=owner,
+                target_name=self.target_name,
+                observed="recursive callsite value demand",
+                fix=(
+                    f"callsite `{self.target_name}` recursively demanded its own "
+                    "floor; leave the bridge as axiomatic"
+                ),
+            )
+        if (body := self.body) is None:
+            return None
+        if len(self.parameters) != len(self.arg_values):
+            return None
+        from sugar_lift_py_tests.outcome import Incomplete, complete_value
+
+        reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
+        outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
+        if isinstance(outcome, Incomplete):
+            return None
+        value = complete_value(outcome, owner=owner)
+        if isinstance(value, CallSiteValue):
+            return value._dig_floor_or_none(
+                reduce_ctx,
+                owner=owner,
+                seen=seen | {key},
+                depth=depth + 1,
+                budget=budget,
+            )
+        return value
 
     def force_floor(
         self,

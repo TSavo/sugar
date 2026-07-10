@@ -15,3 +15,21 @@ class Incomplete:
     @property
     def reason(self) -> str:
         return effect_reason(self.effect)
+
+    def binary_conditional(self, then, else_body, ctx: object = None) -> "Incomplete":
+        # An effect never decides a branch; it rides straight through by returning
+        # itself. Same shape for every operation an effect is asked to do.
+        del then, else_body, ctx
+        return self
+
+    def follow(self, rest, reduce):
+        # An effect halts the run: the rest of the block is unreachable, so it stays
+        # exactly as it is -- unreduced sugar. Never reason about code that never runs.
+        del reduce
+        return rest
+
+    def and_then(self, step):
+        # An effect never continues: it propagates by returning itself, the next step
+        # never runs.
+        del step
+        return self

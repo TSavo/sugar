@@ -27,6 +27,11 @@ class ExprSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     @classmethod
+    def new(cls, site, ctx) -> "ExprSugar":
+        # An expression statement holds one expression, built through the factory.
+        return cls(value=ctx.build_body(site.expr_value(), SugarRole.TERM))
+
+    @classmethod
     def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
         return (
             NotVerdictBearing(
@@ -41,14 +46,7 @@ class ExprSugar(Sugar, role=SugarRole.STATEMENT):
             ),
         )
 
-    @classmethod
-    def build(cls, site, ctx) -> "ExprSugar":
-        if not cls.owns(site):
-            raise TypeError("ExprSugar claim built a non-expression statement")
-        return cls(value=ctx.build_body(site.expr_value(), SugarRole.TERM))
+    def desugar(self, ctx: object = None) -> Outcome:
+        # The statement's outcome is the expression's outcome -- reduce it.
+        return self.value.reduce(ctx)
 
-    def _build(self, ctx) -> Outcome:
-        outcome = self.value.reduce(ctx)
-        if isinstance(outcome, Incomplete):
-            return outcome
-        return Complete(SupportValue())

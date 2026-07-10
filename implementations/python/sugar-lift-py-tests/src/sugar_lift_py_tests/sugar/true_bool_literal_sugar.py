@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import true_bool_literal_return_witness
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+
+@dataclass(frozen=True)
+class TrueBoolLiteralSugar(Sugar, role=SugarRole.TERM):
+    """The literal `True`. It holds no value -- the boolean IS the type. It is its own
+    floor value and it stands on the bool floor as True: it emits the then-face,
+    always, with no fork."""
+
+    blame: str
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return site.observed == "PrimitiveLiteral" and site.literal_value() is True
+
+    @classmethod
+    def new(cls, site, ctx) -> "TrueBoolLiteralSugar":
+        del ctx  # a literal is a leaf: no children
+        return cls(blame=site.blame)
+
+    @classmethod
+    def witnesses(cls):
+        return true_bool_literal_return_witness()
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        del ctx  # the literal is its own floor value
+        return Complete(self)
+
+    def binary_conditional(
+        self, then: "SugarBody", else_body: "SugarBody | None", ctx: object = None
+    ) -> Outcome:
+        del else_body
+        return then.reduce(ctx)
+
+    def negate(self) -> Outcome:
+        # True negates to False -- the literal knows its opposite, no fork.
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+
+        return Complete(FalseBoolLiteralSugar(blame=self.blame))

@@ -94,10 +94,30 @@ def projected_equality_assertion_witness() -> SugarWitnessPair:
     )
 
 
-def primitive_literal_return_witness() -> SugarWitnessPair:
+def true_bool_literal_return_witness() -> SugarWitnessPair:
     return _call_return_pair(
-        name="primitive_literal_return",
-        owner_sugar="PrimitiveLiteralSugar",
+        name="true_bool_literal_return",
+        owner_sugar="TrueBoolLiteralSugar",
+        body="True",
+        truthful="True",
+        lying="False",
+    )
+
+
+def false_bool_literal_return_witness() -> SugarWitnessPair:
+    return _call_return_pair(
+        name="false_bool_literal_return",
+        owner_sugar="FalseBoolLiteralSugar",
+        body="False",
+        truthful="False",
+        lying="True",
+    )
+
+
+def int_literal_return_witness() -> SugarWitnessPair:
+    return _call_return_pair(
+        name="int_literal_return",
+        owner_sugar="IntLiteralSugar",
         body="5",
         truthful="5",
         lying="6",

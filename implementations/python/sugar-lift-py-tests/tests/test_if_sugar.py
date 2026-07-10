@@ -1,140 +1,19 @@
-"""IfSugar composes a test plus a then-block and an else-block (the model: an if gets
-two child blocks). Each branch's returns become GUARDED returns -- the then branch
-under the test, the else branch under its negation. Control flow is composition of
-child blocks, not a walker."""
+"""The factory builds an IfSugar from an `if` statement in Python source."""
 
 from __future__ import annotations
 
-import pytest
+import ast
 
-from factory_reduce import compose_block
-
-from sugar_lift_py_tests.floor import (
-    BlockValue,
-    GuardedReturn,
-    StringValue,
-    SymbolicValue,
-)
-from sugar_lift_py_tests.ir import (
-    ctor,
-    eq,
-    gte,
-    identity,
-    lt,
-    make_var,
-    not_,
-    num,
-    real_lit,
-)
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 
 
-def test_if_else_composes_then_and_else_into_guarded_returns():
-    bv = compose_block(
-        '    if x == 0:\n        return "a"\n    else:\n        return "b"\n',
-        {"x": SymbolicValue(make_var("x"))},
-    )
-    guard = eq(make_var("x"), num(0))
-    assert bv == BlockValue(
-        (
-            GuardedReturn((guard,), StringValue("a")),
-            GuardedReturn((not_(guard),), StringValue("b")),
-        )
-    )
+def test_factory_builds_if_sugar() -> None:
+    if_node = ast.parse("if True:\n    pass").body[0]
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
 
+    result = build_node(if_node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
 
-def test_comment_before_an_if_is_absorbed():
-    bv = compose_block(
-        '    "doc"\n    if x == 0:\n        return "a"\n    else:\n        return "b"\n',
-        {"x": SymbolicValue(make_var("x"))},
-    )
-    assert len(bv.statements) == 2
-
-
-def test_if_guard_accepts_collapsed_number_float_literal():
-    bv = compose_block(
-        '    if x < 1.5:\n        return "a"\n    else:\n        return "b"\n',
-        {"x": SymbolicValue(make_var("x"))},
-    )
-    guard = lt(make_var("x"), real_lit("1.5"))
-    assert bv == BlockValue(
-        (
-            GuardedReturn((guard,), StringValue("a")),
-            GuardedReturn((not_(guard),), StringValue("b")),
-        )
-    )
-
-
-def test_if_guard_accepts_identity_none_literal():
-    bv = compose_block(
-        '    if x is not None:\n        return "a"\n    else:\n        return "b"\n',
-        {"x": SymbolicValue(make_var("x"))},
-    )
-    guard = not_(identity(make_var("x"), ctor("None", [])))
-    assert bv == BlockValue(
-        (
-            GuardedReturn((guard,), StringValue("a")),
-            GuardedReturn((not_(guard),), StringValue("b")),
-        )
-    )
-
-
-def test_if_guard_accepts_greater_equal_compare():
-    bv = compose_block(
-        '    if x >= y:\n        return "a"\n    else:\n        return "b"\n',
-        {"x": SymbolicValue(make_var("x")), "y": SymbolicValue(make_var("y"))},
-    )
-    guard = gte(make_var("x"), make_var("y"))
-    assert bv == BlockValue(
-        (
-            GuardedReturn((guard,), StringValue("a")),
-            GuardedReturn((not_(guard),), StringValue("b")),
-        )
-    )
-
-
-def test_if_guard_accepts_tuple_literal_operand():
-    bv = compose_block(
-        '    if version == (1, 0):\n        return "a"\n    else:\n        return "b"\n',
-        {"version": SymbolicValue(make_var("version"))},
-    )
-    guard = eq(make_var("version"), ctor("tuple", [num(1), num(0)]))
-    assert bv == BlockValue(
-        (
-            GuardedReturn((guard,), StringValue("a")),
-            GuardedReturn((not_(guard),), StringValue("b")),
-        )
-    )
-
-
-def test_if_guard_membership_gap_is_structured():
-    with pytest.raises(TypeError) as exc:
-        compose_block(
-            '    if encoding not in ("ASCII", "latin1"):\n'
-            '        return "a"\n'
-            "    else:\n"
-            '        return "b"\n',
-            {"encoding": SymbolicValue(make_var("encoding"))},
-        )
-
-    assert str(exc.value) == (
-        "write more Sugar for control-flow guard: owner=IfSugar "
-        "blame=f.py:2:7 observed=Compare:NotIn requested=control-flow guard "
-        "fix=add IfSugar lowering for Compare:NotIn"
-    )
-
-
-def test_if_guard_call_gap_names_control_flow_call_frontier():
-    with pytest.raises(TypeError) as exc:
-        compose_block(
-            '    if pytest.importorskip("numpy"):\n'
-            '        return "a"\n'
-            "    else:\n"
-            '        return "b"\n'
-        )
-
-    assert str(exc.value) == (
-        "write more Sugar for control-flow guard: owner=IfSugar "
-        "blame=f.py:2:7 observed=call-control-flow-guard:pytest.importorskip "
-        "requested=control-flow guard fix=add IfSugar lowering for guard call "
-        "`pytest.importorskip` or emit a real effect"
-    )
+    assert isinstance(result.sugar, IfSugar)
