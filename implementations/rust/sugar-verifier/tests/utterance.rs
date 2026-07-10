@@ -357,6 +357,119 @@ fn speak_implication_refuses_envelope_without_implication_members() {
 }
 
 // ---------------------------------------------------------------------
+// 5. Positive speak_implication (#3809): sealed Obligation post⊃pre
+//    is speakable at parity with fact/universe (CID-idempotent re-speak,
+//    first speaker wins).
+// ---------------------------------------------------------------------
+
+fn obligation_post_pre() -> (sugar_ir_types::IrFormula, sugar_ir_types::IrFormula) {
+    use sugar_ir_types::{IrFormula, IrTerm};
+    let post = IrFormula::Atomic {
+        name: "caller_post".into(),
+        args: vec![IrTerm::Var { name: "r".into() }],
+    };
+    let pre = IrFormula::Atomic {
+        name: "callee_pre".into(),
+        args: vec![IrTerm::Var { name: "x".into() }],
+    };
+    (post, pre)
+}
+
+fn implication_proof_bytes() -> ProofBytes {
+    let (post, pre) = obligation_post_pre();
+    let (_sealed, bytes, cid) = sugar_claim_envelope::spoken_obligation_proof_bytes(&post, &pre);
+    ProofBytes::try_from_parts(
+        "spoken-obligation.proof",
+        cid,
+        bytes,
+        Speaker::vendor("obligation-speaker"),
+    )
+    .expect("sealed obligation catalog stages into ProofBytes")
+}
+
+#[test]
+fn speak_implication_positive_and_re_speak_is_idempotent() {
+    let proof = implication_proof_bytes();
+    let speaker = Speaker::vendor("obligation-speaker");
+    let mut pool = MementoPool::default();
+
+    let first = speak_implication(&mut pool, &speaker, &proof).expect("positive speak succeeds");
+    assert_eq!(first.kind, sugar_verifier::utterance::UtteranceKind::Implication);
+    assert!(
+        !first.members_spoken.is_empty(),
+        "first speak must attribute implication members: {:?}",
+        first.members_spoken
+    );
+    assert!(first.members_already_spoken.is_empty());
+    let members_after = pool.mementos.len();
+    let attribution_after: BTreeMap<_, _> = attribution(&pool).clone();
+    assert!(
+        pool.member_speaker(&first.members_spoken[0])
+            .is_some_and(|s| s.role == SpeakerRole::Vendor),
+        "first speaker role stamped"
+    );
+
+    // Re-speak: same speaker, same sealed edge → no-op.
+    let second = speak_implication(&mut pool, &speaker, &proof).expect("re-speak succeeds");
+    assert!(
+        second.members_spoken.is_empty(),
+        "re-speak attributes nothing new: {:?}",
+        second.members_spoken
+    );
+    let mut expected_already = first.members_spoken.clone();
+    expected_already.sort();
+    let mut actual_already = second.members_already_spoken.clone();
+    actual_already.sort();
+    assert_eq!(actual_already, expected_already);
+    assert_eq!(pool.mementos.len(), members_after);
+    assert_eq!(
+        attribution(&pool),
+        &attribution_after,
+        "attribution unchanged by re-speak"
+    );
+
+    // First speaker wins against an impostor.
+    let impostor = Speaker::consumer("impostor");
+    let third = speak_implication(&mut pool, &impostor, &proof).expect("impostor re-speak ok");
+    assert!(third.members_spoken.is_empty());
+    assert_eq!(
+        attribution(&pool),
+        &attribution_after,
+        "later speaker must not steal attribution"
+    );
+}
+
+#[test]
+fn seal_same_obligation_twice_same_implication_member_in_pool() {
+    // Two independently sealed catalogs of the same post⊃pre edge speak as
+    // ONE memento (same member CID) — the seal is a pure function.
+    let (post, pre) = obligation_post_pre();
+    let (s1, b1, c1) = sugar_claim_envelope::spoken_obligation_proof_bytes(&post, &pre);
+    let (s2, b2, c2) = sugar_claim_envelope::spoken_obligation_proof_bytes(&post, &pre);
+    assert_eq!(s1.cid, s2.cid, "member seal CID pure");
+    assert_eq!(c1, c2, "catalog CID pure under fixed seal identity");
+    assert_eq!(b1, b2, "catalog bytes pure");
+
+    let p1 = ProofBytes::try_from_parts("o1.proof", c1, b1, Speaker::vendor("a"))
+        .expect("stage");
+    let p2 = ProofBytes::try_from_parts("o2.proof", c2, b2, Speaker::vendor("b"))
+        .expect("stage");
+    let mut pool = MementoPool::default();
+    let first = speak_implication(&mut pool, &Speaker::vendor("a"), &p1).unwrap();
+    let second = speak_implication(&mut pool, &Speaker::vendor("b"), &p2).unwrap();
+    assert!(!first.members_spoken.is_empty());
+    assert!(
+        second.members_spoken.is_empty(),
+        "second speak of same edge CID is already-spoken"
+    );
+    assert_eq!(
+        pool.mementos.len(),
+        first.members_spoken.len(),
+        "one edge → one pool member"
+    );
+}
+
+// ---------------------------------------------------------------------
 // #3813 (finding 3): a refusal whose scratch decode raised load errors
 // RECORDS those errors into `pool.load_errors` (the durable log every other
 // intake keeps), while still adding NO member or attribution. The

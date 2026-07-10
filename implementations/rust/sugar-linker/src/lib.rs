@@ -1269,26 +1269,44 @@ fn derive_bridge(
 /// checked on the wire, not just in memory. The in-memory obligation on the
 /// [`DerivedBridge`] remains the authoritative value the verifier discharges; the
 /// wire term is its faithful projection, never a second source of truth.
+/// Link-time satisfaction obligation for one bound edge: caller `post`
+/// implies callee `pre` (`post ⊃ pre`). Carried on the derived bridge and
+/// discharged by the solver — carried == checked.
+///
+/// #3809: this IS the speakable implication. Seal via
+/// [`Self::seal_as_implication`] (existing implication memento shape; no
+/// parallel type). Same `(post, pre)` → same content CID (pure function).
 #[derive(Debug, Clone, PartialEq)]
-struct Obligation {
-    /// Caller post-condition `post_B`.
-    post: IrFormula,
-    /// Callee pre-condition `pre_A`.
-    pre: IrFormula,
+pub struct Obligation {
+    /// Caller post-condition `post_B` (antecedent of `post ⊃ pre`).
+    pub post: IrFormula,
+    /// Callee pre-condition `pre_A` (consequent of `post ⊃ pre`).
+    pub pre: IrFormula,
 }
 
 impl Obligation {
-    fn new(post: IrFormula, pre: IrFormula) -> Self {
+    pub fn new(post: IrFormula, pre: IrFormula) -> Self {
         Self { post, pre }
     }
 
     /// Lower to the `{"kind":"implies","operands":[post,pre]}` IR formula the
     /// SMT compiler consumes. Byte-identical to the inline `IrFormula::Implies`
     /// term this seam replaced, so no solver input or verdict changes.
-    fn as_implies(&self) -> IrFormula {
+    pub fn as_implies(&self) -> IrFormula {
         IrFormula::Implies {
             operands: vec![self.post.clone(), self.pre.clone()],
         }
+    }
+
+    /// Seal this Obligation as the speakable implication memento (one CID).
+    /// Pure function of `(post, pre)`: see `sugar_claim_envelope::seal_spoken_obligation`.
+    pub fn seal_as_implication(&self) -> sugar_claim_envelope::MintedEnvelope {
+        sugar_claim_envelope::seal_spoken_obligation(&self.post, &self.pre)
+    }
+
+    /// Signer-independent content CID of the sealed edge (pure function of formulas).
+    pub fn implication_content_cid(&self) -> String {
+        sugar_claim_envelope::spoken_obligation_content_cid(&self.post, &self.pre)
     }
 }
 

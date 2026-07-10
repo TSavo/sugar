@@ -19,5 +19,6 @@ sugar-ir-types = { path = "../sugar-ir-types" }
 sugar-verifier = { path = "../sugar-verifier" }
 sugar-ir-compiler = { path = "../sugar-ir-compiler" }
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
+sugar-claim-envelope = { path = "../sugar-claim-envelope" }
 serde = { workspace = true }
 serde_json = { workspace = true }
