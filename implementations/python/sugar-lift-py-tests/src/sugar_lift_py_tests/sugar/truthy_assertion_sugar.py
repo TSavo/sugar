@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Never, NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.floor import BoolValue, ObjectValue
 from sugar_lift_py_tests.ir import Formula, Term, atomic, bool_const, eq
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
@@ -147,9 +146,8 @@ def _projectable_truth_body(site, ctx) -> TruthProjection:
     if _contains_nested_compare(test):
         return Degraded(_truthy_symbolic_reason(test))
     try:
+        # No-recognizer FactoryGap panics process-terminal; do not catch.
         return Projected(ctx.build_body(test, SugarRole.TERM))
-    except FactoryGap as gap:
-        return Degraded(_truthy_degraded_reason(gap))
     except TypeError as exc:
         return Degraded(_truthy_type_degraded_reason(exc))
 
@@ -167,20 +165,6 @@ def _truthy_symbolic_reason(site) -> TruthProjectionDegradation:
         shape=f"symbolic-term({site.observed})",
         replacement="emit the canonical py.truthy symbolic assertion fact",
         audit_reason="symbolic truthy assertion over nested comparison",
-    )
-
-
-def _truthy_degraded_reason(gap: FactoryGap) -> TruthProjectionDegradation:
-    owner = gap.info.owner
-    observed = gap.info.observed
-    requested = gap.info.requested
-    replacement = gap.info.fix
-    return TruthProjectionDegradation(
-        crime="truthy projection degraded before term-body construction",
-        owner="TruthyAssertionSugar",
-        shape=f"FactoryGap(owner={owner}, observed={observed}, requested={requested})",
-        replacement=replacement,
-        audit_reason=replacement,
     )
 
 

@@ -11,7 +11,7 @@ import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap
+from sugar_lift_py_tests.factory import FactoryAuditRow, factory_panic
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap_info import (
     FactoryGapInfo,
@@ -20,7 +20,7 @@ from sugar_lift_py_tests.factory.factory_gap_info import (
     gap_kind_status,
 )
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome import complete_value
 
@@ -137,7 +137,7 @@ def test_factory_gap_preserves_typed_info_until_effect_boundary() -> None:
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
-    gap = FactoryGap(
+    gap = factory_panic(
         info,
         FactoryAuditRow(
             role="term",
@@ -280,7 +280,7 @@ class Box:
 
     outcome = body.reduce(ctx)
     assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, FactoryGapEffect)
+    assert isinstance(outcome.effect)
 
     assert outcome.effect.requested == "1 constructor arguments"
     assert outcome.effect.gap_kind is GapKind.CONSTRUCTOR

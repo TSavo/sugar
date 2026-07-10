@@ -11,8 +11,7 @@ from factory_reduce import fol, reduce_term
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -48,7 +47,7 @@ class _GapBody:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.REDUCE,
         )
-        raise FactoryGap(info, _audit_row(info))
+        factory_panic(info, _audit_row(info))
 
 
 class _TypeErrorBody:

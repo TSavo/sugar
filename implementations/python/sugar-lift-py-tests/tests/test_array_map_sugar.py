@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.operations import MapOperation, perform_operation
 

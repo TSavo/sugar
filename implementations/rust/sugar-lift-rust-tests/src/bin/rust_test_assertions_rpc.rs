@@ -5536,14 +5536,19 @@ impl FactoryAuditSummaryAccumulator {
             "warranted" => self.warranted += 1,
             "support" => self.support += 1,
             "unresolved" | "unclassified" => self.unresolved += 1,
-            // The rust-test-assertions factory walk row's own typed-effect
-            // status ("boundary") plus the python factory-walk kit's finer
-            // typed-effect family (#3632 batch 6): each is a named lift-side
-            // boundary, aggregated into the "incomplete" bucket the CLI
-            // report expects.
-            "boundary" | "raise-effect" | "runtime-effect" | "coverage-gap" | "factory-gap"
-            | "dig-boundary" | "absent" | "drifted" => self.incomplete += 1,
-            _ => {}
+            // Typed runtime/coverage boundaries still roll to incomplete.
+            // factory-gap / dig-boundary DELETED (third state): residual is panic.
+            // absent / drifted are source-oracle gaps, not soft incomplete.
+            "boundary" | "raise-effect" | "runtime-effect" | "coverage-gap" => {
+                self.incomplete += 1
+            }
+            "absent" | "drifted" => self.unresolved += 1,
+            "factory-gap" | "dig-boundary" => panic!(
+                "third state deleted: status {status:?} must not reach accounting                  (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+            ),
+            other => panic!(
+                "unowned factory walk status {other:?}: no incomplete catch-all                  (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+            ),
         }
     }
 
@@ -5600,10 +5605,14 @@ fn factory_walk_row(row: &Value) -> Value {
     let status = factory_row_status(row);
     let verdict = match status {
         "warranted" | "support" => "complete",
-        "unresolved" => "gap",
-        // "boundary" and the python factory-walk kit's typed-effect family
-        // all fall to "incomplete" via the catch-all below.
-        _ => "incomplete",
+        "unresolved" | "absent" | "drifted" => "gap",
+        "boundary" | "raise-effect" | "runtime-effect" | "coverage-gap" => "incomplete",
+        "factory-gap" | "dig-boundary" => panic!(
+            "third state deleted: status {status:?} must not reach walk rows              (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+        ),
+        other => panic!(
+            "unowned factory walk status {other:?}: no incomplete catch-all              (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+        ),
     };
     let output = if status == "unresolved" {
         json!("gap")
@@ -5684,10 +5693,12 @@ fn factory_row_status(row: &Value) -> &'static str {
         "raise-effect" => "raise-effect",
         "runtime-effect" => "runtime-effect",
         "coverage-gap" => "coverage-gap",
-        "factory-gap" => "factory-gap",
-        "dig-boundary" => "dig-boundary",
         "absent" => "absent",
         "drifted" => "drifted",
+        "factory-gap" | "dig-boundary" => panic!(
+            "third state deleted: factory-gap/dig-boundary must not reach factory_row_status \
+             (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+        ),
         _ => "unresolved",
     }
 }
@@ -5714,13 +5725,16 @@ fn factory_audit_status_counts(rows: &[Value]) -> Value {
             "warranted" => warranted += 1,
             "support" => support += 1,
             "unresolved" | "unclassified" => unresolved += 1,
-            // See FactoryAuditSummaryAccumulator::observe_status: display-layer
-            // aggregation of every named lift-side boundary status (rust's own
-            // "boundary" plus the python factory-walk kit's typed-effect
-            // family) into the "incomplete" bucket.
-            "boundary" | "raise-effect" | "runtime-effect" | "coverage-gap" | "factory-gap"
-            | "dig-boundary" | "absent" | "drifted" => incomplete += 1,
-            _ => {}
+            // factory-gap/dig-boundary deleted; absent/drifted are gaps not incomplete.
+            "boundary" | "raise-effect" | "runtime-effect" | "coverage-gap" => {
+                incomplete += 1
+            }
+            "absent" | "drifted" => unresolved += 1,
+            "factory-gap" | "dig-boundary" => panic!(
+                "third state deleted: factory-gap/dig-boundary in factory_audit_status_counts \
+                 (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+            ),
+            other => panic!("unowned factory walk status {other:?} in status counts")
         }
     }
     json!({

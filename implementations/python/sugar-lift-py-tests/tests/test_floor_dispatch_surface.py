@@ -13,7 +13,7 @@ import pytest
 
 import sugar_lift_py_tests.operations as operations_package
 import sugar_lift_py_tests.floor as floor_package
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.floor import (
     FLOOR_OPERATION_METHOD_NAMES,
     REGISTERED_FLOOR_TYPES,

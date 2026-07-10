@@ -28,7 +28,7 @@ def test_opaque_copy_name_assign_is_runtime_effect_not_construction_gap() -> Non
         "    s.name = \"x\"\n"
         "    assert s.name == \"x\"\n"
     )
-    # Must not raise FactoryGap(project/attribute_assign construction).
+    # Must not factory_panic(project/attribute_assign construction).
     report = build_literal_call_report(source=src, filename="t.py", memento_file="t.py")
     assert report is not None
     blob = repr(report.payload)

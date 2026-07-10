@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, NoReturn
 
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -141,7 +140,7 @@ def _raise_stop_floor_gap(blame: str) -> NoReturn:
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role="async iteration stop floor",

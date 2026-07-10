@@ -8,7 +8,7 @@ import pytest
 
 from factory_reduce import array_map_reduce
 
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.operations import AddOperation

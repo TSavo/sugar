@@ -19,7 +19,7 @@ then BinaryOperatorOperation mints joinable symbolic op. Never fabricate.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue

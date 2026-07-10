@@ -113,7 +113,7 @@ def test_np_style_ann_assign_digs_without_gap() -> None:
 
 def test_attr_ann_assign_still_unowned() -> None:
     """Attribute AnnAssign is not this drain — Name targets only."""
-    from sugar_lift_py_tests.factory import FactoryGap
+    from sugar_lift_py_tests.factory import factory_panic
 
     src = "class C:\n    def m(self):\n        self.x: int = 1\n"
     mod = ast.parse(src)

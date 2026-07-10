@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, NoReturn, cast
 
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -77,7 +76,7 @@ class CallsiteProjectionOperation:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.PROJECTION,
         )
-        raise FactoryGap(
+        factory_panic(
             info,
             FactoryAuditRow(
                 role="project_callsite_with",

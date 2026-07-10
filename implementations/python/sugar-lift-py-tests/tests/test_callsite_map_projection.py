@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.context.reduce_context import ReduceContext
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.operations import MapOperation, perform_operation

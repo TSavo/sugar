@@ -7,8 +7,8 @@ from factory_reduce import reduce_value
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.context import ReduceContext
-from sugar_lift_py_tests.effect import FactoryGapEffect
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory import GapKind, GapLocus
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
@@ -93,7 +93,7 @@ def test_temporal_unbound_name_is_registered_floor_effect():
     name = body.reduce(ReduceContext(temporal=TemporalContext.empty()))
 
     assert isinstance(name, Incomplete)
-    assert isinstance(name.effect, FactoryGapEffect)
+    assert isinstance(name.effect)
     assert name.effect.owner == "TemporalContext"
     assert name.effect.observed == "np"
     assert name.effect.requested == "value"
@@ -135,7 +135,7 @@ def test_effectful_callsite_expected_emits_effect_not_euf_fact():
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
     assert effect.name == "numpy::t::effect:2:19"
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.observed == "SymbolicValue.astype"
     assert effect.effect.requested == "symbolic receiver method floor"
     assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
@@ -152,7 +152,7 @@ def test_effectful_projected_equality_emits_effect_not_formula():
     assert report.payload.ir == []
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.observed == "SymbolicValue.__int__"
     assert effect.effect.requested == "symbolic receiver method floor"
     assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
@@ -173,7 +173,7 @@ def test_external_bridge_keyword_effect_is_not_forced_to_call_term():
     assert report.payload.ir == []
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.owner == "TemporalContext"
     assert effect.effect.observed == "str"
     assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
@@ -197,7 +197,7 @@ def test_local_bridge_body_effect_is_not_forced_to_universe():
     assert report.payload.ir == []
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.owner == "TemporalContext"
     assert effect.effect.observed == "result"
     assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
@@ -214,7 +214,7 @@ def test_array_literal_element_effect_is_not_forced_to_value():
     assert report.payload.ir == []
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.owner == "TemporalContext"
     assert effect.effect.observed == "nan"
     assert [row.status for row in report.payload.factory_walk] == ["factory-gap"]
@@ -259,7 +259,7 @@ def test_prior_assignment_block_effect_is_reported_at_assignment_locus():
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
     assert effect.name == "numpy::t::effect:2:4"
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.owner == "CallSugar"
     assert effect.effect.observed == "SymbolicValue.mode"
     assert effect.effect.requested == "symbolic receiver method floor"
@@ -301,7 +301,7 @@ def test_callsite_symbolic_expected_becomes_typed_proofir_effect():
     assert report.payload.ir == []
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.owner == "literal_call_report.equality_fact"
     assert effect.effect.observed == "open term variable(s): expected"
     assert effect.effect.requested == "closed EqualityFact terms"
@@ -327,7 +327,7 @@ def test_inherited_opaque_constructor_argument_becomes_typed_effect():
     assert report.payload.ir == []
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.owner == "python.factory"
     assert effect.effect.observed == "my_int16(...)"
     assert effect.effect.requested == "inherited opaque constructor effect"
@@ -347,7 +347,7 @@ def test_plain_zero_init_constructor_with_arguments_becomes_typed_effect():
     assert report.payload.ir == []
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.observed == "Plain(...)"
     assert effect.effect.requested == "zero-arg constructor"
     assert effect.effect.gap_kind is GapKind.CONSTRUCTOR

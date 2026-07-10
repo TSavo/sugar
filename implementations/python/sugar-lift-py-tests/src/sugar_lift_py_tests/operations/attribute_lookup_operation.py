@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, NoReturn, TypeGuard
 
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -119,7 +118,7 @@ class AttributeLookupOperation:
             ),
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        raise FactoryGap(
+        factory_panic(
             info,
             FactoryAuditRow(
                 role=requested,

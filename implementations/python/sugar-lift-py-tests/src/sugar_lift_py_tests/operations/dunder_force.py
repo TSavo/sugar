@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.outcome import Incomplete
@@ -21,8 +20,6 @@ def force_dunder_floor_or_runtime_effect(
             owner=owner,
             project_callsite=project_callsite,
         )
-    except FactoryGap:
-        raise
     except TypeError as exc:
         if _is_factory_reduction_typeerror(exc):
             raise

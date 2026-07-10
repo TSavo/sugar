@@ -523,7 +523,6 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context import FactoryBuildContext
     from sugar_lift_py_tests.effect import effect_kind, effect_reason
-    from sugar_lift_py_tests.factory import FactoryGap
     from sugar_lift_py_tests.factory.build import build_node
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.floor import SymbolicValue
@@ -553,24 +552,18 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
             owner="SugarWitnessInstruments",
             blame=function.blame,
         )
-    try:
-        result = build_node(
-            function.function_body_block(),
-            filename="test_witness.py",
-            role=SugarRole.STATEMENT,
-            ctx=ctx,
-        )
-        outcome = SugarBody(
-            sugar=result.sugar,
-            role=SugarRole.STATEMENT,
-            audit_row=result.audit_row,
-        ).reduce(ctx)
-    except FactoryGap as exc:
-        return RedEffectObservation(
-            effect_class="FactoryGap",
-            reason=str(exc),
-            selected_sugars=_selected_sugars_from_audit(audit_sink),
-        )
+    # No-recognizer FactoryGap panics process-terminal; do not catch.
+    result = build_node(
+        function.function_body_block(),
+        filename="test_witness.py",
+        role=SugarRole.STATEMENT,
+        ctx=ctx,
+    )
+    outcome = SugarBody(
+        sugar=result.sugar,
+        role=SugarRole.STATEMENT,
+        audit_row=result.audit_row,
+    ).reduce(ctx)
     if isinstance(outcome, Incomplete):
         return RedEffectObservation(
             effect_class=effect_kind(outcome.effect),

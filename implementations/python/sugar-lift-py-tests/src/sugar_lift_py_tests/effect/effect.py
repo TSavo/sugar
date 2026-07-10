@@ -3,27 +3,18 @@ from __future__ import annotations
 from typing import Literal, Never, NoReturn
 
 from .coverage_gap_effect import CoverageGapEffect
-from .dig_boundary_effect import DigBoundaryEffect
-from .factory_gap_effect import FactoryGapEffect
 from .raise_effect import RaiseEffect
 from .runtime_effect import RuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 
-Effect = (
-    RaiseEffect
-    | RuntimeEffect
-    | CoverageGapEffect
-    | FactoryGapEffect
-    | DigBoundaryEffect
-    | SourceOracleEffect
-)
+# FactoryGapEffect and DigBoundaryEffect are DELETED.
+# No-recognizer is panic, not a typed Incomplete arm.
+Effect = RaiseEffect | RuntimeEffect | CoverageGapEffect | SourceOracleEffect
 
 EffectStatus = Literal[
     "raise-effect",
     "runtime-effect",
     "coverage-gap",
-    "factory-gap",
-    "dig-boundary",
     "absent",
     "drifted",
 ]
@@ -36,16 +27,14 @@ def require_effect(effect: object) -> Effect:
             RaiseEffect,
             RuntimeEffect,
             CoverageGapEffect,
-            FactoryGapEffect,
-            DigBoundaryEffect,
             SourceOracleEffect,
         ),
     ):
         return effect
     raise TypeError(
         "Incomplete.effect must be a typed Effect "
-        "(RaiseEffect | RuntimeEffect | CoverageGapEffect | FactoryGapEffect | "
-        "DigBoundaryEffect | SourceOracleEffect)"
+        "(RaiseEffect | RuntimeEffect | CoverageGapEffect | SourceOracleEffect); "
+        "FactoryGap/DigBoundary were deleted — the None arm panics"
     )
 
 
@@ -56,10 +45,6 @@ def effect_kind(effect: Effect) -> str:
         return "RuntimeEffect"
     if isinstance(effect, CoverageGapEffect):
         return "CoverageGap"
-    if isinstance(effect, FactoryGapEffect):
-        return "FactoryGap"
-    if isinstance(effect, DigBoundaryEffect):
-        return "DigBoundary"
     if isinstance(effect, SourceOracleEffect):
         return "SourceOracleEffect"
     return _unhandled_effect(effect)
@@ -71,10 +56,6 @@ def effect_reason(effect: Effect) -> str:
     if isinstance(effect, RuntimeEffect):
         return effect.reason
     if isinstance(effect, CoverageGapEffect):
-        return effect.reason
-    if isinstance(effect, FactoryGapEffect):
-        return effect.reason
-    if isinstance(effect, DigBoundaryEffect):
         return effect.reason
     if isinstance(effect, SourceOracleEffect):
         return effect.reason
@@ -88,10 +69,6 @@ def effect_status(effect: Effect) -> EffectStatus:
         return "runtime-effect"
     if isinstance(effect, CoverageGapEffect):
         return "coverage-gap"
-    if isinstance(effect, FactoryGapEffect):
-        return "factory-gap"
-    if isinstance(effect, DigBoundaryEffect):
-        return "dig-boundary"
     if isinstance(effect, SourceOracleEffect):
         return effect.status
     return _unhandled_effect(effect)

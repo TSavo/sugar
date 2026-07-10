@@ -7,7 +7,7 @@ from factory_reduce import fol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import FactoryAuditRow, factory_panic, FactoryGapInfo
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import CallSiteValue, TermValue
 from sugar_lift_py_tests.ir import ctor, num, str_const
@@ -123,7 +123,7 @@ class Box:
         self.audit_row = audit_row
         RuntimeError.__init__(self, info.message)
 
-    monkeypatch.setattr(FactoryGap, "__init__", keep_dataclass_info)
+    monkeypatch.setattr(factory_panic, "__init__", keep_dataclass_info)
 
     with pytest.raises(FactoryGap) as raised:
         _reduce_expr(source, "Box().missing")

@@ -7,8 +7,7 @@ from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping, NoReturn
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -297,7 +296,7 @@ def _proofir_gap(
         gap_kind=GapKind.PROOFIR,
         gap_locus=GapLocus.VOCABULARY,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role="proofir-vocabulary",

@@ -8,7 +8,7 @@ from sugar_lift_py_tests.claim import SugarCandidate, SugarCatalog, SugarRole
 from .factory_audit_row import FactoryAuditRow
 from .factory_build_context import FactoryBuildContext
 from .factory_build_result import FactoryBuildResult
-from .factory_gap import FactoryGap
+from .factory_gap import factory_panic
 from .factory_gap_info import FactoryGapInfo, GapKind, GapLocus
 from .source_fragment import SourceFragment
 from .source_fragment_stack import SourceFragmentStack
@@ -141,7 +141,7 @@ def _build_site(
             candidates=[],
             message=info.message,
         )
-        raise FactoryGap(info, audit_row)
+        factory_panic(info, audit_row)
 
     selected = _select_candidate(candidates)
     if selected is None:
@@ -244,7 +244,7 @@ def _raise_ambiguous_candidates(
         candidates=names,
         message=info.message,
     )
-    raise FactoryGap(info, audit_row)
+    factory_panic(info, audit_row)
 
 
 def default_catalog() -> SugarCatalog:

@@ -6,8 +6,6 @@ from typing import Never, NoReturn
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import (
     CoverageGapEffect,
-    DigBoundaryEffect,
-    FactoryGapEffect,
     RaiseEffect,
     RuntimeEffect,
     SourceOracleEffect,
@@ -208,10 +206,6 @@ def _route_incomplete_effect(outcome: Incomplete, *, handlers: tuple, ctx) -> Ou
     if isinstance(effect, RuntimeEffect):
         return outcome
     if isinstance(effect, CoverageGapEffect):
-        return outcome
-    if isinstance(effect, FactoryGapEffect):
-        return outcome
-    if isinstance(effect, DigBoundaryEffect):
         return outcome
     if isinstance(effect, SourceOracleEffect):
         return outcome

@@ -115,7 +115,6 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             # CallSiteValue bodies) into computed; never invent a total for
             # opaque/symbolic iterables. Do not use wrap_builtin_operator: it
             # leaves CallSiteValue unwrapped and drops the sum coordinate.
-            from sugar_lift_py_tests.factory.factory_gap import FactoryGap
             from sugar_lift_py_tests.floor import ArrayLiteral, CallSiteValue, TermValue
             from sugar_lift_py_tests.floor.call_site_value import force_floor
             from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
@@ -123,15 +122,13 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
 
             fold_arg = argument
             if isinstance(argument, CallSiteValue):
-                try:
-                    fold_arg = force_floor(
-                        argument,
-                        ctx,
-                        owner="BuiltinCallSugar.sum dig",
-                        project_callsite=False,
-                    )
-                except FactoryGap:
-                    fold_arg = argument
+                # No-recognizer force_floor panics process-terminal; do not catch.
+                fold_arg = force_floor(
+                    argument,
+                    ctx,
+                    owner="BuiltinCallSugar.sum dig",
+                    project_callsite=False,
+                )
             folded: TermValue | None = None
             if isinstance(fold_arg, ArrayLiteral):
                 total = 0
@@ -150,7 +147,6 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             # Builtin list(x) — materialize to array when dig yields a sequence
             # floor; otherwise opaque call:list(arg). Keeps call:list as the
             # join point for body dig of list(df.columns) etc.
-            from sugar_lift_py_tests.factory.factory_gap import FactoryGap
             from sugar_lift_py_tests.floor import ArrayLiteral, CallSiteValue
             from sugar_lift_py_tests.floor.call_site_value import force_floor
             from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
@@ -159,15 +155,13 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             folded = None
             fold_arg = argument
             if isinstance(argument, CallSiteValue):
-                try:
-                    fold_arg = force_floor(
-                        argument,
-                        ctx,
-                        owner="BuiltinCallSugar.list dig",
-                        project_callsite=False,
-                    )
-                except FactoryGap:
-                    fold_arg = argument
+                # No-recognizer force_floor panics process-terminal; do not catch.
+                fold_arg = force_floor(
+                    argument,
+                    ctx,
+                    owner="BuiltinCallSugar.list dig",
+                    project_callsite=False,
+                )
             if isinstance(fold_arg, ArrayLiteral):
                 folded = fold_arg
             return Complete(

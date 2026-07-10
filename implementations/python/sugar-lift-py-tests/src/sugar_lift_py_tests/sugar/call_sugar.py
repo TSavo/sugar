@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
 from sugar_lift_py_tests.factory.factory_gap_info import (
     FactoryGapInfo,
     GapKind,
@@ -53,17 +53,13 @@ class FactoryGapStrategy:
 
     def emit(self, sugar: "CallSugar", ctx) -> Outcome:
         del sugar, ctx
-        return Incomplete(
-            FactoryGapEffect(
-                owner=self.info.owner,
+        factory_panic_gap(owner=self.info.owner,
                 blame=self.info.blame,
                 observed=self.info.observed,
                 requested=self.info.requested,
                 fix=self.info.fix,
                 gap_kind=self.info.gap_kind,
-                gap_locus=self.info.gap_locus,
-            )
-        )
+                gap_locus=self.info.gap_locus,)
 
 
 @dataclass(frozen=True)
@@ -867,9 +863,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
         if fragment.call_arg_count() != 0:
             if _has_opaque_constructor_base(class_site, ctx):
                 return TypedEffectStrategy(
-                    Incomplete(
-                        FactoryGapEffect(
-                            owner="python.factory",
+                    factory_panic_gap(owner="python.factory",
                             blame=fragment.blame,
                             observed=f"{target}(...)",
                             requested="inherited opaque constructor effect",
@@ -878,9 +872,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                                 "base class; do not fabricate a local __init__"
                             ),
                             gap_kind=GapKind.CONSTRUCTOR,
-                            gap_locus=GapLocus.AST,
-                        )
-                    )
+                            gap_locus=GapLocus.AST,)
                 )
             return FactoryGapStrategy(
                 FactoryGapInfo(

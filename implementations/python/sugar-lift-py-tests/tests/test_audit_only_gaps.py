@@ -6,7 +6,7 @@ import pytest
 
 from sugar_lift_py_tests.audit_only import collect_construction_gaps
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
-from sugar_lift_py_tests.factory import FactoryGap, build_node
+from sugar_lift_py_tests.factory import factory_panic, build_node
 from sugar_lift_py_tests.floor import ObjectValue, TermValue
 from sugar_lift_py_tests.operations import MapOperation, perform_operation
 from sugar_lift_py_tests.outcome import Complete

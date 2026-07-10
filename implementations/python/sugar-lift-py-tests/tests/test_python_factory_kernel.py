@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.claim import SugarCatalog, SugarClaim, SugarRole
-from sugar_lift_py_tests.factory import FactoryGap, build_next, build_node
+from sugar_lift_py_tests.factory import factory_panic, build_next, build_node
 from sugar_lift_py_tests.factory.build import FactoryCandidateDeclined
 from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
 from sugar_lift_py_tests.outcome import complete_value

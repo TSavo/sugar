@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import _Ctor, make_var

@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import NoReturn
 
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -27,7 +26,7 @@ def proofir_construction_gap(
         gap_kind=GapKind.PROOFIR,
         gap_locus=GapLocus.CONSTRUCTION_LAW,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role="proofir-construction-law",

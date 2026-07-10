@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 _GOLDEN = Path(__file__).resolve().parent / "fixtures" / "callsite_emission_golden.json"

@@ -14,8 +14,6 @@ FactoryWalkRedStatus = Literal[
     "raise-effect",
     "runtime-effect",
     "coverage-gap",
-    "factory-gap",
-    "dig-boundary",
     "absent",
     "drifted",
 ]
@@ -131,16 +129,16 @@ def _row_to_rpc(
         line=row.line,
     )
     rpc_status = "unresolved" if status == "unclassified" else status
+    # factory-gap / dig-boundary DELETED: the None arm panics upstream.
+    # absent/drifted are source-oracle gaps (not soft incomplete).
     verdict_by_status = {
         "warranted": "complete",
         "support": "complete",
         "raise-effect": "incomplete",
         "runtime-effect": "incomplete",
         "coverage-gap": "incomplete",
-        "factory-gap": "incomplete",
-        "dig-boundary": "incomplete",
-        "absent": "incomplete",
-        "drifted": "incomplete",
+        "absent": "gap",
+        "drifted": "gap",
         "unresolved": "gap",
     }
     if rpc_status not in verdict_by_status:

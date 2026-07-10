@@ -53,30 +53,15 @@ class CallSiteValue(FloorValue):
         )
 
     def unary_operator_with(self, operation, ctx):
-        from sugar_lift_py_tests.effect import RuntimeEffect
-        from sugar_lift_py_tests.factory import FactoryGap
         from sugar_lift_py_tests.operations import perform_operation
-        from sugar_lift_py_tests.outcome import Incomplete
 
-        try:
-            floor = force_floor(
-                self,
-                ctx,
-                owner=f"{operation.owner} callsite unary operand",
-                project_callsite=False,
-            )
-        except FactoryGap as exc:
-            observed = exc.info.observed
-            return Incomplete(
-                RuntimeEffect(
-                    "unary operator runtime boundary: callsite value "
-                    f"`{self.target_name}` cannot be reduced before applying "
-                    f"`{operation.operator}`. Python evaluates the call result "
-                    "at runtime before the unary operator; keep as typed red "
-                    "until a narrower callsite floor owns this shape. "
-                    f"force_floor={observed}; blame={operation.blame}"
-                )
-            )
+        # No-recognizer force_floor panics (process-terminal). Do not catch.
+        floor = force_floor(
+            self,
+            ctx,
+            owner=f"{operation.owner} callsite unary operand",
+            project_callsite=False,
+        )
         return perform_operation(
             owner=operation.owner,
             blame=operation.blame,
@@ -110,26 +95,16 @@ class CallSiteValue(FloorValue):
         )
 
     def _dig_or_symbolic_redispatch(self, operation, ctx, *, owner_suffix: str):
-        from sugar_lift_py_tests.factory import FactoryGap
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.operations import perform_operation
 
-        try:
-            floor = force_floor(
-                self,
-                ctx,
-                owner=f"{operation.owner} {owner_suffix}",
-                project_callsite=False,
-            )
-        except FactoryGap as exc:
-            del exc
-            return perform_operation(
-                owner=operation.owner,
-                blame=operation.blame,
-                receiver=SymbolicValue(self.term),
-                operation=operation,
-                ctx=ctx,
-            )
+        # No-recognizer force_floor panics (process-terminal). Do not catch.
+        floor = force_floor(
+            self,
+            ctx,
+            owner=f"{operation.owner} {owner_suffix}",
+            project_callsite=False,
+        )
         return perform_operation(
             owner=operation.owner,
             blame=operation.blame,
@@ -145,50 +120,15 @@ class CallSiteValue(FloorValue):
         so outer call:len / call:sum can fold or join by congruence. When dig
         fails, emit an opaque method coordinate (never invent a value).
         """
-        from sugar_lift_py_tests.effect import RuntimeEffect
-        from sugar_lift_py_tests.factory import FactoryGap
-        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.operations import perform_operation
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        try:
-            floor = force_floor(
-                self,
-                ctx,
-                owner=f"{operation.owner} callsite method receiver",
-                project_callsite=False,
-            )
-        except FactoryGap as exc:
-            observed = exc.info.observed
-            # Opaque residual: coordinate for pure methods, else typed red.
-            # Multi-arg / kwarg methods (merge(other), sum(axis=0)) carry
-            # operation.arguments as OpaqueOpCallsite.extra_args so dig mints
-            # call:<m>(receiver, …, kw:…) — never invent a vendor value.
-            if operation.name == "__len__" and not operation.arguments:
-                return Complete(
-                    OpaqueOpCallsite(callee="len", arg=self, computed=None)
-                )
-            if not operation.name.startswith("__") and all(
-                isinstance(arg, FloorValue) for arg in operation.arguments
-            ):
-                return Complete(
-                    OpaqueOpCallsite(
-                        callee=operation.name,
-                        arg=self,
-                        computed=None,
-                        extra_args=tuple(operation.arguments),
-                    )
-                )
-            return Incomplete(
-                RuntimeEffect(
-                    "callsite method runtime boundary: callsite value "
-                    f"`{self.target_name}` cannot be reduced before applying "
-                    f"`.{operation.name}`. Python evaluates the call result at "
-                    "runtime before the method; keep as typed red until a "
-                    "narrower callsite floor owns this shape. "
-                    f"force_floor={observed}; blame={operation.blame}"
-                )
-            )
+        # No-recognizer force_floor panics (process-terminal). Do not catch.
+        floor = force_floor(
+            self,
+            ctx,
+            owner=f"{operation.owner} callsite method receiver",
+            project_callsite=False,
+        )
         return perform_operation(
             owner=operation.owner,
             blame=operation.blame,
@@ -364,8 +304,7 @@ def _force_floor_gap(
     fix: str,
 ) -> NoReturn:
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
-        FactoryGap,
+        FactoryAuditRow, factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,
@@ -380,7 +319,7 @@ def _force_floor_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.PROJECTION,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role="force_floor",
