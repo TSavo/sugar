@@ -28,6 +28,22 @@ The collapse: delete the disk-read branches; delete `warm_solve` as a separate f
 
 ### 4. Enumeration → LSP as one composition (nice-to-have). The enumerate wire returns self-locating mementos (proven e2e #3951), and the real-kit LSP acceptance passes (#3934) — but the descent-through-enumerate *feeding* the LSP acceptance path as one composition isn't wired end-to-end. Completes the "one protocol drives the squiggle" story.
 
+
+---
+
+## Independence map (verified by file-touch trace, not eyeballed)
+
+**Run fully in parallel, anytime, no coordination (python-side, disjoint files):**
+- #3958 free-name bad-twin  (python lift tests)
+- numpy totality-at-zero ratchet  (python floor/tests)
+
+**Serialize — they share rust-core files, confirmed:**
+- one-solve deletion edits: `orchestrate.rs`, `consistency.rs`, `runner.rs`, `sugar-lsp/main.rs`, `sugar-lsp/prove_engine.rs`
+- implication steps 2+ touches: `consistency.rs`, `orchestrate.rs`, `runner.rs`, `tree.rs`, `sugar-linker/lib.rs`, `feed_from_tree.rs`  → **overlaps one-solve on consistency.rs / orchestrate.rs / runner.rs**
+- enumerate→LSP touches: `sugar-lsp/main.rs`, `prove_engine.rs`  → **overlaps one-solve on both LSP files**
+
+So: **one-solve goes first, alone in that cluster.** After it lands, implication and enumerate→LSP can likely run parallel to *each other* (tree/linker vs lsp), but each rebases on the post-one-solve main. The two python tasks run parallel to everything, start them anytime.
+
 ---
 
 ## Landed this session (done, gated) — context, not to-do
