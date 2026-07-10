@@ -157,12 +157,13 @@ class StringValue(FloorValue):
 
 
 def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
-    """Fold join/strip/split (and strip family) or mint an opaque coordinate.
+    """Fold join/strip/split/splitlines (and strip family) or mint an opaque coordinate.
 
     Returns an Outcome when this method is owned, else None so the caller can
     FactoryGap for unrelated names.
     """
     from sugar_lift_py_tests.floor.array_literal import ArrayLiteral
+    from sugar_lift_py_tests.floor.bool_value import BoolValue
     from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
     from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.outcome import Complete
@@ -246,6 +247,40 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
                             )
                         )
                     )
+            return opaque_coordinate()
+        return None
+
+    if name == "splitlines":
+        # str.splitlines([keepends]) — fold when keepends is static bool/0/1;
+        # opaque keepends → coordinate only (never invent line breaks).
+        if len(args) == 0:
+            return Complete(
+                ArrayLiteral(
+                    tuple(
+                        StringValue(part) for part in receiver.value.splitlines()
+                    )
+                )
+            )
+        if len(args) == 1:
+            keep = args[0]
+            if isinstance(keep, BoolValue):
+                return Complete(
+                    ArrayLiteral(
+                        tuple(
+                            StringValue(part)
+                            for part in receiver.value.splitlines(keep.value)
+                        )
+                    )
+                )
+            if isinstance(keep, TermValue) and type(keep.value) is int:
+                return Complete(
+                    ArrayLiteral(
+                        tuple(
+                            StringValue(part)
+                            for part in receiver.value.splitlines(bool(keep.value))
+                        )
+                    )
+                )
             return opaque_coordinate()
         return None
 
