@@ -51,13 +51,16 @@ class LiftReportPayloadDto:
         default_factory=list[VendorConjoinDto]
     )
     diagnostics: list[DiagnosticDto] = field(default_factory=list[DiagnosticDto])
+    # #4013 dual-axis lift coverage (majority assertions / minority bodies).
+    # Optional: filled by lift_rpc after the independent AST census.
+    lift_coverage: dict[str, Any] | None = None
 
     def to_rpc(self) -> dict[str, Any]:
         factory_summary = FactoryAuditSummaryDto(rows=self.factory_walk)
         source_ledger = self.source_ledger or _default_source_ledger(
             len(self.source_mementos)
         )
-        return {
+        out: dict[str, Any] = {
             "kind": "ir-document",
             "ir": [to_rpc_value(contract) for contract in self.ir],
             "sourceLedger": to_rpc_value(source_ledger),
@@ -78,6 +81,10 @@ class LiftReportPayloadDto:
             "diagnostics": [to_rpc_value(row) for row in self.diagnostics],
             "warnings": [],
         }
+        if self.lift_coverage is not None:
+            # First-class --report line items (Part of #4013).
+            out["liftCoverage"] = to_rpc_value(self.lift_coverage)
+        return out
 
 
 def _default_source_ledger(source_memento_count: int) -> dict[str, int]:
