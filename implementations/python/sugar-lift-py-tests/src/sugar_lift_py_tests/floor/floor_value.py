@@ -352,6 +352,41 @@ class FloorValue:
             ),
         )
 
+    def negate(self):
+        # Default: this value does not stand on the negate floor -- it cannot flip.
+        # The None arm: a value that CAN implements negate (the bool literals); absence
+        # here is the honest "no". No blame arg -- mirror binary_conditional.
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="negate",
+            blame=observed,
+            observed=observed,
+            requested="stand on the negate floor",
+            fix=f"write more Floor: implement {observed}.negate",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="negate",
+                status="floor-gap",
+                observed=observed,
+                blame=observed,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def equals(self, other, blame):
         # Default: this value does not stand on the equals floor -- it cannot answer
         # whether it equals another value. The None arm: a value that CAN implements
