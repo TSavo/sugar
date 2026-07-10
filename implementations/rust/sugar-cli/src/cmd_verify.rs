@@ -656,6 +656,11 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
             return EXIT_USER_ERROR;
         }
     };
+    // #3809 cut #2: named run inputs hashed by CLI client.
+    let link_bundle_cid =
+        sugar_verifier::runner::hash_named_project_artifact(project_root, "link-bundle.json");
+    let plugin_registry_cid =
+        sugar_verifier::runner::hash_named_project_artifact(project_root, "plugin-registry.json");
 
     let cfg = RunnerConfig {
         project_root: project_root.to_path_buf(),
@@ -664,6 +669,8 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         extra_proofs: dependency_proofs,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
         solvers_config,
+        link_bundle_cid,
+        plugin_registry_cid,
         witness_discharge,
         ..Default::default()
     };

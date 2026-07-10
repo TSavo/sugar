@@ -214,6 +214,11 @@ pub(crate) fn build_prove_artifact_with_options(
     let solvers_config = SolversConfig::load(project_root).map_err(|e| {
         format!("load solvers from .sugar/config.toml: {e}")
     })?;
+    // #3809 cut #2: CLI hashes named run inputs; solve does not open them.
+    let link_bundle_cid =
+        sugar_verifier::runner::hash_named_project_artifact(project_root, "link-bundle.json");
+    let plugin_registry_cid =
+        sugar_verifier::runner::hash_named_project_artifact(project_root, "plugin-registry.json");
 
     let cfg = RunnerConfig {
         project_root: project_root.to_path_buf(),
@@ -222,6 +227,8 @@ pub(crate) fn build_prove_artifact_with_options(
         extra_proofs: dependency_proofs,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
         solvers_config,
+        link_bundle_cid,
+        plugin_registry_cid,
         plan_artifact: plan_artifact.as_ref().map(|artifact| PlanArtifactInput {
             plan_cid: artifact.plan_cid.clone(),
             member_cid: artifact.member_cid.clone(),
