@@ -1136,6 +1136,10 @@ struct LiftSourceReport {
     vendor_conjoins: Vec<VendorConjoinReport>,
     project_root: Option<PathBuf>,
     source_oracle_routes: Vec<SourceOracleRoute>,
+    /// #4013 dual-axis lift coverage (majority assertions / minority bodies).
+    /// Carried through from the kit's liftCoverage field; independent AST
+    /// census lives inside the kit, not re-computed here.
+    lift_coverage: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1705,6 +1709,11 @@ fn source_report_from_lift_response(
         diagnostics.push(condition);
     }
 
+    let lift_coverage = response
+        .get("liftCoverage")
+        .or_else(|| response.get("lift_coverage"))
+        .cloned();
+
     Ok(LiftSourceReport {
         ledger,
         audits: filtered_audits,
@@ -1719,6 +1728,7 @@ fn source_report_from_lift_response(
         vendor_conjoins,
         project_root: None,
         source_oracle_routes: Vec::new(),
+        lift_coverage,
     })
 }
 
@@ -1903,6 +1913,7 @@ fn source_report_from_proof_pool(
         vendor_conjoins: Vec::new(),
         project_root: None,
         source_oracle_routes: Vec::new(),
+        lift_coverage: None,
     }
 }
 
@@ -3098,6 +3109,10 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
     });
     if let Some(assembly_plan) = assembly_plan_json_value(report) {
         value["assemblyPlan"] = assembly_plan;
+    }
+    // #4013 dual-axis coverage (majority assertions / minority bodies).
+    if let Some(coverage) = &report.lift_coverage {
+        value["liftCoverage"] = coverage.clone();
     }
     value
 }
@@ -4865,6 +4880,89 @@ fn report_unit_test_fact_count(report: &LiftSourceReport) -> usize {
     audit_facts.max(contract_facts)
 }
 
+/// Human render of #4013 dual-axis lift coverage.
+///
+/// Default accounting (assertions) has **no section title** — it *is* the report.
+/// The exception alone is named, and its name is the literal string `Minority Report`.
+fn render_lift_coverage_human(coverage: &Value) -> String {
+    let mut out = String::new();
+    let totals = coverage.get("totals").cloned().unwrap_or(Value::Null);
+    let majority = coverage.get("majority").cloned().unwrap_or(Value::Null);
+    let minority = coverage.get("minority").cloned().unwrap_or(Value::Null);
+    let maj_stated = totals
+        .get("majority_stated")
+        .and_then(Value::as_u64)
+        .or_else(|| majority.get("stated").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let maj_accounted = totals
+        .get("majority_accounted")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let maj_silent = totals
+        .get("majority_silently_unaccounted")
+        .and_then(Value::as_u64)
+        .or_else(|| majority.get("silently_unaccounted").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let min_present = totals
+        .get("minority_present")
+        .and_then(Value::as_u64)
+        .or_else(|| minority.get("present").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let min_dug = totals
+        .get("minority_dug")
+        .and_then(Value::as_u64)
+        .or_else(|| minority.get("dug").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let min_un = totals
+        .get("minority_un_asserted")
+        .and_then(Value::as_u64)
+        .or_else(|| minority.get("un_asserted").and_then(Value::as_u64))
+        .unwrap_or(0);
+    // Default report — no "MAJORITY" qualifier anywhere.
+    out.push_str(&format!(
+        "stated={maj_stated} accounted={maj_accounted} silently_unaccounted={maj_silent}\n"
+    ));
+    if maj_silent > 0 {
+        out.push_str("  silent residue (RED — lifter walked past these asserts):\n");
+        if let Some(silent) = majority.get("silent_loci").and_then(Value::as_array) {
+            for locus in silent.iter().take(32) {
+                let file = locus.get("file").and_then(Value::as_str).unwrap_or("?");
+                let line = locus.get("line").and_then(Value::as_u64).unwrap_or(0);
+                let preview = locus.get("preview").and_then(Value::as_str).unwrap_or("");
+                out.push_str(&format!("    - {file}:{line}  {preview}\n"));
+            }
+            if silent.len() > 32 {
+                out.push_str(&format!("    (+{} more)\n", silent.len() - 32));
+            }
+        }
+    }
+    // Exception alone is named — literal header, no other wording.
+    if min_un > 0 || min_present > 0 {
+        out.push_str("Minority Report\n");
+        out.push_str(&format!(
+            "  present={min_present} dug={min_dug} un_asserted={min_un}\n"
+        ));
+        if min_un > 0 {
+            if let Some(un) = minority.get("un_asserted_loci").and_then(Value::as_array) {
+                for locus in un.iter().take(16) {
+                    let file = locus.get("file").and_then(Value::as_str).unwrap_or("?");
+                    let line = locus.get("line").and_then(Value::as_u64).unwrap_or(0);
+                    let name = locus
+                        .get("qualname")
+                        .or_else(|| locus.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("?");
+                    out.push_str(&format!("    - {file}:{line}  {name}\n"));
+                }
+                if un.len() > 16 {
+                    out.push_str(&format!("    (+{} more)\n", un.len() - 16));
+                }
+            }
+        }
+    }
+    out
+}
+
 fn render_source_report_human(report: &LiftSourceReport) -> String {
     trace_lift_source_report("render_source_report_human.start", report);
     let mut out = String::new();
@@ -4882,6 +4980,9 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         "source audit: {}\n",
         format_counts(&report.ledger)
     ));
+    if let Some(coverage) = &report.lift_coverage {
+        out.push_str(&render_lift_coverage_human(coverage));
+    }
     let universes = distinct_universes_per_method(&report.contracts);
     tracing::info!(
         stage = "render_source_report_human.after_superposition_scan",
@@ -7409,6 +7510,7 @@ mod tests {
             vendor_conjoins: vec![],
             project_root: None,
             source_oracle_routes: Vec::new(),
+            lift_coverage: None,
         }
     }
 
@@ -11873,6 +11975,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             }],
             project_root: None,
             source_oracle_routes: Vec::new(),
+            lift_coverage: None,
         };
         let human = render_source_report_human(&report);
 
@@ -11900,6 +12003,57 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         assert!(
             human.contains("vendor source: src/lib.rs:1-9 enc(input) source_cid=blake3-512:source"),
             "{human}"
+        );
+    }
+
+    #[test]
+    fn lift_coverage_human_names_minority_report_verbatim_when_un_asserted() {
+        // #4013 naming: default assertion accounting has no "MAJORITY" header;
+        // the exception alone is named, and its name is the literal `Minority Report`.
+        let coverage = serde_json::json!({
+            "kind": "lift-coverage",
+            "totals": {
+                "majority_stated": 2,
+                "majority_accounted": 1,
+                "majority_silently_unaccounted": 1,
+                "minority_present": 3,
+                "minority_dug": 1,
+                "minority_un_asserted": 2
+            },
+            "majority": {
+                "stated": 2,
+                "lifted_cited": 1,
+                "refused_loud": 0,
+                "silently_unaccounted": 1,
+                "silent_loci": [
+                    {"file": "t.py", "line": 10, "preview": "assert not x"}
+                ]
+            },
+            "minority": {
+                "present": 3,
+                "dug": 1,
+                "un_asserted": 2,
+                "un_asserted_loci": [
+                    {"file": "t.py", "line": 20, "name": "orphan", "qualname": "orphan"}
+                ]
+            }
+        });
+        let human = render_lift_coverage_human(&coverage);
+        assert!(
+            human.contains("Minority Report"),
+            "literal header `Minority Report` must appear when un_asserted > 0; got:\n{human}"
+        );
+        assert!(
+            !human.to_uppercase().contains("MAJORITY"),
+            "output must not contain MAJORITY (any case); got:\n{human}"
+        );
+        assert!(
+            human.contains("stated=2 accounted=1 silently_unaccounted=1"),
+            "default assertion fields without section title; got:\n{human}"
+        );
+        assert!(
+            human.contains("t.py:20  orphan"),
+            "un-asserted body named under Minority Report; got:\n{human}"
         );
     }
 

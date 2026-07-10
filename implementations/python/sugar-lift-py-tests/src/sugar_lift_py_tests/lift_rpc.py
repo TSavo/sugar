@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -14,6 +15,11 @@ from sugar_lift_py_tests.audit_only import collect_construction_gaps
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.filename import cid_from_proof_stem
+from sugar_lift_py_tests.idd.lift_coverage_accounting import (
+    account_lift_coverage,
+    paint_lines,
+)
+from sugar_lift_py_tests.idd.lift_coverage_census import census_paths
 from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
 from sugar_lift_py_tests.lib import lift_source
@@ -1291,12 +1297,14 @@ def _handle_lift(
         payload = LiftReportPayloadDto(source_ledger={})
         bindings_backed_pass = bool(contract_bindings)
         root = Path(workspace_root).resolve()
+        lifted_paths: List[Path] = []
         if not bindings_backed_pass:
             contracts, diagnostics = _source_lifter_function_contracts(workspace_root)
             payload.ir.extend(contracts)
             payload.diagnostics.extend(diagnostics)
         for path in _iter_python_files(workspace_root, source_paths):
             full_path = Path(path)
+            lifted_paths.append(full_path)
             try:
                 rel_path = full_path.resolve().relative_to(root).as_posix()
             except ValueError:
@@ -1329,6 +1337,14 @@ def _handle_lift(
                 payload.call_edges.extend(file_payload.call_edges)
                 payload.implications.extend(file_payload.implications)
                 payload.diagnostics.extend(file_payload.diagnostics)
+        # #4013: dual-axis lift coverage as first-class --report line items.
+        # Independent AST census (second computation) vs this payload's accounting.
+        # LiftReportPayloadDto is frozen — rebuild with replace(), never assign.
+        if not bindings_backed_pass and lifted_paths:
+            coverage = _build_lift_coverage(
+                root=root, paths=lifted_paths, payload=payload
+            )
+            payload = replace(payload, lift_coverage=coverage)
         _send({"jsonrpc": "2.0", "id": msg_id, "result": payload.to_rpc()})
     except FactoryGap as exc:
         _send(
@@ -1429,6 +1445,48 @@ def _merge_source_ledger(
         return
     for key, value in incoming.items():
         current[key] = current.get(key, 0) + int(value)
+
+
+def _build_lift_coverage(
+    *,
+    root: Path,
+    paths: List[Path],
+    payload: LiftReportPayloadDto,
+) -> Dict[str, Any]:
+    """Independent AST census + partition vs the just-built lift payload.
+
+    Majority (assertions): silently_unaccounted is the RED gate.
+    Minority (bodies): un_asserted is the VISIBLE scope remainder (not red).
+    """
+    disk = census_paths(paths, root=root)
+    # Account against the same RPC shape the report serializes — built without
+    # liftCoverage to avoid self-reference (coverage is the field being filled).
+    interim = {
+        "sourceAudits": [to_rpc_value(a) for a in payload.source_audits],
+        "sourceMementos": [to_rpc_value(m) for m in payload.source_mementos],
+        "assertionSurfaceAudits": [
+            to_rpc_value(a) for a in payload.assertion_surface_audits
+        ],
+        "diagnostics": [to_rpc_value(d) for d in payload.diagnostics],
+        "sourceLedger": to_rpc_value(payload.source_ledger or {}),
+    }
+    coverage = account_lift_coverage(disk, interim)
+    body = coverage.to_json()
+    # Per-file line paint for --visual consumers.
+    paints: Dict[str, Any] = {}
+    for path in paths:
+        path = path.resolve()
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            rel = path.name
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        paints[rel] = paint_lines(source, coverage, file=rel)
+    body["line_paint"] = paints
+    return body
 
 
 def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> None:
