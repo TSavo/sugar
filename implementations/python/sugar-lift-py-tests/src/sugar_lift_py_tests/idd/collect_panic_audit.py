@@ -128,19 +128,31 @@ def _resolve_installed_package_path(package: str) -> Path:
     Single-module libraries (stdlib ``statistics.py``) resolve to the module
     *file* — using the parent directory would audit the entire stdlib tree and
     produce false panics from unrelated modules (asyncio, inspect, …).
+
+    ``decimal`` is special: the public ``decimal`` import is a thin reexport that
+    prefers the C accelerator ``_decimal`` when present. Auditing
+    ``decimal.__file__`` alone would lift only the try/import shim (false R=0)
+    or, worse, never reach the pure-python body. Resolve to the pure-python
+    implementation module ``_pydecimal`` (source file), never the C extension.
     """
+    resolve_name = package
+    if package == "decimal":
+        # Public name stays "decimal" for axes/targets; body is _pydecimal.
+        resolve_name = "_pydecimal"
     code = (
         "import importlib, os\n"
-        f"mod = importlib.import_module({package!r})\n"
+        f"mod = importlib.import_module({resolve_name!r})\n"
         "path = getattr(mod, '__file__', None)\n"
         "if path is None:\n"
         "    raise SystemExit('package has no __file__')\n"
         "path = os.path.abspath(path)\n"
         "base = os.path.basename(path)\n"
+        "if base.endswith(('.so', '.pyd', '.dll')) or 'lib-dynload' in path:\n"
+        "    raise SystemExit('refused C-extension path: ' + path)\n"
         "if base == '__init__.py':\n"
         "    print(os.path.dirname(path))\n"
         "else:\n"
-        "    # Single-module file target (e.g. statistics.py).\n"
+        "    # Single-module file target (e.g. statistics.py / _pydecimal.py).\n"
         "    print(path)\n"
     )
     completed = subprocess.run(
