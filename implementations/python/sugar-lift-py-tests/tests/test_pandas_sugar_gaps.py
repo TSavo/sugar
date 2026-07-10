@@ -635,7 +635,14 @@ def test_pandas_symbolic_map_typed_red_witness_has_bad_twin(
     )
 
 
-def test_pandas_literal_call_lambda_keyword_becomes_typed_red_effect() -> None:
+def test_pandas_literal_call_lambda_keyword_projects_callable_identity() -> None:
+    """LambdaCallable.to_term owns keyword projection (Part of #3809 drain).
+
+    Former RuntimeEffect ``LambdaCallable-unliftable`` is retired: the floor
+    mints ``python:lambda(<param>)`` identity. With formal ``df`` unbound as a
+    closed EqualityFact term, the next residual may be open-var ProofIR — that
+    is a *different* gap family, not LambdaCallable.to_term.
+    """
     report = build_literal_call_report(
         source=(
             "def test_to_csv(df):\n"
@@ -646,21 +653,21 @@ def test_pandas_literal_call_lambda_keyword_becomes_typed_red_effect() -> None:
     )
 
     assert report is not None
-    red_rows = [
-        row for row in report.payload.factory_walk if row.status == "runtime-effect"
+    blob = repr(report.payload)
+    assert "kw:float_format:LambdaCallable-unliftable" not in blob
+    assert "implement LambdaCallable.to_term" not in blob
+    assert "observed=LambdaCallable" not in blob or "to_term" not in blob
+    red_unlift = [
+        row
+        for row in report.payload.factory_walk
+        if row.status == "runtime-effect"
+        and row.reason
+        and "LambdaCallable-unliftable" in row.reason
     ]
-    assert len(red_rows) == 1
-    row = red_rows[0]
-    assert row.selected == "CallsiteKeywordRuntimeEffect"
-    assert row.requested_role == "CallsiteKeywordActual"
-    assert row.ast_kind == "Lambda"
-    assert "callsite keyword runtime boundary" in row.reason
-    assert "kw:float_format:LambdaCallable-unliftable" in row.reason
-    assert "pandas/tests/frame/methods/test_to_csv.py:2:" in row.reason
-    assert "callsite argument runtime boundary" not in row.reason
+    assert not red_unlift
 
 
-def test_pandas_literal_call_lambda_keyword_effect_is_not_green() -> None:
+def test_pandas_literal_call_lambda_keyword_is_not_to_term_gap() -> None:
     report = build_literal_call_report(
         source=(
             "def test_to_csv(df):\n"
@@ -671,11 +678,14 @@ def test_pandas_literal_call_lambda_keyword_effect_is_not_green() -> None:
     )
 
     assert report is not None
-    assert not report.payload.ir
-    assert len(report.payload.effects) == 1
-    assert (
-        "callsite keyword runtime boundary" in report.payload.effects[0].effect.reason
+    blob = repr(report.payload)
+    assert "implement LambdaCallable.to_term" not in blob
+    # Must not re-surface as the drained floor projection gap.
+    assert not (
+        "observed=LambdaCallable" in blob
+        and "project this floor value to a term" in blob
     )
+
 
 
 def test_pandas_string_repeat_reduces_to_string_value() -> None:
