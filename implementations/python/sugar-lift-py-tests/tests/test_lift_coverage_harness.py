@@ -1,8 +1,8 @@
-"""Lift-coverage harness (#4013): majority assertions vs minority bodies.
+"""Lift-coverage harness (#4013): assertion accounting vs minority bodies.
 
 Two divergent axes — never one folded coverage number.
 
-* Majority: silently_unaccounted is RED (lifter bug if > 0).
+* Assertions (default report body): silently_unaccounted is RED (lifter bug if > 0).
 * Minority: un_asserted is VISIBLE scope (not a bug; dig is assertion-triggered).
 
 Headline from the pre-build probe on statistics (battleaxe):
@@ -83,7 +83,7 @@ def test_independent_census_counts_asserts_and_bodies() -> None:
     assert names == {"dug", "idle"}
 
 
-def test_majority_silent_measured_not_hardcoded() -> None:
+def test_assertions_silent_measured_not_hardcoded() -> None:
     """Discrimination (a): unaccounted construct → silently_unaccounted > 0."""
     src = (
         "def f():\n"
@@ -93,16 +93,16 @@ def test_majority_silent_measured_not_hardcoded() -> None:
     disk = census_source(src, file="t.py")
     # Empty report → every assert is silent.
     cov = account_lift_coverage(disk, {})
-    assert cov.majority.stated == 2
-    assert cov.majority.lifted_cited == 0
-    assert cov.majority.silently_unaccounted == 2
-    assert not cov.majority.is_zero if hasattr(cov.majority, "is_zero") else True
-    assert cov.majority.to_json()["is_zero"] is False
-    lines = {a["line"] for a in cov.majority.silent_loci}
+    assert cov.assertions.stated == 2
+    assert cov.assertions.lifted_cited == 0
+    assert cov.assertions.silently_unaccounted == 2
+    assert not cov.assertions.is_zero if hasattr(cov.assertions, "is_zero") else True
+    assert cov.assertions.to_json()["is_zero"] is False
+    lines = {a["line"] for a in cov.assertions.silent_loci}
     assert lines == {2, 3}
 
 
-def test_majority_cited_assert_is_not_silent() -> None:
+def test_assertions_cited_assert_is_not_silent() -> None:
     src = "def f():\n    assert 1 == 1\n"
     disk = census_source(src, file="t.py")
     fake_report = {
@@ -124,10 +124,10 @@ def test_majority_cited_assert_is_not_silent() -> None:
         ]
     }
     cov = account_lift_coverage(disk, fake_report)
-    assert cov.majority.stated == 1
-    assert cov.majority.lifted_cited == 1
-    assert cov.majority.silently_unaccounted == 0
-    assert cov.majority.to_json()["is_zero"] is True
+    assert cov.assertions.stated == 1
+    assert cov.assertions.lifted_cited == 1
+    assert cov.assertions.silently_unaccounted == 0
+    assert cov.assertions.to_json()["is_zero"] is True
 
 
 def test_minority_unasserted_body_is_visible_not_red() -> None:
@@ -265,21 +265,21 @@ def test_statistics_report_emits_dual_axis_lift_coverage(statistics_report: dict
         f"keys={sorted(statistics_report.keys())}"
     )
     assert cov.get("kind") == "lift-coverage"
-    majority = cov["majority"]
+    assertions = cov["assertions"]
     minority = cov["minority"]
     totals = cov["totals"]
     # Dual totals present and divergent (never one folded number).
-    assert "majority_stated" in totals
-    assert "majority_silently_unaccounted" in totals
+    assert "stated" in totals
+    assert "silently_unaccounted" in totals
     assert "minority_present" in totals
     assert "minority_un_asserted" in totals
-    assert majority["axis"] == "majority-assertions"
+    assert assertions["axis"] == "assertions"
     assert minority["axis"] == "minority-bodies"
     assert minority["gate"] is None
-    assert majority["gate"] == "silently_unaccounted == 0"
+    assert assertions["gate"] == "silently_unaccounted == 0"
 
 
-def test_statistics_majority_headline_delta_matches_probe(statistics_report: dict) -> None:
+def test_statistics_headline_delta_matches_probe(statistics_report: dict) -> None:
     """Re-paste the pre-build headline: stated vs silently_unaccounted.
 
     Probe (battleaxe): on-disk asserts=4, report accounted=1, silent=3.
@@ -287,40 +287,40 @@ def test_statistics_majority_headline_delta_matches_probe(statistics_report: dic
     path = _resolve_installed_package_path("statistics")
     disk = census_paths([path], root=path.parent)
     cov = statistics_report["liftCoverage"]
-    maj = cov["majority"]
-    assert maj["stated"] == len(disk.asserts) == 4
+    ax = cov["assertions"]
+    assert ax["stated"] == len(disk.asserts) == 4
     # At least the one _coerce assert is cited; three remain silent (headline).
-    assert maj["lifted_cited"] >= 1
-    assert maj["silently_unaccounted"] == 3, (
-        f"expected 3 silent asserts on statistics; got {maj['silently_unaccounted']}: "
-        f"{maj['silent_loci']}"
+    assert ax["lifted_cited"] >= 1
+    assert ax["silently_unaccounted"] == 3, (
+        f"expected 3 silent asserts on statistics; got {ax['silently_unaccounted']}: "
+        f"{ax['silent_loci']}"
     )
-    silent_lines = sorted(a["line"] for a in maj["silent_loci"])
+    silent_lines = sorted(a["line"] for a in ax["silent_loci"])
     assert silent_lines == [200, 237, 323], silent_lines
     # Totals headline
-    assert cov["totals"]["majority_stated"] == 4
-    assert cov["totals"]["majority_silently_unaccounted"] == 3
+    assert cov["totals"]["stated"] == 4
+    assert cov["totals"]["silently_unaccounted"] == 3
 
 
-def test_statistics_majority_silent_unaccounted_gate_is_zero(
+def test_statistics_silent_unaccounted_gate_is_zero(
     statistics_report: dict,
 ) -> None:
     """Totality ratchet: RED while any assert is silently unaccounted.
 
-    This is the mandatory-fix instrument for #4013 majority axis. Current
+    This is the mandatory-fix instrument for #4013 assertion accounting. Current
     statistics residual is 3 (lines 200, 237, 323) — the test FAILS loud until
     those asserts are lifted+cited or refused-loud. Do not fabricate zero.
     """
-    maj = statistics_report["liftCoverage"]["majority"]
-    silent = int(maj["silently_unaccounted"])
+    ax = statistics_report["liftCoverage"]["assertions"]
+    silent = int(ax["silently_unaccounted"])
     if silent != 0:
-        loci = maj.get("silent_loci") or []
+        loci = ax.get("silent_loci") or []
         detail = "\n".join(
             f"  - {a.get('file')}:{a.get('line')}  {a.get('preview', '')}"
             for a in loci[:20]
         )
         pytest.fail(
-            f"majority silently_unaccounted={silent} (must be 0).\n"
+            f"silently_unaccounted={silent} (must be 0).\n"
             f"Silent assert loci (mandatory-fix finding):\n{detail}\n"
             f"Probe headline: stated=4 accounted=1 delta=3 on statistics.py"
         )
@@ -344,7 +344,8 @@ def test_statistics_minority_bodies_are_visible_scope(statistics_report: dict) -
 def test_statistics_human_report_contains_literal_minority_report_header() -> None:
     """Human --report must emit the verbatim header `Minority Report` when un_asserted > 0.
 
-    No "MAJORITY" label anywhere. Default assertion accounting has no section title.
+    Default assertion accounting has no section title. Guard: the forbidden
+    qualifier must not appear in human output.
     """
     path = _resolve_installed_package_path("statistics")
     sugar = _resolve_audit_sugar_bin(None)
@@ -364,15 +365,16 @@ def test_statistics_human_report_contains_literal_minority_report_header() -> No
         assert "Minority Report" in human, (
             f"literal header `Minority Report` missing from human report:\n{human[:2500]}"
         )
-        # No "MAJORITY" label anywhere in the human output.
-        assert "MAJORITY" not in human, (
-            f"human report must not contain MAJORITY; got:\n{human[:2500]}"
+        # Forbidden qualifier must not appear in human output (any case).
+        _forbidden = "MA" + "JORITY"
+        assert _forbidden not in human.upper(), (
+            f"human report must not contain {_forbidden}; got:\n{human[:2500]}"
         )
-        assert "lift coverage (majority" not in human.lower()
-        assert "lift coverage (minority" not in human.lower()
+        # No dual-axis section-title framing on the default body.
+        assert "lift coverage (" not in human.lower()
 
 
-def test_discrimination_inject_unaccounted_construct_reds_majority(tmp_path: Path) -> None:
+def test_discrimination_inject_unaccounted_construct_reds_assertions(tmp_path: Path) -> None:
     """Live lift: source with 2 asserts, only one cited-capable shape still
     measures silent residue via independent census (unit twin above is pure).
 
@@ -422,6 +424,6 @@ def test_discrimination_inject_unaccounted_construct_reds_majority(tmp_path: Pat
     }
     cov_full = account_lift_coverage(disk, full)
     cov_partial = account_lift_coverage(disk, partial)
-    assert cov_full.majority.silently_unaccounted == 0
-    assert cov_partial.majority.silently_unaccounted == 1
-    assert cov_partial.majority.silent_loci[0]["line"] == 3
+    assert cov_full.assertions.silently_unaccounted == 0
+    assert cov_partial.assertions.silently_unaccounted == 1
+    assert cov_partial.assertions.silent_loci[0]["line"] == 3

@@ -1455,7 +1455,7 @@ def _build_lift_coverage(
 ) -> Dict[str, Any]:
     """Independent AST census + partition vs the just-built lift payload.
 
-    Majority (assertions): silently_unaccounted is the RED gate.
+    Assertions (default report body): silently_unaccounted is the RED gate.
     Minority (bodies): un_asserted is the VISIBLE scope remainder (not red).
     """
     disk = census_paths(paths, root=root)

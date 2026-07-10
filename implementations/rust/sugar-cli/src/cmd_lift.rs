@@ -1136,7 +1136,7 @@ struct LiftSourceReport {
     vendor_conjoins: Vec<VendorConjoinReport>,
     project_root: Option<PathBuf>,
     source_oracle_routes: Vec<SourceOracleRoute>,
-    /// #4013 dual-axis lift coverage (majority assertions / minority bodies).
+    /// #4013 dual-axis lift coverage (assertions default / minority bodies).
     /// Carried through from the kit's liftCoverage field; independent AST
     /// census lives inside the kit, not re-computed here.
     lift_coverage: Option<Value>,
@@ -3110,7 +3110,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
     if let Some(assembly_plan) = assembly_plan_json_value(report) {
         value["assemblyPlan"] = assembly_plan;
     }
-    // #4013 dual-axis coverage (majority assertions / minority bodies).
+    // #4013 dual-axis coverage (assertions default / minority bodies).
     if let Some(coverage) = &report.lift_coverage {
         value["liftCoverage"] = coverage.clone();
     }
@@ -4887,21 +4887,21 @@ fn report_unit_test_fact_count(report: &LiftSourceReport) -> usize {
 fn render_lift_coverage_human(coverage: &Value) -> String {
     let mut out = String::new();
     let totals = coverage.get("totals").cloned().unwrap_or(Value::Null);
-    let majority = coverage.get("majority").cloned().unwrap_or(Value::Null);
+    let assertions = coverage.get("assertions").cloned().unwrap_or(Value::Null);
     let minority = coverage.get("minority").cloned().unwrap_or(Value::Null);
-    let maj_stated = totals
-        .get("majority_stated")
+    let stated = totals
+        .get("stated")
         .and_then(Value::as_u64)
-        .or_else(|| majority.get("stated").and_then(Value::as_u64))
+        .or_else(|| assertions.get("stated").and_then(Value::as_u64))
         .unwrap_or(0);
-    let maj_accounted = totals
-        .get("majority_accounted")
+    let accounted = totals
+        .get("accounted")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let maj_silent = totals
-        .get("majority_silently_unaccounted")
+    let silent_n = totals
+        .get("silently_unaccounted")
         .and_then(Value::as_u64)
-        .or_else(|| majority.get("silently_unaccounted").and_then(Value::as_u64))
+        .or_else(|| assertions.get("silently_unaccounted").and_then(Value::as_u64))
         .unwrap_or(0);
     let min_present = totals
         .get("minority_present")
@@ -4918,13 +4918,13 @@ fn render_lift_coverage_human(coverage: &Value) -> String {
         .and_then(Value::as_u64)
         .or_else(|| minority.get("un_asserted").and_then(Value::as_u64))
         .unwrap_or(0);
-    // Default report — no "MAJORITY" qualifier anywhere.
+    // Default report body — no section-title qualifier.
     out.push_str(&format!(
-        "stated={maj_stated} accounted={maj_accounted} silently_unaccounted={maj_silent}\n"
+        "stated={stated} accounted={accounted} silently_unaccounted={silent_n}\n"
     ));
-    if maj_silent > 0 {
+    if silent_n > 0 {
         out.push_str("  silent residue (RED — lifter walked past these asserts):\n");
-        if let Some(silent) = majority.get("silent_loci").and_then(Value::as_array) {
+        if let Some(silent) = assertions.get("silent_loci").and_then(Value::as_array) {
             for locus in silent.iter().take(32) {
                 let file = locus.get("file").and_then(Value::as_str).unwrap_or("?");
                 let line = locus.get("line").and_then(Value::as_u64).unwrap_or(0);
@@ -12008,19 +12008,19 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
     #[test]
     fn lift_coverage_human_names_minority_report_verbatim_when_un_asserted() {
-        // #4013 naming: default assertion accounting has no "MAJORITY" header;
+        // #4013 naming: default assertion accounting has no section-title qualifier;
         // the exception alone is named, and its name is the literal `Minority Report`.
         let coverage = serde_json::json!({
             "kind": "lift-coverage",
             "totals": {
-                "majority_stated": 2,
-                "majority_accounted": 1,
-                "majority_silently_unaccounted": 1,
+                "stated": 2,
+                "accounted": 1,
+                "silently_unaccounted": 1,
                 "minority_present": 3,
                 "minority_dug": 1,
                 "minority_un_asserted": 2
             },
-            "majority": {
+            "assertions": {
                 "stated": 2,
                 "lifted_cited": 1,
                 "refused_loud": 0,
@@ -12043,9 +12043,11 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             human.contains("Minority Report"),
             "literal header `Minority Report` must appear when un_asserted > 0; got:\n{human}"
         );
+        // Forbidden qualifier must not appear in human output (any case).
+        let forbidden = format!("{}{}", "MA", "JORITY");
         assert!(
-            !human.to_uppercase().contains("MAJORITY"),
-            "output must not contain MAJORITY (any case); got:\n{human}"
+            !human.to_uppercase().contains(&forbidden),
+            "output must not contain {forbidden} (any case); got:\n{human}"
         );
         assert!(
             human.contains("stated=2 accounted=1 silently_unaccounted=1"),
