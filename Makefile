@@ -315,6 +315,7 @@ SHOWCASE_RUNS = \
 	examples/python-literal-base20/run.sh \
 	examples/python-base64-federation/run.sh \
 	examples/itsdangerous-token-padding/run-logo-receipt.sh \
+	examples/stdlib-base64-padding/run-logo-receipt.sh \
 	examples/itsdangerous-token-padding/run.sh \
 	examples/forall-vampire-showcase/run.sh \
 	examples/url-showcase/run.sh \
