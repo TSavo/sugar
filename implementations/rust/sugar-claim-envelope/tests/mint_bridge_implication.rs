@@ -379,3 +379,82 @@ fn bridge_envelope_carries_producer_signature() {
         .unwrap();
     assert!(sig.starts_with("ed25519:"));
 }
+
+// ---------------------------------------------------------------------------
+// seal_spoken_obligation (#3809): Obligation post⊃pre → implication memento
+// ---------------------------------------------------------------------------
+
+fn atomic_eq_named(name: &str) -> sugar_ir_types::IrFormula {
+    use sugar_ir_types::{IrFormula, IrTerm};
+    IrFormula::Atomic {
+        name: name.into(),
+        args: vec![IrTerm::Var { name: "x".into() }],
+    }
+}
+
+#[test]
+fn seal_obligation_is_pure_function_same_post_pre_same_cids() {
+    use sugar_claim_envelope::{
+        seal_spoken_obligation, spoken_obligation_content_cid, formula_endpoint_cid,
+        OBLIGATION_ANTECEDENT_SLOT, OBLIGATION_CONSEQUENT_SLOT,
+    };
+    let post = atomic_eq_named("post_holds");
+    let pre = atomic_eq_named("pre_holds");
+
+    let a = seal_spoken_obligation(&post, &pre);
+    let b = seal_spoken_obligation(&post, &pre);
+    // Attestation CID pure under fixed seal seed/timestamp.
+    assert_eq!(a.cid, b.cid, "seal twice → same attestation CID");
+    assert_eq!(
+        a.canonical_bytes, b.canonical_bytes,
+        "seal twice → byte-identical memento"
+    );
+    let content = spoken_obligation_content_cid(&post, &pre);
+    assert_eq!(
+        spoken_obligation_content_cid(&post, &pre),
+        content,
+        "content CID pure function of formulas"
+    );
+
+    // Mapping: antecedent = post formula CID, consequent = pre formula CID.
+    let mut g = ProofGraph::new();
+    g.push_implication(ImplicationMemento::new(a.canonical_bytes.clone()));
+    let view = g.implications().next().unwrap();
+    assert_eq!(view.kind().map(|k| k.as_str()), Some("implication"));
+    assert_eq!(
+        view.field("antecedentCid").as_deref(),
+        Some(formula_endpoint_cid(&post).as_str())
+    );
+    assert_eq!(
+        view.field("consequentCid").as_deref(),
+        Some(formula_endpoint_cid(&pre).as_str())
+    );
+    assert_eq!(
+        view.field("antecedentSlot").as_deref(),
+        Some(OBLIGATION_ANTECEDENT_SLOT)
+    );
+    assert_eq!(
+        view.field("consequentSlot").as_deref(),
+        Some(OBLIGATION_CONSEQUENT_SLOT)
+    );
+    // Header content CID matches pure seal function.
+    assert_eq!(view.field("cid").as_deref(), Some(content.as_str()));
+}
+
+#[test]
+fn seal_obligation_different_edges_different_cids() {
+    use sugar_claim_envelope::{seal_spoken_obligation, spoken_obligation_content_cid};
+    let post = atomic_eq_named("post_a");
+    let pre_a = atomic_eq_named("pre_a");
+    let pre_b = atomic_eq_named("pre_b");
+    let c_a = spoken_obligation_content_cid(&post, &pre_a);
+    let c_b = spoken_obligation_content_cid(&post, &pre_b);
+    assert_ne!(
+        c_a, c_b,
+        "different post⊃pre edges must not share a content CID"
+    );
+    assert_ne!(
+        seal_spoken_obligation(&post, &pre_a).cid,
+        seal_spoken_obligation(&post, &pre_b).cid
+    );
+}

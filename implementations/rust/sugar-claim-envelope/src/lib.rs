@@ -1481,6 +1481,132 @@ pub fn mint_implication(args: &MintImplicationArgs) -> MintedEnvelope {
 }
 
 // =============================================================================
+// seal_spoken_obligation — implication = spoken Obligation (#3809)
+// =============================================================================
+
+/// Deterministic seal timestamp so attestation CID is a pure function of the
+/// edge content (same post⊃pre → same signed memento under the seal seed).
+pub const OBLIGATION_SEAL_PRODUCED_AT: &str = "1970-01-01T00:00:00.000Z";
+
+/// Deterministic seal signer seed (content-addressed federation, not a secret).
+pub const OBLIGATION_SEAL_SIGNER_SEED: Ed25519Seed = [0x0bu8; 32];
+
+/// Slot names for the Obligation edge `post ⊃ pre` (Hoare composition).
+pub const OBLIGATION_ANTECEDENT_SLOT: &str = "post";
+pub const OBLIGATION_CONSEQUENT_SLOT: &str = "pre";
+
+/// Content CID of a formula endpoint: JCS-blake3 of the alpha-canonical
+/// [`IrFormula`]. Pure function of the formula; used as both `*Hash` and
+/// endpoint CID when sealing a link-time Obligation that carries formulas
+/// (not contract memento refs).
+pub fn formula_endpoint_cid(formula: &sugar_ir_types::IrFormula) -> String {
+    let canon = sugar_ir_types::canonicalize_formula(formula);
+    let json = serde_json::to_value(&canon).expect("IrFormula serializes");
+    sugar_canonicalizer::jcs_cid_of_json(&json)
+}
+
+/// Seal a link-time Obligation (`post ⊃ pre` / [`IrFormula::Implies`]) as the
+/// **existing** implication memento shape via [`mint_implication`].
+///
+/// **Mapping (carried == checked == spoken, one seal):**
+///
+/// | Obligation (`as_implies` operands) | Implication memento field |
+/// |------------------------------------|---------------------------|
+/// | `post` (left of `post ⊃ pre`)      | antecedent: formula CID + slot `"post"` |
+/// | `pre` (right of `post ⊃ pre`)      | consequent: formula CID + slot `"pre"` |
+///
+/// Endpoint CIDs are [`formula_endpoint_cid`] of each formula (no parallel
+/// Obligation type). Header content CID and (with fixed seal seed/timestamp)
+/// attestation CID are pure functions of `(post, pre)`.
+///
+/// Does **not** claim solver discharge: the wire still carries the mint
+/// shape's `verdict` field (existing `mint_implication` convention). Real
+/// discharge of `post ⊃ pre` remains the linker's job.
+pub fn seal_spoken_obligation(
+    post: &sugar_ir_types::IrFormula,
+    pre: &sugar_ir_types::IrFormula,
+) -> MintedEnvelope {
+    let antecedent_cid = formula_endpoint_cid(post);
+    let consequent_cid = formula_endpoint_cid(pre);
+    // Hashes = formula CIDs: the formula IS the endpoint identity for a
+    // formula-level Obligation seal (no separate contract memento on the edge).
+    let args = MintImplicationArgs {
+        produced_by: "sugar-obligation-seal".into(),
+        produced_at: OBLIGATION_SEAL_PRODUCED_AT.into(),
+        antecedent_hash: antecedent_cid.clone(),
+        consequent_hash: consequent_cid.clone(),
+        antecedent: ContractMementoRef::new(antecedent_cid),
+        consequent: ContractMementoRef::new(consequent_cid),
+        additional_inputs: Vec::new(),
+        antecedent_slot: OBLIGATION_ANTECEDENT_SLOT.into(),
+        consequent_slot: OBLIGATION_CONSEQUENT_SLOT.into(),
+        prover: "obligation-seal".into(),
+        prover_run_ms: 0,
+        smt_lib_input: String::new(),
+        proof_witness: String::new(),
+        signer_seed: OBLIGATION_SEAL_SIGNER_SEED,
+    };
+    mint_implication(&args)
+}
+
+/// Header content CID of a sealed Obligation edge (signer-independent pure
+/// function of endpoint formula CIDs + fixed slots). Prefer this over
+/// [`MintedEnvelope::cid`] when asserting seal purity without signature.
+pub fn spoken_obligation_content_cid(
+    post: &sugar_ir_types::IrFormula,
+    pre: &sugar_ir_types::IrFormula,
+) -> String {
+    let antecedent_cid = formula_endpoint_cid(post);
+    let consequent_cid = formula_endpoint_cid(pre);
+    let args = MintImplicationArgs {
+        produced_by: String::new(),
+        produced_at: String::new(),
+        antecedent_hash: antecedent_cid.clone(),
+        consequent_hash: consequent_cid.clone(),
+        antecedent: ContractMementoRef::new(antecedent_cid),
+        consequent: ContractMementoRef::new(consequent_cid),
+        additional_inputs: Vec::new(),
+        antecedent_slot: OBLIGATION_ANTECEDENT_SLOT.into(),
+        consequent_slot: OBLIGATION_CONSEQUENT_SLOT.into(),
+        prover: String::new(),
+        prover_run_ms: 0,
+        smt_lib_input: String::new(),
+        proof_witness: String::new(),
+        signer_seed: OBLIGATION_SEAL_SIGNER_SEED,
+    };
+    implication_content_cid(&args)
+}
+
+/// Build a speakable `.proof` catalog whose sole member is the sealed
+/// Obligation implication. Ready for [`speak_implication`](sugar_verifier::utterance).
+pub fn spoken_obligation_proof_bytes(
+    post: &sugar_ir_types::IrFormula,
+    pre: &sugar_ir_types::IrFormula,
+) -> (MintedEnvelope, Vec<u8>, String) {
+    use sugar_proof_envelope::{
+        ed25519_pubkey_string, build_proof_envelope, ImplicationMemento, ProofEnvelopeInput,
+        ProofGraph,
+    };
+    let sealed = seal_spoken_obligation(post, pre);
+    let mut graph = ProofGraph::new();
+    graph.push_implication(ImplicationMemento::new(sealed.canonical_bytes.clone()));
+    let pubkey = ed25519_pubkey_string(&OBLIGATION_SEAL_SIGNER_SEED);
+    let signer_cid = blake3_512_of(pubkey.as_bytes());
+    let built = build_proof_envelope(&ProofEnvelopeInput {
+        name: "spoken-obligation".into(),
+        version: "1.0.0".into(),
+        binary_cid: None,
+        metadata: None,
+        graph,
+        signer_cid,
+        signer_seed: OBLIGATION_SEAL_SIGNER_SEED,
+        declared_at: OBLIGATION_SEAL_PRODUCED_AT.into(),
+        manifest: None,
+    });
+    (sealed, built.bytes, built.cid)
+}
+
+// =============================================================================
 // mint_witness
 // =============================================================================
 
