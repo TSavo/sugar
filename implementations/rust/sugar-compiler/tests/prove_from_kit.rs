@@ -815,27 +815,39 @@ fn prove_from_kit_does_not_write_proof_run_bundle() {
     );
     assert_eq!(warm.outcome_class, warm2.outcome_class);
 
-    // Discrimination: cold disk face still writes under .sugar/runs
+    // Discrimination (#3809 cut #8): solve never writes; face persist does.
     let local = feed_from_tree::fold_project(&kit, &project, Some(&speaker)).expect("fold");
     let disk_dir = tempfile::tempdir().expect("disk project");
     seal_graph_to_project(&local, disk_dir.path(), "write6-disk");
     let disk =
         solve_project(runner_cfg(disk_dir.path()), compilers).expect("disk solve_project");
     let disk_runs = disk_dir.path().join(".sugar").join("runs");
-    eprintln!(
-        "write#6 gate (cold discrimination):\n\
-         \tdisk_runs exists={}\n\
-         \tdisk bundle_path={:?} exists={}",
-        disk_runs.exists(),
-        disk.artifact.bundle_path,
-        disk.artifact.bundle_path.exists(),
-    );
     assert!(
-        disk_runs.exists() && disk.artifact.bundle_path.exists(),
-        "discrimination failed: cold solve_project must still write .sugar/runs \
-         (instrument would be a no-op). disk_runs={} bundle={:?}",
+        !disk_runs.exists() && disk.artifact.bundle_path.as_os_str().is_empty(),
+        "solve must not write .sugar/runs (cut #8); face persists separately. \
+         disk_runs={} bundle={:?}",
         disk_runs.display(),
         disk.artifact.bundle_path
+    );
+    assert!(
+        !disk.artifact.bundle_bytes.is_empty(),
+        "solve still seals bytes in memory for the face to persist"
+    );
+    let persisted = sugar_verifier::runner::persist_proof_run_to_project(
+        disk_dir.path(),
+        &disk.artifact.bundle_cid,
+        &disk.artifact.bundle_bytes,
+    )
+    .expect("face persist");
+    eprintln!(
+        "write#8 gate (face persist discrimination):\n\
+         \tpersisted={:?} exists={}",
+        persisted,
+        persisted.exists(),
+    );
+    assert!(
+        disk_runs.exists() && persisted.exists(),
+        "face persist_proof_run_to_project must write .sugar/runs"
     );
 }
 
@@ -966,10 +978,13 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
     seal_graph_to_project(&local, disk_dir.path(), "fs89-disk");
     let disk = solve_project(runner_cfg(disk_dir.path()), test_compilers())
         .expect("cold solve_project still runs (exists() path live)");
+    // #3809 cut #8: solve never writes; seal is in-memory only.
     assert!(
-        !disk.artifact.bundle_path.as_os_str().is_empty()
-            && disk.artifact.bundle_path.exists(),
-        "cold face still persists proof-run (discrimination for write path)"
+        disk.artifact.bundle_path.as_os_str().is_empty()
+            && !disk.artifact.bundle_bytes.is_empty(),
+        "solve seals in memory only (cut #8); face may persist. path={:?} bytes={}",
+        disk.artifact.bundle_path,
+        disk.artifact.bundle_bytes.len()
     );
 }
 

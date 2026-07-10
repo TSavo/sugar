@@ -261,15 +261,44 @@ pub(crate) fn build_prove_artifact_with_options(
             cfg,
             compilers,
         )
-        .map(|proven| proven.artifact)
+        .map(|proven| cli_persist_proof_run(project_root, proven.artifact))
         .map_err(|error| error.to_string());
     }
 
     // Disk-load face (sugar#3859): no lift kit for this project — prove over
     // minted `.proof` files. Link errors ANNOTATE, they never gate.
     sugar_compiler::orchestrate::solve_project(cfg, compilers)
-        .map(|proven| proven.artifact)
+        .map(|proven| cli_persist_proof_run(project_root, proven.artifact))
         .map_err(|error| error.to_string())
+}
+
+/// #3809 cut #8: solve seals the proof-run in memory; the CLI face persists
+/// durable receipts under `project_root/.sugar/runs/`.
+fn cli_persist_proof_run(
+    project_root: &Path,
+    mut artifact: ProofRunArtifact,
+) -> ProofRunArtifact {
+    if artifact.bundle_bytes.is_empty() {
+        return artifact;
+    }
+    match sugar_verifier::runner::persist_proof_run_to_project(
+        project_root,
+        &artifact.bundle_cid,
+        &artifact.bundle_bytes,
+    ) {
+        Ok(path) => {
+            artifact.bundle_path = path;
+        }
+        Err(error) => {
+            // Non-fatal for prove result: seal already succeeded; durable
+            // write is a face concern. Surface loudly.
+            eprintln!(
+                "{}: could not persist proof-run under .sugar/runs: {error}",
+                "warning".yellow().bold()
+            );
+        }
+    }
+    artifact
 }
 
 /// Build a live `Kit` from the first planned lift manifest, when present.

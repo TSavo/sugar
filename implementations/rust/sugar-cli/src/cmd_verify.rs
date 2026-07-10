@@ -686,13 +686,27 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
     // still lives in `proof_report_gate`). The new `link_errors` /
     // `outcome_class` dimensions are available but not consumed here; link
     // errors ANNOTATE and never gate (see `solve_project`'s doc).
-    let run_artifact = match sugar_compiler::orchestrate::solve_project(cfg, compilers) {
+    let mut run_artifact = match sugar_compiler::orchestrate::solve_project(cfg, compilers) {
         Ok(proven) => proven.artifact,
         Err(error) => {
             eprintln!("{}: {error}", "error".red().bold());
             return EXIT_USER_ERROR;
         }
     };
+    // #3809 cut #8: solve seals in memory; CLI face persists durable receipt.
+    if !run_artifact.bundle_bytes.is_empty() {
+        match sugar_verifier::runner::persist_proof_run_to_project(
+            project_root,
+            &run_artifact.bundle_cid,
+            &run_artifact.bundle_bytes,
+        ) {
+            Ok(path) => run_artifact.bundle_path = path,
+            Err(error) => eprintln!(
+                "{}: could not persist proof-run under .sugar/runs: {error}",
+                "warning".yellow().bold()
+            ),
+        }
+    }
     let report = run_artifact.report;
     let pool = load_all_proofs::run(project_root);
     let witness_results =
