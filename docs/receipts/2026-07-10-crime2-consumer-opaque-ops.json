@@ -1,0 +1,91 @@
+[
+  {
+    "snippet": "len_list",
+    "dig_floors": 1,
+    "warranted": 1,
+    "forged_warrant": 0,
+    "forged_loci": [],
+    "floor_details": [
+      {
+        "floor": "literal",
+        "blame": "len_list.py:5:4",
+        "detail": "opaque-op-body-computed",
+        "callee": "A",
+        "warrantingAssert": {
+          "file": "len_list.py",
+          "line": 5,
+          "col": 4
+        }
+      }
+    ],
+    "diag_kinds": [
+      "dig-floor",
+      "floor-contract-agreement",
+      "proofir-formula-provenance"
+    ]
+  },
+  {
+    "snippet": "numpy_sum",
+    "dig_floors": 0,
+    "warranted": 0,
+    "forged_warrant": 0,
+    "forged_loci": [],
+    "floor_details": [],
+    "diag_kinds": [
+      "dig-boundary",
+      "floor-contract-agreement",
+      "proofir-formula-provenance"
+    ]
+  },
+  {
+    "snippet": "numpy_sum_lie",
+    "dig_floors": 0,
+    "warranted": 0,
+    "forged_warrant": 0,
+    "forged_loci": [],
+    "floor_details": [],
+    "diag_kinds": [
+      "dig-boundary",
+      "floor-contract-agreement",
+      "proofir-formula-provenance"
+    ]
+  },
+  {
+    "snippet": "pandas_sum",
+    "dig_floors": 0,
+    "warranted": 0,
+    "forged_warrant": 0,
+    "forged_loci": [],
+    "floor_details": [],
+    "diag_kinds": [
+      "dig-boundary",
+      "floor-contract-agreement",
+      "proofir-formula-provenance"
+    ]
+  },
+  {
+    "snippet": "pandas_mean",
+    "dig_floors": 0,
+    "warranted": 0,
+    "forged_warrant": 0,
+    "forged_loci": [],
+    "floor_details": [],
+    "diag_kinds": [
+      "dig-boundary",
+      "floor-contract-agreement",
+      "proofir-formula-provenance"
+    ]
+  },
+  {
+    "snippet": "abs_builtin",
+    "dig_floors": 0,
+    "warranted": 0,
+    "forged_warrant": 0,
+    "forged_loci": [],
+    "floor_details": [],
+    "diag_kinds": [
+      "floor-contract-agreement",
+      "proofir-formula-provenance"
+    ]
+  }
+]

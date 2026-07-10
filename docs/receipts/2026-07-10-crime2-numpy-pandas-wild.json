@@ -1,0 +1,62 @@
+{
+  "results": [
+    {
+      "vendor": "numpy",
+      "root": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/numpy",
+      "sample_n": 60,
+      "files_ok": 56,
+      "files_with_dig_floors": 0,
+      "files_with_forged": 0,
+      "stated": 974,
+      "silently_unaccounted": 974,
+      "dig_floors": 0,
+      "warranted": 0,
+      "forged_warrant": 0,
+      "gate_crime2_zero": true,
+      "forged_loci_sample": [],
+      "dig_floor_sample": [],
+      "errors_n": 4,
+      "errors_sample": [
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/numpy/distutils/extension.py",
+          "err": "rc=1",
+          "stderr": "Traceback (most recent call last):\n  File \"/tmp/crime2_one_file.py\", line 16, in <module>\n    diags = list(report.payload.diagnostics or [])\n                 ^^^^^^^^^^^^^^\nAttributeError: 'NoneType' object has no attribute 'payload'\n"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/numpy/_core/tests/test_records.py",
+          "err": "rc=1",
+          "stderr": "ne 240, in _raise_subscript_gap\n    raise FactoryGap(\nsugar_lift_py_tests.factory.factory_gap.FactoryGap: write more Floor for this Construction: owner=StringSubscriptSugar blame=test_records.py:492:22 observed=SliceValue requested=concrete sequence index fix=add sequence index floor for SliceValue\n"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/numpy/lib/_function_base_impl.py",
+          "err": "rc=1",
+          "stderr": "Traceback (most recent call last):\n  File \"/tmp/crime2_one_file.py\", line 16, in <module>\n    diags = list(report.payload.diagnostics or [])\n                 ^^^^^^^^^^^^^^\nAttributeError: 'NoneType' object has no attribute 'payload'\n"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/numpy/_utils/__init__.py",
+          "err": "rc=1",
+          "stderr": "Traceback (most recent call last):\n  File \"/tmp/crime2_one_file.py\", line 16, in <module>\n    diags = list(report.payload.diagnostics or [])\n                 ^^^^^^^^^^^^^^\nAttributeError: 'NoneType' object has no attribute 'payload'\n"
+        }
+      ]
+    },
+    {
+      "vendor": "pandas",
+      "root": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/pandas",
+      "sample_n": 60,
+      "files_ok": 60,
+      "files_with_dig_floors": 0,
+      "files_with_forged": 0,
+      "stated": 955,
+      "silently_unaccounted": 955,
+      "dig_floors": 0,
+      "warranted": 0,
+      "forged_warrant": 0,
+      "gate_crime2_zero": true,
+      "forged_loci_sample": [],
+      "dig_floor_sample": [],
+      "errors_n": 0,
+      "errors_sample": []
+    }
+  ],
+  "method": "subprocess per-file build_literal_call_report + account_lift_coverage; assert-preferring sample; n=60 each"
+}
