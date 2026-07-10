@@ -124,6 +124,16 @@ def int_literal_return_witness() -> SugarWitnessPair:
     )
 
 
+def float_literal_return_witness() -> SugarWitnessPair:
+    return _call_return_pair(
+        name="float_literal_return",
+        owner_sugar="FloatLiteralSugar",
+        body="2.5",
+        truthful="2.5",
+        lying="3.5",
+    )
+
+
 def name_return_witness() -> SugarWitnessPair:
     return _call_return_pair(
         name="name_return",
