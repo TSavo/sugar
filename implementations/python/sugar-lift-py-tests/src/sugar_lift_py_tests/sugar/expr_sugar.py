@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import SupportValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
+from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witness_examples import inert_statement_return_witness
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
@@ -13,18 +13,14 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class ExprSugar(Sugar, role=SugarRole.STATEMENT):
+    """An expression statement. It reduces its value and discards it: the statement
+    is support. Incomplete still propagates (a halt is not discarded)."""
+
     value: SugarBody
 
     @classmethod
     def owns(cls, site) -> bool:
-        if site.observed != "Expr":
-            return False
-        terms = site.terms()
-        return not (
-            len(terms) == 1
-            and terms[0].observed == "PrimitiveLiteral"
-            and isinstance(terms[0].literal_value(), str)
-        )
+        return site.observed == "Expr"
 
     @classmethod
     def new(cls, site, ctx) -> "ExprSugar":
@@ -47,6 +43,5 @@ class ExprSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # The statement's outcome is the expression's outcome -- reduce it.
-        return self.value.reduce(ctx)
-
+        # Reduce the value, discard it: the statement is support.
+        return self.value.reduce(ctx).and_then(lambda value: Complete(SupportValue()))
