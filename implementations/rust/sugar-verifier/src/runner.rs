@@ -62,7 +62,11 @@ pub struct ProofRunArtifact {
     pub memento: sugar_ir_types::ProofRunMemento,
     pub stage_receipts: Vec<sugar_ir_types::StageReceipt>,
     pub bundle_cid: String,
+    /// Empty when sealed in memory (#3809 cut #8). Faces that want a durable
+    /// receipt call [`persist_proof_run_to_project`] with [`Self::bundle_bytes`].
     pub bundle_path: PathBuf,
+    /// Sealed proof-run envelope bytes (always produced; face may persist).
+    pub bundle_bytes: Vec<u8>,
     pub plan_artifact: Option<PlanArtifactInput>,
 }
 
@@ -616,15 +620,12 @@ impl Runner {
             plugin_registry_cid,
             run_verdict,
         )?;
-        // Warm path (`pool_only_inputs`): seal the proof-run envelope in memory
-        // only — do not create_dir_all / write under project_root/.sugar/runs/
-        // (#3809 write #6). Cold path still persists for durable receipts.
-        let (bundle_cid, bundle_path) = write_proof_run_bundle(
-            &self.cfg.project_root,
+        // #3809 cut #8: always seal in memory. Faces persist via
+        // `persist_proof_run_to_project` if they want a durable receipt.
+        let (bundle_cid, bundle_bytes) = write_proof_run_bundle(
             &memento,
             &stages,
             self.cfg.plan_artifact.as_ref(),
-            /* persist_to_disk = */ !self.cfg.pool_only_inputs,
         )?;
 
         Ok(ProofRunArtifact {
@@ -633,7 +634,8 @@ impl Runner {
             memento,
             stage_receipts: stages,
             bundle_cid,
-            bundle_path,
+            bundle_path: PathBuf::new(),
+            bundle_bytes,
             plan_artifact: self.cfg.plan_artifact.clone(),
         })
     }
@@ -1076,17 +1078,14 @@ fn make_proof_run_memento(
     Ok(memento)
 }
 
-/// Seal the proof-run envelope. When `persist_to_disk` is true (cold face),
-/// write under `project_root/.sugar/runs/`. When false (warm / pool_only),
-/// return the content CID and an empty `bundle_path` — no create_dir_all,
-/// no write (#3809 write #6 closed).
+/// Seal the proof-run envelope in memory (#3809 cut #8).
+/// Returns `(bundle_cid, sealed_bytes)`. Never writes under project_root —
+/// faces call [`persist_proof_run_to_project`] for durable receipts.
 fn write_proof_run_bundle(
-    project_root: &Path,
     memento: &sugar_ir_types::ProofRunMemento,
     stages: &[sugar_ir_types::StageReceipt],
     plan_artifact: Option<&PlanArtifactInput>,
-    persist_to_disk: bool,
-) -> Result<(String, PathBuf), ProofRunArtifactError> {
+) -> Result<(String, Vec<u8>), ProofRunArtifactError> {
     use sugar_proof_envelope::{
         build_proof_envelope, PlanMemento, ProofEnvelopeInput, ProofGraph, ProofRunMemento,
         StageReceiptMemento,
@@ -1124,19 +1123,21 @@ fn write_proof_run_bundle(
         declared_at: iso_now(),
         manifest: None,
     });
-    if !persist_to_disk {
-        // In-memory receipt: CID is real; path is deliberately empty so
-        // callers cannot open() a project file that was never written.
-        let _ = project_root; // warm path does not touch project_root here
-        return Ok((built.cid, PathBuf::new()));
-    }
+    Ok((built.cid, built.bytes))
+}
+
+/// Face helper (#3809 cut #8): write sealed proof-run bytes under
+/// `project_root/.sugar/runs/`. Solve never calls this.
+pub fn persist_proof_run_to_project(
+    project_root: &Path,
+    bundle_cid: &str,
+    bundle_bytes: &[u8],
+) -> Result<PathBuf, ProofRunArtifactError> {
     let out_dir = project_root.join(".sugar").join("runs");
     std::fs::create_dir_all(&out_dir)?;
-    // Colon-free, prefix-retained on-disk name (Windows-safe); the loader
-    // recomputes the CID from bytes so the filename is advisory.
-    let path = out_dir.join(sugar_proof_envelope::proof_filename(&built.cid));
-    std::fs::write(&path, built.bytes)?;
-    Ok((built.cid, path))
+    let path = out_dir.join(sugar_proof_envelope::proof_filename(bundle_cid));
+    std::fs::write(&path, bundle_bytes)?;
+    Ok(path)
 }
 
 fn unsigned_envelope(declared_at: &str) -> sugar_ir_types::ProofRunEnvelope {
@@ -2826,15 +2827,16 @@ mod consistency_owned_callsite_tests {
         );
 
         let project_root = make_unique_cache_dir("plan-artifact-bundle");
-        let (_bundle_cid, bundle_path) = write_proof_run_bundle(
-            &project_root,
+        let (bundle_cid, bytes) = write_proof_run_bundle(
             &memento,
             &[stage],
             Some(&plan_artifact),
-            /* persist_to_disk = */ true,
         )
         .expect("proof-run bundle");
-        let bytes = std::fs::read(&bundle_path).expect("read proof-run bundle");
+        // Face-side persist (solve never writes).
+        let bundle_path =
+            persist_proof_run_to_project(&project_root, &bundle_cid, &bytes).expect("persist");
+        assert!(bundle_path.exists());
         let graph = sugar_proof_envelope::ProofGraph::read(&bytes).expect("read proof graph");
         let plans = graph.plans().collect::<Vec<_>>();
         assert_eq!(
