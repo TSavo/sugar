@@ -73,8 +73,12 @@ fn unique_dir(label: &str) -> PathBuf {
 fn write_lift_manifest(project: &Path, surface: &str, script_path: &Path) {
     let lift_dir = project.join(".sugar").join("lift").join(surface);
     fs::create_dir_all(&lift_dir).expect("mkdir lift surface dir");
+    // Invoke via /bin/sh so the fixture works when the script lives on a
+    // noexec mount (common for Docker tmpfs /tmp). Direct exec of the .sh
+    // path fails with EACCES even when mode is 0755; the shell is on an
+    // executable FS and only *reads* the script.
     let manifest = format!(
-        "name = \"{surface}\"\ncommand = [\"{}\"]\nworking_dir = \".\"\n",
+        "name = \"{surface}\"\ncommand = [\"/bin/sh\", \"{}\"]\nworking_dir = \".\"\n",
         script_path.display()
     );
     fs::write(lift_dir.join("manifest.toml"), manifest).expect("write manifest.toml");
