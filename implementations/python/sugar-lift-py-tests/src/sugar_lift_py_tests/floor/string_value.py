@@ -24,6 +24,15 @@ class StringValue(FloorValue):
 
         return str_const(self.value)
 
+    def add(self, other, blame):
+        # A string's addition IS concatenation: two strings fold to their join.
+        # Anything else falls to the honest addition-floor gap.
+        if type(other) is StringValue:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(StringValue(self.value + other.value))
+        return super().add(other, blame)
+
     def project_callsite_with(self, operation, ctx):
         return operation.project_literal(self, ctx)
 

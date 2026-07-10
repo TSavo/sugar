@@ -393,6 +393,26 @@ def less_than_return_witness() -> SugarWitnessPair:
     )
 
 
+def add_return_witness() -> SugarWitnessPair:
+    # `+` folds concrete numbers on the addition floor; the True/False face of
+    # `1 + 1 == 2` picks the if-face. The truthful twin rides that face, the lying
+    # twin asserts the other -- the pair proves the lift discriminates on the sum.
+    prefix = (
+        "def A(z):\n"
+        "    if 1 + 1 == 2:\n"
+        "        return z\n"
+        "    return 0\n"
+        "\n"
+    )
+    return _call_pair(
+        name="add_return",
+        owner_sugar="AddOpSugar",
+        truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+        lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+    )
+
+
+
 def set_literal_return_witness() -> SugarWitnessPair:
     # A bare set literal reduces as a statement body step, then returns z. Sets do
     # not compare by == to a literal easily in the witness harness, so the pair
