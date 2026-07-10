@@ -125,6 +125,27 @@ class OpaqueOpCallsite(FloorValue):
             )
         )
 
+    def add_with(self, operation: Any, ctx: Any) -> Any:
+        """``.add(operand)`` on an opaque coordinate (e.g. ``df.add(noise)``).
+
+        Folded receivers delegate to the computed floor; opaque receivers mint
+        ``call:add(self, operand)`` with ``computed=None`` — never invent a
+        numeric result for a vendor/opaque frame.
+        """
+        if self.computed is not None:
+            return self.computed.add_with(operation, ctx)
+        del ctx
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            OpaqueOpCallsite(
+                callee="add",
+                arg=self,
+                computed=None,
+                extra_args=(operation.operand,),
+            )
+        )
+
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().binary_operator_with(operation, ctx)
 
