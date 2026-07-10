@@ -272,13 +272,10 @@ impl Runner {
         &self,
         mut pool: MementoPool,
     ) -> Result<ProofRunArtifact, ProofRunArtifactError> {
-        // Input CIDs for the proof-run memento: either walk the project (cold)
-        // or take them from the preloaded pool + in-memory extra_proofs (warm).
-        let input_artifact_cids = if self.cfg.pool_only_inputs {
-            discover_input_artifact_cids_from_pool(&pool, &self.cfg)
-        } else {
-            discover_input_artifact_cids(&self.cfg)
-        };
+        // Input CIDs for the proof-run memento (#3809 cut #1): always from the
+        // client-fed pool + in-memory extra_proofs / plan_artifact. Never
+        // WalkDir project_root for *.proof files — faces load/fold first.
+        let input_artifact_cids = discover_input_artifact_cids_from_pool(&pool, &self.cfg);
         let proof_envelope_cid = input_artifact_cids
             .iter()
             .next()
@@ -1183,23 +1180,8 @@ fn verifier_pipeline_placeholder_cid() -> String {
     sugar_canonicalizer::blake3_512_of(jcs.as_bytes())
 }
 
-fn discover_input_artifact_cids(cfg: &RunnerConfig) -> BTreeSet<String> {
-    let mut cids = BTreeSet::new();
-    collect_proof_file_cids(&cfg.project_root, &mut cids);
-    for extra in &cfg.extra_projects {
-        collect_proof_file_cids(extra, &mut cids);
-    }
-    for proof_file in &cfg.extra_proof_files {
-        collect_one_proof_file_cid(proof_file, &mut cids);
-    }
-    for proof in &cfg.extra_proofs {
-        cids.insert(sugar_canonicalizer::blake3_512_of(&proof.bytes));
-    }
-    cids
-}
-
-/// Warm-path input CIDs: pool member keys + in-memory `extra_proofs` only.
-/// No `WalkDir` / `std::fs::read` of project `*.proof` files (#3809 DoD).
+/// Input CIDs from the client-fed pool + in-memory `extra_proofs` / plan only.
+/// No `WalkDir` / `std::fs::read` of project `*.proof` files (#3809 cut #1).
 fn discover_input_artifact_cids_from_pool(
     pool: &MementoPool,
     cfg: &RunnerConfig,
@@ -1218,36 +1200,6 @@ fn discover_input_artifact_cids_from_pool(
         cids.insert(plan.member_cid.clone());
     }
     cids
-}
-
-fn collect_proof_file_cids(root: &Path, out: &mut BTreeSet<String>) {
-    if !root.exists() {
-        return;
-    }
-    for entry in walkdir::WalkDir::new(root)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if entry.path().extension().and_then(|s| s.to_str()) != Some("proof") {
-            continue;
-        }
-        if let Ok(bytes) = std::fs::read(entry.path()) {
-            out.insert(sugar_canonicalizer::blake3_512_of(&bytes));
-        }
-    }
-}
-
-fn collect_one_proof_file_cid(path: &Path, out: &mut BTreeSet<String>) {
-    if path.extension().and_then(|s| s.to_str()) != Some("proof") {
-        return;
-    }
-    if let Ok(bytes) = std::fs::read(path) {
-        out.insert(sugar_canonicalizer::blake3_512_of(&bytes));
-    }
 }
 
 /// Hash a named project file for faces that want to feed run-header CIDs.
