@@ -154,6 +154,14 @@ auto-mode is the reach story, not a second fabricated table.
 
 ## Per-vendor wall
 
+> **Headline — the corpus reveal ([#4023](https://github.com/TSavo/sugar/pull/4023))**
+>
+> R=0 said green; the assertion grain found **numpy ~34 + pandas ~54** vendor
+> claims silently dropped under it. [#4023](https://github.com/TSavo/sugar/pull/4023)
+> un-gagged them; **2 residuals remain**
+> ([#4024](https://github.com/TSavo/sugar/issues/4024) module-level,
+> [#4025](https://github.com/TSavo/sugar/issues/4025) function residual).
+
 Columns:
 
 | group | fields |
@@ -161,85 +169,106 @@ Columns:
 | **assertions** (the report) | `stated` · `lifted+cited` · `silently_unaccounted` (Crime 1) |
 | **Minority Report** | `bodies present` · `dug` · `un-asserted` / voiceless |
 | **Crime 2** | `dig-floors` · `forged_warrant` |
-| **status** | **RED** if Crime 1 or Crime 2 residual > 0; green only when both gates are zero *and* numbers are measured (not PENDING) |
+| **status** | **RED** if Crime 1 or Crime 2 residual > 0; green when measured residual is zero |
 
 ### Hard rule on numbers
 
-**No fabricated counts.** Only `statistics` has measured dual-axis + Crime 2
-receipts on main. Every other vendor is explicitly **PENDING** until the
-assertion-grain re-audit lands. Prior "R=0 generalizes" greens counted only the
-loud channel; they are not assertion-grain evidence
-([#4016](https://github.com/TSavo/sugar/issues/4016), [#4017](https://github.com/TSavo/sugar/issues/4017)).
+**No fabricated counts.** Assertion-grain cells below are from measured receipts
+only. `numpy` / `pandas` assertion totals are the **[#4023](https://github.com/TSavo/sugar/pull/4023)
+120-file sample**, not a full-package tree count — labeled **sample** so we do
+not overclaim. Body / Crime 2 columns that lack a measured receipt stay `—`
+(not invented).
 
 | vendor | stated | lifted+cited | silently_unaccounted (Crime 1) | bodies present | dug | un-asserted (voiceless) | dig-floors | forged_warrant (Crime 2) | status |
 |--------|-------:|-------------:|-------------------------------:|---------------:|----:|------------------------:|-----------:|-------------------------:|--------|
-| **statistics** | 4 | 1 | **3** (`:200` / `:237` / `:323`) | 58 | 6 | 52 | 0 | 0 | **RED** |
-| numpy | — | — | PENDING | — | — | PENDING | — | PENDING | PENDING |
-| pandas | — | — | PENDING | — | — | PENDING | — | PENDING | PENDING |
-| decimal | — | — | PENDING | — | — | PENDING | — | PENDING | PENDING |
-| fractions | — | — | PENDING | — | — | PENDING | — | PENDING | PENDING |
-| pathlib | — | — | PENDING | — | — | PENDING | — | PENDING | PENDING |
+| **statistics** | 4 | 4 | **0** | 58 | 6 | 52 | 0 | 0 | green |
+| **numpy** (sample, 120 files) | 47 | 46 | **1** (`f2py2e.py:668`) | — | — | — | — | — | **RED** |
+| **pandas** (sample, 120 files) | 137 | 136 | **1** (`expr.py:258` module-level) | — | — | — | — | — | **RED** |
+| **decimal** | 0 | 0 | 0 | — | — | — | — | — | green |
+| **fractions** | 0 | 0 | 0 | — | — | — | — | — | green |
+| **pathlib** | 0 | 0 | 0 | — | — | — | — | — | green |
 
-### Seeded indictment: `statistics` (only real measured row)
+**Sources (do not mix axes):**
+
+| axis | vendors | source |
+|------|---------|--------|
+| Assertions after function-body totality | all six | [#4023](https://github.com/TSavo/sugar/pull/4023) vendor receipts table |
+| Nested silent *before* #4023 (approx.) | numpy ~34 · pandas ~54 · statistics 3 | [#4023](https://github.com/TSavo/sugar/pull/4023) (pre-totality walk) |
+| Minority Report bodies | **statistics only** | [#4015](https://github.com/TSavo/sugar/pull/4015) |
+| Crime 2 dig-floors / forged_warrant | **statistics only** | [#4020](https://github.com/TSavo/sugar/pull/4020) |
+
+### Sample caveat (`numpy` / `pandas`)
+
+`numpy` and `pandas` rows are the **#4023 120-file sample**, not the full
+installed package. Treat them as measured *grain* evidence of silent loss under
+R=0 and of residual silence after totality — not as a complete tree census.
+Full-tree recount is future work; do not invent it here.
+
+`decimal` / `fractions` / `pathlib` are single-module stdlib files on the
+battleaxe 3.12 shell in that same receipt: **zero** `assert` statements on disk
+→ silent 0 before and after ([#4023](https://github.com/TSavo/sugar/pull/4023)).
+
+### `statistics` — first indictment closed green
 
 | field | value | source |
 |-------|------:|--------|
-| stated | 4 | [#4015](https://github.com/TSavo/sugar/pull/4015) totals |
-| lifted+cited | 1 | [#4015](https://github.com/TSavo/sugar/pull/4015) |
-| silently_unaccounted | **3** | Crime 1 — [#4015](https://github.com/TSavo/sugar/pull/4015), prosecute [#4017](https://github.com/TSavo/sugar/issues/4017) |
-| silent loci | `statistics.py:200` `assert not _isfinite(total)` · `statistics.py:237` `assert not _isfinite(ssd)` · `statistics.py:323` `assert not _isfinite(x)` | [#4017](https://github.com/TSavo/sugar/issues/4017) |
+| stated | 4 | [#4023](https://github.com/TSavo/sugar/pull/4023) after (was 4 in [#4015](https://github.com/TSavo/sugar/pull/4015)) |
+| lifted+cited | **4** | [#4023](https://github.com/TSavo/sugar/pull/4023) — was 1 under nested blindness |
+| silently_unaccounted | **0** | [#4023](https://github.com/TSavo/sugar/pull/4023); ratchet green because the silenced testify ([#4017](https://github.com/TSavo/sugar/issues/4017)) |
+| was silent (pre-#4023) | 3 (`:200` / `:237` / `:323` `assert not _isfinite(...)`) | [#4015](https://github.com/TSavo/sugar/pull/4015) / [#4017](https://github.com/TSavo/sugar/issues/4017) |
 | bodies present | 58 | [#4015](https://github.com/TSavo/sugar/pull/4015) Minority axis |
 | dug | 6 | [#4015](https://github.com/TSavo/sugar/pull/4015) |
-| un_asserted | 52 | scope / voiceless — reported, not red ([#4016](https://github.com/TSavo/sugar/issues/4016)) |
-| dig-floors | 0 | [#4020](https://github.com/TSavo/sugar/pull/4020) first run |
-| forged_warrant | 0 | Crime 2 clean on this path ([#4020](https://github.com/TSavo/sugar/pull/4020)) |
-| status | **RED** | Crime 1 residual; ratchet red until the silenced testify ([#4017](https://github.com/TSavo/sugar/issues/4017)) |
-
-Headline from the instrument ([#4015](https://github.com/TSavo/sugar/pull/4015), quoted shape):
+| un_asserted | 52 | scope / voiceless — reported, not red ([#4016](https://github.com/TSavo/sugar/issues/4016)); [#4015](https://github.com/TSavo/sugar/pull/4015) |
+| dig-floors | 0 | [#4020](https://github.com/TSavo/sugar/pull/4020) |
+| forged_warrant | 0 | [#4020](https://github.com/TSavo/sugar/pull/4020) |
+| status | **green** | Crime 1 residual 0; Crime 2 residual 0 |
 
 ```
-assertions (the report):
+assertions (the report) — after #4023:
   stated:                    4
-  accounted (lifted+cited):  1
-  silently_unaccounted:      3   ← RED / Crime 1
+  accounted (lifted+cited):  4
+  silently_unaccounted:      0   ← green / silenced testify
 
-Minority Report:
+Minority Report (bodies — still #4015):
   present:      58
   dug:           6
   un_asserted:  52   ← scope, not red
 
-Crime 2:
+Crime 2 (still #4020):
   dig_floors:       0
   forged_warrant:   0
 ```
 
-R=0 said "no loud construction gaps." The assertion grain said **75% silent
-assertion loss** (1 of 4 lifted). That is why the wall exists.
+### Residuals still RED (next indictments)
 
-### PENDING vendors — re-audit note
+| vendor | residual (from [#4023](https://github.com/TSavo/sugar/pull/4023) only) | surface | prosecute |
+|--------|------------------------------------------------------------------------|---------|-----------|
+| **numpy** (sample) | `f2py2e.py:668` `assert len(flib_flags) <= 2, …` — FunctionDef-body, still un-audited after totality | function residual | [#4025](https://github.com/TSavo/sugar/issues/4025) |
+| **pandas** (sample) | `expr.py:258` `assert not intersection, _msg` — parent=`Module` | module-level assertion surface | [#4024](https://github.com/TSavo/sugar/issues/4024) |
 
-`numpy` / `pandas` / `decimal` / `fractions` / `pathlib` stay **PENDING**.
-
-Numbers land when the enumeration fix re-reads the corpus at the assertion
-grain ([#4017](https://github.com/TSavo/sugar/issues/4017) prosecution path;
-campaign docket in [#4016](https://github.com/TSavo/sugar/issues/4016)). The
-prior "green" receipts are being re-audited: R=0 only proved the loud channel;
-`statistics` under a green R=0 was 1-of-4 lifted. Do **not** invent placeholder
-counts for these rows.
+Before #4023 nested walk: numpy **~34** and pandas **~54** vendor asserts never
+reached `_lift_assert` under a green R=0. After function-body totality those
+speak; the two residuals above are what remain on the sample
+([#4023](https://github.com/TSavo/sugar/pull/4023)).
 
 ---
 
 ## How to read a row
 
 1. **Crime 1 column > 0** → vendor claims exist and were silenced. **RED.**
-   Prosecute by lifting the vendor's own claim (never fabricate).
+   Prosecute by lifting the vendor's own claim (never fabricate). Open
+   residuals: numpy [#4025](https://github.com/TSavo/sugar/issues/4025), pandas
+   [#4024](https://github.com/TSavo/sugar/issues/4024).
 2. **Crime 2 column > 0** → digs floored into literal/effect with no warranting
-   assertion. **RED.** Prosecute the forged warrant.
+   assertion. **RED.** Prosecute the forged warrant. (Only `statistics` has a
+   measured Crime 2 receipt today — [#4020](https://github.com/TSavo/sugar/pull/4020).)
 3. **`un_asserted` large, crimes 0** → scope is thin: the report is green on
    what was claimed, and the Minority Report names the voiceless remainder.
-   Visible, honest, not red — and not "fully verified."
-4. **PENDING** → no assertion-grain measurement yet. Prior R=0 is not a
-   substitute.
+   Visible, honest, not red — and not "fully verified." (Body axis measured for
+   `statistics` only — [#4015](https://github.com/TSavo/sugar/pull/4015).)
+4. **sample** → assertion numbers are a 120-file sample ([#4023](https://github.com/TSavo/sugar/pull/4023)),
+   not a full-package tree. Prior R=0 is still not a substitute for assertion grain.
+5. **`—`** → that axis has no measured receipt yet. Do not invent.
 
 ---
 
@@ -260,13 +289,16 @@ counts for these rows.
 |-----|------|
 | [#4016](https://github.com/TSavo/sugar/issues/4016) | EPIC — Minority Report campaign; two crimes; prosecute the silenced only |
 | [#4013](https://github.com/TSavo/sugar/issues/4013) | Dual-axis harness; `Minority Report` naming; report vs named outlier section |
-| [#4015](https://github.com/TSavo/sugar/pull/4015) | Crime 1 detector live on main; statistics seed totals |
+| [#4015](https://github.com/TSavo/sugar/pull/4015) | Crime 1 detector live on main; statistics body / pre-totality assertion seed |
 | [#4020](https://github.com/TSavo/sugar/pull/4020) | Crime 2 detector live on main; statistics `forged_warrant = 0` |
-| [#4017](https://github.com/TSavo/sugar/issues/4017) | First indictment — lift the 3 silenced `statistics` asserts |
+| [#4017](https://github.com/TSavo/sugar/issues/4017) | First indictment — `statistics` nested silent asserts (closed green by #4023) |
+| [#4023](https://github.com/TSavo/sugar/pull/4023) | Total function-body assertion enumeration; corpus sample receipts on this wall |
+| [#4024](https://github.com/TSavo/sugar/issues/4024) | Prosecute pandas module-level assert residual (`expr.py:258`) |
+| [#4025](https://github.com/TSavo/sugar/issues/4025) | Prosecute numpy function residual (`f2py2e.py:668`) |
 | [#4007](https://github.com/TSavo/sugar/issues/4007) | Auto-mode capability — point the instrument at any dep (missing `.proof` = cache miss) |
 | [#4012](https://github.com/TSavo/sugar/pull/4012) | Auto-mode MVP: cold-only lift, shipped-`.proof` preference, disk CID cache — ecosystem-scale `Minority Report` |
 
 ---
 
-*Gallery scaffold only. Rows other than `statistics` fill from measured
-`--report` receipts — never from invented numbers.*
+*Wall numbers come only from measured receipts (#4023 assertion sample;
+#4015 bodies / #4020 Crime 2 for `statistics`). Never invent a full-tree count.*
