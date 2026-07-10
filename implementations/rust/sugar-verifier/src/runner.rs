@@ -36,7 +36,7 @@ use crate::solvers::{
 };
 use crate::types::{AnchoredMember, CallSite, MementoCid, MementoPool, ObligationVerdict, Report};
 use crate::{
-    body_discharge, call_edge_loader, compiler_registry, enumerate_callsites, instantiate,
+    body_discharge, compiler_registry, enumerate_callsites, instantiate,
     load_all_proofs::{self, ProofBytes},
     report as report_stage, resolve_target,
 };
@@ -130,10 +130,11 @@ pub struct RunnerConfig {
     /// (#3809 cut #2). Solve never opens that file. `None` → placeholder CID.
     pub plugin_registry_cid: Option<String>,
     /// Residual pre-protocol side-channel gate (#3809). When true, skip
-    /// remaining project FS for claim-adjacent discovery (proof walk,
-    /// call-edges, locus exists, tier-2 cache_dir, runs write). Named
-    /// artifacts + signers/solvers are always client-fed. Series deletes this
-    /// field once every other branch is gone. Derived by `solve_project_with_pool`.
+    /// remaining project FS for claim-adjacent discovery (locus exists,
+    /// tier-2 cache_dir). Named artifacts, input CIDs, call-edges, signers,
+    /// solvers, witness resolvers, and runs-seal are already client-fed or
+    /// deleted. Series deletes this field once every other branch is gone.
+    /// Derived by `solve_project_with_pool`.
     pub pool_only_inputs: bool,
     /// #3809: typed witness-discharge context (project_dir + resolvers).
     /// Sole config surface for custom-witness package recompute (step 3:
@@ -322,27 +323,9 @@ impl Runner {
         )?);
 
         let enumerate_stage = StageCapture::start("enumerate_callsites", loaded_cids.clone());
-        // Cold path may still load legacy `*.call-edges.json` sidecars.
-        // Warm path: pool bridges + enumerate_callsites are the sole edge
-        // source — do not WalkDir project_root.
-        let call_edges = if self.cfg.pool_only_inputs {
-            Vec::new()
-        } else {
-            call_edge_loader::load_call_edge_files(&self.cfg.project_root)
-        };
-        let obligations = call_edge_loader::process_call_edges(&call_edges, &pool);
-        for (source_cid, target_cid, locus) in &obligations {
-            let file = locus
-                .as_ref()
-                .and_then(|l| l.get("file"))
-                .and_then(|f| f.as_str())
-                .unwrap_or("<unknown>");
-            report.call_edges.push(crate::types::ResolvedCallEdge {
-                source_contract_cid: source_cid.clone(),
-                target_contract_cid: target_cid.clone(),
-                file: file.to_string(),
-            });
-        }
+        // #3809 cut #3: solve never WalkDirs `*.call-edges.json`. Discharge
+        // edges come from pool bridges + `enumerate_callsites` only. Faces
+        // that want report.call_edges telemetry rebuild from the pool.
         let callsites = enumerate_callsites::run(&pool);
         let callsite_property_cids: Vec<String> = callsites
             .iter()
@@ -351,7 +334,7 @@ impl Runner {
         stages.push(enumerate_stage.finish(
             sorted(callsite_property_cids),
             Vec::new(),
-            vec![json!({"kind": "stage-summary", "callsites": callsites.len(), "call_edges": obligations.len()})],
+            vec![json!({"kind": "stage-summary", "callsites": callsites.len(), "call_edges": 0})],
             sugar_ir_types::StageVerdict::Ok,
         )?);
 
@@ -662,27 +645,8 @@ impl Runner {
             "verifier: proofs loaded"
         );
 
-        // Load and process call edges
-        let call_edges = call_edge_loader::load_call_edge_files(&self.cfg.project_root);
-        let obligations = call_edge_loader::process_call_edges(&call_edges, &pool);
-
-        // Report resolved call-edge obligations using the single
-        // `obligations` computation above (do not call process_call_edges
-        // a second time: it's an O(callgraph) walk over all loaded
-        // mementos).
-        for (source_cid, target_cid, locus) in &obligations {
-            let file = locus
-                .as_ref()
-                .and_then(|l| l.get("file"))
-                .and_then(|f| f.as_str())
-                .unwrap_or("<unknown>");
-            report.call_edges.push(crate::types::ResolvedCallEdge {
-                source_contract_cid: source_cid.clone(),
-                target_contract_cid: target_cid.clone(),
-                file: file.to_string(),
-            });
-        }
-
+        // #3809 cut #3: no `*.call-edges.json` WalkDir. Pool bridges +
+        // enumerate_callsites only.
         let callsites = enumerate_callsites::run(&pool);
         info!(
             callsites = callsites.len(),

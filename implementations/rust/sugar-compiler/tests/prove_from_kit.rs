@@ -655,7 +655,7 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
         "warm path read plugin-registry.json (R_named_reg=1)"
     );
 
-    // (2) canary call-edge must not appear on the report
+    // (2) canary call-edge must not appear on the report (cut #3: never WalkDir)
     let canary_edges: Vec<_> = warm
         .artifact
         .report
@@ -724,8 +724,8 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
         "unfed solve must not read link-bundle.json from project_root"
     );
 
-    // Discrimination (#3809 cut #1): solve never WalkDirs *.proof — empty
-    // pool must not pick up canary CID even with pool_only_inputs=false.
+    // Discrimination (#3809 cut #1 + #3): solve never WalkDirs *.proof or
+    // *.call-edges.json — empty pool + pool_only_inputs=false still clean.
     let cold_cfg = RunnerConfig {
         project_root: project.clone(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
@@ -741,6 +741,21 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
         !cold_inputs.iter().any(|c| c == &canary_proof_cid),
         "solve must not WalkDir canary .proof into inputs when pool is empty \
          (R_proof_walk>0). cold_inputs={cold_inputs:?}"
+    );
+    let cold_canary_edges: Vec<_> = cold
+        .report
+        .call_edges
+        .iter()
+        .filter(|e| {
+            e.source_contract_cid.contains("canary")
+                || e.target_contract_cid.contains("canary")
+                || e.file.contains("canary")
+        })
+        .collect();
+    assert!(
+        cold_canary_edges.is_empty(),
+        "solve must not WalkDir trap.call-edges.json into report \
+         (R_call_edges>0). cold_canary_edges={cold_canary_edges:?}"
     );
     // Client-fed pool membership is the only way a CID lands in the header.
     let mut fed_pool = MementoPool::default();

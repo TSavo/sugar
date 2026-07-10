@@ -234,9 +234,10 @@ impl ProvenOutcome {
 /// pools are mostly unbridged, so a short-circuit would brick real runs).
 ///
 /// Disk-load face: builds the pool via [`load_pool`] then runs the **one**
-/// discharge body. Cold residual side-channels (config re-read, call-edges,
-/// proof-run write, `Path::exists` locus preference, …) stay available
-/// because `cfg.pool_only_inputs` is left as the caller set it (default false).
+/// discharge body. Residual side-channels gated by `pool_only_inputs` (tier-2
+/// cache_dir, …) stay available when the caller leaves the flag false.
+/// Call-edges / named inputs / input CIDs / config / runs-seal no longer
+/// WalkDir inside solve (#3809 series).
 ///
 /// Callers that already hold a multi-speaker pool (e.g. [`prove_from_kit`])
 /// use [`solve_project_with_pool`] — same body; warmth derived from the
@@ -265,9 +266,10 @@ pub fn solve_project(
 /// `pool` (fold / prior load). This single preloaded entry **derives** the
 /// zero project-FS discharge policy (`pool_only_inputs = true`,
 /// `cache_dir = None`) from that residency: discharge must not re-open
-/// plan/config/manifests, walk `*.proof` / call-edges / named artifacts, or
-/// write `.sugar/runs/` / tier-2 cache. Claim bytes + solvers + signers +
-/// plan_artifact must already ride on `cfg` / `pool` / `compilers`.
+/// plan/config/manifests or write tier-2 cache. Input CIDs, call-edges,
+/// named artifacts, and runs-seal are already non-FS in solve. Claim bytes +
+/// solvers + signers + plan_artifact must already ride on `cfg` / `pool` /
+/// `compilers`.
 ///
 /// Cold disk face remains [`solve_project`] (load then discharge without
 /// forcing the flag — residual side-channels still resolve).
