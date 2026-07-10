@@ -442,6 +442,15 @@ def _resolve_bound_lhs(lhs, fn):
             rhs = stmt.assign_value()
             if rhs.observed == "Call":
                 return rhs
+        if stmt.observed == "AnnAssign":
+            try:
+                if stmt.annassign_target_id() != name:
+                    continue
+            except TypeError:
+                continue
+            rhs = stmt.annassign_value()
+            if rhs is not None and rhs.observed == "Call":
+                return rhs
     return lhs
 
 
@@ -1129,9 +1138,14 @@ def _needed_prior_assignment_sites(
 
 
 def _prior_binding_value_names(site: SourceFragment) -> set[str]:
-    if site.observed != "Assign":
-        return set()
-    return set(_names_including_self(site.assign_value()))
+    if site.observed == "Assign":
+        return set(_names_including_self(site.assign_value()))
+    if site.observed == "AnnAssign":
+        value = site.annassign_value()
+        if value is None:
+            return set()
+        return set(_names_including_self(value))
+    return set()
 
 
 def _prior_binding_target_names(site: SourceFragment) -> set[str]:
@@ -1148,6 +1162,11 @@ def _prior_binding_target_names(site: SourceFragment) -> set[str]:
                 item.name_id() for item in targets[0].terms() if item.observed == "Name"
             }
         return set()
+    if site.observed == "AnnAssign":
+        try:
+            return {site.annassign_target_id()}
+        except TypeError:
+            return set()
     if site.observed == "Import":
         return {asname or name for name, asname in site.import_names()}
     if site.observed == "ImportFrom" and site.importfrom_level() == 0:

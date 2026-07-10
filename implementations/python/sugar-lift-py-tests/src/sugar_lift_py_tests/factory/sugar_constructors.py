@@ -289,6 +289,14 @@ def _module_level_assigns_before(
                 same_name.append((list(assigns), stmt))
             if stmt.observed == "Assign" and stmt.assign_target_name() is not None:
                 assigns.append(stmt)
+            if stmt.observed == "AnnAssign":
+                try:
+                    stmt.annassign_target_id()
+                except TypeError:
+                    continue
+                # Annotation-only forms bind nothing; only valued AnnAssign seeds.
+                if stmt.annassign_value() is not None:
+                    assigns.append(stmt)
     if same_name:
         return same_name[0][0]
     return assigns
