@@ -1,0 +1,520 @@
+{
+  "kind": "full-package-assertion-grain",
+  "version": "4016.full-tree.v1",
+  "measurement": {
+    "host": "local (Mac) \u2014 full installed packages; enumerator from main post-#4023",
+    "numpy_version": "2.5.0",
+    "pandas_version": "3.0.3",
+    "method": {
+      "nested_before_approx": "ast Assert not a direct child of FunctionDef/AsyncFunctionDef.body (same method as #4023 sample)",
+      "after": "account_lift_coverage(census, build_literal_call_report.payload.to_rpc())"
+    },
+    "ast_full_stated": {
+      "numpy": {
+        "files": 407,
+        "stated": 3208,
+        "nested_before_approx": 714
+      },
+      "pandas": {
+        "files": 1421,
+        "stated": 17543,
+        "nested_before_approx": 2906
+      }
+    }
+  },
+  "packages": {
+    "numpy": {
+      "files_total": 407,
+      "files_ok": 405,
+      "files_error": 2,
+      "stated_lift_path_ok_files": 3101,
+      "nested_before_approx_ok_files": 666,
+      "after_lifted": 3058,
+      "after_refused": 0,
+      "after_silent": 43,
+      "seconds": 295.7,
+      "errors": [
+        {
+          "error": "FactoryGap: write more Constructor for this Construction: owner=AttributeSugar blame=numpy/_core/tests/test_deprecations.py:249:15 observed=Test1.called requested=constructor-bound field fix=bind `self.called` in `Test1.__init__`, define `__getattr__` on `Test1`, or add the floor that owns this attribute",
+          "file": "numpy/_core/tests/test_deprecations.py",
+          "stated": 4
+        },
+        {
+          "error": "FactoryGap: write more Floor for this Construction: owner=BinOpSugar blame=numpy/_core/tests/test_stringdtype.py:612:31 observed=SymbolicValue+ArrayLiteral requested=binary operator operand floor fix=add BinaryOperatorOperation support for SymbolicValue + ArrayLiteral",
+          "file": "numpy/_core/tests/test_stringdtype.py",
+          "stated": 103
+        }
+      ],
+      "silent_loci_count": 43,
+      "silent_loci_outside_tests": [
+        {
+          "col": 4,
+          "end_col": 49,
+          "end_line": 668,
+          "file": "numpy/f2py/f2py2e.py",
+          "line": 668,
+          "preview": "assert len(flib_flags) <= 2, repr(flib_flags)"
+        },
+        {
+          "col": 4,
+          "end_col": 34,
+          "end_line": 44,
+          "file": "numpy/random/_examples/cffi/extending.py",
+          "line": 44,
+          "preview": "assert vals[i] == vals_cffi[i]"
+        },
+        {
+          "col": 0,
+          "end_col": 23,
+          "end_line": 47,
+          "file": "numpy/random/_examples/numba/extending.py",
+          "line": 47,
+          "preview": "assert r1.shape == (n,)"
+        },
+        {
+          "col": 0,
+          "end_col": 27,
+          "end_line": 48,
+          "file": "numpy/random/_examples/numba/extending.py",
+          "line": 48,
+          "preview": "assert r1.shape == r2.shape"
+        }
+      ],
+      "silent_loci_sample_first_20": [
+        {
+          "col": 8,
+          "end_col": 49,
+          "end_line": 370,
+          "file": "numpy/_core/tests/test_custom_dtypes.py",
+          "line": 370,
+          "preview": "assert larr.dtype == arr.dtype == SF(1.0)"
+        },
+        {
+          "col": 4,
+          "end_col": 33,
+          "end_line": 2603,
+          "file": "numpy/_core/tests/test_nditer.py",
+          "line": 2603,
+          "preview": "assert expected[1:] == result"
+        },
+        {
+          "col": 8,
+          "end_col": 57,
+          "end_line": 225,
+          "file": "numpy/_core/tests/test_ufunc.py",
+          "line": 225,
+          "preview": "assert obj is umt._pickleable_module_global_ufunc"
+        },
+        {
+          "col": 4,
+          "end_col": 49,
+          "end_line": 668,
+          "file": "numpy/f2py/f2py2e.py",
+          "line": 668,
+          "preview": "assert len(flib_flags) <= 2, repr(flib_flags)"
+        },
+        {
+          "col": 8,
+          "end_col": 40,
+          "end_line": 209,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 209,
+          "preview": "assert self.type_num == info.num"
+        },
+        {
+          "col": 8,
+          "end_col": 47,
+          "end_line": 270,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 270,
+          "preview": "assert isinstance(self.arr, np.ndarray)"
+        },
+        {
+          "col": 16,
+          "end_col": 52,
+          "end_line": 277,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 277,
+          "preview": "assert not self.arr.flags[\"FORTRAN\"]"
+        },
+        {
+          "col": 16,
+          "end_col": 51,
+          "end_line": 278,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 278,
+          "preview": "assert self.arr.flags[\"CONTIGUOUS\"]"
+        },
+        {
+          "col": 16,
+          "end_col": 60,
+          "end_line": 279,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 279,
+          "preview": "assert (not self.arr_attr[6] & wrap.FORTRAN)"
+        },
+        {
+          "col": 16,
+          "end_col": 48,
+          "end_line": 282,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 282,
+          "preview": "assert self.arr.flags[\"FORTRAN\"]"
+        },
+        {
+          "col": 16,
+          "end_col": 55,
+          "end_line": 283,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 283,
+          "preview": "assert not self.arr.flags[\"CONTIGUOUS\"]"
+        },
+        {
+          "col": 16,
+          "end_col": 56,
+          "end_line": 284,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 284,
+          "preview": "assert (self.arr_attr[6] & wrap.FORTRAN)"
+        },
+        {
+          "col": 12,
+          "end_col": 42,
+          "end_line": 299,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 299,
+          "preview": "assert self.pyarr.dtype == typ"
+        },
+        {
+          "col": 8,
+          "end_col": 57,
+          "end_line": 301,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 301,
+          "preview": "assert self.pyarr.flags[\"OWNDATA\"], (obj, intent)"
+        },
+        {
+          "col": 16,
+          "end_col": 54,
+          "end_line": 306,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 306,
+          "preview": "assert not self.pyarr.flags[\"FORTRAN\"]"
+        },
+        {
+          "col": 16,
+          "end_col": 53,
+          "end_line": 307,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 307,
+          "preview": "assert self.pyarr.flags[\"CONTIGUOUS\"]"
+        },
+        {
+          "col": 16,
+          "end_col": 62,
+          "end_line": 308,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 308,
+          "preview": "assert (not self.pyarr_attr[6] & wrap.FORTRAN)"
+        },
+        {
+          "col": 16,
+          "end_col": 50,
+          "end_line": 310,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 310,
+          "preview": "assert self.pyarr.flags[\"FORTRAN\"]"
+        },
+        {
+          "col": 16,
+          "end_col": 57,
+          "end_line": 311,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 311,
+          "preview": "assert not self.pyarr.flags[\"CONTIGUOUS\"]"
+        },
+        {
+          "col": 16,
+          "end_col": 58,
+          "end_line": 312,
+          "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+          "line": 312,
+          "preview": "assert (self.pyarr_attr[6] & wrap.FORTRAN)"
+        }
+      ]
+    },
+    "pandas": {
+      "files_total": 1421,
+      "files_ok": 1421,
+      "files_error": 0,
+      "stated_lift_path_ok_files": 17543,
+      "nested_before_approx_ok_files": 2906,
+      "after_lifted": 17204,
+      "after_refused": 0,
+      "after_silent": 339,
+      "seconds": 668.6,
+      "errors": [],
+      "silent_loci_count": 339,
+      "silent_loci_outside_tests": [
+        {
+          "col": 0,
+          "end_col": 29,
+          "end_line": 258,
+          "file": "pandas/core/computation/expr.py",
+          "line": 258,
+          "preview": "assert not intersection, _msg"
+        },
+        {
+          "col": 12,
+          "end_col": 39,
+          "end_line": 502,
+          "file": "pandas/core/groupby/grouper.py",
+          "line": 502,
+          "preview": "assert self.obj is not None  # for mypy"
+        },
+        {
+          "col": 8,
+          "end_col": 52,
+          "end_line": 1112,
+          "file": "pandas/core/groupby/ops.py",
+          "line": 1112,
+          "preview": "assert len(self.binlabels) == len(self.bins)"
+        },
+        {
+          "col": 12,
+          "end_col": 57,
+          "end_line": 134,
+          "file": "pandas/io/common.py",
+          "line": 134,
+          "preview": "assert isinstance(self.handle, TextIOWrapper)"
+        },
+        {
+          "col": 12,
+          "end_col": 46,
+          "end_line": 133,
+          "file": "pandas/io/parsers/c_parser_wrapper.py",
+          "line": 133,
+          "preview": "assert self.orig_names is not None"
+        },
+        {
+          "col": 12,
+          "end_col": 47,
+          "end_line": 171,
+          "file": "pandas/io/parsers/c_parser_wrapper.py",
+          "line": 171,
+          "preview": "assert self.index_names is not None"
+        },
+        {
+          "col": 16,
+          "end_col": 50,
+          "end_line": 225,
+          "file": "pandas/io/parsers/c_parser_wrapper.py",
+          "line": 225,
+          "preview": "assert self.orig_names is not None"
+        },
+        {
+          "col": 12,
+          "end_col": 46,
+          "end_line": 309,
+          "file": "pandas/io/parsers/c_parser_wrapper.py",
+          "line": 309,
+          "preview": "assert self.orig_names is not None"
+        },
+        {
+          "col": 8,
+          "end_col": 41,
+          "end_line": 2191,
+          "file": "pandas/io/pytables.py",
+          "line": 2191,
+          "preview": "assert isinstance(self.name, str)"
+        },
+        {
+          "col": 8,
+          "end_col": 42,
+          "end_line": 2192,
+          "file": "pandas/io/pytables.py",
+          "line": 2192,
+          "preview": "assert isinstance(self.cname, str)"
+        },
+        {
+          "col": 8,
+          "end_col": 21,
+          "end_line": 4169,
+          "file": "pandas/io/pytables.py",
+          "line": 4169,
+          "preview": "assert j == 1"
+        },
+        {
+          "col": 8,
+          "end_col": 39,
+          "end_line": 288,
+          "file": "pandas/plotting/_matplotlib/core.py",
+          "line": 288,
+          "preview": "assert \"color\" not in self.kwds"
+        }
+      ],
+      "silent_loci_sample_first_20": [
+        {
+          "col": 0,
+          "end_col": 29,
+          "end_line": 258,
+          "file": "pandas/core/computation/expr.py",
+          "line": 258,
+          "preview": "assert not intersection, _msg"
+        },
+        {
+          "col": 12,
+          "end_col": 39,
+          "end_line": 502,
+          "file": "pandas/core/groupby/grouper.py",
+          "line": 502,
+          "preview": "assert self.obj is not None  # for mypy"
+        },
+        {
+          "col": 8,
+          "end_col": 52,
+          "end_line": 1112,
+          "file": "pandas/core/groupby/ops.py",
+          "line": 1112,
+          "preview": "assert len(self.binlabels) == len(self.bins)"
+        },
+        {
+          "col": 12,
+          "end_col": 57,
+          "end_line": 134,
+          "file": "pandas/io/common.py",
+          "line": 134,
+          "preview": "assert isinstance(self.handle, TextIOWrapper)"
+        },
+        {
+          "col": 12,
+          "end_col": 46,
+          "end_line": 133,
+          "file": "pandas/io/parsers/c_parser_wrapper.py",
+          "line": 133,
+          "preview": "assert self.orig_names is not None"
+        },
+        {
+          "col": 12,
+          "end_col": 47,
+          "end_line": 171,
+          "file": "pandas/io/parsers/c_parser_wrapper.py",
+          "line": 171,
+          "preview": "assert self.index_names is not None"
+        },
+        {
+          "col": 16,
+          "end_col": 50,
+          "end_line": 225,
+          "file": "pandas/io/parsers/c_parser_wrapper.py",
+          "line": 225,
+          "preview": "assert self.orig_names is not None"
+        },
+        {
+          "col": 12,
+          "end_col": 46,
+          "end_line": 309,
+          "file": "pandas/io/parsers/c_parser_wrapper.py",
+          "line": 309,
+          "preview": "assert self.orig_names is not None"
+        },
+        {
+          "col": 8,
+          "end_col": 41,
+          "end_line": 2191,
+          "file": "pandas/io/pytables.py",
+          "line": 2191,
+          "preview": "assert isinstance(self.name, str)"
+        },
+        {
+          "col": 8,
+          "end_col": 42,
+          "end_line": 2192,
+          "file": "pandas/io/pytables.py",
+          "line": 2192,
+          "preview": "assert isinstance(self.cname, str)"
+        },
+        {
+          "col": 8,
+          "end_col": 21,
+          "end_line": 4169,
+          "file": "pandas/io/pytables.py",
+          "line": 4169,
+          "preview": "assert j == 1"
+        },
+        {
+          "col": 8,
+          "end_col": 39,
+          "end_line": 288,
+          "file": "pandas/plotting/_matplotlib/core.py",
+          "line": 288,
+          "preview": "assert \"color\" not in self.kwds"
+        },
+        {
+          "col": 8,
+          "end_col": 44,
+          "end_line": 2360,
+          "file": "pandas/tests/arithmetic/test_datetime64.py",
+          "line": 2360,
+          "preview": "assert expected.dtype == index.dtype"
+        },
+        {
+          "col": 4,
+          "end_col": 37,
+          "end_line": 332,
+          "file": "pandas/tests/arrays/boolean/test_construction.py",
+          "line": 332,
+          "preview": "assert not result.flags.writeable"
+        },
+        {
+          "col": 4,
+          "end_col": 33,
+          "end_line": 335,
+          "file": "pandas/tests/arrays/boolean/test_construction.py",
+          "line": 335,
+          "preview": "assert result.flags.writeable"
+        },
+        {
+          "col": 4,
+          "end_col": 37,
+          "end_line": 153,
+          "file": "pandas/tests/arrays/floating/test_to_numpy.py",
+          "line": 153,
+          "preview": "assert not result.flags.writeable"
+        },
+        {
+          "col": 4,
+          "end_col": 33,
+          "end_line": 156,
+          "file": "pandas/tests/arrays/floating/test_to_numpy.py",
+          "line": 156,
+          "preview": "assert result.flags.writeable"
+        },
+        {
+          "col": 4,
+          "end_col": 33,
+          "end_line": 159,
+          "file": "pandas/tests/arrays/floating/test_to_numpy.py",
+          "line": 159,
+          "preview": "assert result.flags.writeable"
+        },
+        {
+          "col": 4,
+          "end_col": 33,
+          "end_line": 162,
+          "file": "pandas/tests/arrays/floating/test_to_numpy.py",
+          "line": 162,
+          "preview": "assert result.flags.writeable"
+        },
+        {
+          "col": 4,
+          "end_col": 37,
+          "end_line": 172,
+          "file": "pandas/tests/arrays/floating/test_to_numpy.py",
+          "line": 172,
+          "preview": "assert not result.flags.writeable"
+        }
+      ]
+    }
+  }
+}

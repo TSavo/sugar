@@ -154,13 +154,17 @@ auto-mode is the reach story, not a second fabricated table.
 
 ## Per-vendor wall
 
-> **Headline — the corpus reveal ([#4023](https://github.com/TSavo/sugar/pull/4023))**
+> **Headline — the full-tree beacon**
 >
-> R=0 said green; the assertion grain found **numpy ~34 + pandas ~54** vendor
-> claims silently dropped under it. [#4023](https://github.com/TSavo/sugar/pull/4023)
-> un-gagged them; **2 residuals remain**
-> ([#4024](https://github.com/TSavo/sugar/issues/4024) module-level,
-> [#4025](https://github.com/TSavo/sugar/issues/4025) function residual).
+> R=0 said green. Across the **full installed packages**, the pre-totality
+> nested walk hid approximately **numpy 714 + pandas 2906 ≈ 3620** asserts
+> under that green. [#4023](https://github.com/TSavo/sugar/pull/4023) un-gagged
+> the function-body surface. **Residuals that remain silent after totality:**
+> numpy **43** · pandas **339**. Open indictments still name the first library
+> loci ([#4025](https://github.com/TSavo/sugar/issues/4025) `f2py2e.py:668`,
+> [#4024](https://github.com/TSavo/sugar/issues/4024) `expr.py:258` module-level)
+> — they are two of many. Full measurement:
+> [`2026-07-10-full-package-assert-grain-receipt.md`](superpowers/specs/2026-07-10-full-package-assert-grain-receipt.md).
 
 Columns:
 
@@ -173,40 +177,51 @@ Columns:
 
 ### Hard rule on numbers
 
-**No fabricated counts.** Assertion-grain cells below are from measured receipts
-only. `numpy` / `pandas` assertion totals are the **[#4023](https://github.com/TSavo/sugar/pull/4023)
-120-file sample**, not a full-package tree count — labeled **sample** so we do
-not overclaim. Body / Crime 2 columns that lack a measured receipt stay `—`
-(not invented).
+**No fabricated counts.** Assertion-grain cells are from measured receipts only.
+`numpy` / `pandas` rows below are the **full installed package trees**
+(`numpy==2.5.0`, `pandas==3.0.3`, every `.py` under site-packages) — not the
+old 120-file sample. Body / Crime 2 columns that lack a measured receipt stay
+`—` (not invented).
 
-| vendor | stated | lifted+cited | silently_unaccounted (Crime 1) | bodies present | dug | un-asserted (voiceless) | dig-floors | forged_warrant (Crime 2) | status |
-|--------|-------:|-------------:|-------------------------------:|---------------:|----:|------------------------:|-----------:|-------------------------:|--------|
-| **statistics** | 4 | 4 | **0** | 58 | 6 | 52 | 0 | 0 | green |
-| **numpy** (sample, 120 files) | 47 | 46 | **1** (`f2py2e.py:668`) | — | — | — | — | — | **RED** |
-| **pandas** (sample, 120 files) | 137 | 136 | **1** (`expr.py:258` module-level) | — | — | — | — | — | **RED** |
-| **decimal** | 0 | 0 | 0 | — | — | — | — | — | green |
-| **fractions** | 0 | 0 | 0 | — | — | — | — | — | green |
-| **pathlib** | 0 | 0 | 0 | — | — | — | — | — | green |
+| vendor | stated | lifted+cited | silently_unaccounted (Crime 1) | nested before≈ (hid under R=0) | bodies present | dug | un-asserted | dig-floors | forged_warrant | status |
+|--------|-------:|-------------:|-------------------------------:|-------------------------------:|---------------:|----:|------------:|-----------:|---------------:|--------|
+| **statistics** | 4 | 4 | **0** | 3 | 58 | 6 | 52 | 0 | 0 | green |
+| **numpy** (full tree, 407 files) | 3208† | 3058 | **43** | **714** | — | — | — | — | — | **RED** |
+| **pandas** (full tree, 1421 files) | 17543 | 17204 | **339** | **2906** | — | — | — | — | — | **RED** |
+| **decimal** | 0 | 0 | 0 | 0 | — | — | — | — | — | green |
+| **fractions** | 0 | 0 | 0 | 0 | — | — | — | — | — | green |
+| **pathlib** | 0 | 0 | 0 | 0 | — | — | — | — | — | green |
+
+† **numpy stated** is full-tree AST (3208). Lift-path after-totals cover **405/407**
+files (stated on those files = 3101 = 3058 lifted + 43 silent). Two files
+FactoryGap-panicked mid-lift (107 asserts on disk not in after-accounting) —
+labeled partial, not invented as silent. See receipt.
 
 **Sources (do not mix axes):**
 
 | axis | vendors | source |
 |------|---------|--------|
-| Assertions after function-body totality | all six | [#4023](https://github.com/TSavo/sugar/pull/4023) vendor receipts table |
-| Nested silent *before* #4023 (approx.) | numpy ~34 · pandas ~54 · statistics 3 | [#4023](https://github.com/TSavo/sugar/pull/4023) (pre-totality walk) |
+| Full-tree nested-before + after residual | numpy, pandas | [full-package receipt](superpowers/specs/2026-07-10-full-package-assert-grain-receipt.md) (main post-#4023 enumerator) |
+| statistics after totality + ratchet | statistics | [#4023](https://github.com/TSavo/sugar/pull/4023) |
 | Minority Report bodies | **statistics only** | [#4015](https://github.com/TSavo/sugar/pull/4015) |
 | Crime 2 dig-floors / forged_warrant | **statistics only** | [#4020](https://github.com/TSavo/sugar/pull/4020) |
+| decimal / fractions / pathlib | those three | [#4023](https://github.com/TSavo/sugar/pull/4023) (zero asserts on disk) |
 
-### Sample caveat (`numpy` / `pandas`)
+### Full-tree note (`numpy` / `pandas`)
 
-`numpy` and `pandas` rows are the **#4023 120-file sample**, not the full
-installed package. Treat them as measured *grain* evidence of silent loss under
-R=0 and of residual silence after totality — not as a complete tree census.
-Full-tree recount is future work; do not invent it here.
+These rows are the **complete installed package** (library + in-tree tests),
+measured with the merged #4023 function-body totality enumerator. The earlier
+#4023 **120-file sample** (numpy silent 1 / pandas silent 1) was a lower bound;
+the full tree is the real danger surface.
 
-`decimal` / `fractions` / `pathlib` are single-module stdlib files on the
-battleaxe 3.12 shell in that same receipt: **zero** `assert` statements on disk
-→ silent 0 before and after ([#4023](https://github.com/TSavo/sugar/pull/4023)).
+| package | files | nested before≈ (hid under R=0) | after silent residual | after lifted |
+|---------|------:|-------------------------------:|----------------------:|-------------:|
+| numpy 2.5.0 | 407 | **714** | **43** (405 files completed lift) | 3058 |
+| pandas 3.0.3 | 1421 | **2906** | **339** | 17204 |
+| **combined** | | **≈ 3620** | **382** | |
+
+`decimal` / `fractions` / `pathlib` remain single-module stdlib files with
+**zero** on-disk asserts in the #4023 receipt → silent 0.
 
 ### `statistics` — first indictment closed green
 
@@ -239,17 +254,16 @@ Crime 2 (still #4020):
   forged_warrant:   0
 ```
 
-### Residuals still RED (next indictments)
+### Residuals still RED (full tree + open indictments)
 
-| vendor | residual (from [#4023](https://github.com/TSavo/sugar/pull/4023) only) | surface | prosecute |
-|--------|------------------------------------------------------------------------|---------|-----------|
-| **numpy** (sample) | `f2py2e.py:668` `assert len(flib_flags) <= 2, …` — FunctionDef-body, still un-audited after totality | function residual | [#4025](https://github.com/TSavo/sugar/issues/4025) |
-| **pandas** (sample) | `expr.py:258` `assert not intersection, _msg` — parent=`Module` | module-level assertion surface | [#4024](https://github.com/TSavo/sugar/issues/4024) |
+| vendor | residual (full-tree measurement) | first named locus / prosecute |
+|--------|----------------------------------|-------------------------------|
+| **numpy** | **43** silent after totality (among 405 completed files); 2 files FactoryGap-abort (107 asserts not in after-totals) | includes `f2py2e.py:668` → [#4025](https://github.com/TSavo/sugar/issues/4025); 4 silent outside `*/tests/*` |
+| **pandas** | **339** silent after totality (1421/1421 files) | includes `expr.py:258` module-level → [#4024](https://github.com/TSavo/sugar/issues/4024); 12 silent outside `*/tests/*` |
 
-Before #4023 nested walk: numpy **~34** and pandas **~54** vendor asserts never
-reached `_lift_assert` under a green R=0. After function-body totality those
-speak; the two residuals above are what remain on the sample
-([#4023](https://github.com/TSavo/sugar/pull/4023)).
+The sample residuals from #4023 were the first named library loci; the full-tree
+scan shows they sit inside a **much larger** residual set. Full silent-locus
+lists: [JSON receipt](superpowers/specs/2026-07-10-full-package-assert-grain-receipt.json).
 
 ---
 
@@ -257,8 +271,9 @@ speak; the two residuals above are what remain on the sample
 
 1. **Crime 1 column > 0** → vendor claims exist and were silenced. **RED.**
    Prosecute by lifting the vendor's own claim (never fabricate). Open
-   residuals: numpy [#4025](https://github.com/TSavo/sugar/issues/4025), pandas
-   [#4024](https://github.com/TSavo/sugar/issues/4024).
+   campaign loci: numpy [#4025](https://github.com/TSavo/sugar/issues/4025),
+   pandas [#4024](https://github.com/TSavo/sugar/issues/4024) — plus the broader
+   full-tree residual counts above.
 2. **Crime 2 column > 0** → digs floored into literal/effect with no warranting
    assertion. **RED.** Prosecute the forged warrant. (Only `statistics` has a
    measured Crime 2 receipt today — [#4020](https://github.com/TSavo/sugar/pull/4020).)
@@ -266,8 +281,8 @@ speak; the two residuals above are what remain on the sample
    what was claimed, and the Minority Report names the voiceless remainder.
    Visible, honest, not red — and not "fully verified." (Body axis measured for
    `statistics` only — [#4015](https://github.com/TSavo/sugar/pull/4015).)
-4. **sample** → assertion numbers are a 120-file sample ([#4023](https://github.com/TSavo/sugar/pull/4023)),
-   not a full-package tree. Prior R=0 is still not a substitute for assertion grain.
+4. **nested before≈** → approximate count of asserts the pre-#4023 walk never
+   saw (not direct `FunctionDef` body children). The size of the surface R=0 hid.
 5. **`—`** → that axis has no measured receipt yet. Do not invent.
 
 ---
@@ -292,7 +307,8 @@ speak; the two residuals above are what remain on the sample
 | [#4015](https://github.com/TSavo/sugar/pull/4015) | Crime 1 detector live on main; statistics body / pre-totality assertion seed |
 | [#4020](https://github.com/TSavo/sugar/pull/4020) | Crime 2 detector live on main; statistics `forged_warrant = 0` |
 | [#4017](https://github.com/TSavo/sugar/issues/4017) | First indictment — `statistics` nested silent asserts (closed green by #4023) |
-| [#4023](https://github.com/TSavo/sugar/pull/4023) | Total function-body assertion enumeration; corpus sample receipts on this wall |
+| [#4023](https://github.com/TSavo/sugar/pull/4023) | Total function-body assertion enumeration (un-gagged nested surface) |
+| [full-package receipt](superpowers/specs/2026-07-10-full-package-assert-grain-receipt.md) | Full-tree numpy/pandas assertion grain (beacon numbers on this wall) |
 | [#4024](https://github.com/TSavo/sugar/issues/4024) | Prosecute pandas module-level assert residual (`expr.py:258`) |
 | [#4025](https://github.com/TSavo/sugar/issues/4025) | Prosecute numpy function residual (`f2py2e.py:668`) |
 | [#4007](https://github.com/TSavo/sugar/issues/4007) | Auto-mode capability — point the instrument at any dep (missing `.proof` = cache miss) |
@@ -300,5 +316,6 @@ speak; the two residuals above are what remain on the sample
 
 ---
 
-*Wall numbers come only from measured receipts (#4023 assertion sample;
-#4015 bodies / #4020 Crime 2 for `statistics`). Never invent a full-tree count.*
+*Wall numbers come only from measured receipts (full-tree numpy/pandas
+assertion grain; #4023 for statistics / stdlib zeros; #4015 bodies / #4020
+Crime 2 for `statistics`). Never invent counts.*
