@@ -117,6 +117,42 @@ _NESTED_SCOPE_OBSERVED = frozenset(
     }
 )
 
+# Provenance name for asserts that are direct children of the Module (no
+# FunctionDef parent). Not a fabricated FunctionDef — module-parent lift only.
+_MODULE_PARENT_NAME = "<module>"
+
+
+def _assert_parent_name(fn: SourceFragment | None) -> str:
+    """Enclosing function name, or ``<module>`` for module-scope asserts (#4024)."""
+    if fn is None:
+        return _MODULE_PARENT_NAME
+    return fn.function_name()
+
+
+def _iter_assertion_surfaces_in_suite(
+    suite: list[SourceFragment],
+) -> list[SourceFragment]:
+    """Recursive Assert collect over a statement suite (function body or module).
+
+    Same visit pattern for both surfaces (#4017 function totality, #4024 module):
+    collect Assert; recurse through control-flow via ``fragments()``; skip nested
+    FunctionDef / AsyncFunctionDef / ClassDef / Lambda (their own def entries).
+    """
+    found: list[SourceFragment] = []
+
+    def visit(frag: SourceFragment) -> None:
+        if frag.observed == "Assert":
+            found.append(frag)
+            return
+        if frag.observed in _NESTED_SCOPE_OBSERVED:
+            return
+        for child in frag.fragments():
+            visit(child)
+
+    for stmt in suite:
+        visit(stmt)
+    return found
+
 
 def _iter_function_assertion_surfaces(fn: SourceFragment) -> list[SourceFragment]:
     """Every ``Assert`` under ``fn``, including nested control-flow suites.
@@ -137,20 +173,18 @@ def _iter_function_assertion_surfaces(fn: SourceFragment) -> list[SourceFragment
         raise TypeError(
             f"_iter_function_assertion_surfaces requires FunctionDef, got {fn.observed}"
         )
-    found: list[SourceFragment] = []
+    return _iter_assertion_surfaces_in_suite(fn.function_body())
 
-    def visit(frag: SourceFragment) -> None:
-        if frag.observed == "Assert":
-            found.append(frag)
-            return
-        if frag.observed in _NESTED_SCOPE_OBSERVED:
-            return
-        for child in frag.fragments():
-            visit(child)
 
-    for stmt in fn.function_body():
-        visit(stmt)
-    return found
+def _iter_module_assertion_surfaces(root_frag: SourceFragment) -> list[SourceFragment]:
+    """Every module-level ``Assert`` (not inside any FunctionDef/ClassDef/Lambda).
+
+    #4024 — same recursive-collect pattern as ``_iter_function_assertion_surfaces``,
+    rooted at module body statements. Nested defs/classes are skipped here; they
+    are enumerated as their own def entries. Direct children of the Module (and
+    top-level if/try/for/with/match) are the residual surface after #4023.
+    """
+    return _iter_assertion_surfaces_in_suite(_module_statements(root_frag))
 
 
 def _canonical_term_sig(term) -> str:
@@ -399,15 +433,57 @@ def build_literal_call_report(
         ),
         **local_functions,
     }
+    def _absorb_assert_lift(lifted: LiftResult) -> None:
+        nonlocal contracts, source_mementos, source_audits, factory_walk
+        nonlocal call_edges, implications, effects
+        # _lift_assert never returns None now: it lifts the assert or PANICS
+        # (FactoryGap). A silent skip here would be the cardinal crime.
+        lifted_contracts, mementos, audits, rows, edges, effect_rows = lifted
+        contracts = _merge_contract_rows([*contracts, *lifted_contracts])
+        source_mementos.extend(mementos)
+        source_audits.extend(audits)
+        factory_walk.extend(rows)
+        call_edges.extend(edges)
+        implications.extend(
+            _precondition_implications_from_call_edges(
+                edges, contract_bindings or []
+            )
+        )
+        effects.extend(effect_rows)
+
     for fn in local_function_defs:
         # Total assertion-surface enumeration (#4017): every Assert under the
         # function, including nested if/try/except/for/while/with/match — not
         # only direct FunctionDef.body children. Nested FunctionDef/ClassDef
         # scopes are their own def entries (no double-collect under the outer).
         for stmt in _iter_function_assertion_surfaces(fn):
-            lifted = _lift_assert(
+            _absorb_assert_lift(
+                _lift_assert(
+                    stmt,
+                    fn=fn,
+                    filename=filename,
+                    memento_file=rel_file,
+                    source_lines=lines,
+                    functions_by_name=dig_functions,
+                    classes_by_name=local_classes,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    contract_bindings=contract_bindings or [],
+                    module_statements=module_statements,
+                    dig_refusals=dig_refusals,
+                    dig_floors=dig_floors,
+                    agreement_violations=agreement_violations,
+                    factory_audits=factory_audits,
+                )
+            )
+    # Module-level asserts (#4024): same lift door, parent is the module
+    # (fn=None) — not folded into an arbitrary FunctionDef. Priors use only
+    # module statements before the assert line.
+    for stmt in _iter_module_assertion_surfaces(root_frag):
+        _absorb_assert_lift(
+            _lift_assert(
                 stmt,
-                fn=fn,
+                fn=None,
                 filename=filename,
                 memento_file=rel_file,
                 source_lines=lines,
@@ -422,20 +498,7 @@ def build_literal_call_report(
                 agreement_violations=agreement_violations,
                 factory_audits=factory_audits,
             )
-            # _lift_assert never returns None now: it lifts the assert or PANICS
-            # (FactoryGap). A silent skip here would be the cardinal crime.
-            lifted_contracts, mementos, audits, rows, edges, effect_rows = lifted
-            contracts = _merge_contract_rows([*contracts, *lifted_contracts])
-            source_mementos.extend(mementos)
-            source_audits.extend(audits)
-            factory_walk.extend(rows)
-            call_edges.extend(edges)
-            implications.extend(
-                _precondition_implications_from_call_edges(
-                    edges, contract_bindings or []
-                )
-            )
-            effects.extend(effect_rows)
+        )
     if not contracts and not effects:
         return None
     materialized_contracts = _dedupe_rpc_rows(
@@ -487,35 +550,53 @@ def build_literal_call_report(
     )
 
 
-def _resolve_bound_lhs(lhs, fn):
+def _resolve_bound_lhs(
+    lhs,
+    fn: SourceFragment | None,
+    *,
+    module_statements: list[SourceFragment] | None = None,
+    stmt: SourceFragment | None = None,
+):
     """LHS-as-term, syntactically: a Name bound to a CALL recomposes to that call, so
     ``x = y(5); assert x == 9`` lifts IDENTICALLY to ``assert y(5) == 9`` -- the binding is
     transparent and the bridge falls out wherever the call appears (the same dance, the
     binding just different clothes). Only a call RHS substitutes; a non-call binding leaves
     the Name as-is (which panics as before -- only ``call(...) == literal`` is covered).
+
+    Module-parent asserts (``fn is None``) scan module statements before ``stmt`` only.
     """
     if lhs.observed != "Name":
         return lhs
     name = lhs.name_id()
-    for stmt in fn.function_body():
-        if stmt.observed == "Assign" and stmt.assign_target_name() == name:
-            rhs = stmt.assign_value()
+    if fn is not None:
+        sites = list(fn.function_body())
+    elif module_statements is not None and stmt is not None:
+        sites = []
+        for prior in module_statements:
+            if prior.line == stmt.line and prior.col == stmt.col:
+                break
+            sites.append(prior)
+    else:
+        sites = []
+    for body_stmt in sites:
+        if body_stmt.observed == "Assign" and body_stmt.assign_target_name() == name:
+            rhs = body_stmt.assign_value()
             if rhs.observed == "Call":
                 return rhs
-        if stmt.observed == "AnnAssign":
+        if body_stmt.observed == "AnnAssign":
             try:
-                if stmt.annassign_target_id() != name:
+                if body_stmt.annassign_target_id() != name:
                     continue
             except TypeError:
                 continue
-            rhs = stmt.annassign_value()
+            rhs = body_stmt.annassign_value()
             if rhs is not None and rhs.observed == "Call":
                 return rhs
     return lhs
 
 
 def _non_call_equality_lhs_gap(
-    lhs: SourceFragment, *, fn: SourceFragment, stmt: SourceFragment
+    lhs: SourceFragment, *, fn: SourceFragment | None, stmt: SourceFragment
 ) -> tuple[str, str, str]:
     if lhs.observed == "Name":
         name = lhs.name_id()
@@ -570,7 +651,7 @@ def _assertion_runtime_reason(
 def _lift_assert(
     stmt: SourceFragment,
     *,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -691,7 +772,12 @@ def _lift_assert(
             memento_file=memento_file,
             source_lines=source_lines,
         )
-    comparison_left = _resolve_bound_lhs(comparison.compare_left(), fn)
+    comparison_left = _resolve_bound_lhs(
+        comparison.compare_left(),
+        fn,
+        module_statements=module_statements,
+        stmt=stmt,
+    )
     callee_name = _callee_name(comparison_left, import_aliases, from_imports)
     if callee_name is None:
         observed, requested, fix = _non_call_equality_lhs_gap(
@@ -846,7 +932,7 @@ def _call_return_sort_from_universe(
 def _lift_assertion_via_factory(
     stmt: SourceFragment,
     *,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -986,7 +1072,7 @@ def _lift_assertion_via_factory(
 def _factory_assertion_derived_context(
     stmt: SourceFragment,
     *,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -1097,7 +1183,7 @@ def _factory_assertion_derived_context(
 def _assertion_factory_ctx(
     *,
     stmt: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     filename: str,
     functions_by_name: dict[str, SourceFragment],
     classes_by_name: dict[str, SourceFragment],
@@ -1125,12 +1211,14 @@ def _assertion_factory_ctx(
 
 
 def _ctx_with_function_params(
-    fn: SourceFragment, ctx: FactoryBuildContext
+    fn: SourceFragment | None, ctx: FactoryBuildContext
 ) -> FactoryBuildContext:
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.temporal import bind_temporal
 
+    if fn is None:
+        return ctx
     for param_name in fn.function_params():
         ctx = bind_temporal(
             ctx,
@@ -1144,7 +1232,7 @@ def _ctx_with_function_params(
 
 def _ctx_with_prior_assignments(
     module_statements: list[SourceFragment],
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     stmt: SourceFragment,
     ctx: FactoryBuildContext,
 ) -> FactoryBuildContext | _PriorAssignmentEffect:
@@ -1211,7 +1299,7 @@ def _ctx_with_prior_import_bindings(
 
 def _needed_prior_assignment_sites(
     module_statements: list[SourceFragment],
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     stmt: SourceFragment,
 ) -> list[SourceFragment]:
     needed_names = set(_names_including_self(stmt))
@@ -1264,7 +1352,7 @@ def _prior_binding_target_names(site: SourceFragment) -> set[str]:
 
 def _prior_assignment_names(
     module_statements: list[SourceFragment],
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     stmt: SourceFragment,
 ) -> set[str]:
     names: set[str] = set()
@@ -1275,10 +1363,22 @@ def _prior_assignment_names(
 
 def _prior_assignment_sites(
     module_statements: list[SourceFragment],
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     stmt: SourceFragment,
 ) -> list[SourceFragment]:
+    """Prior statements visible to an assert.
+
+    Function parent: module statements before the def, then body statements
+    before the assert. Module parent (``fn is None``): only module statements
+    before the assert line — never invent a FunctionDef to reuse body walk.
+    """
     priors: list[SourceFragment] = []
+    if fn is None:
+        for prior in module_statements:
+            if prior.line == stmt.line and prior.col == stmt.col:
+                break
+            priors.append(prior)
+        return priors
     for prior in module_statements:
         if prior.line == fn.line and prior.col == fn.col:
             break
@@ -1308,7 +1408,7 @@ def _is_simple_bound_name_equality(stmt: SourceFragment, bound_names: set[str]) 
 
 def _comparison_assertion_uses_nonfree_name(
     stmt: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     *,
     import_aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
@@ -1330,8 +1430,9 @@ def _comparison_assertion_uses_nonfree_name(
         for operator in operators
     ):
         return False
+    parent_params = set(fn.function_params()) if fn is not None else set()
     safe_names = (
-        set(fn.function_params())
+        parent_params
         | set(import_aliases)
         | set(from_imports)
         | set(extra_safe_names or set())
@@ -1399,7 +1500,7 @@ def _literal_floor_via_factory(
 
 def _effect_lift(
     frag: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     incomplete: Incomplete,
     *,
     stmt: SourceFragment,
@@ -1410,7 +1511,7 @@ def _effect_lift(
     source_lines: list[str],
 ) -> LiftResult:
     effect_name = (
-        f"{Path(memento_file).stem}::{fn.function_name()}::"
+        f"{Path(memento_file).stem}::{_assert_parent_name(fn)}::"
         f"effect:{frag.line}:{frag.col}"
     )
     memento = _statement_source_memento(
@@ -1451,7 +1552,7 @@ def _effect_lift(
 def _prior_assignment_effect_lift(
     prior: _PriorAssignmentEffect,
     *,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -1471,7 +1572,7 @@ def _prior_assignment_effect_lift(
 
 def _proofir_effect_lift(
     frag: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     *,
     stmt: SourceFragment,
     observed: str,
@@ -1592,7 +1693,7 @@ def _numpy_integer_literal_call_derived_fact(
     comparison: SourceFragment,
     callee_name: str,
     callsite: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -1666,7 +1767,7 @@ def _numpy_float_literal_call_derived_fact(
     *,
     callee_name: str,
     callsite: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -1838,7 +1939,7 @@ def _opaque_op_companion_formula(value) -> Formula | None:
 def _opaque_op_companion_facts(
     value,
     stmt: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     *,
     filename: str,
     memento_file: str,
@@ -1892,7 +1993,7 @@ def _attribute_coordinate_name(frag: SourceFragment) -> str | None:
 def _try_lift_attribute_coordinate_assertion(
     stmt: SourceFragment,
     *,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -2012,7 +2113,7 @@ def _lift_callsite_assertion(
     comparison: SourceFragment,
     callee_name: str,
     callsite: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -2291,7 +2392,7 @@ def _lift_callsite_assertion(
 
 def _emit_dict_literal_callsite_facts(
     stmt: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     callee_name: str,
     arg_terms: list[Term],
     value: DictLiteralValue,
@@ -2380,7 +2481,7 @@ def _dict_read_sort(term: Term, *, callee_name: str) -> ProofSort:
 
 def _emit_euf_fact(
     stmt: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     callee_name: str,
     arg_terms,
     value_term,
@@ -2578,7 +2679,7 @@ def _require_proofir_emission_node(
 
 def _emit_assertion_surface_fact(
     stmt: SourceFragment,
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     formula: Formula,
     *,
     selected: str,
@@ -2589,7 +2690,7 @@ def _emit_assertion_surface_fact(
     reason: str | None = None,
 ) -> LiftResult:
     contract_name = (
-        f"{Path(memento_file).stem}::{fn.function_name()}::"
+        f"{Path(memento_file).stem}::{_assert_parent_name(fn)}::"
         f"assert:{stmt.line}:{stmt.col}::assertion"
     )
     memento = _statement_source_memento(
@@ -2986,7 +3087,7 @@ def _construct_callsite_from_factory_term(
     stmt: SourceFragment,
     callsite: SourceFragment,
     callee_name: str,
-    caller_fn: SourceFragment,
+    caller_fn: SourceFragment | None,
     functions_by_name: dict[str, SourceFragment],
     classes_by_name: dict[str, SourceFragment],
     *,
@@ -4855,7 +4956,7 @@ def _callee_name(
 
 
 def _source_audit(
-    fn: SourceFragment,
+    fn: SourceFragment | None,
     stmt: SourceFragment,
     memento_file: str,
     contract_name: str,
@@ -4868,7 +4969,7 @@ def _source_audit(
         role=role,
         contract=contract_name,
         file=memento_file,
-        source_function_name=fn.function_name(),
+        source_function_name=_assert_parent_name(fn),
         loci=(
             AuditLocus(
                 file=memento_file,
