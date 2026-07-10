@@ -10,6 +10,7 @@ description = "Sugar: six-stage verifier pipeline (load, enumerate, resolve, ins
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-ir-types = { path = "../sugar-ir-types" }
 sugar-proof-envelope = { path = "../sugar-proof-envelope" }
+sugar-claim-envelope = { path = "../sugar-claim-envelope" }
 libsugar = { path = "../libsugar" }
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
 sugar-ir-compiler = { path = "../sugar-ir-compiler" }
@@ -28,7 +29,6 @@ chrono = { version = "0.4", features = ["clock"] }
 tracing = "0.1"
 
 [dev-dependencies]
-sugar-claim-envelope = { path = "../sugar-claim-envelope" }
 sugar-ir-symbolic = { path = "../sugar-ir-symbolic" }
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
