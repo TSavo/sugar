@@ -29,6 +29,7 @@ from .raise_value import RaiseValue
 from .return_value import ReturnValue
 from .sequence_constructor import SequenceConstructor
 from .set_literal_value import SetLiteralValue
+from .set_value import SetValue
 from .slice_value import SliceValue
 from .string_value import StringValue
 from .support_value import SupportValue
@@ -58,6 +59,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ReturnValue,
     SequenceConstructor,
     SetLiteralValue,
+    SetValue,
     SliceValue,
     StringValue,
     SupportValue,
@@ -97,6 +99,7 @@ __all__ = [
     "ReturnValue",
     "SequenceConstructor",
     "SetLiteralValue",
+    "SetValue",
     "SliceValue",
     "StringValue",
     "SupportValue",
