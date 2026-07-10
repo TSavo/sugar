@@ -1,9 +1,16 @@
+// Call-edge helpers. Solve does **not** WalkDir `*.call-edges.json`
+// (#3809 cut #3): discharge uses pool bridges + `enumerate_callsites`.
+// `load_call_edge_files` remains a **client** helper for faces/showcases
+// that still dual-write sidecars (e.g. panama mint emission checks).
+
 use std::path::Path;
 
 use serde_json::Value as Json;
 
 use crate::types::MementoPool;
 
+/// Client helper: WalkDir project for legacy `*.call-edges.json` sidecars.
+/// Solve never calls this (#3809 cut #3).
 pub fn load_call_edge_files(project_root: &Path) -> Vec<Json> {
     let mut edges = Vec::new();
     if !project_root.exists() {
