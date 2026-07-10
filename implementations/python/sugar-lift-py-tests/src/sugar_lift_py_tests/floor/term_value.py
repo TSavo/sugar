@@ -80,6 +80,24 @@ class TermValue(FloorValue):
             return Complete(TermValue(self.value * other.value))
         return super().multiply(other, blame)
 
+    def divide(self, other, blame):
+        # A number stands on the division floor: true division. A concrete zero
+        # divisor is a runtime effect (the program halts), not a lift-side gap.
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            if other.value == 0:
+                from sugar_lift_py_tests.effect import DivisionByZeroRuntimeEffect
+
+                return Incomplete(
+                    DivisionByZeroRuntimeEffect(
+                        f"division by zero runtime boundary: the divisor is "
+                        f"concretely 0; owner=TermValue.divide blame={blame}"
+                    )
+                )
+            return Complete(TermValue(self.value / other.value))
+        return super().divide(other, blame)
+
     def to_term(self, *, owner: str):
         del owner
         # Int embeds in Real losslessly (3 and 3.0 are the same number), but the

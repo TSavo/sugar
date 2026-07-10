@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .coverage_gap_effect import CoverageGapEffect
+from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .effect import Effect, effect_kind, effect_reason, effect_status, require_effect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .raise_effect import RaiseEffect
@@ -9,6 +10,7 @@ from .source_oracle_effect import SourceOracleEffect
 
 __all__ = [
     "CoverageGapEffect",
+    "DivisionByZeroRuntimeEffect",
     "Effect",
     "OSExitRuntimeEffect",
     "RaiseEffect",
