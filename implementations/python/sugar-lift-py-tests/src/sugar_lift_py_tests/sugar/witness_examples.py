@@ -393,6 +393,20 @@ def less_than_return_witness() -> SugarWitnessPair:
     )
 
 
+def set_literal_return_witness() -> SugarWitnessPair:
+    # A bare set literal reduces as a statement body step, then returns z. Sets do
+    # not compare by == to a literal easily in the witness harness, so the pair
+    # discriminates on the returned face -- the set itself is just present.
+    prefix = "def A(z):\n    {1}\n    return z\n\n"
+    return _call_pair(
+        name="set_literal_return",
+        owner_sugar="SetLiteralSugar",
+        truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+        lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+    )
+
+
+
 def greater_than_return_witness() -> SugarWitnessPair:
     # `>` is `b < a` with the operands swapped: folds concrete operands to the
     # True/False literal, and the literal picks the if-face. The truthful twin
