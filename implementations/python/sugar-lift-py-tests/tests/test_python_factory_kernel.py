@@ -44,7 +44,8 @@ def test_batch_lift_entrypoints_use_lift_rpc_not_lsp() -> None:
 
 def test_lift_rpc_reports_factory_gap_without_old_lsp_entry(tmp_path) -> None:
     source = tmp_path / "base64.py"
-    source.write_text("def encode_len(data):\n    global x\n", encoding="utf-8")
+    # Nonlocal remains unowned (shared-scope sibling of Global, still residual).
+    source.write_text("def encode_len(data):\n    nonlocal x\n", encoding="utf-8")
     env = {
         **os.environ,
         "PYTHONPATH": str(PY_TESTS / "src"),
@@ -81,9 +82,9 @@ def test_lift_rpc_reports_factory_gap_without_old_lsp_entry(tmp_path) -> None:
     assert lift_response["error"]["data"]["info"] == {
         "owner": "python.factory",
         "blame": str(source) + ":2:4",
-        "observed": "Global",
+        "observed": "Nonlocal",
         "requested": "statement",
-        "fix": "create sugar_lift_py_tests.sugar.global.global_sugar",
+        "fix": "create sugar_lift_py_tests.sugar.nonlocal.nonlocal_sugar",
         "gap_kind": "Sugar",
         "gap_locus": "AST",
     }
@@ -93,8 +94,8 @@ def test_lift_rpc_audit_only_argv_collects_all_factory_gaps(tmp_path) -> None:
     first = tmp_path / "a.py"
     second = tmp_path / "b.py"
     empty_package_marker = tmp_path / "empty" / "__init__.py"
-    first.write_text("def a():\n    global x\n", encoding="utf-8")
-    second.write_text("def b():\n    global y\n", encoding="utf-8")
+    first.write_text("def a():\n    nonlocal x\n", encoding="utf-8")
+    second.write_text("def b():\n    nonlocal y\n", encoding="utf-8")
     empty_package_marker.parent.mkdir()
     empty_package_marker.write_text("", encoding="utf-8")
     env = {
@@ -139,7 +140,7 @@ def test_lift_rpc_audit_only_argv_collects_all_factory_gaps(tmp_path) -> None:
     assert error["message"] == "audit-only construction gaps"
     gaps = error["data"]["auditOnlyGaps"]
     assert [gap["label"] for gap in gaps] == [str(first), str(second)]
-    assert [gap["gap"]["observed"] for gap in gaps] == ["Global", "Global"]
+    assert [gap["gap"]["observed"] for gap in gaps] == ["Nonlocal", "Nonlocal"]
     assert all(
         gap["message"].startswith("write more Sugar for this AST") for gap in gaps
     )
@@ -188,7 +189,8 @@ def test_lift_rpc_normal_mode_ignores_empty_package_markers(tmp_path) -> None:
 
 
 def test_factory_without_sugar_panics_on_last_popped_source_fragment() -> None:
-    source = "def encode_len(data):\n    global x\n"
+    # Nonlocal remains unowned after GlobalSugar drain (shared-scope sibling).
+    source = "def encode_len(data):\n    nonlocal x\n"
 
     with pytest.raises(FactoryGap) as raised:
         build_next(source, filename="base64.py", role=SugarRole.TERM)
@@ -198,9 +200,9 @@ def test_factory_without_sugar_panics_on_last_popped_source_fragment() -> None:
     assert gap.info.to_json() == {
         "owner": "python.factory",
         "blame": "base64.py:2:4",
-        "observed": "Global",
+        "observed": "Nonlocal",
         "requested": "statement",
-        "fix": "create sugar_lift_py_tests.sugar.global.global_sugar",
+        "fix": "create sugar_lift_py_tests.sugar.nonlocal.nonlocal_sugar",
         "gap_kind": "Sugar",
         "gap_locus": "AST",
     }
@@ -208,7 +210,7 @@ def test_factory_without_sugar_panics_on_last_popped_source_fragment() -> None:
         "kind": "factory-audit-row",
         "role": "statement",
         "status": "sugar-gap",
-        "observed": "Global",
+        "observed": "Nonlocal",
         "blame": "base64.py:2:4",
         "selected": None,
         "candidates": [],
