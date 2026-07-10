@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from .array_literal import ArrayLiteral
 from .block_value import BlockValue
-from .bool_value import BoolValue
 from .bound_var import BoundVar
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
@@ -40,7 +39,6 @@ from .tuple_literal_value import TupleLiteralValue
 REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ArrayLiteral,
     BlockValue,
-    BoolValue,
     BoundVar,
     BuilderState,
     Bv32Value,
@@ -76,7 +74,6 @@ __all__ = [
     "BASE_CONSTRUCTION_GAP_METHOD_NAMES",
     "BinaryOperatorFloor",
     "BlockValue",
-    "BoolValue",
     "BoundVar",
     "BuilderState",
     "Bv32Value",

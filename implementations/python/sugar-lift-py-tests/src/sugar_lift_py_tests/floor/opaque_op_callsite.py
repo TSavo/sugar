@@ -196,12 +196,11 @@ def is_concrete_floor_value(value: FloorValue) -> bool:
     SymbolicValue / OpaqueOpCallsite / ObjectValue / ArrayLiteral are not
     concrete — they do not supply a companion equality by themselves.
     """
-    from .bool_value import BoolValue
     from .string_value import StringValue
     from .term_value import TermValue
     from .tuple_literal_value import TupleLiteralValue
 
-    if isinstance(value, (TermValue, StringValue, BoolValue)):
+    if isinstance(value, (TermValue, StringValue)):
         return True
     if isinstance(value, TupleLiteralValue):
         return all(is_concrete_floor_value(item) for item in value.items)

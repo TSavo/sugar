@@ -17,6 +17,11 @@ class PassSugar(Sugar, role=SugarRole.STATEMENT):
         return site.observed == "Pass"
 
     @classmethod
+    def new(cls, site, ctx) -> "PassSugar":
+        del site, ctx  # pass is a leaf: no children
+        return cls()
+
+    @classmethod
     def witnesses(cls) -> tuple[NotVerdictBearing, SugarWitnessPair]:
         return (
             NotVerdictBearing(
@@ -31,11 +36,7 @@ class PassSugar(Sugar, role=SugarRole.STATEMENT):
             ),
         )
 
-    @classmethod
-    def build(cls, site, ctx) -> "PassSugar":
-        if not cls.owns(site):
-            raise TypeError("PassSugar claim built a non-pass statement")
-        return cls()
-
-    def _build(self, ctx=None) -> Outcome:
+    def desugar(self, ctx: object = None) -> Outcome:
+        del ctx  # pass is inert control-flow support
         return Complete(SupportValue())
+

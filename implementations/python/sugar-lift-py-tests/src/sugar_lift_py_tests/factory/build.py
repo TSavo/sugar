@@ -15,10 +15,6 @@ from .source_fragment_stack import SourceFragmentStack
 from sugar_lift_py_tests.sugar_body import ReducibleSugar
 
 
-class FactoryCandidateDeclined(RuntimeError):
-    """A selected sugar can step aside only so the factory can select the next one."""
-
-
 def build_node(
     node: ast.AST | SourceFragment | None,
     *,
@@ -54,15 +50,6 @@ def build_next(
     ctx: Optional[FactoryBuildContext] = None,
     contract_bindings: list | None = None,
 ) -> FactoryBuildResult | object:
-    report = _build_source_report(
-        source=source,
-        filename=filename,
-        memento_file=memento_file,
-        contract_bindings=contract_bindings,
-    )
-    if report is not None:
-        return report
-
     site = SourceFragmentStack.from_source(source, filename).pop()
     if site is None:
         raise ValueError("factory source contained no source sites")
@@ -86,29 +73,6 @@ def _fallback_role(site: SourceFragment, requested: SugarRole) -> SugarRole:
     return requested
 
 
-def _build_source_report(
-    *,
-    source: str,
-    filename: str,
-    memento_file: str | None,
-    contract_bindings: list | None = None,
-):
-    from .array_map_report import build_array_map_report
-    from .literal_call_report import build_literal_call_report
-
-    array_map = build_array_map_report(
-        source=source,
-        filename=filename,
-        memento_file=memento_file,
-    )
-    if array_map is not None:
-        return array_map
-    return build_literal_call_report(
-        source=source,
-        filename=filename,
-        memento_file=memento_file,
-        contract_bindings=contract_bindings,
-    )
 
 
 def _build_site(
@@ -117,13 +81,8 @@ def _build_site(
     role: SugarRole,
     catalog: SugarCatalog,
     ctx: FactoryBuildContext,
-    excluded: frozenset[str] = frozenset(),
 ) -> FactoryBuildResult:
-    candidates = [
-        candidate
-        for candidate in catalog.candidates_for(role, site)
-        if candidate.name not in excluded
-    ]
+    candidates = list(catalog.candidates_for(role, site))
     if not candidates:
         info = FactoryGapInfo(
             owner="python.factory",
@@ -146,16 +105,7 @@ def _build_site(
     selected = _select_candidate(candidates)
     if selected is None:
         _raise_ambiguous_candidates(site, role, candidates)
-    try:
-        sugar = selected.claim.build(site, ctx)
-    except FactoryCandidateDeclined:
-        return _build_site(
-            site,
-            role=role,
-            catalog=catalog,
-            ctx=ctx,
-            excluded=excluded | {selected.name},
-        )
+    sugar = selected.claim.new(site, ctx)
     message = (
         f"selected Sugar `{selected.name}` for role {role.value} at `{site.blame}`"
     )

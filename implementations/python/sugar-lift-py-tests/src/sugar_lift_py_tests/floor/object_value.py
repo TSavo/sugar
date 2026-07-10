@@ -235,25 +235,12 @@ class ObjectValue(FloorValue):
             and isinstance(operation.right, ObjectValue)
             and not self.has_method(method_name)
         ):
-            from sugar_lift_py_tests.floor.bool_value import BoolValue
-            from sugar_lift_py_tests.outcome import Complete
-
-            if not self.identity or not operation.right.identity:
-                return self._floor_gap(
-                    owner=operation.owner,
-                    blame=operation.blame,
-                    observed=f"{self.class_name}=={operation.right.class_name}",
-                    requested="object identity equality",
-                    fix=(
-                        "construct ObjectValue identities before applying "
-                        "method-less equality"
-                    ),
-                )
-            return Complete(
-                BoolValue(
-                    self.class_name == operation.right.class_name
-                    and self.identity == operation.right.identity
-                )
+            return self._floor_gap(
+                owner=operation.owner,
+                blame=operation.blame,
+                observed=f"{self.class_name}=={operation.right.class_name}",
+                requested="object identity equality",
+                fix="lift method-less object identity equality",
             )
         return self.call_method_value(
             method_name,
@@ -395,15 +382,21 @@ class ObjectValue(FloorValue):
                 if sink is not None:
                     sink.append(call_value)
             return Complete(call_value)
-        return self._floor_gap(
-            owner=owner,
-            blame=blame,
-            observed=f"{self.class_name}.{name}",
-            requested="constructor-bound method",
-            fix=(
-                f"define `{name}` on `{self.class_name}` or add the "
-                "floor that owns this method"
-            ),
+        # Method not in the single-return method table (multi-statement /
+        # effectful bodies are not folded into ObjectMethodValue). Typed red —
+        # not factory_panic: the Sugar owns the call; the residual is runtime
+        # method evaluation, not match(None).
+        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            RuntimeEffect(
+                "constructor-bound method runtime boundary: "
+                f"`{self.class_name}.{name}` is not a single-return diggable "
+                "method floor (multi-statement/effectful bodies stay red); "
+                f"owner={owner}; define a diggable body or keep as typed red. "
+                f"blame={blame}"
+            )
         )
 
     def has_method(self, name: str) -> bool:

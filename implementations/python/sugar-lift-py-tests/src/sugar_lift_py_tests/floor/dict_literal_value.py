@@ -118,10 +118,6 @@ def _term_to_floor(term: Term) -> FloorValue:
         from .string_value import StringValue
 
         return StringValue(term.value)
-    if isinstance(term, _ConstBool):
-        from .bool_value import BoolValue
-
-        return BoolValue(term.value)
     if isinstance(term, _Ctor) and term.name == "python:dict":
         entries: list[tuple[Term, Term]] = []
         for entry in term.args:

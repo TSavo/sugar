@@ -1,35 +1,42 @@
 from __future__ import annotations
 
-import os
-import sys
 from typing import NoReturn
 
 from .factory_audit_row import FactoryAuditRow
 from .factory_gap_info import FactoryGapInfo, GapKind, GapLocus
 
-# Terminal exit for the None / no-recognizer arm of
-# match(Sugar) { Some => cite_or_effect, None => panic!() }.
-# Non-zero, process-fatal, not catchable as a value to continue on.
-_FACTORY_PANIC_EXIT_CODE = 1
+
+class FactoryPanic(BaseException):
+    """The None arm of match(Sugar) { Some => cite_or_effect, None => panic!() }.
+
+    A BaseException, NOT an Exception: a normal `except Exception:` -- the usual swallow
+    -- will not catch it, so it propagates and halts loud, the way a process exit did.
+    Only an audit harness that explicitly does `except FactoryPanic:` can hold it, to
+    enumerate every gap instead of dying on the first. It carries the gap so the audit
+    can name what to write."""
+
+    def __init__(
+        self,
+        info: FactoryGapInfo,
+        audit_row: FactoryAuditRow | None = None,
+    ) -> None:
+        self.info = info
+        self.audit_row = audit_row
+        super().__init__(
+            "FACTORY PANIC: match(Sugar) { Some => cite_or_effect, None => panic!() }\n"
+            f"{info.message}"
+        )
 
 
 def factory_panic(
     info: FactoryGapInfo,
     audit_row: FactoryAuditRow | None = None,
 ) -> NoReturn:
-    """Halt the process: no recognizer is not a third state.
-
-    There is no FactoryGap type. There is no catchable Incomplete arm.
-    The None slot panics.
+    """The None / no-recognizer arm. No recognizer is not a third state: there is no
+    FactoryGap type and no catchable Incomplete arm. The None slot panics -- loudly,
+    uncatchable by ordinary handlers -- via a BaseException that only audit mode holds.
     """
-    sys.stderr.write(
-        "FACTORY PANIC: match(Sugar) { Some => cite_or_effect, None => panic!() }\n"
-        f"{info.message}\n"
-    )
-    if audit_row is not None:
-        sys.stderr.write(f"audit={audit_row.to_json()}\n")
-    sys.stderr.flush()
-    os._exit(_FACTORY_PANIC_EXIT_CODE)
+    raise FactoryPanic(info, audit_row)
 
 
 def factory_panic_gap(
@@ -73,10 +80,12 @@ def dig_boundary_panic(
     caught: str,
     reason: str,
 ) -> NoReturn:
-    """Dig refusal is not a soft ledger row. Sink."""
-    sys.stderr.write(
-        "DIG BOUNDARY PANIC: match(Sugar) { Some => cite_or_effect, None => panic!() }\n"
-        f"callee={callee} blame={blame} caught={caught} reason={reason}\n"
+    """Dig refusal is not a soft ledger row. It panics like any other None arm."""
+    info = FactoryGapInfo(
+        owner="dig",
+        blame=blame,
+        observed=callee,
+        requested="dig",
+        fix=f"caught={caught} reason={reason}",
     )
-    sys.stderr.flush()
-    os._exit(_FACTORY_PANIC_EXIT_CODE)
+    raise FactoryPanic(info)
