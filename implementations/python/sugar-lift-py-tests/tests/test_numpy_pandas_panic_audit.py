@@ -346,6 +346,7 @@ def test_extracts_audit_only_gaps_when_rust_adds_trailing_context() -> None:
 
 
 def test_installed_numpy_totality_gate_is_stable_zero() -> None:
+    """Installed numpy package construction-gap R stays at 0 (per-package arm)."""
     report = collect_panic_audit(
         ROOT,
         installed_packages=("numpy",),
@@ -363,11 +364,7 @@ def test_installed_numpy_totality_gate_is_stable_zero() -> None:
 
 
 def test_installed_pandas_totality_gate_is_stable_zero() -> None:
-    """Installed pandas package audit stays at R=0 construction/unexpected panics.
-
-    Companion to the numpy totality gate. Closes the residual BinOp OpaqueOp
-    and nested-import support gaps drained after #3908/#3909 body dig widened.
-    """
+    """Installed pandas package construction-gap R stays at 0 (per-package arm)."""
     import pandas
 
     report = collect_panic_audit(
@@ -387,6 +384,31 @@ def test_installed_pandas_totality_gate_is_stable_zero() -> None:
         f"{render_text(report)}"
     )
     assert not report.records
+
+
+def test_numpy_pandas_wall_construction_gap_r_is_stable_zero() -> None:
+    """Capstone ratchet: combined installed numpy+pandas construction-gap R == 0.
+
+    Part of #3809. The drain sequence repeatedly unmasked deeper floors once a
+    recognizer/totalizer closed; this gate measures the same combined R vector
+    drain workers read on battleaxe and refuses any silent climb after honest-0.
+    """
+    import pandas
+
+    report = collect_panic_audit(
+        ROOT,
+        installed_packages=("numpy", "pandas"),
+        include_showcases=False,
+    )
+
+    assert report.is_zero, (
+        f"numpy {numpy.__version__} + pandas {pandas.__version__} wall R reopened: "
+        f"{render_text(report)}"
+    )
+    assert report.r.is_zero
+    assert not report.records
+    assert not report.diagnostics
+    assert sum(report.r.values.values()) == 0
 
 
 def test_extracts_audit_only_loud_floor_type_error() -> None:

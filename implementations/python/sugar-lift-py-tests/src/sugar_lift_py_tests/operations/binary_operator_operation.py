@@ -85,10 +85,13 @@ class BinaryOperatorOperation:
             return Complete(TermValue(folder(receiver.value, self.right.value)))
         if isinstance(self.right, SymbolicValue):
             return self._emit_symbolic(receiver, self.right)
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
 
         if isinstance(self.right, OpaqueOpCallsite):
             return self._emit_symbolic(receiver, self.right._downstream())
+        if isinstance(self.right, CallSiteValue):
+            return self._emit_symbolic(receiver, SymbolicValue(self.right.term))
         if isinstance(self.right, ObjectValue):
             return self._reflect_binary(receiver, self.right, ctx)
         self._floor_gap(receiver="TermValue")
@@ -97,12 +100,18 @@ class BinaryOperatorOperation:
         self, receiver: SymbolicValue, ctx: FactoryBuildContext | None
     ) -> Outcome:
         del ctx
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
 
         right = self.right
         if isinstance(right, OpaqueOpCallsite):
             # OpaqueOp participates as its coordinate term (or computed value).
             right = right._downstream()
+        if isinstance(right, CallSiteValue):
+            # Undiggable / undemanded callsite right: participate as its bridge
+            # term (same coordinate surface as left-side CallSiteValue dig
+            # fallback). Never invent a folded value for the callsite body.
+            right = SymbolicValue(right.term)
         if isinstance(right, (TermValue, SymbolicValue)):
             return self._emit_symbolic(receiver, right)
         if isinstance(self.right, StringValue) and self.operator in {"==", "!="}:

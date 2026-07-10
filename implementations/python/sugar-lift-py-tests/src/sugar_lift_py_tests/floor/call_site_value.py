@@ -86,13 +86,30 @@ class CallSiteValue(FloorValue):
         )
 
     def binary_operator_with(self, operation, ctx):
-        """Binary op on a callsite result (e.g. ``f() + g()``, ``x + y`` after dig).
+        """Binary op on a callsite result (e.g. ``(x + y).substitute(...)``).
 
-        Same totalizer shape as unary_operator_with: dig the floor when
-        possible; else mint a joinable symbolic coordinate
-        ``call:<op>(callsite, right)`` via OpaqueOp / SymbolicValue path —
-        never invent a numeric fold for an undiggable body.
+        Lift-probe residual: FactoryGap · observed=CallSiteValue ·
+        requested=binary_operator_with. Mechanism: missing floor totalizer
+        (sibling of unary_operator_with) — not a missing AST recognizer.
+
+        Dig the callsite floor when the body projects; undiggable residual
+        re-dispatches on ``SymbolicValue(self.term)`` so BinaryOperatorOperation
+        mints a joinable symbolic op. Never fabricate a concrete fold.
         """
+        return self._dig_or_symbolic_redispatch(
+            operation, ctx, owner_suffix="callsite binary operand"
+        )
+
+    def subscript_with(self, operation, ctx):
+        """Subscript on a callsite result (revealed after binary dig progress).
+
+        Same dig-or-symbolic totalizer as binary_operator_with.
+        """
+        return self._dig_or_symbolic_redispatch(
+            operation, ctx, owner_suffix="callsite subscript receiver"
+        )
+
+    def _dig_or_symbolic_redispatch(self, operation, ctx, *, owner_suffix: str):
         from sugar_lift_py_tests.factory import FactoryGap
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.operations import perform_operation
@@ -101,13 +118,10 @@ class CallSiteValue(FloorValue):
             floor = force_floor(
                 self,
                 ctx,
-                owner=f"{operation.owner} callsite binary operand",
+                owner=f"{operation.owner} {owner_suffix}",
                 project_callsite=False,
             )
         except FactoryGap as exc:
-            # Opaque residual: treat the undiggable callsite as its term
-            # coordinate and re-dispatch so BinaryOperatorOperation can mint
-            # a joinable symbolic op (never fabricate a concrete fold).
             del exc
             return perform_operation(
                 owner=operation.owner,
