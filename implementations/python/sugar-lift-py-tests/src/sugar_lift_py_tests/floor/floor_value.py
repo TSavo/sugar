@@ -604,6 +604,42 @@ class FloorValue:
             ),
         )
 
+    def modulo(self, other, blame):
+        # Default: this value does not stand on the modulo floor -- it cannot answer
+        # what remainder it leaves by another value. The None arm: a value that CAN
+        # implements modulo and gives back a remainder; absence here is the honest "no".
+        del other
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="modulo",
+            blame=blame,
+            observed=observed,
+            requested="stand on the modulo floor",
+            fix=f"write more Floor: implement {observed}.modulo",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="modulo",
+                status="floor-gap",
+                observed=observed,
+                blame=blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow, factory_panic,
