@@ -277,10 +277,6 @@ fn runner_aggregates_per_solver_telemetry() {
     std::fs::create_dir_all(&tmp).unwrap();
     let cfg = RunnerConfig {
         project_root: tmp.clone(),
-        legacy_z3_fallback: None,
-        cache_dir: None,
-        mint_seed: None,
-        mint_producer_id: None,
         solvers_config: Some(
             SolversConfig::from_toml(
                 r#"
@@ -292,11 +288,7 @@ binary = "stub:unsat"
             )
             .unwrap(),
         ),
-        extra_projects: Vec::new(),
-        extra_proof_files: Vec::new(),
-        extra_proofs: Vec::new(),
-        plan_artifact: None,
-        trusted_implication_signers: Vec::new(),
+        ..Default::default()
     };
     let runner = Runner::new(cfg);
     let (report, stats) = runner.run_with_tiers();
