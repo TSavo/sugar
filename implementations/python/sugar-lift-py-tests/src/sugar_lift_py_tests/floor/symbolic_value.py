@@ -127,6 +127,49 @@ class SymbolicValue(FloorValue):
             )
         )
 
+    def add_with(self, operation, ctx):
+        """``.add(operand)`` on a symbolic receiver.
+
+        Numeric operands (TermValue / SymbolicValue / OpaqueOp coordinate)
+        route through ``BinaryOperatorOperation(+)`` so free ``z.add(1)`` is
+        the joinable term ``+(z, 1)`` — same arithmetic as ``z + 1``, and the
+        AddSugar witness seed stays proof-bearing.
+
+        Vendor/opaque operands (arrays, undiggable callsites) mint
+        ``call:add(self, operand)`` with ``computed=None`` — never invent a
+        placement/array sum (pandas BlockPlacement residual).
+        """
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.operations.binary_operator_operation import (
+            BinaryOperatorOperation,
+        )
+        from sugar_lift_py_tests.operations.perform_operation import perform_operation
+        from sugar_lift_py_tests.outcome import Complete
+
+        operand = operation.operand
+        if isinstance(operand, (TermValue, SymbolicValue, OpaqueOpCallsite)):
+            return perform_operation(
+                owner=operation.owner,
+                blame=operation.blame,
+                receiver=self,
+                operation=BinaryOperatorOperation(
+                    operator="+",
+                    right=operand,
+                    owner=operation.owner,
+                    blame=operation.blame,
+                ),
+                ctx=ctx,
+            )
+        return Complete(
+            OpaqueOpCallsite(
+                callee="add",
+                arg=self,
+                computed=None,
+                extra_args=(operand,),
+            )
+        )
+
     def binary_operator_with(self, operation, ctx):
         return operation.binary_symbolic(self, ctx)
 
