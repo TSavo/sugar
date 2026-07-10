@@ -92,6 +92,64 @@ Voiceless (`un_asserted`) is **reported, not gated red**. Silenced
 (`silently_unaccounted`) is the injustice the campaign prosecutes
 ([#4016](https://github.com/TSavo/sugar/issues/4016)).
 
+### The product is the Minority Report
+
+The deeper inversion: the whole **product** is the `Minority Report`, because
+it is the only part that can affect the future.
+
+- **Under contract is expected.** Code consistent with a vendor (numpy, etc.)
+  — the parts *under contract* — is EXPECTED. Boring. Contracted code is
+  deterministic and known; it cannot surprise you, therefore it cannot hurt
+  you. The green wall of proofs is that comfort: reassurance that what was
+  claimed held.
+- **Danger lives off contract.** The danger that flaps in the night is **not**
+  the parts under contract. It is the **un-contracted surface** — bodies,
+  paths, usages no assertion governs. That is the only part that can actually
+  affect the future (the unpredicted incident).
+- **Green is comfort; the Minority Report is intelligence.** So the green wall
+  of proofs is reassurance, not the product. The product **is** the
+  `Minority Report` — the named danger surface at full size.
+- **Campaign reframed.** Driving Crime 1 (`silently_unaccounted → 0`) and
+  Crime 2 (`forged_warrant → 0`) is **not** about making green greener. It is
+  about making the `Minority Report` **TRUE**, so the danger surface it names
+  is the *real* one at full size — not a fake-small one hiding behind a broken
+  instrument. (The nested-assert blindness made the danger surface look smaller
+  than it was: silenced claims never opened digs, so un-asserted looked thinner
+  than reality.)
+
+Green is the contract room. The `Minority Report` is the only instrument that
+can still change what happens next.
+
+---
+
+## Auto-mode: Minority Report across the dependency tree
+
+Where does the un-contracted danger actually live? Most of all in your
+**dependencies** — code you didn't write, under no contract you control,
+pip-installed and trusted on faith. That is the un-contracted surface at its
+largest.
+
+**Auto-mode** is the mechanism that points the instrument at **any** lib in the
+tree — no shipped proof required, no vendor cooperation:
+
+| piece | role |
+|-------|------|
+| [#4007](https://github.com/TSavo/sugar/issues/4007) | The capability: LSP lifts un-instrumented vendor source on unresolved symbol; a missing `.proof` is a **cache miss**, not a black hole; vendor tests ARE the spec |
+| [#4012](https://github.com/TSavo/sugar/pull/4012) | The cold-only implementation: skip warm/sealed modules; prefer vendor-shipped `*.proof`; disk-durable `.sugar/imports/auto/<source_cid>.proof` cache; mint from source only when cold |
+
+On a cold dependency edge, auto-mode lifts the source that is already on disk
+and the report's section header remains exactly `Minority Report` — naming that
+dependency's danger surface: the bodies no assertion (theirs or yours) ever put
+under oath.
+
+**Auto-mode + the Minority Report = the product at ecosystem scale.** The
+gallery's curated rows (six stdlib/vendors on the wall) are the **demo**.
+Auto-mode is the same intelligence pointed at every lib in the tree — not just
+the rows below.
+
+No invented dependency-tree counts belong here. The wall stays measured-only;
+auto-mode is the reach story, not a second fabricated table.
+
 ---
 
 ## Per-vendor wall
@@ -205,6 +263,8 @@ counts for these rows.
 | [#4015](https://github.com/TSavo/sugar/pull/4015) | Crime 1 detector live on main; statistics seed totals |
 | [#4020](https://github.com/TSavo/sugar/pull/4020) | Crime 2 detector live on main; statistics `forged_warrant = 0` |
 | [#4017](https://github.com/TSavo/sugar/issues/4017) | First indictment — lift the 3 silenced `statistics` asserts |
+| [#4007](https://github.com/TSavo/sugar/issues/4007) | Auto-mode capability — point the instrument at any dep (missing `.proof` = cache miss) |
+| [#4012](https://github.com/TSavo/sugar/pull/4012) | Auto-mode MVP: cold-only lift, shipped-`.proof` preference, disk CID cache — ecosystem-scale `Minority Report` |
 
 ---
 
