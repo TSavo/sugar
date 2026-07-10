@@ -1,0 +1,7 @@
+*.proof
+.prove*
+.verify*
+.sugar/runs/
+.sugar/witnesses/
+__pycache__/
+.pytest_cache/

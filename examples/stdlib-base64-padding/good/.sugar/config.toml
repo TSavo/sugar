@@ -1,0 +1,18 @@
+# stdlib-base64-padding twin: pytest-lift surface + z3 seat.
+# JWT-style unpadded urlsafe base64 via CPython base64 + rstrip(b"=").
+
+[[plugins]]
+name = "python-tests-lift"
+kind = "lift"
+surface = "python-tests"
+
+[solvers]
+default = "z3"
+
+[solvers.dispatch]
+linear_arithmetic = "z3"
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+flags = ["-smt2", "-in"]
