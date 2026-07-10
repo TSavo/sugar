@@ -91,16 +91,8 @@ pub struct RunnerConfig {
     /// the long-term interface; command surfaces that still accept `--z3` must
     /// opt into this compat hatch explicitly.
     pub legacy_z3_fallback: Option<LegacyZ3Fallback>,
-    /// Deprecated no-op (#3809 cut #7). Discharge no longer reads or writes
-    /// under any implication cache directory. Field kept for API stability
-    /// until the series deletes residual config surface with `pool_only_inputs`.
-    pub cache_dir: Option<PathBuf>,
-    /// Unused after cut #7 (no disk mint). Kept for API stability until flag cut.
-    pub mint_seed: Option<[u8; 32]>,
-    /// Unused after cut #7 (no disk mint). Kept for API stability until flag cut.
-    pub mint_producer_id: Option<String>,
-    /// Client-fed trust anchors (config-fed by faces, cut #4). No longer used
-    /// for tier-2 disk scan after cut #7; retained for face config plumbing.
+    /// Client-fed trust anchors (config-fed by faces, cut #4). Retained for
+    /// face config plumbing / future pool-fed implication trust checks.
     pub trusted_implication_signers: Vec<String>,
     /// Client-fed SolversConfig (#3809 PR A). Solve never opens
     /// `.sugar/config.toml` for `[solvers]` — faces load and set this.
@@ -128,13 +120,6 @@ pub struct RunnerConfig {
     /// Client-fed content CID of `plugin-registry.json` for the proof-run header
     /// (#3809 cut #2). Solve never opens that file. `None` → placeholder CID.
     pub plugin_registry_cid: Option<String>,
-    /// Residual pre-protocol side-channel gate (#3809). When true, skip
-    /// remaining project FS for claim-adjacent discovery (locus exists).
-    /// Input CIDs, call-edges, named artifacts, signers, solvers, witness
-    /// resolvers, runs-seal, and tier-2 cache are already client-fed or
-    /// deleted. Series deletes this field once every other branch is gone.
-    /// Derived by `solve_project_with_pool`.
-    pub pool_only_inputs: bool,
     /// #3809: typed witness-discharge context (project_dir + resolvers).
     /// Sole config surface for custom-witness package recompute (step 3:
     /// `SUGAR_WITNESS_PROJECT_DIR` / `SUGAR_WITNESS_RESOLVERS` env retired).
@@ -504,7 +489,6 @@ impl Runner {
             &self.registry,
             &self.compilers,
             &self.cfg.project_root,
-            self.cfg.pool_only_inputs,
             &self.cfg.witness_discharge,
         );
         for cr in &consistency_results {
@@ -801,7 +785,6 @@ impl Runner {
             registry,
             compilers,
             &self.cfg.project_root,
-            self.cfg.pool_only_inputs,
             &self.cfg.witness_discharge,
         );
         for cr in &consistency_results {
@@ -2104,18 +2087,6 @@ mod consistency_owned_callsite_tests {
         pool.bridges_by_symbol.clear();
         pool.mementos.remove(&bridge_cid);
         assert!(!callsite_row_is_owned_by_consistency(&cs, &pool));
-    }
-
-    fn int_sort() -> Json {
-        json!({"kind": "primitive", "name": "Int"})
-    }
-
-    fn int_const(n: i64) -> Json {
-        json!({"kind": "const", "sort": int_sort(), "value": n})
-    }
-
-    fn int_ge(lhs: Json, rhs: Json) -> Json {
-        json!({"kind": "atomic", "name": ">=", "args": [lhs, rhs]})
     }
 
     fn make_unique_cache_dir(label: &str) -> PathBuf {

@@ -688,7 +688,6 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     let fed_named_cfg = RunnerConfig {
         project_root: project.clone(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
-        pool_only_inputs: false,
         link_bundle_cid: Some(link_bundle_cid.clone()),
         plugin_registry_cid: Some(plugin_reg_cid.clone()),
         ..Default::default()
@@ -713,7 +712,6 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     let unfed_cfg = RunnerConfig {
         project_root: project.clone(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
-        pool_only_inputs: false,
         ..Default::default()
     };
     let unfed = Runner::new_with_compilers(unfed_cfg, test_compilers())
@@ -729,7 +727,6 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     let cold_cfg = RunnerConfig {
         project_root: project.clone(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
-        pool_only_inputs: false,
         ..Default::default()
     };
     let cold = Runner::new_with_compilers(cold_cfg, test_compilers())
@@ -777,7 +774,6 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
         RunnerConfig {
             project_root: project.clone(),
             legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
-            pool_only_inputs: false,
             ..Default::default()
         },
         test_compilers(),
@@ -959,8 +955,8 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
     )
     .expect("poison manifest");
 
-    // Cut #7 canary: cache_dir with a sentinel; discharge must not read/write
-    // it even if the caller leaves cache_dir set (solve ignores the field).
+    // Canary: a dir that must not be read/written by solve (tier-2 vestige
+    // deleted; no cache_dir field remains on RunnerConfig).
     let cache_dir = dir.path().join("tier2-cache");
     fs::create_dir_all(&cache_dir).expect("mkdir cache");
     let cache_sentinel = cache_dir.join("MUST_NOT_READ.sentinel");
@@ -983,11 +979,7 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
     )
     .expect("clean warm");
 
-    let mut cfg = runner_cfg(&project);
-    // Deliberately set cache_dir — discharge ignores it (cut #7).
-    cfg.cache_dir = Some(cache_dir.clone());
-    cfg.mint_seed = Some([0x42; 32]);
-    cfg.mint_producer_id = Some("fs89-test".into());
+    let cfg = runner_cfg(&project);
 
     let warm = prove_from_kit(
         &kit,
@@ -1029,11 +1021,9 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
         "cache sentinel must remain untouched (no tier2 mint write)"
     );
 
-    // Discrimination: cold verify_consistency WITH exists() still stats.
-    // Plant a vendor-looking absolute path that does NOT exist under project
-    // and a consumer relative that does — speaker preference is warm-only;
-    // cold uses exists. We only need cold path to still *call* exists without
-    // panicking: run disk solve_project on sealed fold (no pool_only).
+    // Discrimination: disk-load face still solves (load then same zero-FS
+    // discharge). Plant canaries under project; speaker-only locus preference
+    // must not open them.
     let local = feed_from_tree::fold_project(
         &kit,
         &project,
@@ -1064,7 +1054,7 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
 ///
 /// ## AFTER / scope ruling
 /// - **Preloaded SOLVE** is [`solve_project_with_pool`]: pure discharge over a pre-fed
-///   pool + in-memory `RunnerConfig` / compilers. Derives `pool_only_inputs`
+///   pool + in-memory `RunnerConfig` / compilers. One path (no `pool_only_inputs` flag)
 ///   and never calls plan/config loaders.
 /// - **Lift front** remains `fold_kit_to_pool` / rendezvous / enumerate —
 ///   kit source reads are lift, not solve (DoD: warm *solve* FS = 0).
