@@ -70,6 +70,7 @@ mod fol_format;
 mod parser;
 mod plugin;
 mod prove_diagnostics;
+mod auto_mode;
 mod prove_engine;
 
 use backend::JsonRpcBackend;
@@ -855,6 +856,11 @@ async fn in_process_solve_and_publish(
                 MessageType::INFO,
                 format!("in-process solve degraded: {reason}"),
             )
+            .await;
+    }
+    for line in &outcome.auto_logs {
+        client
+            .log_message(MessageType::INFO, format!("#4007 {line}"))
             .await;
     }
 

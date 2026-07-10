@@ -245,6 +245,8 @@ pub struct SolveOutcome {
     pub rows: Vec<Json>,
     pub degraded: bool,
     pub degraded_reason: Option<String>,
+    /// Client-side auto-lift log lines (#4007); empty when disabled/no imports.
+    pub auto_logs: Vec<String>,
 }
 
 /// Solve one edited buffer against the resident base index: mint the
@@ -254,6 +256,28 @@ pub struct SolveOutcome {
 /// scoped to `file`. Warmth is derived (base index already resident) — zero
 /// project FS. `ctx` is never mutated (caller owns rebuild).
 pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutcome {
+    // #4007: client-side auto-lift of importable vendor source into a *working*
+    // base pool (solve still receives only mementos; site-packages is never
+    // opened inside the solve door).
+    // #4007 Auto mode (LSP client): lift importable vendor source into a
+    // working base pool, then rebuild the consistency index from that pool.
+    // Solve still only sees mementos — site-packages is never opened inside
+    // the solve door.
+    let mut auto_logs: Vec<String> = Vec::new();
+    let owned_auto_index: Option<sugar_verifier::consistency::ConsistencyIndex> =
+        if crate::auto_mode::auto_lift_enabled() {
+            let mut working_base_pool = ctx.pool.clone();
+            auto_logs =
+                crate::auto_mode::auto_lift_imports_into_pool(source, &mut working_base_pool);
+            Some(sugar_verifier::consistency::build_consistency_index(
+                &working_base_pool,
+            ))
+        } else {
+            None
+        };
+    let working_index: &sugar_verifier::consistency::ConsistencyIndex =
+        owned_auto_index.as_ref().unwrap_or(&ctx.consistency_index);
+
     let scratch_dir = std::env::temp_dir().join("sugar-lsp-lift-scratch").join(
         sugar_canonicalizer::blake3_512_hex(ctx.project_root.display().to_string().as_bytes()),
     );
@@ -268,6 +292,7 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
             degraded_reason: Some(format!(
                 "source-overlay build failed; falling back to resident disk-pool: {err}"
             )),
+            auto_logs,
         };
     }
 
@@ -277,6 +302,7 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
             rows: Vec::new(),
             degraded: true,
             degraded_reason: Some(format!("cannot create lsp scratch dir: {err}")),
+            auto_logs,
         };
     }
 
@@ -328,9 +354,9 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
         ),
     };
 
-    // #3809: one solve door; resident base index derives pool-only (zero FS).
+    // #3809: one solve door; base index is client-fed (imports + auto-lift mementos).
     let results = sugar_verifier::consistency::verify_consistency_scoped_with_base_index(
-        &ctx.consistency_index,
+        &working_index,
         &overlay_pool,
         &ctx.plan,
         &ctx.registry,
@@ -360,5 +386,6 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
         rows,
         degraded,
         degraded_reason,
+        auto_logs,
     }
 }
