@@ -362,6 +362,17 @@ def tuple_assign_return_witness() -> SugarWitnessPair:
     )
 
 
+def multi_target_assign_return_witness() -> SugarWitnessPair:
+    """Chained multi-target: `a, b = pair = (z, 2)` — residual sibling of os.uname()."""
+    prefix = "def A(z):\n    a, b = pair = (z, 2)\n    return a\n\n"
+    return _call_pair(
+        name="multi_target_assign_return",
+        owner_sugar="MultiTargetAssignSugar",
+        truthful=prefix + "def test_a():\n    assert A(1) == 1\n",
+        lying=prefix + "def test_a():\n    assert A(1) == 2\n",
+    )
+
+
 def tuple_unpack_assign_return_witness() -> SugarWitnessPair:
     prefix = (
         "def A(z):\n" "    pair = [z, 2]\n" "    a, b = pair\n" "    return b\n" "\n"
