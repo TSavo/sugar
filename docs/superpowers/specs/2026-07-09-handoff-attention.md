@@ -1,62 +1,46 @@
-# Handoff (2026-07-09, rev 5)
+# Handoff (2026-07-09, rev 6)
 
-Main is green; ~55 PRs merged. Live queue: what I'm driving (fleet) + **independent tasks T can grab now** (python/doc-side, zero rust-core collision).
+Main is green (by per-PR battleaxe corpus receipts). Live queue below.
 
 ---
 
 ## Driving: solve is API-driven, CLI is a client
 
-Solve reads NOTHING from the project filesystem. Every input arrives as a content-addressed memento over the one API. The CLI becomes a client that feeds inputs (same as the LSP). When solve only has what a client fed it, `pool_only_inputs` has nothing to decide and is deleted.
+Solve reads NOTHING from the project filesystem. Inputs arrive as content-addressed mementos over the one API; CLI and LSP are clients that feed. End goal: `delete pool_only_inputs`. Plan: `docs/superpowers/specs/2026-07-09-solve-api-driven-plan.md`. **None of the 8 disk-reads need a new protocol verb.**
 
-**Plan:** `docs/superpowers/specs/2026-07-09-solve-api-driven-plan.md` — 8 disk-reads to move. **Confirmed: NONE need a new protocol verb** (all CLI-client-fed or trivial-delete).
+**Cuts landed:** #4 config (#3983) · #6 witness resolvers (#3985) · #2 named inputs (#3987) · #8 runs-seal (#3990) · #5 locus/scope (#3992). All byte-identical (DoD FS=0) + corpus 55/55.
 
-**Cuts landed:** #4 config signers/solvers (#3983) · #6 witness resolvers (#3985) · #2 named run inputs / link-bundle+registry (#3987). All byte-identical (DoD FS=0, byte-identical=true) + corpus 55/55.
+**In flight (97109):** rebase #1 (#3989, conflicted on runner.rs); investigate #3 (sidecar call-edges) + #7 (tier-2 feed shape) and report; then the final `delete pool_only_inputs`.
 
-**Remaining trivial cuts (97105 driving, one PR each):** #1 input-artifact CID walk · #8 `.sugar/runs` write · #5 `Path::exists` locus/scope. Then the two flagged items, then the final `delete pool_only_inputs`.
-
-**Flagged — I investigate before touching, only surface to T if real:**
-- #3 call-edges: trivial-delete IF pool bridges + `enumerate_callsites` cover production; sidecar-only production = a lift/bridge emission gap (would come to T).
-- #7 tier-2 implication cache: no new verb, but needs a solve request/response feed path (design-shaped API surface). Report the shape before building.
+**Flags (I surface only if real):** #3 = lift/bridge gap only if sidecar-only production exists; #7 = design-shaped feed path, report shape before building.
 
 ---
 
-## INDEPENDENT — T can grab now (python/doc-side, no rust-core collision)
-
-### C. Real-scale numpy/pandas re-sweep — **CLOSED**. Receipt: `docs/receipts/2026-07-10-vendor-op-scale-sweep.md` — **187/187 gap=0** on current main.
-
-
-### D. SECOND real-name logo — **CLOSED**. `examples/stdlib-base64-padding` (stdlib encode_nopad), CI `run-logo-receipt.sh`, SCOPE.md. GOOD discharged / BAD unsatisfied / WRONG-UNPADDED discharged.
-
-
-### E. Multi-arg loud bad-twins — **CLOSED**. `tests/test_multiarg_loud_discrimination.py`.
-
-**DONE (off the list):**
-- #3958 free-name bad-twin → #3982 (T). Dig already correct; pinned loud.
-- B coordinate discrimination bad-twins (kwarg/chain/method/attr) → #3986 (T). Verify-before-ship applied.
-- C scale re-sweep 187/187 gap=0 (receipt).
-- D stdlib encode_nopad logo.
-- E multi-arg loud discrimination bad-twins (`df.merge(other, on=...)`, `df.pivot_table(...)`) → T. Membrane already discriminates; pinned 8 instruments (shared euf + dual-assert unsat + arg-identity guards). Instrument: `tests/test_multiarg_loud_discrimination.py`.
-- A numpy totality-at-zero ratchet → 97102 building it now (R=0 reached). If T wants it instead, tell me so I stop 97102.
+## Independent queue — ALL DONE (T)
+- A numpy totality-at-zero ratchet → 97107 finishing (R=0 reached).
+- B coordinate discrimination bad-twins → #3986.
+- C real-scale re-sweep (187/187) → #3993.
+- D second real-name logo (stdlib base64) → #3993. (#3994 is a divergent DUPLICATE — close it.)
+- E multi-arg bad-twins (df.merge/pivot_table) → #3991.
+- #3958 free-name bad-twin → #3982.
 
 ---
 
-## Serialized behind one-solve (I drive, after 97105 finishes the cuts)
-- Implication steps 2+: un-stub `CallSite::implication()` + feed-fold producing implications from real link-time Obligations into the pool. Overlaps one-solve on `consistency.rs`/`orchestrate.rs`/`runner.rs`.
-- Enumerate→LSP as one composition: descent-through-enumerate feeding the LSP acceptance path end-to-end. Overlaps one-solve on the `sugar-lsp` files.
+## Serialized behind one-solve (I drive, after 97109 finishes)
+- Implication steps 2+: un-stub `CallSite::implication()` + feed-fold from real link-time Obligations into the pool. Overlaps one-solve on `consistency.rs`/`orchestrate.rs`/`runner.rs`.
+- Enumerate→LSP as one composition. Overlaps one-solve on `sugar-lsp` files.
 
 ---
 
-## Landed this session (context, not to-do)
-- Real-pandas red squiggle proven + gated (#3934/#3936/#3940): FS=0, byte-identical, ~3.4 ms. (A mock-sourced version was wrongly called "the demo" — caught, replaced.)
-- Enumeration typed descent complete; over-encoded `SourceMemento[path]` reverted (#3950, -1042 lines).
-- Witness-as-verb complete (#3959/#3962/#3964): `WitnessPool<CID,WitnessMemento>` — oracle resolves, Rust verifies, no env, no invalidation.
-- Implication step 1 (#3972). numpy wall 182→0. Logo CI-ratcheted (#3960) + scoped (#3977). #3958 pinned (#3982). Coordinate bad-twins pinned (#3986). Solve-API cuts #4/#6/#2 (#3983/#3985/#3987).
+## Landed this session (context)
+Real-pandas squiggle gated 3.4 ms (#3934/#3940). Enumeration descent complete; `SourceMemento[path]` over-encoding reverted (#3950). Witness-as-verb complete (#3959/#3962/#3964). Implication step 1 (#3972). numpy 182→0. Two real-name logos (itsdangerous #3960/#3977, stdlib base64 #3993). Solve-API cuts #4/#6/#2/#8/#5.
 
 ---
 
 ## Process
-- `watch_worker` unreliable — poll for idle. Dispatch to a busy worker fails silently. Swap workers fresh at ~180k context; long reports scroll off past ~200k — write to a file and read it.
-- Merge-on-sight on green/known-baseline; read the mechanism on grounding/soundness PRs.
-- Receipt discipline: paste the actual `55 passed` count. Verify-before-ship: combined corpus on branch BEFORE merge, not ship-then-corpus (kevlar applied this in #3986).
+- `watch_worker` unreliable — poll. Busy-worker dispatch fails silently. Swap fresh at ~180k context; force-swap if looping. Long reports → write to a file.
+- Solve cuts all touch `runner.rs` — strictly sequential, rebase each on prior merged cut.
+- Paste the actual `55 passed` count in every PR; verify-before-ship.
 - ONE PR per doc change.
-- Doctrine: idempotency + no-double-entry + warm-FS=0 + no-invalidation are ONE thing — a CID-keyed pool. "The existing thing already IS the pool," never "add a second path."
+- CI CAVEAT: fast admin-merges cancel each commit's CI before it completes — main is green by per-PR corpus receipts, NOT by a completed CI run. Let CI finish on a HEAD periodically for a real end-to-end green.
+- Doctrine: idempotency + no-double-entry + warm-FS=0 + no-invalidation = ONE thing (CID-keyed pool). "The existing thing already IS the pool."
