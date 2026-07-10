@@ -36,12 +36,13 @@
 // `initialize` the resident `ProveContext` (vendor-only base pool + solver
 // plan/registry + IR-compiler registry + consistency index) is built once
 // from the workspace root's `.sugar/imports`. On `didOpen`/`didSave` (and
-// `didChange`, debounced 250ms), the edited buffer is minted as a
-// SOURCE-OVERLAY scratch proof
-// (`sugar_cli::cmd_mint::mint_project_scratch_proof`) and solved against the
-// resident base index via THE ONE DOOR
+// `didChange`, debounced 250ms), the edited buffer is staged into a
+// SOURCE-OVERLAY and FEED via enumerate→fold
+// (`sugar_compiler::feed_from_tree` / `pool_from_graph_with_speaker` — same
+// composition as CLI `prove_from_kit`), then solved against the resident
+// base index via THE ONE DOOR
 // (`sugar_verifier::consistency::verify_consistency_scoped_with_base_index`
-// — #3809 one solve; resident base derives pool-only).
+// — #3809 one feed + one solve; no parallel mint-as-feed).
 // Non-discharged consistency rows become `publishDiagnostics` entries whose
 // message is the three-fact block (vendor fact / vendor universe / your
 // fact / conjoined / the fix), rendered by `fol_format.rs` (a port of
@@ -70,8 +71,8 @@ mod fol_format;
 mod parser;
 mod plugin;
 mod prove_diagnostics;
-mod auto_mode;
-mod prove_engine;
+
+use sugar_lsp::prove_engine;
 
 use backend::JsonRpcBackend;
 use config::LspConfig;

@@ -4,38 +4,34 @@
 // linking the engine directly into sugar-lsp. No daemon RPC, no subprocess
 // solver.
 //
-// This module is a from-scratch composition of the SAME public primitives
-// `sugar-linkerd`'s `server.rs::build_prove_context_for` and
-// `methods.rs::handle_prove_consistency` compose -- never a reimplementation
-// of the verifier's own logic, and never an import of `sugar-linkerd` (which
-// ships no `[lib]` target and stays untouched per the lane's DO-NOT-TOUCH
-// list). Every stage below calls straight into `sugar_verifier` /
-// `sugar_cli`'s public API:
+// #3809 composition (one path with CLI prove / the enumeration protocol):
 //
 //   1. `build_prove_context_for`: load the VENDOR-ONLY base pool from
-//      `.sugar/imports` (`sugar_verifier::load_all_proofs::run`), build the
-//      solver plan/registry (`sugar_verifier::RunnerConfig` +
-//      `build_plan_and_registry_pub`), the IR-compiler registry
-//      (`compiler_registry::build`), and the base `ConsistencyIndex`
-//      (`consistency::build_consistency_index`) ONCE. Held resident in the
-//      `LanguageServer` struct (warm because the LSP process lives).
-//   2. `solve_buffer`: on didOpen/didSave/didChange(debounced), mint a
-//      SOURCE-OVERLAY scratch proof of the edited buffer
-//      (`sugar_cli::cmd_mint::mint_project_scratch_proof`), load its bytes
-//      into an overlay `MementoPool`
-//      (`sugar_verifier::load_all_proofs::{ProofBytes, load_proof_bytes_into_pool}`),
-//      then solve through THE resident-base SOLVE door
-//      (`consistency::verify_consistency_scoped_with_base_index` — derived
-//      pool_only, zero project FS reads) and render rows via
-//      `sugar_verifier::report::row_to_json`.
+//      `.sugar/imports`, build solver plan/registry, compilers, and base
+//      `ConsistencyIndex` ONCE. Held resident in the LanguageServer.
+//   2. `solve_buffer`: stage the edited buffer into a source overlay, then
+//      FEED claims via the SAME door as `sugar prove` kit face:
+//        rendezvous kit → `sugar.enumerate` walk → `feed_from_tree::fold_project`
+//        → `pool_from_graph_with_speaker` (consumer speaker)
+//      Then discharge through THE resident-base SOLVE door
+//      (`verify_consistency_scoped_with_base_index` — zero project FS for
+//      claim facts). NO parallel `mint_project_scratch_proof` feed.
+//
+// Mint remains the door for sealed `.proof` publish / vendor cache seal
+// (auto_mode); it is not the LSP solve feed.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use libsugar::core::Dialect;
 use serde_json::Value as Json;
+use sugar_compiler::feed_from_tree;
+use sugar_compiler::kit::{Kit, LiftManifest};
+use sugar_compiler::orchestrate::pool_from_graph_with_speaker;
 use sugar_verifier::consistency::ConsistencyIndex;
 use sugar_verifier::solvers::{SolverHandle, SolverPlan, SolverSeat};
+use sugar_verifier::Speaker;
 
 /// Resident context for in-process proving, mirroring
 /// `sugar-linkerd::state::ProveContext` field for field: the SAME
@@ -146,9 +142,10 @@ pub fn build_prove_context_for(project_root: &Path) -> ProveContext {
 /// source files, with the request's buffer content substituted at
 /// `request_file`'s project-relative path. Deliberately EXCLUDED:
 /// `.sugar/imports` (the vendor pool is resident already), any `*.proof`,
-/// `.sugar/runs|cache|witnesses`, and dot/target dirs. Mirrors
-/// `sugar-linkerd::methods::build_source_overlay_project` (private to a
-/// binary crate with no lib target; duplicated here rather than imported).
+/// `.sugar/runs|cache|witnesses`, and dot/target dirs.
+///
+/// The overlay is the workspace_root the kit sees for `sugar.enumerate` —
+/// same staging role as before mint-as-feed, now the enumerate→fold mount.
 pub fn build_source_overlay_project(
     project_root: &Path,
     overlay_root: &Path,
@@ -239,7 +236,7 @@ pub fn build_source_overlay_project(
 
 /// Result of one `solve_buffer` call: rendered rows (wire-identical to
 /// `sugar prove --json` / the daemon's `proveConsistency`, via the SAME
-/// `sugar_verifier::report::row_to_json`), plus whether the overlay mint
+/// `sugar_verifier::report::row_to_json`), plus whether the overlay feed
 /// degraded to the resident base pool alone (and why).
 pub struct SolveOutcome {
     pub rows: Vec<Json>,
@@ -249,16 +246,87 @@ pub struct SolveOutcome {
     pub auto_logs: Vec<String>,
 }
 
-/// Solve one edited buffer against the resident base index: mint the
-/// SOURCE-OVERLAY scratch proof, load it into a small overlay pool, and
-/// drive THE resident-base SOLVE door
-/// ([`sugar_verifier::consistency::verify_consistency_scoped_with_base_index`]),
-/// scoped to `file`. Warmth is derived (base index already resident) — zero
-/// project FS. `ctx` is never mutated (caller owns rebuild).
+/// Dialect for a lift surface name (mirrors CLI `try_rendezvous_prove_kit`).
+fn dialect_for_surface(surface: &str) -> Dialect {
+    match surface {
+        "rust" => Dialect::Rust,
+        "c" => Dialect::C,
+        "python" => Dialect::Other("python".into()),
+        other => Dialect::Other(other.to_string()),
+    }
+}
+
+/// Rendezvous the first configured lift kit for `project_root`.
+///
+/// Same selection shape as CLI prove Task 9: project config lift plugins +
+/// manifest resolution, then `Kit::rendezvous` (live kit_declaration handshake).
+fn try_rendezvous_lift_kit(project_root: &Path) -> Result<Kit, String> {
+    let cfg = sugar_cli::project_config::read_project_config(project_root);
+    let mut last_err: Option<String> = None;
+    for plugin in cfg.plugins.iter().filter(|p| p.is_lift_plugin()) {
+        let planned = match sugar_cli::lift_plugin::find_manifest_for_surface(
+            project_root,
+            &plugin.surface,
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        };
+        if planned.command.is_empty() {
+            last_err = Some(format!(
+                "empty lift command for surface `{}`",
+                planned.surface
+            ));
+            continue;
+        }
+        let working_dir =
+            sugar_cli::lift_plugin::absolute_working_dir_for_manifest(project_root, &planned);
+        let manifest = LiftManifest {
+            surface: planned.surface.clone(),
+            name: planned.name.clone(),
+            dialect: dialect_for_surface(&planned.surface),
+            command: planned.command.clone(),
+            working_dir,
+            method: planned.method.clone(),
+        };
+        match Kit::rendezvous(manifest) {
+            Ok(kit) => return Ok(kit),
+            Err(e) => {
+                last_err = Some(e.to_string());
+                continue;
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        "no lift kit configured (no [[plugins]] lift surfaces with a resolvable manifest)"
+            .to_string()
+    }))
+}
+
+/// #3809: consumer feed half — enumerate→fold→pool, NOT batch mint.
+///
+/// Walk `sugar.enumerate` via `fold_project`, stamp consumer speaker at pool
+/// intake (`pool_from_graph_with_speaker`). Same construction as the lift
+/// front of `prove_from_kit` / `fold_kit_to_pool` for the local graph (vendor
+/// testimony stays on the resident base index, not re-merged here).
+pub fn feed_overlay_pool(overlay_root: &Path) -> Result<sugar_verifier::types::MementoPool, String> {
+    let kit = try_rendezvous_lift_kit(overlay_root)?;
+    let speaker = Speaker::consumer("sugar-lsp");
+    let graph = feed_from_tree::fold_project(&kit, overlay_root, Some(&speaker))
+        .map_err(|e| format!("enumerate→fold feed failed: {e}"))?;
+    pool_from_graph_with_speaker(&graph, speaker)
+        .map_err(|e| format!("fold→pool speaker stamp failed: {e}"))
+}
+
+/// Solve one edited buffer against the resident base index: stage the
+/// SOURCE-OVERLAY, FEED consumer claims via enumerate→fold (one composition
+/// with the API), and drive THE resident-base SOLVE door
+/// ([`sugar_verifier::consistency::verify_consistency_scoped_with_base_index`]).
+/// Warmth is derived (base index already resident) — zero project FS for
+/// claim facts. `ctx` is never mutated (caller owns rebuild).
 pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutcome {
-    // #4007: client-side auto-lift of importable vendor source into a *working*
-    // base pool (solve still receives only mementos; site-packages is never
-    // opened inside the solve door).
     // #4007 Auto mode (LSP client): lift importable vendor source into a
     // working base pool, then rebuild the consistency index from that pool.
     // Solve still only sees mementos — site-packages is never opened inside
@@ -281,9 +349,6 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
     let working_index: &sugar_verifier::consistency::ConsistencyIndex =
         owned_auto_index.as_ref().unwrap_or(&ctx.consistency_index);
 
-    let scratch_dir = std::env::temp_dir().join("sugar-lsp-lift-scratch").join(
-        sugar_canonicalizer::blake3_512_hex(ctx.project_root.display().to_string().as_bytes()),
-    );
     let overlay_root = std::env::temp_dir().join("sugar-lsp-lift-src").join(
         sugar_canonicalizer::blake3_512_hex(ctx.project_root.display().to_string().as_bytes()),
     );
@@ -299,67 +364,37 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
         };
     }
 
-    let _ = std::fs::remove_dir_all(&scratch_dir);
-    if let Err(err) = std::fs::create_dir_all(&scratch_dir) {
-        return SolveOutcome {
-            rows: Vec::new(),
-            degraded: true,
-            degraded_reason: Some(format!("cannot create lsp scratch dir: {err}")),
-            auto_logs,
-        };
-    }
-
-    let mint_result = sugar_cli::cmd_mint::mint_project_scratch_proof(&overlay_root, &scratch_dir, false);
-
-    let (overlay_pool, degraded, degraded_reason) = match mint_result {
-        Ok(Some(scratch)) => {
-            let mut overlay_pool = sugar_verifier::types::MementoPool::default();
-            match sugar_verifier::load_all_proofs::ProofBytes::try_from_parts(
-                "sugar-lsp-overlay",
-                scratch.cid,
-                scratch.bytes,
-                sugar_verifier::Speaker::consumer("sugar-lsp-overlay"),
-            ) {
-                Ok(staged) => {
-                    sugar_verifier::load_all_proofs::load_proof_bytes_into_pool(
-                        &[staged],
-                        &mut overlay_pool,
-                    );
-                    use sugar_verifier::types::MemberKind;
-                    let contracts = overlay_pool.member_count_by_kind(MemberKind::Contract);
-                    let sources = overlay_pool.member_count_by_kind(MemberKind::SourceMemento);
-                    if contracts == 0 && sources == 0 {
-                        (
-                            sugar_verifier::types::MementoPool::default(),
-                            true,
-                            Some("overlay produced no consumer testimony; falling back to resident disk-pool".to_string()),
-                        )
-                    } else {
-                        (overlay_pool, false, None)
-                    }
-                }
-                Err(err) => (
+    // #3809: one feed — enumerate→fold→pool. No mint_project_scratch_proof.
+    let (overlay_pool, degraded, degraded_reason) = match feed_overlay_pool(&overlay_root) {
+        Ok(pool) => {
+            use sugar_verifier::types::MemberKind;
+            let contracts = pool.member_count_by_kind(MemberKind::Contract);
+            let sources = pool.member_count_by_kind(MemberKind::SourceMemento);
+            if contracts == 0 && sources == 0 {
+                (
                     sugar_verifier::types::MementoPool::default(),
                     true,
-                    Some(format!("stage scratch proof bytes failed: {err}")),
-                ),
+                    Some(
+                        "enumerate→fold produced no consumer testimony; falling back to resident disk-pool"
+                            .to_string(),
+                    ),
+                )
+            } else {
+                (pool, false, None)
             }
         }
-        Ok(None) => (
-            sugar_verifier::types::MementoPool::default(),
-            true,
-            Some("overlay mint produced no catalog (no [[plugins]] lift entries declared, or lifter contributed nothing); falling back to resident disk-pool".to_string()),
-        ),
         Err(err) => (
             sugar_verifier::types::MementoPool::default(),
             true,
-            Some(format!("overlay mint failed; falling back to resident disk-pool: {err}")),
+            Some(format!(
+                "enumerate→fold feed failed; falling back to resident disk-pool: {err}"
+            )),
         ),
     };
 
     // #3809: one solve door; base index is client-fed (imports + auto-lift mementos).
     let results = sugar_verifier::consistency::verify_consistency_scoped_with_base_index(
-        &working_index,
+        working_index,
         &overlay_pool,
         &ctx.plan,
         &ctx.registry,
