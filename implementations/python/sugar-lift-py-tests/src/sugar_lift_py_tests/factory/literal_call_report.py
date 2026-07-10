@@ -850,6 +850,7 @@ def _lift_assert(
         return _prior_assignment_effect_lift(
             assertion_ctx,
             fn=fn,
+            stmt=stmt,
             filename=filename,
             memento_file=memento_file,
             source_lines=source_lines,
@@ -947,9 +948,15 @@ def _lift_assertion_via_factory(
     dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
 ) -> LiftResult | None:
-    from .build import build_node, default_catalog
+    """Factory assertion door.
 
-    catalog = default_catalog()
+    Prior-assignment fold is best-effort for reducing bound names. When a prior
+    is Incomplete (runtime mutator, opaque call, …), do **not** leave the
+    assertion silent (#4025): retry the catalog with free names (params only),
+    which owns shapes like ``assert len(x) <= N`` via ComparisonAssertionSugar.
+    If bare also cannot own the assert, emit the prior effect *and* cite the
+    assertion locus so dual-axis accounting cannot report ``stated → ∅``.
+    """
     external_bridge_sink: list[dict[str, Any]] = []
     ctx = _assertion_factory_ctx(
         stmt=stmt,
@@ -965,9 +972,46 @@ def _lift_assertion_via_factory(
         factory_audits=factory_audits,
     )
     if isinstance(ctx, _PriorAssignmentEffect):
-        return _prior_assignment_effect_lift(
-            ctx,
+        prior_block = ctx
+        bare_sink: list[dict[str, Any]] = []
+        bare_ctx = _assertion_factory_ctx_bare(
             fn=fn,
+            filename=filename,
+            functions_by_name=functions_by_name,
+            classes_by_name=classes_by_name,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
+            contract_bindings=contract_bindings,
+            external_bridge_sink=bare_sink,
+            factory_audits=factory_audits,
+        )
+        bare_lifted = _try_assertion_factory_build(
+            stmt,
+            fn=fn,
+            ctx=bare_ctx,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            module_statements=module_statements,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
+            prior_names=set(),
+            external_bridge_sink=bare_sink,
+            contract_bindings=contract_bindings,
+            functions_by_name=functions_by_name,
+            classes_by_name=classes_by_name,
+            dig_refusals=dig_refusals,
+            dig_floors=dig_floors,
+            agreement_violations=agreement_violations,
+            factory_audits=factory_audits,
+        )
+        if bare_lifted is not None:
+            # Symbolic/free-name path owned the assert without the unfolderable prior.
+            return bare_lifted
+        return _prior_assignment_effect_lift(
+            prior_block,
+            fn=fn,
+            stmt=stmt,
             filename=filename,
             memento_file=memento_file,
             source_lines=source_lines,
@@ -976,12 +1020,58 @@ def _lift_assertion_via_factory(
         stmt, _prior_assignment_names(module_statements, fn, stmt)
     ):
         return None
+    return _try_assertion_factory_build(
+        stmt,
+        fn=fn,
+        ctx=ctx,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+        module_statements=module_statements,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        prior_names=_prior_assignment_names(module_statements, fn, stmt),
+        external_bridge_sink=external_bridge_sink,
+        contract_bindings=contract_bindings,
+        functions_by_name=functions_by_name,
+        classes_by_name=classes_by_name,
+        dig_refusals=dig_refusals,
+        dig_floors=dig_floors,
+        agreement_violations=agreement_violations,
+        factory_audits=factory_audits,
+    )
+
+
+def _try_assertion_factory_build(
+    stmt: SourceFragment,
+    *,
+    fn: SourceFragment | None,
+    ctx: FactoryBuildContext,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    module_statements: list[SourceFragment],
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+    prior_names: set[str],
+    external_bridge_sink: list[dict[str, Any]],
+    contract_bindings: list,
+    functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
+    dig_refusals: list[DigBoundary],
+    dig_floors: list[DigFloorRecord],
+    agreement_violations: list[FloorContractAgreementViolation],
+    factory_audits: list[FactoryAuditDto],
+) -> LiftResult | None:
+    from .build import build_node, default_catalog
+
+    catalog = default_catalog()
     if _comparison_assertion_uses_nonfree_name(
         stmt,
         fn,
         import_aliases=import_aliases,
         from_imports=from_imports,
-        extra_safe_names=_temporal_binding_names(ctx),
+        extra_safe_names=_temporal_binding_names(ctx) | prior_names,
     ):
         catalog = SugarCatalog(
             [
@@ -1208,6 +1298,38 @@ def _assertion_factory_ctx(
     )
     ctx = _ctx_with_function_params(fn, ctx)
     return _ctx_with_prior_assignments(module_statements, fn, stmt, ctx)
+
+
+def _assertion_factory_ctx_bare(
+    *,
+    fn: SourceFragment | None,
+    filename: str,
+    functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+    contract_bindings: list,
+    external_bridge_sink: list[dict[str, Any]] | None = None,
+    factory_audits: list[FactoryAuditDto] | None = None,
+) -> FactoryBuildContext:
+    """Assertion ctx with function params only — no prior-assignment fold.
+
+    Used when a prior is Incomplete: free names stay free so symbolic
+    comparison sugars (``len(x) <= N``, …) can still own the assert (#4025).
+    """
+    from .build import default_catalog
+
+    ctx = FactoryBuildContext(
+        filename=filename,
+        catalog=default_catalog(),
+        name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        contract_bindings=contract_bindings,
+        external_bridge_sink=external_bridge_sink,
+        audit_sink=factory_audits,
+    )
+    return _ctx_with_function_params(fn, ctx)
 
 
 def _ctx_with_function_params(
@@ -1556,8 +1678,17 @@ def _prior_assignment_effect_lift(
     filename: str,
     memento_file: str,
     source_lines: list[str],
+    stmt: SourceFragment | None = None,
 ) -> LiftResult:
-    return _effect_lift(
+    """Emit prior-assignment Incomplete at the prior locus.
+
+    When ``stmt`` is the assertion that needed the prior and differs from the
+    prior site, also cite the assertion (source memento at assert span) so
+    dual-axis accounting cannot leave the claim ``stated → ∅`` (#4025). The
+    prior walk/effect locus stays at the assignment (byte-compatible with
+    existing prior-assignment teeth).
+    """
+    prior_lift = _effect_lift(
         prior.site,
         fn,
         prior.incomplete,
@@ -1567,6 +1698,34 @@ def _prior_assignment_effect_lift(
         filename=filename,
         memento_file=memento_file,
         source_lines=source_lines,
+    )
+    if (
+        stmt is None
+        or stmt.observed != "Assert"
+        or (stmt.line == prior.site.line and stmt.col == prior.site.col)
+    ):
+        return prior_lift
+    # Cite the blocked assertion without a second effect row (preserves
+    # prior-locus effect counts). Memento alone is enough for dual-axis speak.
+    contract_name = (
+        f"{Path(memento_file).stem}::{_assert_parent_name(fn)}::"
+        f"assert:{stmt.line}:{stmt.col}::prior-blocked"
+    )
+    assert_memento = _statement_source_memento(
+        stmt,
+        fn,
+        memento_file,
+        source_lines,
+        contract_name=contract_name,
+        role="python.literal-call-sugar",
+    )
+    return (
+        prior_lift[0],
+        [*prior_lift[1], assert_memento],
+        prior_lift[2],
+        prior_lift[3],
+        prior_lift[4],
+        prior_lift[5],
     )
 
 
@@ -2043,6 +2202,7 @@ def _try_lift_attribute_coordinate_assertion(
         return _prior_assignment_effect_lift(
             assertion_ctx,
             fn=fn,
+            stmt=stmt,
             filename=filename,
             memento_file=memento_file,
             source_lines=source_lines,
