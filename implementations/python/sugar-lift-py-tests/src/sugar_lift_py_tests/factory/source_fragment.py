@@ -993,6 +993,26 @@ class SourceFragment:
         self._require(ast.For, ast.AsyncFor)
         return len(self.node.orelse)  # type: ignore[attr-defined]
 
+    # --- while loops ------------------------------------------------------
+
+    def while_test(self) -> "SourceFragment":
+        """Return the condition expression for a While node."""
+        self._require(ast.While)
+        return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
+
+    def while_body_block(self) -> "SourceFragment":
+        """Return a Block SourceFragment for a While body suite."""
+        from .block import Block
+
+        self._require(ast.While)
+        body = self.node.body  # type: ignore[attr-defined]
+        return SourceFragment.from_node(Block.of(body), self.filename)
+
+    def while_orelse_count(self) -> int:
+        """Return the number of else statements on a While node."""
+        self._require(ast.While)
+        return len(self.node.orelse)  # type: ignore[attr-defined]
+
     def unparse(self) -> str:
         """Return a canonical source-text representation of this node (via ast.unparse).
 
