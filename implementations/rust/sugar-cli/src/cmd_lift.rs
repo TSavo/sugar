@@ -4884,11 +4884,13 @@ fn report_unit_test_fact_count(report: &LiftSourceReport) -> usize {
 ///
 /// Default accounting (assertions) has **no section title** — it *is* the report.
 /// The exception alone is named, and its name is the literal string `Minority Report`.
+/// Crime 2 (forged warrant) is RED when dig floors lack a warranting assert stamp.
 fn render_lift_coverage_human(coverage: &Value) -> String {
     let mut out = String::new();
     let totals = coverage.get("totals").cloned().unwrap_or(Value::Null);
     let assertions = coverage.get("assertions").cloned().unwrap_or(Value::Null);
     let minority = coverage.get("minority").cloned().unwrap_or(Value::Null);
+    let crime2 = coverage.get("crime2").cloned().unwrap_or(Value::Null);
     let stated = totals
         .get("stated")
         .and_then(Value::as_u64)
@@ -4956,6 +4958,44 @@ fn render_lift_coverage_human(coverage: &Value) -> String {
                 }
                 if un.len() > 16 {
                     out.push_str(&format!("    (+{} more)\n", un.len() - 16));
+                }
+            }
+        }
+    }
+    // Crime 2 — dig floors without warrantingAssert (#4016).
+    let c2_forged = totals
+        .get("crime2_forged_warrant")
+        .and_then(Value::as_u64)
+        .or_else(|| crime2.get("forged_warrant").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let c2_floors = totals
+        .get("crime2_dig_floors")
+        .and_then(Value::as_u64)
+        .or_else(|| crime2.get("dig_floors").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let c2_warranted = totals
+        .get("crime2_warranted")
+        .and_then(Value::as_u64)
+        .or_else(|| crime2.get("warranted").and_then(Value::as_u64))
+        .unwrap_or(0);
+    if c2_floors > 0 || c2_forged > 0 {
+        out.push_str(&format!(
+            "crime2 dig_floors={c2_floors} warranted={c2_warranted} forged_warrant={c2_forged}\n"
+        ));
+        if c2_forged > 0 {
+            out.push_str(
+                "  forged warrants (RED — dig floor with no warranting assertion):\n",
+            );
+            if let Some(forged) = crime2.get("forged_loci").and_then(Value::as_array) {
+                for locus in forged.iter().take(32) {
+                    let file = locus.get("file").and_then(Value::as_str).unwrap_or("?");
+                    let line = locus.get("line").and_then(Value::as_u64).unwrap_or(0);
+                    let detail = locus.get("detail").and_then(Value::as_str).unwrap_or("");
+                    let callee = locus.get("callee").and_then(Value::as_str).unwrap_or("");
+                    out.push_str(&format!("    - {file}:{line}  {detail} {callee}\n"));
+                }
+                if forged.len() > 32 {
+                    out.push_str(&format!("    (+{} more)\n", forged.len() - 32));
                 }
             }
         }
