@@ -9,8 +9,13 @@ PANIC_AXES = (
     "numpy_floor_panics",
     "pandas_sugar_panics",
     "pandas_floor_panics",
+    "statistics_sugar_panics",
+    "statistics_floor_panics",
     "unexpected_panics",
 )
+
+# Named package axes that own sugar/floor buckets. Anything else is unexpected.
+_PACKAGE_AXES = frozenset({"numpy", "pandas", "statistics"})
 
 
 @dataclass(frozen=True)
@@ -25,10 +30,15 @@ class PanicVector:
                 values["unexpected_panics"] += 1
                 continue
             target = _axis_target(record.target)
-            if target not in {"numpy", "pandas"}:
+            if target not in _PACKAGE_AXES:
                 values["unexpected_panics"] += 1
                 continue
-            values[f"{target}_{record.kind}_panics"] += 1
+            # sugar / floor only — other kinds fall into unexpected.
+            axis = f"{target}_{record.kind}_panics"
+            if axis not in values:
+                values["unexpected_panics"] += 1
+                continue
+            values[axis] += 1
         return cls(values)
 
     @property

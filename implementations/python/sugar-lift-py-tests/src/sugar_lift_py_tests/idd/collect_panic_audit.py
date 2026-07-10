@@ -122,13 +122,26 @@ def collect_panic_audit(
 
 
 def _resolve_installed_package_path(package: str) -> Path:
+    """Resolve an installed import to a lift target path.
+
+    Package modules (``numpy/__init__.py``) resolve to the package directory.
+    Single-module libraries (stdlib ``statistics.py``) resolve to the module
+    *file* — using the parent directory would audit the entire stdlib tree and
+    produce false panics from unrelated modules (asyncio, inspect, …).
+    """
     code = (
         "import importlib, os\n"
         f"mod = importlib.import_module({package!r})\n"
         "path = getattr(mod, '__file__', None)\n"
         "if path is None:\n"
         "    raise SystemExit('package has no __file__')\n"
-        "print(os.path.dirname(os.path.abspath(path)))\n"
+        "path = os.path.abspath(path)\n"
+        "base = os.path.basename(path)\n"
+        "if base == '__init__.py':\n"
+        "    print(os.path.dirname(path))\n"
+        "else:\n"
+        "    # Single-module file target (e.g. statistics.py).\n"
+        "    print(path)\n"
     )
     completed = subprocess.run(
         [sys.executable, "-c", code],
@@ -200,13 +213,23 @@ def _prepare_audit_workspace(
     target = target.resolve()
     root = root.resolve()
     audit_workspace.mkdir(parents=True, exist_ok=True)
-    for source in sorted(target.rglob("*.py")):
-        if "__pycache__" in source.parts:
-            continue
-        relative = source.relative_to(target)
-        destination = audit_workspace / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+    if target.is_file():
+        # Single-module library (e.g. stdlib statistics.py): stage the file
+        # itself. Path.rglob on a file is empty — never silent-empty-workspace.
+        if target.suffix != ".py":
+            raise ValueError(
+                f"audit target file must be a .py module, got {target}"
+            )
+        destination = audit_workspace / target.name
+        shutil.copy2(target, destination)
+    else:
+        for source in sorted(target.rglob("*.py")):
+            if "__pycache__" in source.parts:
+                continue
+            relative = source.relative_to(target)
+            destination = audit_workspace / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
 
     sugar_dir = audit_workspace / ".sugar"
     manifest_dir = sugar_dir / "lift/python"
@@ -319,6 +342,12 @@ def _installed_package_version(target: Path) -> Optional[str]:
 
 def _hash_tree(hasher: Any, label: str, root: Path) -> None:
     _hash_text(hasher, f"{label}:root", root.name)
+    if root.is_file():
+        # Single-module target (statistics.py): hash the file itself.
+        _hash_text(hasher, f"{label}:path", root.name)
+        data = root.read_bytes()
+        _hash_text(hasher, f"{label}:sha256", hashlib.sha256(data).hexdigest())
+        return
     for source in sorted(root.rglob("*.py")):
         if "__pycache__" in source.parts:
             continue

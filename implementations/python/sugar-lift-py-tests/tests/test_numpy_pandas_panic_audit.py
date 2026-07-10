@@ -66,6 +66,8 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
         "numpy_floor_panics": 1,
         "pandas_sugar_panics": 0,
         "pandas_floor_panics": 1,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
         "unexpected_panics": 0,
     }
     assert len(report.records) == 3
@@ -123,6 +125,8 @@ def test_installed_package_audit_target_counts_against_language_axis(tmp_path) -
         "numpy_floor_panics": 0,
         "pandas_sugar_panics": 0,
         "pandas_floor_panics": 0,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
         "unexpected_panics": 0,
     }
     assert all(_is_visual_lift(command) for command in calls)
@@ -299,6 +303,8 @@ def test_extracts_audit_only_gaps_from_rust_wrapped_rpc_error() -> None:
         "numpy_floor_panics": 1,
         "pandas_sugar_panics": 1,
         "pandas_floor_panics": 1,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
         "unexpected_panics": 0,
     }
 
@@ -341,6 +347,8 @@ def test_extracts_audit_only_gaps_when_rust_adds_trailing_context() -> None:
         "numpy_floor_panics": 0,
         "pandas_sugar_panics": 0,
         "pandas_floor_panics": 0,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
         "unexpected_panics": 0,
     }
 
@@ -358,6 +366,8 @@ def test_installed_numpy_totality_gate_is_stable_zero() -> None:
         "numpy_floor_panics": 0,
         "pandas_sugar_panics": 0,
         "pandas_floor_panics": 0,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
         "unexpected_panics": 0,
     }, f"numpy {numpy.__version__} construction-gap gate reopened: {render_text(report)}"
     assert not report.records
@@ -378,6 +388,8 @@ def test_installed_pandas_totality_gate_is_stable_zero() -> None:
         "numpy_floor_panics": 0,
         "pandas_sugar_panics": 0,
         "pandas_floor_panics": 0,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
         "unexpected_panics": 0,
     }, (
         f"pandas {pandas.__version__} construction-gap gate reopened: "
@@ -411,6 +423,60 @@ def test_numpy_pandas_wall_construction_gap_r_is_stable_zero() -> None:
     assert sum(report.r.values.values()) == 0
 
 
+def test_installed_statistics_totality_gate_is_stable_zero() -> None:
+    """Third-vendor pin: installed stdlib statistics construction-gap R == 0.
+
+    Part of #3809 Task G. Single-module packages resolve to the module *file*
+    (not the parent stdlib directory — that would audit asyncio/inspect and
+    paper over with false panics). Panic / R>0 is sacred.
+    """
+    import statistics
+
+    report = collect_panic_audit(
+        ROOT,
+        installed_packages=("statistics",),
+        include_showcases=False,
+    )
+    r_total = sum(report.r.values.values())
+
+    assert report.r.values == {
+        "numpy_sugar_panics": 0,
+        "numpy_floor_panics": 0,
+        "pandas_sugar_panics": 0,
+        "pandas_floor_panics": 0,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
+        "unexpected_panics": 0,
+    }, (
+        f"statistics module construction-gap gate reopened (R={r_total}): "
+        f"path={statistics.__file__} {render_text(report)}"
+    )
+    assert r_total == 0
+    assert report.is_zero
+    assert not report.records
+    assert [t.name for t in report.targets] == ["statistics-all"]
+
+
+def test_single_module_package_resolves_to_module_file_not_stdlib_dir() -> None:
+    """statistics must not resolve to /usr/lib/pythonX.Y (entire stdlib)."""
+    path = panic_audit_module._resolve_installed_package_path("statistics")
+    assert path.is_file(), path
+    assert path.name == "statistics.py", path
+    assert path.parent.name.startswith("python") or "site-packages" in str(path)
+
+
+def test_prepare_audit_workspace_stages_single_module_file(tmp_path) -> None:
+    """Single-module targets must stage the .py file (rglob on a file is empty)."""
+    module = tmp_path / "statistics.py"
+    module.write_text("def mean(xs):\n    return sum(xs) / len(xs)\n", encoding="utf-8")
+    workspace = tmp_path / "audit-ws"
+    panic_audit_module._prepare_audit_workspace(module, ROOT, workspace)
+    staged = workspace / "statistics.py"
+    assert staged.is_file()
+    assert "def mean" in staged.read_text(encoding="utf-8")
+    assert (workspace / ".sugar/config.toml").is_file()
+
+
 def test_extracts_audit_only_loud_floor_type_error() -> None:
     def failing_runner(command: list[str], cwd: Path) -> CommandResult:
         return CommandResult(
@@ -437,6 +503,8 @@ def test_extracts_audit_only_loud_floor_type_error() -> None:
         "numpy_floor_panics": 1,
         "pandas_sugar_panics": 0,
         "pandas_floor_panics": 1,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
         "unexpected_panics": 0,
     }
 
