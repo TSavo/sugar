@@ -13,11 +13,13 @@ PANIC_AXES = (
     "statistics_floor_panics",
     "decimal_sugar_panics",
     "decimal_floor_panics",
+    "fractions_sugar_panics",
+    "fractions_floor_panics",
     "unexpected_panics",
 )
 
 # Named package axes that own sugar/floor buckets. Anything else is unexpected.
-_PACKAGE_AXES = frozenset({"numpy", "pandas", "statistics", "decimal"})
+_PACKAGE_AXES = frozenset({"numpy", "pandas", "statistics", "decimal", "fractions"})
 
 
 @dataclass(frozen=True)

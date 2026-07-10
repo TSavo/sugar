@@ -70,6 +70,8 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
         "unexpected_panics": 0,
     }
     assert len(report.records) == 3
@@ -131,6 +133,8 @@ def test_installed_package_audit_target_counts_against_language_axis(tmp_path) -
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
         "unexpected_panics": 0,
     }
     assert all(_is_visual_lift(command) for command in calls)
@@ -311,6 +315,8 @@ def test_extracts_audit_only_gaps_from_rust_wrapped_rpc_error() -> None:
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
         "unexpected_panics": 0,
     }
 
@@ -357,6 +363,8 @@ def test_extracts_audit_only_gaps_when_rust_adds_trailing_context() -> None:
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
         "unexpected_panics": 0,
     }
 
@@ -378,6 +386,8 @@ def test_installed_numpy_totality_gate_is_stable_zero() -> None:
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
         "unexpected_panics": 0,
     }, f"numpy {numpy.__version__} construction-gap gate reopened: {render_text(report)}"
     assert not report.records
@@ -402,6 +412,8 @@ def test_installed_pandas_totality_gate_is_stable_zero() -> None:
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
         "unexpected_panics": 0,
     }, (
         f"pandas {pandas.__version__} construction-gap gate reopened: "
@@ -460,6 +472,8 @@ def test_installed_statistics_totality_gate_is_stable_zero() -> None:
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
         "unexpected_panics": 0,
     }, (
         f"statistics module construction-gap gate reopened (R={r_total}): "
@@ -496,6 +510,8 @@ def test_installed_decimal_totality_gate_is_stable_zero() -> None:
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
         "unexpected_panics": 0,
     }, (
         f"decimal pure-python body construction-gap gate reopened (R={r_total}): "
@@ -507,6 +523,60 @@ def test_installed_decimal_totality_gate_is_stable_zero() -> None:
     assert [t.name for t in report.targets] == ["decimal-all"]
     assert path.is_file()
     assert path.name == "_pydecimal.py", path
+
+
+def test_installed_fractions_totality_gate_is_stable_zero() -> None:
+    """Fifth-vendor pin: installed stdlib fractions construction-gap R == 0.
+
+    Part of #3809. Pure-python single-module ``fractions.py`` (like statistics) —
+    resolve to the module *file*, never the parent stdlib directory. Panic / R>0
+    is sacred.
+    """
+    import fractions
+
+    path = panic_audit_module._resolve_installed_package_path("fractions")
+
+    report = collect_panic_audit(
+        ROOT,
+        installed_packages=("fractions",),
+        include_showcases=False,
+    )
+    r_total = sum(report.r.values.values())
+
+    assert report.r.values == {
+        "numpy_sugar_panics": 0,
+        "numpy_floor_panics": 0,
+        "pandas_sugar_panics": 0,
+        "pandas_floor_panics": 0,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
+        "decimal_sugar_panics": 0,
+        "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
+        "unexpected_panics": 0,
+    }, (
+        f"fractions module construction-gap gate reopened (R={r_total}): "
+        f"path={path} {render_text(report)}"
+    )
+    assert r_total == 0
+    assert report.is_zero
+    assert not report.records
+    assert [t.name for t in report.targets] == ["fractions-all"]
+    assert path.is_file()
+    assert path.name == "fractions.py", path
+    assert path == Path(fractions.__file__).resolve() or path.name == "fractions.py"
+
+
+def test_fractions_resolves_to_module_file_not_stdlib_dir() -> None:
+    """fractions must resolve to fractions.py — not the parent stdlib tree."""
+    path = panic_audit_module._resolve_installed_package_path("fractions")
+    assert path.is_file(), path
+    assert path.name == "fractions.py", path
+    assert not str(path).endswith((".so", ".pyd", ".dll"))
+    text = path.read_text(encoding="utf-8", errors="replace")
+    assert "class Fraction" in text
+    assert len(text) > 5_000, "expected full pure-python body"
 
 
 def test_single_module_package_resolves_to_module_file_not_stdlib_dir() -> None:
@@ -572,6 +642,8 @@ def test_extracts_audit_only_loud_floor_type_error() -> None:
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
         "unexpected_panics": 0,
     }
 
