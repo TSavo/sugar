@@ -118,12 +118,18 @@ pub struct RunnerConfig {
     /// it as an already-addressed run input and stores the plan-memento bytes in
     /// the proof-run bundle without reinterpreting component discovery.
     pub plan_artifact: Option<PlanArtifactInput>,
+    /// Client-fed content CID of `link-bundle.json` for the proof-run header
+    /// (#3809 cut #2). Solve never opens that file — faces hash and set this.
+    /// `None` → honest placeholder CID.
+    pub link_bundle_cid: Option<String>,
+    /// Client-fed content CID of `plugin-registry.json` for the proof-run header
+    /// (#3809 cut #2). Solve never opens that file. `None` → placeholder CID.
+    pub plugin_registry_cid: Option<String>,
     /// Residual pre-protocol side-channel gate (#3809). When true, skip
     /// remaining project FS for claim-adjacent discovery (proof walk,
-    /// call-edges, named artifacts, locus exists, witness read_dir, tier-2
-    /// cache_dir, runs write). Signers/solvers are always client-fed (PR A)
-    /// and no longer consult this flag. Series A–I deletes this field once
-    /// every other branch is gone. Derived by `solve_project_with_pool`.
+    /// call-edges, locus exists, tier-2 cache_dir, runs write). Named
+    /// artifacts + signers/solvers are always client-fed. Series deletes this
+    /// field once every other branch is gone. Derived by `solve_project_with_pool`.
     pub pool_only_inputs: bool,
     /// #3809: typed witness-discharge context (project_dir + resolvers).
     /// Sole config surface for custom-witness package recompute (step 3:
@@ -274,21 +280,18 @@ impl Runner {
             .next()
             .cloned()
             .unwrap_or_else(|| placeholder_cid("empty-proof-inputs"));
-        // Named on-disk planning artifacts are cold-path only. Warm path uses
-        // placeholders (plan_artifact, if any, is already on cfg and stamped
-        // into the run memento separately below).
-        let link_bundle_cid = if self.cfg.pool_only_inputs {
-            placeholder_cid("absent-link-bundle")
-        } else {
-            discover_named_artifact_cid(&self.cfg.project_root, "link-bundle.json")
-                .unwrap_or_else(|| placeholder_cid("absent-link-bundle"))
-        };
-        let plugin_registry_cid = if self.cfg.pool_only_inputs {
-            placeholder_cid("absent-plugin-registry")
-        } else {
-            discover_named_artifact_cid(&self.cfg.project_root, "plugin-registry.json")
-                .unwrap_or_else(|| placeholder_cid("absent-plugin-registry"))
-        };
+        // Named run inputs (#3809 cut #2): client-fed only. Solve never reads
+        // link-bundle.json / plugin-registry.json under project_root.
+        let link_bundle_cid = self
+            .cfg
+            .link_bundle_cid
+            .clone()
+            .unwrap_or_else(|| placeholder_cid("absent-link-bundle"));
+        let plugin_registry_cid = self
+            .cfg
+            .plugin_registry_cid
+            .clone()
+            .unwrap_or_else(|| placeholder_cid("absent-plugin-registry"));
 
         let mut stages = Vec::with_capacity(4);
         let mut report = Report::default();
@@ -1246,7 +1249,9 @@ fn collect_one_proof_file_cid(path: &Path, out: &mut BTreeSet<String>) {
     }
 }
 
-fn discover_named_artifact_cid(project_root: &Path, name: &str) -> Option<String> {
+/// Hash a named project file for faces that want to feed run-header CIDs.
+/// Client helper — solve never calls this (#3809 cut #2).
+pub fn hash_named_project_artifact(project_root: &Path, name: &str) -> Option<String> {
     let path = project_root.join(name);
     std::fs::read(path)
         .ok()

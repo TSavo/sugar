@@ -682,37 +682,47 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
         "canaries must not change outcome class"
     );
 
-    // Discrimination: cold disk face (no pool_only) still sees canary proof CID
-    // via discover_input_artifact_cids when Runner runs without the flag.
-    let cold_cfg = RunnerConfig {
+    // Discrimination (#3809 cut #2): named CIDs only when **client feeds** them.
+    // Solve never reads link-bundle.json; unfed path uses placeholders (warm).
+    let fed_cfg = RunnerConfig {
+        project_root: project.clone(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+        pool_only_inputs: false,
+        link_bundle_cid: Some(link_bundle_cid.clone()),
+        plugin_registry_cid: Some(plugin_reg_cid.clone()),
+        ..Default::default()
+    };
+    let cold_pool = MementoPool::default();
+    let fed_runner = Runner::new_with_compilers(fed_cfg, test_compilers());
+    let fed = fed_runner
+        .run_with_proof_run_with_pool(cold_pool)
+        .expect("client-fed named inputs still build a memento");
+    eprintln!(
+        "client-fed discrimination: link={} reg={}",
+        fed.memento.header.link_bundle_cid, fed.memento.header.plugin_registry_cid
+    );
+    assert_eq!(
+        &fed.memento.header.link_bundle_cid, &link_bundle_cid,
+        "discrimination: client-fed link_bundle_cid must stamp the header"
+    );
+    assert_eq!(
+        &fed.memento.header.plugin_registry_cid, &plugin_reg_cid,
+        "discrimination: client-fed plugin_registry_cid must stamp the header"
+    );
+
+    // Unfed cold still does not open the files (placeholders, like warm).
+    let unfed_cfg = RunnerConfig {
         project_root: project.clone(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
         pool_only_inputs: false,
         ..Default::default()
     };
-    // Empty pool — we only care that discover walks canary into inputs.
-    // run_with_proof_run would load_all_proofs; use a direct unit of the
-    // discover helper via running with pool that has no members but cfg
-    // cold: actually discover_input_artifact_cids is private. Discrimination
-    // via cold solve_project load_errors / or hash the file is known present.
-    // Stronger: cold Runner with empty extra, load_pool will try canary and
-    // may load_error; content hash still collected by discover when using
-    // run_with_proof_run_inner after a minimal pool.
-    let cold_pool = MementoPool::default();
-    let cold_runner = Runner::new_with_compilers(cold_cfg, test_compilers());
-    let cold = cold_runner
-        .run_with_proof_run_with_pool(cold_pool)
-        .expect("cold empty-pool run still builds a memento");
-    let cold_inputs = &cold.memento.header.input_artifact_cids;
-    eprintln!("cold discrimination inputs={cold_inputs:?}");
-    assert!(
-        cold_inputs.iter().any(|c| c == &canary_proof_cid),
-        "discrimination failed: cold path did not include canary proof CID \
-         (instrument would be a no-op). cold_inputs={cold_inputs:?}"
-    );
-    assert_eq!(
-        &cold.memento.header.link_bundle_cid, &link_bundle_cid,
-        "discrimination: cold path should hash link-bundle.json"
+    let unfed = Runner::new_with_compilers(unfed_cfg, test_compilers())
+        .run_with_proof_run_with_pool(MementoPool::default())
+        .expect("unfed run");
+    assert_ne!(
+        &unfed.memento.header.link_bundle_cid, &link_bundle_cid,
+        "unfed solve must not read link-bundle.json from project_root"
     );
 }
 
