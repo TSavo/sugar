@@ -461,6 +461,42 @@ class FloorValue:
             ),
         )
 
+    def subtract(self, other, blame):
+        # Default: this value does not stand on the subtraction floor -- it cannot
+        # answer what it is minus another value. The None arm: a value that CAN
+        # implements subtract and gives back a term; absence here is the honest "no".
+        del other
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="subtract",
+            blame=blame,
+            observed=observed,
+            requested="stand on the subtraction floor",
+            fix=f"write more Floor: implement {observed}.subtract",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="subtract",
+                status="floor-gap",
+                observed=observed,
+                blame=blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow, factory_panic,

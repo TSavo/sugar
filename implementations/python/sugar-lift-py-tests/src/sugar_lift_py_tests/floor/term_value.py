@@ -63,6 +63,14 @@ class TermValue(FloorValue):
             return Complete(TermValue(self.value + other.value))
         return super().add(other, blame)
 
+    def subtract(self, other, blame):
+        # A number stands on the subtraction floor: two numbers subtract to a number.
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value - other.value))
+        return super().subtract(other, blame)
+
     def to_term(self, *, owner: str):
         del owner
         # Int embeds in Real losslessly (3 and 3.0 are the same number), but the
