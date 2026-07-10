@@ -146,6 +146,25 @@ class OpaqueOpCallsite(FloorValue):
             )
         )
 
+    def next_with(self, operation: Any, ctx: Any) -> Any:
+        """``next(opaque_iter)`` (e.g. ``next(df.itertuples(...))``).
+
+        Folded receivers delegate; opaque mints ``call:next(self)`` with
+        ``computed=None`` — never invent the first yielded element.
+        """
+        if self.computed is not None:
+            return self.computed.next_with(operation, ctx)
+        del ctx, operation
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            OpaqueOpCallsite(
+                callee="next",
+                arg=self,
+                computed=None,
+            )
+        )
+
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().binary_operator_with(operation, ctx)
 
