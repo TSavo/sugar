@@ -111,15 +111,16 @@ pub fn build_prove_context_for(project_root: &Path) -> ProveContext {
 
     let pool = sugar_verifier::load_all_proofs::run(&imports_root);
 
-    // Solver plan/registry: kit-declared `.sugar/config.toml` `[solvers]`
-    // wins verbatim (via `build_plan_and_registry_pub`'s own precedence);
-    // otherwise fall back to a default single-z3 registry when z3 is
-    // reachable on PATH, exactly as `sugar-linkerd::server::build_solver_context`
-    // does for its own solver wiring.
+    // #3809 PR A: LSP is a client of the solve API — load [solvers] here and
+    // feed solvers_config; solve never opens config.toml.
+    let solvers_config = sugar_verifier::SolversConfig::load(project_root)
+        .ok()
+        .flatten();
     let legacy_z3_fallback = which_on_path("z3").map(|_| sugar_verifier::LegacyZ3Fallback::compat("z3"));
     let cfg = sugar_verifier::RunnerConfig {
         project_root: project_root.to_path_buf(),
         legacy_z3_fallback,
+        solvers_config,
         ..Default::default()
     };
     let (plan, registry) = sugar_verifier::runner::build_plan_and_registry_pub(&cfg);

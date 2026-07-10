@@ -22,7 +22,6 @@ use std::time::Duration;
 use crate::formula_rewrite;
 
 use rayon::prelude::*;
-use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value as Json;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
@@ -95,12 +94,14 @@ pub struct RunnerConfig {
     pub mint_seed: Option<[u8; 32]>,
     /// Producer id stamped into minted implication mementos.
     pub mint_producer_id: Option<String>,
-    /// Local project trust anchors for Tier-2 implication cache entries.
-    /// Empty means the cache tier is skipped entirely.
+    /// Client-fed trust anchors for Tier-2 implication cache entries
+    /// (#3809 PR A). Empty means the cache tier is skipped entirely.
+    /// Faces that want project config signers read config.toml themselves
+    /// and set this — solve never opens config for signers.
     pub trusted_implication_signers: Vec<String>,
-    /// Optional pre-loaded SolversConfig. If set, bypasses
-    /// `.sugar/config.toml` discovery (used by tests and the
-    /// multi-solver demo).
+    /// Client-fed SolversConfig (#3809 PR A). Solve never opens
+    /// `.sugar/config.toml` for `[solvers]` — faces load and set this.
+    /// When `None`, only `legacy_z3_fallback` (if any) builds the plan.
     pub solvers_config: Option<SolversConfig>,
     /// Additional project directories whose .proof files should
     /// also be loaded (e.g., OpenAPI spec project for cross-kit
@@ -117,21 +118,12 @@ pub struct RunnerConfig {
     /// it as an already-addressed run input and stores the plan-memento bytes in
     /// the proof-run bundle without reinterpreting component discovery.
     pub plan_artifact: Option<PlanArtifactInput>,
-    /// Warm / preloaded-pool discharge (#3809 DoD): when true, the runner
-    /// treats the caller-supplied pool plus in-memory config fields
-    /// (`extra_proofs`, `plan_artifact`, `solvers_config` /
-    /// `legacy_z3_fallback`, `trusted_implication_signers`) as the **sole**
-    /// claim+config source. It MUST NOT walk or read `project_root` for:
-    /// - `*.proof` input CIDs (use pool member keys + `extra_proofs` instead)
-    /// - `*.call-edges.json` (pool bridges already drive enumerate_callsites)
-    /// - `link-bundle.json` / `plugin-registry.json` named artifacts
-    /// - `.sugar/config.toml` (signers + SolversConfig) — only what's already
-    ///   on this `RunnerConfig` is used
-    ///
-    /// Proof-run **writes** under `project_root/.sugar/runs/` may still occur
-    /// (output receipt, not an input side-channel). Default `false` preserves
-    /// the cold disk face. Derived by `solve_project_with_pool` (preloaded
-    /// pool = resident facts); cold `solve_project` leaves default false.
+    /// Residual pre-protocol side-channel gate (#3809). When true, skip
+    /// remaining project FS for claim-adjacent discovery (proof walk,
+    /// call-edges, named artifacts, locus exists, witness read_dir, tier-2
+    /// cache_dir, runs write). Signers/solvers are always client-fed (PR A)
+    /// and no longer consult this flag. Series A–I deletes this field once
+    /// every other branch is gone. Derived by `solve_project_with_pool`.
     pub pool_only_inputs: bool,
     /// #3809: typed witness-discharge context (project_dir + resolvers).
     /// Sole config surface for custom-witness package recompute (step 3:
@@ -217,25 +209,16 @@ impl Runner {
         Self::new_with_compilers(cfg, compilers)
     }
 
-    pub fn new_with_compilers(mut cfg: RunnerConfig, compilers: CompilerRegistry) -> Self {
-        // Resolve solver config. Precedence:
-        //   1. cfg.solvers_config (test/demo override)
-        //   2. .sugar/config.toml under project_root (skipped when pool_only_inputs)
-        //   3. explicit legacy single-Z3 compat fallback
+    pub fn new_with_compilers(cfg: RunnerConfig, compilers: CompilerRegistry) -> Self {
+        // Solve is API-driven (#3809 PR A): signers + solvers ride only on
+        // client-fed `cfg` fields. Faces (CLI/LSP) read `.sugar/config.toml`
+        // and set `trusted_implication_signers` / `solvers_config` /
+        // `legacy_z3_fallback` — solve does not open config.toml.
         //
-        // Warm path (#3809): signers + solvers must already ride on `cfg`
-        // (CLI reads config once before prove_from_kit). Re-opening
-        // config.toml here is a silent disk side-channel on an in-memory pool.
-        if cfg.trusted_implication_signers.is_empty() && !cfg.pool_only_inputs {
-            cfg.trusted_implication_signers =
-                match load_trusted_implication_signers(&cfg.project_root) {
-                    Ok(signers) => signers,
-                    Err(error) => {
-                        warn!(error = %error, "failed to load trusted implication signers");
-                        Vec::new()
-                    }
-                };
-        }
+        // Precedence for the plan:
+        //   1. cfg.solvers_config (client-fed)
+        //   2. cfg.legacy_z3_fallback
+        //   3. empty registry (loud at solver layer)
         let (plan, registry) = build_plan_and_registry(&cfg);
         Self {
             cfg,
@@ -1374,43 +1357,15 @@ fn build_plan_and_registry(cfg: &RunnerConfig) -> (SolverPlan, HashMap<SolverSea
     if let Some(sc) = &cfg.solvers_config {
         return (SolverPlan::from_config(sc), registry::build(sc));
     }
-    // Warm path: never open project config for solvers — use legacy fallback
-    // only. Cold path still discovers `.sugar/config.toml` solvers.
-    if !cfg.pool_only_inputs {
-        if let Ok(Some(sc)) = SolversConfig::load(&cfg.project_root) {
-            return (SolverPlan::from_config(&sc), registry::build(&sc));
-        }
-    }
-    // Fallback: explicit legacy single-Z3 compat plan. Absence is loud at the
-    // solver layer (empty registry -> solver not found), never a silent skip.
+    // Client-fed only (#3809 PR A): no SolversConfig::load(project_root).
+    // Faces that want [solvers] from config.toml call SolversConfig::load
+    // themselves and set cfg.solvers_config before constructing the Runner.
     let registry = cfg
         .legacy_z3_fallback
         .as_ref()
         .map(|fallback| registry::build_default_z3(&fallback.binary))
         .unwrap_or_default();
     (SolverPlan::Single(SolverSeat::Z3), registry)
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct TrustAnchorConfig {
-    #[serde(default)]
-    trusted_implication_signers: Vec<String>,
-}
-
-fn load_trusted_implication_signers(project_root: &Path) -> Result<Vec<String>, String> {
-    let path = project_root.join(".sugar").join("config.toml");
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let body =
-        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let cfg: TrustAnchorConfig = toml::from_str(&body).map_err(|e| format!("parse toml: {e}"))?;
-    Ok(cfg
-        .trusted_implication_signers
-        .into_iter()
-        .map(|signer| signer.trim().to_string())
-        .filter(|signer| !signer.is_empty())
-        .collect())
 }
 
 /// One contract's self-post verification outcome.

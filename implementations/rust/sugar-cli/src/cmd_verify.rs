@@ -645,12 +645,25 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         }
     };
 
+    // #3809 PR A: CLI client feeds solvers; solve does not open config.toml.
+    let solvers_config = match SolversConfig::load(project_root) {
+        Ok(sc) => sc,
+        Err(error) => {
+            eprintln!(
+                "{}: load solvers from .sugar/config.toml: {error}",
+                "error".red().bold()
+            );
+            return EXIT_USER_ERROR;
+        }
+    };
+
     let cfg = RunnerConfig {
         project_root: project_root.to_path_buf(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat(args.z3.clone())),
         extra_projects,
         extra_proofs: dependency_proofs,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
+        solvers_config,
         witness_discharge,
         ..Default::default()
     };
