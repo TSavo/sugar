@@ -14,3 +14,7 @@ class SupportValue(FloorValue):
     first-order logic. Desugaring to it always completes."""
 
     non_fol_support = True
+
+    def contribution(self):
+        # Inert support is absorbed: present, accounted for, contributes nothing.
+        return ()

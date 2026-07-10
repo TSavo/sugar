@@ -100,6 +100,11 @@ BASE_CONSTRUCTION_GAP_METHOD_NAMES = tuple(
 class FloorValue:
     non_fol_support = False
 
+    def contribution(self):
+        # A floor value contributes itself to the block record. Support overrides
+        # to contribute nothing (absorbed).
+        return (self,)
+
     def add_with(
         self, operation: AddOperation, ctx: FactoryBuildContext | None
     ) -> Outcome:

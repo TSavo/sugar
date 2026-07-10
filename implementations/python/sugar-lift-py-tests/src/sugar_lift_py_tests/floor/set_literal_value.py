@@ -18,6 +18,10 @@ class SetLiteralValue(FloorValue):
 
     items: tuple[Term, ...]
 
+    def contribution(self):
+        # Typed non-FOL support carrier: absorbed in a block record.
+        return ()
+
     def to_term(self, *, owner: str) -> Term:
         del owner
         return ctor("python:set", list(self.items))

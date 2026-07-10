@@ -32,6 +32,10 @@ class DictLiteralValue(FloorValue):
 
     entries: tuple[tuple[Term, Term], ...]
 
+    def contribution(self):
+        # Typed non-FOL support carrier: absorbed in a block record.
+        return ()
+
     def to_term(self, *, owner: str) -> Term:
         del owner
         return ctor(
