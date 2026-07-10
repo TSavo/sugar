@@ -130,7 +130,8 @@ pub struct RunnerConfig {
     ///
     /// Proof-run **writes** under `project_root/.sugar/runs/` may still occur
     /// (output receipt, not an input side-channel). Default `false` preserves
-    /// the cold disk face. Set by `prove_from_kit` / warm callers only.
+    /// the cold disk face. Derived by `solve_project_with_pool` (preloaded
+    /// pool = resident facts); cold `solve_project` leaves default false.
     pub pool_only_inputs: bool,
     /// #3809: typed witness-discharge context (project_dir + resolvers).
     /// Sole config surface for custom-witness package recompute (step 3:

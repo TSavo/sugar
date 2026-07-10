@@ -40,7 +40,8 @@
 // SOURCE-OVERLAY scratch proof
 // (`sugar_cli::cmd_mint::mint_project_scratch_proof`) and solved against the
 // resident base index via THE ONE DOOR
-// (`sugar_verifier::consistency::warm_solve` — #3809 named warm SOLVE door).
+// (`sugar_verifier::consistency::verify_consistency_scoped_with_base_index`
+// — #3809 one solve; resident base derives pool-only).
 // Non-discharged consistency rows become `publishDiagnostics` entries whose
 // message is the three-fact block (vendor fact / vendor universe / your
 // fact / conjoined / the fix), rendered by `fol_format.rs` (a port of

@@ -233,9 +233,14 @@ impl ProvenOutcome {
 /// `link_errors` (see `ProvenOutcome`'s doc for the empirical reason -- real
 /// pools are mostly unbridged, so a short-circuit would brick real runs).
 ///
-/// Disk-load face: builds the pool via [`load_pool`] then hands off to
-/// [`solve_project_with_pool`]. Callers that already hold a multi-speaker
-/// pool (e.g. [`prove_from_kit`]) use that door directly.
+/// Disk-load face: builds the pool via [`load_pool`] then runs the **one**
+/// discharge body. Cold residual side-channels (config re-read, call-edges,
+/// proof-run write, `Path::exists` locus preference, …) stay available
+/// because `cfg.pool_only_inputs` is left as the caller set it (default false).
+///
+/// Callers that already hold a multi-speaker pool (e.g. [`prove_from_kit`])
+/// use [`solve_project_with_pool`] — same body; warmth derived from the
+/// preloaded pool, not a second function door.
 pub fn solve_project(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
@@ -244,21 +249,55 @@ pub fn solve_project(
     // construction `run_with_proof_run` uses inline, so deriving beat-1 links
     // from it and discharging beat 2 over it read the SAME production truth.
     let pool = load_pool(&cfg);
-    solve_project_with_pool(cfg, compilers, pool)
+    discharge_with_pool(cfg, compilers, pool)
 }
 
-/// Production solve beats over a **preloaded** pool (sugar#3809 Task 8).
+/// Production solve over a **preloaded** pool (sugar#3809 Task 8 / one-solve).
 ///
 /// Same annotate-not-block link + `Runner::run_with_proof_run_with_pool`
 /// discharge as [`solve_project`], without re-walking the project for
 /// `.proof` files. Use this when the pool was assembled with speakers via
 /// [`pool_from_graph_with_speaker`] and vendor `ProofBytes` merge.
 ///
-/// Warm callers should prefer [`warm_solve`], which **forces** the zero-disk
-/// input policy. This door honors `cfg.pool_only_inputs` as the caller set it
-/// (cold `solve_project` leaves it false so disk solvers-config + legacy
-/// call-edge sidecars still resolve).
+/// ## Warmth is derived cache state, not a second door
+///
+/// There is no separate `warm_solve`. The caller already holds claim facts in
+/// `pool` (fold / prior load). This single preloaded entry **derives** the
+/// zero project-FS discharge policy (`pool_only_inputs = true`,
+/// `cache_dir = None`) from that residency: discharge must not re-open
+/// plan/config/manifests, walk `*.proof` / call-edges / named artifacts, or
+/// write `.sugar/runs/` / tier-2 cache. Claim bytes + solvers + signers +
+/// plan_artifact must already ride on `cfg` / `pool` / `compilers`.
+///
+/// Cold disk face remains [`solve_project`] (load then discharge without
+/// forcing the flag — residual side-channels still resolve).
+///
+/// ## Out of scope (not "warm solve FS")
+///
+/// - **Kit process source reads during fold/enumerate** — that is *lift*,
+///   done before this door; owned by rendezvous + `sugar.enumerate`.
+/// - **CLI `plan_workspace` / `read_project_config`** — cold front that
+///   *builds* the pinned plan; a warm re-solve must pass the already-pinned
+///   `RunnerConfig` (and compilers) without calling those again.
+/// - **z3 process spawn** — process execution, not a project filesystem read.
+/// - **Full pandas CLI wall (~33s)** — vendor-feed volume / unscoped solve,
+///   not residual plan/manifest I/O on this door.
 pub fn solve_project_with_pool(
+    mut cfg: RunnerConfig,
+    compilers: CompilerRegistry,
+    pool: MementoPool,
+) -> Result<ProvenOutcome, SolveError> {
+    // Derived warmth: pool is already resident in the caller's hands.
+    // Callers do not pre-force `pool_only_inputs` via a second door.
+    cfg.pool_only_inputs = true;
+    cfg.cache_dir = None;
+    discharge_with_pool(cfg, compilers, pool)
+}
+
+/// THE solve body: annotate-not-block LINK + Runner discharge over one pool.
+/// Policy rides on `cfg` (`pool_only_inputs` / `cache_dir` / …) — set by the
+/// cold disk face or derived by [`solve_project_with_pool`] for a preloaded pool.
+fn discharge_with_pool(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
     pool: MementoPool,
@@ -285,41 +324,6 @@ pub fn solve_project_with_pool(
         artifact,
         outcome_class,
     })
-}
-
-/// #3809 warm **SOLVE** door — pure discharge over a pre-fed pool.
-///
-/// ## Scope (DoD read-side)
-///
-/// This is the solve half only. It does **not**:
-/// - re-read `.sugar/config.toml` / component plans / lift manifests
-/// - re-rendezvous a kit or re-run `sugar.enumerate` (lift)
-/// - walk project `*.proof` / call-edges / named artifacts
-/// - write `.sugar/runs/` or tier-2 cache
-///
-/// Claim bytes + solvers + signers + plan_artifact must already ride on
-/// `cfg` / `pool` / `compilers` in memory (CLI cold front or prior fold).
-///
-/// ## Out of scope (not "warm solve FS")
-///
-/// - **Kit process source reads during fold/enumerate** — that is *lift*,
-///   done before this door; owned by rendezvous + `sugar.enumerate`.
-/// - **CLI `plan_workspace` / `read_project_config`** — cold front that
-///   *builds* the pinned plan; a warm re-solve must pass the already-pinned
-///   `RunnerConfig` (and compilers) without calling those again.
-/// - **z3 process spawn** — process execution, not a project filesystem read.
-/// - **Full pandas CLI wall (~33s)** — vendor-feed volume / unscoped solve,
-///   not residual plan/manifest I/O on this door.
-///
-/// Forces `pool_only_inputs = true` and `cache_dir = None`.
-pub fn warm_solve(
-    mut cfg: RunnerConfig,
-    compilers: CompilerRegistry,
-    pool: MementoPool,
-) -> Result<ProvenOutcome, SolveError> {
-    cfg.pool_only_inputs = true;
-    cfg.cache_dir = None;
-    solve_project_with_pool(cfg, compilers, pool)
 }
 
 /// Failures staging the kit walk + testimony into a dischargeable pool —
@@ -359,17 +363,18 @@ pub fn prove_from_kit(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
 ) -> Result<ProvenOutcome, ProveFromKitError> {
-    // LIFT front (not warm-solve DoD): fold + testimony assemble the pool.
+    // LIFT front (not solve DoD): fold + testimony assemble the pool.
     // Kit source reads / enumerate RPC live here — rendezvous front, kept.
     let pool = fold_kit_to_pool(kit, workspace_root, speaker, &cfg)?;
 
-    // SOLVE half (#3809 warm door): pure discharge; no plan/manifest re-read.
-    Ok(warm_solve(cfg, compilers, pool)?)
+    // SOLVE half: one preloaded-pool discharge. Warmth is derived inside
+    // solve_project_with_pool (pool already resident) — no second door.
+    Ok(solve_project_with_pool(cfg, compilers, pool)?)
 }
 
 /// LIFT half of [`prove_from_kit`]: walk enumerate + optional testimony into
 /// a multi-speaker pool. May spawn the kit and (kit-side) read sources.
-/// Not the warm-solve DoD surface — use [`warm_solve`] once the pool is fed.
+/// Not the solve DoD surface — use [`solve_project_with_pool`] once the pool is fed.
 pub fn fold_kit_to_pool(
     kit: &Kit,
     workspace_root: &Path,

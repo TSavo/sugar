@@ -20,7 +20,7 @@
 //
 // HONESTY NOTE (per the lane brief): this exercises the REAL construction
 // (`build_prove_context_for` -> `mint_project_scratch_proof` ->
-// `warm_solve` -> `row_to_json` ->
+// `verify_consistency_scoped_with_base_index` -> `row_to_json` ->
 // `fol_format::format_detail`) end to end, but the "lifter" on both sides is
 // a fixture shell script speaking the lift-plugin wire protocol directly
 // (the SAME pattern `sugar-cli/tests/cmd_verify_rust_division_unsound.rs`
