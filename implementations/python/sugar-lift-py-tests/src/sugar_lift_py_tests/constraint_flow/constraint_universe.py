@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .constraint_dig_request import ConstraintDigRequest
-from ..factory.dig_boundary import DigBoundary
+from ..factory.factory_gap import dig_boundary_panic
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class ConstraintUniverse:
     source_memento: dict[str, Any]
     sugar_chain: list[str]
     warranted_by: ConstraintDigRequest
-    dig_refusals: list[DigBoundary]
+    dig_refusals: list
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -26,5 +26,7 @@ class ConstraintUniverse:
             "sourceMemento": dict(self.source_memento),
             "sugarChain": list(self.sugar_chain),
             "warrantedBy": self.warranted_by.to_json(),
-            "diagnostics": [refusal.to_json() for refusal in self.dig_refusals],
+            # dig_refusals used to hold DigBoundary soft rows; that type is deleted.
+            # Any dig refusal panics at the record site, so this list is always empty.
+            "diagnostics": list(self.dig_refusals),
         }

@@ -109,12 +109,10 @@ class SymbolicValue(FloorValue):
                     extra_args=tuple(operation.arguments),
                 )
             )
-        from sugar_lift_py_tests.effect import FactoryGapEffect
+        from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
         from sugar_lift_py_tests.outcome import Incomplete
 
-        return Incomplete(
-            FactoryGapEffect(
-                owner=operation.owner,
+        factory_panic_gap(owner=operation.owner,
                 blame=operation.blame,
                 observed=f"SymbolicValue.{operation.name}",
                 requested="symbolic receiver method floor",
@@ -123,9 +121,7 @@ class SymbolicValue(FloorValue):
                     "or keep the opaque runtime method as a typed effect"
                 ),
                 gap_kind=GapKind.FLOOR,
-                gap_locus=GapLocus.CONSTRUCTION,
-            )
-        )
+                gap_locus=GapLocus.CONSTRUCTION,)
 
     def add_with(self, operation, ctx):
         """``.add(operand)`` on a symbolic receiver.

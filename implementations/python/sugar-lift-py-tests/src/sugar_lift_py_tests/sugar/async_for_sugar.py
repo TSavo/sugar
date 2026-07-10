@@ -5,8 +5,7 @@ from typing import NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -108,7 +107,7 @@ def _raise_async_for_gap(site, *, observed: str, requested: str, fix: str) -> No
         gap_kind=GapKind.SUGAR,
         gap_locus=GapLocus.AST,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role=requested,

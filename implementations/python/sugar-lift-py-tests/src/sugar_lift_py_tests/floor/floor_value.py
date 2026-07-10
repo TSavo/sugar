@@ -312,8 +312,7 @@ class FloorValue:
 
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
-            FactoryGap,
+            FactoryAuditRow, factory_panic,
             FactoryGapInfo,
             GapKind,
             GapLocus,
@@ -329,7 +328,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.PROJECTION,
         )
-        gap = FactoryGap(
+        factory_panic(
             info,
             FactoryAuditRow(
                 role="to_term",
@@ -341,12 +340,10 @@ class FloorValue:
                 message=info.message,
             ),
         )
-        raise gap
 
     def _operation_construction_gap(self, operation: Any, method_name: str) -> NoReturn:
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
-            FactoryGap,
+            FactoryAuditRow, factory_panic,
             FactoryGapInfo,
             GapKind,
             GapLocus,
@@ -364,7 +361,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        raise FactoryGap(
+        factory_panic(
             info,
             FactoryAuditRow(
                 role=method_name,

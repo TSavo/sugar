@@ -9,8 +9,7 @@ _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.temporal."
 
 def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
-        FactoryGap,
+        FactoryAuditRow, factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,
@@ -32,7 +31,7 @@ def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
         gap_kind=GapKind.OPERATION,
         gap_locus=GapLocus.METHOD_NAME,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role="method_name",
@@ -58,8 +57,7 @@ def _missing_temporal_floor_gap(
     method_name: str,
 ):
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
-        FactoryGap,
+        FactoryAuditRow, factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,
@@ -78,7 +76,7 @@ def _missing_temporal_floor_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role=method_name,
@@ -111,8 +109,7 @@ def perform_temporal_operation(
                 method_name=method_name,
             )
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
-            FactoryGap,
+            FactoryAuditRow, factory_panic,
             FactoryGapInfo,
             GapKind,
             GapLocus,
@@ -131,7 +128,7 @@ def perform_temporal_operation(
             gap_kind=GapKind.OPERATION,
             gap_locus=GapLocus.METHOD_NAME,
         )
-        raise FactoryGap(
+        factory_panic(
             info,
             FactoryAuditRow(
                 role=method_name,

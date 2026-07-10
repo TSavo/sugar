@@ -5,16 +5,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.effect import (
-    DigBoundaryEffect,
     Effect,
-    FactoryGapEffect,
     RuntimeEffect,
     effect_kind,
     effect_reason,
     require_effect,
 )
-from sugar_lift_py_tests.factory import FactoryGap
-from sugar_lift_py_tests.factory.dig_boundary import DigBoundary
 from sugar_lift_py_tests.ir import _json_like_to_value, eq, make_var, num
 from sugar_lift_py_tests.outcome import Incomplete
 
@@ -75,25 +71,6 @@ class BoundaryRecord:
             raise TypeError("BoundaryRecord.from_incomplete requires Incomplete")
         return cls(effect=incomplete.effect, provenance=provenance)
 
-    @classmethod
-    def from_gap(
-        cls,
-        gap: FactoryGap | DigBoundary,
-        *,
-        provenance: Provenance,
-    ) -> BoundaryRecord:
-        if isinstance(gap, FactoryGap):
-            return cls(
-                effect=FactoryGapEffect.from_gap(gap),
-                provenance=provenance,
-            )
-        if isinstance(gap, DigBoundary):
-            return cls(
-                effect=DigBoundaryEffect.from_refusal(gap),
-                provenance=provenance,
-            )
-        raise TypeError("BoundaryRecord.from_gap requires FactoryGap or DigBoundary")
-
     def denotation(self) -> None:
         return None
 
@@ -107,12 +84,6 @@ class BoundaryRecord:
             "reason": self.reason,
             "provenance": self.provenance().to_rpc(),
         }
-
-    @staticmethod
-    def dig_boundary_diagnostic(refusal: DigBoundary) -> dict[str, Any]:
-        if not isinstance(refusal, DigBoundary):
-            raise TypeError("dig_boundary_diagnostic requires DigBoundary")
-        return DigBoundaryEffect.from_refusal(refusal).to_diagnostic()
 
     @staticmethod
     def agreement_violation_diagnostic(

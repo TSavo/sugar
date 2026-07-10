@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+from sugar_lift_py_tests.factory.factory_gap import factory_panic
 from sugar_lift_py_tests.factory.literal_call_report import (
     _require_proofir_emission_node,
 )
@@ -45,7 +45,7 @@ def test_proofir_return_type_seam_accepts_typed_node() -> None:
 
 
 def test_proofir_return_type_seam_refuses_raw_dict() -> None:
-    with pytest.raises(FactoryGap, match="EqualityFact"):
+    with pytest.raises(factory_panic, match="EqualityFact"):
         _require_proofir_emission_node(
             {"kind": "contract", "inv": {"kind": "atomic", "name": "=", "args": []}},
             construction_site="tests:raw-dict",

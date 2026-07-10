@@ -29,7 +29,7 @@ from dataclasses import dataclass
 import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
 from sugar_lift_py_tests.factory.build import FactoryBuildContext, default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.outcome import Incomplete
@@ -103,7 +103,7 @@ def _classify(
 
     reduce_gap_observed: str | None = None
     outcome = body.reduce(ctx)
-    if isinstance(outcome, Incomplete) and isinstance(outcome.effect, FactoryGapEffect):
+    if isinstance(outcome, Incomplete) and isinstance(outcome.effect):
         reduce_gap_observed = outcome.effect.observed
 
     return _CallsiteClassification(

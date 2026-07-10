@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -86,7 +85,7 @@ class ConstructorStrategy:
                 gap_kind=GapKind.CONSTRUCTOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
-            raise FactoryGap(
+            factory_panic(
                 info,
                 FactoryAuditRow(
                     role="constructor field floor",
@@ -97,7 +96,7 @@ class ConstructorStrategy:
                     candidates=[],
                     message=info.message,
                 ),
-            ) from exc
+            )
         return ObjectField(name=name, value=value)
 
     def _class_field(self, name: str, body: SugarBody, ctx) -> ObjectField:
@@ -119,7 +118,7 @@ class ConstructorStrategy:
                 gap_kind=GapKind.CONSTRUCTOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
-            raise FactoryGap(
+            factory_panic(
                 info,
                 FactoryAuditRow(
                     role="class descriptor __set_name__ effect",

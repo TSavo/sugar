@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.floor import BoolValue, FloorValue, TermValue
 from sugar_lift_py_tests.ir import bool_const, num
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term

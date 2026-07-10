@@ -3,8 +3,7 @@
 pyrightconfig.json runs the repo in basic mode; that ratchet lives in
 test_type_checker_ratchet.py. This is a SEPARATE, narrower lane: it re-runs
 pyright in STRICT mode scoped to exactly the files #3657's priority list named
-as closeable-but-loose (FloorDispatchSurface/FloorValue, FactoryBuildContext,
-FactoryGapEffect, the SugarBody/FactoryBuildResult edge, and the two DTOs that
+as closeable-but-loose (FloorDispatchSurface/FloorValue, FactoryBuildContext, the SugarBody/FactoryBuildResult edge, and the two DTOs that
 close their dict[str, Any] fallback lanes). Whole-repo strict is not the ask;
 these six-plus-two files ARE PR1-4's fixes, so R starts at 0 for all of them.
 

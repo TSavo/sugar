@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import ClassVar, NoReturn
 
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -206,7 +205,7 @@ def _raise_string_slice_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role="string_slice",
@@ -237,7 +236,7 @@ def _raise_subscript_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role=requested,

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
 
 import json
 from collections.abc import Mapping
@@ -51,7 +52,7 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceSpanDto,
 )
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
-from sugar_lift_py_tests.effect import FactoryGapEffect, RuntimeEffect
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.effect import effect_status
 from sugar_lift_py_tests.floor import (
     DictLiteralValue,
@@ -89,7 +90,7 @@ from sugar_lift_py_tests.proofir.sorts import (
     sort_from_ir,
 )
 
-from .dig_boundary import DigBoundary
+from .factory_gap import dig_boundary_panic
 from .dig_floor import DigFloorRecord, assert_locus_json, record_dig_floor
 from .floor_contract_agreement import (
     FloorContractAgreementViolation,
@@ -97,7 +98,7 @@ from .floor_contract_agreement import (
     floor_contract_agreement_diagnostic,
     floor_contract_agreement_violations_for_fact,
 )
-from .factory_gap import FactoryGap
+from .factory_gap import factory_panic
 from .package_source_accounting import (
     package_source_audits_for_source,
     source_ledger_for_source_audits,
@@ -401,7 +402,7 @@ def build_literal_call_report(
     call_edges: list[CallEdgeDto] = []
     implications: list[ImplicationDto] = []
     effects: list[EffectDto] = []
-    dig_refusals: list[DigBoundary] = []
+    dig_refusals: list = []
     dig_floors: list[DigFloorRecord] = []
     agreement_violations: list[FloorContractAgreementViolation] = []
     # Dig / name-resolver map is keyed by bare function name (call resolution).
@@ -529,7 +530,8 @@ def build_literal_call_report(
             # DiagnosticDto docstring); cast documents the open membrane
             # rather than pretending pyright verified per-producer fields.
             diagnostics=[
-                cast(DiagnosticDto, refusal.to_json()) for refusal in dig_refusals
+                # DigBoundary deleted: dig refusal panics at record time; list stays empty.
+                cast(DiagnosticDto, refusal) for refusal in dig_refusals
             ]
             + [
                 cast(DiagnosticDto, floor.to_json()) for floor in dig_floors
@@ -661,7 +663,7 @@ def _lift_assert(
     from_imports: dict[str, tuple[str, str]],
     contract_bindings: list,
     module_statements: list[SourceFragment],
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
     dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
@@ -944,7 +946,7 @@ def _lift_assertion_via_factory(
     contract_bindings: list,
     module_statements: list[SourceFragment],
     factory_audits: list[FactoryAuditDto],
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
     dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
 ) -> LiftResult | None:
@@ -1058,7 +1060,7 @@ def _try_assertion_factory_build(
     contract_bindings: list,
     functions_by_name: dict[str, SourceFragment],
     classes_by_name: dict[str, SourceFragment],
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
     dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
@@ -1170,7 +1172,7 @@ def _factory_assertion_derived_context(
     classes_by_name: dict[str, SourceFragment],
     import_aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
     dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
@@ -1741,28 +1743,18 @@ def _proofir_effect_lift(
     memento_file: str,
     source_lines: list[str],
 ) -> LiftResult:
+    del frag, fn, filename, source_lines
     from .factory_gap_info import GapKind, GapLocus
 
-    return _effect_lift(
-        frag,
-        fn,
-        Incomplete(
-            FactoryGapEffect(
-                owner="literal_call_report.equality_fact",
-                blame=(f"{memento_file}:{stmt.line}:{stmt.col}"),
-                observed=observed,
-                requested=requested,
-                fix=fix,
-                gap_kind=GapKind.PROOFIR,
-                gap_locus=GapLocus.CONSTRUCTION_LAW,
-            )
-        ),
-        stmt=stmt,
-        selected="TypedEffect",
-        requested_role="ProofIRConstructionLaw",
-        filename=filename,
-        memento_file=memento_file,
-        source_lines=source_lines,
+    # ProofIR construction-law gap: no soft Incomplete — panic.
+    factory_panic_gap(
+        owner="literal_call_report.equality_fact",
+        blame=f"{memento_file}:{stmt.line}:{stmt.col}",
+        observed=observed,
+        requested=requested,
+        fix=fix,
+        gap_kind=GapKind.PROOFIR,
+        gap_locus=GapLocus.CONSTRUCTION_LAW,
     )
 
 
@@ -1799,7 +1791,7 @@ def _is_open_byte_support_universe(formulas: list[Formula], bound: set[str]) -> 
 
 
 def _record_open_universe_refusal(
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
     *,
     callee: SourceFragment,
     formulas: list[Formula],
@@ -2794,8 +2786,7 @@ def _require_proofir_emission_node(
 ):
     """ProofIR Slice 3 return-type seam: raw formula rows must become nodes."""
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
-        FactoryGap,
+        FactoryAuditRow, factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,
@@ -2823,7 +2814,7 @@ def _require_proofir_emission_node(
         gap_kind=GapKind.PROOFIR,
         gap_locus=GapLocus.EMISSION,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role="ProofIRNode",
@@ -3254,7 +3245,7 @@ def _construct_callsite_from_factory_term(
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
     dig_floors: list[DigFloorRecord],
     agreement_violations: list[FloorContractAgreementViolation],
     factory_audits: list[FactoryAuditDto],
@@ -3269,7 +3260,7 @@ def _construct_callsite_from_factory_term(
     """
     from .build import default_catalog
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
-    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic
     from sugar_lift_py_tests.floor import CallSiteValue
     from sugar_lift_py_tests.floor.call_site_value import force_floor
     from sugar_lift_py_tests.operations import (
@@ -3530,7 +3521,7 @@ def _construct_callsite_from_factory_term(
                     ctx=cast(Any, reduce_ctx),
                 )
             )
-        except (TypeError, ValueError, FactoryGap) as exc:
+        except (TypeError, ValueError) as exc:
             _record_dig_refusal(
                 dig_refusals,
                 callee=call_value.target_name,
@@ -3584,7 +3575,7 @@ def _construct_callsite_from_factory_term(
         top_value = complete_value(outcome, owner="literal_call_report.callsite_floor")
         if not isinstance(top_value, CallSiteValue):
             raise TypeError(f"callsite reduced to {type(top_value).__name__}")
-    except (TypeError, ValueError, FactoryGap) as exc:
+    except (TypeError, ValueError) as exc:
         _record_dig_refusal(
             dig_refusals,
             callee=callee_name,
@@ -3626,9 +3617,9 @@ def _immediate_callsite_term(
     *,
     owner: str,
     blame: str,
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
 ) -> Term | _BridgeProjectionRefused | None:
-    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic
     from sugar_lift_py_tests.floor.call_site_value import (
         _ctx_with_curried_args,
         _reduce_callsite_body,
@@ -3667,7 +3658,7 @@ def _immediate_callsite_term(
                 ctx=reduce_ctx,
             )
         )
-    except (TypeError, ValueError, FactoryGap) as exc:
+    except (TypeError, ValueError) as exc:
         _record_dig_refusal(
             dig_refusals,
             callee=call_value.target_name,
@@ -3690,7 +3681,7 @@ def _function_universe(
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
     factory_audits: list[FactoryAuditDto],
     import_aliases: dict[str, str] | None = None,
     from_imports: dict[str, tuple[str, str]] | None = None,
@@ -3710,7 +3701,7 @@ def _function_universe(
     only when ``pd`` resolves; without aliases the open free var ``pd`` refuses the
     universe (opaque attr body-dig gap, same family as opaque builtin body dig).
     """
-    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic
 
     from .build import default_catalog
     from .sugar_constructors import (
@@ -3769,7 +3760,7 @@ def _function_universe(
         body_steps = universe_sugar.factory_steps(callee.node)
         body_formulas = universe_sugar.constraint_formulas()
         body_step_formulas = universe_sugar.constraint_formula_steps()
-    except (TypeError, ValueError, FactoryGap, IncompleteFunctionBody) as exc:
+    except (TypeError, ValueError, IncompleteFunctionBody) as exc:
         for closed_universe in (
             _urlsafe_translate_function_universe,
             _strip_literal_function_universe,
@@ -4258,7 +4249,7 @@ def _open_dig_orientation_walk_rows(
     emitted_formula is None on rows — formulas live in reason only so they
     are not treated as warranted ambient constraints.
     """
-    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic
 
     from .build import default_catalog
     from .sugar_constructors import IncompleteFunctionBody, build_control_flow_body_sugar
@@ -4280,7 +4271,7 @@ def _open_dig_orientation_walk_rows(
         )
         sugar = build_control_flow_body_sugar(callee, build_ctx)
         formulas = sugar.constraint_formulas()
-    except (TypeError, ValueError, FactoryGap, IncompleteFunctionBody, Exception):
+    except (TypeError, ValueError, IncompleteFunctionBody, Exception):
         return []
     if not formulas:
         return []
@@ -4368,7 +4359,7 @@ def _dig_universe(
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
 ) -> LiftResult | None:
     """The dig, when the source is present. Desugar `callee`'s body into the universe
     post (a forall over the function's formals) and mint it as a `function-contract`.
@@ -4658,20 +4649,19 @@ def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResu
 
 
 def _record_dig_refusal(
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
     *,
     callee: str,
     blame: str,
     caught: BaseException,
     reason: str,
-) -> None:
-    dig_refusals.append(
-        DigBoundary(
-            callee=callee,
-            blame=blame,
-            caught=type(caught).__name__,
-            reason=f"{reason}: {caught}",
-        )
+) -> NoReturn:
+    del dig_refusals
+    dig_boundary_panic(
+        callee=callee,
+        blame=blame,
+        caught=type(caught).__name__,
+        reason=f"{reason}: {caught}",
     )
 
 
@@ -4681,9 +4671,9 @@ def _panic_no_sugar(
     """The mouth. The lifter saw an assertion it could not lift and REFUSES to drop it
     silently -- it PANICS, naming the AST shape and the sugar that is missing. A silent
     `return None` here would be the cardinal crime (un-done work disguised as done), so
-    the design forbids it: every give-up on a claim is a FactoryGap, never a None."""
+    the design forbids it: every give-up on a claim is a factory_panic, never a None."""
     from .factory_audit_row import FactoryAuditRow
-    from .factory_gap import FactoryGap
+    from .factory_gap import factory_panic
     from .factory_gap_info import FactoryGapInfo
 
     blame = f"{memento_file}:{frag.line}:{frag.col}"
@@ -4694,7 +4684,7 @@ def _panic_no_sugar(
         requested=requested,
         fix=fix,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role=requested,
@@ -5014,7 +5004,7 @@ def _with_module_sibling_functions(
 
 
 def _source_funcdef(
-    module_name: str, attr: str, *, dig_refusals: list[DigBoundary]
+    module_name: str, attr: str, *, dig_refusals: list
 ) -> SourceFragment | None:
     """Resolve ``module_name.attr`` to its installed-source FunctionDef SourceFragment.
 
@@ -5074,7 +5064,7 @@ def _resolve_imported_callees(
     aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
     *,
-    dig_refusals: list[DigBoundary],
+    dig_refusals: list,
 ) -> dict[str, SourceFragment]:
     """For every callsite referencing an imported callee (``np.rot90(...)`` or a
     ``from``-imported ``rot90(...)``), resolve its installed source to a

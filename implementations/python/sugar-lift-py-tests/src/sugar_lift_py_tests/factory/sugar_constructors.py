@@ -193,7 +193,7 @@ def _ctx_with_formal_binds(site: SourceFragment, ctx):
     name is temporally bound at *build* time (`_method_receiver_is_temporally_bound`).
     Universe dig already binds via `build_control_flow_body_sugar`; the single-return
     bridge shortcut must bind too, or `def A(s): return s.mean()` builds as
-    FactoryGap(call-method:mean) while the universe post correctly states
+    factory_panic(call-method:mean) while the universe post correctly states
     `out == call:mean(s)`.
 
     Install-source digs (``_sugar_file`` / ``_sugar_source`` on the FunctionDef)

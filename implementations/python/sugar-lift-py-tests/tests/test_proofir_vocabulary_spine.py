@@ -10,7 +10,7 @@ import cbor2
 import pytest
 
 from sugar_lift_py_tests.factory.literal_call_report import euf_callsite_name
-from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+from sugar_lift_py_tests.factory.factory_gap import factory_panic
 from sugar_lift_py_tests.ir import (
     Bool,
     Int,
@@ -247,7 +247,7 @@ def _captured_lift_document(capture: Path) -> dict:
 def _run_witness_case(case, tmp_path: Path) -> str:
     if case.expected == "construction-refusal":
         assert case.construct is not None
-        with pytest.raises((FactoryGap, TypeError)):
+        with pytest.raises((factory_panic, TypeError)):
             case.construct()
         return "construction-refusal"
     if case.construct is not None:
@@ -484,7 +484,7 @@ def test_equality_fact_semantic_merge_refuses_lying_pair() -> None:
     )
 
     assert stated_lie.semantic_cid() != derived_truth.semantic_cid()
-    with pytest.raises(FactoryGap, match="semantic_cid"):
+    with pytest.raises(factory_panic, match="semantic_cid"):
         merge_equality_facts(stated_lie, derived_truth)
 
 
@@ -510,7 +510,7 @@ def test_equality_fact_constructor_invariants_are_loud() -> None:
             rhs_term=ConstTerm(5, sort=IntSort()),
             provenance=_stated_provenance("EqualityFact"),
         )
-    with pytest.raises(FactoryGap, match="typed ProofIR Term"):
+    with pytest.raises(factory_panic, match="typed ProofIR Term"):
         EqualityFact(
             call_term=call_term,
             rhs_term={"kind": "const"},
@@ -548,7 +548,7 @@ def test_function_contract_witnesses_and_builder_invariants(tmp_path: Path) -> N
     assert contract.denotation() is not None
     assert contract.cid().startswith("blake3-512:")
 
-    with pytest.raises(FactoryGap, match="post"):
+    with pytest.raises(factory_panic, match="post"):
         (
             FunctionContract.builder(
                 symbol="module::missing::callable",
@@ -595,7 +595,7 @@ def test_refusal_record_has_no_formula_and_fact_plus_refusal_is_unconstructible(
 
 
 def test_function_contract_rejects_wrong_formula_and_declaration_shapes() -> None:
-    with pytest.raises(FactoryGap, match="post mentioning 'result'"):
+    with pytest.raises(factory_panic, match="post mentioning 'result'"):
         (
             FunctionContract.builder(
                 symbol="module::bad::callable",

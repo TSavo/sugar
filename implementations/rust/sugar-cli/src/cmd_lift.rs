@@ -3324,7 +3324,11 @@ fn render_factory_walk_rows(factory_walk: &[Value], project_root: Option<&Path>)
         } else {
             row.get("verdict")
                 .and_then(Value::as_str)
-                .unwrap_or("incomplete")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "factory walk row missing verdict: no incomplete catch-all                          (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+                    )
+                })
         };
         let context_key = factory_walk_context_key(row, &file);
         let verdict = if raw_verdict == "complete" {
@@ -4049,7 +4053,11 @@ fn visual_boundary_rows(
         } else {
             row.get("verdict")
                 .and_then(Value::as_str)
-                .unwrap_or("incomplete")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "factory walk row missing verdict: no incomplete catch-all                          (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+                    )
+                })
         };
         if raw_verdict == "complete" {
             continue;
@@ -4168,7 +4176,11 @@ fn visual_factory_walk_rows(
         } else {
             row.get("verdict")
                 .and_then(Value::as_str)
-                .unwrap_or("incomplete")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "factory walk row missing verdict: no incomplete catch-all                          (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+                    )
+                })
         };
         let context = factory_walk_context_key(row, &file);
         let (tone, label) = if raw_verdict == "complete" {
@@ -6245,11 +6257,12 @@ fn normalized_source_status(status: Option<&str>) -> &str {
         Some("boundary")
         | Some("raise-effect")
         | Some("runtime-effect")
-        | Some("coverage-gap")
-        | Some("factory-gap")
-        | Some("dig-boundary")
-        | Some("absent")
-        | Some("drifted") => "boundary",
+        | Some("coverage-gap") => "boundary",
+        // factory-gap / dig-boundary deleted third state: residual is unresolved gap.
+        // absent / drifted are source-oracle gaps, not soft incomplete boundary.
+        Some("factory-gap") | Some("dig-boundary") | Some("absent") | Some("drifted") => {
+            "unresolved"
+        }
         Some("unresolved") | Some("unclassified") | Some("silent") => "unresolved",
         _ => "unresolved",
     }
@@ -7283,7 +7296,11 @@ fn factory_walk_context_has_incomplete_boundary(factory_walk: &[Value], context:
         } else {
             row.get("verdict")
                 .and_then(Value::as_str)
-                .unwrap_or("incomplete")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "factory walk row missing verdict: no incomplete catch-all                          (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
+                    )
+                })
         };
         verdict != "complete"
     })

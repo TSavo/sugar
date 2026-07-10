@@ -595,7 +595,7 @@ def test_sklearn_symbolic_no_arm_operand_pair_still_panics() -> None:
     This proves the new SymbolicValue/StringValue arm did not widen dispatch
     to swallow shapes that have no lawful floor.
     """
-    from sugar_lift_py_tests.factory import FactoryGap
+    from sugar_lift_py_tests.factory import factory_panic
     from sugar_lift_py_tests.operations.binary_operator_operation import (
         BinaryOperatorOperation,
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, cast
 
 from sugar_lift_py_tests.context import FactoryBuildContext
-from sugar_lift_py_tests.factory import FactoryGap, FactoryGapInfo, GapKind, GapLocus
+from sugar_lift_py_tests.factory import factory_panic, FactoryGapInfo, GapKind, GapLocus
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.floor import BASE_CONSTRUCTION_GAP_METHOD_NAMES, FloorValue
 from sugar_lift_py_tests.operations.floor_operation import FloorOperation
@@ -29,7 +29,7 @@ def _operation_method_name(*, owner: str, blame: str, operation: FloorOperation)
         gap_kind=GapKind.OPERATION,
         gap_locus=GapLocus.METHOD_NAME,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role="method_name",
@@ -76,7 +76,7 @@ def _missing_floor_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
-    raise FactoryGap(
+    factory_panic(
         info,
         FactoryAuditRow(
             role=method_name,
@@ -121,7 +121,7 @@ def perform_operation(
             gap_kind=GapKind.OPERATION,
             gap_locus=GapLocus.METHOD_NAME,
         )
-        raise FactoryGap(
+        factory_panic(
             info,
             FactoryAuditRow(
                 role=method_name,

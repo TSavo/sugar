@@ -4,8 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -124,7 +123,7 @@ def _array_element(value, *, element: SugarBody):
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        raise FactoryGap(
+        factory_panic(
             info,
             FactoryAuditRow(
                 role="array element floor",

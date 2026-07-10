@@ -13,7 +13,6 @@ if __package__ in (None, ""):
 
 from sugar_lift_py_tests.audit_only import collect_construction_gaps
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.filename import cid_from_proof_stem
 from sugar_lift_py_tests.idd.lift_coverage_accounting import (
     account_lift_coverage,
@@ -1346,21 +1345,6 @@ def _handle_lift(
             )
             payload = replace(payload, lift_coverage=coverage)
         _send({"jsonrpc": "2.0", "id": msg_id, "result": payload.to_rpc()})
-    except FactoryGap as exc:
-        _send(
-            {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {
-                    "code": -32603,
-                    "message": str(exc),
-                    "data": {
-                        "info": exc.info.to_json(),
-                        "factoryAudit": exc.audit_row.to_json(),
-                    },
-                },
-            }
-        )
     except Exception as exc:
         _send(
             {

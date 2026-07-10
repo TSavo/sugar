@@ -6,7 +6,7 @@ Mechanism (lift-probed):
   time (Batch A) → ``out == call:mean(s)``.
 - Callsite force_floor used ``build_bridge_body``'s single-return *shortcut*,
   which built ``s.mean()`` with an empty temporal → CallSugar emitted
-  FactoryGap(``call-method:mean``) instead of MethodCallStrategy.
+  factory_panic(``call-method:mean``) instead of MethodCallStrategy.
 - Working cases: ``len(s)`` is BuiltinCallSugar (free call, not method);
   ``df[\"col\"].mean()`` has a constructed Subscript receiver.
 

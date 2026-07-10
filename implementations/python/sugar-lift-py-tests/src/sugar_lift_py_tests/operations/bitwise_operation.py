@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, ClassVar
 
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
+    FactoryAuditRow, factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,
@@ -118,7 +117,7 @@ class BitwiseOperation:
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
-            raise FactoryGap(
+            factory_panic(
                 info,
                 FactoryAuditRow(
                     role="bitwise operand floor",
@@ -129,7 +128,7 @@ class BitwiseOperation:
                     candidates=[],
                     message=info.message,
                 ),
-            ) from None
+            )
 
     def _fold_concrete_ints(self, receiver: TermValue) -> int | None:
         left = _concrete_int(receiver)

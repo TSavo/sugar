@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
 from sugar_lift_py_tests.factory import GapKind, GapLocus
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -71,7 +71,7 @@ def test_free_formal_arg_emits_open_term_factory_gap_no_equality_fact() -> None:
     assert report.payload.ir == []
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.owner == "literal_call_report.equality_fact"
     assert effect.effect.observed == "open term variable(s): value"
     assert effect.effect.requested == "closed EqualityFact terms"
@@ -93,7 +93,7 @@ def test_free_formal_rhs_emits_open_term_factory_gap() -> None:
     assert report.payload.ir == []
     assert len(report.payload.effects) == 1
     effect = report.payload.effects[0]
-    assert isinstance(effect.effect, FactoryGapEffect)
+    assert isinstance(effect.effect)
     assert effect.effect.observed == "open term variable(s): expected"
 
 
@@ -111,7 +111,7 @@ def test_bound_callsite_arg_emits_equality_fact_not_gap() -> None:
     open_gaps = [
         e
         for e in report.payload.effects
-        if isinstance(getattr(e, "effect", None), FactoryGapEffect)
+        if isinstance(getattr(e, "effect", None))
         and "open term variable" in (e.effect.observed or "")
     ]
     assert open_gaps == []
@@ -127,7 +127,7 @@ def test_bound_literal_sum_no_open_term_gap() -> None:
     open_gaps = [
         e
         for e in report.payload.effects
-        if isinstance(getattr(e, "effect", None), FactoryGapEffect)
+        if isinstance(getattr(e, "effect", None))
         and "open term variable" in (e.effect.observed or "")
     ]
     assert open_gaps == []

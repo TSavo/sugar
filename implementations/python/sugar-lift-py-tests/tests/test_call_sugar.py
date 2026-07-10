@@ -13,7 +13,7 @@ import ast
 import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import FactoryGapEffect
+from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
 from sugar_lift_py_tests.factory.build import FactoryBuildContext, default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.outcome import Incomplete
@@ -36,7 +36,7 @@ def _build(expr: str):
 def _reduce_gap_effect(body, ctx) -> FactoryGapEffect:
     outcome = body.reduce(ctx)
     assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, FactoryGapEffect)
+    assert isinstance(outcome.effect)
     return outcome.effect
 
 

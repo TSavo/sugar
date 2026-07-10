@@ -5,7 +5,7 @@ from typing import ClassVar
 import pytest
 
 from sugar_lift_py_tests.context import ReduceContext
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
 from sugar_lift_py_tests.temporal import (
     AddAssignRewriteOperation,

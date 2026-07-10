@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+from sugar_lift_py_tests.factory.factory_gap import factory_panic
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
-from sugar_lift_py_tests.factory.dig_boundary import DigBoundary
+from sugar_lift_py_tests.factory.factory_gap import dig_boundary_panic
 from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
 from sugar_lift_py_tests.factory.floor_contract_agreement import (
     FloorContractAgreementViolation,
@@ -25,8 +25,6 @@ from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.effect import (
     CoverageGapEffect,
-    DigBoundaryEffect,
-    FactoryGapEffect,
     RaiseEffect,
     RuntimeEffect,
     SourceOracleEffect,
@@ -139,7 +137,7 @@ def test_eq_refuses_wrong_sort_terms() -> None:
     call = CallTerm("h", (), sort=IntSort())
     rhs = ConstTerm("not-an-int", sort=StringSort())
 
-    with pytest.raises(FactoryGap, match="matching sorts"):
+    with pytest.raises(factory_panic, match="matching sorts"):
         Eq(call, rhs)
 
 
@@ -147,10 +145,10 @@ def test_closed_formula_refuses_naked_ir_formula_and_illegal_free_var() -> None:
     out = VarTerm("out", sort=IntSort())
     ghost = VarTerm("ghost", sort=IntSort())
 
-    with pytest.raises(FactoryGap, match="naked ir.Formula"):
+    with pytest.raises(factory_panic, match="naked ir.Formula"):
         ClosedFormula(ir_eq(make_var("out"), num(0)))
 
-    with pytest.raises(FactoryGap, match="illegal free var"):
+    with pytest.raises(factory_panic, match="illegal free var"):
         ClosedFormula(Eq(out, ghost), allowed_vars=("out",))
 
 
@@ -168,7 +166,7 @@ def test_post_condition_enforces_contract_scope_and_sort_law() -> None:
 
     assert post.ir_formula == ir_eq(out.ir_term, x.ir_term)
 
-    with pytest.raises(FactoryGap, match="declared formals plus out"):
+    with pytest.raises(factory_panic, match="declared formals plus out"):
         PostCondition(
             Eq(out, ghost),
             formals={"x": IntSort()},
@@ -176,7 +174,7 @@ def test_post_condition_enforces_contract_scope_and_sort_law() -> None:
             out_sort=IntSort(),
         )
 
-    with pytest.raises(FactoryGap, match="post mentioning 'out'"):
+    with pytest.raises(factory_panic, match="post mentioning 'out'"):
         PostCondition(
             Eq(x, ConstTerm(0, sort=IntSort())),
             formals={"x": IntSort()},
@@ -189,7 +187,7 @@ def test_post_condition_enforces_contract_scope_and_sort_law() -> None:
         free_vars=frozenset({"out", "x"}),
         free_var_sorts={"out": IntSort()},
     )
-    with pytest.raises(FactoryGap, match="sort"):
+    with pytest.raises(factory_panic, match="sort"):
         PostCondition(
             unsorted,
             formals={"x": IntSort()},
@@ -289,7 +287,7 @@ def test_naked_formula_cannot_be_inserted_as_equality_fact_term() -> None:
     call = CallTerm("h", (), sort=IntSort())
     rhs = ConstTerm(0, sort=IntSort())
 
-    with pytest.raises(FactoryGap, match="CallTerm"):
+    with pytest.raises(factory_panic, match="CallTerm"):
         EqualityFact(
             call_term=Eq(call, rhs),
             rhs_term=rhs,
@@ -363,7 +361,7 @@ def test_refusal_record_gap_effects_are_typed_before_legacy_lowering() -> None:
         requested="CallTerm",
         fix="route call through typed construction",
     )
-    gap = FactoryGap(
+    gap = factory_panic(
         gap_info,
         FactoryAuditRow(
             role="BodyUniverse",
@@ -377,12 +375,12 @@ def test_refusal_record_gap_effects_are_typed_before_legacy_lowering() -> None:
     )
     gap_record = BoundaryRecord.from_gap(gap, provenance=_refusal_provenance())
 
-    assert isinstance(gap_record.effect, FactoryGapEffect)
+    assert isinstance(gap_record.effect)
     assert gap_record.effect_kind == "FactoryGap"
     assert gap_record.reason == str(gap)
     assert gap_record.to_declaration()["reason"] == str(gap)
 
-    dig = DigBoundary(
+    dig = dig_boundary_panic(
         callee="pkg.mod::A",
         blame="factory",
         caught="RuntimeError",
@@ -390,7 +388,7 @@ def test_refusal_record_gap_effects_are_typed_before_legacy_lowering() -> None:
     )
     dig_record = BoundaryRecord.from_gap(dig, provenance=_refusal_provenance())
 
-    assert isinstance(dig_record.effect, DigBoundaryEffect)
+    assert isinstance(dig_record.effect)
     assert dig_record.effect_kind == "DigBoundary"
     assert dig_record.reason == "cannot climb"
     assert dig_record.to_declaration()["reason"] == "cannot climb"
@@ -425,7 +423,7 @@ def test_boundary_diagnostics_route_through_boundary_record(monkeypatch) -> None
         raising=False,
     )
 
-    dig = DigBoundary(
+    dig = dig_boundary_panic(
         callee="pkg.mod::A",
         blame="factory",
         caught="RuntimeError",
@@ -461,7 +459,7 @@ def test_role_wrappers_refuse_raw_formula_and_missing_provenance() -> None:
     assert wrapped.to_rpc()["kind"] == "atomic"
     assert wrapped.provenance.node_class == "UniverseMint"
 
-    with pytest.raises(FactoryGap, match="Provenance"):
+    with pytest.raises(factory_panic, match="Provenance"):
         claim_formula_from_ir(
             formula,
             var_sorts={"out": IntSort()},
@@ -470,7 +468,7 @@ def test_role_wrappers_refuse_raw_formula_and_missing_provenance() -> None:
             role="construction-law",
         )
 
-    with pytest.raises(FactoryGap, match="illegal free var"):
+    with pytest.raises(factory_panic, match="illegal free var"):
         claim_formula_from_ir(
             formula,
             var_sorts={"out": IntSort()},
@@ -510,7 +508,7 @@ def test_universe_mint_requires_claim_formula_and_preserves_wire_shape() -> None
             provenance=_universe_provenance(),
         )
 
-    with pytest.raises(FactoryGap, match="Provenance"):
+    with pytest.raises(factory_panic, match="Provenance"):
         UniverseMint(
             name="module::missing::assertion",
             slot="inv",

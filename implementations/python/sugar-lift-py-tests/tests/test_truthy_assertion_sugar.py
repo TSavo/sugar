@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.factory.factory_gap_info import (
     FactoryGapInfo,
@@ -47,7 +47,7 @@ class _GapBuildContext:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        raise FactoryGap(
+        factory_panic(
             info,
             FactoryAuditRow(
                 role="TERM",
@@ -125,7 +125,7 @@ def test_truthy_projection_degraded_arm_names_crime_owner_shape_replacement() ->
     assert result.reason == TruthProjectionDegradation(
         crime="truthy projection degraded before term-body construction",
         owner="TruthyAssertionSugar",
-        shape="FactoryGap(owner=test, observed=Name, requested=truthy term body)",
+        shape="factory_panic(owner=test, observed=Name, requested=truthy term body)",
         replacement="write more Floor for truthy body",
         audit_reason="write more Floor for truthy body",
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Callable, Iterable, TypeAlias
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, GapKind
+from sugar_lift_py_tests.factory import FactoryAuditRow, GapKind
 from sugar_lift_py_tests.factory.factory_gap_info import gap_kind_status
 
 from .audit_only_gap import AuditOnlyGap
@@ -24,15 +24,6 @@ def collect_construction_gaps(walkers: Iterable[AuditWalker]) -> list[AuditOnlyG
     for label, walker in walkers:
         try:
             walker()
-        except FactoryGap as exc:
-            gaps.append(
-                AuditOnlyGap(
-                    label=label,
-                    info=exc.info.to_json(),
-                    audit_row=exc.audit_row,
-                    message=str(exc),
-                )
-            )
         except TypeError as exc:
             gap = _gap_from_loud_type_error(label, str(exc))
             if gap is None:

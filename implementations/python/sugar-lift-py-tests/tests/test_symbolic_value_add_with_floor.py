@@ -12,7 +12,7 @@ Mechanism: missing **floor totalizer** — not a missing AST recognizer.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue

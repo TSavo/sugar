@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 _CHAIN = "def h(x):\n    return x + 1\ndef g(x):\n    return h(x)\n"

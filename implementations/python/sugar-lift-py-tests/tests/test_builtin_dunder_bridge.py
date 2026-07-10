@@ -8,7 +8,7 @@ from factory_reduce import fol
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
