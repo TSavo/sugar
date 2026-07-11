@@ -49,3 +49,40 @@ class UniverseValue(FloorValue):
         from sugar_lift_py_tests.ir import and_
 
         return and_(list(exits))
+
+    def mints(self):
+        # The record entries mint their own rows; the universe mints its post
+        # (Derived: the lift composed it from the exits).
+        from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
+        from sugar_lift_py_tests.proofir.nodes import (
+            ConstructionSite,
+            Derived,
+            Provenance,
+        )
+        from sugar_lift_py_tests.proofir.nodes.universe_mint import UniverseMint
+
+        rows = tuple(
+            row
+            for entry in self.record.statements
+            for row in entry.mint_contribution(self.name, self.formals)
+        )
+        post_provenance = Provenance(
+            node_class="UniverseMint",
+            construction_site=ConstructionSite(path=self.name, line=0, column=0),
+            warrant=Derived(floor_chain=("UniverseValue.post",)),
+        )
+        return (
+            *rows,
+            UniverseMint(
+                name=self.name,
+                slot="post",
+                formula=claim_formula(
+                    self.post(),
+                    formals=self.formals,
+                    provenance=post_provenance,
+                    role="post",
+                ),
+                provenance=post_provenance,
+                formals=self.formals,
+            ),
+        )

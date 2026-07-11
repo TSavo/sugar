@@ -116,6 +116,11 @@ class FloorValue:
         del ctx
         return Complete(self)
 
+    def mint_contribution(self, name, formals):
+        # Default: a record entry mints no row of its own.
+        del name, formals
+        return ()
+
     def follow_rest(self, rest, reduce):
         # Default: an ordinary statement value lets the block go on.
         return reduce(rest)
