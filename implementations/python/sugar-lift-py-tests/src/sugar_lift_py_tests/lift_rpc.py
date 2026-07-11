@@ -682,10 +682,15 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     rows (no post, no contract). Enumeration is functions by design: module
     statements no FunctionDefSugar owns are not lifted here.
 
-    Production door: FactoryPanic propagates and halts loud. Audit mode uses
-    `audit_lift_file` -- the ONE place the panic is held for enumeration.
+    Report path (AGENTS.md match-trace doctrine): holds per-def FactoryPanic
+    via `audit_lift_file(hold_panic=True)` and projects each held gap as a
+    FactoryWalkRedRowDto so --report --visual paints the None arm red. The
+    panic itself stays sacred outside this door (desugar/reduce never catch
+    it). Enumeration reuses this door so a broken def yields partial IR + red
+    walk rows rather than crashing the LSP -- hold_panic=False remains for
+    callers that demand the loud abort.
     """
-    payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
+    payload, _gaps = audit_lift_file(source, filename, hold_panic=True)
     return payload
 
 
@@ -695,12 +700,14 @@ def audit_lift_file(
     *,
     hold_panic: bool = True,
 ) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]]:
-    """Per-def factory walk for the audit door.
+    """Per-def factory walk -- the ONE door that may hold FactoryPanic.
 
     For each FunctionDef / test def: try build + desugar + payload_rows.
-    On FactoryPanic (and only when hold_panic), record a structured gap row
-    and CONTINUE to the next def. Clean defs still contribute their universe
-    rows. Production lift calls with hold_panic=False so the panic stays loud.
+    On FactoryPanic (and only when hold_panic), record a structured gap row,
+    project a FactoryWalkRedRowDto onto factory_walk (so the existing visual
+    red-render path fires), and CONTINUE to the next def. Clean defs still
+    contribute their universe rows. hold_panic=False re-raises so true
+    production semantics stay loud when a caller asks.
     """
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -745,9 +752,78 @@ def audit_lift_file(
         except FactoryPanic as panic:
             if not hold_panic:
                 raise
-            # Audit door: hold the panic, name the gap, keep walking.
-            gaps.append(gap_from_factory_panic(label, panic))
+            # ONE door: hold the panic, name the gap, paint it red, keep walking.
+            gap = gap_from_factory_panic(label, panic)
+            gaps.append(gap)
+            payload.factory_walk.append(_factory_walk_red_from_gap(gap))
     return payload, gaps
+
+
+def _factory_walk_red_from_gap(gap: AuditOnlyGap):
+    """Project a held FactoryPanic as a factory-walk red row.
+
+    status=unclassified serializes to unresolved/verdict=gap so
+    visual_factory_walk_rows takes the existing RED-with-grounds arm.
+    """
+    from sugar_lift_py_tests.canonicalizer import blake3_512_of
+    from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
+    from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
+    from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
+
+    audit = gap.audit_row
+    blame = str(audit.blame or gap.info.get("blame") or gap.label or "")
+    file, line, col = _parse_blame_locus(blame)
+    if not file:
+        # Fall back to the def label (filename:line:col) when blame is bare.
+        file, line, col = _parse_blame_locus(gap.label)
+    memento = SourceMementoDto(
+        file=file or "<unknown>",
+        span=SourceSpanDto(
+            start_line=line,
+            start_col=col,
+            end_line=line,
+            end_col=col,
+        ),
+        source_cid=blake3_512_of(b""),
+    )
+    reason = gap.message or audit.message or "factory gap"
+    return FactoryWalkRedRowDto(
+        file=file or "<unknown>",
+        line=line,
+        requested_role=str(audit.role or gap.info.get("requested") or "statement"),
+        ast_kind=str(audit.observed or gap.info.get("observed") or "unknown"),
+        selected=audit.selected,
+        status="unclassified",
+        output=str(audit.status or "sugar-gap"),
+        source_memento=memento,
+        reason=reason,
+        extra={
+            "candidates": list(audit.candidates),
+            "blame": blame,
+            "gap_kind": str(gap.info.get("gap_kind") or ""),
+            "gap_locus": str(gap.info.get("gap_locus") or ""),
+        },
+    )
+
+
+def _parse_blame_locus(site: str) -> tuple[str, int, int]:
+    """Parse 'path:line:col' from the right (paths may contain colons)."""
+    if not site:
+        return "", 0, 0
+    parts = site.rsplit(":", 2)
+    if len(parts) == 3:
+        file, line_s, col_s = parts
+        try:
+            return file, int(line_s), int(col_s)
+        except ValueError:
+            return site, 0, 0
+    if len(parts) == 2:
+        file, line_s = parts
+        try:
+            return file, int(line_s), 0
+        except ValueError:
+            return site, 0, 0
+    return site, 0, 0
 
 
 def _item_memento(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
