@@ -189,12 +189,25 @@ def summarize_pandas_completed_wall(
 ) -> PandasWallSummary:
     # Criterion 14 (#3706): green/red_reasoned/red_bare come from the JSON
     # report's `lineAccounting`, never a scrape of the `--visual` render.
+    # #4102: construction gaps come from production factoryWalk verdict==gap
+    # rows -- never hardcode zero (false-green when visual returns 0 with
+    # structured reds still on the walk).
     summary = summarize_numpy_wall(report_json)
+    gap_rows = _completed_wall_gap_rows(report_json)
+    by_bucket = {bucket: 0 for bucket in _GAP_BUCKETS}
+    templates: dict[str, int] = {}
+    for row in gap_rows:
+        bucket = _gap_bucket(row)
+        if bucket in by_bucket:
+            by_bucket[bucket] += 1
+        template = _gap_template(row, bucket)
+        templates[template] = templates.get(template, 0) + 1
     return PandasWallSummary(
         mode="complete",
-        gaps_total=0,
-        gaps_by_bucket={bucket: 0 for bucket in _GAP_BUCKETS},
-        gap_templates={},
+        # Honest count of every verdict==gap row -- never undercount.
+        gaps_total=len(gap_rows),
+        gaps_by_bucket=dict(sorted(by_bucket.items())),
+        gap_templates=dict(sorted(templates.items())),
         frontier={},
         green=summary.green,
         red_reasoned=summary.red_reasoned,
@@ -204,6 +217,25 @@ def summarize_pandas_completed_wall(
         call_edges_resolved=summary.call_edges_resolved,
         implications=summary.implications,
     )
+
+
+def _completed_wall_gap_rows(
+    report_json: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    """factoryWalk rows whose verdict is gap (production structured reds)."""
+    summary = report_json.get("factoryAuditSummary")
+    if not isinstance(summary, Mapping):
+        return ()
+    walk = summary.get("factoryWalk")
+    if not isinstance(walk, list):
+        return ()
+    rows: list[Mapping[str, Any]] = []
+    for row in walk:
+        if not isinstance(row, Mapping):
+            continue
+        if row.get("verdict") == "gap":
+            rows.append(row)
+    return tuple(rows)
 
 
 def check_pandas_wall_floors(
@@ -516,6 +548,22 @@ def _check_completed_wall_floors(
             "pandas wall completed; switch tools/pandas-wall-floors.json "
             "to mode=complete and pin completed-wall floors"
         )
+    # #4102: construction gaps remaining on a completed wall are red.
+    if summary.gaps_total > floors.gaps_total_ceiling:
+        breaches.append(
+            "construction gap ceiling breached: "
+            f"observed={summary.gaps_total} "
+            f"ceiling={floors.gaps_total_ceiling} "
+            f"delta={summary.gaps_total - floors.gaps_total_ceiling}"
+        )
+    for template, observed in sorted(summary.gap_templates.items()):
+        ceiling = floors.gap_template_ceilings.get(template, 0)
+        if observed > ceiling:
+            breaches.append(
+                "construction gap template ceiling breached: "
+                f"template={template} observed={observed} "
+                f"ceiling={ceiling} delta={observed - ceiling}"
+            )
     if summary.red_bare != 0:
         breaches.append(
             "red_bare invariant breached: "
