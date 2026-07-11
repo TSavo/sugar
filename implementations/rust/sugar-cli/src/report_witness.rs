@@ -19,6 +19,7 @@ use sugar_proof_envelope::{
 };
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // fields are read by cmd_prove when printing minted witness paths (binary module tree)
 pub(crate) struct ReportWitnessProof {
     pub name: String,
     pub proof_cid: String,
@@ -198,6 +199,7 @@ impl WitnessMintOptions {
 
 #[derive(Debug, Clone)]
 pub(crate) enum WitnessSource {
+    #[allow(dead_code)] // constructed via WitnessSource::{report,command,file} from cmd_prove (binary) and report_witness unit tests
     Report(ReportWitnessSource),
     Command(CommandWitnessSource),
     File(FileWitnessSource),
@@ -205,6 +207,7 @@ pub(crate) enum WitnessSource {
 }
 
 impl WitnessSource {
+    #[allow(dead_code)] // constructors used by cmd_prove (binary) and report_witness unit tests
     pub(crate) fn report(project_root: &Path, report: Json, replay_pins: Json) -> Self {
         Self::Report(ReportWitnessSource {
             project_root: project_root.to_path_buf(),
@@ -213,6 +216,7 @@ impl WitnessSource {
         })
     }
 
+    #[allow(dead_code)] // constructors used by cmd_prove (binary) and report_witness unit tests
     pub(crate) fn command(
         project_root: &Path,
         name: impl Into<String>,
@@ -234,6 +238,7 @@ impl WitnessSource {
         }))
     }
 
+    #[allow(dead_code)] // constructors used by cmd_prove (binary) and report_witness unit tests
     pub(crate) fn file(
         project_root: &Path,
         name: impl Into<String>,

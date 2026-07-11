@@ -130,6 +130,7 @@ pub(crate) struct KitResolution {
 
 /// Resolve `--kit=<name>` from project/user config. There is no built-in
 /// kit catalog: a shortcut only exists when `[[kits]]` declares it.
+#[allow(dead_code)] // called by cmd_verify::resolve path in the binary module tree (not in lib.rs)
 pub(crate) fn resolve_kit(kit: &str) -> Option<(PathBuf, String, String)> {
     let config_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let project_cfg = read_project_config(&config_root);
@@ -152,6 +153,7 @@ pub(crate) fn resolve_kit_from_configs(
         .map(|entry| kit_resolution_from_entry(config_root, entry))
 }
 
+#[allow(dead_code)] // called by cmd_verify kit-alias diagnostics in the binary module tree
 pub(crate) fn configured_kit_alias_names() -> Vec<String> {
     let config_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let project_cfg = read_project_config(&config_root);
@@ -1848,6 +1850,7 @@ pub fn mint_lift_plugins_for_report(
 /// `load_proof_bytes_into_pool` -- the SAME catalog-loading core every
 /// on-disk `.proof` goes through, so member validation and origin
 /// semantics are identical to a disk load.
+#[allow(dead_code)] // fields read by sugar-lsp prove_engine / in_process_prove (external crate)
 pub struct ScratchProof {
     pub cid: String,
     pub bytes: Vec<u8>,
@@ -1873,6 +1876,7 @@ pub struct ScratchProof {
 /// Returns `Ok(None)` when the project declares no lift plugins, or when
 /// the mint produced no catalog (lifter-missing empty-set attestation) --
 /// callers should treat this as "not applicable", not an error.
+#[allow(dead_code)] // called by sugar-lsp prove_engine / in_process_prove (external crate)
 pub fn mint_project_scratch_proof(
     project_root: &Path,
     out_dir: &Path,
@@ -1899,6 +1903,7 @@ pub fn mint_project_scratch_proof(
     }
 }
 
+#[allow(dead_code)] // called by cmd_lift report path in the binary module tree
 pub(crate) fn lift_plugins_response_for_report(
     project_root: &Path,
     plugins: &[PluginEntry],
@@ -2077,6 +2082,7 @@ fn mint_toolchain_output_witness_decl(
     }))
 }
 
+#[allow(dead_code)] // private helper of lift_plugins_response_for_report (cmd_lift binary)
 fn report_toolchain_plan_steps(plugins: &[PluginEntry]) -> Vec<Value> {
     let mut steps = plugins
         .iter()
@@ -2106,6 +2112,7 @@ fn report_toolchain_plan_steps(plugins: &[PluginEntry]) -> Vec<Value> {
     steps
 }
 
+#[allow(dead_code)] // private helper of lift_plugins_response_for_report (cmd_lift binary)
 fn dispatch_report_lift_plugin(
     project_root: &Path,
     plugin: &PluginEntry,
@@ -2141,6 +2148,7 @@ fn dispatch_report_lift_plugin(
     Ok(response)
 }
 
+#[allow(dead_code)] // private helper of dispatch_report_lift_plugin (cmd_lift binary)
 fn prefix_workspace_override_source_files(response: &mut Value, workspace_override: Option<&str>) {
     let Some(prefix) = report_source_prefix(workspace_override) else {
         return;
@@ -2148,6 +2156,7 @@ fn prefix_workspace_override_source_files(response: &mut Value, workspace_overri
     prefix_relative_file_fields(response, &prefix);
 }
 
+#[allow(dead_code)] // private helper of prefix_workspace_override_source_files (cmd_lift binary)
 fn report_source_prefix(workspace_override: Option<&str>) -> Option<String> {
     let raw = workspace_override?.trim();
     if raw.is_empty() || raw == "." {
@@ -2157,6 +2166,7 @@ fn report_source_prefix(workspace_override: Option<&str>) -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
+#[allow(dead_code)] // private helper of prefix_workspace_override_source_files (cmd_lift binary)
 fn prefix_relative_file_fields(value: &mut Value, prefix: &str) {
     match value {
         Value::Object(object) => {
@@ -2176,6 +2186,7 @@ fn prefix_relative_file_fields(value: &mut Value, prefix: &str) {
     }
 }
 
+#[allow(dead_code)] // private helper of prefix_relative_file_fields (cmd_lift binary)
 fn prefixed_report_source_file(file: &str, prefix: &str) -> String {
     let normalized = file.replace('\\', "/");
     if normalized.trim().is_empty() || Path::new(&normalized).is_absolute() {

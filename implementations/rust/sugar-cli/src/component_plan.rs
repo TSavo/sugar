@@ -165,6 +165,7 @@ struct ComponentRegistration {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // minted by plan_artifact_memento; threaded by cmd_prove (binary) and plan-artifact unit tests
 pub(crate) struct PlanArtifactMemento {
     pub plan_cid: String,
     pub member_cid: String,
@@ -359,16 +360,19 @@ pub fn plan_workspace_with_options(
     plan
 }
 
+#[allow(dead_code)] // called by discharge_config in the binary module tree
 pub(crate) fn planned_lift_plugins(project_root: &Path) -> Vec<PluginEntry> {
     plan_workspace(project_root, PlanIntent::Lift).plugins
 }
 
+#[allow(dead_code)] // called by cmd_lift/cmd_prove/cmd_verify/witness_verify in the binary module tree
 pub(crate) fn first_error_diagnostic(plan: &ComponentPlan) -> Option<&ComponentDiagnostic> {
     plan.diagnostics
         .iter()
         .find(|diagnostic| matches!(diagnostic.level, DiagnosticLevel::Error))
 }
 
+#[allow(dead_code)] // called by cmd_lift/cmd_prove/cmd_verify in the binary module tree
 pub(crate) fn warning_diagnostics(
     plan: &ComponentPlan,
 ) -> impl Iterator<Item = &ComponentDiagnostic> {
@@ -387,6 +391,7 @@ pub(crate) fn planned_lift_manifest(
         .find(|manifest| manifest.surface == surface)
 }
 
+#[allow(dead_code)] // feeds compiler_registry / compiler_registry_from_plan for cmd_prove/cmd_verify (binary)
 pub(crate) fn planned_ir_compilers(project_root: &Path) -> Vec<PlannedIrCompiler> {
     plan_workspace(project_root, PlanIntent::Prove).ir_compilers
 }
@@ -398,6 +403,7 @@ pub(crate) fn planned_ir_compilers(project_root: &Path) -> Vec<PlannedIrCompiler
 /// `sugar_verifier::compiler_registry::build`, so the dependency on
 /// `sugar-verifier` lives here (in `sugar-cli`, above `libsugar`) rather
 /// than inside the census path calling the verifier crate directly.
+#[allow(dead_code)] // used as ComponentRegistry by cmd_prove/cmd_verify in the binary module tree
 pub(crate) struct VerifierComponentRegistry;
 
 impl ComponentRegistry for VerifierComponentRegistry {
@@ -408,6 +414,7 @@ impl ComponentRegistry for VerifierComponentRegistry {
     }
 }
 
+#[allow(dead_code)] // entry for full-plan compiler registry; pair of compiler_registry_from_plan (cmd_prove/cmd_verify binary)
 pub(crate) fn compiler_registry(
     project_root: &Path,
     registry_builder: &dyn ComponentRegistry<Registry = CompilerRegistry>,
@@ -421,6 +428,7 @@ pub(crate) fn compiler_registry(
     registry
 }
 
+#[allow(dead_code)] // called by cmd_prove/cmd_verify in the binary module tree
 pub(crate) fn compiler_registry_from_plan(
     project_root: &Path,
     plan: &ComponentPlan,
@@ -431,6 +439,7 @@ pub(crate) fn compiler_registry_from_plan(
     registry
 }
 
+#[allow(dead_code)] // private helper of compiler_registry{,_from_plan}; also unit-tested in this module
 fn register_planned_ir_compilers(
     registry: &mut CompilerRegistry,
     project_root: &Path,
@@ -612,6 +621,7 @@ fn forensic_item_to_json(item: &ForensicItem) -> Value {
     })
 }
 
+#[allow(dead_code)] // exercised by rust_census_yields_missing_kit_suggestion unit test only today
 fn missing_kit_message_from_census(census: &WorkspaceCensus) -> Option<String> {
     let evidence = census.languages.first()?;
     Some(missing_kit_message(evidence))
@@ -1561,6 +1571,7 @@ fn absolute_path(path: &Path) -> PathBuf {
         .join(path)
 }
 
+#[allow(dead_code)] // called by planned ir-compiler path and witness_verify in the binary module tree
 pub(crate) fn resolve_project_relative_working_dir(
     project_root: &Path,
     working_dir: Option<&PathBuf>,
@@ -1574,6 +1585,7 @@ pub(crate) fn resolve_project_relative_working_dir(
     })
 }
 
+#[allow(dead_code)] // called by cmd_prove plan-artifact mint in the binary module tree + plan-artifact unit tests
 pub(crate) fn plan_artifact_memento(
     project_root: &Path,
     intent: PlanIntent,
@@ -1602,6 +1614,7 @@ pub(crate) fn plan_artifact_memento(
     })
 }
 
+#[allow(dead_code)] // called by plan-artifact unit tests; cmd_prove threads PlanArtifactMemento through it
 pub(crate) fn plan_workspace_for_replay(
     project_root: &Path,
     intent: PlanIntent,
@@ -1614,6 +1627,7 @@ pub(crate) fn plan_workspace_for_replay(
     }
 }
 
+#[allow(dead_code)] // used when minting PlanArtifactMemento component source_cid (cmd_prove binary + unit tests)
 pub(crate) fn file_bytes_cid(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|error| {
         format!(
@@ -1624,6 +1638,7 @@ pub(crate) fn file_bytes_cid(path: &Path) -> Result<String, String> {
     Ok(blake3_512_of(&bytes))
 }
 
+#[allow(dead_code)] // private helper of plan_artifact_memento (cmd_prove binary + unit tests)
 fn plan_affects_run(plan: &ComponentPlan) -> bool {
     !(plan.selected_components.is_empty()
         && plan.plugins.is_empty()
@@ -1631,6 +1646,7 @@ fn plan_affects_run(plan: &ComponentPlan) -> bool {
         && plan.ir_compilers.is_empty())
 }
 
+#[allow(dead_code)] // private helper of plan_artifact_memento (cmd_prove binary + unit tests)
 fn plan_artifact_body(
     project_root: &Path,
     intent: PlanIntent,
@@ -1670,6 +1686,7 @@ fn plan_artifact_body(
     })
 }
 
+#[allow(dead_code)] // private helper of plan_workspace_for_replay (cmd_prove binary + unit tests)
 fn component_plan_from_plan_artifact(
     artifact: &PlanArtifactMemento,
 ) -> Result<ComponentPlan, String> {
@@ -1746,6 +1763,7 @@ fn component_plan_from_plan_artifact(
     plan_from_artifact_body(body)
 }
 
+#[allow(dead_code)] // private helper of component_plan_from_plan_artifact (cmd_prove binary + unit tests)
 fn plan_from_artifact_body(body: &Value) -> Result<ComponentPlan, String> {
     let selected_components = array_field(body, "selectedComponents")
         .iter()
@@ -1782,12 +1800,14 @@ fn plan_from_artifact_body(body: &Value) -> Result<ComponentPlan, String> {
     })
 }
 
+#[allow(dead_code)] // private helper of plan-artifact replay refusal path (unit tests)
 fn plan_artifact_replay_refusal(crime: &str, shape: &str, replacement: &str) -> String {
     format!(
         "PlanArtifact replay refusal: crime={crime}; owner=component-plan seam; shape={shape}; replacement={replacement}"
     )
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_artifact_body (cmd_prove binary + unit tests)
 fn planned_component_to_value(component: &PlannedComponent) -> Value {
     json!({
         "name": component.name,
@@ -1800,6 +1820,7 @@ fn planned_component_to_value(component: &PlannedComponent) -> Value {
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_from_artifact_body (cmd_prove binary + unit tests)
 fn planned_component_from_value(value: &Value) -> Result<PlannedComponent, String> {
     Ok(PlannedComponent {
         name: required_string(value, "name", "selected component")?,
@@ -1812,6 +1833,7 @@ fn planned_component_from_value(value: &Value) -> Result<PlannedComponent, Strin
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_artifact_body (cmd_prove binary + unit tests)
 fn plugin_entry_to_value(plugin: &PluginEntry) -> Value {
     json!({
         "name": plugin.name,
@@ -1823,6 +1845,7 @@ fn plugin_entry_to_value(plugin: &PluginEntry) -> Value {
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_from_artifact_body (cmd_prove binary + unit tests)
 fn plugin_entry_from_artifact_value(value: &Value) -> Result<PluginEntry, String> {
     Ok(PluginEntry {
         name: string_field(value, "name"),
@@ -1834,6 +1857,7 @@ fn plugin_entry_from_artifact_value(value: &Value) -> Result<PluginEntry, String
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_artifact_body (cmd_prove binary + unit tests)
 fn planned_lift_manifest_to_value(manifest: &PlannedLiftManifest) -> Value {
     json!({
         "surface": manifest.surface,
@@ -1851,6 +1875,7 @@ fn planned_lift_manifest_to_value(manifest: &PlannedLiftManifest) -> Value {
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_from_artifact_body (cmd_prove binary + unit tests)
 fn planned_lift_manifest_from_artifact_value(value: &Value) -> Result<PlannedLiftManifest, String> {
     Ok(PlannedLiftManifest {
         surface: required_string(value, "surface", "PlanArtifact lift manifest")?,
@@ -1868,6 +1893,7 @@ fn planned_lift_manifest_from_artifact_value(value: &Value) -> Result<PlannedLif
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_artifact_body (cmd_prove binary + unit tests)
 fn planned_ir_compiler_to_value(compiler: &PlannedIrCompiler) -> Value {
     json!({
         "name": compiler.name,
@@ -1881,6 +1907,7 @@ fn planned_ir_compiler_to_value(compiler: &PlannedIrCompiler) -> Value {
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_from_artifact_body (cmd_prove binary + unit tests)
 fn planned_ir_compiler_from_artifact_value(value: &Value) -> Result<PlannedIrCompiler, String> {
     Ok(PlannedIrCompiler {
         name: required_string(value, "name", "PlanArtifact IR compiler")?,
@@ -1894,6 +1921,7 @@ fn planned_ir_compiler_from_artifact_value(value: &Value) -> Result<PlannedIrCom
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_artifact_body (cmd_prove binary + unit tests)
 fn component_diagnostic_to_value(diagnostic: &ComponentDiagnostic) -> Value {
     json!({
         "level": match diagnostic.level {
@@ -1905,6 +1933,7 @@ fn component_diagnostic_to_value(diagnostic: &ComponentDiagnostic) -> Value {
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_artifact_body (cmd_prove binary + unit tests)
 fn workspace_census_to_value(census: &WorkspaceCensus) -> Value {
     json!({
         "languages": census.languages.iter().map(language_evidence_to_value).collect::<Vec<_>>(),
@@ -1912,6 +1941,7 @@ fn workspace_census_to_value(census: &WorkspaceCensus) -> Value {
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_from_artifact_body (cmd_prove binary + unit tests)
 fn workspace_census_from_value(value: &Value) -> Result<WorkspaceCensus, String> {
     Ok(WorkspaceCensus {
         languages: array_field(value, "languages")
@@ -1925,6 +1955,7 @@ fn workspace_census_from_value(value: &Value) -> Result<WorkspaceCensus, String>
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_artifact_body (cmd_prove binary + unit tests)
 fn language_evidence_to_value(evidence: &LanguageEvidence) -> Value {
     json!({
         "language": evidence.language,
@@ -1933,6 +1964,7 @@ fn language_evidence_to_value(evidence: &LanguageEvidence) -> Value {
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_from_artifact_body (cmd_prove binary + unit tests)
 fn language_evidence_from_value(value: &Value) -> Result<LanguageEvidence, String> {
     Ok(LanguageEvidence {
         language: required_string(value, "language", "PlanArtifact census language")?,
@@ -1941,6 +1973,7 @@ fn language_evidence_from_value(value: &Value) -> Result<LanguageEvidence, Strin
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_artifact_body (cmd_prove binary + unit tests)
 fn forensic_item_to_value(item: &ForensicItem) -> Value {
     json!({
         "id": item.id,
@@ -1951,6 +1984,7 @@ fn forensic_item_to_value(item: &ForensicItem) -> Value {
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_from_artifact_body (cmd_prove binary + unit tests)
 fn forensic_item_from_value(value: &Value) -> Result<ForensicItem, String> {
     Ok(ForensicItem {
         id: required_string(value, "id", "PlanArtifact census item")?,
@@ -1961,6 +1995,7 @@ fn forensic_item_from_value(value: &Value) -> Result<ForensicItem, String> {
     })
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_from_artifact_body (cmd_prove binary + unit tests)
 fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {
     value
         .get(key)
@@ -1969,6 +2004,7 @@ fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {
         .unwrap_or(&[])
 }
 
+#[allow(dead_code)] // PlanArtifact serde helper for plan_from_artifact_body (cmd_prove binary + unit tests)
 fn required_string(value: &Value, key: &str, shape: &str) -> Result<String, String> {
     string_field(value, key).ok_or_else(|| {
         plan_artifact_replay_refusal(
@@ -1979,14 +2015,17 @@ fn required_string(value: &Value, key: &str, shape: &str) -> Result<String, Stri
     })
 }
 
+#[allow(dead_code)] // PlanArtifact + report_witness JCS helper (cmd_prove binary + unit tests)
 fn jcs_cid(value: &Value) -> String {
     blake3_512_of(jcs_bytes(value).as_bytes())
 }
 
+#[allow(dead_code)] // PlanArtifact JCS helper for plan_artifact_memento (cmd_prove binary + unit tests)
 fn jcs_bytes(value: &Value) -> String {
     encode_jcs(json_to_cvalue(value).as_ref())
 }
 
+#[allow(dead_code)] // JCS helper shared by plan-artifact path and report_witness (cmd_prove binary)
 fn json_to_cvalue(value: &Value) -> Arc<CValue> {
     match value {
         Value::Null => CValue::null(),

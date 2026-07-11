@@ -721,6 +721,7 @@ where
     checks
 }
 
+#[allow(dead_code)] // called by cmd_doctor in the binary module tree
 pub(crate) fn oracle_requested_from_env() -> bool {
     std::env::var("SUGAR_RESOLVE_ORACLE")
         .map(|value| !value.trim().is_empty())

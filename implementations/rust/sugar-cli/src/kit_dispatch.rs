@@ -45,7 +45,6 @@ static KIT_DISPATCH_DIAGNOSTICS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 #[derive(Debug, Clone)]
 pub struct SealedPluginRegistry {
     pub memento: PluginRegistryMemento,
-    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +62,7 @@ struct ManifestPluginRegistration {
     memento: PluginMemento,
 }
 
+#[allow(dead_code)] // called by dependency_proof_pool_assembly integration test
 pub fn reset_kit_dispatch_registry_cache_for_tests() {
     if let Some(cache) = RUN_PLUGIN_REGISTRIES.get() {
         cache.lock().expect("registry cache lock").clear();
@@ -70,6 +70,7 @@ pub fn reset_kit_dispatch_registry_cache_for_tests() {
     let _ = drain_kit_dispatch_diagnostics();
 }
 
+#[allow(dead_code)] // drained by reset_kit_dispatch_registry_cache_for_tests (integration tests)
 pub fn drain_kit_dispatch_diagnostics() -> Vec<String> {
     let diagnostics = KIT_DISPATCH_DIAGNOSTICS.get_or_init(|| Mutex::new(Vec::new()));
     let mut diagnostics = diagnostics.lock().expect("diagnostics lock");
@@ -117,10 +118,12 @@ fn build_run_plugin_registry(workspace_root: &Path) -> Result<RunPluginRegistry,
             .map_err(|error| format!("register {}: {error}", plugin.source))?;
     }
     let memento = registry.emit_registry_memento(REGISTRY_SEALED_AT);
-    let path = write_plugin_registry_memento(workspace_root, &memento)
+    // Write the sealed memento to disk (side effect); path is not retained --
+    // no reader after the seal (deleted with the unread SealedPluginRegistry.path field).
+    write_plugin_registry_memento(workspace_root, &memento)
         .map_err(|error| format!("write sealed PluginRegistryMemento: {error}"))?;
     Ok(RunPluginRegistry {
-        sealed: SealedPluginRegistry { memento, path },
+        sealed: SealedPluginRegistry { memento },
         plugins,
     })
 }

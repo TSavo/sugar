@@ -225,6 +225,7 @@ impl std::fmt::Display for LiftPluginError {
 
 impl std::error::Error for LiftPluginError {}
 
+#[allow(dead_code)] // called by cmd_package and dispatch_report_lift_plugin (cmd_lift binary path)
 pub(crate) fn dispatch_lift(
     project_root: &Path,
     surface: &str,
@@ -621,6 +622,7 @@ pub fn find_manifest_for_surface(
 }
 
 /// Absolute working_dir for `Kit::rendezvous` from a planned manifest.
+#[allow(dead_code)] // called by sugar-lsp prove_engine (external crate)
 pub fn absolute_working_dir_for_manifest(
     project_root: &Path,
     manifest: &PlannedLiftManifest,
