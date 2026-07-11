@@ -45,9 +45,28 @@
           "type": "string",
           "default": "",
           "description": "Prepended onto PATH for the sugar-lsp child when rust lifters need cargo/rustc helpers."
+        },
+        "sugar.reportMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report mode: paint sugar-lsp sugar/reportMode ranges (blue fact / green dig / red dig-stop / yellow Minority). Product is sugar-lsp; this only toggles host decorations."
         }
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "sugar.reportMode.toggle",
+        "title": "Sugar: Toggle Report Mode"
+      },
+      {
+        "command": "sugar.reportMode.on",
+        "title": "Sugar: Report Mode On"
+      },
+      {
+        "command": "sugar.reportMode.off",
+        "title": "Sugar: Report Mode Off"
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc -p ./",

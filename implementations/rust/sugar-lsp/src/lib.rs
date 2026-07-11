@@ -7,3 +7,4 @@
 
 pub mod auto_mode;
 pub mod prove_engine;
+pub mod report_mode;

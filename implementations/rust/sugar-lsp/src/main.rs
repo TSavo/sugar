@@ -73,6 +73,17 @@ mod plugin;
 mod prove_diagnostics;
 
 use sugar_lsp::prove_engine;
+use sugar_lsp::report_mode;
+
+/// #4149 custom notification: report-mode paint ranges for the editor host.
+#[derive(Debug)]
+enum ReportModeNotification {}
+
+impl tower_lsp::lsp_types::notification::Notification for ReportModeNotification {
+    type Params = report_mode::ReportModePayload;
+    const METHOD: &'static str = "sugar/reportMode";
+}
+
 
 use backend::JsonRpcBackend;
 use config::LspConfig;
@@ -893,7 +904,19 @@ async fn in_process_solve_and_publish(
         .collect();
 
     prove_diagnostics.lock().await.insert(uri.clone(), row_diags);
-    publish_and_cache(client, last_diagnostics, uri, diagnostics).await;
+    publish_and_cache(client, last_diagnostics, uri.clone(), diagnostics).await;
+
+    // #4149 report mode: project prove rows → paint payload (facts blue / unsat).
+    // Dig-stop green→red + Minority yellow join when liftCoverage is fed later.
+    let payload = report_mode::project_from_prove_rows(
+        uri.as_str(),
+        &outcome.rows,
+        &file,
+        &project_root,
+    );
+    client
+        .send_notification::<ReportModeNotification>(payload)
+        .await;
 }
 
 fn format_hover(ann: &Annotation) -> String {
