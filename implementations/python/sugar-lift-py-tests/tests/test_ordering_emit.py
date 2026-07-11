@@ -11,7 +11,7 @@ from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue
-from sugar_lift_py_tests.ir import make_var, not_, num, py_lt
+from sugar_lift_py_tests.ir import ctor, make_var, not_, num, py_lt
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
 
@@ -47,8 +47,11 @@ def test_ground_sides_still_fold_not_emit() -> None:
     assert isinstance(reduce_value("1 < 2"), TrueBoolLiteralSugar)
 
 
-def test_a_value_with_no_term_projection_still_panics() -> None:
-    # None cannot fold against a number and NoneValue has no to_term: the
-    # panic lives on the term floor, and it still fires.
-    with pytest.raises(FactoryPanic):
-        reduce_value("None < 5")
+def test_ground_none_ordering_emits_for_now() -> None:
+    # Python raises TypeError for None < 5 -- a recognized runtime fact that
+    # should become a named effect under the gap/fact discriminator. That
+    # ruling has not landed; today the emit default states py.lt(None, 5).
+    # This pin is EXACT so the effect ruling flips it loudly when it comes.
+    value = reduce_value("None < 5")
+    assert isinstance(value, PredicateValue)
+    assert value.formula == py_lt(ctor("None", []), num(5))
