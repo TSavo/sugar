@@ -42,9 +42,15 @@ class SourceFragment:
     filename: str
     line: int
     col: int
+    # The file's full source text: what the fragment content-addresses its own
+    # covered segment against when it emits its memento. None only for bare
+    # nodes constructed without source (their memento() refuses, loudly).
+    source: str | None = None
 
     @classmethod
-    def from_node(cls, node: object, filename: str) -> "SourceFragment":
+    def from_node(
+        cls, node: object, filename: str, source: str | None = None
+    ) -> "SourceFragment":
         # A container node (Module) has no position; it is never a site itself, only a
         # source of fragments, so default its position rather than fail to wrap it.
         # Block is the factory's synthetic suite node; SourceFragment is the sole
@@ -59,6 +65,52 @@ class SourceFragment:
             filename=filename,
             line=getattr(node, "lineno", 0),
             col=getattr(node, "col_offset", 0),
+            source=source,
+        )
+
+    def memento(self):
+        # The fragment EMITS its memento: the sealed wire projection -- file,
+        # span, and the content address of the exact source text it covers
+        # (the rust source oracle's blake3_512_of(body_text) convention).
+        from sugar_lift_py_tests.canonicalizer import blake3_512_of
+        from sugar_lift_py_tests.kit_rpc import SourceMementoDto
+        from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
+
+        segment = None
+        if self.source is not None:
+            if isinstance(self.node, Block):
+                statements = getattr(self.node, "body", [])
+                segments = [
+                    seg
+                    for stmt in statements
+                    if (seg := ast.get_source_segment(self.source, stmt)) is not None
+                ]
+                segment = "\n".join(segments) if segments else None
+            else:
+                segment = ast.get_source_segment(self.source, self.node)
+        if segment is None:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+            from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+            factory_panic_gap(
+                owner="SourceFragment",
+                blame=self.blame,
+                observed=self.observed,
+                requested="emit a source memento",
+                fix="construct the fragment with its source text "
+                "(a memento without a source_cid is decorative)",
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
+            )
+        return SourceMementoDto(
+            file=self.filename,
+            span=SourceSpanDto(
+                start_line=self.line,
+                start_col=self.col,
+                end_line=self.end_line,
+                end_col=getattr(self.node, "end_col_offset", 0) or 0,
+            ),
+            source_cid=blake3_512_of(segment.encode()),
         )
 
     def fragments(self) -> List["SourceFragment"]:
@@ -67,18 +119,18 @@ class SourceFragment:
         every other AST child is its own fragment."""
         node = self.node
         if isinstance(node, Block):
-            return [SourceFragment.from_node(stmt, self.filename) for stmt in node.body]
+            return [SourceFragment.from_node(stmt, self.filename, source=self.source) for stmt in node.body]
         children: List[SourceFragment] = []
         for _field, value in ast.iter_fields(node):
             if _is_suite(value):
                 children.append(
-                    SourceFragment.from_node(Block.of(value), self.filename)
+                    SourceFragment.from_node(Block.of(value), self.filename, source=self.source)
                 )
             elif isinstance(value, ast.AST):
-                children.append(SourceFragment.from_node(value, self.filename))
+                children.append(SourceFragment.from_node(value, self.filename, source=self.source))
             elif isinstance(value, list):
                 children.extend(
-                    SourceFragment.from_node(item, self.filename)
+                    SourceFragment.from_node(item, self.filename, source=self.source)
                     for item in value
                     if isinstance(item, ast.AST)
                 )
@@ -160,7 +212,7 @@ class SourceFragment:
         """Return a SourceFragment for the Attribute.value receiver, or None if not a method call."""
         self._require(ast.Call)
         if isinstance(self.node.func, ast.Attribute):  # type: ignore[attr-defined]
-            return SourceFragment.from_node(self.node.func.value, self.filename)  # type: ignore[attr-defined]
+            return SourceFragment.from_node(self.node.func.value, self.filename, source=self.source)  # type: ignore[attr-defined]
         return None
 
     def call_target_name(self) -> "str | None":
@@ -209,22 +261,22 @@ class SourceFragment:
     def call_args(self) -> "list[SourceFragment]":
         """Return SourceFragments for each positional argument of the Call."""
         self._require(ast.Call)
-        return [SourceFragment.from_node(a, self.filename) for a in self.node.args]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(a, self.filename, source=self.source) for a in self.node.args]  # type: ignore[attr-defined]
 
     def set_elts(self) -> "list[SourceFragment]":
         """Return SourceFragments for each element of a Set literal (ast.Set.elts)."""
         self._require(ast.Set)
-        return [SourceFragment.from_node(e, self.filename) for e in self.node.elts]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(e, self.filename, source=self.source) for e in self.node.elts]  # type: ignore[attr-defined]
 
     def list_elts(self) -> "list[SourceFragment]":
         """Return SourceFragments for each element of a List literal (ast.List.elts)."""
         self._require(ast.List)
-        return [SourceFragment.from_node(e, self.filename) for e in self.node.elts]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(e, self.filename, source=self.source) for e in self.node.elts]  # type: ignore[attr-defined]
 
     def tuple_elts(self) -> "list[SourceFragment]":
         """Return SourceFragments for each element of a Tuple literal (ast.Tuple.elts)."""
         self._require(ast.Tuple)
-        return [SourceFragment.from_node(e, self.filename) for e in self.node.elts]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(e, self.filename, source=self.source) for e in self.node.elts]  # type: ignore[attr-defined]
 
     def call_arg_count(self) -> int:
         """Return the number of positional arguments."""
@@ -244,17 +296,17 @@ class SourceFragment:
     def binop_left(self) -> "SourceFragment":
         """Return a SourceFragment for the left operand of a BinOp."""
         self._require(ast.BinOp)
-        return SourceFragment.from_node(self.node.left, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.left, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def binop_right(self) -> "SourceFragment":
         """Return a SourceFragment for the right operand of a BinOp."""
         self._require(ast.BinOp)
-        return SourceFragment.from_node(self.node.right, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.right, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def subscript_receiver(self) -> "SourceFragment":
         """Return a SourceFragment for the Subscript.value (the container)."""
         self._require(ast.Subscript)
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def subscript_index(self) -> "SourceFragment":
         """Return a SourceFragment for the Subscript index, unwrapping legacy ast.Index."""
@@ -263,30 +315,30 @@ class SourceFragment:
         # Python < 3.9 wraps the slice in ast.Index
         if hasattr(ast, "Index") and isinstance(idx, ast.Index):
             idx = idx.value  # type: ignore[attr-defined]
-        return SourceFragment.from_node(idx, self.filename)
+        return SourceFragment.from_node(idx, self.filename, source=self.source)
 
     def slice_lower(self) -> "SourceFragment | None":
         """Return a SourceFragment for a Slice lower bound, or None for an omitted bound."""
         self._require(ast.Slice)
         lower = self.node.lower  # type: ignore[attr-defined]
-        return None if lower is None else SourceFragment.from_node(lower, self.filename)
+        return None if lower is None else SourceFragment.from_node(lower, self.filename, source=self.source)
 
     def slice_upper(self) -> "SourceFragment | None":
         """Return a SourceFragment for a Slice upper bound, or None for an omitted bound."""
         self._require(ast.Slice)
         upper = self.node.upper  # type: ignore[attr-defined]
-        return None if upper is None else SourceFragment.from_node(upper, self.filename)
+        return None if upper is None else SourceFragment.from_node(upper, self.filename, source=self.source)
 
     def slice_step(self) -> "SourceFragment | None":
         """Return a SourceFragment for a Slice step bound, or None for an omitted bound."""
         self._require(ast.Slice)
         step = self.node.step  # type: ignore[attr-defined]
-        return None if step is None else SourceFragment.from_node(step, self.filename)
+        return None if step is None else SourceFragment.from_node(step, self.filename, source=self.source)
 
     def lambda_body(self) -> "SourceFragment":
         """Return a SourceFragment for the body expression of a Lambda."""
         self._require(ast.Lambda)
-        return SourceFragment.from_node(self.node.body, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.body, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def lambda_params(self) -> "list[str]":
         """Return the argument names for a Lambda node."""
@@ -298,7 +350,7 @@ class SourceFragment:
         self._require(ast.Return)
         if self.node.value is None:  # type: ignore[attr-defined]
             return None
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def assign_target_name(self) -> "str | None":
         """Return the target name id for a single-Name Assign target, else None."""
@@ -312,7 +364,7 @@ class SourceFragment:
         """Return SourceFragments for each assignment target."""
         self._require(ast.Assign)
         return [
-            SourceFragment.from_node(target, self.filename)
+            SourceFragment.from_node(target, self.filename, source=self.source)
             for target in self.node.targets  # type: ignore[attr-defined]
         ]
 
@@ -339,45 +391,45 @@ class SourceFragment:
     def assign_value(self) -> "SourceFragment":
         """Return a SourceFragment for Assign.value."""
         self._require(ast.Assign)
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def delete_targets(self) -> "list[SourceFragment]":
         """Return SourceFragments for each delete target."""
         self._require(ast.Delete)
         return [
-            SourceFragment.from_node(target, self.filename)
+            SourceFragment.from_node(target, self.filename, source=self.source)
             for target in self.node.targets  # type: ignore[attr-defined]
         ]
 
     def if_test(self) -> "SourceFragment":
         """Return a SourceFragment for the If test expression."""
         self._require(ast.If)
-        return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.test, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def if_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the statements in the If body."""
         self._require(ast.If)
-        return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(s, self.filename, source=self.source) for s in self.node.body]  # type: ignore[attr-defined]
 
     def if_orelse(self) -> "list[SourceFragment]":
         """Return SourceFragments for the statements in the If orelse (else branch)."""
         self._require(ast.If)
-        return [SourceFragment.from_node(s, self.filename) for s in self.node.orelse]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(s, self.filename, source=self.source) for s in self.node.orelse]  # type: ignore[attr-defined]
 
     def ifexp_test(self) -> "SourceFragment":
         """Return the condition expression of an IfExp."""
         self._require(ast.IfExp)
-        return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.test, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def ifexp_body(self) -> "SourceFragment":
         """Return the true-branch expression of an IfExp."""
         self._require(ast.IfExp)
-        return SourceFragment.from_node(self.node.body, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.body, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def ifexp_orelse(self) -> "SourceFragment":
         """Return the false-branch expression of an IfExp."""
         self._require(ast.IfExp)
-        return SourceFragment.from_node(self.node.orelse, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.orelse, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def try_body(self) -> "SourceFragment":
         """Return a Block SourceFragment for the Try body suite."""
@@ -385,12 +437,12 @@ class SourceFragment:
 
         self._require(ast.Try, ast.TryStar)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename)
+        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
 
     def try_handlers(self) -> "list[SourceFragment]":
         """Return SourceFragments for the Try except handlers."""
         self._require(ast.Try, ast.TryStar)
-        return [SourceFragment.from_node(h, self.filename) for h in self.node.handlers]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(h, self.filename, source=self.source) for h in self.node.handlers]  # type: ignore[attr-defined]
 
     def try_orelse(self) -> "SourceFragment | None":
         """Return a Block SourceFragment for the Try else suite, if present."""
@@ -399,7 +451,7 @@ class SourceFragment:
         self._require(ast.Try, ast.TryStar)
         if not self.node.orelse:  # type: ignore[attr-defined]
             return None
-        return SourceFragment.from_node(Block.of(self.node.orelse), self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(Block.of(self.node.orelse), self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def try_finalbody(self) -> "SourceFragment | None":
         """Return a Block SourceFragment for the Try finally suite, if present."""
@@ -408,7 +460,7 @@ class SourceFragment:
         self._require(ast.Try, ast.TryStar)
         if not self.node.finalbody:  # type: ignore[attr-defined]
             return None
-        return SourceFragment.from_node(Block.of(self.node.finalbody), self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(Block.of(self.node.finalbody), self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def except_handler_body(self) -> "SourceFragment":
         """Return a Block SourceFragment for an ExceptHandler body suite."""
@@ -416,7 +468,7 @@ class SourceFragment:
 
         self._require(ast.ExceptHandler)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename)
+        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
 
     def except_handler_type_names(self) -> "tuple[str, ...] | None":
         """Return handler exception names, or None for a bare except."""
@@ -461,12 +513,12 @@ class SourceFragment:
     def function_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the statements in a FunctionDef body."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
-        return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(s, self.filename, source=self.source) for s in self.node.body]  # type: ignore[attr-defined]
 
     def function_body_block(self) -> "SourceFragment":
         """Return the FunctionDef body as the factory's Block gateway node."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
-        return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(Block.of(self.node.body), self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def compare_ops(self) -> "list[str]":
         """Return the operator class names for a Compare node (e.g. ['Eq', 'Lt'])."""
@@ -476,12 +528,12 @@ class SourceFragment:
     def compare_left(self) -> "SourceFragment":
         """Return a SourceFragment for the left operand of a Compare."""
         self._require(ast.Compare)
-        return SourceFragment.from_node(self.node.left, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.left, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def compare_comparators(self) -> "list[SourceFragment]":
         """Return SourceFragments for each comparator on the right side of a Compare."""
         self._require(ast.Compare)
-        return [SourceFragment.from_node(c, self.filename) for c in self.node.comparators]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(c, self.filename, source=self.source) for c in self.node.comparators]  # type: ignore[attr-defined]
 
     def function_name(self) -> str:
         """Return the name string for a FunctionDef or AsyncFunctionDef node."""
@@ -499,7 +551,7 @@ class SourceFragment:
             (
                 arg.arg,
                 (
-                    SourceFragment.from_node(arg.annotation, self.filename)
+                    SourceFragment.from_node(arg.annotation, self.filename, source=self.source)
                     if arg.annotation is not None
                     else None
                 ),
@@ -530,7 +582,7 @@ class SourceFragment:
     def class_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the statements in a ClassDef body."""
         self._require(ast.ClassDef)
-        return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(s, self.filename, source=self.source) for s in self.node.body]  # type: ignore[attr-defined]
 
     def class_base_names(self) -> tuple[str | None, ...]:
         """Return dotted base names for a ClassDef; None means dynamic/unnamed base."""
@@ -549,7 +601,7 @@ class SourceFragment:
         Wraps ast.parse() internally; callers never need to import ast.
         """
         tree = ast.parse(source, filename=filename)
-        return cls.from_node(tree, filename)
+        return cls.from_node(tree, filename, source=source)
 
     def has_position(self) -> bool:
         """Return True if this node has line and column position attributes."""
@@ -600,7 +652,7 @@ class SourceFragment:
     def assert_test(self) -> "SourceFragment":
         """Return a SourceFragment for the test expression of an Assert node."""
         self._require(ast.Assert)
-        return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.test, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def assert_has_message(self) -> bool:
         """Return True when an Assert node carries an assertion message."""
@@ -623,19 +675,19 @@ class SourceFragment:
         node = ast.Assert(test=test.node, msg=None)
         ast.copy_location(node, self.node)
         ast.fix_missing_locations(node)
-        return SourceFragment.from_node(node, self.filename)
+        return SourceFragment.from_node(node, self.filename, source=self.source)
 
     def expr_value(self) -> "SourceFragment":
         """Return a SourceFragment for the expression inside an Expr statement node."""
         self._require(ast.Expr)
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     # --- unary / bool ops -------------------------------------------------
 
     def unaryop_operand(self) -> "SourceFragment":
         """Return a SourceFragment for the operand of a UnaryOp node."""
         self._require(ast.UnaryOp)
-        return SourceFragment.from_node(self.node.operand, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.operand, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def boolop_op_kind(self) -> str:
         """Return 'and' or 'or' for a BoolOp node."""
@@ -645,7 +697,7 @@ class SourceFragment:
     def boolop_values(self) -> "list[SourceFragment]":
         """Return the operand SourceFragments for a BoolOp node (ast.BoolOp.values)."""
         self._require(ast.BoolOp)
-        return [SourceFragment.from_node(v, self.filename) for v in self.node.values]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(v, self.filename, source=self.source) for v in self.node.values]  # type: ignore[attr-defined]
 
     def dict_entries(self) -> "list[tuple[SourceFragment | None, SourceFragment]]":
         """Return key/value fragments for a Dict expression.
@@ -656,8 +708,8 @@ class SourceFragment:
         self._require(ast.Dict)
         return [
             (
-                None if key is None else SourceFragment.from_node(key, self.filename),
-                SourceFragment.from_node(value, self.filename),
+                None if key is None else SourceFragment.from_node(key, self.filename, source=self.source),
+                SourceFragment.from_node(value, self.filename, source=self.source),
             )
             for key, value in zip(self.node.keys, self.node.values)  # type: ignore[attr-defined]
         ]
@@ -667,7 +719,7 @@ class SourceFragment:
     def attr_receiver(self) -> "SourceFragment":
         """Return a SourceFragment for the receiver of an Attribute node (Attribute.value)."""
         self._require(ast.Attribute)
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     # --- call / keyword ---------------------------------------------------
 
@@ -678,12 +730,12 @@ class SourceFragment:
         whether it is a Name or an Attribute.
         """
         self._require(ast.Call)
-        return SourceFragment.from_node(self.node.func, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.func, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def call_keywords(self) -> "list[SourceFragment]":
         """Return SourceFragments wrapping each ast.keyword of the Call."""
         self._require(ast.Call)
-        return [SourceFragment.from_node(kw, self.filename) for kw in self.node.keywords]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(kw, self.filename, source=self.source) for kw in self.node.keywords]  # type: ignore[attr-defined]
 
     def keyword_arg_name(self) -> "str | None":
         """Return the keyword argument name string, or None for **kwargs expansion."""
@@ -693,7 +745,7 @@ class SourceFragment:
     def keyword_value(self) -> "SourceFragment":
         """Return a SourceFragment for the value expression of a keyword argument."""
         self._require(ast.keyword)
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     # --- formatted string literals ----------------------------------------
 
@@ -701,7 +753,7 @@ class SourceFragment:
         """Return the literal/formatted child fragments of an f-string."""
         self._require(ast.JoinedStr)
         return [
-            SourceFragment.from_node(value, self.filename)
+            SourceFragment.from_node(value, self.filename, source=self.source)
             for value in self.node.values  # type: ignore[attr-defined]
         ]
 
@@ -719,7 +771,7 @@ class SourceFragment:
         """Return the expression inside an f-string formatted field."""
         self._require(ast.FormattedValue)
         value = self.node.value  # type: ignore[attr-defined]
-        return SourceFragment.from_node(value, self.filename)
+        return SourceFragment.from_node(value, self.filename, source=self.source)
 
     def formatted_value_conversion(self) -> int:
         """Return the ast.FormattedValue conversion code."""
@@ -737,69 +789,69 @@ class SourceFragment:
         spec = self.node.format_spec  # type: ignore[attr-defined]
         if spec is None:
             return None
-        return SourceFragment.from_node(spec, self.filename).joined_str_static_text()
+        return SourceFragment.from_node(spec, self.filename, source=self.source).joined_str_static_text()
 
     # --- comprehensions ----------------------------------------------------
 
     def listcomp_element(self) -> "SourceFragment":
         """Return the element expression produced by a list comprehension."""
         self._require(ast.ListComp)
-        return SourceFragment.from_node(self.node.elt, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.elt, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def listcomp_generators(self) -> "list[SourceFragment]":
         """Return the comprehension clauses of a list comprehension."""
         self._require(ast.ListComp)
         return [
-            SourceFragment.from_node(generator, self.filename)
+            SourceFragment.from_node(generator, self.filename, source=self.source)
             for generator in self.node.generators  # type: ignore[attr-defined]
         ]
 
     def setcomp_element(self) -> "SourceFragment":
         """Return the element expression produced by a set comprehension."""
         self._require(ast.SetComp)
-        return SourceFragment.from_node(self.node.elt, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.elt, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def setcomp_generators(self) -> "list[SourceFragment]":
         """Return the comprehension clauses of a set comprehension."""
         self._require(ast.SetComp)
         return [
-            SourceFragment.from_node(generator, self.filename)
+            SourceFragment.from_node(generator, self.filename, source=self.source)
             for generator in self.node.generators  # type: ignore[attr-defined]
         ]
 
     def dictcomp_key(self) -> "SourceFragment":
         """Return the key expression produced by a dict comprehension."""
         self._require(ast.DictComp)
-        return SourceFragment.from_node(self.node.key, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.key, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def dictcomp_value(self) -> "SourceFragment":
         """Return the value expression produced by a dict comprehension."""
         self._require(ast.DictComp)
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def dictcomp_generators(self) -> "list[SourceFragment]":
         """Return the comprehension clauses of a dict comprehension."""
         self._require(ast.DictComp)
         return [
-            SourceFragment.from_node(generator, self.filename)
+            SourceFragment.from_node(generator, self.filename, source=self.source)
             for generator in self.node.generators  # type: ignore[attr-defined]
         ]
 
     def comprehension_target(self) -> "SourceFragment":
         """Return the target bound by a comprehension clause."""
         self._require(ast.comprehension)
-        return SourceFragment.from_node(self.node.target, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.target, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def comprehension_iter(self) -> "SourceFragment":
         """Return the iterable expression of a comprehension clause."""
         self._require(ast.comprehension)
-        return SourceFragment.from_node(self.node.iter, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.iter, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def comprehension_ifs(self) -> "list[SourceFragment]":
         """Return the guard expressions of a comprehension clause."""
         self._require(ast.comprehension)
         return [
-            SourceFragment.from_node(guard, self.filename)
+            SourceFragment.from_node(guard, self.filename, source=self.source)
             for guard in self.node.ifs  # type: ignore[attr-defined]
         ]
 
@@ -813,19 +865,19 @@ class SourceFragment:
     def annassign_target(self) -> "SourceFragment":
         """Return a SourceFragment for the target of an AnnAssign node."""
         self._require(ast.AnnAssign)
-        return SourceFragment.from_node(self.node.target, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.target, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def annassign_annotation(self) -> "SourceFragment":
         """Return a SourceFragment for the annotation of an AnnAssign node."""
         self._require(ast.AnnAssign)
-        return SourceFragment.from_node(self.node.annotation, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.annotation, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def annassign_value(self) -> "SourceFragment | None":
         """Return a SourceFragment for the optional value of an AnnAssign, or None."""
         self._require(ast.AnnAssign)
         if self.node.value is None:  # type: ignore[attr-defined]
             return None
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def annassign_target_id(self) -> str:
         """Return the name string when an AnnAssign target is a simple Name node."""
@@ -876,7 +928,7 @@ class SourceFragment:
         """Return SourceFragments for the decorators of a FunctionDef/AsyncFunctionDef."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         return [
-            SourceFragment.from_node(d, self.filename)
+            SourceFragment.from_node(d, self.filename, source=self.source)
             for d in self.node.decorator_list  # type: ignore[attr-defined]
         ]
 
@@ -885,12 +937,12 @@ class SourceFragment:
     def aug_assign_target(self) -> "SourceFragment":
         """Return a SourceFragment for the target of an AugAssign node."""
         self._require(ast.AugAssign)
-        return SourceFragment.from_node(self.node.target, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.target, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def aug_assign_value(self) -> "SourceFragment":
         """Return a SourceFragment for the value expression of an AugAssign node."""
         self._require(ast.AugAssign)
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def aug_assign_op(self) -> str:
         """Return the operator class name for an AugAssign node (e.g. 'Add', 'Sub')."""
@@ -913,7 +965,7 @@ class SourceFragment:
         )
         ast.copy_location(binop, self.node)
         ast.fix_missing_locations(binop)
-        return SourceFragment.from_node(binop, self.filename)
+        return SourceFragment.from_node(binop, self.filename, source=self.source)
 
     # --- raise ------------------------------------------------------------
 
@@ -922,7 +974,7 @@ class SourceFragment:
         self._require(ast.Raise)
         if self.node.exc is None:  # type: ignore[attr-defined]
             return None
-        return SourceFragment.from_node(self.node.exc, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.exc, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     # --- context managers -------------------------------------------------
 
@@ -935,7 +987,7 @@ class SourceFragment:
         """Return the context expression for a With/AsyncWith item."""
         self._require(ast.With, ast.AsyncWith)
         item = self.node.items[index]  # type: ignore[attr-defined]
-        return SourceFragment.from_node(item.context_expr, self.filename)
+        return SourceFragment.from_node(item.context_expr, self.filename, source=self.source)
 
     def with_optional_vars_name(self, index: int = 0) -> "str | None":
         """Return the simple `as name` binding for a With/AsyncWith item, if any."""
@@ -961,21 +1013,21 @@ class SourceFragment:
 
         self._require(ast.With, ast.AsyncWith)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename)
+        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
 
     # --- await ------------------------------------------------------------
 
     def await_value(self) -> "SourceFragment":
         """Return the awaited expression for an Await node."""
         self._require(ast.Await)
-        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     # --- for loops --------------------------------------------------------
 
     def for_iter(self) -> "SourceFragment":
         """Return the iterable expression for a For/AsyncFor node."""
         self._require(ast.For, ast.AsyncFor)
-        return SourceFragment.from_node(self.node.iter, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.iter, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def for_target_name(self) -> "str | None":
         """Return the simple target name for a For/AsyncFor node, if any."""
@@ -993,7 +1045,7 @@ class SourceFragment:
     def for_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the body statements of a For or AsyncFor node."""
         self._require(ast.For, ast.AsyncFor)
-        return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(s, self.filename, source=self.source) for s in self.node.body]  # type: ignore[attr-defined]
 
     def for_body_block(self) -> "SourceFragment":
         """Return a Block SourceFragment for a For/AsyncFor body suite."""
@@ -1001,7 +1053,7 @@ class SourceFragment:
 
         self._require(ast.For, ast.AsyncFor)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename)
+        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
 
     def for_orelse_count(self) -> int:
         """Return the number of else statements on a For/AsyncFor node."""
@@ -1013,7 +1065,7 @@ class SourceFragment:
     def while_test(self) -> "SourceFragment":
         """Return the condition expression for a While node."""
         self._require(ast.While)
-        return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.test, self.filename, source=self.source)  # type: ignore[attr-defined]
 
     def while_body_block(self) -> "SourceFragment":
         """Return a Block SourceFragment for a While body suite."""
@@ -1021,7 +1073,7 @@ class SourceFragment:
 
         self._require(ast.While)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename)
+        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
 
     def while_orelse_count(self) -> int:
         """Return the number of else statements on a While node."""
