@@ -271,11 +271,13 @@ def build_pandas_wall(
                 _combined_output(visual_result)
             )
             if frontier_summary is None:
+                combined = _combined_output(visual_result)
+                tail = combined[-4000:] if combined else "<no output captured>"
                 raise RuntimeError(
                     "pandas wall visual render failed without structured "
-                    "construction gaps or a named frontier "
-                    f"exit={visual_result.returncode}; see {visual_path}"
-                )
+                    f"construction gaps or a named frontier exit={visual_result.returncode}; "
+                    f"the render's own last words follow (instrument, not a summary):\n{tail}"
+                ) from None
             frontier_path = output_dir / "frontier.json"
             frontier_path.write_text(
                 json.dumps(frontier_summary.frontier, indent=2, sort_keys=True) + "\n",
