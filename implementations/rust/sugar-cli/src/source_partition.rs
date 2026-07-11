@@ -401,6 +401,7 @@ impl SourcePartition {
     /// Total physical lines of the compilation unit. `warrant + support +
     /// effect + residue == total` holds by construction, not by a checked
     /// equation.
+    #[allow(dead_code)] // exercised by total_tiling_constructs_and_projects_totals unit test
     pub fn total(&self) -> usize {
         self.total_lines
     }

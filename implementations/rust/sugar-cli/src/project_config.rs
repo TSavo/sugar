@@ -450,6 +450,7 @@ fn strip_comment(s: &str) -> &str {
 }
 
 /// Surface menu shown by `sugar init`.
+#[allow(dead_code)] // exercised by project_config unit tests (KNOWN_SURFACES.contains asserts)
 pub const KNOWN_SURFACES: &[&str] = &[
     "default",
     "rust-sugar-decorator",

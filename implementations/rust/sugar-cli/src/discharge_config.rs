@@ -7,10 +7,7 @@
 // `cmd_verify` need before running the verifier pipeline: the discharge
 // command is declared in the KIT'S MANIFEST (alongside its lift `command`),
 // resolved through the SAME `find_manifest` dispatch lift uses, no bespoke
-// config. Before this seam `cmd_verify::run_artifact_project_verify` called
-// `crate::cmd_prove::configure_witness_discharge_env_with_plan` directly --
-// a face-to-face reach-in. Both faces now call the ONE function in this
-// module instead.
+// config. Both faces call `witness_discharge_for_plan` in this module.
 //
 // #3809 witness-as-verb: this struct converts to
 // `sugar_verifier::WitnessDischargeContext` and is passed as a typed
@@ -183,16 +180,6 @@ impl WitnessDischargeConfig {
     }
 }
 
-/// Legacy name: stage optional DISCHARGE_* lie-env only (not project_dir/resolvers).
-/// Prefer [`witness_discharge_for_plan`] when filling `RunnerConfig`.
-pub(crate) fn configure_witness_discharge_env_with_plan(
-    project_root: &Path,
-    cfg_doc: &ProjectConfig,
-    component_plan: Option<&ComponentPlan>,
-) {
-    WitnessDischargeConfig::from_plan(project_root, cfg_doc, component_plan).apply_env();
-}
-
 /// Compute typed verifier context from the project's manifest plan.
 /// `project_dir` + resolvers flow typed-only (step 3); optional DISCHARGE_*
 /// process pollution for showcase lie scripts is staged as a side effect.
@@ -209,8 +196,9 @@ pub(crate) fn witness_discharge_for_plan(
 // The witness-discharge path loads the lift surface manifest at
 // `<project>/.sugar/lift/<surface>/manifest.toml` to read its
 // `discharge_command` + `witness_tool`. No hardcoded `sugar-lift-<kit>`.
-// (Relocated from `cmd_prove.rs` alongside `configure_witness_discharge_env_with_plan`;
-// these helpers exist ONLY to serve it.)
+// Helpers below serve WitnessDischargeConfig::from_plan / witness_discharge_for_plan.
+// (Legacy configure_witness_discharge_env_with_plan deleted -- superseded by
+// witness_discharge_for_plan in b34b7fbb6 Part of #3809 witness-as-verb step 3.)
 
 fn find_manifest_with_plan(
     project_root: &Path,
