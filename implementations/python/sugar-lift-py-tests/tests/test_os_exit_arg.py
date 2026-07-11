@@ -37,7 +37,9 @@ def test_os_exit_still_reduces_to_the_runtime_effect() -> None:
 
 
 def test_unowned_node_inside_os_exit_argument_panics_at_construction() -> None:
-    # A plain call is owned now (a coordinate); an attribute access is not --
-    # the audit still reaches inside the argument.
-    with pytest.raises(FactoryPanic):
-        _build("os.exit(a.b)\n")
+    # A plain call is a coordinate; AttributeSugar owns a.b as call:b(a).
+    # ListComp has no sugar -- the audit still reaches inside the argument and
+    # panics at CONSTRUCTION on a genuinely unowned node.
+    with pytest.raises(FactoryPanic) as raised:
+        _build("os.exit([x for x in y])\n")
+    assert raised.value.info.observed == "ListComp"
