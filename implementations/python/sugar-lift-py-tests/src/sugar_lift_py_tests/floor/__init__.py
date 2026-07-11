@@ -6,7 +6,9 @@ from .bound_var import BoundVar
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .call_site_value import CallSiteValue
+from .class_value import ClassValue
 from .dict_literal_value import DictLiteralValue
+
 from .dict_value import DictValue
 from .encoded_string_value import EncodedStringValue
 from .floor_dispatch_surface import (
@@ -54,6 +56,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     BuilderState,
     Bv32Value,
     CallSiteValue,
+    ClassValue,
     DictLiteralValue,
     DictValue,
     EncodedStringValue,
@@ -100,6 +103,7 @@ __all__ = [
     "BuilderState",
     "Bv32Value",
     "CallSiteValue",
+    "ClassValue",
     "DictLiteralValue",
     "DictValue",
     "EncodedStringValue",

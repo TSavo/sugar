@@ -602,11 +602,45 @@ class SourceFragment:
         self._require(ast.ClassDef)
         return [SourceFragment.from_node(s, self.filename, source=self.source) for s in self.node.body]  # type: ignore[attr-defined]
 
+    def class_body_block(self) -> "SourceFragment":
+        """Return a Block SourceFragment for a ClassDef body suite."""
+        from .block import Block
+
+        self._require(ast.ClassDef)
+        body = self.node.body  # type: ignore[attr-defined]
+        return SourceFragment.from_node(
+            Block.of(body), self.filename, source=self.source
+        )
+
+    def class_bases(self) -> "list[SourceFragment]":
+        """Return SourceFragments for each base expression of a ClassDef."""
+        self._require(ast.ClassDef)
+        return [
+            SourceFragment.from_node(base, self.filename, source=self.source)
+            for base in self.node.bases  # type: ignore[attr-defined]
+        ]
+
     def class_base_names(self) -> tuple[str | None, ...]:
         """Return dotted base names for a ClassDef; None means dynamic/unnamed base."""
         self._require(ast.ClassDef)
         node = cast(ast.ClassDef, self.node)
         return tuple(_dotted_expr_name(base) for base in node.bases)
+
+    def class_keywords(self) -> "list[SourceFragment]":
+        """Return SourceFragments for ClassDef keywords (e.g. metaclass=M)."""
+        self._require(ast.ClassDef)
+        return [
+            SourceFragment.from_node(kw, self.filename, source=self.source)
+            for kw in self.node.keywords  # type: ignore[attr-defined]
+        ]
+
+    def class_decorators(self) -> "list[SourceFragment]":
+        """Return SourceFragments for ClassDef decorator expressions."""
+        self._require(ast.ClassDef)
+        return [
+            SourceFragment.from_node(d, self.filename, source=self.source)
+            for d in self.node.decorator_list  # type: ignore[attr-defined]
+        ]
 
     # ------------------------------------------------------------------
     # Additional accessors added in numpy-import-sugar sweep
