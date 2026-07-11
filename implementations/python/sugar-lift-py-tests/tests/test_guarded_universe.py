@@ -2,7 +2,8 @@
 both. The then-face's entries ride under the guard, the continuation rides
 under its negation when the then-face exits, and the universe emits guarded
 implications -- the dig shape: `if x == "ccc": return "yyy"` yields
-`implies(eq(x, "ccc"), eq(out, "yyy"))`. Vacuous off the guard, forced on it."""
+`implies(py.eq(x, "ccc"), eq(out, "yyy"))`. Vacuous off the guard, forced on
+it. Vendor relations are py. atoms; posts are lift-owned eq(out, ...)."""
 
 from __future__ import annotations
 
@@ -12,7 +13,17 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.floor import UniverseValue
-from sugar_lift_py_tests.ir import and_, eq, implies, lt, make_var, not_, num, str_const
+from sugar_lift_py_tests.ir import (
+    and_,
+    eq,
+    implies,
+    make_var,
+    not_,
+    num,
+    py_eq,
+    py_lt,
+    str_const,
+)
 from sugar_lift_py_tests.outcome import complete_value
 
 
@@ -29,7 +40,7 @@ def test_the_dig_shape_emits_the_guarded_implication() -> None:
     universe = _universe(
         'def enc(x):\n    if x == "ccc":\n        return "yyy"\n    return x\n'
     )
-    guard = eq(make_var("x"), str_const("ccc"))
+    guard = py_eq(make_var("x"), str_const("ccc"))
     assert universe.post() == and_(
         [
             implies(guard, eq(make_var("out"), str_const("yyy"))),
@@ -45,9 +56,9 @@ def test_an_inv_stated_under_a_guard_is_an_implication() -> None:
         "        assert z < 2\n"
         "    return z\n"
     )
-    guard = eq(make_var("z"), num(1))
+    guard = py_eq(make_var("z"), num(1))
     assert universe.invs() == (
-        implies(guard, lt(make_var("z"), num(2))),
+        implies(guard, py_lt(make_var("z"), num(2))),
     )
     # the then-face states but does not exit: the continuation is unconditional
     assert universe.post() == eq(make_var("out"), make_var("z"))

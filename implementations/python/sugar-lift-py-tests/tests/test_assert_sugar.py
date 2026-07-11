@@ -16,7 +16,7 @@ from sugar_lift_py_tests.effect import AssertionFailedRuntimeEffect
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import BlockValue, InvValue, ReturnValue, TermValue
 from sugar_lift_py_tests.floor import SymbolicValue
-from sugar_lift_py_tests.ir import eq, make_var, num
+from sugar_lift_py_tests.ir import make_var, num, py_eq
 from sugar_lift_py_tests.outcome import Incomplete
 
 
@@ -26,7 +26,7 @@ def test_symbolic_assert_states_an_inv() -> None:
         binds={"z": SymbolicValue(make_var("z"))},
     )
     assert block == BlockValue(
-        (InvValue(eq(make_var("z"), num(1))), ReturnValue(TermValue(2)))
+        (InvValue(py_eq(make_var("z"), num(1))), ReturnValue(TermValue(2)))
     )
 
 
