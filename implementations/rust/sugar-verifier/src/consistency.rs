@@ -2147,16 +2147,15 @@ impl Attribution {
 }
 
 /// The canonical join key for a ground callsite fact: the JCS canonicalization
-/// of a `call:*` ctor term. The cross-fact join -- a consumer obligation pooling
-/// a sibling's sworn vector about the SAME concrete call -- requires `TermKey`
-/// equality PLUS `Scope` equality (`with_ambient_ground_callsite_facts`); a
-/// `TermKey` match alone is not sufficient (#3884: the same concrete call can
-/// be named by independent consumers -- see `Scope` below and
-/// `ambient_ground_callsite_facts_do_not_cross_consumer_scopes`, which pins
-/// that a shared `TermKey` across scopes must NOT pool). The wrapper carries
-/// `Eq`/`Ord`/`Hash` and nothing else may be compared against it.
-/// `#[serde(transparent)]`: the wire form is the bare string, so no artifact
-/// byte changes.
+/// of a `call:*` ctor term (args included -- `call:len(100)` and `call:len(200)`
+/// are distinct keys). A fact about `call:len(200)` never joins a payload whose
+/// wanted set is only `call:len(100)` -- exact call-term identity, not callee
+/// name (#3884). Scope is a secondary gate only for Stated peer claims (so a
+/// good/bad twin pair under different prefixes can still sit in one pool and
+/// receive opposite verdicts); Derived testimony travels pool-wide on TermKey
+/// alone. The wrapper carries `Eq`/`Ord`/`Hash` and nothing else may be compared
+/// against it. `#[serde(transparent)]`: the wire form is the bare string, so no
+/// artifact byte changes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 struct TermKey(String);
@@ -2178,6 +2177,7 @@ struct Scope(String);
 #[derive(Debug, Clone)]
 struct AmbientGroundCallsiteFact {
     attribution: Attribution,
+    /// Used for Stated peer-claim scope gating; Derived ignores this at join.
     scope: Option<Scope>,
     term_key: TermKey,
     witness_key: AmbientFactWitnessKey,
@@ -2186,13 +2186,12 @@ struct AmbientGroundCallsiteFact {
 
 /// Collect closed ground facts about concrete callsite terms. A literal-domain
 /// loop replay may emit `call:g(3) == 1` rather than a universal. That fact
-/// must constrain sibling `#euf#` obligations about the same concrete call --
-/// but ONLY within the SAME `Scope` (see `Scope`/`TermKey` above): unlike
-/// closed universals, these are finite replay facts from one assertion
-/// context, so a shared `TermKey` alone never pools two independent
-/// consumers' testimony (`ambient_ground_callsite_facts_do_not_cross_consumer_scopes`
-/// pins exactly that). We collect only ground equalities whose subject is a
-/// `call:*` ctor; local variables and non-call helper ctors never travel.
+/// constrains sibling `#euf#` obligations about the SAME concrete call term
+/// (`TermKey` = full JCS of the `call:*` ctor, args included -- never the bare
+/// callee name). Derived testimony joins pool-wide on that key; Stated peer
+/// claims stay same-scope so a good/bad twin pair can coexist (#3884). We collect
+/// only ground equalities whose subject is a `call:*` ctor; local variables and
+/// non-call helper ctors never travel.
 fn collect_ambient_ground_callsite_facts(
     inv: &Json,
     source: &Attribution,
@@ -2756,10 +2755,14 @@ fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Jso
 /// Conjoin closed ground callsite facts into matching callsite-keyed obligations.
 /// This is the finite-replay twin of `with_ambient_foralls`: a replayed literal
 /// loop has already named the concrete calls (`call:g(0)`, `call:g(1)`, ...), so
-/// only facts whose subject exactly appears in the current obligation are
-/// relevant. Bare names still receive nothing, and callsite-keyed obligations
-/// receive only facts from the same source/test scope; two independent consumers
-/// can share a structural `call:*` term without pooling their asserted values.
+/// only facts whose subject term is byte-identical (exact `TermKey`) to a term
+/// that appears in the current obligation are relevant. Bare names still receive
+/// nothing. #3884 join rules:
+///   1. Exact call-term identity (full ctor with args) -- never callee name.
+///   2. Derived testimony travels pool-wide on that key (independent-KIND
+///      witness across property prefixes).
+///   3. Stated peer claims join only within the same ambient scope, so a
+///      good/bad twin pair under different prefixes can keep opposite verdicts.
 fn with_ambient_ground_callsite_facts(
     inv: Json,
     property_name: &str,
@@ -2795,14 +2798,19 @@ fn with_ambient_ground_callsite_facts(
         {
             continue;
         }
-        if fact
-            .scope
-            .as_ref()
-            .is_some_and(|scope| Some(scope) != obligation_scope.as_ref())
-        {
+        // Exact call-term identity -- never callee name, never first-writer among
+        // different args (wanted is the full TermKey set of this obligation).
+        if !wanted.contains(&fact.term_key) {
             continue;
         }
-        if !wanted.contains(&fact.term_key) {
+        // Derived travels pool-wide; Stated peers stay same-scope (#3884).
+        let is_derived = fact.witness_key.provenance_kind == ProofIrProvenanceKind::Derived;
+        if !is_derived
+            && fact
+                .scope
+                .as_ref()
+                .is_some_and(|scope| Some(scope) != obligation_scope.as_ref())
+        {
             continue;
         }
         if current_ground_witnesses.contains(&fact.witness_key) {
@@ -6106,29 +6114,211 @@ mod tests {
         );
     }
 
+    /// Stated peer claims under different property prefixes do not pool each
+    /// other (a good/bad twin pair must keep opposite verdicts). Derived
+    /// testimony about the same exact term does travel across prefixes (#3884).
     #[test]
-    fn ambient_ground_callsite_facts_do_not_cross_consumer_scopes() {
+    fn ambient_ground_callsite_facts_stated_peers_stay_scoped_derived_crosses() {
         let (plan, reg) = z3_plan_and_registry();
         let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
 
-        let mut pool = MementoPool::default();
+        // Pure Stated peers: no cross-prefix join -- each is a lone claim.
+        let mut stated_pool = MementoPool::default();
         insert_contract(
-            &mut pool,
+            &mut stated_pool,
             "blake3-512:consumer-a-point",
             "src/lib.rs::tests::consumer_a::g#euf#c:callresult_g_a1(i:2)::assertion",
             json!({"kind":"and","operands":[eqf(callg(int(2)), int(1))]}),
         );
         insert_contract(
-            &mut pool,
+            &mut stated_pool,
             "blake3-512:consumer-b-point",
             "src/lib.rs::tests::consumer_b::g#euf#c:callresult_g_a1(i:2)::assertion",
             json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]}),
         );
+        let stated_res = verify_consistency(
+            &stated_pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        for row in &stated_res {
+            assert_eq!(
+                row.verdict,
+                ObligationVerdict::Refused,
+                "Stated peers under different prefixes must not pool each other: {stated_res:?}"
+            );
+        }
+
+        // Derived cross-prefix: independent-KIND witness of g(2)==1 refutes a
+        // lying claim under another prefix about the exact same term.
+        let mut derived_pool = MementoPool::default();
+        insert_derived_contract(
+            &mut derived_pool,
+            "blake3-512:derived-g2-one",
+            "src/lib.rs::tests::derived_scope::g#euf#c:callresult_g_a1(i:2)::assertion",
+            json!({"kind":"and","operands":[eqf(callg(int(2)), int(1))]}),
+        );
+        insert_contract(
+            &mut derived_pool,
+            "blake3-512:lying-g2",
+            "src/lib.rs::tests::consumer_lie::g#euf#c:callresult_g_a1(i:2)::assertion",
+            json!({"kind":"and","operands":[eqf(callg(int(2)), int(99))]}),
+        );
+        let derived_res = verify_consistency(
+            &derived_pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        let lying = derived_res
+            .iter()
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:lying-g2"))
+            .expect("lying claim present");
+        assert_eq!(
+            lying.verdict,
+            ObligationVerdict::Unsatisfied,
+            "Derived testimony must cross prefixes on exact term identity: {derived_res:?}"
+        );
+    }
+
+    /// #3884 SOUNDNESS repro (shape 2 / Repro B): consumer assertions over the
+    /// SAME ground call term (`call:len(100)`) but DIFFERENT property-name prefixes
+    /// (different ambient scopes) join via exact call-term identity. A derived
+    /// witness states the true value. Two discrimination pools (EUF dig needs
+    /// teeth -- both sides of the pair):
+    ///   * truthful twin agrees -> Discharged
+    ///   * lying twin asserts a wrong value -> Unsatisfied (contradiction)
+    /// Before the fix the scope key blocked pool-wide term-identity join across
+    /// prefixes (silent no-join / false green when a domain universe was present).
+    ///
+    /// NOTE (from the len-bridge fixture era): the earlier draft tried the shared
+    /// pool shape and saw both rows `vendor_fact_ir: None` with both Discharged
+    /// when a domain universe was present; without a universe both were Refused.
+    #[test]
+    fn ambient_ground_facts_join_on_exact_term_across_property_prefixes_bad_twin_refutes() {
+        let (plan, reg) = z3_plan_and_registry();
+        let call_len = |arg: Json| json!({"kind":"ctor","name":"call:len","args":[arg]});
+        let derived_inv = json!({"kind":"and","operands":[eqf(call_len(int(100)), int(0))]});
+        let derived_name =
+            "src/lib.rs::tests::fresh_len_derived::len#euf#c:call:len(i:100)::assertion";
+
+        // --- truthful twin: matching value, different property prefix ---
+        let mut good_pool = MementoPool::default();
+        insert_derived_contract(
+            &mut good_pool,
+            "blake3-512:derived-len-100-zero",
+            derived_name,
+            derived_inv.clone(),
+        );
+        insert_contract(
+            &mut good_pool,
+            "blake3-512:good-len-100",
+            "src/lib.rs::tests::fresh_len_good::len#euf#c:call:len(i:100)::assertion",
+            json!({"kind":"and","operands":[eqf(call_len(int(100)), int(0))]}),
+        );
+        let good_res = verify_consistency(
+            &good_pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        let good = good_res
+            .iter()
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:good-len-100"))
+            .expect("truthful twin present");
+        assert_eq!(
+            good.verdict,
+            ObligationVerdict::Discharged,
+            "BEFORE/AFTER: truthful twin must Discharge when the cross-prefix \
+             exact-term join fires (was Refused under scope isolation): {good_res:?}"
+        );
+
+        // --- lying twin: wrong value, different property prefix ---
+        let mut bad_pool = MementoPool::default();
+        insert_derived_contract(
+            &mut bad_pool,
+            "blake3-512:derived-len-100-zero-bad",
+            derived_name,
+            derived_inv,
+        );
+        insert_contract(
+            &mut bad_pool,
+            "blake3-512:bad-len-100",
+            "src/lib.rs::tests::fresh_len_bad::len#euf#c:call:len(i:100)::assertion",
+            json!({"kind":"and","operands":[eqf(call_len(int(100)), int(2))]}),
+        );
+        let bad_res = verify_consistency(
+            &bad_pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        let bad = bad_res
+            .iter()
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:bad-len-100"))
+            .expect("lying twin present");
+        assert_eq!(
+            bad.verdict,
+            ObligationVerdict::Unsatisfied,
+            "BEFORE/AFTER: lying twin must be Unsatisfied when the cross-prefix \
+             exact-term join fires (was Refused / false-green Discharged): {bad_res:?}"
+        );
+
+        // vendor_fact_ir carries the participating ambient fact for THIS term.
+        let bad_v = bad
+            .verification
+            .as_ref()
+            .expect("bad row carries verification")
+            .to_json();
+        let vf = bad_v
+            .get("vendorFactIr")
+            .and_then(|v| v.as_array())
+            .expect("lying twin must receive the matching-term ambient fact in vendorFactIr");
+        assert!(
+            !vf.is_empty(),
+            "vendorFactIr must be non-empty for the refuting join: {bad_v:?}"
+        );
+        let vf_text = serde_json::to_string(vf).unwrap_or_default();
+        assert!(
+            vf_text.contains(r#""value":0"#) || vf_text.contains("\"value\":0"),
+            "refuting fact must be call:len(100)==0, got: {vf_text}"
+        );
+    }
+
+    /// #3884 SOUNDNESS repro (shape 1 / Repro A): when multiple ground facts for
+    /// the same callee name exist with DIFFERENT arguments (`call:len(100)` vs
+    /// `call:len(200)`), a contract about one term must NEVER receive the other
+    /// term's fact in solve-participating `vendor_fact_ir`. Exact call-term
+    /// identity is the join key -- not the callee name `len`, not first-writer.
+    #[test]
+    fn ambient_ground_facts_never_attach_non_matching_argument_to_vendor_fact_ir() {
+        let (plan, reg) = z3_plan_and_registry();
+        let call_len = |arg: Json| json!({"kind":"ctor","name":"call:len","args":[arg]});
+
+        let mut pool = MementoPool::default();
+        insert_derived_contract(
+            &mut pool,
+            "blake3-512:derived-len-100",
+            "src/lib.rs::tests::fresh_len_a::len#euf#c:call:len(i:100)::assertion",
+            json!({"kind":"and","operands":[eqf(call_len(int(100)), int(0))]}),
+        );
+        insert_derived_contract(
+            &mut pool,
+            "blake3-512:derived-len-200",
+            "src/lib.rs::tests::fresh_len_b::len#euf#c:call:len(i:200)::assertion",
+            json!({"kind":"and","operands":[eqf(call_len(int(200)), int(5))]}),
+        );
+        // Consumer about len(100) only -- must not pick up len(200)==5.
         insert_contract(
             &mut pool,
-            "blake3-512:consumer-c-point",
-            "src/lib.rs::tests::consumer_c::g#euf#c:callresult_g_a1(i:2)::assertion",
-            json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]}),
+            "blake3-512:consumer-len-100",
+            "src/lib.rs::tests::fresh_len_consumer::len#euf#c:call:len(i:100)::assertion",
+            json!({"kind":"and","operands":[eqf(call_len(int(100)), int(0))]}),
         );
 
         let res = verify_consistency(
@@ -6138,27 +6328,49 @@ mod tests {
             &test_compilers(),
             std::path::Path::new("."),
         );
-        assert_eq!(res.len(), 3, "three separate obligations: {res:?}");
-        let consumer_a = res
+        let consumer = res
             .iter()
-            .find(|r| r.contract_cid == test_cid_string("blake3-512:consumer-a-point"))
-            .expect("consumer A point row present");
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:consumer-len-100"))
+            .expect("consumer present");
         assert_eq!(
-            consumer_a.verdict,
-            ObligationVerdict::Refused,
-            "consumer A's point assertion must not pool into other consumer scopes \
-             OR discharge by self-witnessing: {res:?}"
+            consumer.verdict,
+            ObligationVerdict::Discharged,
+            "matching-arg derived fact must witness the consumer: {res:?}"
         );
-        let consumer_b = res
-            .iter()
-            .find(|r| r.contract_cid == test_cid_string("blake3-512:consumer-b-point"))
-            .expect("consumer B point row present");
-        assert_eq!(
-            consumer_b.verdict,
-            ObligationVerdict::Refused,
-            "consumer B must not see consumer A's different value for the same structural \
-             callsite, and with no independent same-scope witness remains refused: {res:?}"
-        );
+
+        let v = consumer
+            .verification
+            .as_ref()
+            .expect("consumer carries verification")
+            .to_json();
+        if let Some(vf) = v.get("vendorFactIr").and_then(|x| x.as_array()) {
+            let vf_text = serde_json::to_string(vf).unwrap_or_default();
+            assert!(
+                !vf_text.contains("\"value\":5") && !vf_text.contains(r#""value":5"#),
+                "vendorFactIr must not carry call:len(200)==5 for a call:len(100) \
+                 consumer (cross-term attachment): {vf_text}"
+            );
+            // The matching fact's subject term must be call:len with arg 100 only.
+            for fact in vf {
+                if let Some((term, _val)) = ground_term_const_equality(fact) {
+                    if is_callsite_ctor_term(term) {
+                        let args = term.get("args").and_then(|a| a.as_array());
+                        if let Some(args) = args {
+                            assert!(
+                                args.iter().any(|a| a.get("value") == Some(&json!(100))),
+                                "solve-participating fact must be about call:len(100), \
+                                 got: {fact:?}"
+                            );
+                            assert!(
+                                !args.iter().any(|a| a.get("value") == Some(&json!(200))),
+                                "solve-participating fact must not be about call:len(200): \
+                                 {fact:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // --- forall-rewrite regression: callsite-keyed obligations travel the
