@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
@@ -42,4 +42,6 @@ class NameSugar(Sugar, role=SugarRole.TERM):
 
     def desugar(self, ctx: object = None) -> Outcome:
         # Ask the context what stands at this name; the binding answers.
-        return Complete(ctx.temporal.value_for(self.name))
+        # A BoundVar recomposes its source against its definition scope; a
+        # concrete or symbolic binding stands as itself.
+        return ctx.temporal.value_for(self.name).answer(ctx)

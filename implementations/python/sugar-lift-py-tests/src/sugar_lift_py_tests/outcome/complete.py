@@ -23,6 +23,10 @@ class Complete:
         # The value owns its contribution to the block record -- no interrogation.
         return self.value.contribution()
 
+    def extend_scope(self, ctx):
+        # The value owns whether the rest of the block sees a new binding.
+        return self.value.extend_scope(ctx)
+
     def and_then(self, step):
         # A completed value keeps going: hand the value to the next step.
         return step(self.value)

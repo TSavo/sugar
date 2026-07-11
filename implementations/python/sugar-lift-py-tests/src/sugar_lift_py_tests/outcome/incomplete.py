@@ -33,6 +33,10 @@ class Incomplete:
         # beside it via follow.
         return (self,)
 
+    def extend_scope(self, ctx):
+        # An effect does not rebind: the rest never runs under a new scope.
+        return ctx
+
     def and_then(self, step):
         # An effect never continues: it propagates by returning itself, the next step
         # never runs.

@@ -105,6 +105,17 @@ class FloorValue:
         # to contribute nothing (absorbed).
         return (self,)
 
+    def extend_scope(self, ctx):
+        # Default: a statement value does not rebind the rest of the block.
+        return ctx
+
+    def answer(self, ctx=None):
+        # Default: a binding stands as itself (NameSugar asks; the value answers).
+        from sugar_lift_py_tests.outcome import Complete
+
+        del ctx
+        return Complete(self)
+
     def add_with(
         self, operation: AddOperation, ctx: FactoryBuildContext | None
     ) -> Outcome:
