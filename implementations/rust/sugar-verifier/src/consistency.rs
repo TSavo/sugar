@@ -167,6 +167,11 @@ pub struct ConsistencyResult {
     /// assertion instead of dropping the source. `None` when the contract
     /// memento carries no readable locus (fail-open: no false anchor).
     pub locus: Option<SourceLocus>,
+    /// #4148: ambient vendor posts that matched a callsite but were dropped
+    /// during specialization (open after substitution, etc.). Non-empty under
+    /// declared deps means the warm path must degrade -- the vendor law never
+    /// reached the solve. Empty is the only path to an un-degraded green.
+    pub dropped_ambient_posts: Vec<DroppedAmbientPost>,
 }
 
 /// Typed replacement for the hand-rolled `verification` JSON on
@@ -1136,6 +1141,7 @@ fn try_witness_discharge(
             failed_tests: None,
             reason,
         }),
+        dropped_ambient_posts: Vec::new(),
     };
     let tool = evidence
         .get("certificate")
@@ -1205,6 +1211,7 @@ fn seal_witness_package_outcome(
                     failed_tests: None,
                     reason,
                 }),
+                dropped_ambient_posts: Vec::new(),
             }
         }
         Ok(outcome) => {
@@ -1235,6 +1242,7 @@ fn seal_witness_package_outcome(
                 witnessed: false,
                 locus: None,
                 verification: verification_from_boundary(boundary.verification),
+                dropped_ambient_posts: Vec::new(),
             }
         }
         Err(e) => {
@@ -1253,6 +1261,7 @@ fn seal_witness_package_outcome(
                 witnessed: false,
                 locus: None,
                 verification: verification_from_boundary(boundary.verification),
+                dropped_ambient_posts: Vec::new(),
             }
         }
     }
@@ -1708,6 +1717,7 @@ fn provenance_kind_refusal(cid: String, body: &Json, reason: String) -> Consiste
         witnessed: false,
         locus: None,
         verification: verification_from_boundary(boundary.verification),
+        dropped_ambient_posts: Vec::new(),
     }
 }
 
@@ -2088,6 +2098,7 @@ fn check_inv_consistency_with_vacuity_reason(
                 solver_reason,
                 &[],
             )),
+            dropped_ambient_posts: Vec::new(),
         };
     }
     if let Some(reason) = structural_contradiction_reason(&inv) {
@@ -2109,6 +2120,7 @@ fn check_inv_consistency_with_vacuity_reason(
                 Some(&format!("structural: {reason}")),
                 &[],
             )),
+            dropped_ambient_posts: Vec::new(),
         };
     }
     let raw_sat_goal = IrFormula::Not(inv.clone()).to_value();
@@ -2162,6 +2174,7 @@ fn check_inv_consistency_with_vacuity_reason(
             Some(&raw_reason),
             &invs,
         )),
+        dropped_ambient_posts: Vec::new(),
     }
 }
 
@@ -2939,6 +2952,48 @@ struct BridgeBinding {
     out_binding: String,
 }
 
+/// Why an ambient vendor post was not conjoined into the obligation (#4148).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DroppedAmbientPostReason {
+    /// Specialization left free variables -- `formula_is_closed` rejected it.
+    OpenAfterSpecialization,
+    /// Callsite subject was an opaque uninterpreted call (not a usable match).
+    OpaqueCallSubject,
+    /// Consumer call term failed to decode as a ctor (fell through to atomic).
+    CallTermDecodeFailed,
+}
+
+/// One ambient vendor post that matched a callsite but did not enter `linkedPosts`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DroppedAmbientPost {
+    pub source_symbol: String,
+    pub target_cid: String,
+    pub reason: DroppedAmbientPostReason,
+    /// Compact spelling of the specialized (or attempted) post for diagnostics.
+    pub spelling: String,
+}
+
+impl DroppedAmbientPostReason {
+    pub fn label(&self) -> &'static str {
+        match self {
+            DroppedAmbientPostReason::OpenAfterSpecialization => "open-after-specialization",
+            DroppedAmbientPostReason::OpaqueCallSubject => "opaque-call-subject",
+            DroppedAmbientPostReason::CallTermDecodeFailed => "call-term-decode-failed",
+        }
+    }
+}
+
+/// Partition of ambient-post specialization (#4148 type fence).
+///
+/// Every specialization step returns this shape -- not a silently-filtered
+/// `Vec`. Callers that proceed to a green verdict while `dropped` is non-empty
+/// must do so explicitly; the warm-overlay law forbids that under declared deps.
+#[derive(Debug, Clone, Default)]
+struct AmbientPostInstances {
+    kept: Vec<LinkedPostInstance>,
+    dropped: Vec<DroppedAmbientPost>,
+}
+
 #[derive(Debug, Clone)]
 struct AmbientPost {
     binding: BridgeBinding,
@@ -3037,6 +3092,7 @@ pub(crate) fn linked_post_instance_count(pool: &MementoPool, body: &Json) -> usi
 
 fn instantiate_ambient_posts_for_inv(inv: &Json, ambient: &[AmbientPost]) -> Vec<Json> {
     linked_ambient_post_instances_for_inv(inv, ambient)
+        .kept
         .into_iter()
         .map(|p| p.instantiated_post)
         .collect()
@@ -3045,23 +3101,40 @@ fn instantiate_ambient_posts_for_inv(inv: &Json, ambient: &[AmbientPost]) -> Vec
 fn linked_ambient_post_instances_for_inv(
     inv: &Json,
     ambient: &[AmbientPost],
-) -> Vec<LinkedPostInstance> {
+) -> AmbientPostInstances {
     if ambient.is_empty() {
-        return Vec::new();
+        return AmbientPostInstances::default();
     }
     let mut callsites = Vec::new();
     collect_unquantified_ctor_terms(inv, &mut callsites);
     if callsites.is_empty() {
-        return Vec::new();
+        return AmbientPostInstances::default();
     }
 
-    let mut instances = Vec::new();
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for callsite in &callsites {
         let Some(name) = callsite.get("name").and_then(|v| v.as_str()) else {
+            // Call term did not decode as a named ctor -- record if ambient
+            // posts exist that we intended to apply (subject opaque / decode fail).
+            if !ambient.is_empty() {
+                dropped.push(DroppedAmbientPost {
+                    source_symbol: "<unknown-call>".to_string(),
+                    target_cid: String::new(),
+                    reason: DroppedAmbientPostReason::CallTermDecodeFailed,
+                    spelling: compact_json(callsite),
+                });
+            }
             continue;
         };
         let Some(args) = callsite.get("args").and_then(|v| v.as_array()) else {
+            dropped.push(DroppedAmbientPost {
+                source_symbol: name.to_string(),
+                target_cid: String::new(),
+                reason: DroppedAmbientPostReason::CallTermDecodeFailed,
+                spelling: compact_json(callsite),
+            });
             continue;
         };
         for post in ambient.iter().filter(|post| {
@@ -3082,17 +3155,24 @@ fn linked_ambient_post_instances_for_inv(
                 callsite,
             );
             if !formula_is_closed(&instance, &mut Vec::new()) {
-                debug!(
+                // #4148: LOUD drop -- never silently skip an open specialized post.
+                tracing::warn!(
                     source_symbol = %post.binding.source_symbol,
                     target_cid = %post.binding.target_cid,
-                    "verifier/linker: skipped open specialized post"
+                    "verifier/linker: dropped open specialized vendor post (not closed after specialization)"
                 );
+                dropped.push(DroppedAmbientPost {
+                    source_symbol: post.binding.source_symbol.clone(),
+                    target_cid: post.binding.target_cid.clone(),
+                    reason: DroppedAmbientPostReason::OpenAfterSpecialization,
+                    spelling: compact_json(&instance),
+                });
                 continue;
             }
             let key = libsugar::canonical::json_jcs(&instance)
                 .unwrap_or_else(|_| serde_json::to_string(&instance).unwrap_or_default());
             if seen.insert(key) {
-                instances.push(LinkedPostInstance {
+                kept.push(LinkedPostInstance {
                     binding: post.binding.clone(),
                     call: callsite.clone(),
                     vendor_post: post.post.clone(),
@@ -3101,31 +3181,32 @@ fn linked_ambient_post_instances_for_inv(
             }
         }
     }
-    instances
+    AmbientPostInstances { kept, dropped }
 }
 
 fn with_ambient_posts_with_instances(
     inv: Json,
     ambient: &[AmbientPost],
-) -> (Json, Vec<LinkedPostInstance>) {
+) -> (Json, AmbientPostInstances) {
     if ambient.is_empty() {
-        return (inv, Vec::new());
+        return (inv, AmbientPostInstances::default());
     }
-    let instances = linked_ambient_post_instances_for_inv(&inv, ambient);
+    let partition = linked_ambient_post_instances_for_inv(&inv, ambient);
     debug!(
         ambient_posts = ambient.len(),
-        instances = instances.len(),
+        kept = partition.kept.len(),
+        dropped = partition.dropped.len(),
         "verifier/linker: conjoining specialized contract posts into obligation"
     );
-    if instances.is_empty() {
-        return (inv, Vec::new());
+    if partition.kept.is_empty() {
+        return (inv, partition);
     }
-    let mut operands = Vec::with_capacity(instances.len() + 1);
+    let mut operands = Vec::with_capacity(partition.kept.len() + 1);
     operands.push(inv);
-    operands.extend(instances.iter().map(|p| p.instantiated_post.clone()));
+    operands.extend(partition.kept.iter().map(|p| p.instantiated_post.clone()));
     (
         IrFormula::And(operands).to_value(),
-        instances,
+        partition,
     )
 }
 
@@ -3916,7 +3997,9 @@ fn process_consistency_group(
                             .into_iter()
                     })
                     .collect();
-                let (inv, linked_posts) = with_ambient_posts_with_instances(inv, &ambient_posts);
+                let (inv, ambient_partition) = with_ambient_posts_with_instances(inv, &ambient_posts);
+                let linked_posts = ambient_partition.kept.clone();
+                let dropped_ambient_posts = ambient_partition.dropped.clone();
                 let (inv, skipped_same_kind_duplicate, vendor_facts) =
                     with_ambient_ground_callsite_facts(
                         inv,
@@ -3961,6 +4044,7 @@ fn process_consistency_group(
                         &sworn,
                     );
                 }
+                result.dropped_ambient_posts = dropped_ambient_posts;
                 out.push(result);
             } else {
                 for candidate in &inv_candidates {
@@ -3972,8 +4056,10 @@ fn process_consistency_group(
                         &scope,
                         candidate.provenance_kind,
                     );
-                    let (inv, linked_posts) =
+                    let (inv, ambient_partition) =
                         with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
+                    let linked_posts = ambient_partition.kept.clone();
+                    let dropped_ambient_posts = ambient_partition.dropped.clone();
                     let (inv, skipped_same_kind_duplicate, vendor_facts) =
                         with_ambient_ground_callsite_facts(
                             inv,
@@ -4022,6 +4108,7 @@ fn process_consistency_group(
                         );
                         attach_conjoined_facts(&mut result, &original_inv, &vendor_facts, &sworn);
                     }
+                    result.dropped_ambient_posts = dropped_ambient_posts;
                     if !suppress_standalone_support_vacuity(
                         property_name,
                         candidate,
@@ -4303,6 +4390,7 @@ mod tests {
                 reason: "r".to_string(),
             }),
             locus: None,
+            dropped_ambient_posts: Vec::new(),
         };
         let before = witness.verification.clone();
         attach_conjoined_facts(
@@ -4330,6 +4418,7 @@ mod tests {
                 &[],
             )),
             locus: None,
+            dropped_ambient_posts: Vec::new(),
         };
         attach_conjoined_facts(
             &mut solver,

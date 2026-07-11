@@ -100,20 +100,31 @@ fn write_executable(path: &Path, text: &str) {
 }
 
 /// Mint a minimal vendor .proof: post-bearing encodeBase64 universe + inv fact.
+///
+/// The post MUST close after ambient specialization (formals + outBinding
+/// substituted at the consumer callsite). An open post (free vars other than
+/// formals/out) is dropped by `formula_is_closed` -- linkedPosts stays empty,
+/// the obligation refuses vacuous, and a planted lie becomes a silent green
+/// (degraded=false, 0 ERROR diagnostics). That is the #3802/#3808 false-green
+/// shape the warm path must never publish.
 fn mint_base64_style_vendor_proof() -> (String, Vec<u8>) {
+    // Universe: encodeBase64 always yields "eHl6" (base64 of "xyz"). After
+    // specialisation at call:encodeBase64("xyz") this becomes the closed
+    // ground fact `= (call:encodeBase64("xyz"), "eHl6")` which conjoins with
+    // the consumer inv -- good twin matches, planted lie contradicts.
     let post = json!({
         "kind": "atomic",
-        "name": "str.eq-bv-blocks",
+        "name": "=",
         "args": [
             {"kind": "var", "name": "out"},
-            {"kind": "var", "name": "blocks"}
+            {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "eHl6"}
         ]
     });
     let inv = json!({
         "kind": "atomic",
         "name": "=",
         "args": [
-            {"kind": "atomic", "name": "call:encodeBase64", "args": [
+            {"kind": "ctor", "name": "call:encodeBase64", "args": [
                 {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "abc"}
             ]},
             {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "YWJj"}
@@ -194,6 +205,133 @@ fn mint_base64_style_vendor_proof() -> (String, Vec<u8>) {
     (sealed.cid, sealed.bytes)
 }
 
+
+/// Vendor proof whose post STAYS OPEN after specialization: free var
+/// `unbound` is not a formal and is not substituted. linkedPosts drops it
+/// (formula_is_closed fails) -- the #4148 vacuous-refuse false-green shape.
+fn mint_open_post_vendor_proof() -> (String, Vec<u8>) {
+    let post = json!({
+        "kind": "atomic",
+        "name": "=",
+        "args": [
+            {"kind": "var", "name": "out"},
+            {"kind": "var", "name": "unbound"}
+        ]
+    });
+    let inv = json!({
+        "kind": "atomic",
+        "name": "=",
+        "args": [
+            {"kind": "ctor", "name": "call:encodeBase64", "args": [
+                {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "abc"}
+            ]},
+            {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "YWJj"}
+        ]
+    });
+
+    let mut graph = ProofGraph::new();
+    let post_atom = graph.register_atom(FlatAtom::new(json_to_cvalue(&post)));
+    let inv_atom = graph.register_atom(FlatAtom::new(json_to_cvalue(&inv)));
+    let body = graph.register_body(ContractBody::from_slots(vec![
+        ("post", &post_atom),
+        ("inv", &inv_atom),
+    ]));
+    let body_cid = body.cid().as_str().to_string();
+
+    let args = MintContractArgs {
+        evidence_term: None,
+        formals: vec!["value".into()],
+        emit_empty_formals: false,
+        formal_sorts: Vec::new(),
+        library: Some("b64vendor".into()),
+        bridge_source_symbol: Some("call:encodeBase64".into()),
+        body_discharge_eligible: true,
+        body_discharge_refusal_reason: None,
+        panic_loci: Vec::new(),
+        class_shapes: Vec::new(),
+        source_warrants: Vec::new(),
+        proofir_provenance: Some(json_to_cvalue(&json!({
+            "warrants": [{
+                "kind": "Stated",
+                "locus": {"path": "vendor/b64vendor.py", "line": 1, "column": 0}
+            }]
+        }))),
+        contract_name: "encodeBase64".into(),
+        pre: None,
+        post: Some(json_to_cvalue(&post)),
+        inv: Some(json_to_cvalue(&inv)),
+        out_binding: "out".into(),
+        produced_by: "warm-overlay-test".into(),
+        produced_at: "1970-01-01T00:00:00.000Z".into(),
+        input_cids: Vec::new(),
+        authoring: Authoring::KitAuthor {
+            author: "warm-overlay-test".into(),
+            note: None,
+        },
+        signer_seed: seed(),
+    };
+    let minted = mint_contract_with_body_cid(&args, Some(&body_cid)).expect("mint open-post vendor");
+    graph.push_claim_contract(ClaimContractMemento::new(minted.canonical_bytes));
+
+    let bridge = mint_bridge(&MintBridgeArgs {
+        produced_by: "warm-overlay-test".into(),
+        produced_at: "1970-01-01T00:00:00.000Z".into(),
+        source_symbol: "call:encodeBase64".into(),
+        source_layer: "source".into(),
+        target_contract: ContractMementoRef::new(minted.cid.clone()),
+        target_layer: "kit".into(),
+        ir_arg_sorts: vec![],
+        ir_return_sort: String::new(),
+        notes: "vendor body bridge open-post".into(),
+        signer_seed: seed(),
+        target_proof_cid: None,
+        callsite: None,
+    });
+    graph.push_bridge(BridgeMemento::new(bridge.canonical_bytes));
+
+    let sealed = build_proof_envelope(&ProofEnvelopeInput {
+        name: "vendor-open".into(),
+        version: "1.0.0".into(),
+        binary_cid: None,
+        metadata: None,
+        graph,
+        signer_cid: ed25519_pubkey_string(&seed()),
+        signer_seed: seed(),
+        declared_at: "1970-01-01T00:00:00.000Z".into(),
+        manifest: None,
+    });
+    (sealed.cid, sealed.bytes)
+}
+
+fn stage_consumer_with_open_post_vendor(label: &str) -> (PathBuf, PathBuf) {
+    let root = unique_dir(label);
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join(".sugar")).unwrap();
+    fs::write(
+        root.join(".sugar").join("config.toml"),
+        "[[plugins]]\nsurface = \"mockconsumer\"\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("lib.rs"), "// BAD_MARKER\n").unwrap();
+
+    let name = "encodeBase64#euf#c:call:encodeBase64(xyz)::assertion";
+    write_mock_kit(
+        &root,
+        "mockconsumer",
+        "dynamic",
+        &contract_ir_document(name, "src/lib.rs", "eHl6"),
+        &contract_ir_document(name, "src/lib.rs", "AAAA"),
+    );
+
+    let imports = root.join(".sugar").join("imports");
+    fs::create_dir_all(&imports).unwrap();
+    let (cid, bytes) = mint_open_post_vendor_proof();
+    fs::write(imports.join(format!("{cid}.proof")), bytes).unwrap();
+
+    let file = root.join("src").join("lib.rs");
+    (root, file)
+}
+
 fn mint_consumer_assertion_pool(name: &str, inv: &Json) -> MementoPool {
     let mut graph = ProofGraph::new();
     let inv_atom = graph.register_atom(FlatAtom::new(json_to_cvalue(inv)));
@@ -265,6 +403,10 @@ fn mint_consumer_assertion_pool(name: &str, inv: &Json) -> MementoPool {
 }
 
 fn contract_ir_document(name: &str, file: &str, rhs: &str) -> Json {
+    // Call terms are IrTerm ctors (kind=ctor), never kind=atomic -- atomic is
+    // only the formula shell of `=`. A wrong kind makes sugar.enumerate fact
+    // payload decode fail and the warm path degrade (honest, but never
+    // exercises un-degraded contradiction).
     json!({
         "kind": "ir-document",
         "diagnostics": [],
@@ -276,7 +418,7 @@ fn contract_ir_document(name: &str, file: &str, rhs: &str) -> Json {
                 "kind": "atomic",
                 "name": "=",
                 "args": [
-                    {"kind": "atomic", "name": "call:encodeBase64", "args": [
+                    {"kind": "ctor", "name": "call:encodeBase64", "args": [
                         {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "xyz"}
                     ]},
                     {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": rhs}
@@ -451,18 +593,32 @@ for line in sys.stdin:
 }
 
 fn assert_never_false_green(outcome: &sugar_lsp::prove_engine::SolveOutcome, label: &str) {
-    let unsatisfied = outcome
+    let statuses: Vec<&str> = outcome
         .rows
         .iter()
-        .filter(|r| r.get("status").and_then(|s| s.as_str()) == Some("unsatisfied"))
-        .count();
+        .filter_map(|r| r.get("status").and_then(|s| s.as_str()))
+        .collect();
+    let unsatisfied = statuses.iter().filter(|s| **s == "unsatisfied").count();
     let empty_undegraded = outcome.rows.is_empty() && !outcome.degraded;
+    // Vacuous refuse: every row refused/empty and no contradiction -- honest
+    // ONLY when degraded. Un-degraded vacuous refuse is the #4148 false green.
+    let all_vacuous = !statuses.is_empty()
+        && statuses
+            .iter()
+            .all(|s| *s == "refused" || *s == "vacuous" || *s == "unknown");
+    let vacuous_undegraded = all_vacuous && unsatisfied == 0 && !outcome.degraded;
     assert!(
         !empty_undegraded,
         "{label}: NEVER 0-diagnostics un-degraded (false green). degraded={:?} reason={:?} rows={}",
         outcome.degraded,
         outcome.degraded_reason,
         outcome.rows.len()
+    );
+    assert!(
+        !vacuous_undegraded,
+        "{label}: NEVER un-degraded vacuous refuse (false green #4148). \
+         statuses={statuses:?} reason={:?}",
+        outcome.degraded_reason
     );
     assert!(
         unsatisfied > 0 || outcome.degraded,
@@ -678,3 +834,144 @@ fn truthful_twin_stays_green_or_honestly_degrades() {
     }
     fs::remove_dir_all(&root).ok();
 }
+
+/// Real daemon-path receipt for #3802 + #3808: same `solve_buffer` door the
+/// LSP `didOpen`/`didChange` path calls (not a hand-built pool). Prints the
+/// twin flip so a re-verify can read the statuses without re-deriving them.
+#[test]
+fn real_solve_buffer_path_twin_flip_receipts_3802_3808() {
+    if !z3_available() {
+        eprintln!("SKIP: z3 required for twin-flip receipts");
+        return;
+    }
+    let (root, file) = stage_consumer_with_vendor("receipts", "dynamic", "eHl6", "AAAA");
+    // Declared import deps (post-bearing vendor) -- #3808 surface.
+    assert!(
+        sugar_cli::cmd_mint::project_declares_import_dependencies(&root),
+        "fixture must declare .sugar/imports deps"
+    );
+    let ctx = sugar_lsp::prove_engine::build_prove_context_for(&root);
+
+    let bad = sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// BAD_MARKER lie\n");
+    let good =
+        sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// GOOD_MARKER truthful\n");
+
+    let summarize = |label: &str, o: &sugar_lsp::prove_engine::SolveOutcome| {
+        let statuses: Vec<&str> = o
+            .rows
+            .iter()
+            .filter_map(|r| r.get("status").and_then(|s| s.as_str()))
+            .collect();
+        let unsat = statuses.iter().filter(|s| **s == "unsatisfied").count();
+        eprintln!(
+            "RECEIPT {label}: degraded={} reason={:?} rows={} statuses={:?} unsat={}",
+            o.degraded,
+            o.degraded_reason,
+            o.rows.len(),
+            statuses,
+            unsat
+        );
+        (unsat, o.degraded, o.rows.is_empty())
+    };
+
+    let (bad_unsat, bad_degraded, bad_empty) = summarize("consumer-bad", &bad);
+    let (good_unsat, good_degraded, _good_empty) = summarize("consumer-good", &good);
+
+    // #3802: planted lie -- never un-degraded empty, and never silent green.
+    assert!(
+        !(bad_empty && !bad_degraded),
+        "LAW VIOLATION #3802: consumer-bad un-degraded 0-diagnostics (false green)"
+    );
+    assert!(
+        bad_unsat > 0 || bad_degraded,
+        "LAW VIOLATION #3802: consumer-bad neither contradiction nor degraded"
+    );
+
+    // Prefer the live warm path: un-degraded feed + real contradiction on the
+    // lie, green twin free of unsatisfied. That is the #3808 inject-then-solve
+    // shape the unit guards alone cannot prove.
+    assert!(
+        !bad_degraded,
+        "warm feed must be live for this fixture (not degrade); reason={:?}",
+        bad.degraded_reason
+    );
+    assert!(
+        bad_unsat > 0,
+        "consumer-bad un-degraded must surface contradiction: {:?}",
+        bad.rows
+    );
+    let mut probe = MementoPool::default();
+    let n = sugar_cli::cmd_mint::inject_dependency_bridges_into_pool(&root, &mut probe);
+    assert!(
+        n > 0,
+        "LAW VIOLATION #3808: inject minted 0 bridges for declared post-bearing imports"
+    );
+    assert!(
+        !good_degraded,
+        "consumer-good warm feed must be live; reason={:?}",
+        good.degraded_reason
+    );
+    assert_eq!(
+        good_unsat, 0,
+        "consumer-good un-degraded must not report unsatisfied: {:?}",
+        good.rows
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+
+/// #4148 anti-false-green teeth: open vendor post after specialization is
+/// DROPPED (not conjoined). BEFORE the fix this returned degraded=false with
+/// a vacuous refuse (or empty unsat) -- a silent green on a planted lie.
+/// AFTER: degraded=true with the dropped-post reason.
+#[test]
+fn open_vendor_post_degrades_never_false_green_4148() {
+    if !z3_available() {
+        eprintln!("SKIP: z3 required for open-post degrade discrimination");
+        return;
+    }
+    let (root, file) = stage_consumer_with_open_post_vendor("open-post-4148");
+    assert!(
+        sugar_cli::cmd_mint::project_declares_import_dependencies(&root),
+        "fixture must declare imports"
+    );
+    let ctx = sugar_lsp::prove_engine::build_prove_context_for(&root);
+
+    let outcome =
+        sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// BAD_MARKER planted lie\n");
+
+    let statuses: Vec<&str> = outcome
+        .rows
+        .iter()
+        .filter_map(|r| r.get("status").and_then(|s| s.as_str()))
+        .collect();
+    let unsat = statuses.iter().filter(|s| **s == "unsatisfied").count();
+    eprintln!(
+        "RECEIPT open-post-vacuous-refuse AFTER: degraded={} reason={:?} rows={} statuses={:?} unsat={}",
+        outcome.degraded,
+        outcome.degraded_reason,
+        outcome.rows.len(),
+        statuses,
+        unsat
+    );
+
+    // BEFORE (false green): degraded=false and no real contradiction from the
+    // vendor universe (post never applied). AFTER: must degrade.
+    assert!(
+        outcome.degraded,
+        "LAW VIOLATION #4148: open-post planted lie must degrade, not un-degraded green; \
+         statuses={statuses:?} reason={:?}",
+        outcome.degraded_reason
+    );
+    let reason = outcome.degraded_reason.as_deref().unwrap_or("");
+    assert!(
+        reason.contains("dropped") && reason.contains("vendor post"),
+        "degraded reason must name dropped vendor posts: {reason}"
+    );
+    // Never the un-degraded empty/green shape.
+    assert_never_false_green(&outcome, "open-post #4148");
+
+    fs::remove_dir_all(&root).ok();
+}
+
