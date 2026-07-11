@@ -721,7 +721,13 @@ def audit_lift_file(
     payload = LiftReportPayloadDto(source_ledger={})
     gaps: list[AuditOnlyGap] = []
     catalog = default_catalog()
-    module = SourceFragment.from_source(source, filename).statements()[0]
+    roots = SourceFragment.from_source(source, filename).statements()
+    if not roots:
+        # Empty/comment-only modules have no source site to construct. Their
+        # honest audit result is the empty set, not an indexing crash and not a
+        # fabricated support row.
+        return payload, gaps
+    module = roots[0]
     for stmt in module.statements():
         # Either ordinary FunctionDef or test_* testimony (both owns shapes).
         if not (FunctionDefSugar.owns(stmt) or TestFunctionDefSugar.owns(stmt)):

@@ -265,17 +265,47 @@ def build_pandas_wall(
     visual_path = output_dir / "wall.txt"
     _write_command_receipt(visual_path, visual_result)
     if visual_result.returncode != 0:
-        summary = summarize_pandas_construction_gaps(_combined_output(visual_result))
+        failure_result = visual_result
+        summary = summarize_pandas_construction_gaps(_combined_output(failure_result))
+        if summary.gaps_total == 0 and floors.mode == "complete":
+            # Complete mode must stay production-loud. When that production door
+            # finds a construction gap, rerun the SAME disposable workspace through
+            # the kit's one audit door so the wall receives the whole structured
+            # frontier instead of one child-process death disguised as transport.
+            # Nothing catches FactoryPanic in production; only the manifest changes
+            # for this diagnostic retry.
+            _prepare_audit_workspace(package_path, root, workspace, audit_only=True)
+            audit_result = runner(
+                [
+                    os.fspath(sugar_bin),
+                    "lift",
+                    "--report",
+                    "--visual",
+                    os.fspath(workspace),
+                ],
+                root,
+                env,
+            )
+            audit_path = output_dir / "wall.audit.txt"
+            _write_command_receipt(audit_path, audit_result)
+            audit_summary = summarize_pandas_construction_gaps(
+                _combined_output(audit_result)
+            )
+            # The retry is now the most informed signal even when it exposes an
+            # unrelated RPC failure. Keep its exact output loud; only structured
+            # AuditOnlyGap rows become construction-gap accounting below.
+            failure_result = audit_result
+            summary = audit_summary
         if summary.gaps_total == 0:
             frontier_summary = summarize_pandas_frontier_error(
-                _combined_output(visual_result)
+                _combined_output(failure_result)
             )
             if frontier_summary is None:
-                combined = _combined_output(visual_result)
+                combined = _combined_output(failure_result)
                 tail = combined[-4000:] if combined else "<no output captured>"
                 raise RuntimeError(
                     "pandas wall visual render failed without structured "
-                    f"construction gaps or a named frontier exit={visual_result.returncode}; "
+                    f"construction gaps or a named frontier exit={failure_result.returncode}; "
                     f"the render's own last words follow (instrument, not a summary):\n{tail}"
                 ) from None
             frontier_path = output_dir / "frontier.json"
