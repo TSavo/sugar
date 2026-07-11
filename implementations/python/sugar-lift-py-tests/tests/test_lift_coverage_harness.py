@@ -183,13 +183,15 @@ def test_minority_assert_moves_body_out_of_unasserted() -> None:
 def test_line_paint_marks_silent_and_minority() -> None:
     from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
+    # Ground tautology assert folds away (no ::assertion fact row) -- true silent.
+    # A diggable assert (f(1)==2) would mint a contract fact and paint lifted.
     src = (
         "def claimed():\n"
         "    return 1\n"
         "def orphan():\n"
         "    return 0\n"
         "def silent_fn():\n"
-        "    assert f(1) == 2\n"
+        "    assert 1 == 1\n"
         "    return 0\n"
         "\n"
         "def test_claimed():\n"
@@ -198,26 +200,12 @@ def test_line_paint_marks_silent_and_minority() -> None:
     payload = lift_file_payload(src, "t.py")
     disk = census_source(src, file="t.py")
     rpc = payload.to_rpc()
-    # Cite test_claimed's assert; leave silent_fn's assert unspoken.
-    rpc["sourceAudits"] = [
-        {
-            "file": "t.py",
-            "sourceFunctionName": "test_claimed",
-            "loci": [
-                {
-                    "file": "t.py",
-                    "line": 10,
-                    "col": 4,
-                    "status": "warranted",
-                    "ast_kind": "Assert",
-                }
-            ],
-        }
-    ]
     cov = account_lift_coverage(disk, rpc)
     paint = paint_lines(src, cov, file="t.py")
     by_line = {row["line"]: row["bucket"] for row in paint}
+    # test_claimed::assertion fact row cites line 10.
     assert by_line[10] == "lifted+cited"
+    # silent_fn's ground assert has no fact row and no gap -- Crime-1 red paint.
     assert by_line[6] == "silently-unaccounted"
     assert by_line[3] == "minority-un-asserted"
 
