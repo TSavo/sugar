@@ -12,8 +12,9 @@ from typing import Any, Dict, List, Optional
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sugar_lift_py_tests.audit_only import collect_construction_gaps
+from sugar_lift_py_tests.audit_only import AuditOnlyGap, gap_from_factory_panic
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.filename import cid_from_proof_stem
 from sugar_lift_py_tests.idd.lift_coverage_accounting import (
     account_lift_coverage,
@@ -22,7 +23,6 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import (
 from sugar_lift_py_tests.idd.lift_coverage_census import census_paths
 from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
-from sugar_lift_py_tests.lib import lift_source
 
 KIT_ID = "python"
 KIT_VERSION = "0.1.0"
@@ -681,6 +681,26 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     function-contract plus inv rows; testimony mints only ::assertion fact
     rows (no post, no contract). Enumeration is functions by design: module
     statements no FunctionDefSugar owns are not lifted here.
+
+    Production door: FactoryPanic propagates and halts loud. Audit mode uses
+    `audit_lift_file` -- the ONE place the panic is held for enumeration.
+    """
+    payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
+    return payload
+
+
+def audit_lift_file(
+    source: str,
+    filename: str,
+    *,
+    hold_panic: bool = True,
+) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]]:
+    """Per-def factory walk for the audit door.
+
+    For each FunctionDef / test def: try build + desugar + payload_rows.
+    On FactoryPanic (and only when hold_panic), record a structured gap row
+    and CONTINUE to the next def. Clean defs still contribute their universe
+    rows. Production lift calls with hold_panic=False so the panic stays loud.
     """
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -689,36 +709,45 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     from sugar_lift_py_tests.outcome import complete_value
     from sugar_lift_py_tests.sugar.function_def_sugar import FunctionDefSugar
     from sugar_lift_py_tests.sugar.test_function_def_sugar import TestFunctionDefSugar
-
     from sugar_lift_py_tests.sugar_body import SugarBody
 
     payload = LiftReportPayloadDto(source_ledger={})
+    gaps: list[AuditOnlyGap] = []
     catalog = default_catalog()
     module = SourceFragment.from_source(source, filename).statements()[0]
     for stmt in module.statements():
         # Either ordinary FunctionDef or test_* testimony (both owns shapes).
         if not (FunctionDefSugar.owns(stmt) or TestFunctionDefSugar.owns(stmt)):
             continue
-        ctx = FactoryBuildContext(filename=filename, catalog=catalog)
-        result = build_node(stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx)
-        # Project the factory walk from audit rows the tree already carries.
-        root = SugarBody(
-            sugar=result.sugar,
-            role=SugarRole.STATEMENT,
-            audit_row=result.audit_row,
-        )
-        payload.factory_walk.extend(root.factory_walk_rows())
-        value = complete_value(result.sugar.desugar(ctx), owner="lift_file_payload")
-        def_memento = dataclasses.replace(
-            stmt.memento(),
-            source_function_name=value.name,
-            role="function-contract",
-        )
-        # The value owns the wire rows -- universe vs testimony, no fork here.
-        payload.ir.extend(value.payload_rows(def_memento))
-        payload.call_edges.extend(value.call_edges())
-        payload.source_mementos.append(def_memento)
-    return payload
+        label = f"{filename}:{stmt.line}:{stmt.col}"
+        try:
+            ctx = FactoryBuildContext(filename=filename, catalog=catalog)
+            result = build_node(
+                stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx
+            )
+            root = SugarBody(
+                sugar=result.sugar,
+                role=SugarRole.STATEMENT,
+                audit_row=result.audit_row,
+            )
+            payload.factory_walk.extend(root.factory_walk_rows())
+            value = complete_value(
+                result.sugar.desugar(ctx), owner="lift_file_payload"
+            )
+            def_memento = dataclasses.replace(
+                stmt.memento(),
+                source_function_name=value.name,
+                role="function-contract",
+            )
+            payload.ir.extend(value.payload_rows(def_memento))
+            payload.call_edges.extend(value.call_edges())
+            payload.source_mementos.append(def_memento)
+        except FactoryPanic as panic:
+            if not hold_panic:
+                raise
+            # Audit door: hold the panic, name the gap, keep walking.
+            gaps.append(gap_from_factory_panic(label, panic))
+    return payload, gaps
 
 
 def _item_memento(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1399,8 +1428,16 @@ def _handle_lift_audit_only(
     source_paths: List[Any],
     contract_bindings: list,
 ) -> None:
+    """Audit door: per-def factory walk, hold FactoryPanic, enumerate gaps.
+
+    The wall drinks `auditOnlyGaps` from the error payload. Clean defs still
+    contribute IR rows so the frontier is honest accounting -- not a silent
+    empty set when every file has at least one gap.
+    """
+    del contract_bindings  # factory dig does not rebind contracts here
     root = Path(workspace_root).resolve()
-    walkers = []
+    payload = LiftReportPayloadDto(source_ledger={})
+    gaps: list[AuditOnlyGap] = []
     for path in _iter_python_files(workspace_root, source_paths):
         full_path = Path(path)
         try:
@@ -1408,29 +1445,15 @@ def _handle_lift_audit_only(
         except ValueError:
             rel_path = full_path.name
         source = full_path.read_text(encoding="utf-8")
+        file_payload, file_gaps = audit_lift_file(source, rel_path, hold_panic=True)
+        payload.ir.extend(file_payload.ir)
+        payload.call_edges.extend(file_payload.call_edges)
+        payload.factory_walk.extend(file_payload.factory_walk)
+        payload.source_mementos.extend(file_payload.source_mementos)
+        gaps.extend(file_gaps)
 
-        def walk(
-            *,
-            path: str = path,
-            source: str = source,
-            rel_path: str = rel_path,
-        ) -> object:
-            try:
-                return lift_source(
-                    path,
-                    source,
-                    memento_file=rel_path,
-                    contract_bindings=contract_bindings,
-                )
-            except ValueError as exc:
-                if str(exc) == NO_SOURCE_SITES_MESSAGE:
-                    return None
-                raise
-
-        walkers.append((path, walk))
-
-    gaps = collect_construction_gaps(walkers)
     if gaps:
+        # Wall scrapes auditOnlyGaps from the RPC error data (ONE door).
         _send(
             {
                 "jsonrpc": "2.0",
@@ -1440,6 +1463,7 @@ def _handle_lift_audit_only(
                     "message": "audit-only construction gaps",
                     "data": {
                         "auditOnlyGaps": [gap.to_json() for gap in gaps],
+                        "ir": [to_rpc_value(item) for item in payload.ir],
                     },
                 },
             }
@@ -1449,7 +1473,7 @@ def _handle_lift_audit_only(
         {
             "jsonrpc": "2.0",
             "id": msg_id,
-            "result": LiftReportPayloadDto(source_ledger={}).to_rpc(),
+            "result": payload.to_rpc(),
         }
     )
 
