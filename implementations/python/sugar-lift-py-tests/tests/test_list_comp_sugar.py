@@ -1,121 +1,140 @@
+"""ListCompSugar: [elt for target in iter if conds] is py.listcomp(...).
+
+Single-generator simple-Name target. Carries elt + iter (+ conditions) on the
+comprehension coordinate -- never enumerates the iterable, never drops pieces.
+Multi-generator and tuple-target stay loud FactoryPanic gaps.
+"""
+
 from __future__ import annotations
 
 import ast
-import json
-from dataclasses import replace
-from pathlib import Path
+
+import pytest
 
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
-from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.floor import ArrayLiteral, SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Incomplete
-from sugar_lift_py_tests.temporal import TemporalContext
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.sugar.list_comp_sugar import ListCompSugar
 
 
-def test_literal_list_comp_reduces_finite_domain() -> None:
-    assert reduce_value("[x + 1 for x in [1, 2, 3]]") == ArrayLiteral(
-        (TermValue(2), TermValue(3), TermValue(4))
+def _site(expr: str):
+    node = ast.parse(expr, mode="eval").body
+    return SourceFragment.from_node(node, "t.py")
+
+
+def _xs():
+    return {"xs": SymbolicValue(make_var("xs"))}
+
+
+def _ys():
+    return {"ys": SymbolicValue(make_var("ys"))}
+
+
+# ---------------------------------------------------------------------------
+# (1) positive: elt + iter ride the comprehension coordinate
+# ---------------------------------------------------------------------------
+
+
+def test_list_comp_reduces_to_comprehension_coordinate() -> None:
+    """[x for x in xs] -> SymbolicValue(py.listcomp(py.iter_elem(xs), xs))."""
+    value = reduce_value("[x for x in xs]", binds=_xs())
+    assert isinstance(value, SymbolicValue)
+    elem = ctor("py.iter_elem", [make_var("xs")])
+    assert value.term == ctor("py.listcomp", [elem, make_var("xs")])
+
+
+# ---------------------------------------------------------------------------
+# (2) discrimination: elt, iter, and conditions are carried (not dropped)
+# ---------------------------------------------------------------------------
+
+
+def test_elt_discriminates_the_coordinate() -> None:
+    """Different elt produces a different term."""
+    plain = reduce_value("[x for x in xs]", binds=_xs())
+    doubled = reduce_value("[x * 2 for x in xs]", binds=_xs())
+    elem = ctor("py.iter_elem", [make_var("xs")])
+    assert plain.term == ctor("py.listcomp", [elem, make_var("xs")])
+    assert doubled.term == ctor(
+        "py.listcomp", [ctor("*", [elem, num(2)]), make_var("xs")]
+    )
+    assert plain.term != doubled.term
+
+
+def test_iter_discriminates_the_coordinate() -> None:
+    """Different iter produces a different term."""
+    from_xs = reduce_value("[x for x in xs]", binds=_xs())
+    from_ys = reduce_value("[x for x in ys]", binds=_ys())
+    assert from_xs.term != from_ys.term
+    assert from_xs.term == ctor(
+        "py.listcomp",
+        [ctor("py.iter_elem", [make_var("xs")]), make_var("xs")],
+    )
+    assert from_ys.term == ctor(
+        "py.listcomp",
+        [ctor("py.iter_elem", [make_var("ys")]), make_var("ys")],
     )
 
 
-def test_literal_list_comp_filter_reduces_finite_domain() -> None:
-    assert reduce_value("[x for x in [1, 2, 3] if x != 2]") == ArrayLiteral(
-        (TermValue(1), TermValue(3))
-    )
+def test_condition_rides_the_coordinate() -> None:
+    """[x for x in xs if x > 0] carries the condition term (not dropped)."""
+    value = reduce_value("[x for x in xs if x > 0]", binds=_xs())
+    elem = ctor("py.iter_elem", [make_var("xs")])
+    # GreaterThan is b < a with operands swapped: py.lt(0, x).
+    cond = ctor("py.lt", [num(0), elem])
+    assert value.term == ctor("py.listcomp", [elem, make_var("xs"), cond])
 
 
-def test_literal_list_comp_bad_twin_flips(tmp_path: Path) -> None:
-    truthful = run_source_through_real_solver(
-        tmp_path / "list-comp-truthful",
-        "def A():\n"
-        "    return len([x + 1 for x in [1, 2, 3]])\n"
-        "\n"
-        "def test_list_comp_truthful():\n"
-        "    assert A() == 3\n",
-    )
-    lying = run_source_through_real_solver(
-        tmp_path / "list-comp-lying",
-        "def A():\n"
-        "    return len([x + 1 for x in [1, 2, 3]])\n"
-        "\n"
-        "def test_list_comp_lying():\n"
-        "    assert A() == 2\n",
-    )
-    print(
-        json.dumps(
-            {
-                "truthful": truthful.prove_doc,
-                "lying": lying.prove_doc,
-                "selected": {
-                    "truthful": truthful.selected_sugars,
-                    "lying": lying.selected_sugars,
-                },
-            },
-            indent=2,
-            sort_keys=True,
+# ---------------------------------------------------------------------------
+# (3) structural: owns single-gen Name target; not multi/tuple/other kinds
+# ---------------------------------------------------------------------------
+
+
+def test_owns_single_generator_name_target_only() -> None:
+    assert ListCompSugar.owns(_site("[x for x in xs]")) is True
+    assert ListCompSugar.owns(_site("[x for x in xs if x]")) is True
+    assert ListCompSugar.owns(_site("[x * 2 for x in xs]")) is True
+    # Multi-generator: not owned.
+    assert ListCompSugar.owns(_site("[x for a in A for b in B]")) is False
+    # Tuple-unpack target: not owned.
+    assert ListCompSugar.owns(_site("[x for (x, y) in pairs]")) is False
+    # Other observed kinds.
+    assert ListCompSugar.owns(_site("{x for x in xs}")) is False  # SetComp
+    assert ListCompSugar.owns(_site("{x: x for x in xs}")) is False  # DictComp
+    assert ListCompSugar.owns(_site("(x for x in xs)")) is False  # GeneratorExp
+    assert ListCompSugar.owns(_site("[1, 2, 3]")) is False  # List literal
+
+    catalog = default_catalog()
+    single = [
+        c.name
+        for c in catalog.candidates_for(SugarRole.TERM, _site("[x for x in xs]"))
+    ]
+    multi = [
+        c.name
+        for c in catalog.candidates_for(
+            SugarRole.TERM, _site("[x for a in A for b in B]")
         )
-    )
-
-    assert truthful.verdict == "sat"
-    assert lying.verdict == "unsat"
-    assert "ListCompSugar" in truthful.selected_sugars
-    assert "ListCompSugar" in lying.selected_sugars
-
-
-def test_runtime_iterable_list_comp_is_typed_runtime_effect() -> None:
-    ctx = FactoryBuildContext(filename="list_comp.py", catalog=default_catalog())
-    body = ctx.build_body(
-        ast.parse("[x for x in xs]", mode="eval").body, SugarRole.TERM
-    )
-    reduce_ctx = replace(
-        ReduceContext.root(owner="list-comp-test"),
-        temporal=TemporalContext.empty().bind_value(
-            "xs", SymbolicValue(make_var("xs"))
-        ),
-    )
-
-    outcome = body.reduce(reduce_ctx)
-
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RuntimeEffect)
-    assert "list comprehension runtime boundary" in outcome.effect.reason
-    assert "runtime iterable `Name`" in outcome.effect.reason
-    assert "typed red" in outcome.effect.reason
-    assert "blame=" in outcome.effect.reason
+    ]
+    literal = [
+        c.name for c in catalog.candidates_for(SugarRole.TERM, _site("[1, 2, 3]"))
+    ]
+    assert "ListCompSugar" in single
+    assert "ListCompSugar" not in multi
+    assert "ListCompSugar" not in literal
+    assert "ListLiteralSugar" in literal
 
 
-def test_non_bool_guard_list_comp_is_conservative_runtime_effect() -> None:
-    ctx = FactoryBuildContext(filename="list_comp.py", catalog=default_catalog())
-    body = ctx.build_body(
-        ast.parse("[x for x in [1] if 1]", mode="eval").body,
-        SugarRole.TERM,
-    )
-
-    outcome = body.reduce(ReduceContext.root(owner="list-comp-test"))
-
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RuntimeEffect)
-    assert "list comprehension runtime boundary" in outcome.effect.reason
-    assert (
-        "guard truthiness for non-bool floors is runtime here" in outcome.effect.reason
-    )
-    assert "narrower truthiness dispatch may own this later" in outcome.effect.reason
+def test_multi_generator_is_a_loud_factory_gap() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        reduce_value("[x for a in A for b in B]")
+    assert raised.value.info.observed == "ListComp"
 
 
-def test_list_comp_factory_selects_shape_recognizer() -> None:
-    ctx = FactoryBuildContext(filename="list_comp.py", catalog=default_catalog())
-    result = build_node(
-        ast.parse("[x for x in [1]]", mode="eval").body,
-        filename="list_comp.py",
-        role=SugarRole.TERM,
-        ctx=ctx,
-    )
-
-    assert result.audit_row.selected == "ListCompSugar"
-    assert result.audit_row.status == "selected"
+def test_tuple_target_is_a_loud_factory_gap() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        reduce_value("[x for (x, y) in pairs]")
+    assert raised.value.info.observed == "ListComp"
