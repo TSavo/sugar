@@ -121,6 +121,16 @@ class FloorValue:
         del name, formals
         return ()
 
+    def callsites(self):
+        # Default: this value carries no CallSiteValue. CallSiteValue overrides
+        # to yield itself; equals/less_than emit collect from both operands.
+        return ()
+
+    def edge_contribution(self, source_contract):
+        # Default: a record entry projects no call edge of its own.
+        del source_contract
+        return ()
+
     def follow_rest(self, rest, reduce):
         # Default: an ordinary statement value lets the block go on.
         return reduce(rest)
@@ -493,13 +503,18 @@ class FloorValue:
         # floor, panic only inside to_term when a side cannot enter FOL at all.
         # The panic lives on the TERM floor, so a false "equals gap" can never
         # fire for a comparison the lift fully understands -- `1 == z` emits
-        # eq(1, z); nothing is missing there.
+        # eq(1, z); nothing is missing there. Operand CallSiteValues ride as
+        # operand_callsites so callEdges project from the collapse later.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import eq
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
-            PredicateValue(eq(self.to_term(owner=str(site)), other.to_term(owner=str(site))), site)
+            PredicateValue(
+                eq(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
+                site,
+                operand_callsites=(*self.callsites(), *other.callsites()),
+            )
         )
 
     def less_than(self, other, site):
@@ -508,13 +523,18 @@ class FloorValue:
         # floor, panic only inside to_term when a side cannot enter FOL at all.
         # The panic lives on the TERM floor, so a false "ordering gap" can never
         # fire for a comparison the lift fully understands -- `1 < z` emits
-        # lt(1, z); nothing is missing there.
+        # lt(1, z); nothing is missing there. Operand CallSiteValues ride as
+        # operand_callsites so callEdges project from the collapse later.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import lt
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
-            PredicateValue(lt(self.to_term(owner=str(site)), other.to_term(owner=str(site))), site)
+            PredicateValue(
+                lt(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
+                site,
+                operand_callsites=(*self.callsites(), *other.callsites()),
+            )
         )
 
     def add(self, other, site):

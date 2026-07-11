@@ -73,3 +73,8 @@ class SugarBody(Generic[ReductionT_co]):
         # Raw, unreached sugar mints nothing.
         del name, formals
         return ()
+
+    def edge_contribution(self, source_contract):
+        # Raw, unreached sugar projects no call edge.
+        del source_contract
+        return ()

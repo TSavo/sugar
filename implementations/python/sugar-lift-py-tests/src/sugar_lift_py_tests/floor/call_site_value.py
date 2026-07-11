@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from typing import Any, NoReturn
 
 from sugar_lift_py_tests.ir import Term
@@ -18,7 +18,8 @@ class CallSiteValue(FloorValue):
 
     The `term` is the bridge/culture coordinate used by contract composition.
     The factory-built `body` is only reduced when a downstream floor demands a
-    concrete value (for example, a list literal index).
+    concrete value (for example, a list literal index). `site` is the fragment
+    that owned the call -- carried for edge projection, never compared.
     """
 
     target_name: str
@@ -29,10 +30,33 @@ class CallSiteValue(FloorValue):
     # ObjectMethodValue.body: a callsite's factory-built body varies in
     # reduction shape with the SugarRole it was built under.
     body: SugarBody[Any] | FunctionBodyUniverse | None
+    site: object = dataclass_field(default=None, compare=False)
 
     def to_term(self, *, owner: str):
         del owner
         return self.term
+
+    def callsites(self):
+        # A CallSiteValue carries itself -- equals emit collects it so the
+        # inv that consumes the term can still project the edge later.
+        return (self,)
+
+    def edge_contribution(self, source_contract):
+        # Project one call-edge row: the coordinates this value already carries.
+        # Seal/link fields (targetContract, cids) stay absent -- never faked.
+        edge = {
+            "kind": "call-edge",
+            "sourceContract": source_contract,
+            "targetSymbol": f"call:{self.target_name}",
+        }
+        if self.site is not None:
+            edge["callSiteLocus"] = {
+                "file": self.site.filename,
+                "line": self.site.line,
+                "col": self.site.col,
+            }
+            edge["callsite"] = str(self.site)
+        return (edge,)
 
     def project_callsite_with(self, operation, ctx):
         return operation.project_callsite(self, ctx)
