@@ -13,7 +13,7 @@ from factory_reduce import fol, reduce_term, reduce_value
 
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import eq, make_var, num
+from sugar_lift_py_tests.ir import make_var, num, py_eq
 
 
 def test_name_reduces_to_its_bound_variable():
@@ -33,7 +33,7 @@ def test_unbound_name_panics_like_python_would() -> None:
 def test_symbolic_left_equals_emits_the_formula() -> None:
     value = reduce_value("z == 1", binds={"z": SymbolicValue(make_var("z"))})
     assert isinstance(value, PredicateValue)
-    assert value.formula == eq(make_var("z"), num(1))
+    assert value.formula == py_eq(make_var("z"), num(1))
 
 
 def test_concrete_left_equals_symbolic_right_emits_too() -> None:
@@ -41,7 +41,7 @@ def test_concrete_left_equals_symbolic_right_emits_too() -> None:
     # equals floor emits -- never a false panic, nothing is missing here.
     value = reduce_value("1 == z", binds={"z": SymbolicValue(make_var("z"))})
     assert isinstance(value, PredicateValue)
-    assert value.formula == eq(num(1), make_var("z"))
+    assert value.formula == py_eq(num(1), make_var("z"))
 
 
 def test_ground_sides_still_fold_not_emit() -> None:

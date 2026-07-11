@@ -498,40 +498,38 @@ class FloorValue:
         )
 
     def equals(self, other, site):
-        # Default: EMIT. The contract: fold when both sides are ground (the
-        # literal pair overrides), emit when either side stands on the term
-        # floor, panic only inside to_term when a side cannot enter FOL at all.
-        # The panic lives on the TERM floor, so a false "equals gap" can never
-        # fire for a comparison the lift fully understands -- `1 == z` emits
-        # eq(1, z); nothing is missing there. Operand CallSiteValues ride as
-        # operand_callsites so callEdges project from the collapse later.
+        # Default: EMIT an operator-indexed atom. Fold when both sides are
+        # ground (the literal pair overrides); emit when either side stands on
+        # the term floor; panic only inside to_term when a side cannot enter
+        # FOL at all. Vendor `==` is py.eq -- not SMT = -- because Python float
+        # equality is not reflexive (nan == nan is False) and the sort universe
+        # adjudicates later. Operand CallSiteValues ride as operand_callsites.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import eq
+        from sugar_lift_py_tests.ir import py_eq
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
             PredicateValue(
-                eq(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
+                py_eq(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
                 site,
                 operand_callsites=(*self.callsites(), *other.callsites()),
             )
         )
 
     def less_than(self, other, site):
-        # Default: EMIT. The contract: fold when both sides are ground (the
-        # literal pair overrides), emit when either side stands on the term
-        # floor, panic only inside to_term when a side cannot enter FOL at all.
-        # The panic lives on the TERM floor, so a false "ordering gap" can never
-        # fire for a comparison the lift fully understands -- `1 < z` emits
-        # lt(1, z); nothing is missing there. Operand CallSiteValues ride as
-        # operand_callsites so callEdges project from the collapse later.
+        # Default: EMIT an operator-indexed atom. Fold when both sides are
+        # ground (the literal pair overrides); emit when either side stands on
+        # the term floor; panic only inside to_term when a side cannot enter
+        # FOL at all. Vendor `<` is py.lt -- not SMT < -- so the sort universe
+        # adjudicates (same NaN/reflexivity split as py.eq). Operand
+        # CallSiteValues ride as operand_callsites.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import lt
+        from sugar_lift_py_tests.ir import py_lt
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
             PredicateValue(
-                lt(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
+                py_lt(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
                 site,
                 operand_callsites=(*self.callsites(), *other.callsites()),
             )

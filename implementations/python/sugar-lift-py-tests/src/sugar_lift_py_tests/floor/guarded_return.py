@@ -16,7 +16,8 @@ class GuardedReturn(FloorValue):
     value: object
 
     def post_contribution(self):
-        # The guarded exit: implies(and(guards), out == value).
+        # The guarded exit: implies(and(guards), out == value). out == value is
+        # the LIFT's own sentence (reflexive-safe), so ir.eq -- not py.eq.
         from sugar_lift_py_tests.ir import and_, eq, implies, make_var
 
         guard = self.guards[0] if len(self.guards) == 1 else and_(list(self.guards))

@@ -227,6 +227,16 @@ def eq(a: Term, b: Term) -> Formula:
     return atomic("=", [a, b])
 
 
+def py_eq(a: Term, b: Term) -> Formula:
+    """Python `==` as an operator-indexed atom; the sort universe adjudicates (NaN: py.eq is not reflexive on floats)."""
+    return atomic("py.eq", [a, b])
+
+
+def py_lt(a: Term, b: Term) -> Formula:
+    """Python `<` as an operator-indexed atom; the sort universe adjudicates (NaN: IEEE ordering is not total on floats)."""
+    return atomic("py.lt", [a, b])
+
+
 def identity(a: Term, b: Term) -> Formula:
     return atomic("identity", [a, b])
 

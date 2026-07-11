@@ -14,7 +14,9 @@ class ReturnValue(FloorValue):
     value: object
 
     def post_contribution(self):
-        # The exit the post slot binds: out == <this term>.
+        # The exit the post slot binds: out == <this term>. This is the LIFT's
+        # own sentence asserting true equality of out with the exit term --
+        # reflexive-safe, so ir.eq (SMT =), not py.eq (vendor Python ==).
         from sugar_lift_py_tests.ir import eq, make_var
 
         return (eq(make_var("out"), self.value.to_term(owner="post")),)
