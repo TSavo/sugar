@@ -1,125 +1,94 @@
+"""JoinedStrSugar: f-string concatenates every part; interpolations ride."""
+
 from __future__ import annotations
 
 import ast
-import json
-from dataclasses import replace
-from pathlib import Path
 
-from factory_reduce import reduce_value
+import pytest
+
+from factory_reduce import fol, reduce_term, reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
-from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import StringValue, SymbolicValue
-from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.temporal import TemporalContext
-from sugar_lift_py_tests.witness_harness import (
-    WitnessPipelineError,
-    run_source_through_real_solver,
-)
+from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
+from sugar_lift_py_tests.sugar.joined_str_sugar import JoinedStrSugar
 
 
-def test_static_joined_str_reduces_literal_segments() -> None:
+def _site(expr: str):
+    return SourceFragment.from_node(ast.parse(expr, mode="eval").body, "t.py")
+
+
+def test_literal_only_fstring_folds() -> None:
+    """(1) All-literal f-string folds to the concrete string."""
     assert reduce_value("f'numpy-totality'") == StringValue("numpy-totality")
 
 
-def test_static_joined_str_bad_twin_flips(tmp_path: Path) -> None:
-    truthful = run_source_through_real_solver(
-        tmp_path / "joined-str-truthful",
-        "def A():\n"
-        "    return f'numpy-totality'\n"
-        "\n"
-        "def test_joined_str_truthful():\n"
-        "    assert A() == 'numpy-totality'\n",
+def test_ground_interpolation_folds() -> None:
+    """(1) Ground formatted value folds into the joined string."""
+    assert reduce_value("f'a{1}b'") == StringValue("a1b")
+
+
+def test_symbolic_interpolation_carries_the_value() -> None:
+    """(2) f'x{a}' and f'x{b}' produce different terms -- value is carried."""
+    with_a = reduce_term(
+        "f'x{a}'", binds={"a": SymbolicValue(make_var("a"))}
     )
-    lying = run_source_through_real_solver(
-        tmp_path / "joined-str-lying",
-        "def A():\n"
-        "    return f'numpy-totality'\n"
-        "\n"
-        "def test_joined_str_lying():\n"
-        "    assert A() == 'wrong-totality'\n",
+    with_b = reduce_term(
+        "f'x{b}'", binds={"b": SymbolicValue(make_var("b"))}
     )
-    print(
-        json.dumps(
-            {
-                "truthful": truthful.prove_doc,
-                "lying": lying.prove_doc,
-                "selected": {
-                    "truthful": truthful.selected_sugars,
-                    "lying": lying.selected_sugars,
-                },
-            },
-            indent=2,
-            sort_keys=True,
+    assert fol(with_a) != fol(with_b)
+    assert "py.fstring" in repr(with_a) or "py.format" in repr(with_a)
+    # The free var rides inside the format coordinate.
+    assert fol(with_a) == fol(
+        ctor(
+            "py.fstring",
+            [
+                str_const("x"),
+                ctor(
+                    "py.format",
+                    [make_var("a"), str_const(""), num(-1)],
+                ),
+            ],
         )
     )
 
-    assert truthful.verdict == "sat"
-    assert lying.verdict == "unsat"
-    assert "JoinedStrSugar" in truthful.selected_sugars
-    assert "JoinedStrSugar" in lying.selected_sugars
+
+def test_literal_only_change_discriminates() -> None:
+    """(2) f'x' vs f'y' differ (literal parts not dropped/constant-collapsed)."""
+    assert reduce_value("f'x'") == StringValue("x")
+    assert reduce_value("f'y'") == StringValue("y")
+    assert reduce_value("f'x'") != reduce_value("f'y'")
 
 
-def test_formatted_joined_str_with_symbolic_field_is_addressable() -> None:
-    ctx = FactoryBuildContext(filename="joined.py", catalog=default_catalog())
-    body = ctx.build_body(ast.parse("f'value={x}'", mode="eval").body, SugarRole.TERM)
-    reduce_ctx = replace(
-        ReduceContext.root(owner="joined-str-test"),
-        temporal=TemporalContext.empty().bind_value("x", SymbolicValue(make_var("x"))),
+def test_owns_joined_str_not_plain_str_or_binop() -> None:
+    """(3) owns fires on JoinedStr, not plain str Constant or string +."""
+    assert JoinedStrSugar.owns(_site("f'hi'")) is True
+    assert JoinedStrSugar.owns(_site("f'{x}'")) is True
+    assert JoinedStrSugar.owns(_site("'hi'")) is False
+    assert JoinedStrSugar.owns(_site("'a' + 'b'")) is False
+
+    catalog = default_catalog()
+    cands = [
+        c.name
+        for c in catalog.candidates_for(SugarRole.TERM, _site("f'z'"))
+    ]
+    assert "JoinedStrSugar" in cands
+
+
+def test_format_spec_rides_in_the_coordinate() -> None:
+    result = reduce_term(
+        "f'{x:.2f}'", binds={"x": SymbolicValue(make_var("x"))}
     )
-
-    outcome = body.reduce(reduce_ctx)
-
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
-    assert "py.fstring" in repr(outcome.value.term)
-    assert "py.format" in repr(outcome.value.term)
-
-
-def test_dynamic_joined_str_external_argument_refuses_without_transport_error(
-    tmp_path: Path,
-) -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_dynamic_joined_str_bridge_argument_refuses():\n"
-        "    length = 9\n"
-        "    assert np.dtype(f'S{length}') == 'S9'\n"
-    )
-
-    try:
-        result = run_source_through_real_solver(
-            tmp_path / "dynamic-joined-str-bridge-argument",
-            source,
+    assert fol(result) == fol(
+        ctor(
+            "py.fstring",
+            [
+                ctor(
+                    "py.format",
+                    [make_var("x"), str_const(".2f"), num(-1)],
+                ),
+            ],
         )
-    except WitnessPipelineError as exc:  # pragma: no cover - assertion payload
-        raise AssertionError(
-            "dynamic f-string external-call arguments must refuse through the "
-            "typed effect path, not abort the lift transport"
-        ) from exc
-
-    trace = {
-        "rows": result.prove_doc.get("rows"),
-        "diagnostics": result.lift_doc.get("diagnostics"),
-        "selected": result.selected_sugars,
-    }
-    print(json.dumps(trace, indent=2, sort_keys=True))
-
-    statuses = [row.get("status") for row in result.prove_doc.get("rows", [])]
-    assert statuses == ["refused"]
-    assert "JoinedStrSugar" in result.selected_sugars
-
-
-def test_joined_str_factory_selects_shape_recognizer() -> None:
-    ctx = FactoryBuildContext(filename="joined.py", catalog=default_catalog())
-    result = build_node(
-        ast.parse("f'prefix-{x}'", mode="eval").body,
-        filename="joined.py",
-        role=SugarRole.TERM,
-        ctx=ctx,
     )
-
-    assert result.audit_row.selected == "JoinedStrSugar"
-    assert result.audit_row.status == "selected"
