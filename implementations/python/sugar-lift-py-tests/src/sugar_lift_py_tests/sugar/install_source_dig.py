@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -245,28 +246,78 @@ def resolve_method_funcdef(method_name: str, receiver_floor: Any, ctx: Any):
 def method_body_is_attachable(fn_site) -> bool:
     """Whether attaching dig body is safe under current floors.
 
-    Complex method bodies (BinOp, attribute chains, multi-stmt) still reduce
-    through missing CallSiteValue floors and factory_panic the whole def.
-    Attach only simple return faces; complex stay body=None (coordinate-only)
-    until those floors exist. Free-function dig is opt-in via build_dig_body
-    without this gate when caller wants full try.
+    Allows a straight-line prefix of Assign/Pass/Expr then a single Return.
+    Return expr may be Name/const/attr/BinOp/Call once CallSiteValue binary
+    dispatch totalizes ``+`` (and friends). Multi-branch / raise / with stay out.
     """
     if fn_site is None or fn_site.observed != "FunctionDef":
         return False
     frags = fn_site.function_body()
-    if len(frags) != 1 or frags[0].observed != "Return":
+    if not frags:
         return False
-    rv = frags[0].return_value()
-    if rv is None:
+    *prefix, last = frags
+    if last.observed != "Return" or last.return_value() is None:
         return False
-    # Name / constant / attribute of self (self.x) — no BinOp / nested call yet.
+    for stmt in prefix:
+        if stmt.observed not in ("Assign", "AnnAssign", "Expr", "Pass"):
+            return False
+    return _return_expr_attachable(last.return_value())
+
+
+def _return_expr_attachable(rv) -> bool:
     obs = rv.observed
     if obs in ("Name", "Constant", "PrimitiveLiteral", "JoinedStr"):
         return True
     if obs == "Attribute":
         recv = rv.attr_receiver()
         return recv is not None and recv.observed == "Name"
+    if obs == "BinOp":
+        # Recurse both sides so value + self.sep + call is fine.
+        try:
+            left = rv.binop_left()
+            right = rv.binop_right()
+        except Exception:
+            return True
+        return _return_expr_attachable(left) and _return_expr_attachable(right)
+    if obs == "Call":
+        return True
     return False
+
+
+@dataclass(frozen=True)
+class SequentialDigBody:
+    """Reduce straight-line statements; surface the last return value for dig.
+
+    Used when method bodies are ``x = f(x); return x + ...``. Dig wants the
+    return floor, not a BlockValue record. Scope threads via BoundVar.
+    """
+
+    statements: tuple  # SugarBody STATEMENT
+
+    def desugar(self, ctx: Any = None):
+        from sugar_lift_py_tests.floor.return_value import ReturnValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        cur = ctx
+        last_return = None
+        for stmt in self.statements:
+            outcome = stmt.reduce(cur)
+            from sugar_lift_py_tests.outcome import Incomplete as _Inc
+
+            if isinstance(outcome, _Inc):
+                return outcome
+            cur = outcome.extend_scope(cur)
+            for item in outcome.contribution():
+                if isinstance(item, ReturnValue):
+                    last_return = item
+        if last_return is not None:
+            # Dig wants the returned floor, not the ReturnValue wrapper.
+            return Complete(last_return.value)
+        from sugar_lift_py_tests.effect import RuntimeEffect
+
+        return Incomplete(
+            RuntimeEffect("sequential dig body had no return value")
+        )
 
 
 def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
@@ -275,7 +326,12 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
         return None
     if require_attachable and not method_body_is_attachable(fn_site):
         return None
-    from sugar_lift_py_tests.factory.sugar_constructors import build_bridge_body
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.factory.sugar_constructors import (
+        _ctx_with_formal_binds,
+        build_bridge_body,
+    )
+    from sugar_lift_py_tests.sugar_body import SugarBody
 
     building = getattr(ctx, "building", frozenset()) or frozenset()
     name = fn_site.function_name()
@@ -288,22 +344,37 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
         body_ctx = replace(ctx, building=building | {name, bridge})
         mod = getattr(fn_site.node, "_sugar_bridge_name", "") or ""
         if "." in str(mod):
-            # module.Class.method → seed module siblings
             parts = str(mod).split(".")
-            module_name = parts[0] if len(parts) <= 2 else ".".join(parts[:-2])
-            if len(parts) == 2:
-                module_name = parts[0]
-            elif len(parts) >= 3:
-                module_name = ".".join(parts[:-2]) if parts[-2][0].isupper() else ".".join(parts[:-1])
-            # Prefer: package.module from first two segments when middle is Class
             if len(parts) >= 3 and parts[-2][:1].isupper():
                 module_name = ".".join(parts[:-2])
+            elif len(parts) >= 2:
+                module_name = parts[0]
+            else:
+                module_name = str(mod)
             siblings = module_sibling_function_nodes(module_name)
             if siblings:
                 merged = dict(getattr(body_ctx, "name_resolver", None) or {})
                 merged.update(siblings)
                 body_ctx = replace(body_ctx, name_resolver=merged)
-        return build_bridge_body(fn_site, body_ctx)
+
+        frags = fn_site.function_body()
+        # Single return expr → existing bridge body (TERM sugar).
+        if (
+            len(frags) == 1
+            and frags[0].observed == "Return"
+            and frags[0].return_value() is not None
+        ):
+            return build_bridge_body(fn_site, body_ctx)
+
+        # Straight-line Assign* + Return → sequential dig body under formals.
+        formal_ctx = _ctx_with_formal_binds(fn_site, body_ctx)
+        statements = tuple(
+            formal_ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in frags
+        )
+        return SugarBody(
+            sugar=SequentialDigBody(statements=statements),
+            role=SugarRole.TERM,
+        )
     except Exception:
         return None
 
