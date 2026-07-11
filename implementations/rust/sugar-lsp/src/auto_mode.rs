@@ -26,8 +26,8 @@ use sugar_verifier::load_all_proofs::{self, ProofBytes};
 use sugar_verifier::types::MementoPool;
 use sugar_verifier::Speaker;
 
-const MAX_VENDOR_PY_FILES: usize = 40;
-const MAX_VENDOR_PY_BYTES: usize = 1_500_000;
+const MAX_VENDOR_PY_FILES: usize = 80;
+const MAX_VENDOR_PY_BYTES: usize = 3_000_000;
 const MAX_SHIPPED_PROOFS: usize = 8;
 
 /// Process-wide memo: source_cid → sealed proof.
@@ -597,17 +597,31 @@ fn stage_vendor_project(module: &str, module_root: &Path) -> Result<PathBuf, Str
             module_root.display()
         ));
     }
+
+    // Preserve relative paths so package imports + tests/ still resolve.
+    // (Flattened copies broke dig into vendor packages — #4106 follow-up.)
     let src_dst = project.join("vendor_src");
     fs::create_dir_all(&src_dst).map_err(|e| e.to_string())?;
     for f in &files {
-        let name = f.file_name().unwrap_or_default();
-        let mut dst = src_dst.join(name);
-        if dst.exists() {
-            let h = sugar_canonicalizer::blake3_512_hex(f.to_string_lossy().as_bytes());
-            dst = src_dst.join(format!("{}_{}", &h[..12], name.to_string_lossy()));
+        let rel = f.strip_prefix(module_root).unwrap_or(f.as_path());
+        let dst = src_dst.join(rel);
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         fs::copy(f, &dst).map_err(|e| format!("copy {}: {e}", f.display()))?;
     }
+
+    // PYTHONPATH: kit + staged tree + src-layout package root if present.
+    let mut path_entries: Vec<String> = vec![
+        kit.display().to_string(),
+        src_dst.display().to_string(),
+    ];
+    let src_layout = src_dst.join("src");
+    if src_layout.is_dir() {
+        path_entries.push(src_layout.display().to_string());
+    }
+    // Also site-packages of the active interpreter (deps of tests).
+    let path_joined = path_entries.join(":");
 
     let sugar = project.join(".sugar");
     fs::create_dir_all(sugar.join("lift/python")).map_err(|e| e.to_string())?;
@@ -636,8 +650,8 @@ timeout_seconds = 10
 
     let wrapper = sugar.join("lift/python/run-lift-rpc.sh");
     let body = format!(
-        "#!/bin/sh\nexport PYTHONPATH={kit}${{PYTHONPATH:+:$PYTHONPATH}}\nexec {py} -m sugar_lift_py_tests.lift_rpc --rpc\n",
-        kit = shell_quote(&kit.display().to_string()),
+        "#!/bin/sh\nexport PYTHONPATH={paths}${{PYTHONPATH:+:$PYTHONPATH}}\nexec {py} -m sugar_lift_py_tests.lift_rpc --rpc\n",
+        paths = shell_quote(&path_joined),
         py = shell_quote(&py.display().to_string()),
     );
     fs::write(&wrapper, body).map_err(|e| e.to_string())?;
