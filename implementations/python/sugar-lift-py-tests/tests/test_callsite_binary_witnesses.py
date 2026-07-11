@@ -80,29 +80,22 @@ def test_callsite_add_dig_dual_ir_has_contradictory_rhs() -> None:
     assert lefts == {"call:A"}
 
 
-def test_callsite_add_dig_lying_unsat_or_dual_structural(tmp_path: Path) -> None:
-    """Lying twin: prefer real unsat; else dual-assert structural refutation.
+def test_callsite_add_dig_lying_unsat_through_real_solver(tmp_path: Path) -> None:
+    """Lying twin A()==4 with ground post out=3 → unsat (prove path)."""
+    result = run_source_through_real_solver(tmp_path / "cs-add-lie", _LYING)
+    statuses = [row.get("status") for row in result.prove_doc.get("rows", [])]
+    assert result.verdict == "unsat", (result.verdict, statuses)
+    assert "refused" not in statuses
 
-    Single-assert lying under consistency-only prove may still discharge; the
-    dual file is the logo-style ratchet when structural dual fires.
-    """
-    lying = run_source_through_real_solver(tmp_path / "cs-add-lie", _LYING)
-    if lying.verdict == "unsat":
-        return
-    dual = run_source_through_real_solver(tmp_path / "cs-add-dual", _DUAL)
-    statuses = [row.get("status") for row in dual.prove_doc.get("rows", [])]
+
+def test_callsite_add_dig_dual_structural_unsat(tmp_path: Path) -> None:
+    """Dual py.eq(call:A(),3) ∧ py.eq(call:A(),4) → structural unsat pre-SMT."""
+    result = run_source_through_real_solver(tmp_path / "cs-add-dual", _DUAL)
+    statuses = [row.get("status") for row in result.prove_doc.get("rows", [])]
     reasons = " ".join(
-        str(row.get("reason") or "") for row in dual.prove_doc.get("rows", [])
+        str(row.get("reason") or "") for row in result.prove_doc.get("rows", [])
     )
-    if dual.verdict == "unsat":
-        assert "refused" not in statuses
-        return
-    # Honest residual: ground post + dual IR already sealed above; prove path
-    # may still consistency-discharge until dual structural owns py.eq pairs.
-    # Do not greenwash — require discrimination material present and sat only
-    # when post is still ground 3 (not free EUF).
-    assert lying.verdict == "sat"
-    rpc = lift_file_payload(_LYING, "t.py").to_rpc()
-    a = next(r for r in rpc["ir"] if r.get("name") == "A")
-    assert a["post"]["args"][1]["value"] == 3
-    assert "mutually consistent" in reasons or dual.verdict == "sat"
+    assert result.verdict == "unsat", (result.verdict, statuses, reasons)
+    assert "structural" in reasons
+    assert "equals both" in reasons
+    assert "refused" not in statuses
