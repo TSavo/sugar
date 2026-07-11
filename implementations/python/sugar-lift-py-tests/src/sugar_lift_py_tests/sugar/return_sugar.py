@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ReturnValue
@@ -17,7 +17,7 @@ class ReturnSugar(Sugar, role=SugarRole.STATEMENT):
     ReturnValue. Bare `return` is not this sugar -- no invented None."""
 
     value: SugarBody
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -28,7 +28,7 @@ class ReturnSugar(Sugar, role=SugarRole.STATEMENT):
     def new(cls, site, ctx) -> "ReturnSugar":
         return cls(
             value=ctx.build_body(site.return_value(), SugarRole.TERM),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod

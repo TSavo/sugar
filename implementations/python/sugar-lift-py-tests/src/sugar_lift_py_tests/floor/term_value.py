@@ -16,7 +16,7 @@ class TermValue(FloorValue):
     def add_with(self, operation: Any, ctx: Any) -> Any:
         return operation.add_term(self, ctx)
 
-    def equals(self, other, blame):
+    def equals(self, other, site):
         # A number stands on the equals floor: two numbers are equal or not, and it
         # gives back the True or False literal -- the boolean IS the type.
         if type(other) is TermValue:
@@ -29,13 +29,13 @@ class TermValue(FloorValue):
             )
 
             return Complete(
-                TrueBoolLiteralSugar(blame=blame)
+                TrueBoolLiteralSugar(site=site)
                 if self.value == other.value
-                else FalseBoolLiteralSugar(blame=blame)
+                else FalseBoolLiteralSugar(site=site)
             )
-        return super().equals(other, blame)
+        return super().equals(other, site)
 
-    def less_than(self, other, blame):
+    def less_than(self, other, site):
         # A number stands on the ordering floor: two numbers are ordered or not, and
         # it gives back the True or False literal -- the boolean IS the type.
         if type(other) is TermValue:
@@ -48,39 +48,39 @@ class TermValue(FloorValue):
             )
 
             return Complete(
-                TrueBoolLiteralSugar(blame=blame)
+                TrueBoolLiteralSugar(site=site)
                 if self.value < other.value
-                else FalseBoolLiteralSugar(blame=blame)
+                else FalseBoolLiteralSugar(site=site)
             )
-        return super().less_than(other, blame)
+        return super().less_than(other, site)
 
-    def add(self, other, blame):
+    def add(self, other, site):
         # The collapsed Number adds: two numbers fold to their sum -- one value type
         # for int and float. Anything else falls to the honest addition-floor gap.
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(self.value + other.value))
-        return super().add(other, blame)
+        return super().add(other, site)
 
-    def subtract(self, other, blame):
+    def subtract(self, other, site):
         # A number stands on the subtraction floor: two numbers subtract to a number.
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(self.value - other.value))
-        return super().subtract(other, blame)
+        return super().subtract(other, site)
 
-    def multiply(self, other, blame):
+    def multiply(self, other, site):
         # A number stands on the multiplication floor: two numbers multiply, and the
         # product is a TermValue -- the collapsed Number.
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(self.value * other.value))
-        return super().multiply(other, blame)
+        return super().multiply(other, site)
 
-    def divide(self, other, blame):
+    def divide(self, other, site):
         # A number stands on the division floor: true division. A concrete zero
         # divisor is a runtime effect (the program halts), not a lift-side gap.
         if type(other) is TermValue:
@@ -92,13 +92,13 @@ class TermValue(FloorValue):
                 return Incomplete(
                     DivisionByZeroRuntimeEffect(
                         f"division by zero runtime boundary: the divisor is "
-                        f"concretely 0; owner=TermValue.divide blame={blame}"
+                        f"concretely 0; owner=TermValue.divide site={site}"
                     )
                 )
             return Complete(TermValue(self.value / other.value))
-        return super().divide(other, blame)
+        return super().divide(other, site)
 
-    def modulo(self, other, blame):
+    def modulo(self, other, site):
         # A number stands on the modulo floor: the remainder. A concrete zero
         # divisor is a runtime effect (the program halts), not a lift-side gap.
         if type(other) is TermValue:
@@ -110,11 +110,11 @@ class TermValue(FloorValue):
                 return Incomplete(
                     ModuloByZeroRuntimeEffect(
                         f"modulo by zero runtime boundary: the divisor is "
-                        f"concretely 0; owner=TermValue.modulo blame={blame}"
+                        f"concretely 0; owner=TermValue.modulo site={site}"
                     )
                 )
             return Complete(TermValue(self.value % other.value))
-        return super().modulo(other, blame)
+        return super().modulo(other, site)
 
     def to_term(self, *, owner: str):
         del owner

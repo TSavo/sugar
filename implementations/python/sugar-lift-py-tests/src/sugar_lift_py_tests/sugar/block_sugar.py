@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BlockValue
@@ -22,7 +22,7 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
     Complete reduces the rest) or stops (an Incomplete leaves the rest unresolved)."""
 
     statements: tuple[SugarBody, ...]
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -36,7 +36,7 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                 ctx.build_body(stmt, SugarRole.STATEMENT)
                 for stmt in site.statements()
             ),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod

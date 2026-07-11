@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
@@ -16,7 +16,7 @@ class NameSugar(Sugar, role=SugarRole.TERM):
     projects. An unbound name panics -- the same way it would for Python."""
 
     name: str
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -25,7 +25,7 @@ class NameSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def new(cls, site, ctx) -> "NameSugar":
         del ctx  # a name is a leaf: nothing to build, only to look up at reduce time
-        return cls(name=site.name_id(), blame=site.blame)
+        return cls(name=site.name_id(), site=site)
 
     @classmethod
     def witnesses(cls):

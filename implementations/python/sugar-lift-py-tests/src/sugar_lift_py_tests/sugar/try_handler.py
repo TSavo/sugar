@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import SymbolicValue
@@ -14,7 +14,7 @@ class TryHandler:
     exception_names: tuple[str, ...] | None
     bound_name: str | None
     body: SugarBody
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     def matches(self, effect: RaiseEffect) -> bool:
         if self.exception_names is None:
@@ -40,6 +40,6 @@ class TryHandler:
             self.bound_name,
             SymbolicValue(exception_term),
             owner="TryHandler",
-            blame=self.blame,
+            blame=str(self.site),
         )
         return self.body.reduce(handler_ctx)

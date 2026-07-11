@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from typing import TYPE_CHECKING
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -18,7 +18,7 @@ class TrueBoolLiteralSugar(Sugar, role=SugarRole.TERM):
     floor value and it stands on the bool floor as True: it emits the then-face,
     always, with no fork."""
 
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -27,7 +27,7 @@ class TrueBoolLiteralSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def new(cls, site, ctx) -> "TrueBoolLiteralSugar":
         del ctx  # a literal is a leaf: no children
-        return cls(blame=site.blame)
+        return cls(site=site)
 
     @classmethod
     def witnesses(cls):
@@ -53,9 +53,9 @@ class TrueBoolLiteralSugar(Sugar, role=SugarRole.TERM):
         del else_body
         return then.reduce(ctx)
 
-    def stated(self, blame):
+    def stated(self, site):
         # Ground True states nothing: the assert is support, absorbed.
-        del blame
+        del site
         from sugar_lift_py_tests.floor.support_value import SupportValue
 
         return Complete(SupportValue())
@@ -66,4 +66,4 @@ class TrueBoolLiteralSugar(Sugar, role=SugarRole.TERM):
             FalseBoolLiteralSugar,
         )
 
-        return Complete(FalseBoolLiteralSugar(blame=self.blame))
+        return Complete(FalseBoolLiteralSugar(site=self.site))

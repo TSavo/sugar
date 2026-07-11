@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import TupleValue
@@ -17,7 +17,7 @@ class TupleLiteralSugar(Sugar, role=SugarRole.TERM):
     the tuple is the reduced elements in construction order, no fork."""
 
     elements: tuple[SugarBody, ...]
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -30,7 +30,7 @@ class TupleLiteralSugar(Sugar, role=SugarRole.TERM):
             elements=tuple(
                 ctx.build_body(elt, SugarRole.TERM) for elt in site.tuple_elts()
             ),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod

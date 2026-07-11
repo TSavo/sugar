@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
@@ -21,7 +21,7 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
     condition: SugarBody
     then: SugarBody
     else_body: SugarBody | None
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -42,7 +42,7 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
                 if len(blocks) > 1
                 else None
             ),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod

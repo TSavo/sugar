@@ -9,7 +9,7 @@ from .floor_value import FloorValue
 class NoneValue(FloorValue):
     """The floor for the `None` literal. No fields -- the None-ness IS the type."""
 
-    def equals(self, other, blame):
+    def equals(self, other, site):
         # None stands on the equals floor only against itself. Cross-type is the
         # honest default gap until a ruling lands.
         if type(other) is NoneValue:
@@ -18,5 +18,5 @@ class NoneValue(FloorValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(TrueBoolLiteralSugar(blame=blame))
-        return super().equals(other, blame)
+            return Complete(TrueBoolLiteralSugar(site=site))
+        return super().equals(other, site)

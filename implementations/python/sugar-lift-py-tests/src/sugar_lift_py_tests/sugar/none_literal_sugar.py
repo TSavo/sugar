@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import NoneValue
@@ -14,7 +14,7 @@ class NoneLiteralSugar(Sugar, role=SugarRole.TERM):
     """The literal `None`. It holds no value -- the None-ness IS the type. It
     reduces to a NoneValue: None as a term."""
 
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -23,7 +23,7 @@ class NoneLiteralSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def new(cls, site, ctx) -> "NoneLiteralSugar":
         del ctx  # a literal is a leaf: no children
-        return cls(blame=site.blame)
+        return cls(site=site)
 
     @classmethod
     def witnesses(cls):
