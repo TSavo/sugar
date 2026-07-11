@@ -4,6 +4,7 @@ from dataclasses import dataclass, field as dataclass_field
 from typing import TYPE_CHECKING
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
@@ -13,10 +14,14 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class TrueBoolLiteralSugar(Sugar, role=SugarRole.TERM):
+class TrueBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
     """The literal `True`. It holds no value -- the boolean IS the type. It is its own
     floor value and it stands on the bool floor as True: it emits the then-face,
-    always, with no fork."""
+    always, with no fork.
+
+    Inherits FloorValue so unimplemented floor verbs (unary_minus, etc.) and
+    as_expression_statement panic or discard cleanly -- never AttributeError.
+    """
 
     site: object = dataclass_field(compare=False)
 
