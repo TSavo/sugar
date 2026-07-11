@@ -31,6 +31,7 @@ from .opaque_op_callsite import OpaqueOpCallsite
 from .predicate_value import PredicateValue
 from .raise_value import RaiseValue
 from .return_value import ReturnValue
+from .scope_rebind import ScopeRebind
 from .sequence_constructor import SequenceConstructor
 from .set_literal_value import SetLiteralValue
 from .set_value import SetValue
@@ -67,6 +68,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     PredicateValue,
     RaiseValue,
     ReturnValue,
+    ScopeRebind,
     SequenceConstructor,
     SetLiteralValue,
     SetValue,
@@ -113,6 +115,7 @@ __all__ = [
     "PredicateValue",
     "RaiseValue",
     "ReturnValue",
+    "ScopeRebind",
     "SequenceConstructor",
     "SetLiteralValue",
     "SetValue",

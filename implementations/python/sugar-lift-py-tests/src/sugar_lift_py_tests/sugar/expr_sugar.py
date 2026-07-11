@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import SupportValue
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import inert_statement_return_witness
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, SugarWitnessPair
@@ -13,8 +12,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class ExprSugar(Sugar, role=SugarRole.STATEMENT):
-    """An expression statement. It reduces its value and discards it: the statement
-    is support. Incomplete still propagates (a halt is not discarded)."""
+    """An expression statement. It reduces its value; the value owns the statement
+    face (ordinary values discard to support; a ScopeRebind keeps itself so the
+    block threads the rebind). Incomplete still propagates (a halt is not discarded)."""
 
     value: SugarBody
 
@@ -43,5 +43,10 @@ class ExprSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Reduce the value, discard it: the statement is support.
-        return self.value.reduce(ctx).and_then(lambda value: Complete(SupportValue()))
+        # Reduce the value; the value owns the statement face -- ordinary values
+        # discard to SupportValue, a ScopeRebind keeps itself so the block threads
+        # the rebind (contribution still empty).
+        return self.value.reduce(ctx).and_then(
+            lambda value: value.as_expression_statement()
+        )
+
