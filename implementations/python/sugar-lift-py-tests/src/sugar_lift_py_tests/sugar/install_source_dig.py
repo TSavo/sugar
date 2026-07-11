@@ -191,12 +191,20 @@ def resolve_call_funcdef(target_name: str, ctx: Any):
 
 
 def _receiver_class_name(receiver_floor: Any) -> str | None:
-    """Best-effort class name from a reduced method receiver floor."""
+    """Best-effort class name from a reduced method receiver floor.
+
+    CallSiteValue ctor receivers expose ``target_name``; ObjectValue exposes
+    ``class_name``. Both enable nested method dig (self.method) under budget
+    without vendor-only name==sign special cases.
+    """
     if receiver_floor is None:
         return None
     target = getattr(receiver_floor, "target_name", None)
     if isinstance(target, str) and target:
         return target
+    class_name = getattr(receiver_floor, "class_name", None)
+    if isinstance(class_name, str) and class_name:
+        return class_name
     bound = getattr(receiver_floor, "bound_name", None) or getattr(
         receiver_floor, "name", None
     )
