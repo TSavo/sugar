@@ -322,6 +322,248 @@ mod tests {
     use super::*;
     use crate::project_config::PluginEntry;
 
+    fn lift_plugin(surface: &str) -> PluginEntry {
+        PluginEntry {
+            kind: Some("lift".to_string()),
+            surface: surface.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn planned_manifest(surface: &str, tool: &str) -> PlannedLiftManifest {
+        PlannedLiftManifest {
+            surface: surface.to_string(),
+            name: surface.to_string(),
+            command: vec!["lift-cmd".to_string()],
+            discharge_command: vec![
+                "discharge".to_string(),
+                "--tool".to_string(),
+                tool.to_string(),
+            ],
+            witness_tool: Some(tool.to_string()),
+            resolve_witness_command: vec!["resolve-cmd".to_string(), "--json".to_string()],
+            resolve_witness_method: None,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn from_plan_derives_resolvers_and_discharge_commands_from_plan_manifests() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = ProjectConfig {
+            plugins: vec![lift_plugin("kit-a")],
+            ..Default::default()
+        };
+        let plan = ComponentPlan {
+            plugins: vec![lift_plugin("kit-a")],
+            lift_manifests: vec![planned_manifest("kit-a", "my-tool.9")],
+            ..Default::default()
+        };
+
+        let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
+
+        // project_dir is canonicalized.
+        assert_eq!(
+            config.project_dir,
+            Some(dir.path().canonicalize().unwrap())
+        );
+        // Resolver entry carries argv + working_dir + default method.
+        assert_eq!(config.resolvers.len(), 1);
+        assert_eq!(config.resolvers[0]["argv"], json!(["resolve-cmd", "--json"]));
+        assert_eq!(
+            config.resolvers[0]["method"],
+            json!("sugar.plugin.resolve_witness")
+        );
+        // Discharge key is uppercased with non-alphanumerics replaced by `_`,
+        // value is the space-joined argv.
+        assert_eq!(
+            config.discharge_commands.get("SUGAR_WITNESS_DISCHARGE_MY_TOOL_9"),
+            Some(&"discharge --tool my-tool.9".to_string())
+        );
+        assert_eq!(config.discharge_commands.len(), 1);
+    }
+
+    #[test]
+    fn from_plan_config_declared_lift_plugins_win_over_plan_plugins() {
+        // cfg declares a lift plugin, so the plan's plugin list must be
+        // IGNORED: only the cfg surface's manifest contributes.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = ProjectConfig {
+            plugins: vec![lift_plugin("cfg-surface")],
+            ..Default::default()
+        };
+        let plan = ComponentPlan {
+            plugins: vec![lift_plugin("plan-surface")],
+            lift_manifests: vec![
+                planned_manifest("cfg-surface", "cfgtool"),
+                planned_manifest("plan-surface", "plantool"),
+            ],
+            ..Default::default()
+        };
+
+        let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
+
+        assert!(config
+            .discharge_commands
+            .contains_key("SUGAR_WITNESS_DISCHARGE_CFGTOOL"));
+        assert!(
+            !config
+                .discharge_commands
+                .contains_key("SUGAR_WITNESS_DISCHARGE_PLANTOOL"),
+            "plan plugin must not contribute when cfg declares lift plugins"
+        );
+    }
+
+    #[test]
+    fn from_plan_falls_back_to_plan_plugins_when_cfg_has_no_lift_plugins() {
+        // cfg has only an emit plugin (not a lift plugin), so the plan's
+        // plugin list is the source.
+        let dir = tempfile::tempdir().unwrap();
+        let emit_only = PluginEntry {
+            kind: Some("emit".to_string()),
+            surface: "emit-surface".to_string(),
+            ..Default::default()
+        };
+        let cfg = ProjectConfig {
+            plugins: vec![emit_only],
+            ..Default::default()
+        };
+        let plan = ComponentPlan {
+            plugins: vec![lift_plugin("plan-surface")],
+            lift_manifests: vec![planned_manifest("plan-surface", "plantool")],
+            ..Default::default()
+        };
+
+        let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
+
+        assert!(config
+            .discharge_commands
+            .contains_key("SUGAR_WITNESS_DISCHARGE_PLANTOOL"));
+    }
+
+    #[test]
+    fn from_plan_skips_manifests_without_discharge_or_tool_but_keeps_resolvers() {
+        // Loud-loss shape: a manifest with no discharge_command (or no
+        // witness_tool) contributes NO discharge env var, but its resolver
+        // is still collected -- the omission is per-channel, not global.
+        let dir = tempfile::tempdir().unwrap();
+        let mut no_discharge = planned_manifest("kit-a", "toolless");
+        no_discharge.discharge_command.clear();
+        let mut no_tool = planned_manifest("kit-b", "ignored");
+        no_tool.witness_tool = None;
+        let cfg = ProjectConfig {
+            plugins: vec![lift_plugin("kit-a"), lift_plugin("kit-b")],
+            ..Default::default()
+        };
+        let plan = ComponentPlan {
+            lift_manifests: vec![no_discharge, no_tool],
+            ..Default::default()
+        };
+
+        let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
+
+        assert!(config.discharge_commands.is_empty());
+        assert_eq!(config.resolvers.len(), 2);
+    }
+
+    #[test]
+    fn from_plan_first_manifest_wins_on_duplicate_discharge_tool() {
+        // Two surfaces declaring the same witness_tool collapse to one env
+        // key; the FIRST surface's command is kept (BTreeMap entry().or_insert).
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = ProjectConfig {
+            plugins: vec![lift_plugin("kit-a"), lift_plugin("kit-b")],
+            ..Default::default()
+        };
+        let mut second = planned_manifest("kit-b", "sametool");
+        second.discharge_command = vec!["other-discharge".to_string()];
+        let plan = ComponentPlan {
+            lift_manifests: vec![planned_manifest("kit-a", "sametool"), second],
+            ..Default::default()
+        };
+
+        let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
+
+        assert_eq!(
+            config.discharge_commands.get("SUGAR_WITNESS_DISCHARGE_SAMETOOL"),
+            Some(&"discharge --tool sametool".to_string())
+        );
+        assert_eq!(config.discharge_commands.len(), 1);
+    }
+
+    #[test]
+    fn from_plan_project_local_manifest_wins_over_plan_manifest() {
+        // A `.sugar/lift/<surface>/manifest.toml` in the project root takes
+        // precedence over the plan's manifest for the same surface.
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_dir = dir.path().join(".sugar").join("lift").join("kit-a");
+        std::fs::create_dir_all(&manifest_dir).unwrap();
+        std::fs::write(
+            manifest_dir.join("manifest.toml"),
+            r#"
+name = "kit-a"
+command = ["local-lift"]
+discharge_command = ["local-discharge"]
+witness_tool = "localtool"
+"#,
+        )
+        .unwrap();
+        let cfg = ProjectConfig {
+            plugins: vec![lift_plugin("kit-a")],
+            ..Default::default()
+        };
+        let plan = ComponentPlan {
+            lift_manifests: vec![planned_manifest("kit-a", "plantool")],
+            ..Default::default()
+        };
+
+        let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
+
+        assert_eq!(
+            config.discharge_commands.get("SUGAR_WITNESS_DISCHARGE_LOCALTOOL"),
+            Some(&"local-discharge".to_string())
+        );
+        assert!(
+            !config
+                .discharge_commands
+                .contains_key("SUGAR_WITNESS_DISCHARGE_PLANTOOL"),
+            "project-local manifest must shadow the plan manifest"
+        );
+    }
+
+    #[test]
+    fn apply_env_caller_override_wins_over_derived_value() {
+        // Discrimination pair, same box: a pre-set caller env var survives
+        // apply_env; an unset one is populated. Unique key names keep this
+        // hermetic under parallel test execution; project_dir/resolvers are
+        // left empty so no shared SUGAR_WITNESS_* globals are touched.
+        let preset_key = "SUGAR_WITNESS_DISCHARGE_TEST3873_PRESET";
+        let fresh_key = "SUGAR_WITNESS_DISCHARGE_TEST3873_FRESH";
+        std::env::remove_var(preset_key);
+        std::env::remove_var(fresh_key);
+        std::env::set_var(preset_key, "caller-value");
+
+        let mut discharge_commands = BTreeMap::new();
+        discharge_commands.insert(preset_key.to_string(), "derived-value".to_string());
+        discharge_commands.insert(fresh_key.to_string(), "derived-value".to_string());
+        let config = WitnessDischargeConfig {
+            project_dir: None,
+            resolvers: Vec::new(),
+            discharge_commands,
+        };
+        config.apply_env();
+
+        assert_eq!(
+            std::env::var(preset_key).as_deref(),
+            Ok("caller-value"),
+            "caller-set env var must win over the derived value"
+        );
+        assert_eq!(std::env::var(fresh_key).as_deref(), Ok("derived-value"));
+
+        std::env::remove_var(preset_key);
+        std::env::remove_var(fresh_key);
+    }
+
     fn plugin(surface: &str) -> PluginEntry {
         PluginEntry {
             kind: Some("lift".to_string()),

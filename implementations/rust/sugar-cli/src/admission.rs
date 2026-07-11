@@ -145,3 +145,167 @@ fn read_json_value(path: &Path) -> Result<Value, String> {
         std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_json(dir: &Path, name: &str, value: &Value) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, serde_json::to_string_pretty(value).unwrap()).unwrap();
+        path
+    }
+
+    // -- verify_policy_receipt: match / mismatch / missing-field --
+
+    #[test]
+    fn policy_receipt_match_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = write_json(dir.path(), "policy.json", &json!({"policyCid": "cid-A"}));
+        let proof = json!({"policyCid": "cid-A"});
+        let report = verify_policy_receipt(&proof, &policy_path).unwrap();
+        assert_eq!(report["ok"], json!(true));
+        assert_eq!(report["verdict"], json!("accepted"));
+        assert_eq!(report["reason"], json!("policyCid matched"));
+        assert_eq!(report["pinnedPolicyCid"], json!("cid-A"));
+        assert_eq!(report["candidatePolicyCid"], json!("cid-A"));
+    }
+
+    #[test]
+    fn policy_receipt_mismatch_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = write_json(dir.path(), "policy.json", &json!({"policyCid": "cid-A"}));
+        let proof = json!({"policyCid": "cid-B"});
+        let report = verify_policy_receipt(&proof, &policy_path).unwrap();
+        assert_eq!(report["ok"], json!(false));
+        assert_eq!(report["verdict"], json!("rejected"));
+        assert_eq!(report["reason"], json!("policyCid mismatch"));
+    }
+
+    #[test]
+    fn policy_receipt_missing_policy_side_field_is_loud_typed_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = write_json(dir.path(), "policy.json", &json!({"somethingElse": 1}));
+        let proof = json!({"policyCid": "cid-A"});
+        let err = verify_policy_receipt(&proof, &policy_path).unwrap_err();
+        assert_eq!(err, "policy receipt missing policyCid");
+    }
+
+    #[test]
+    fn policy_receipt_missing_proof_side_field_is_loud_typed_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = write_json(dir.path(), "policy.json", &json!({"policyCid": "cid-A"}));
+        let proof = json!({"notPolicyCid": "cid-A"});
+        let err = verify_policy_receipt(&proof, &policy_path).unwrap_err();
+        assert_eq!(err, "proof receipt missing policyCid");
+    }
+
+    // -- verify_artifact_receipt: match / mismatch / missing-field --
+
+    #[test]
+    fn artifact_receipt_match_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact_path = dir.path().join("artifact.bin");
+        std::fs::write(&artifact_path, b"artifact bytes").unwrap();
+        let cid = blake3_512_of(b"artifact bytes");
+        let proof = json!({"binaryCid": cid});
+        let report = verify_artifact_receipt(&proof, &artifact_path).unwrap();
+        assert_eq!(report["ok"], json!(true));
+        assert_eq!(report["verdict"], json!("accepted"));
+        assert_eq!(report["reason"], json!("binaryCid matched"));
+        assert_eq!(report["attestedBinaryCid"], json!(cid));
+        assert_eq!(report["observedBinaryCid"], json!(cid));
+    }
+
+    #[test]
+    fn artifact_receipt_mismatch_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact_path = dir.path().join("artifact.bin");
+        std::fs::write(&artifact_path, b"artifact bytes").unwrap();
+        let proof = json!({"binaryCid": "not-the-real-cid"});
+        let report = verify_artifact_receipt(&proof, &artifact_path).unwrap();
+        assert_eq!(report["ok"], json!(false));
+        assert_eq!(report["verdict"], json!("rejected"));
+        assert_eq!(report["reason"], json!("binaryCid mismatch"));
+        assert_eq!(report["attestedBinaryCid"], json!("not-the-real-cid"));
+        assert_eq!(
+            report["observedBinaryCid"],
+            json!(blake3_512_of(b"artifact bytes"))
+        );
+    }
+
+    #[test]
+    fn artifact_receipt_missing_binary_cid_is_loud_typed_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact_path = dir.path().join("artifact.bin");
+        std::fs::write(&artifact_path, b"artifact bytes").unwrap();
+        let proof = json!({"policyCid": "cid-A"});
+        let err = verify_artifact_receipt(&proof, &artifact_path).unwrap_err();
+        assert_eq!(err, "proof receipt missing binaryCid");
+    }
+
+    #[test]
+    fn artifact_receipt_unreadable_artifact_is_loud_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact_path = dir.path().join("does-not-exist.bin");
+        let proof = json!({"binaryCid": "cid"});
+        let err = verify_artifact_receipt(&proof, &artifact_path).unwrap_err();
+        assert!(err.starts_with("read artifact "), "unexpected error: {err}");
+    }
+
+    // -- combined driver: both receipts, both verdict arms in one box --
+
+    #[test]
+    fn combined_policy_and_artifact_report_both_arms() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact_path = dir.path().join("artifact.bin");
+        std::fs::write(&artifact_path, b"payload").unwrap();
+        let cid = blake3_512_of(b"payload");
+        let policy_path = write_json(dir.path(), "policy.json", &json!({"policyCid": "cid-A"}));
+        let proof_path = write_json(
+            dir.path(),
+            "proof.json",
+            &json!({"policyCid": "cid-A", "binaryCid": cid}),
+        );
+
+        // Accepted arm: both match.
+        let report = verify_artifact_or_policy(
+            &Some(artifact_path.clone()),
+            &Some(proof_path),
+            &Some(policy_path.clone()),
+        )
+        .unwrap();
+        assert_eq!(report["ok"], json!(true));
+        assert_eq!(report["reason"], json!("policyCid and binaryCid matched"));
+
+        // Rejected arm: policy mismatches, artifact matches.
+        let bad_proof_path = write_json(
+            dir.path(),
+            "bad-proof.json",
+            &json!({"policyCid": "cid-B", "binaryCid": cid}),
+        );
+        let report = verify_artifact_or_policy(
+            &Some(artifact_path),
+            &Some(bad_proof_path),
+            &Some(policy_path),
+        )
+        .unwrap();
+        assert_eq!(report["ok"], json!(false));
+        assert_eq!(report["verdict"], json!("rejected"));
+        assert_eq!(report["reason"], json!("policyCid mismatch"));
+    }
+
+    #[test]
+    fn missing_proof_or_targets_are_loud_user_errors() {
+        let err = verify_artifact_or_policy(&None, &None, &None).unwrap_err();
+        assert_eq!(err, "--proof is required for admission verification");
+
+        let dir = tempfile::tempdir().unwrap();
+        let proof_path = write_json(dir.path(), "proof.json", &json!({"policyCid": "cid-A"}));
+        let err = verify_artifact_or_policy(&None, &Some(proof_path), &None).unwrap_err();
+        assert_eq!(
+            err,
+            "--artifact or --policy is required for admission verification"
+        );
+    }
+}
