@@ -134,11 +134,14 @@ export class ReportModePainter {
     const t = p.totals;
     const digStop = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "dig_stop").length;
     const digOpen = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "walk_open").length;
-    const minority = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "minority").length;
-    this.status.text = `Sugar $(circle-filled) f=${t.facts} dig=${digOpen}/${digStop} y=${minority} u=${t.unsat}`;
+    const minorityRanges = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "minority").length;
+    // Dual-axis one-liner: same census as CLI `sugar lift --report` (#4149).
+    // stated/accounted/silent | minority — dig/facts/unsat stay in tooltip.
+    this.status.text = `Sugar ${t.stated}/${t.accounted}/${t.silentlyUnaccounted} | min=${t.minorityUnAsserted}`;
     this.status.tooltip = [
-      `stated=${t.stated} accounted=${t.accounted} silent=${t.silentlyUnaccounted}`,
-      `dig open=${digOpen} dig-stop=${digStop} minority=${minority}`,
+      `stated=${t.stated} accounted=${t.accounted} silently_unaccounted=${t.silentlyUnaccounted} | minority un_asserted=${t.minorityUnAsserted}`,
+      `present=${t.minorityPresent} dug=${t.minorityDug} (minority paint ranges=${minorityRanges})`,
+      `dig open=${digOpen} dig-stop=${digStop}  (dig-stop ≠ unsat)`,
       `facts=${t.facts} unsat=${t.unsat}`,
       "Click to toggle report mode",
     ].join("\n");
