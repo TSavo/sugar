@@ -975,3 +975,171 @@ fn open_vendor_post_degrades_never_false_green_4148() {
     fs::remove_dir_all(&root).ok();
 }
 
+// ---------------------------------------------------------------------------
+// Silent-drop ratchets (post-#4154): unit law for assess_dropped_ambient_posts
+// ---------------------------------------------------------------------------
+//
+// #4154 made drops loud at the specialization step and threaded degrade into
+// solve_buffer. These instruments pin the ASSESS half so a future change that
+// still records drops but forgets to degrade (or soft-skips under declared
+// deps) fails red without needing the full mock-kit + z3 path.
+//
+// Auto-mode / download-sources edge: once a post-bearing vendor proof lands
+// under `.sugar/imports` (cold mint, shipped proof, disk auto cache, or
+// Download sources sdist seal — seal order #4012/#4108), the project is
+// "declared deps". The same assess gate applies; there is no separate
+// auto-mode path that may un-degraded-green when drops are non-empty.
+// (Does not thrash full numpy suite — instrument is pure assess + staged
+// imports proof only.)
+
+fn consistency_result_with_drops(
+    drops: Vec<sugar_verifier::consistency::DroppedAmbientPost>,
+) -> sugar_verifier::consistency::ConsistencyResult {
+    sugar_verifier::consistency::ConsistencyResult {
+        contract_cid: "test-cid".into(),
+        property_name: "test#euf#c:1::assertion".into(),
+        verdict: sugar_verifier::types::ObligationVerdict::Refused,
+        reason: "fixture vacuous refuse".into(),
+        effect: None,
+        witnessed: false,
+        verification: None,
+        locus: None,
+        dropped_ambient_posts: drops,
+    }
+}
+
+fn sample_dropped_post(
+    reason: sugar_verifier::consistency::DroppedAmbientPostReason,
+) -> sugar_verifier::consistency::DroppedAmbientPost {
+    sugar_verifier::consistency::DroppedAmbientPost {
+        source_symbol: "call:encodeBase64".into(),
+        target_cid: "vendor-target".into(),
+        reason,
+        spelling: "fixture".into(),
+    }
+}
+
+/// Pure law: under declared post-bearing deps, any dropped ambient vendor post
+/// means assess MUST Err. Empty drops stay Ok. No deps → Ok (no warm law to
+/// apply). If this softens to Ok on non-empty drops, silent green returns.
+#[test]
+fn assess_dropped_ambient_posts_loud_under_declared_deps_silent_drop_ratchet() {
+    let root = unique_dir("assess-drop-ratchet");
+    fs::create_dir_all(root.join(".sugar").join("imports")).unwrap();
+    let (cid, bytes) = mint_base64_style_vendor_proof();
+    fs::write(
+        root.join(".sugar")
+            .join("imports")
+            .join(format!("{cid}.proof")),
+        &bytes,
+    )
+    .unwrap();
+    assert!(
+        sugar_cli::cmd_mint::project_declares_import_dependencies(&root),
+        "fixture must declare imports"
+    );
+    let bindings = sugar_cli::cmd_mint::contract_bindings_from_dependency_proofs(&root);
+    assert!(
+        sugar_cli::cmd_mint::dependency_bindings_need_bridges(&bindings),
+        "post-bearing vendor must need bridges"
+    );
+
+    // Empty drops: lawful green path.
+    sugar_lsp::prove_engine::assess_dropped_ambient_posts(&[], &root)
+        .expect("empty drops under declared deps must pass assess");
+    sugar_lsp::prove_engine::assess_dropped_ambient_posts(
+        &[consistency_result_with_drops(Vec::new())],
+        &root,
+    )
+    .expect("result with empty dropped_ambient_posts must pass assess");
+
+    // Non-empty drops: MUST fail loud for every recorded reason class.
+    for reason in [
+        sugar_verifier::consistency::DroppedAmbientPostReason::OpenAfterSpecialization,
+        sugar_verifier::consistency::DroppedAmbientPostReason::CallTermDecodeFailed,
+        sugar_verifier::consistency::DroppedAmbientPostReason::OpaqueCallSubject,
+    ] {
+        let results = vec![consistency_result_with_drops(vec![sample_dropped_post(
+            reason.clone(),
+        )])];
+        let err = sugar_lsp::prove_engine::assess_dropped_ambient_posts(&results, &root)
+            .expect_err(&format!(
+                "LAW VIOLATION silent-drop: assess must Err on dropped {:?}",
+                reason
+            ));
+        assert!(
+            err.contains("dropped") && err.contains("vendor post"),
+            "assess error must name dropped vendor posts: {err}"
+        );
+        assert!(
+            err.contains(reason.label()),
+            "assess error must surface reason label {}: {err}",
+            reason.label()
+        );
+    }
+
+    // Multiple drops collapse reason labels in the message.
+    let multi = vec![consistency_result_with_drops(vec![
+        sample_dropped_post(
+            sugar_verifier::consistency::DroppedAmbientPostReason::OpenAfterSpecialization,
+        ),
+        sample_dropped_post(
+            sugar_verifier::consistency::DroppedAmbientPostReason::CallTermDecodeFailed,
+        ),
+    ])];
+    let err = sugar_lsp::prove_engine::assess_dropped_ambient_posts(&multi, &root)
+        .expect_err("multi-drop must still Err");
+    assert!(
+        err.contains("dropped 2 vendor post"),
+        "must count drops: {err}"
+    );
+
+    // No declared deps: assess is a no-op even if drops are non-empty
+    // (nothing to fall back from; cold/unbound path owns that surface).
+    let bare = unique_dir("assess-drop-no-deps");
+    fs::create_dir_all(bare.join(".sugar")).unwrap();
+    sugar_lsp::prove_engine::assess_dropped_ambient_posts(
+        &[consistency_result_with_drops(vec![sample_dropped_post(
+            sugar_verifier::consistency::DroppedAmbientPostReason::OpenAfterSpecialization,
+        )])],
+        &bare,
+    )
+    .expect("without declared deps, assess must not invent a warm-law failure");
+
+    fs::remove_dir_all(&root).ok();
+    fs::remove_dir_all(&bare).ok();
+}
+
+/// Meta-ratchet: solve_buffer must call assess when drops fire. Re-runs the
+/// open-post fixture and asserts the degraded_reason is exactly the assess
+/// channel (not a generic testimony gap that could hide a silent drop path).
+#[test]
+fn open_post_degraded_reason_is_assess_channel_not_silent() {
+    if !z3_available() {
+        eprintln!("SKIP: z3 required for open-post assess-channel receipt");
+        return;
+    }
+    let (root, file) = stage_consumer_with_open_post_vendor("open-post-assess-channel");
+    let ctx = sugar_lsp::prove_engine::build_prove_context_for(&root);
+    let outcome =
+        sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// BAD_MARKER planted lie\n");
+    assert!(
+        outcome.degraded,
+        "open-post must degrade; reason={:?}",
+        outcome.degraded_reason
+    );
+    let reason = outcome.degraded_reason.as_deref().unwrap_or("");
+    // assess_dropped_ambient_posts wording — not testimony/feed-only.
+    assert!(
+        reason.contains("dropped")
+            && reason.contains("vendor post")
+            && reason.contains("open-after-specialization"),
+        "degraded reason must be the assess_dropped_ambient_posts channel \
+         (silent-drop ratchet); got: {reason}"
+    );
+    // If assess were removed, we could still see refused rows un-degraded —
+    // assert_never_false_green catches that shape.
+    assert_never_false_green(&outcome, "open-post assess-channel");
+    fs::remove_dir_all(&root).ok();
+}
+
