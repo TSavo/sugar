@@ -18,6 +18,30 @@ class BlockValue(FloorValue):
     statements: tuple[object, ...]
     fall_through: tuple = ()
 
+    def contribution(self):
+        # A block inside a record splices: its entries ARE the entries.
+        return self.statements
+
+    def inv_contribution(self):
+        return tuple(
+            formula
+            for entry in self.statements
+            for formula in entry.inv_contribution()
+        )
+
+    def post_contribution(self):
+        return tuple(
+            formula
+            for entry in self.statements
+            for formula in entry.post_contribution()
+        )
+
+    def follow_rest(self, rest, reduce):
+        # A face that exits makes the continuation unreachable: keep it raw.
+        if any(entry.post_contribution() for entry in self.statements):
+            return rest
+        return reduce(rest)
+
     def guard_with(self, operation: Any, ctx: Any) -> Any:
         return operation.guard_block(self, ctx)
 

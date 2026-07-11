@@ -116,6 +116,46 @@ class FloorValue:
         del ctx
         return Complete(self)
 
+    def follow_rest(self, rest, reduce):
+        # Default: an ordinary statement value lets the block go on.
+        return reduce(rest)
+
+    def guarded(self, formula):
+        # Default: this value cannot ride under a guard. The record entries
+        # that CAN override: a return becomes a GuardedReturn, an inv becomes
+        # an implication. Absence is the honest no.
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        del formula
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="guarded",
+            blame=observed,
+            observed=observed,
+            requested="ride under a guard",
+            fix=f"write more Floor: implement {observed}.guarded",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="guarded",
+                status="floor-gap",
+                observed=observed,
+                blame=observed,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def inv_contribution(self):
         # Default: a record entry states no inv. InvValue overrides.
         return ()

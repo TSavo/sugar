@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.ir import Formula, eq, make_var
+from sugar_lift_py_tests.ir import Formula
 
 from .floor_value import FloorValue
 
@@ -27,21 +27,25 @@ class UniverseValue(FloorValue):
 
     def post(self) -> Formula:
         exits = tuple(
-            term
+            formula
             for entry in self.record.statements
-            for term in entry.post_contribution()
+            for formula in entry.post_contribution()
         )
-        if len(exits) != 1:
+        if not exits:
             from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
             from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
 
             factory_panic_gap(
                 owner="UniverseValue",
                 blame=self.name,
-                observed=f"{len(exits)} exits",
-                requested="one post slot",
-                fix="write more Universe: guarded multi-exit post composition",
+                observed="no exits",
+                requested="a post slot",
+                fix="write more Universe: a body with no return posts nothing yet",
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
-        return eq(make_var("out"), exits[0])
+        if len(exits) == 1:
+            return exits[0]
+        from sugar_lift_py_tests.ir import and_
+
+        return and_(list(exits))

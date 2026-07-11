@@ -21,3 +21,9 @@ class InvValue(FloorValue):
     def inv_contribution(self):
         # The stated fact IS the inv slot's row.
         return (self.formula,)
+
+    def guarded(self, formula):
+        # A fact stated under a guard IS an implication.
+        from sugar_lift_py_tests.ir import implies
+
+        return InvValue(implies(formula, self.formula))
