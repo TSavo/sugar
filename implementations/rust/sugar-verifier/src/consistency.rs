@@ -8073,4 +8073,195 @@ mod tests {
         let _ = std::fs::remove_dir_all(&project);
         let _ = std::fs::remove_dir_all(&trap);
     }
+
+    // -----------------------------------------------------------------------
+    // #4148 / silent-drop ratchets: ambient vendor post specialization must
+    // NEVER silently discard a matched post. Partition.dropped is the only
+    // lawful place a non-kept post may land; empty-dropped + missing-kept when
+    // a match was attempted is a law violation (silent green class).
+    // -----------------------------------------------------------------------
+
+    fn ambient_post_encode_base64(post: Json, formals: Vec<String>) -> AmbientPost {
+        AmbientPost {
+            binding: BridgeBinding {
+                source_symbol: "call:encodeBase64".to_string(),
+                target_cid: "test-target-cid".to_string(),
+                target_proof_cid: None,
+                formals,
+                out_binding: "out".to_string(),
+            },
+            post,
+        }
+    }
+
+    fn consumer_inv_encode_base64(rhs: &str) -> Json {
+        json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {
+                    "kind": "ctor",
+                    "name": "call:encodeBase64",
+                    "args": [
+                        {
+                            "kind": "const",
+                            "sort": {"kind": "primitive", "name": "String"},
+                            "value": "xyz"
+                        }
+                    ]
+                },
+                {
+                    "kind": "const",
+                    "sort": {"kind": "primitive", "name": "String"},
+                    "value": rhs
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn silent_drop_ratchet_open_post_after_specialization_is_loud() {
+        // Post stays open: free var `unbound` is not a formal and is not the out
+        // binding. Specialization must LOUD-drop, never silently filter.
+        let ambient = vec![ambient_post_encode_base64(
+            json!({
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "out"},
+                    {"kind": "var", "name": "unbound"}
+                ]
+            }),
+            vec!["value".to_string()],
+        )];
+        let inv = consumer_inv_encode_base64("AAAA");
+        let partition = linked_ambient_post_instances_for_inv(&inv, &ambient);
+        assert!(
+            partition.kept.is_empty(),
+            "open specialized post must not enter linkedPosts: {:?}",
+            partition.kept
+        );
+        assert_eq!(
+            partition.dropped.len(),
+            1,
+            "open specialized post must land in dropped (silent filter is illegal): {:?}",
+            partition.dropped
+        );
+        assert_eq!(
+            partition.dropped[0].reason,
+            DroppedAmbientPostReason::OpenAfterSpecialization
+        );
+        assert_eq!(
+            partition.dropped[0].reason.label(),
+            "open-after-specialization"
+        );
+        assert_eq!(partition.dropped[0].source_symbol, "call:encodeBase64");
+    }
+
+    #[test]
+    fn silent_drop_ratchet_closed_post_is_kept_not_dropped() {
+        let ambient = vec![ambient_post_encode_base64(
+            json!({
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "out"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "eHl6"
+                    }
+                ]
+            }),
+            vec!["value".to_string()],
+        )];
+        let inv = consumer_inv_encode_base64("eHl6");
+        let partition = linked_ambient_post_instances_for_inv(&inv, &ambient);
+        assert_eq!(
+            partition.kept.len(),
+            1,
+            "closed specialized post must be kept: {:?}",
+            partition
+        );
+        assert!(
+            partition.dropped.is_empty(),
+            "closed specialized post must not be dropped: {:?}",
+            partition.dropped
+        );
+    }
+
+    #[test]
+    fn silent_drop_ratchet_call_term_missing_args_is_loud_decode_fail() {
+        // Ctor collected without an args array: specialization cannot bind
+        // formals. Must record CallTermDecodeFailed -- never a silent skip
+        // that leaves dropped empty while ambient posts exist for that call.
+        let ambient = vec![ambient_post_encode_base64(
+            json!({
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "out"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "eHl6"
+                    }
+                ]
+            }),
+            vec!["value".to_string()],
+        )];
+        let inv = json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "ctor", "name": "call:encodeBase64"},
+                {
+                    "kind": "const",
+                    "sort": {"kind": "primitive", "name": "String"},
+                    "value": "AAAA"
+                }
+            ]
+        });
+        let partition = linked_ambient_post_instances_for_inv(&inv, &ambient);
+        assert!(
+            partition.kept.is_empty(),
+            "decode-fail call term must not keep posts: {:?}",
+            partition.kept
+        );
+        assert!(
+            !partition.dropped.is_empty(),
+            "LAW VIOLATION: missing-args call term with ambient posts must loud-drop, not silent-skip"
+        );
+        assert!(
+            partition
+                .dropped
+                .iter()
+                .any(|d| d.reason == DroppedAmbientPostReason::CallTermDecodeFailed),
+            "expected call-term-decode-failed among {:?}",
+            partition
+                .dropped
+                .iter()
+                .map(|d| d.reason.label())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn silent_drop_ratchet_dropped_reason_labels_are_stable() {
+        // Wire labels are load-bearing for assess_dropped_ambient_posts reason
+        // strings and IDE/logs. Renaming without updating the assess gate is a
+        // silent-green class failure mode.
+        assert_eq!(
+            DroppedAmbientPostReason::OpenAfterSpecialization.label(),
+            "open-after-specialization"
+        );
+        assert_eq!(
+            DroppedAmbientPostReason::OpaqueCallSubject.label(),
+            "opaque-call-subject"
+        );
+        assert_eq!(
+            DroppedAmbientPostReason::CallTermDecodeFailed.label(),
+            "call-term-decode-failed"
+        );
+    }
 }
