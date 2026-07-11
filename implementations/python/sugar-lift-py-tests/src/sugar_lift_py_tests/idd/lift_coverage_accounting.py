@@ -184,14 +184,71 @@ def account_lift_coverage(
 def _account_assertions(
     asserts: list[AssertLocus], payload: Mapping[str, Any]
 ) -> AssertionAxis:
+    """Partition census asserts against collapse fact rows and audit gaps.
+
+    Lifted+cited: a kind=contract ::assertion (inv) row whose warrant memento
+    covers the census file:line -- the warrant is the assert's sealed memento.
+    Refused-loud: auditOnlyGaps whose site (blame file:line) matches the locus.
+    Silently-unaccounted: neither (Crime-1 gate; RED when positive).
+
+    Pre-rebuild sourceAudits / surface audits remain a secondary spoken set so
+    older report shapes still classify; the collapse fact rows are the primary.
+    """
     lifted_keys: set[tuple[str, int, int]] = set()
     refused_keys: set[tuple[str, int, int]] = set()
     lifted_loci: list[dict] = []
     refused_loci: list[dict] = []
 
+    # Primary: ::assertion fact rows the collapse minted (mirror minority join).
+    for item in payload.get("ir") or []:
+        if not isinstance(item, Mapping):
+            continue
+        if not _is_assertion_fact_row(item):
+            continue
+        for file, line, col, end_line in _assertion_warrant_spans(item):
+            key = (file, line, col)
+            lifted_keys.add(key)
+            # Span coverage: every line in the warrant is a spoken locus key.
+            for span_line in range(line, max(line, end_line) + 1):
+                lifted_keys.add((file, span_line, col))
+            name = str(item.get("name") or "")
+            lifted_loci.append(
+                {
+                    "file": file,
+                    "line": line,
+                    "col": col,
+                    "status": "warranted",
+                    "contract": name,
+                    "source": "assertion-fact-row",
+                }
+            )
+
+    # Refused-loud: audit door gap rows (site = blame file:line:col).
+    for gap in (
+        payload.get("auditOnlyGaps") or payload.get("audit_only_gaps") or []
+    ):
+        if not isinstance(gap, Mapping):
+            continue
+        file, line, col = _gap_site(gap)
+        if not file and not line:
+            continue
+        key = (file, line, col)
+        refused_keys.add(key)
+        refused_loci.append(
+            {
+                "file": file,
+                "line": line,
+                "col": col,
+                "status": "refused",
+                "source": "audit-only-gap",
+                "label": str(gap.get("label") or ""),
+                "message": str(gap.get("message") or ""),
+            }
+        )
+
+    # Secondary: pre-rebuild audit surfaces (sourceAudits / mementos / ...).
     for file, line, col, status, meta in _iter_report_assertion_loci(payload):
         key = (file, line, col if col is not None else 0)
-        # Prefer exact col match; also accept line-only match against disk.
         entry = {
             "file": file,
             "line": line,
@@ -206,7 +263,7 @@ def _account_assertions(
             refused_keys.add(key)
             refused_loci.append(entry)
         else:
-            # Unknown status — treat as spoken (lifted) so we don't invent silent
+            # Unknown status -- treat as spoken (lifted) so we don't invent silent
             # loss from an unmapped vocabulary word; still listed under lifted.
             lifted_keys.add(key)
             lifted_loci.append(entry)
@@ -225,7 +282,7 @@ def _account_assertions(
 
     return AssertionAxis(
         stated=len(asserts),
-        # Counts are over on-disk asserts classified by the report — not raw
+        # Counts are over on-disk asserts classified by the report -- not raw
         # report row counts (a report may re-emit the same locus).
         lifted_cited=len(lifted_matched),
         refused_loud=len(refused_matched),
@@ -235,6 +292,79 @@ def _account_assertions(
         silent_loci=[a.to_json() for a in silent],
         on_disk=[a.to_json() for a in asserts],
     )
+
+
+def _is_assertion_fact_row(item: Mapping[str, Any]) -> bool:
+    """Collapse fact rows: kind=contract named *::assertion (inv, no function)."""
+    kind = str(item.get("kind") or "")
+    if kind == "function-contract":
+        return False
+    name = str(item.get("name") or "")
+    if name.endswith("::assertion"):
+        return True
+    # Inv-only contract rows are the testimony fact shape even without the suffix.
+    if kind == "contract" and item.get("inv") is not None:
+        return True
+    return False
+
+
+def _assertion_warrant_spans(
+    item: Mapping[str, Any],
+) -> list[tuple[str, int, int, int]]:
+    """(file, start_line, start_col, end_line) from each sealed warrant memento."""
+    spans: list[tuple[str, int, int, int]] = []
+    warrants = item.get("sourceWarrants") or item.get("source_warrants") or []
+    for warrant in warrants:
+        if not isinstance(warrant, Mapping):
+            continue
+        file = str(warrant.get("file") or "")
+        span = warrant.get("span") or {}
+        if not isinstance(span, Mapping):
+            span = {}
+        start_line = int(span.get("start_line") or span.get("startLine") or 0)
+        end_line = int(
+            span.get("end_line") or span.get("endLine") or start_line or 0
+        )
+        col = int(span.get("start_col") or span.get("startCol") or 0)
+        if file or start_line:
+            spans.append((file, start_line, col, end_line))
+    return spans
+
+
+def _gap_site(gap: Mapping[str, Any]) -> tuple[str, int, int]:
+    """file:line:col from an auditOnlyGaps row (blame, then label)."""
+    info = gap.get("gap")
+    blame = ""
+    if isinstance(info, Mapping):
+        blame = str(info.get("blame") or "")
+    if not blame:
+        audit_row = gap.get("auditRow") or gap.get("audit_row")
+        if isinstance(audit_row, Mapping):
+            blame = str(audit_row.get("blame") or "")
+    if not blame:
+        blame = str(gap.get("label") or "")
+    return _parse_file_line_col(blame)
+
+
+def _parse_file_line_col(site: str) -> tuple[str, int, int]:
+    """Parse 'path:line:col' from the right (paths may contain colons)."""
+    if not site:
+        return "", 0, 0
+    parts = site.rsplit(":", 2)
+    if len(parts) == 3:
+        file, line_s, col_s = parts
+        try:
+            return file, int(line_s), int(col_s)
+        except ValueError:
+            return site, 0, 0
+    if len(parts) == 2:
+        file, line_s = parts
+        try:
+            return file, int(line_s), 0
+        except ValueError:
+            return site, 0, 0
+    return site, 0, 0
+
 
 
 def _matched(a: AssertLocus, keys: set[tuple[str, int, int]]) -> bool:
