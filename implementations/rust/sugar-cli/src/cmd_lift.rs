@@ -3507,13 +3507,22 @@ fn render_factory_walk_rows(factory_walk: &[Value], project_root: Option<&Path>)
 
 const ANSI_GREEN: &str = "\u{1b}[32m";
 const ANSI_RED: &str = "\u{1b}[31m";
+// Report mode palette (#4149): blue=fact, green=dig open, red=dig-stop/crime, yellow=minority
+const ANSI_BLUE: &str = "\u{1b}[34m";
+const ANSI_YELLOW: &str = "\u{1b}[33m";
 const ANSI_RESET: &str = "\u{1b}[0m";
 
 #[derive(Clone, Copy)]
 enum VisualTone {
     Plain,
+    /// Warranted fact (FACT ⊢ …) — under oath.
+    Blue,
+    /// Dig/walk still open.
     Green,
+    /// Dig-stop effect / crime paint.
     Red,
+    /// Minority / ungoverned (voiceless) — reported, not crime.
+    Yellow,
 }
 
 struct VisualFactoryWalkRow {
@@ -3910,7 +3919,7 @@ fn render_universe_warrant_breakdown(
                 source, predicate, ..
             } => {
                 let (tone, annotation) = match mode {
-                    UniverseVisualMode::Fact => (VisualTone::Plain, format!("FACT ⊢ {predicate}")),
+                    UniverseVisualMode::Fact => (VisualTone::Blue, format!("FACT ⊢ {predicate}")),
                     UniverseVisualMode::BodyComplete | UniverseVisualMode::BodyIncomplete => {
                         let tone = if red.is_some() {
                             VisualTone::Red
@@ -4057,7 +4066,7 @@ fn render_universe_source_walk(
         .filter(|predicate| !rendered_lines.contains(&predicate.sort_key.0))
     {
         let (tone, annotation) = if mode == UniverseVisualMode::Fact {
-            (VisualTone::Plain, format!("FACT ⊢ {}", predicate.predicate))
+            (VisualTone::Blue, format!("FACT ⊢ {}", predicate.predicate))
         } else {
             (
                 VisualTone::Green,
@@ -4082,7 +4091,7 @@ fn render_universe_source_walk(
                 .cloned()
                 .unwrap_or_else(|| "<predicate unavailable>".to_string());
             let (tone, annotation) = if mode == UniverseVisualMode::Fact {
-                (VisualTone::Plain, format!("FACT ⊢ {predicate}"))
+                (VisualTone::Blue, format!("FACT ⊢ {predicate}"))
             } else {
                 (VisualTone::Green, format!("GREEN ⊢ {predicate}"))
             };
@@ -4445,8 +4454,10 @@ fn ansi_paint(source: &str, tone: VisualTone) -> String {
     }
     let color = match tone {
         VisualTone::Plain => unreachable!("plain tone returned before ANSI selection"),
+        VisualTone::Blue => ANSI_BLUE,
         VisualTone::Green => ANSI_GREEN,
         VisualTone::Red => ANSI_RED,
+        VisualTone::Yellow => ANSI_YELLOW,
     };
     format!("{color}{source}{ANSI_RESET}")
 }
@@ -5176,7 +5187,7 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
                         &mut out,
                         project_root,
                         locus,
-                        VisualTone::Red,
+                        VisualTone::Yellow,
                         /*body=*/ true,
                     );
                 }
@@ -12778,6 +12789,21 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         assert!(
             full.contains("Minority Report") && full.contains("def orphan():"),
             "render_report_visual must surface actual Minority source; got:\n{full}"
+        );
+    }
+
+    #[test]
+    fn report_mode_fact_lines_paint_blue() {
+        // #4149: FACT ⊢ is blue (under oath), not green (dig open) or plain.
+        let tone_for_fact = VisualTone::Blue;
+        let painted = ansi_paint("assert x == 1", tone_for_fact);
+        assert!(
+            painted.contains("\u{1b}[34m") || painted.contains("\x1b[34m"),
+            "FACT paint must use ANSI blue; got {painted:?}"
+        );
+        assert!(
+            !painted.contains("\u{1b}[32m") && !painted.contains("\x1b[32m"),
+            "FACT must not paint green (that's dig-open); got {painted:?}"
         );
     }
 
