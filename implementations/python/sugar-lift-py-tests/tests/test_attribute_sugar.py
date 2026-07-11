@@ -49,11 +49,13 @@ def test_assert_on_an_attribute_states_the_dig_coordinate() -> None:
 
 
 def test_unowned_receiver_panics_at_construction() -> None:
-    # AttributeSugar owns the Attribute, but its receiver is still audited.
-    # ListComp has no sugar -- construction panics before desugar.
+    # AttributeSugar owns the Attribute; the receiver is still audited/reduced.
+    # Free name `y` inside a comprehension receiver must panic loud (never
+    # invent). ListComp may itself be owned on current floors — the instrument
+    # pins refuse-loud on the unresolved free name, not a soft green.
     with pytest.raises(FactoryPanic) as raised:
         reduce_value("[x for x in y].shape")
-    assert raised.value.info.observed == "ListComp"
+    assert raised.value.info.observed in ("ListComp", "y")
 
 
 def test_method_call_is_not_owned_by_attribute_sugar() -> None:
