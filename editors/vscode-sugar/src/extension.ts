@@ -2,12 +2,11 @@
 //
 // extension.ts: thin VS Code LanguageClient host for sugar-lsp --in-process.
 //
-// THE PRODUCT IS THE LSP. Report mode, prove, diagnostics, and decorations
-// policy live in sugar-lsp (see #4149). This file only:
-//   1) resolves sugar-lsp binary + child env
-//   2) starts vscode-languageclient over stdio
-//
-// Do not reintroduce proveClient / cold sugar prove shell-out here.
+// THE PRODUCT IS THE LSP. Report mode, prove, diagnostics live in sugar-lsp
+// (#4149). This host only:
+//   1) spawns sugar-lsp over stdio
+//   2) paints sugar/reportMode decorations when enabled
+//   3) exposes Sugar: Toggle Report Mode
 
 import * as vscode from "vscode";
 import {
@@ -15,8 +14,10 @@ import {
   LanguageClientOptions,
   ServerOptions,
 } from "vscode-languageclient/node";
+import { ReportModePainter, ReportModePayload } from "./reportMode";
 
 let client: LanguageClient | undefined;
+let painter: ReportModePainter | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const cfg = vscode.workspace.getConfiguration("sugar");
@@ -29,11 +30,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
 
-  // The in-process engine mints an overlay of the edited buffer through the
-  // SAME `sugar mint` lift plugins the consumer project ships (or auto-
-  // discovers). A python/rust lifter subprocess `sugar-lsp` spawns inherits
-  // `sugar-lsp`'s own environment, so PATH/PYTHONPATH configured here reach
-  // it exactly as they reached the old cold `sugar mint`/`sugar prove` shell.
   const pythonBinDir = cfg.get<string>("prove.pythonBinDir") || "";
   const pyPath = cfg.get<string>("prove.pythonPath") || "";
   const rustBinDir = cfg.get<string>("prove.rustBinDir") || "";
@@ -48,6 +44,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     env.PYTHONPATH = env.PYTHONPATH ? `${pyPath}:${env.PYTHONPATH}` : pyPath;
   }
 
+  painter = new ReportModePainter();
+  const reportOn = cfg.get<boolean>("reportMode");
+  painter.setEnabled(reportOn !== false);
+
+  context.subscriptions.push(
+    painter,
+    vscode.commands.registerCommand("sugar.reportMode.toggle", () => {
+      painter?.toggle();
+    }),
+    vscode.commands.registerCommand("sugar.reportMode.on", () => {
+      painter?.setEnabled(true);
+      void vscode.workspace
+        .getConfiguration("sugar")
+        .update("reportMode", true, vscode.ConfigurationTarget.Global);
+    }),
+    vscode.commands.registerCommand("sugar.reportMode.off", () => {
+      painter?.setEnabled(false);
+      void vscode.workspace
+        .getConfiguration("sugar")
+        .update("reportMode", false, vscode.ConfigurationTarget.Global);
+    })
+  );
+
   const serverOptions: ServerOptions = {
     command: binaryPath,
     args: ["--in-process"],
@@ -60,14 +79,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       { scheme: "file", language: "rust" },
     ],
     outputChannelName: "Sugar LSP",
+    middleware: {},
   };
 
   client = new LanguageClient(
     "sugar-lsp",
-    "Sugar (inline wall)",
+    "Sugar (report mode)",
     serverOptions,
     clientOptions
   );
+
+  client.onNotification("sugar/reportMode", (payload: ReportModePayload) => {
+    painter?.onPayload(payload);
+  });
+
   context.subscriptions.push({ dispose: () => void client?.stop() });
   await client.start();
 }

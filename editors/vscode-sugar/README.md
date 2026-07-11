@@ -11,6 +11,13 @@ publishes.
 | Hover / code actions | **sugar-lsp** |
 | Cold `sugar prove` shell-out, `proveClient.ts`, linkerd daemon | **deleted** |
 
+## Report mode UI
+
+- Setting: `sugar.reportMode` (default **on**)
+- Commands: **Sugar: Toggle Report Mode** / On / Off
+- Status bar: `Sugar report` — click to toggle
+- Server sends `sugar/reportMode` after each in-process solve; host paints decorations only when enabled.
+
 ## Configure
 
 - `sugar.lsp.binaryPath` — absolute path to `sugar-lsp` (`bin/sugarbin --bin sugar-lsp`)
