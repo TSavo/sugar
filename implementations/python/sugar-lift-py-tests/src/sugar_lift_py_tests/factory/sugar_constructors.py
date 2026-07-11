@@ -213,7 +213,7 @@ def _ctx_with_formal_binds(site: SourceFragment, ctx):
             param_name,
             SymbolicValue(make_var(param_name)),
             owner="sugar_constructors.formal_binds",
-            site=site,
+            blame=f"{getattr(site, 'filename', '')}:{getattr(site, 'line', 0)}",
         )
     return body_ctx
 
@@ -345,22 +345,24 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
     if not selected:
         return ctx
 
+    # Modern BlockSugar: reduce Assign as BoundVar and thread scope forward.
     folded_ctx = ctx
     for prior in selected:
         try:
-            block = BlockSugar(
-                statements=(folded_ctx.build_body(prior, SugarRole.STATEMENT),),
-                blame=prior.blame,
+            body = folded_ctx.build_body(prior, SugarRole.STATEMENT)
+            outcome = body.reduce(folded_ctx)
+        except (TypeError, ValueError, AssertionError):
+            continue
+        if isinstance(outcome, Incomplete):
+            continue
+        try:
+            complete_value(
+                outcome, owner="sugar_constructors.module_global_binds"
             )
-            folded = block.fold_with_context(folded_ctx)
-        except (TypeError, ValueError):
+        except Exception:
             continue
-        if isinstance(folded.outcome, Incomplete):
-            continue
-        complete_value(
-            folded.outcome, owner="sugar_constructors.module_global_binds"
-        )
-        folded_ctx = folded.ctx
+        # BoundVar / ScopeRebind extend_scope so GLOBAL is visible to formals.
+        folded_ctx = outcome.extend_scope(folded_ctx)
     return folded_ctx
 
 

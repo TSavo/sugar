@@ -831,6 +831,11 @@ def audit_lift_file(
     # Seed import bindings once for every def in this module (deeper floors).
     module_temporal = _module_import_temporal(module)
     import_aliases, from_imports = _module_import_maps(module)
+    # Same-module name_resolver: bare f() digs body of def f in this file.
+    name_resolver: dict = {}
+    for stmt in _iter_liftable_function_defs(module):
+        if stmt.observed == "FunctionDef":
+            name_resolver[stmt.function_name()] = stmt.node
     for stmt in _iter_liftable_function_defs(module):
         # Either ordinary FunctionDef or test_* testimony (both owns shapes).
         # Class methods included (pytest TestCase-style / mixin tests).
@@ -844,6 +849,7 @@ def audit_lift_file(
                 temporal=module_temporal,
                 import_aliases=import_aliases,
                 from_imports=from_imports,
+                name_resolver=name_resolver,
             )
             result = build_node(
                 stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx

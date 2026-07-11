@@ -7,6 +7,10 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.sugar.install_source_dig import (
+    module_sibling_function_nodes as _module_sibling_function_nodes,
+    resolve_install_source_funcdef as _resolve_install_source_funcdef,
+)
 
 
 @dataclass(frozen=True)
@@ -17,8 +21,9 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     (positional then keyword VALUES in source order), and the result is the
     callsite -- a CallSiteValue whose term IS `call:f(<arg terms>)`. Keyword
     names ride in `parameters` (not dropped). The lift does not derive f
-    (dig the universe, don't derive f). Method receivers stay MethodCallSugar's;
-    ``**kwargs`` expansion stays a loud gap (unowned)."""
+    (dig the universe when body resolves; else coordinate only). Method receivers
+    stay MethodCallSugar's; ``**kwargs`` expansion stays a loud gap (unowned).
+    Body dig: install_source_dig.resolve_call_funcdef + build_dig_body."""
 
     target_name: str
     args: tuple[SugarBody, ...]
@@ -94,19 +99,33 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         if not remaining:
             from sugar_lift_py_tests.floor import CallSiteValue
             from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.sugar.install_source_dig import (
+                build_dig_body,
+                dig_parameters_for_body,
+                resolve_call_funcdef,
+            )
+
+            # Install-source / same-module body dig: attach factory-built body
+            # when resolve succeeds. body=None remains lawful coordinate-only.
+            fn = resolve_call_funcdef(self.target_name, ctx)
+            body = build_dig_body(fn, ctx) if fn is not None else None
+            parameters = dig_parameters_for_body(
+                fn, len(accumulated), self.keyword_names
+            )
+            if body is None:
+                # Fall back to keyword names when no dig body (prior behavior).
+                parameters = self.keyword_names
 
             return Complete(
                 CallSiteValue(
                     target_name=self.target_name,
                     arg_values=accumulated,
-                    # Keyword names for the trailing keyword value slots -- not
-                    # dropped. Positional-only calls keep parameters empty.
-                    parameters=self.keyword_names,
+                    parameters=parameters,
                     term=ctor(
                         f"call:{self.target_name}",
                         [value.to_term(owner=str(self.site)) for value in accumulated],
                     ),
-                    body=None,
+                    body=body,
                     site=self.site,
                 )
             )
