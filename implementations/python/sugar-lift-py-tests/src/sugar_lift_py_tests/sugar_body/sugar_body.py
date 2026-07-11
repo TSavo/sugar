@@ -78,3 +78,82 @@ class SugarBody(Generic[ReductionT_co]):
         # Raw, unreached sugar projects no call edge.
         del source_contract
         return ()
+
+    def factory_walk_rows(self):
+        # Project the audit row this body carries, then recurse through the
+        # sugar's children in source order -- carried, projected, no second
+        # recognition pass.
+        from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import (
+            FactoryWalkCompleteRowDto,
+            FactoryWalkRedRowDto,
+        )
+        from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
+        from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
+        from sugar_lift_py_tests.canonicalizer import blake3_512_of
+
+        rows: list = []
+        if self.audit_row is not None:
+            audit = self.audit_row
+            site = getattr(self.sugar, "site", None)
+            if site is not None:
+                memento = site.memento()
+                file = site.filename
+                line = site.line
+            else:
+                parts = audit.blame.rsplit(":", 2)
+                if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
+                    file, line_s, col_s = parts
+                    line = int(line_s)
+                    col = int(col_s)
+                else:
+                    file, line, col = audit.blame, 0, 0
+                memento = SourceMementoDto(
+                    file=file,
+                    span=SourceSpanDto(
+                        start_line=line,
+                        start_col=col,
+                        end_line=line,
+                        end_col=col,
+                    ),
+                    source_cid=blake3_512_of(b""),
+                )
+            if audit.status == "selected":
+                rows.append(
+                    FactoryWalkCompleteRowDto(
+                        file=file,
+                        line=line,
+                        requested_role=audit.role,
+                        ast_kind=audit.observed,
+                        selected=audit.selected,
+                        status="warranted",
+                        output=audit.selected or "selected",
+                        source_memento=memento,
+                        reason=audit.message,
+                        extra={
+                            "candidates": list(audit.candidates),
+                            "blame": audit.blame,
+                        },
+                    )
+                )
+            else:
+                rows.append(
+                    FactoryWalkRedRowDto(
+                        file=file,
+                        line=line,
+                        requested_role=audit.role,
+                        ast_kind=audit.observed,
+                        selected=audit.selected,
+                        status="unclassified",
+                        output=audit.status,
+                        source_memento=memento,
+                        reason=audit.message or audit.status,
+                        extra={
+                            "candidates": list(audit.candidates),
+                            "blame": audit.blame,
+                        },
+                    )
+                )
+        for child in self.sugar.walk_children():
+            rows.extend(child.factory_walk_rows())
+        return tuple(rows)
+

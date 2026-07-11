@@ -54,3 +54,6 @@ class NotOpSugar(Sugar, role=SugarRole.TERM):
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.operand.reduce(ctx).and_then(lambda value: value.negate())
+
+    def walk_children(self):
+        return (self.operand,)

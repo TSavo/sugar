@@ -57,3 +57,6 @@ class AddOpSugar(Sugar, role=SugarRole.TERM):
                 lambda right: left.add(right, self.site)
             )
         )
+
+    def walk_children(self):
+        return (self.left, self.right)

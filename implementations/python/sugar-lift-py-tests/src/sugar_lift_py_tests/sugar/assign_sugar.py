@@ -52,3 +52,6 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
         # (the block threads the new one AFTER this), so a self-referential rebind
         # reads the old value. The rhs stays as source -- not reduced here.
         return Complete(BoundVar(self.name, self.value, scope=ctx))
+
+    def walk_children(self):
+        return (self.value,)

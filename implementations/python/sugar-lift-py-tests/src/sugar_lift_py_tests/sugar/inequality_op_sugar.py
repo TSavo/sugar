@@ -74,3 +74,6 @@ class InequalityOpSugar(Sugar, role=SugarRole.TERM):
                 )
             )
         )
+
+    def walk_children(self):
+        return (self.left, self.right)

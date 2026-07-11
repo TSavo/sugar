@@ -67,3 +67,6 @@ class FunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 UniverseValue(name=self.name, formals=self.formals, record=record)
             )
         )
+
+    def walk_children(self):
+        return (self.body,)

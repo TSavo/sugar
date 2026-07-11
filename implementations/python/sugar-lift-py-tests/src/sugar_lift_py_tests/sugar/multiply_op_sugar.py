@@ -57,3 +57,6 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
                 lambda right: left.multiply(right, self.site)
             )
         )
+
+    def walk_children(self):
+        return (self.left, self.right)

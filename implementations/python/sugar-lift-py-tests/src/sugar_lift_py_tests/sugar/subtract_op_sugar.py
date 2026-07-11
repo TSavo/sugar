@@ -56,3 +56,6 @@ class SubtractOpSugar(Sugar, role=SugarRole.TERM):
                 lambda right: left.subtract(right, self.site)
             )
         )
+
+    def walk_children(self):
+        return (self.left, self.right)

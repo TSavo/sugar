@@ -696,6 +696,8 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     from sugar_lift_py_tests.proofir.nodes import Derived, Provenance, Stated
     from sugar_lift_py_tests.sugar.function_def_sugar import FunctionDefSugar
 
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
     payload = LiftReportPayloadDto(source_ledger={})
     catalog = default_catalog()
     module = SourceFragment.from_source(source, filename).statements()[0]
@@ -704,6 +706,13 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
             continue
         ctx = FactoryBuildContext(filename=filename, catalog=catalog)
         result = build_node(stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx)
+        # Project the factory walk from audit rows the tree already carries.
+        root = SugarBody(
+            sugar=result.sugar,
+            role=SugarRole.STATEMENT,
+            audit_row=result.audit_row,
+        )
+        payload.factory_walk.extend(root.factory_walk_rows())
         universe = complete_value(result.sugar.desugar(ctx), owner="lift_file_payload")
         def_memento = dataclasses.replace(
             stmt.memento(),

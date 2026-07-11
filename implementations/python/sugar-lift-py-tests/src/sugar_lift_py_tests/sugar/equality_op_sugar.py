@@ -72,3 +72,6 @@ class EqualityOpSugar(Sugar, role=SugarRole.TERM):
                 lambda right: left.equals(right, self.site)
             )
         )
+
+    def walk_children(self):
+        return (self.left, self.right)

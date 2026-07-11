@@ -57,3 +57,6 @@ class ModuloOpSugar(Sugar, role=SugarRole.TERM):
                 lambda right: left.modulo(right, self.site)
             )
         )
+
+    def walk_children(self):
+        return (self.left, self.right)

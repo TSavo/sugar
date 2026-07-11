@@ -58,3 +58,6 @@ class OsSugar(Sugar, role=SugarRole.TERM):
                 f"owner=OsSugar site={self.site}"
             )
         )
+
+    def walk_children(self):
+        return self.args
