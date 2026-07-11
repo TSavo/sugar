@@ -46,6 +46,22 @@ class CallSiteValue(FloorValue):
             PredicateValue(py_truthy(self.term), site, operand_callsites=(self,))
         )
 
+    def length(self, site):
+        # A callsite length stays the call:len coordinate over this value's term.
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            CallSiteValue(
+                target_name="len",
+                arg_values=(self,),
+                parameters=(),
+                term=ctor("call:len", [self.to_term(owner=str(site))]),
+                body=None,
+                site=site,
+            )
+        )
+
     def callsites(self):
         # A CallSiteValue carries itself -- equals emit collects it so the
         # inv that consumes the term can still project the edge later.
