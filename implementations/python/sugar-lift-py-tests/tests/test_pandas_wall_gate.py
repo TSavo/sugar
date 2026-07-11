@@ -208,6 +208,183 @@ def test_completed_wall_mode_uses_numpy_style_floors() -> None:
     ]
 
 
+def _factory_walk_gap(
+    kind: str,
+    *,
+    owner: str = "python.factory",
+    observed: str = "While",
+    requested: str = "statement",
+) -> dict[str, object]:
+    """Production factoryWalk red row shape (verdict=gap + top-level gap_kind)."""
+    return {
+        "kind": "factory-walk-row",
+        "verdict": "gap",
+        "status": "unresolved",
+        "gap_kind": kind,
+        "owner": owner,
+        "observed": observed,
+        "requested": requested,
+        "reason": f"write more {kind} for this AST",
+    }
+
+
+def test_completed_wall_counts_factory_walk_gaps_not_false_green() -> None:
+    """#4102 BAD TWIN: production gap rows cannot summarize as zero.
+
+    Before: summarize_pandas_completed_wall hard-coded gaps_total=0.
+    After: verdict==gap rows on factoryWalk are counted honestly.
+    """
+    report = {
+        "lineAccounting": [
+            {
+                "file": "pkg.py",
+                "line": 1,
+                "class": "warrant",
+                "grounds": "cid:blake3-512:x",
+            }
+        ],
+        "contracts": [{"pre": {"kind": "atomic"}}],
+        "callEdges": [],
+        "factoryAuditSummary": {
+            "factoryWalk": [
+                {
+                    "kind": "factory-walk-row",
+                    "verdict": "complete",
+                    "status": "warranted",
+                },
+                _factory_walk_gap(
+                    "Sugar", observed="While", requested="statement"
+                ),
+                _factory_walk_gap(
+                    "Sugar", observed="NamedExpr", requested="term"
+                ),
+                _factory_walk_gap(
+                    "Sugar", observed="ListComp", requested="term"
+                ),
+                _factory_walk_gap(
+                    "Floor",
+                    owner="attribute",
+                    observed="TermValue",
+                    requested="stand on the attribute floor",
+                ),
+            ]
+        },
+    }
+
+    summary = summarize_pandas_completed_wall(report)
+
+    # BAD TWIN teeth: must NOT be the false-green zero.
+    assert summary.gaps_total != 0
+    assert summary.gaps_total == 4
+    assert summary.gaps_by_bucket["Sugar"] == 3
+    assert summary.gaps_by_bucket["Floor"] == 1
+    assert summary.gaps_by_bucket["Constructor"] == 0
+    assert summary.gaps_by_bucket["ProofIR"] == 0
+    # lineAccounting fields preserved.
+    assert summary.green == 1
+    assert summary.mode == "complete"
+    assert summary.gap_templates == {
+        "Floor|attribute|TermValue|stand on the attribute floor": 1,
+        "Sugar|python.factory|ListComp|term": 1,
+        "Sugar|python.factory|NamedExpr|term": 1,
+        "Sugar|python.factory|While|statement": 1,
+    }
+
+
+def test_completed_wall_gap_ceiling_reds_the_wall() -> None:
+    """Completed wall with construction gaps breaches when ceiling is 0."""
+    report = {
+        "lineAccounting": [],
+        "contracts": [],
+        "callEdges": [],
+        "factoryAuditSummary": {
+            "factoryWalk": [
+                _factory_walk_gap("Sugar", observed="While"),
+                _factory_walk_gap(
+                    "Floor", owner="attribute", observed="TermValue"
+                ),
+            ]
+        },
+    }
+    summary = summarize_pandas_completed_wall(report)
+    floors = PandasWallFloors(
+        mode="complete",
+        gaps_total_ceiling=0,
+        gap_template_ceilings={},
+        green=0,
+        pre_bearing=0,
+        implications=0,
+        frontier_needle="",
+        frontier_owner="",
+        frontier_shape="",
+    )
+    breaches = check_pandas_wall_floors(summary, floors)
+    assert breaches
+    assert any("construction gap ceiling breached" in b for b in breaches)
+    assert any(
+        "construction gap template ceiling breached" in b for b in breaches
+    )
+
+
+def test_completed_wall_zero_gaps_stays_clean() -> None:
+    """Genuinely clean factoryWalk still summarizes gaps_total=0."""
+    report = {
+        "lineAccounting": [
+            {
+                "file": "pkg.py",
+                "line": 1,
+                "class": "warrant",
+                "grounds": "cid:blake3-512:x",
+            }
+        ],
+        "contracts": [{"pre": {"kind": "atomic"}}],
+        "callEdges": [{"kind": "implication"}],
+        "factoryAuditSummary": {
+            "factoryWalk": [
+                {
+                    "kind": "factory-walk-row",
+                    "verdict": "complete",
+                    "status": "warranted",
+                },
+                {
+                    "kind": "factory-walk-row",
+                    "verdict": "incomplete",
+                    "status": "runtime-effect",
+                },
+            ]
+        },
+    }
+    summary = summarize_pandas_completed_wall(report)
+    assert summary.gaps_total == 0
+    assert summary.gaps_by_bucket == {
+        "Constructor": 0,
+        "Floor": 0,
+        "ProofIR": 0,
+        "Sugar": 0,
+    }
+    assert summary.gap_templates == {}
+    assert summary.green == 1
+    assert summary.pre_bearing == 1
+    assert summary.implications == 1
+    assert (
+        check_pandas_wall_floors(
+            summary,
+            PandasWallFloors(
+                mode="complete",
+                gaps_total_ceiling=0,
+                gap_template_ceilings={},
+                green=1,
+                pre_bearing=1,
+                implications=1,
+                frontier_needle="",
+                frontier_owner="",
+                frontier_shape="",
+            ),
+        )
+        == []
+    )
+
+
 def test_build_uses_sugarbin_cached_audit_workspace_and_structured_gap_mode(
     tmp_path: Path,
 ) -> None:
