@@ -7,9 +7,6 @@ site matches the locus. Silently-unaccounted is the Crime-1 gate (RED when >0).
 
 from __future__ import annotations
 
-import pytest
-
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
@@ -50,27 +47,28 @@ def test_minority_demo_assert_is_lifted_cited_not_silent_residue() -> None:
 
 
 def test_unliftable_assert_refused_loud_via_audit_door() -> None:
-    """(b) Report path panics loud; audit door enumerates gap rows as refused.
+    """(b) Report path holds per-def; audit gaps refuse the assert locus.
 
-    Finding (wiring):
-      * lift_file_payload / non-audit _handle_lift: FactoryPanic propagates --
-        the whole file lift aborts; no liftCoverage is built on that path.
-      * audit_lift_file(hold_panic=True) / _handle_lift_audit_only: panic is
-        held; auditOnlyGaps rows are emitted. Clean defs still contribute IR.
-        Coverage is not built on the audit error path today -- the wall drinks
-        gaps from the RPC error; unit accounting feeds gaps into the payload.
-      * While-before-assert: gap site is the While (not the Assert line), so a
-        site-matched refused-loud rule does not claim the assert. An unliftable
-        construct *on* the assert expression (ListComp) puts blame on the same
-        line as the census AssertLocus -- that is the real refused-loud join.
+    Finding (wiring, post report-renders-None-arm-red):
+      * lift_file_payload holds FactoryPanic (hold_panic=True) and projects a
+        FactoryWalkRedRowDto -- the visual None arm. Nothing raises.
+      * audit_lift_file still returns structured AuditOnlyGap rows; the wall
+        audit-only path drinks them as auditOnlyGaps. Coverage refused-loud
+        matches gap site (blame file:line) to the census AssertLocus.
+      * Unliftable construct *on* the assert expression (ListComp) puts blame
+        on the same line as the census assert -- that is the refused-loud join.
     """
     # Unliftable expression *on* the assert line so gap site == assert locus.
     source = "def test_t():\n    assert [x for x in [1]]\n"
     file = "t.py"
 
-    with pytest.raises(FactoryPanic) as raised:
-        lift_file_payload(source, file)
-    assert raised.value.info.observed == "ListComp"
+    # Report path holds: red walk row, no raise.
+    held = lift_file_payload(source, file)
+    assert not any(row.name.endswith("::assertion") for row in held.ir)
+    from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
+
+    red = [r for r in held.factory_walk if isinstance(r, FactoryWalkRedRowDto)]
+    assert red and red[0].ast_kind == "ListComp"
 
     payload, gaps = audit_lift_file(source, file, hold_panic=True)
     assert gaps, "audit door must enumerate the ListComp gap"
@@ -96,8 +94,8 @@ def test_unliftable_assert_refused_loud_via_audit_door() -> None:
     assert ax["refused_loci"][0]["line"] == 2
 
 
-def test_while_before_assert_report_path_raises() -> None:
-    """While before an assert: production door panics; no silent cover-up.
+def test_while_before_assert_gap_site_is_while_not_assert() -> None:
+    """While before an assert: report holds; gap site is While, assert silent.
 
     Audit gap site is the While line, not the Assert -- site-matched
     refused-loud does not claim the assert. Crime-1 stays RED for that
@@ -109,9 +107,12 @@ def test_while_before_assert_report_path_raises() -> None:
         "        x = x - 1\n"
         "    assert x == 0\n"
     )
-    with pytest.raises(FactoryPanic) as raised:
-        lift_file_payload(source, "bad.py")
-    assert raised.value.info.observed == "While"
+    # Report path holds the While gap as a red factory_walk row.
+    held = lift_file_payload(source, "bad.py")
+    from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
+
+    red = [r for r in held.factory_walk if isinstance(r, FactoryWalkRedRowDto)]
+    assert red and red[0].ast_kind == "While"
 
     payload, gaps = audit_lift_file(source, "bad.py", hold_panic=True)
     assert any(g.info.get("observed") == "While" for g in gaps)

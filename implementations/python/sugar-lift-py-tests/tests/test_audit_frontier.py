@@ -1,6 +1,7 @@
 """The audit door holds FactoryPanic and enumerates the frontier: a clean def
 still produces its universe row, an unowned node (While) becomes a structured
-gap row, and the walk continues. Production lift stays panic-loud."""
+gap row (and a red factory_walk row), and the walk continues. hold_panic=False
+stays panic-loud for callers that demand the abort."""
 
 from __future__ import annotations
 
