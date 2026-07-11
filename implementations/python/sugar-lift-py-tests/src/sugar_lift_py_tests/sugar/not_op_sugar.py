@@ -11,16 +11,19 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class NotOpSugar(Sugar, role=SugarRole.TERM):
-    """The `not` operator. It reduces the operand and asks it to negate itself.
-    The bool literal owns the flip; values that do not stand on the negate floor
-    panic for free. Its own sugar, its own type; no fork."""
+    """Legacy `not` arm -- ownership moved to UnaryOpSugar (all four UnaryOp
+    shapes: -/+/not/~). Kept registered only so comes_before edges remain
+    valid; owns always returns False."""
 
     operand: SugarBody
     site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "UnaryOp" and site.operator_kind() == "Not"
+        # UnaryOpSugar owns UnaryOp including Not -- do not double-claim.
+        del site
+        return False
+
 
     @classmethod
     def new(cls, site, ctx) -> "NotOpSugar":

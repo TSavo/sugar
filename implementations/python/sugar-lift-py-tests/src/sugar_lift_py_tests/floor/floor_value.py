@@ -613,6 +613,107 @@ class FloorValue:
             ),
         )
 
+    def unary_minus(self, site):
+        # Default: no arithmetic negation floor. TermValue folds; SymbolicValue
+        # emits py.neg; absence is the honest "no".
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="unary_minus",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the unary-minus floor",
+            fix=f"write more Floor: implement {observed}.unary_minus",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="unary_minus",
+                status="floor-gap",
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
+    def unary_plus(self, site):
+        # Default: no unary-plus floor. TermValue / SymbolicValue implement.
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="unary_plus",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the unary-plus floor",
+            fix=f"write more Floor: implement {observed}.unary_plus",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="unary_plus",
+                status="floor-gap",
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
+    def bitwise_invert(self, site):
+        # Default: no bitwise-not floor. TermValue folds ints; SymbolicValue
+        # emits py.invert; absence is the honest "no".
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="bitwise_invert",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the bitwise-invert floor",
+            fix=f"write more Floor: implement {observed}.bitwise_invert",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="bitwise_invert",
+                status="floor-gap",
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def equals(self, other, site):
         # Default: EMIT an operator-indexed atom. Fold when both sides are
         # ground (the literal pair overrides); emit when either side stands on

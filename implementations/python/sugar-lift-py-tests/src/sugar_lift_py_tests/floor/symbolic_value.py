@@ -52,6 +52,31 @@ class SymbolicValue(FloorValue):
             )
         )
 
+    def unary_minus(self, site):
+        # Symbolic arithmetic negation: emit py.neg(term) (LAW in symbolic_term).
+        del site
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(SymbolicValue(ctor("py.neg", [self.term])))
+
+    def unary_plus(self, site):
+        # Unary plus on a symbolic is identity (symbolic_term UAdd returns the
+        # operand). Match the LAW; do not invent a py.pos spelling.
+        del site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self)
+
+    def bitwise_invert(self, site):
+        # Symbolic bitwise NOT: emit py.invert(term).
+        del site
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(SymbolicValue(ctor("py.invert", [self.term])))
+
+
     def subscript(self, index, site):
         # A symbolic receiver stays the py.subscript coordinate regardless of index.
         return self.py_subscript_coordinate(index, site)
