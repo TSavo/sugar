@@ -4,6 +4,9 @@ Membrane: fleet/CallSugar emits call:f(...) coordinates. This module resolves
 f to a FunctionDef (same module, from_import, or importable module.attr), tags
 install-source provenance, and builds a diggable body via build_bridge_body.
 
+Method dig: MethodCallSugar attaches body when recv is a known class ctor /
+from_import class and the method FunctionDef resolves on install source.
+
 Bridge/dig doctrine:
 - Resolve first; None means body stays None (coordinate only / dig opaque).
 - Prefer real source file (Download Sources / site-packages) over invention.
@@ -23,8 +26,7 @@ from typing import Any
 def module_sibling_function_nodes(module_name: str) -> dict:
     """AST FunctionDef nodes for every def in ``module_name``, bare + qualified keys.
 
-    Enables open dig of ``base64.urlsafe_b64encode`` to resolve same-module
-    ``b64encode`` (and itsdangerous ``want_bytes`` when digging encoding bodies).
+    Also indexes ``Class.method`` / ``module.Class.method`` for method body dig.
     """
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
@@ -42,15 +44,28 @@ def module_sibling_function_nodes(module_name: str) -> dict:
         return {}
     nodes: dict = {}
     for child in parsed.walk():
-        if child.observed != "FunctionDef":
-            continue
-        name = child.function_name()
-        child.node.decorator_list = []  # type: ignore[attr-defined]
-        child.node._sugar_source = source  # type: ignore[attr-defined]
-        child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
-        child.node._sugar_bridge_name = f"{module_name}.{name}"  # type: ignore[attr-defined]
-        nodes[name] = child.node
-        nodes[f"{module_name}.{name}"] = child.node
+        if child.observed == "FunctionDef":
+            name = child.function_name()
+            child.node.decorator_list = []  # type: ignore[attr-defined]
+            child.node._sugar_source = source  # type: ignore[attr-defined]
+            child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
+            child.node._sugar_bridge_name = f"{module_name}.{name}"  # type: ignore[attr-defined]
+            nodes[name] = child.node
+            nodes[f"{module_name}.{name}"] = child.node
+        elif child.observed == "ClassDef":
+            cname = child.class_name()
+            for stmt in child.class_body():
+                if stmt.observed != "FunctionDef":
+                    continue
+                mname = stmt.function_name()
+                stmt.node.decorator_list = []  # type: ignore[attr-defined]
+                stmt.node._sugar_source = source  # type: ignore[attr-defined]
+                stmt.node._sugar_file = sourcefile  # type: ignore[attr-defined]
+                stmt.node._sugar_bridge_name = (
+                    f"{module_name}.{cname}.{mname}"
+                )  # type: ignore[attr-defined]
+                nodes[f"{cname}.{mname}"] = stmt.node
+                nodes[f"{module_name}.{cname}.{mname}"] = stmt.node
     return nodes
 
 
@@ -65,7 +80,6 @@ def resolve_install_source_funcdef(import_target: str):
         module = importlib.import_module(module_name)
         obj = getattr(module, attr)
         if not callable(obj) or inspect.isclass(obj):
-            # Classes are not free-function dig targets in this PR.
             return None
         source = textwrap.dedent(inspect.getsource(obj))
     except (ImportError, AttributeError, OSError, TypeError):
@@ -88,14 +102,54 @@ def resolve_install_source_funcdef(import_target: str):
     return None
 
 
-def resolve_call_funcdef(target_name: str, ctx: Any):
-    """Resolve a plain-name call target to a FunctionDef SourceFragment, or None.
+def resolve_install_source_class_method(qualified_class: str, method_name: str):
+    """Resolve ``module.Class.method`` to a FunctionDef SourceFragment, or None."""
+    if not qualified_class or not method_name or "." not in qualified_class:
+        return None
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
-    Order:
-    1. ``ctx.name_resolver`` (same-module defs seeded by audit_lift_file)
-    2. ``ctx.from_imports`` → ``module.attr`` install-source
-    3. ``ctx.import_aliases`` not used for bare names (attr path is MethodCall)
-    """
+    module_name, class_name = qualified_class.rsplit(".", 1)
+    siblings = module_sibling_function_nodes(module_name)
+    node = siblings.get(f"{module_name}.{class_name}.{method_name}") or siblings.get(
+        f"{class_name}.{method_name}"
+    )
+    if node is not None:
+        return SourceFragment.from_node(
+            node, getattr(node, "_sugar_file", f"<{module_name}>")
+        )
+
+    try:
+        module = importlib.import_module(module_name)
+        cls = getattr(module, class_name)
+        if not inspect.isclass(cls):
+            return None
+        obj = cls.__dict__.get(method_name)
+        if obj is None:
+            obj = getattr(cls, method_name, None)
+        if obj is None or not callable(obj):
+            return None
+        source = textwrap.dedent(inspect.getsource(obj))
+        sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
+    except (ImportError, AttributeError, OSError, TypeError):
+        return None
+    try:
+        parsed = SourceFragment.from_source(source, sourcefile)
+    except SyntaxError:
+        return None
+    for child in parsed.walk():
+        if child.observed == "FunctionDef" and child.function_name() == method_name:
+            child.node.decorator_list = []  # type: ignore[attr-defined]
+            child.node._sugar_source = source  # type: ignore[attr-defined]
+            child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
+            child.node._sugar_bridge_name = (
+                f"{qualified_class}.{method_name}"
+            )  # type: ignore[attr-defined]
+            return child
+    return None
+
+
+def resolve_call_funcdef(target_name: str, ctx: Any):
+    """Resolve a plain-name call target to a FunctionDef SourceFragment, or None."""
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
     if not target_name or ctx is None:
@@ -107,7 +161,6 @@ def resolve_call_funcdef(target_name: str, ctx: Any):
         filename = getattr(ctx, "filename", "<module>")
         site = SourceFragment.from_node(node, filename)
         if site.observed == "FunctionDef":
-            # Tag with module file when available so global binds seed.
             sugar_file = getattr(node, "_sugar_file", None) or filename
             sugar_source = getattr(node, "_sugar_source", None)
             if sugar_source is None and sugar_file and Path(sugar_file).is_file():
@@ -124,7 +177,6 @@ def resolve_call_funcdef(target_name: str, ctx: Any):
     if target_name in from_imports:
         mod, attr = from_imports[target_name]
         qualified = f"{mod}.{attr}" if mod else attr
-        # Prefer full-module sibling node (real file + globals).
         if mod:
             siblings = module_sibling_function_nodes(mod)
             n = siblings.get(qualified) or siblings.get(attr)
@@ -137,13 +189,94 @@ def resolve_call_funcdef(target_name: str, ctx: Any):
     return None
 
 
-def build_dig_body(fn_site, ctx: Any):
+def _receiver_class_name(receiver_floor: Any) -> str | None:
+    """Best-effort class name from a reduced method receiver floor."""
+    if receiver_floor is None:
+        return None
+    target = getattr(receiver_floor, "target_name", None)
+    if isinstance(target, str) and target:
+        return target
+    bound = getattr(receiver_floor, "bound_name", None) or getattr(
+        receiver_floor, "name", None
+    )
+    if isinstance(bound, str) and bound:
+        return bound
+    return None
+
+
+def resolve_method_funcdef(method_name: str, receiver_floor: Any, ctx: Any):
+    """Resolve recv.method to a FunctionDef SourceFragment, or None."""
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    if not method_name or ctx is None:
+        return None
+
+    class_name = _receiver_class_name(receiver_floor)
+    resolver = getattr(ctx, "name_resolver", None) or {}
+
+    if class_name:
+        key = f"{class_name}.{method_name}"
+        node = resolver.get(key)
+        if node is not None:
+            filename = getattr(ctx, "filename", "<module>")
+            site = SourceFragment.from_node(node, filename)
+            if site.observed == "FunctionDef":
+                sugar_file = getattr(node, "_sugar_file", None) or filename
+                sugar_source = getattr(node, "_sugar_source", None)
+                if sugar_source is None and sugar_file and Path(sugar_file).is_file():
+                    try:
+                        sugar_source = Path(sugar_file).read_text(encoding="utf-8")
+                    except OSError:
+                        sugar_source = None
+                if sugar_source is not None:
+                    node._sugar_source = sugar_source  # type: ignore[attr-defined]
+                    node._sugar_file = sugar_file  # type: ignore[attr-defined]
+                return site
+
+        from_imports = getattr(ctx, "from_imports", None) or {}
+        if class_name in from_imports:
+            mod, attr = from_imports[class_name]
+            qualified = f"{mod}.{attr}" if mod else attr
+            return resolve_install_source_class_method(qualified, method_name)
+
+    return None
+
+
+def method_body_is_attachable(fn_site) -> bool:
+    """Whether attaching dig body is safe under current floors.
+
+    Complex method bodies (BinOp, attribute chains, multi-stmt) still reduce
+    through missing CallSiteValue floors and factory_panic the whole def.
+    Attach only simple return faces; complex stay body=None (coordinate-only)
+    until those floors exist. Free-function dig is opt-in via build_dig_body
+    without this gate when caller wants full try.
+    """
+    if fn_site is None or fn_site.observed != "FunctionDef":
+        return False
+    frags = fn_site.function_body()
+    if len(frags) != 1 or frags[0].observed != "Return":
+        return False
+    rv = frags[0].return_value()
+    if rv is None:
+        return False
+    # Name / constant / attribute of self (self.x) — no BinOp / nested call yet.
+    obs = rv.observed
+    if obs in ("Name", "Constant", "PrimitiveLiteral", "JoinedStr"):
+        return True
+    if obs == "Attribute":
+        recv = rv.attr_receiver()
+        return recv is not None and recv.observed == "Name"
+    return False
+
+
+def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
     """Build diggable body for ``fn_site`` FunctionDef, or None on failure."""
     if fn_site is None or fn_site.observed != "FunctionDef":
         return None
+    if require_attachable and not method_body_is_attachable(fn_site):
+        return None
     from sugar_lift_py_tests.factory.sugar_constructors import build_bridge_body
 
-    # Recursion / re-entrancy: skip if already building this callee.
     building = getattr(ctx, "building", frozenset()) or frozenset()
     name = fn_site.function_name()
     bridge = getattr(fn_site.node, "_sugar_bridge_name", None) or name
@@ -153,10 +286,18 @@ def build_dig_body(fn_site, ctx: Any):
         from dataclasses import replace
 
         body_ctx = replace(ctx, building=building | {name, bridge})
-        # Seed siblings into name_resolver for same-module nested calls.
         mod = getattr(fn_site.node, "_sugar_bridge_name", "") or ""
         if "." in str(mod):
-            module_name = str(mod).rsplit(".", 1)[0]
+            # module.Class.method → seed module siblings
+            parts = str(mod).split(".")
+            module_name = parts[0] if len(parts) <= 2 else ".".join(parts[:-2])
+            if len(parts) == 2:
+                module_name = parts[0]
+            elif len(parts) >= 3:
+                module_name = ".".join(parts[:-2]) if parts[-2][0].isupper() else ".".join(parts[:-1])
+            # Prefer: package.module from first two segments when middle is Class
+            if len(parts) >= 3 and parts[-2][:1].isupper():
+                module_name = ".".join(parts[:-2])
             siblings = module_sibling_function_nodes(module_name)
             if siblings:
                 merged = dict(getattr(body_ctx, "name_resolver", None) or {})
@@ -164,25 +305,17 @@ def build_dig_body(fn_site, ctx: Any):
                 body_ctx = replace(body_ctx, name_resolver=merged)
         return build_bridge_body(fn_site, body_ctx)
     except Exception:
-        # IncompleteFunctionBody is Exception; Incomplete is not BaseException.
-        # Any build failure → coordinate only (body=None). Never invent.
         return None
 
 
 def dig_parameters_for_body(fn_site, arg_count: int, keyword_names: tuple[str, ...]):
-    """Formal names for CallSiteValue.parameters when body dig can run.
-
-    Dig requires ``len(parameters) == len(arg_values)``. Prefer function formals
-    when arity matches positional-only calls; keyword-only uses keyword_names.
-    """
+    """Formal names for CallSiteValue.parameters when body dig can run."""
     if fn_site is None:
         return keyword_names
     formals = tuple(fn_site.function_params())
     if keyword_names:
-        # Keyword values are trailing; parameters are keyword names in order.
         if len(keyword_names) == arg_count:
             return keyword_names
-        # Mixed pos+kw: need full formal list of same length — else dig stays opaque.
         if len(formals) == arg_count:
             return formals
         return keyword_names
@@ -191,6 +324,5 @@ def dig_parameters_for_body(fn_site, arg_count: int, keyword_names: tuple[str, .
     return ()
 
 
-# Aliases matching historical test imports from call_sugar
 _resolve_install_source_funcdef = resolve_install_source_funcdef
 _module_sibling_function_nodes = module_sibling_function_nodes

@@ -18,7 +18,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
     then positional args, then keyword VALUES in source order. Keyword names
     ride in `parameters` (not dropped). Disjoint from CallSugar (plain-name,
     no receiver) and OsSugar (`os.exit`). ``**kwargs`` expansion stays a loud
-    gap (unowned).
+    gap (unowned). Body dig via install_source_dig when receiver class resolves.
     """
 
     method_name: str
@@ -97,12 +97,33 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
         if not remaining:
             from sugar_lift_py_tests.floor import CallSiteValue
             from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.sugar.install_source_dig import (
+                build_dig_body,
+                dig_parameters_for_body,
+                resolve_method_funcdef,
+            )
+
+            # Method body dig: receiver is accumulated[0]. Resolve class.method
+            # from name_resolver / from_imports / install-source. body=None is
+            # still lawful coordinate-only when resolve fails.
+            receiver_floor = accumulated[0] if accumulated else None
+            fn = resolve_method_funcdef(self.method_name, receiver_floor, ctx)
+            body = (
+                build_dig_body(fn, ctx, require_attachable=True)
+                if fn is not None
+                else None
+            )
+            parameters = dig_parameters_for_body(
+                fn, len(accumulated), self.keyword_names
+            )
+            if body is None:
+                parameters = self.keyword_names
 
             return Complete(
                 CallSiteValue(
                     target_name=self.method_name,
                     arg_values=accumulated,
-                    parameters=self.keyword_names,
+                    parameters=parameters,
                     term=ctor(
                         f"call:{self.method_name}",
                         [
@@ -110,7 +131,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                             for value in accumulated
                         ],
                     ),
-                    body=None,
+                    body=body,
                     site=self.site,
                 )
             )
