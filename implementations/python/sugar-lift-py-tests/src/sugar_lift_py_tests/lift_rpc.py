@@ -667,15 +667,79 @@ def _lift_file_for_enumeration(
     """
     full_path = (root / file_rel).resolve()
     source = full_path.read_text(encoding="utf-8")
-    try:
-        result = lift_source(str(full_path), source, memento_file=file_rel)
-    except ValueError as exc:
-        if "no source sites" in str(exc):
-            return [], []
-        raise
-    ir_items = [to_rpc_value(item) for item in result.payload.ir]
-    call_edges = [to_rpc_value(edge) for edge in result.payload.call_edges]
-    return ir_items, call_edges
+    file_payload = lift_file_payload(source, str(full_path))
+    ir_items = [to_rpc_value(item) for item in file_payload.ir]
+    # callEdges from the collapse are a follow-up: CallSiteValues in the record
+    # carry the coordinates, but the edge rows are not projected yet. This is a
+    # named gap, not silent truncation.
+    return ir_items, []
+
+
+
+def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
+    """The RPC door over the collapse. Build each def through the factory,
+    slam it, and serve the record's projections as wire rows: one
+    function-contract row per universe (post, formals, the def's sealed
+    warrant) and one contract row per stated inv (Stated provenance, its own
+    warrant read off the carried fragment). Enumeration is functions by
+    design: module statements no FunctionDefSugar owns are not lifted here.
+    """
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.factory.build import build_node, default_catalog
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.floor.universe_mint_projection import (
+        claim_formula,
+        construction_site,
+    )
+    from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
+    from sugar_lift_py_tests.outcome import complete_value
+    from sugar_lift_py_tests.proofir.nodes import Derived, Provenance, Stated
+    from sugar_lift_py_tests.sugar.function_def_sugar import FunctionDefSugar
+
+    payload = LiftReportPayloadDto(source_ledger={})
+    catalog = default_catalog()
+    module = SourceFragment.from_source(source, filename).statements()[0]
+    for stmt in module.statements():
+        if not FunctionDefSugar.owns(stmt):
+            continue
+        ctx = FactoryBuildContext(filename=filename, catalog=catalog)
+        result = build_node(stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx)
+        universe = complete_value(result.sugar.desugar(ctx), owner="lift_file_payload")
+        def_memento = stmt.memento()
+        post_provenance = Provenance(
+            node_class="BodyUniverseDto",
+            construction_site=construction_site(stmt),
+            warrant=Derived(floor_chain=("UniverseValue.post",)),
+        )
+        payload.ir.append(
+            BodyUniverseDto(
+                name=universe.name,
+                post=claim_formula(
+                    universe.post(),
+                    formals=universe.formals,
+                    provenance=post_provenance,
+                    role="post",
+                ),
+                source_warrants=[def_memento],
+                formals=list(universe.formals),
+                kind="function-contract",
+                bridge_source_symbol=universe.name,
+            )
+        )
+        for entry in universe.record.statements:
+            for row in entry.mint_contribution(universe.name, universe.formals):
+                payload.ir.append(
+                    BodyUniverseDto(
+                        name=row.name,
+                        inv=row.formula,
+                        source_warrants=list(row.source_warrants),
+                        formals=list(row.formals),
+                        kind="contract",
+                    )
+                )
+        payload.source_mementos.append(def_memento)
+    return payload
 
 
 def _item_memento(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1309,33 +1373,14 @@ def _handle_lift(
             except ValueError:
                 rel_path = full_path.name
             with open(path, "r", encoding="utf-8") as handle:
-                try:
-                    result = lift_source(
-                        path,
-                        handle.read(),
-                        memento_file=rel_path,
-                        contract_bindings=contract_bindings,
-                    )
-                except ValueError as exc:
-                    if str(exc) == NO_SOURCE_SITES_MESSAGE:
-                        continue
-                    raise
-            if hasattr(result, "payload"):
-                file_payload = result.payload
-                if bindings_backed_pass:
-                    payload.call_edges.extend(file_payload.call_edges)
-                    payload.implications.extend(file_payload.implications)
-                    payload.diagnostics.extend(file_payload.diagnostics)
-                    continue
-                payload.ir.extend(file_payload.ir)
-                payload.source_mementos.extend(file_payload.source_mementos)
-                _merge_source_ledger(payload.source_ledger, file_payload.source_ledger)
-                payload.source_audits.extend(file_payload.source_audits)
-                payload.factory_audits.extend(file_payload.factory_audits)
-                payload.factory_walk.extend(file_payload.factory_walk)
-                payload.call_edges.extend(file_payload.call_edges)
-                payload.implications.extend(file_payload.implications)
-                payload.diagnostics.extend(file_payload.diagnostics)
+                file_payload = lift_file_payload(handle.read(), path)
+            if bindings_backed_pass:
+                # The collapse does not project call edges or implications yet
+                # (named gap; the coordinates ride in the record). Nothing to
+                # merge on a bindings-backed pass.
+                continue
+            payload.ir.extend(file_payload.ir)
+            payload.source_mementos.extend(file_payload.source_mementos)
         # #4013: dual-axis lift coverage as first-class --report line items.
         # Independent AST census (second computation) vs this payload's accounting.
         # LiftReportPayloadDto is frozen — rebuild with replace(), never assign.
