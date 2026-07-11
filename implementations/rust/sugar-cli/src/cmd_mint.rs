@@ -1495,11 +1495,16 @@ fn dependency_contract_refs_cache_path(project_root: &Path, key: &str) -> std::p
         .join(format!("{key}.json"))
 }
 
-fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
+/// Public face of dependency-proof binding extraction (#3808 warm overlay).
+///
+/// Reads only `.sugar/imports/*.proof` (declared vendor deps) and returns the
+/// same binding rows the mint path feeds consumer lifters. Used by the LSP
+/// warm overlay to mint consumer→vendor bridges without a full scratch mint.
+pub fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
     // Scope strictly to declared dependency proofs under `.sugar/imports/`.
     // (`load_all_proofs::run` recursively walks the WHOLE crate tree, which
     // would slurp stale proofs under target/, examples/, the crate's own
-    // freshly-minted output, etc. — we want only what the kit author placed
+    // freshly-minted output, etc. -- we want only what the kit author placed
     // in imports/ as a dependency.)
     let imports_dir = project_root.join(".sugar").join("imports");
     let mut proof_files = Vec::new();
@@ -1785,6 +1790,190 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
     }
 
     result
+}
+
+/// Whether `project_root` declares vendor dependencies via staged imports.
+///
+/// True when `.sugar/imports/` holds at least one `*.proof` file -- the same
+/// surface `contract_bindings_from_dependency_proofs` reads.
+pub fn project_declares_import_dependencies(project_root: &Path) -> bool {
+    let imports_dir = project_root.join(".sugar").join("imports");
+    let Ok(entries) = std::fs::read_dir(&imports_dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|ext| ext == "proof")
+    })
+}
+
+/// True when any dependency binding carries a post-bearing universe that
+/// needs a consumer→vendor bridge for ambient-post specialization (case-2).
+pub fn dependency_bindings_need_bridges(bindings: &[Value]) -> bool {
+    bindings.iter().any(|binding| {
+        let has_post = binding
+            .get("has_post")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || binding.get("post").is_some_and(|p| p.is_object());
+        if !has_post {
+            return false;
+        }
+        // A bridge needs a resolvable target CID and a callsite symbol.
+        let has_target = binding
+            .get("contract_cid")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty());
+        has_target
+    })
+}
+
+/// #3808: inject consumer→vendor bridges into `pool` from the project's
+/// declared import proofs, and load those proofs so bridge targets resolve.
+///
+/// The warm overlay deliberately excludes `.sugar/imports` from the scratch
+/// tree and does not run a full mint (library_bindings=false / enumerate→fold).
+/// Without this pass, case-2 (universe via binding, e.g. base64 str.eq-bv-blocks)
+/// loses its law: consumer members load, ambient-post specialization has no
+/// bridge, and the warm path returns un-degraded 0 rows (false green).
+///
+/// Returns the number of bridges minted into `pool`.
+pub fn inject_dependency_bridges_into_pool(
+    project_root: &Path,
+    pool: &mut sugar_verifier::types::MementoPool,
+) -> usize {
+    let imports_dir = project_root.join(".sugar").join("imports");
+    let mut proof_files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&imports_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("proof") {
+                proof_files.push(path);
+            }
+        }
+    }
+    if proof_files.is_empty() {
+        return 0;
+    }
+
+    // Stage vendor members (contract bodies + atoms) into the overlay pool so
+    // `collect_ambient_posts` can resolve `targetContractCid` when it walks the
+    // bridges we mint below. First-writer-wins: CIDs already present stay.
+    sugar_verifier::load_all_proofs::load_files_into_pool(&proof_files, pool);
+
+    let bindings = contract_bindings_from_dependency_proofs(project_root);
+    if bindings.is_empty() {
+        return 0;
+    }
+
+    let mut graph = ProofGraph::new();
+    let mut minted = 0usize;
+    let produced_at = "1970-01-01T00:00:00.000Z".to_string();
+    let mut seen_symbols: BTreeSet<String> = BTreeSet::new();
+
+    for binding in &bindings {
+        let has_post = binding
+            .get("has_post")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || binding.get("post").is_some_and(|p| p.is_object());
+        if !has_post {
+            continue;
+        }
+        let Some(target_cid) = binding
+            .get("contract_cid")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        // Prefer an explicit bridgeSourceSymbol; fall back to call:<leaf>
+        // from the contract name so ambient-post matching still fires on
+        // ctor names the consumer assertion emits.
+        let source_symbol = binding
+            .get("bridgeSourceSymbol")
+            .or_else(|| binding.get("bridge_source_symbol"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                binding
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(|name| {
+                        let leaf = name.rsplit("::").next().unwrap_or(name);
+                        if leaf.starts_with("call:") || leaf.starts_with("method:") {
+                            leaf.to_string()
+                        } else {
+                            format!("call:{leaf}")
+                        }
+                    })
+            });
+        let Some(source_symbol) = source_symbol else {
+            continue;
+        };
+        if !seen_symbols.insert(source_symbol.clone()) {
+            continue;
+        }
+
+        let target_proof_cid = binding
+            .get("target_proof_cid")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
+        // ContractMementoRef::new panics on untagged CIDs; only accept
+        // blake3-512: forms that already survived the dependency binder.
+        if !target_cid.starts_with("blake3-512:") {
+            continue;
+        }
+        let target_ref = ContractMementoRef::new(target_cid.to_string());
+        let bridge = mint_bridge(&MintBridgeArgs {
+            produced_by: "sugar-cli/inject_dependency_bridges".to_string(),
+            produced_at: produced_at.clone(),
+            source_symbol,
+            source_layer: "source".to_string(),
+            target_contract: target_ref,
+            target_layer: "kit".to_string(),
+            ir_arg_sorts: vec![],
+            ir_return_sort: String::new(),
+            notes: "auto-minted warm-overlay dependency bridge (#3808)".to_string(),
+            signer_seed: DEV_SIGNER_SEED,
+            target_proof_cid,
+            callsite: None,
+        });
+        graph.push_bridge(BridgeMemento::new(bridge.canonical_bytes));
+        minted += 1;
+    }
+
+    if minted == 0 {
+        return 0;
+    }
+
+    // Seal the bridge graph and merge into the overlay pool (consumer speaker:
+    // these bridges are the consumer's binding of vendor law, not vendor
+    // testimony itself).
+    match sugar_compiler::orchestrate::pool_from_graph_with_speaker(
+        &graph,
+        sugar_verifier::Speaker::consumer("sugar-overlay-dependency-bridges"),
+    ) {
+        Ok(bridge_pool) => {
+            pool.merge(bridge_pool);
+            minted
+        }
+        Err(err) => {
+            warn!(
+                target: "sugar_cli::cmd_mint",
+                error = %err,
+                "inject_dependency_bridges_into_pool: failed to load bridge graph"
+            );
+            0
+        }
+    }
 }
 
 impl Kit for MintKit {
