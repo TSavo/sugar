@@ -75,3 +75,24 @@ Mint staging **preserves package layout** + puts `src/` on PYTHONPATH so dig can
 - `SUGAR_LSP_DOWNLOAD_VCS=1` forces git clone from `Project-URL: Source`
 - Automatic VCS fallback when sdist missing/fails
 - Still open: LSP UI prompt, recursive Requires-Dist
+
+## Remaining #4106 close-out (this PR)
+
+### Factory shapes
+- **`BytesLiteralSugar`** — `b"…"` was observed as `Constant` (not PrimitiveLiteral) and gap’d; now owns + reduces to `python:bytes(hex)`.
+- Unblocks `Signer(b"secret")` Constant gap; remaining silent suite asserts need more floors (TemporalContext, isinstance, pytest patterns) — still honest-silent.
+
+### Recursive Requires-Dist
+- `SUGAR_LSP_DOWNLOAD_RECURSIVE=1` or `[auto] download_recursive = true`
+- Direct deps only; uses installed metadata; optional extras may fail if not installed.
+
+### LSP UI
+- `window/showMessage` toast on successful `download-sources:` lines
+- `.sugar/config.toml` `[auto]` knobs → env defaults:
+
+```toml
+[auto]
+lift = true
+download_sources = true
+download_recursive = false
+```

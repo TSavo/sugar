@@ -118,6 +118,43 @@ def _extract_archive(blob: bytes, filename: str, dest: Path) -> Path:
     return final
 
 
+
+def download_distribution(dist_name: str, cache_dir: Path) -> dict:
+    """Download by distribution name (PyPI / metadata), not import name."""
+    import importlib.metadata as md
+
+    try:
+        dist = md.distribution(dist_name)
+    except md.PackageNotFoundError:
+        # normalize: charset-normalizer vs charset_normalizer
+        alt = dist_name.replace("-", "_")
+        try:
+            dist = md.distribution(alt)
+        except md.PackageNotFoundError:
+            alt2 = dist_name.replace("_", "-")
+            try:
+                dist = md.distribution(alt2)
+            except md.PackageNotFoundError:
+                return {
+                    "ok": False,
+                    "error": f"distribution not installed: {dist_name}",
+                    "name": dist_name,
+                }
+    # Reuse module path using the distribution's top-level name when possible
+    name = dist.metadata.get("Name") or dist.name
+    # Prefer first top-level package from files
+    module = name.replace("-", "_")
+    try:
+        # packages_distributions reverse: find a module owned by this dist
+        for mod, dists in (md.packages_distributions() or {}).items():
+            if any(d.lower() == name.lower() for d in (dists or [])):
+                module = mod
+                break
+    except Exception:
+        pass
+    return download_sources(module, cache_dir)
+
+
 def download_sources(module: str, cache_dir: Path) -> dict:
     dist = _dist_for_module(module)
     if dist is None:
@@ -332,10 +369,60 @@ def main(argv: list[str]) -> int:
     module, cache = argv[1], Path(argv[2])
     try:
         result = download_sources(module, cache)
+        if result.get("ok") and _recursive_enabled():
+            result["recursive"] = _download_requires(
+                result.get("name") or module, Path(cache)
+            )
     except Exception as e:
         result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
     print(json.dumps(result))
     return 0 if result.get("ok") else 1
+
+
+def _recursive_enabled() -> bool:
+    return os.environ.get("SUGAR_LSP_DOWNLOAD_RECURSIVE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _download_requires(dist_name: str, cache_dir: Path) -> list:
+    """Fetch Requires-Dist of the installed dist (direct deps only)."""
+    import importlib.metadata as md
+    import re
+
+    out = []
+    try:
+        dist = md.distribution(dist_name)
+    except Exception as e:
+        return [{"ok": False, "error": str(e)}]
+    reqs = dist.requires or []
+    seen = {dist_name.lower()}
+    for req in reqs:
+        # strip extras/markers: 'urllib3<3,>=1.21.1; extra == "..."'
+        name = re.split(r"[<=>!~;\[]", req, maxsplit=1)[0].strip()
+        if not name or name.lower() in seen:
+            continue
+        # skip extras-only requirements when marker present with extra ==
+        if "extra ==" in req.replace(" ", ""):
+            continue
+        seen.add(name.lower())
+        try:
+            child = download_distribution(name, cache_dir)
+        except Exception as e:
+            child = {"ok": False, "name": name, "error": str(e)}
+        out.append(
+            {
+                "name": name,
+                "ok": bool(child.get("ok")),
+                "via": child.get("via"),
+                "root": child.get("root"),
+                "error": child.get("error"),
+            }
+        )
+    return out
 
 
 if __name__ == "__main__":

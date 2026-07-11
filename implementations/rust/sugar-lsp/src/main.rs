@@ -863,6 +863,13 @@ async fn in_process_solve_and_publish(
         client
             .log_message(MessageType::INFO, format!("#4007 {line}"))
             .await;
+        // Maven-class "Download sources" affordance (#4106): surface fetch
+        // events as a user-visible toast, not only Output log.
+        if line.starts_with("download-sources:") && !line.contains(" skip:") {
+            client
+                .show_message(MessageType::INFO, format!("Sugar: {line}"))
+                .await;
+        }
     }
 
     let project_root = prove_ctx
@@ -956,6 +963,29 @@ fn build_diagnostics(result: &backend::VerifyResult, range: Range) -> Vec<Diagno
     }
 }
 
+
+fn apply_auto_config_env(auto: &config::AutoConfig) {
+    // Only fill unset env so operators can still override from the shell.
+    if std::env::var_os("SUGAR_LSP_AUTO_LIFT").is_none() {
+        std::env::set_var(
+            "SUGAR_LSP_AUTO_LIFT",
+            if auto.lift { "1" } else { "0" },
+        );
+    }
+    if std::env::var_os("SUGAR_LSP_DOWNLOAD_SOURCES").is_none() {
+        std::env::set_var(
+            "SUGAR_LSP_DOWNLOAD_SOURCES",
+            if auto.download_sources { "1" } else { "0" },
+        );
+    }
+    if std::env::var_os("SUGAR_LSP_DOWNLOAD_RECURSIVE").is_none() {
+        std::env::set_var(
+            "SUGAR_LSP_DOWNLOAD_RECURSIVE",
+            if auto.download_recursive { "1" } else { "0" },
+        );
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let mut config_path = ".sugar/config.toml".to_string();
@@ -981,6 +1011,8 @@ async fn main() {
 
     // Read config
     let config = config::load_config(&config_path).unwrap_or_default();
+    // Workspace [auto] → env defaults (env already set wins).
+    apply_auto_config_env(&config.auto);
 
     let backend_path = config.server.backend.clone();
 

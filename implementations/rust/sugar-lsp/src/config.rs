@@ -14,6 +14,11 @@
 //   plugin = "sugar-lsp-go"
 //   plugin_args = ["--rpc"]
 //
+//   [auto]
+//   lift = true
+//   download_sources = true
+//   download_recursive = false
+//
 // Language plugins are spawned as child processes and spoken to via JSON-RPC.
 
 use serde::Deserialize;
@@ -25,6 +30,27 @@ pub struct LspConfig {
     pub server: ServerConfig,
     #[serde(default)]
     pub language: Vec<LanguagePluginConfig>,
+    /// Auto-mode / Download sources knobs (#4007 / #4106).
+    /// Env vars still win when set; this is the workspace-default surface.
+    #[serde(default)]
+    pub auto: AutoConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AutoConfig {
+    /// Default on. Maps to SUGAR_LSP_AUTO_LIFT when env unset.
+    #[serde(default = "default_true")]
+    pub lift: bool,
+    /// Maven-class sdist/VCS fetch. Maps to SUGAR_LSP_DOWNLOAD_SOURCES.
+    #[serde(default = "default_true")]
+    pub download_sources: bool,
+    /// Fetch Requires-Dist of sealed packages (direct deps only).
+    #[serde(default)]
+    pub download_recursive: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -70,6 +96,21 @@ impl Default for LspConfig {
         Self {
             server: default_server(),
             language: Vec::new(),
+            auto: AutoConfig {
+                lift: true,
+                download_sources: true,
+                download_recursive: false,
+            },
+        }
+    }
+}
+
+impl Default for AutoConfig {
+    fn default() -> Self {
+        Self {
+            lift: true,
+            download_sources: true,
+            download_recursive: false,
         }
     }
 }
