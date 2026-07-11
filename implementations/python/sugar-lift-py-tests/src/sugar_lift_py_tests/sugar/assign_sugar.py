@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BoundVar
@@ -19,7 +19,7 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
 
     name: str
     value: SugarBody
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -32,7 +32,7 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
         return cls(
             name=site.assign_target_name(),
             value=ctx.build_body(site.assign_value(), SugarRole.TERM),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod

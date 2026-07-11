@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import OSExitRuntimeEffect
@@ -19,7 +19,7 @@ class OsSugar(Sugar, role=SugarRole.TERM):
     other child -- an unowned node inside them panics at construction."""
 
     args: tuple[SugarBody, ...]
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -35,7 +35,7 @@ class OsSugar(Sugar, role=SugarRole.TERM):
             args=tuple(
                 ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
             ),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod
@@ -55,6 +55,6 @@ class OsSugar(Sugar, role=SugarRole.TERM):
         return Incomplete(
             OSExitRuntimeEffect(
                 f"OS exit runtime boundary: os.exit halts the program at runtime; "
-                f"owner=OsSugar blame={self.blame}"
+                f"owner=OsSugar site={self.site}"
             )
         )

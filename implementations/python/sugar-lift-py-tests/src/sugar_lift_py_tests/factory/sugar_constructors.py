@@ -213,7 +213,7 @@ def _ctx_with_formal_binds(site: SourceFragment, ctx):
             param_name,
             SymbolicValue(make_var(param_name)),
             owner="sugar_constructors.formal_binds",
-            blame=site.blame,
+            site=site,
         )
     return body_ctx
 

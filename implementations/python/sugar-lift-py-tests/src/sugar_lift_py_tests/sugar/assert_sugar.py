@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
@@ -19,7 +19,7 @@ class AssertSugar(Sugar, role=SugarRole.STATEMENT):
     The sugar owns no distinction; the value answers."""
 
     condition: SugarBody
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -30,7 +30,7 @@ class AssertSugar(Sugar, role=SugarRole.STATEMENT):
         # The condition is factory-built (audited), never reduced here.
         return cls(
             condition=ctx.build_body(site.assert_test(), SugarRole.TERM),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod
@@ -48,5 +48,5 @@ class AssertSugar(Sugar, role=SugarRole.STATEMENT):
     def desugar(self, ctx: object = None) -> Outcome:
         # Reduce the condition, and the result states itself.
         return self.condition.reduce(ctx).and_then(
-            lambda value: value.stated(self.blame)
+            lambda value: value.stated(self.site)
         )

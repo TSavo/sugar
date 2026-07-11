@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import field as dataclass_field, dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.ir import Formula
 
@@ -10,6 +10,7 @@ from .floor_value import FloorValue
 @dataclass(frozen=True)
 class PredicateValue(FloorValue):
     formula: Formula
+    site: object = dataclass_field(default=None, compare=False)
 
     def negate(self):
         # A predicate flips by wrapping its formula in not_ -- the formula owns
@@ -17,15 +18,14 @@ class PredicateValue(FloorValue):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete
 
-        return Complete(PredicateValue(not_(self.formula)))
+        return Complete(PredicateValue(not_(self.formula), self.site))
 
-    def stated(self, blame):
+    def stated(self, site):
         # A symbolic predicate states an inv: the fact the record emits.
-        del blame
         from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.outcome import Complete
 
-        return Complete(InvValue(self.formula))
+        return Complete(InvValue(self.formula, site))
 
     def binary_conditional(self, then, else_body, ctx=None):
         # A symbolic condition cannot pick a face, so it GUARDS: both faces

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import field as dataclass_field, dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.ir import Formula
 
@@ -17,6 +17,7 @@ class InvValue(FloorValue):
     It contributes itself to the record (the record IS the emission surface)."""
 
     formula: Formula
+    site: object = dataclass_field(default=None, compare=False)
 
     def inv_contribution(self):
         # The stated fact IS the inv slot's row.
@@ -26,4 +27,4 @@ class InvValue(FloorValue):
         # A fact stated under a guard IS an implication.
         from sugar_lift_py_tests.ir import implies
 
-        return InvValue(implies(formula, self.formula))
+        return InvValue(implies(formula, self.formula), self.site)

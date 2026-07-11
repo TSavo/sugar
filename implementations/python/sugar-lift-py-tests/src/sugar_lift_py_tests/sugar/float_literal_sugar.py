@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import TermValue
@@ -16,7 +16,7 @@ class FloatLiteralSugar(Sugar, role=SugarRole.TERM):
     literal syntaxes, one floor; Int/Real is emission-time sort inference."""
 
     value: float
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -28,7 +28,7 @@ class FloatLiteralSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def new(cls, site, ctx) -> "FloatLiteralSugar":
         del ctx  # a literal is a leaf: no children
-        return cls(value=site.literal_value(), blame=site.blame)
+        return cls(value=site.literal_value(), site=site)
 
     @classmethod
     def witnesses(cls):

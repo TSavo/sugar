@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field, dataclass, replace
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -21,7 +21,7 @@ class FunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     name: str
     formals: tuple[str, ...]
     body: SugarBody
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -37,7 +37,7 @@ class FunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             name=site.function_name(),
             formals=tuple(site.function_params()),
             body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod

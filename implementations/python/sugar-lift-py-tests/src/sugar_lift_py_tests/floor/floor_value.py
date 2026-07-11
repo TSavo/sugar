@@ -411,7 +411,7 @@ class FloorValue:
             ),
         )
 
-    def stated(self, blame):
+    def stated(self, site):
         # Default: this value cannot stand as a statable fact -- `assert 5` is
         # Python truthiness, a ruling that has not happened yet. The values that
         # CAN state override: a symbolic predicate states an inv, ground True
@@ -427,7 +427,7 @@ class FloorValue:
         observed = type(self).__name__
         info = FactoryGapInfo(
             owner="stated",
-            blame=blame,
+            blame=str(site),
             observed=observed,
             requested="stand as a statable fact",
             fix=f"write more Floor: implement {observed}.stated",
@@ -440,7 +440,7 @@ class FloorValue:
                 role="stated",
                 status="floor-gap",
                 observed=observed,
-                blame=blame,
+                blame=str(site),
                 selected=None,
                 candidates=[],
                 message=info.message,
@@ -482,7 +482,7 @@ class FloorValue:
             ),
         )
 
-    def equals(self, other, blame):
+    def equals(self, other, site):
         # Default: EMIT. The contract: fold when both sides are ground (the
         # literal pair overrides), emit when either side stands on the term
         # floor, panic only inside to_term when a side cannot enter FOL at all.
@@ -494,10 +494,10 @@ class FloorValue:
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
-            PredicateValue(eq(self.to_term(owner=blame), other.to_term(owner=blame)))
+            PredicateValue(eq(self.to_term(owner=str(site)), other.to_term(owner=str(site))), site)
         )
 
-    def less_than(self, other, blame):
+    def less_than(self, other, site):
         # Default: EMIT. The contract: fold when both sides are ground (the
         # literal pair overrides), emit when either side stands on the term
         # floor, panic only inside to_term when a side cannot enter FOL at all.
@@ -509,10 +509,10 @@ class FloorValue:
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
-            PredicateValue(lt(self.to_term(owner=blame), other.to_term(owner=blame)))
+            PredicateValue(lt(self.to_term(owner=str(site)), other.to_term(owner=str(site))), site)
         )
 
-    def add(self, other, blame):
+    def add(self, other, site):
         # Default: this value does not stand on the addition floor -- it cannot answer
         # what it is to add another value. The None arm: a value that CAN implements
         # add and gives back the sum (or concat); absence here is the honest "no".
@@ -528,7 +528,7 @@ class FloorValue:
         observed = type(self).__name__
         info = FactoryGapInfo(
             owner="add",
-            blame=blame,
+            blame=str(site),
             observed=observed,
             requested="stand on the addition floor",
             fix=f"write more Floor: implement {observed}.add",
@@ -541,14 +541,14 @@ class FloorValue:
                 role="add",
                 status="floor-gap",
                 observed=observed,
-                blame=blame,
+                blame=str(site),
                 selected=None,
                 candidates=[],
                 message=info.message,
             ),
         )
 
-    def subtract(self, other, blame):
+    def subtract(self, other, site):
         # Default: this value does not stand on the subtraction floor -- it cannot
         # answer what it is minus another value. The None arm: a value that CAN
         # implements subtract and gives back a term; absence here is the honest "no".
@@ -564,7 +564,7 @@ class FloorValue:
         observed = type(self).__name__
         info = FactoryGapInfo(
             owner="subtract",
-            blame=blame,
+            blame=str(site),
             observed=observed,
             requested="stand on the subtraction floor",
             fix=f"write more Floor: implement {observed}.subtract",
@@ -577,14 +577,14 @@ class FloorValue:
                 role="subtract",
                 status="floor-gap",
                 observed=observed,
-                blame=blame,
+                blame=str(site),
                 selected=None,
                 candidates=[],
                 message=info.message,
             ),
         )
 
-    def multiply(self, other, blame):
+    def multiply(self, other, site):
         # Default: this value does not stand on the multiplication floor -- it cannot
         # answer what it multiplies by another value to. The None arm: a value that CAN
         # implements multiply and gives back a product; absence here is the honest "no".
@@ -600,7 +600,7 @@ class FloorValue:
         observed = type(self).__name__
         info = FactoryGapInfo(
             owner="multiply",
-            blame=blame,
+            blame=str(site),
             observed=observed,
             requested="stand on the multiplication floor",
             fix=f"write more Floor: implement {observed}.multiply",
@@ -613,14 +613,14 @@ class FloorValue:
                 role="multiply",
                 status="floor-gap",
                 observed=observed,
-                blame=blame,
+                blame=str(site),
                 selected=None,
                 candidates=[],
                 message=info.message,
             ),
         )
 
-    def divide(self, other, blame):
+    def divide(self, other, site):
         # Default: this value does not stand on the division floor -- it cannot answer
         # what it divides by another value to. The None arm: a value that CAN
         # implements divide and gives back a quotient; absence here is the honest "no".
@@ -636,7 +636,7 @@ class FloorValue:
         observed = type(self).__name__
         info = FactoryGapInfo(
             owner="divide",
-            blame=blame,
+            blame=str(site),
             observed=observed,
             requested="stand on the division floor",
             fix=f"write more Floor: implement {observed}.divide",
@@ -649,14 +649,14 @@ class FloorValue:
                 role="divide",
                 status="floor-gap",
                 observed=observed,
-                blame=blame,
+                blame=str(site),
                 selected=None,
                 candidates=[],
                 message=info.message,
             ),
         )
 
-    def modulo(self, other, blame):
+    def modulo(self, other, site):
         # Default: this value does not stand on the modulo floor -- it cannot answer
         # what remainder it leaves by another value. The None arm: a value that CAN
         # implements modulo and gives back a remainder; absence here is the honest "no".
@@ -672,7 +672,7 @@ class FloorValue:
         observed = type(self).__name__
         info = FactoryGapInfo(
             owner="modulo",
-            blame=blame,
+            blame=str(site),
             observed=observed,
             requested="stand on the modulo floor",
             fix=f"write more Floor: implement {observed}.modulo",
@@ -685,7 +685,7 @@ class FloorValue:
                 role="modulo",
                 status="floor-gap",
                 observed=observed,
-                blame=blame,
+                blame=str(site),
                 selected=None,
                 candidates=[],
                 message=info.message,
@@ -736,7 +736,7 @@ class FloorValue:
         blame = getattr(operation, "blame", observed)
         info = FactoryGapInfo(
             owner=owner,
-            blame=blame,
+            blame=str(site),
             observed=observed,
             requested=method_name,
             fix=f"add {method_name} to {observed} or emit a real effect",
@@ -749,7 +749,7 @@ class FloorValue:
                 role=method_name,
                 status="floor-gap",
                 observed=observed,
-                blame=blame,
+                blame=str(site),
                 selected=None,
                 candidates=[],
                 message=info.message,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -20,7 +20,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
     target_name: str
     args: tuple[SugarBody, ...]
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -41,7 +41,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             args=tuple(
                 ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
             ),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod
@@ -72,7 +72,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     parameters=(),
                     term=ctor(
                         f"call:{self.target_name}",
-                        [value.to_term(owner=self.blame) for value in accumulated],
+                        [value.to_term(owner=str(self.site)) for value in accumulated],
                     ),
                     body=None,
                 )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from typing import TYPE_CHECKING
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -19,7 +19,7 @@ class FalseBoolLiteralSugar(Sugar, role=SugarRole.TERM):
     floor value and it dispatches the emit to the else-face; with no else it emits
     nothing (an empty block adds no constraint). No fork."""
 
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -28,7 +28,7 @@ class FalseBoolLiteralSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def new(cls, site, ctx) -> "FalseBoolLiteralSugar":
         del ctx  # a literal is a leaf: no children
-        return cls(blame=site.blame)
+        return cls(site=site)
 
     @classmethod
     def witnesses(cls):
@@ -56,7 +56,7 @@ class FalseBoolLiteralSugar(Sugar, role=SugarRole.TERM):
             return Complete(BlockValue(()))
         return else_body.reduce(ctx)
 
-    def stated(self, blame):
+    def stated(self, site):
         # Ground False under assert is a recognized fact the program halts --
         # a named runtime effect, per the gap/fact discriminator; never a panic.
         from sugar_lift_py_tests.effect import AssertionFailedRuntimeEffect
@@ -65,7 +65,7 @@ class FalseBoolLiteralSugar(Sugar, role=SugarRole.TERM):
         return Incomplete(
             AssertionFailedRuntimeEffect(
                 f"assertion failed runtime boundary: the condition is concretely "
-                f"False; owner=FalseBoolLiteralSugar blame={blame}"
+                f"False; owner=FalseBoolLiteralSugar site={site}"
             )
         )
 
@@ -75,4 +75,4 @@ class FalseBoolLiteralSugar(Sugar, role=SugarRole.TERM):
             TrueBoolLiteralSugar,
         )
 
-        return Complete(TrueBoolLiteralSugar(blame=self.blame))
+        return Complete(TrueBoolLiteralSugar(site=self.site))

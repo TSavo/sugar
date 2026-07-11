@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
@@ -17,7 +17,7 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
 
     left: SugarBody
     right: SugarBody
-    blame: str
+    site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -28,7 +28,7 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
         return cls(
             left=ctx.build_body(site.binop_left(), SugarRole.TERM),
             right=ctx.build_body(site.binop_right(), SugarRole.TERM),
-            blame=site.blame,
+            site=site,
         )
 
     @classmethod
@@ -54,6 +54,6 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
     def desugar(self, ctx: object = None) -> Outcome:
         return self.left.reduce(ctx).and_then(
             lambda left: self.right.reduce(ctx).and_then(
-                lambda right: left.multiply(right, self.blame)
+                lambda right: left.multiply(right, self.site)
             )
         )

@@ -163,9 +163,14 @@ class SourceFragment:
             return "PrimitiveLiteral"
         return type(self.node).__name__
 
+    def __str__(self) -> str:
+        # The site IS the address: its display projection, computed at print time.
+        return f"{self.filename}:{self.line}:{self.col}"
+
     @property
     def blame(self) -> str:
-        return f"{self.filename}:{self.line}:{self.col}"
+        # Legacy accessor for pre-spine audit paths; new code says str(site).
+        return str(self)
 
     @property
     def suggested_sugar_module(self) -> str:
