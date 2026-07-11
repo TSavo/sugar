@@ -406,6 +406,10 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     let mut merged_vendor_conjoins: Vec<Value> = Vec::new();
     let mut merged_factory_summary = MergedFactoryAuditSummary::default();
     let mut oracle_observation = OracleObservation::default();
+    // Workspace liftCoverage: the bindings-backed re-lift honestly omits it
+    // (coverage is a workspace census, not a bindings pass). Carry the first
+    // non-empty coverage we see -- never clobber a populated report with absence.
+    let mut merged_lift_coverage: Option<Value> = None;
     // Content-shape dedup keys (NOT names). See `canonical_dedup_key`.
     let mut seen_content: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut seen_implications: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -560,6 +564,18 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
         {
             merged_plan_mementos.extend(arr.iter().cloned());
         }
+        if merged_lift_coverage.is_none() {
+            if let Some(coverage) = entry
+                .response
+                .get("liftCoverage")
+                .or_else(|| entry.response.get("lift_coverage"))
+            {
+                // Bindings-backed re-lift omits the field; empty object is not a census.
+                if lift_coverage_is_populated(coverage) {
+                    merged_lift_coverage = Some(coverage.clone());
+                }
+            }
+        }
     }
     for edge in &merged_call_edges {
         let Some(bridge) = bridge_ir_from_resolved_call_edge(edge) else {
@@ -626,7 +642,19 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     if !merged_plan_mementos.is_empty() {
         merged["planMementos"] = Value::Array(merged_plan_mementos);
     }
+    if let Some(coverage) = merged_lift_coverage {
+        merged["liftCoverage"] = coverage;
+    }
     Ok(merged)
+}
+
+/// True when a liftCoverage value is a real census (not absent / empty object).
+fn lift_coverage_is_populated(coverage: &Value) -> bool {
+    match coverage {
+        Value::Object(map) => !map.is_empty(),
+        Value::Null => false,
+        _ => true,
+    }
 }
 
 fn merge_call_edge(
@@ -6273,6 +6301,97 @@ mod tests {
                 .len(),
             1,
             "merged ir-document must keep implication-lifter output: {merged}"
+        );
+    }
+
+    #[test]
+    fn merge_ir_document_responses_carries_workspace_lift_coverage() {
+        // Workspace lift computes liftCoverage; the bindings-backed re-lift
+        // honestly omits it. Merge must keep the census from the first pass.
+        let coverage = json!({
+            "kind": "lift-coverage",
+            "totals": {
+                "minority_present": 2,
+                "minority_dug": 1,
+                "minority_un_asserted": 1
+            },
+            "minority": {
+                "present": 2,
+                "dug": 1,
+                "un_asserted": 1,
+                "un_asserted_loci": [{
+                    "name": "helper",
+                    "file": "demo.py",
+                    "line": 6
+                }]
+            }
+        });
+        let merged = merge_ir_document_responses(vec![
+            PerPluginDispatch {
+                surface: "python".to_string(),
+                response: json!({
+                    "kind": "ir-document",
+                    "ir": [{
+                        "kind": "function-contract",
+                        "name": "enc",
+                        "post": {"kind": "atomic", "name": "true", "args": []}
+                    }],
+                    "liftCoverage": coverage,
+                    "diagnostics": []
+                }),
+            },
+            PerPluginDispatch {
+                surface: "python".to_string(),
+                response: json!({
+                    "kind": "ir-document",
+                    "ir": [{
+                        "kind": "function-contract",
+                        "name": "enc",
+                        "post": {"kind": "atomic", "name": "true", "args": []}
+                    }],
+                    // bindings pass: no liftCoverage field
+                    "diagnostics": []
+                }),
+            },
+        ])
+        .expect("merge ir-documents");
+
+        assert_eq!(
+            merged["liftCoverage"]["totals"]["minority_un_asserted"],
+            1,
+            "workspace liftCoverage must survive the bindings-backed merge: {merged}"
+        );
+        assert_eq!(
+            merged["liftCoverage"]["minority"]["un_asserted_loci"][0]["name"],
+            "helper",
+            "Minority Report loci must survive: {merged}"
+        );
+        // Empty object from a later pass must not clobber a populated census.
+        let merged_empty_second = merge_ir_document_responses(vec![
+            PerPluginDispatch {
+                surface: "python".to_string(),
+                response: json!({
+                    "kind": "ir-document",
+                    "ir": [],
+                    "liftCoverage": coverage,
+                    "diagnostics": []
+                }),
+            },
+            PerPluginDispatch {
+                surface: "python".to_string(),
+                response: json!({
+                    "kind": "ir-document",
+                    "ir": [],
+                    "liftCoverage": {},
+                    "diagnostics": []
+                }),
+            },
+        ])
+        .expect("merge with empty second coverage");
+        assert_eq!(
+            merged_empty_second["liftCoverage"]["totals"]["minority_un_asserted"],
+            1,
+            "empty liftCoverage must not clobber a populated census: {merged_empty_second}"
         );
     }
 
