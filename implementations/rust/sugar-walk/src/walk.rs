@@ -707,7 +707,7 @@ fn collect_into(pat: &Pat, term: IrTerm, out: &mut Vec<(String, IrTerm)>) -> Opt
             | Pat::Rest(_)
             | Pat::Verbatim(_)
     ) {
-        return panic_on_unsupported_pattern(pat);
+        panic_on_unsupported_pattern(pat);
     }
     panic!("sugar-walk WP pattern collector panicked on unknown syn::Pat variant")
 }
