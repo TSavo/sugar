@@ -181,6 +181,55 @@ def test_double_lowers_to_dischargeable_core_form():
     assert value["args"][1]["value"] == 2
 
 
+def test_dig_shape_if_return_return_lowers_to_ite():
+    # The ambient-post dig shape: if cond: return a / return b -> result == ite(...)
+    # so mint auto-writes the sourceSymbol -> contract bridge for the body.
+    source = (
+        "def enc(x: int) -> int:\n"
+        "    if x == 1:\n"
+        "        return 2\n"
+        "    return x\n"
+    )
+    contract = _fn_contract(source)
+    out = to_verify_dialect(contract, collect_int_signatures(source)["enc"])
+
+    assert out["bridgeSourceSymbol"] == "enc"
+    assert out["kind"] == "function-contract"
+    assert out["formals"] == ["x"]
+    post = out["post"]
+    assert post["name"] == "="
+    assert post["args"][0] == {"kind": "var", "name": "result"}
+    ite = post["args"][1]
+    assert ite["kind"] == "ctor"
+    assert ite["name"] == "ite"
+    cond, then_arm, else_arm = ite["args"]
+    assert cond["name"] == "="
+    assert then_arm == _int(2)
+    assert else_arm == _var("x")
+
+
+def test_dig_shape_string_if_return_return_lowers_to_ite():
+    # The named enc demo: strings are first-class so the bridge still mints.
+    source = (
+        "def enc(x: str) -> str:\n"
+        '    if x == "ccc":\n'
+        '        return "yyy"\n'
+        "    return x\n"
+    )
+    contract = _fn_contract(source)
+    out = to_verify_dialect(contract, collect_int_signatures(source)["enc"])
+
+    assert out["bridgeSourceSymbol"] == "enc"
+    assert out["formalSorts"] == [{"kind": "primitive", "name": "String"}]
+    assert out["returnSort"] == {"kind": "primitive", "name": "String"}
+    ite = out["post"]["args"][1]
+    assert ite["name"] == "ite"
+    cond, then_arm, else_arm = ite["args"]
+    assert cond["name"] == "="
+    assert then_arm == _str("yyy")
+    assert else_arm == _var("x")
+
+
 def test_if_raise_body_guard_lowers_to_rust_shaped_precondition_cid():
     source = (
         "def bounded_digit(x: int) -> int:\n"

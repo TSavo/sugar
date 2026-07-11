@@ -72,10 +72,14 @@ _CORE_CMP_OP: dict[str, str] = {
     ">=": "≥",
 }
 
-# Annotation surfaces that faithfully map to the SMT `Int` sort. Anything else
-# (no annotation, `float`, `str`, custom types) refuses for an arithmetic body.
+# Annotation surfaces that faithfully map to an SMT sort. Anything else
+# (no annotation, `float`, custom types) refuses for a typed body. `str` maps to
+# SMT `String` so dig-shape string functions (`if x == "ccc": return "yyy"`)
+# can emit a bridgeable function-contract -- the same ambient-post path the
+# int arithmetic cases already ride.
 _INT_ANNOTATIONS = {"int"}
 _BOOL_ANNOTATIONS = {"bool"}
+_STRING_ANNOTATIONS = {"str"}
 
 
 class VerifyDialectRefusal(Exception):
@@ -95,8 +99,8 @@ class _Sorts:
     `: int` / `-> int` annotations (the round-trip lifter erases these to
     `Value`)."""
 
-    formal_sorts: dict[str, str]  # formal name -> "Int" | "Bool"
-    return_sort: str | None  # "Int" | "Bool" | None
+    formal_sorts: dict[str, str]  # formal name -> "Int" | "Bool" | "String"
+    return_sort: str | None  # "Int" | "Bool" | "String" | None
 
 
 def prim_sort(name: str) -> Json:
@@ -166,6 +170,8 @@ def _sort_for_annotation(annotation: ast.expr | None) -> str | None:
             return "Int"
         if annotation.id in _BOOL_ANNOTATIONS:
             return "Bool"
+        if annotation.id in _STRING_ANNOTATIONS:
+            return "String"
     return None
 
 
@@ -223,14 +229,14 @@ def to_verify_dialect(contract: Json, sorts: _Sorts) -> Json:
         if sort is None:
             raise VerifyDialectRefusal(
                 fn_name,
-                f"formal `{formal}` lacks an `int`/`bool` annotation; refusing "
+                f"formal `{formal}` lacks an `int`/`bool`/`str` annotation; refusing "
                 f"rather than emit a `Value`-sorted obligation z3 cannot discharge",
             )
         new_formal_sorts.append(prim_sort(sort))
     return_sort = sorts.return_sort
     if return_sort is None:
         raise VerifyDialectRefusal(
-            fn_name, "return lacks an `int`/`bool` annotation; refusing"
+            fn_name, "return lacks an `int`/`bool`/`str` annotation; refusing"
         )
 
     out = dict(contract)
@@ -269,6 +275,12 @@ def _unwrap_return(term: Json, fn_name: str) -> Json:
         if isinstance(inner, list) and len(inner) == 1:
             return inner[0]
         raise VerifyDialectRefusal(fn_name, "python:return wrapper is malformed")
+    # Dig-shape value if: `if cond: return a` / `return b` (else is pass) lowers
+    # to `ite(cond, a, b)`. This is the ambient-post body the mint auto-bridges
+    # so `assert enc("ccc") == "yyy"` can specialise through the body.
+    dig_ite = _dig_shape_if_return_return(term, fn_name)
+    if dig_ite is not None:
+        return dig_ite
     statements = _flatten_sequence(term)
     if len(statements) >= 2 and all(
         _is_precondition_guard_statement(statement) for statement in statements[:-1]
@@ -284,12 +296,88 @@ def _unwrap_return(term: Json, fn_name: str) -> Json:
                 return inner[0]
             raise VerifyDialectRefusal(fn_name, "python:return wrapper is malformed")
     # A body that did not fold to exactly one return after supported precondition
-    # guards is not a value-op.
+    # guards (or a dig-shape if-return/return) is not a value-op.
     raise VerifyDialectRefusal(
         fn_name,
         "body does not reduce to supported precondition guard(s) followed by "
         "a single `return <expr>`; refusing",
     )
+
+
+def _dig_shape_if_return_return(term: Json, fn_name: str) -> Json | None:
+    """`if cond: return a` then `return b` (else pass) -> ite(cond, a, b).
+
+    Also accepts a single `if cond: return a else: return b`. Returns None when
+    the shape does not match (caller falls through to the existing refusal).
+    """
+    del fn_name
+    # Single if with both arms returning.
+    both_arms = _if_both_arms_return(term)
+    if both_arms is not None:
+        return both_arms
+    statements = _flatten_sequence(term)
+    if len(statements) != 2:
+        return None
+    head, tail = statements
+    if not _is_python_return(tail):
+        return None
+    if_parts = _if_then_return_else_pass(head)
+    if if_parts is None:
+        return None
+    cond, then_value = if_parts
+    else_value = tail["args"][0]
+    return {
+        "kind": "ctor",
+        "name": "ite",
+        "args": [cond, then_value, else_value],
+    }
+
+
+def _if_both_arms_return(term: Json) -> Json | None:
+    if (
+        not isinstance(term, dict)
+        or term.get("kind") != "ctor"
+        or term.get("name") != "python:if"
+    ):
+        return None
+    args = term.get("args")
+    if not isinstance(args, list) or len(args) != 3:
+        return None
+    cond, then_branch, else_branch = args
+    if not (_is_python_return(then_branch) and _is_python_return(else_branch)):
+        return None
+    return {
+        "kind": "ctor",
+        "name": "ite",
+        "args": [cond, then_branch["args"][0], else_branch["args"][0]],
+    }
+
+
+def _if_then_return_else_pass(term: Json) -> tuple[Json, Json] | None:
+    if (
+        not isinstance(term, dict)
+        or term.get("kind") != "ctor"
+        or term.get("name") != "python:if"
+    ):
+        return None
+    args = term.get("args")
+    if not isinstance(args, list) or len(args) != 3:
+        return None
+    cond, then_branch, else_branch = args
+    if not (_is_python_return(then_branch) and _is_python_pass(else_branch)):
+        return None
+    return cond, then_branch["args"][0]
+
+
+def _is_python_return(term: Json) -> bool:
+    if (
+        not isinstance(term, dict)
+        or term.get("kind") != "ctor"
+        or term.get("name") != "python:return"
+    ):
+        return False
+    args = term.get("args")
+    return isinstance(args, list) and len(args) == 1
 
 
 def _flatten_sequence(term: Json) -> list[Json]:
@@ -388,7 +476,7 @@ def _is_flat_guard_term(term: Json) -> bool:
         return False
     sort = term.get("sort")
     sort_name = sort.get("name") if isinstance(sort, dict) else None
-    return sort_name in {"Int", "Bool"}
+    return sort_name in {"Int", "Bool", "String"}
 
 
 def _is_python_raise(term: Json) -> bool:
@@ -469,10 +557,11 @@ def _normalize_term(term: Json, fn_name: str, formal_sorts: dict[str, str]) -> J
     if kind == "const":
         sort = term.get("sort")
         sort_name = sort.get("name") if isinstance(sort, dict) else None
-        if sort_name in {"Int", "Bool"}:
+        if sort_name in {"Int", "Bool", "String"}:
             return term
         raise VerifyDialectRefusal(
-            fn_name, f"constant of sort `{sort_name}` is not Int/Bool; refusing"
+            fn_name,
+            f"constant of sort `{sort_name}` is not Int/Bool/String; refusing",
         )
     if kind != "ctor":
         raise VerifyDialectRefusal(fn_name, f"unexpected term kind `{kind}`")
@@ -480,6 +569,20 @@ def _normalize_term(term: Json, fn_name: str, formal_sorts: dict[str, str]) -> J
     name = term.get("name", "")
     raw_args = term.get("args")
     args = raw_args if isinstance(raw_args, list) else []
+
+    # Dig-shape value if already lowered by _unwrap_return to `ite(cond, a, b)`.
+    if name == "ite":
+        if len(args) != 3:
+            raise VerifyDialectRefusal(fn_name, "ite arity != 3")
+        return {
+            "kind": "ctor",
+            "name": "ite",
+            "args": [
+                _normalize_term(args[0], fn_name, formal_sorts),
+                _normalize_term(args[1], fn_name, formal_sorts),
+                _normalize_term(args[2], fn_name, formal_sorts),
+            ],
+        }
 
     if name == "python:compare":
         # python:compare(str_const(op), lhs, rhs) -> core comparison ctor.
