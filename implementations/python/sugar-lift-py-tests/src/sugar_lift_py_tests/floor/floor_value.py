@@ -363,6 +363,42 @@ class FloorValue:
             ),
         )
 
+    def stated(self, blame):
+        # Default: this value cannot stand as a statable fact -- `assert 5` is
+        # Python truthiness, a ruling that has not happened yet. The values that
+        # CAN state override: a symbolic predicate states an inv, ground True
+        # states nothing, ground False is the named halt. Absence is the honest no.
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="stated",
+            blame=blame,
+            observed=observed,
+            requested="stand as a statable fact",
+            fix=f"write more Floor: implement {observed}.stated",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="stated",
+                status="floor-gap",
+                observed=observed,
+                blame=blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def negate(self):
         # Default: this value does not stand on the negate floor -- it cannot flip.
         # The None arm: a value that CAN implements negate (the bool literals); absence

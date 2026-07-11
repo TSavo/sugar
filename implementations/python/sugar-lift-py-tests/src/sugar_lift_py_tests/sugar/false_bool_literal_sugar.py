@@ -56,6 +56,19 @@ class FalseBoolLiteralSugar(Sugar, role=SugarRole.TERM):
             return Complete(BlockValue(()))
         return else_body.reduce(ctx)
 
+    def stated(self, blame):
+        # Ground False under assert is a recognized fact the program halts --
+        # a named runtime effect, per the gap/fact discriminator; never a panic.
+        from sugar_lift_py_tests.effect import AssertionFailedRuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            AssertionFailedRuntimeEffect(
+                f"assertion failed runtime boundary: the condition is concretely "
+                f"False; owner=FalseBoolLiteralSugar blame={blame}"
+            )
+        )
+
     def negate(self) -> Outcome:
         # False negates to True -- the literal knows its opposite, no fork.
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (

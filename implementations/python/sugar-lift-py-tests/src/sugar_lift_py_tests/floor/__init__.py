@@ -21,6 +21,7 @@ from .guarded_return import GuardedReturn
 from .import_alias_value import ImportAliasValue
 from .lambda_callable import LambdaCallable
 from .list_value import ListValue
+from .inv_value import InvValue
 from .none_value import NoneValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
@@ -55,6 +56,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ImportAliasValue,
     LambdaCallable,
     ListValue,
+    InvValue,
     NoneValue,
     ObjectMethodValue,
     ObjectValue,
@@ -97,6 +99,7 @@ __all__ = [
     "ImportAliasValue",
     "LambdaCallable",
     "ListValue",
+    "InvValue",
     "NoneValue",
     "ObjectField",
     "ObjectMethodValue",
