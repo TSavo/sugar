@@ -464,6 +464,7 @@ impl MemberRecord {
         Self { cid, bytes }
     }
 
+    #[allow(dead_code)] // exercised by typed_member differential tests only today.
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.bytes
     }
