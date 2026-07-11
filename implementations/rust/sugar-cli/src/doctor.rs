@@ -1653,11 +1653,17 @@ fn resolve_binary(cmd0: &str, working_dir: Option<&Path>) -> BinaryResolution {
     }
 }
 
+#[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     path.metadata()
         .map(|m| m.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
 }
 
 /// Locate a bare-name binary via PATH, mirroring how the OS would resolve it.
@@ -1667,6 +1673,17 @@ fn which_binary(name: &str) -> Option<PathBuf> {
         let candidate = dir.join(name);
         if candidate.is_file() && is_executable(&candidate) {
             return Some(candidate);
+        }
+        #[cfg(windows)]
+        if Path::new(name).extension().is_none() {
+            let path_ext =
+                std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
+            for extension in path_ext.to_string_lossy().split(';') {
+                let candidate = dir.join(format!("{name}{extension}"));
+                if is_executable(&candidate) {
+                    return Some(candidate);
+                }
+            }
         }
     }
     None

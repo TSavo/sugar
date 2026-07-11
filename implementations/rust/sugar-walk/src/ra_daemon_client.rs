@@ -24,6 +24,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -85,6 +86,7 @@ pub struct DaemonReadiness {
 /// daemon refuses are simply ABSENT from the map: the caller treats absence as
 /// refusal and falls back to the syntactic tiers. A daemon that is unreachable
 /// or cannot reach readiness yields an empty map.
+#[cfg(unix)]
 pub fn resolve_receiver_crates(
     workspace_root: &Path,
     queries: &[DaemonQuery],
@@ -219,6 +221,22 @@ pub fn resolve_receiver_crates(
     batch
 }
 
+/// The resident rust-analyzer oracle currently uses Unix-domain sockets.
+/// Windows callers refuse this optional resolution tier and retain the sound
+/// syntactic fallbacks, matching the transport-failure behavior on Unix.
+#[cfg(not(unix))]
+pub fn resolve_receiver_crates(
+    _workspace_root: &Path,
+    queries: &[DaemonQuery],
+) -> DaemonResolutionBatch {
+    let mut batch = DaemonResolutionBatch::default();
+    if !queries.is_empty() {
+        batch.refuse("sugar-ra-oracle transport requires Unix-domain sockets");
+    }
+    batch
+}
+
+#[cfg(unix)]
 fn request_readiness(
     stream: &mut UnixStream,
     workspace_root: &Path,
@@ -436,6 +454,7 @@ fn daemon_socket_path(project_cid: &str) -> PathBuf {
 /// Mirrors `sugar-lsp-rust/src/daemon_client.rs::connect_or_spawn` (which
 /// still spawns `sugar-linkerd`, but for the separate editor prove-server
 /// path, not this oracle path).
+#[cfg(unix)]
 fn connect_or_spawn(socket_path: &Path, project_cid: &str) -> std::io::Result<UnixStream> {
     if let Ok(stream) = UnixStream::connect(socket_path) {
         return Ok(stream);
@@ -515,6 +534,7 @@ fn connect_or_spawn(socket_path: &Path, project_cid: &str) -> std::io::Result<Un
 }
 
 /// Send one JSON-RPC request line and read one response line.
+#[cfg(unix)]
 fn send_one(stream: &mut UnixStream, req: &Json) -> std::io::Result<Json> {
     let line = serde_json::to_string(req).map_err(|e| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, format!("json encode: {e}"))
@@ -539,7 +559,7 @@ fn send_one(stream: &mut UnixStream, req: &Json) -> std::io::Result<Json> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Write};
