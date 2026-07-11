@@ -13,5 +13,9 @@ class ReturnValue(FloorValue):
 
     value: object
 
+    def post_contribution(self):
+        # The exit the post slot binds: out == <this term>.
+        return (self.value.to_term(owner="post"),)
+
     def project_callsite_with(self, operation, ctx):
         return operation.project_return(self, ctx)
