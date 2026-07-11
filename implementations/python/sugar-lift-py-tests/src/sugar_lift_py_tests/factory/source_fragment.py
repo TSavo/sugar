@@ -889,6 +889,19 @@ class SourceFragment:
             for generator in self.node.generators  # type: ignore[attr-defined]
         ]
 
+    def genexp_element(self) -> "SourceFragment":
+        """Return the element expression produced by a generator expression."""
+        self._require(ast.GeneratorExp)
+        return SourceFragment.from_node(self.node.elt, self.filename, source=self.source)  # type: ignore[attr-defined]
+
+    def genexp_generators(self) -> "list[SourceFragment]":
+        """Return the comprehension clauses of a generator expression."""
+        self._require(ast.GeneratorExp)
+        return [
+            SourceFragment.from_node(generator, self.filename, source=self.source)
+            for generator in self.node.generators  # type: ignore[attr-defined]
+        ]
+
     def comprehension_target(self) -> "SourceFragment":
         """Return the target bound by a comprehension clause."""
         self._require(ast.comprehension)
