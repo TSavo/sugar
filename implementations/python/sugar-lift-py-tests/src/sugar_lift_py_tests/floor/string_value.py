@@ -77,6 +77,14 @@ class StringValue(FloorValue):
             )
         return super().less_than(other, site)
 
+    def length(self, site):
+        # A string knows its length: the count of characters.
+        del site
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(TermValue(len(self.value)))
+
     def add(self, other, site):
         # A string's addition IS concatenation: two strings fold to their join.
         # Anything else falls to the honest addition-floor gap.

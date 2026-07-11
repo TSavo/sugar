@@ -424,6 +424,41 @@ class FloorValue:
             ),
         )
 
+    def length(self, site):
+        # Default: this value does not stand on the length floor -- it cannot
+        # answer len(...). Values that CAN implement length (concrete folds,
+        # symbolic stays the call:len coordinate); absence here is the honest "no".
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="length",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the length floor",
+            fix=f"write more Floor: implement {observed}.length",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="length",
+                status="floor-gap",
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def binary_conditional(self, then, else_body, ctx=None, site=None):
         # Default: ask truth, then the standing dispatches the two faces.
         # Base cases (True/False literals, PredicateValue) override.

@@ -32,3 +32,11 @@ class ListValue(FloorValue):
             if self.elements
             else FalseBoolLiteralSugar(site=site)
         )
+
+    def length(self, site):
+        # A list knows its length: the count of reduced elements.
+        del site
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(TermValue(len(self.elements)))

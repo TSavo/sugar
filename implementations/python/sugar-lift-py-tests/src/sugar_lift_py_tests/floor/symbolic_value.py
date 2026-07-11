@@ -35,6 +35,23 @@ class SymbolicValue(FloorValue):
 
         return Complete(PredicateValue(py_truthy(self.term), site))
 
+    def length(self, site):
+        # A symbolic length stays the call:len coordinate -- the vendor's stated address.
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            CallSiteValue(
+                target_name="len",
+                arg_values=(self,),
+                parameters=(),
+                term=ctor("call:len", [self.to_term(owner=str(site))]),
+                body=None,
+                site=site,
+            )
+        )
+
     def project_callsite_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
 
