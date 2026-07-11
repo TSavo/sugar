@@ -1,145 +1,66 @@
-"""AttributeSugar lowers Python attribute access to the call:<attr> coordinate."""
+"""AttributeSugar: `x.attr` is a unary coordinate call:<attr>(receiver).
+
+Same head family as methods (and CallSugar's opaque-coordinate doctrine) --
+NOT py.attr(receiver, name). The LAW lives in symbolic_term's Attribute case;
+this sugar is the factory arm that owns the Attribute TERM and projects it.
+"""
 
 from __future__ import annotations
 
-import ast
-
 import pytest
 
-from factory_reduce import fol, reduce_term
+from factory_reduce import compose_block, reduce_value
 
-from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
-from sugar_lift_py_tests.factory import (
-    FactoryAuditRow, factory_panic,
-    FactoryGapInfo,
-    GapKind,
-    GapLocus,
-)
-from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import ArrayLiteral
-from sugar_lift_py_tests.ir import ctor, make_var, str_const
-from sugar_lift_py_tests.outcome import Incomplete
-from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
-
-
-def _audit_row(info: FactoryGapInfo) -> FactoryAuditRow:
-    return FactoryAuditRow(
-        role="test",
-        status="floor-gap",
-        observed=info.observed,
-        blame=info.blame,
-        selected=None,
-        candidates=[],
-        message=info.message,
-    )
-
-
-class _GapBody:
-    def reduce(self, ctx):
-        info = FactoryGapInfo(
-            owner="test",
-            blame="t.py:1",
-            observed="Call",
-            requested="reduce a receiver",
-            fix="write more Floor",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.REDUCE,
-        )
-        factory_panic(info, _audit_row(info))
-
-
-class _TypeErrorBody:
-    def reduce(self, ctx):
-        raise TypeError("reduce bug, not a recognition miss")
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.floor import CallSiteValue, InvValue, SymbolicValue
+from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq
 
 
 def test_attribute_reduces_to_call_attr_coordinate() -> None:
-    assert fol(reduce_term("arr.shape")) == fol(
-        ctor("call:shape", [make_var("arr")])
+    value = reduce_value(
+        "arr.shape", binds={"arr": SymbolicValue(make_var("arr"))}
+    )
+    assert isinstance(value, CallSiteValue)
+    assert value.term == ctor("call:shape", [make_var("arr")])
+    assert value.target_name == "shape"
+
+
+def test_nested_attribute_is_nested_coordinate() -> None:
+    # a.b.c -> call:c(call:b(a)), not py.attr.
+    value = reduce_value(
+        "arr.shape.dtype", binds={"arr": SymbolicValue(make_var("arr"))}
+    )
+    assert isinstance(value, CallSiteValue)
+    assert value.term == ctor(
+        "call:dtype", [ctor("call:shape", [make_var("arr")])]
     )
 
 
-def test_call_result_attribute_reduces_to_call_attr_coordinate() -> None:
-    assert fol(reduce_term("np.any(arr).dtype")) == fol(
-        ctor(
-            "call:dtype",
-            [ctor("call:any", [make_var("np"), make_var("arr")])],
-        )
+def test_assert_on_an_attribute_states_the_dig_coordinate() -> None:
+    # Assignment aliases y to x.shape's source; equals emits over the
+    # coordinate term; the assert states InvValue(py.eq(call:shape(x), 7)).
+    block = compose_block(
+        "    y = x.shape\n    assert y == 7\n    return 1\n",
+        binds={"x": SymbolicValue(make_var("x"))},
     )
+    inv = block.statements[0]
+    assert isinstance(inv, InvValue)
+    assert inv.formula == py_eq(ctor("call:shape", [make_var("x")]), num(7))
 
 
-def test_dynamic_subscript_attribute_receiver_is_typed_runtime_effect() -> None:
-    ctx = FactoryBuildContext(filename="attribute.py", catalog=default_catalog())
-    body = ctx.build_body(
-        ast.parse("d[...].flags.writeable", mode="eval").body,
-        SugarRole.TERM,
-    )
-
-    outcome = body.reduce(ReduceContext.root(owner="attribute-test"))
-
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RuntimeEffect)
-    assert "attribute lookup runtime boundary" in outcome.effect.reason
-    assert "attribute receiver `Attribute` requires runtime evaluation" in (
-        outcome.effect.reason
-    )
-    assert "typed red" in outcome.effect.reason
-    assert "blame=" in outcome.effect.reason
+def test_unowned_receiver_panics_at_construction() -> None:
+    # AttributeSugar owns the Attribute, but its receiver is still audited.
+    # ListComp has no sugar -- construction panics before desugar.
+    with pytest.raises(FactoryPanic) as raised:
+        reduce_value("[x for x in y].shape")
+    assert raised.value.info.observed == "ListComp"
 
 
-def test_dynamic_call_attribute_receiver_is_typed_runtime_effect() -> None:
-    ctx = FactoryBuildContext(filename="attribute.py", catalog=default_catalog())
-    body = ctx.build_body(
-        ast.parse("np.add(1, 2, **get_kwarg(int64_2)).dtype", mode="eval").body,
-        SugarRole.TERM,
-    )
-
-    outcome = body.reduce(ReduceContext.root(owner="attribute-test"))
-
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RuntimeEffect)
-    assert "attribute lookup runtime boundary" in outcome.effect.reason
-    assert "attribute receiver `Call` requires runtime evaluation" in (
-        outcome.effect.reason
-    )
-    assert "typed red" in outcome.effect.reason
-    assert "blame=" in outcome.effect.reason
-
-
-def test_desugar_propagates_floor_gaps() -> None:
-    sugar = AttributeSugar(
-        term=str_const("t"),
-        receiver=_GapBody(),
-        receiver_name=None,
-        name="x",
-        blame="t.py:1",
-    )
-    with pytest.raises(FactoryGap):
-        sugar.desugar(ctx=None)
-
-
-def test_list_bound_attribute_missing_floor_is_typed_runtime_boundary() -> None:
-    node = ast.parse("items.append", mode="eval").body
-    build_ctx = FactoryBuildContext(filename="attr.py", catalog=default_catalog())
-    temporal = build_ctx.temporal.bind_value("items", ArrayLiteral(()))
-    body = build_ctx.with_temporal(temporal).build_body(node, SugarRole.TERM)
-    outcome = body.reduce(ReduceContext(temporal=temporal))
-
-    assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "RuntimeEffect"
-    assert "attribute access runtime boundary" in outcome.reason
-    assert "ArrayLiteral.append" in outcome.reason
-
-
-def test_desugar_propagates_type_errors() -> None:
-    sugar = AttributeSugar(
-        term=str_const("t"),
-        receiver=_TypeErrorBody(),
-        receiver_name=None,
-        name="x",
-        blame="t.py:1",
-    )
-    with pytest.raises(TypeError):
-        sugar.desugar(ctx=None)
+def test_method_call_is_not_owned_by_attribute_sugar() -> None:
+    # CallSugar/OsSugar own Call nodes. AttributeSugar owns Attribute terms.
+    # `x.m()` is a Call whose func is an Attribute -- the Call is still unowned
+    # (method-call sugar is a different arm); the func Attribute is never built
+    # as a TERM by the call path, so the shapes stay disjoint.
+    with pytest.raises(FactoryPanic) as raised:
+        reduce_value("x.m()", binds={"x": SymbolicValue(make_var("x"))})
+    assert raised.value.info.observed == "Call"
