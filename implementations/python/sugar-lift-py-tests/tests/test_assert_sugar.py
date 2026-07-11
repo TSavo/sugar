@@ -8,12 +8,9 @@ a statable fact panics."""
 
 from __future__ import annotations
 
-import pytest
-
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.effect import AssertionFailedRuntimeEffect
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import BlockValue, InvValue, ReturnValue, TermValue
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import make_var, num, py_eq
@@ -45,8 +42,8 @@ def test_ground_false_assert_is_the_named_halt() -> None:
     assert len(record) == 2  # the return never ran
 
 
-def test_a_value_that_cannot_state_a_fact_panics() -> None:
-    # `assert 5` is Python truthiness -- a ruling that has not happened yet.
-    # TermValue does not stand as a statable fact; the honest floor gap fires.
-    with pytest.raises(FactoryPanic):
-        compose_block("    assert 5\n    return 2\n")
+def test_assert_nonzero_folds_through_truth_to_support() -> None:
+    # `assert 5` is Python truthiness: TermValue.truth folds True, stated is support.
+    assert compose_block("    assert 5\n    return 2\n") == BlockValue(
+        (ReturnValue(TermValue(2)),)
+    )

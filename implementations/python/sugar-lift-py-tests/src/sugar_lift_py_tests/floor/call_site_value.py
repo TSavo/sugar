@@ -36,6 +36,16 @@ class CallSiteValue(FloorValue):
         del owner
         return self.term
 
+    def truth(self, site):
+        # A callsite EMITS py.truthy over its term, carrying itself as an operand.
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(py_truthy(self.term), site, operand_callsites=(self,))
+        )
+
     def callsites(self):
         # A CallSiteValue carries itself -- equals emit collects it so the
         # inv that consumes the term can still project the edge later.

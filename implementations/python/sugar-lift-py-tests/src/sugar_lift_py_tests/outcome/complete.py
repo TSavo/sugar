@@ -9,11 +9,10 @@ from sugar_lift_py_tests.floor import FloorValue
 class Complete:
     value: FloorValue
 
-    def binary_conditional(self, then, else_body, ctx=None):
+    def binary_conditional(self, then, else_body, ctx=None, site=None):
         # The completed value is the dispatcher: True emits the then-face, False the
-        # else-face. A value that cannot do the bool thing has no binary_conditional,
-        # and the base FloorValue's panic is the honest "no".
-        return self.value.binary_conditional(then, else_body, ctx)
+        # else-face. Truth answers first for values that fold; the standing decides.
+        return self.value.binary_conditional(then, else_body, ctx, site)
 
     def follow(self, rest, reduce):
         # The value owns whether and how the rest reduces: an ordinary value

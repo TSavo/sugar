@@ -16,5 +16,9 @@ class BoolFloor(Protocol):
     FloorValue's panic is the honest 'no' -- absence is the contract."""
 
     def binary_conditional(
-        self, then: "SugarBody", else_body: "SugarBody | None", ctx: object = None
+        self,
+        then: "SugarBody",
+        else_body: "SugarBody | None",
+        ctx: object = None,
+        site=None,
     ) -> "Outcome": ...

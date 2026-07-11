@@ -16,6 +16,23 @@ class TermValue(FloorValue):
     def add_with(self, operation: Any, ctx: Any) -> Any:
         return operation.add_term(self, ctx)
 
+    def truth(self, site):
+        # Python-faithful: nonzero is True. bool(nan) is True and nan != 0 IS
+        # True in Python, so the same expression is correct.
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(
+            TrueBoolLiteralSugar(site=site)
+            if self.value != 0
+            else FalseBoolLiteralSugar(site=site)
+        )
+
     def equals(self, other, site):
         # A number stands on the equals floor: two numbers are equal or not, and it
         # gives back the True or False literal -- the boolean IS the type.

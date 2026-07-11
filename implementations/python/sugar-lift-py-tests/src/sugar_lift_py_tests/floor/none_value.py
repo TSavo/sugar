@@ -9,6 +9,15 @@ from .floor_value import FloorValue
 class NoneValue(FloorValue):
     """The floor for the `None` literal. No fields -- the None-ness IS the type."""
 
+    def truth(self, site):
+        # None's truth IS False -- the type again.
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+
+        return Complete(FalseBoolLiteralSugar(site=site))
+
     def equals(self, other, site):
         # None stands on the equals floor only against itself. Cross-type is the
         # honest default gap until a ruling lands.
