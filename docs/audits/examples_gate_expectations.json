@@ -550,14 +550,12 @@
       "work_order_issue": 3750
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "silent-truncation/no-terminal-verdict-after-witness-verify",
-      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape silent-truncation/no-terminal-verdict-after-witness-verify in the recensus4 clean sweep; work order #3755. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 4.273,
-      "name": "examples/tokio-effect-consistency/run.sh",
-      "work_order_issue": 3755
+      "expected": "GREEN",
+      "first_seen": "2026-07-08 fix for #3755",
+      "grounds": "script exits 0. PR #3790 (commit 4be1852b0) guards the `sugar verify --project . --json` calls that previously ran bare under `set -euo pipefail`: a crashing/nonzero verify killed the whole script instantly with no PASS/FAIL line, the silent-truncation shape recensus4 observed. The calls are now wrapped in set +e/set -e, stdout+stderr captured to .verify.json/.verify_recompute.json, and the script gates on the parsed witness verdict (verified vs. not) rather than the process exit code, printing a named failure with the captured output (and the exit code) on any non-verified outcome instead of dying silently. Re-verified on current main: good consistency=discharged witness=discharged, bad consistency=unsatisfied witness=unsatisfied, terminal line 'tokio effect consistency showcase self-check passed' prints.",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 45.0,
+      "name": "examples/tokio-effect-consistency/run.sh"
     },
     {
       "expected": "NAMED_RED",
@@ -593,8 +591,8 @@
   "policy": "GREEN rows must remain green. NAMED_RED rows must keep the same failure_shape until a deliberate fixture move records promotion to GREEN. New examples, missing examples, new reds, and changed red shapes fail the gate.",
   "suite": "smoke",
   "summary": {
-    "green": 15,
-    "named_red": 47,
+    "green": 16,
+    "named_red": 46,
     "total": 62,
     "unclassified": 0
   },
