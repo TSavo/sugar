@@ -132,10 +132,13 @@ export class ReportModePainter {
       return;
     }
     const t = p.totals;
-    this.status.text = `Sugar $(circle-filled) f=${t.facts} u=${t.unsat}`;
+    const digStop = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "dig_stop").length;
+    const digOpen = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "walk_open").length;
+    const minority = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "minority").length;
+    this.status.text = `Sugar $(circle-filled) f=${t.facts} dig=${digOpen}/${digStop} y=${minority} u=${t.unsat}`;
     this.status.tooltip = [
       `stated=${t.stated} accounted=${t.accounted} silent=${t.silentlyUnaccounted}`,
-      `Minority un_asserted=${t.minorityUnAsserted}`,
+      `dig open=${digOpen} dig-stop=${digStop} minority=${minority}`,
       `facts=${t.facts} unsat=${t.unsat}`,
       "Click to toggle report mode",
     ].join("\n");

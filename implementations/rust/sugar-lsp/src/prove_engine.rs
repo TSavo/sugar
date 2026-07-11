@@ -244,6 +244,8 @@ pub struct SolveOutcome {
     pub degraded_reason: Option<String>,
     /// Client-side auto-lift log lines (#4007); empty when disabled/no imports.
     pub auto_logs: Vec<String>,
+    /// Best-effort kit lift-report JSON (factoryWalk + liftCoverage) for report mode.
+    pub report_lift: Option<Json>,
 }
 
 /// Dialect for a lift surface name (mirrors CLI `try_rendezvous_prove_kit`).
@@ -433,6 +435,7 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
                 "source-overlay build failed; falling back to resident disk-pool: {err}"
             )),
             auto_logs,
+            report_lift: None,
         };
     }
 
@@ -507,10 +510,26 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
         })
         .collect();
 
+    // Report mode surfaces: best-effort kit lift report on the overlay
+    // (factory dig green→red + Minority yellow). Failures stay silent in payload.
+    let report_out = overlay_root.join(".sugar").join("report-mode-out");
+    let _ = std::fs::create_dir_all(&report_out);
+    let report_lift = match sugar_cli::cmd_mint::report_lift_response_for_project(
+        &overlay_root,
+        &report_out,
+    ) {
+        Ok(v) => Some(v),
+        Err(err) => {
+            tracing::debug!(error = %err, "report-mode lift snapshot skipped");
+            None
+        }
+    };
+
     SolveOutcome {
         rows,
         degraded,
         degraded_reason,
         auto_logs,
+        report_lift,
     }
 }

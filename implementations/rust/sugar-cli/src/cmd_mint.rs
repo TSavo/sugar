@@ -2120,8 +2120,30 @@ pub fn mint_project_scratch_proof(
     }
 }
 
-#[allow(dead_code)] // called by cmd_lift report path in the binary module tree
-pub(crate) fn lift_plugins_response_for_report(
+
+/// Convenience: run configured lift plugins for a project and return the report JSON.
+/// Best-effort face for sugar-lsp report mode (dig green→red + Minority yellow).
+pub fn report_lift_response_for_project(
+    project_root: &Path,
+    out_dir: &Path,
+) -> Result<Value, String> {
+    let project_cfg = read_project_config(project_root);
+    let lift_plugins = project_cfg
+        .plugins
+        .iter()
+        .filter(|plugin| plugin.is_lift_plugin())
+        .cloned()
+        .collect::<Vec<_>>();
+    if lift_plugins.is_empty() {
+        return Err("no lift plugins configured for report".to_string());
+    }
+    lift_plugins_response_for_report(project_root, &lift_plugins, out_dir, false, true)
+}
+
+/// Lift plugins and return the kit report JSON (factoryWalk + liftCoverage).
+/// Public for sugar-lsp report mode (#4149).
+#[allow(dead_code)]
+pub fn lift_plugins_response_for_report(
     project_root: &Path,
     plugins: &[PluginEntry],
     out_dir: &Path,
