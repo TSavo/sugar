@@ -37,5 +37,7 @@ def test_os_exit_still_reduces_to_the_runtime_effect() -> None:
 
 
 def test_unowned_node_inside_os_exit_argument_panics_at_construction() -> None:
+    # A plain call is owned now (a coordinate); an attribute access is not --
+    # the audit still reaches inside the argument.
     with pytest.raises(FactoryPanic):
-        _build("os.exit(mystery())\n")
+        _build("os.exit(a.b)\n")
