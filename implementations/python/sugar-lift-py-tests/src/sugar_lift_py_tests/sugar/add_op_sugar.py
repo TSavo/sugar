@@ -44,11 +44,29 @@ class AddOpSugar(Sugar, role=SugarRole.TERM):
             "    return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="add_return",
-            owner_sugar="AddOpSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        # CallSiteValue binary dispatch + install-source body dig: `g(2) + 1`
+        # folds to ground post `out = 3`. Truthful asserts 3; lying asserts 4.
+        dig_prefix = (
+            "def g(x):\n"
+            "    return x\n"
+            "def A():\n"
+            "    return g(2) + 1\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="add_return",
+                owner_sugar="AddOpSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="callsite_add_dig_return",
+                owner_sugar="AddOpSugar",
+                truthful=dig_prefix + "def test_a():\n    assert A() == 3\n",
+                lying=dig_prefix + "def test_a():\n    assert A() == 4\n",
+                family="callsite-binary-dig",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
