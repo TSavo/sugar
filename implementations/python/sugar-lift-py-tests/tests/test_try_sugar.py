@@ -47,7 +47,10 @@ def test_try_body_and_except_thread_with_caught_type() -> None:
     assert isinstance(first, ReturnValue)
     assert first.value == TermValue(1)
     second = block.statements[1]
-    assert isinstance(second, ReturnValue)
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+
+    # Except-arm return is GuardedReturn so outer tail after try still reduces.
+    assert isinstance(second, GuardedReturn)
     value = second.value
     assert isinstance(value, CallSiteValue)
     assert value.target_name == "except"

@@ -149,7 +149,10 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
 
         return arm.body.reduce(body_ctx).and_then(
             lambda hblock: self._collect_handlers(
-                (*accumulated, *hblock.contribution()),
+                (
+                    *accumulated,
+                    *_except_arm_contributions(hblock.contribution(), arm),
+                ),
                 index + 1,
                 ctx,
             )
@@ -161,3 +164,26 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             children.append(arm.type_body)
             children.append(arm.body)
         return tuple(children)
+
+
+def _except_arm_contributions(entries: tuple, arm: "TryExceptArm") -> tuple:
+    """Except-arm returns must not unguard-kill the rest of the outer block.
+
+    Recognition threading splices handler bodies into the enclosing record. An
+    unguarded ReturnValue.follow_rest keeps the tail raw — which would drop
+    asserts *after* a try/except that only returns on the exception path.
+    Wrap handler returns as GuardedReturn under py.except(type) so the tail
+    still reduces.
+    """
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    guard = ctor("py.except", [str_const(n) for n in arm.type_names])
+    out = []
+    for entry in entries:
+        if type(entry) is ReturnValue:
+            out.append(GuardedReturn(guards=(guard,), value=entry.value))
+        else:
+            out.append(entry)
+    return tuple(out)

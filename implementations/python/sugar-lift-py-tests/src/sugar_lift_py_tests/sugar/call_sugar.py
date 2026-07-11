@@ -22,7 +22,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     callsite -- a CallSiteValue whose term IS `call:f(<arg terms>)`. Keyword
     names ride in `parameters` (not dropped). The lift does not derive f
     (dig the universe when body resolves; else coordinate only). Method receivers
-    stay MethodCallSugar's; ``**kwargs`` expansion stays a loud gap (unowned).
+    stay MethodCallSugar's; ``**kwargs`` / ``*args`` ride coordinates (not dropped).
     Body dig: install_source_dig.resolve_call_funcdef + build_dig_body."""
 
     target_name: str
@@ -40,7 +40,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             site.observed == "Call"
             and site.call_receiver() is None
             and site.call_target_name() is not None
-            and not site.call_has_kwargs_expansion()
+            # *args / **kwargs ride as coordinates (StarredSugar / ** param)
         )
 
     @classmethod
@@ -53,12 +53,8 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         keyword_bodies: list[SugarBody] = []
         for kw in site.call_keywords():
             name = kw.keyword_arg_name()
-            # owns() already excluded **kwargs expansion; double-check.
-            if name is None:
-                raise AssertionError(
-                    "CallSugar.new saw **kwargs expansion after owns() filter"
-                )
-            keyword_names.append(name)
+            # **kwargs expansion: parameter name is "**" (not dropped).
+            keyword_names.append(name if name is not None else "**")
             keyword_bodies.append(
                 ctx.build_body(kw.keyword_value(), SugarRole.TERM)
             )

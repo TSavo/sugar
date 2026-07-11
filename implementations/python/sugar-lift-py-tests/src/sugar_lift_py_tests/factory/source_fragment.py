@@ -283,6 +283,11 @@ class SourceFragment:
         self._require(ast.Tuple)
         return [SourceFragment.from_node(e, self.filename, source=self.source) for e in self.node.elts]  # type: ignore[attr-defined]
 
+    def starred_value(self) -> "SourceFragment":
+        """Return the value expression under a Starred (`*args`) node."""
+        self._require(ast.Starred)
+        return SourceFragment.from_node(self.node.value, self.filename, source=self.source)  # type: ignore[attr-defined]
+
     def call_arg_count(self) -> int:
         """Return the number of positional arguments."""
         self._require(ast.Call)
@@ -509,6 +514,18 @@ class SourceFragment:
         """Return the bound exception name in `except X as name`, if any."""
         self._require(ast.ExceptHandler)
         return self.node.name  # type: ignore[attr-defined]
+
+    def function_vararg_name(self) -> "str | None":
+        """Return the *args name for a FunctionDef, or None."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        vararg = self.node.args.vararg  # type: ignore[attr-defined]
+        return vararg.arg if vararg is not None else None
+
+    def function_kwarg_name(self) -> "str | None":
+        """Return the **kwargs name for a FunctionDef, or None."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        kwarg = self.node.args.kwarg  # type: ignore[attr-defined]
+        return kwarg.arg if kwarg is not None else None
 
     def function_params(self) -> "list[str]":
         """Return the argument names for a FunctionDef or AsyncFunctionDef."""

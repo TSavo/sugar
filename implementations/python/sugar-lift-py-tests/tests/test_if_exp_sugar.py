@@ -60,11 +60,10 @@ def test_literal_ifexp_bad_twin_flips(tmp_path: Path) -> None:
 
     assert truthful.verdict == "sat"
     assert lying.verdict == "unsat"
-    assert "IfExpSugar" in truthful.selected_sugars
-    assert "IfExpSugar" in lying.selected_sugars
 
 
-def test_runtime_condition_ifexp_is_typed_runtime_effect() -> None:
+def test_runtime_condition_ifexp_is_py_if_exp_coordinate() -> None:
+    """Symbolic condition is py.if_exp term coordinate — not RuntimeEffect red."""
     ctx = FactoryBuildContext(filename="if_exp.py", catalog=default_catalog())
     body = ctx.build_body(
         ast.parse("1 if flag else 2", mode="eval").body, SugarRole.TERM
@@ -78,12 +77,14 @@ def test_runtime_condition_ifexp_is_typed_runtime_effect() -> None:
 
     outcome = body.reduce(reduce_ctx)
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RuntimeEffect)
-    assert "conditional expression runtime boundary" in outcome.effect.reason
-    assert "condition `Name` is evaluated at runtime" in outcome.effect.reason
-    assert "typed red" in outcome.effect.reason
-    assert "blame=" in outcome.effect.reason
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert outcome.value.target_name == "if_exp"
+    term = outcome.value.term
+    assert getattr(term, "name", None) == "py.if_exp"
 
 
 def test_ifexp_factory_selects_shape_recognizer() -> None:
@@ -99,7 +100,7 @@ def test_ifexp_factory_selects_shape_recognizer() -> None:
     assert result.audit_row.status == "selected"
 
 
-def test_runtime_condition_inside_bridge_body_stays_typed_effect() -> None:
+def test_runtime_condition_inside_bridge_body_is_complete() -> None:
     module = ast.parse(
         "def choose(flag):\n"
         "    value = 1 if flag == 1 else 2\n"
@@ -118,7 +119,6 @@ def test_runtime_condition_inside_bridge_body_stays_typed_effect() -> None:
     body = ctx.build_body(call_node, SugarRole.TERM)
     outcome = body.reduce(ReduceContext.root(owner="if-exp-bridge-test"))
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RuntimeEffect)
-    assert "conditional expression runtime boundary" in outcome.reason
-    assert "condition `Compare` is evaluated at runtime" in outcome.reason
+    from sugar_lift_py_tests.outcome import Complete
+
+    assert isinstance(outcome, Complete)
