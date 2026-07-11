@@ -48,10 +48,19 @@ class FalseBoolLiteralSugar(Sugar, role=SugarRole.TERM):
         # Its own floor value: contributes itself to the block record.
         return (self,)
 
+    def truth(self, site):
+        # A bool's truth is itself.
+        del site
+        return Complete(self)
+
     def binary_conditional(
-        self, then: "SugarBody", else_body: "SugarBody | None", ctx: object = None
+        self,
+        then: "SugarBody",
+        else_body: "SugarBody | None",
+        ctx: object = None,
+        site=None,
     ) -> Outcome:
-        del then
+        del then, site
         if else_body is None:
             return Complete(BlockValue(()))
         return else_body.reduce(ctx)

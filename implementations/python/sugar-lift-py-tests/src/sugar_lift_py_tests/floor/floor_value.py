@@ -389,12 +389,10 @@ class FloorValue:
         del ctx
         return self._operation_construction_gap(operation, "unary_operator_with")
 
-    def binary_conditional(self, then, else_body, ctx=None):
-        # Default: this value does not stand on the bool floor -- it cannot decide a
-        # two-way branch. That is the None arm, a construction gap. A value that CAN
-        # do the bool thing implements binary_conditional; its absence here is the
-        # honest "no", and this panic is that no.
-        del then, else_body, ctx
+    def truth(self, site):
+        # Default: this value has no Python truth -- it cannot stand as a
+        # condition. Values that CAN answer implement truth (concrete folds,
+        # symbolic emits py.truthy); absence here is the honest "no".
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow,
             FactoryGapInfo,
@@ -405,54 +403,18 @@ class FloorValue:
 
         observed = type(self).__name__
         info = FactoryGapInfo(
-            owner="binary_conditional",
-            blame=observed,
-            observed=observed,
-            requested="stand on the bool floor",
-            fix=f"write more Floor: implement {observed}.binary_conditional",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="binary_conditional",
-                status="floor-gap",
-                observed=observed,
-                blame=observed,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
-
-    def stated(self, site):
-        # Default: this value cannot stand as a statable fact -- `assert 5` is
-        # Python truthiness, a ruling that has not happened yet. The values that
-        # CAN state override: a symbolic predicate states an inv, ground True
-        # states nothing, ground False is the named halt. Absence is the honest no.
-        from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
-            FactoryGapInfo,
-            GapKind,
-            GapLocus,
-            factory_panic,
-        )
-
-        observed = type(self).__name__
-        info = FactoryGapInfo(
-            owner="stated",
+            owner="truth",
             blame=str(site),
             observed=observed,
-            requested="stand as a statable fact",
-            fix=f"write more Floor: implement {observed}.stated",
+            requested="stand as a condition",
+            fix=f"write more Floor: implement {observed}.truth",
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
         factory_panic(
             info,
             FactoryAuditRow(
-                role="stated",
+                role="truth",
                 status="floor-gap",
                 observed=observed,
                 blame=str(site),
@@ -461,6 +423,18 @@ class FloorValue:
                 message=info.message,
             ),
         )
+
+    def binary_conditional(self, then, else_body, ctx=None, site=None):
+        # Default: ask truth, then the standing dispatches the two faces.
+        # Base cases (True/False literals, PredicateValue) override.
+        return self.truth(site).and_then(
+            lambda standing: standing.binary_conditional(then, else_body, ctx, site)
+        )
+
+    def stated(self, site):
+        # Default: ask truth, then the standing states itself. Base cases
+        # (True/False literals, PredicateValue) override.
+        return self.truth(site).and_then(lambda standing: standing.stated(site))
 
     def negate(self):
         # Default: this value does not stand on the negate floor -- it cannot flip.

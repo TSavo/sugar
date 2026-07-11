@@ -16,10 +16,12 @@ class Incomplete:
     def reason(self) -> str:
         return effect_reason(self.effect)
 
-    def binary_conditional(self, then, else_body, ctx: object = None) -> "Incomplete":
+    def binary_conditional(
+        self, then, else_body, ctx: object = None, site=None
+    ) -> "Incomplete":
         # An effect never decides a branch; it rides straight through by returning
         # itself. Same shape for every operation an effect is asked to do.
-        del then, else_body, ctx
+        del then, else_body, ctx, site
         return self
 
     def follow(self, rest, reduce):

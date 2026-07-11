@@ -24,6 +24,22 @@ class StringValue(FloorValue):
 
         return str_const(self.value)
 
+    def truth(self, site):
+        # A string's truth is nonempty.
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(
+            TrueBoolLiteralSugar(site=site)
+            if self.value
+            else FalseBoolLiteralSugar(site=site)
+        )
+
     def add(self, other, site):
         # A string's addition IS concatenation: two strings fold to their join.
         # Anything else falls to the honest addition-floor gap.

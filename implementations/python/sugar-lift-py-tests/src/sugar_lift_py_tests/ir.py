@@ -237,6 +237,11 @@ def py_lt(a: Term, b: Term) -> Formula:
     return atomic("py.lt", [a, b])
 
 
+def py_truthy(a: Term) -> Formula:
+    """The Python truth relation as an atom; the sort adjudicates the interpretation."""
+    return atomic("py.truthy", [a])
+
+
 def identity(a: Term, b: Term) -> Formula:
     return atomic("identity", [a, b])
 

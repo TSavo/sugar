@@ -27,6 +27,14 @@ class SymbolicValue(FloorValue):
         del owner
         return self.term
 
+    def truth(self, site):
+        # A symbolic value EMITS the Python truth relation; the sort adjudicates later.
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(PredicateValue(py_truthy(self.term), site))
+
     def project_callsite_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
 

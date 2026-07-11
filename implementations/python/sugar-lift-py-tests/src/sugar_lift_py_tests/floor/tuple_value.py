@@ -15,3 +15,19 @@ class TupleValue(FloorValue):
     """
 
     elements: tuple
+
+    def truth(self, site):
+        # A tuple's truth is nonempty.
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(
+            TrueBoolLiteralSugar(site=site)
+            if self.elements
+            else FalseBoolLiteralSugar(site=site)
+        )

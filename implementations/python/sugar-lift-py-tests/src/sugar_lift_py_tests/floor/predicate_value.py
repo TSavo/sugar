@@ -33,10 +33,11 @@ class PredicateValue(FloorValue):
 
         return Complete(InvValue(self.formula, site, self.operand_callsites))
 
-    def binary_conditional(self, then, else_body, ctx=None):
+    def binary_conditional(self, then, else_body, ctx=None, site=None):
         # A symbolic condition cannot pick a face, so it GUARDS: both faces
         # reduce, each entry rides under its polarity. Each face's own exits
         # (post_contribution before merge) decide what the continuation rides.
+        del site
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, complete_value

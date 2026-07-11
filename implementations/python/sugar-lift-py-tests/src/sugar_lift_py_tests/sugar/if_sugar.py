@@ -57,5 +57,5 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.condition.reduce(ctx).binary_conditional(
-            self.then, self.else_body, ctx
+            self.then, self.else_body, ctx, self.site
         )
