@@ -493,6 +493,19 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
         &ctx.project_root,
     );
 
+    // #4148: if declared deps need vendor bridges and any ambient vendor post
+    // was dropped during specialization (open after substitution, decode fail),
+    // the vendor law never reached the solve -- degrade to cold. Over-degrade is
+    // safe; silent un-degraded green on a vacuous refuse is not.
+    let (degraded, degraded_reason) = if !degraded {
+        match assess_dropped_ambient_posts(&results, &ctx.project_root) {
+            Ok(()) => (false, None),
+            Err(reason) => (true, Some(reason)),
+        }
+    } else {
+        (degraded, degraded_reason)
+    };
+
     let rows: Vec<Json> = results
         .iter()
         .map(|cr| {
@@ -532,4 +545,42 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
         auto_logs,
         report_lift,
     }
+}
+
+/// #4148 post-survival half of the soundness floor.
+///
+/// Under declared deps that need bridges, any dropped ambient vendor post means
+/// the overlay did not apply the vendor law it was handed. Force degrade so
+/// the extension falls back cold -- never un-degraded vacuous refuse.
+pub fn assess_dropped_ambient_posts(
+    results: &[sugar_verifier::consistency::ConsistencyResult],
+    project_root: &Path,
+) -> Result<(), String> {
+    if !sugar_cli::cmd_mint::project_declares_import_dependencies(project_root) {
+        return Ok(());
+    }
+    let dep_bindings =
+        sugar_cli::cmd_mint::contract_bindings_from_dependency_proofs(project_root);
+    if !sugar_cli::cmd_mint::dependency_bindings_need_bridges(&dep_bindings) {
+        return Ok(());
+    }
+    let dropped: Vec<_> = results
+        .iter()
+        .flat_map(|r| r.dropped_ambient_posts.iter())
+        .collect();
+    if dropped.is_empty() {
+        return Ok(());
+    }
+    let n = dropped.len();
+    let reasons: Vec<&str> = dropped
+        .iter()
+        .map(|d| d.reason.label())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    Err(format!(
+        "overlay dropped {n} vendor post(s) as not-closed after specialization \
+         (reasons: {}); the vendor law never reached the solve -- falling back to resident disk-pool",
+        reasons.join(", ")
+    ))
 }
