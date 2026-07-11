@@ -100,20 +100,31 @@ fn write_executable(path: &Path, text: &str) {
 }
 
 /// Mint a minimal vendor .proof: post-bearing encodeBase64 universe + inv fact.
+///
+/// The post MUST close after ambient specialization (formals + outBinding
+/// substituted at the consumer callsite). An open post (free vars other than
+/// formals/out) is dropped by `formula_is_closed` -- linkedPosts stays empty,
+/// the obligation refuses vacuous, and a planted lie becomes a silent green
+/// (degraded=false, 0 ERROR diagnostics). That is the #3802/#3808 false-green
+/// shape the warm path must never publish.
 fn mint_base64_style_vendor_proof() -> (String, Vec<u8>) {
+    // Universe: encodeBase64 always yields "eHl6" (base64 of "xyz"). After
+    // specialisation at call:encodeBase64("xyz") this becomes the closed
+    // ground fact `= (call:encodeBase64("xyz"), "eHl6")` which conjoins with
+    // the consumer inv -- good twin matches, planted lie contradicts.
     let post = json!({
         "kind": "atomic",
-        "name": "str.eq-bv-blocks",
+        "name": "=",
         "args": [
             {"kind": "var", "name": "out"},
-            {"kind": "var", "name": "blocks"}
+            {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "eHl6"}
         ]
     });
     let inv = json!({
         "kind": "atomic",
         "name": "=",
         "args": [
-            {"kind": "atomic", "name": "call:encodeBase64", "args": [
+            {"kind": "ctor", "name": "call:encodeBase64", "args": [
                 {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "abc"}
             ]},
             {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "YWJj"}
@@ -265,6 +276,10 @@ fn mint_consumer_assertion_pool(name: &str, inv: &Json) -> MementoPool {
 }
 
 fn contract_ir_document(name: &str, file: &str, rhs: &str) -> Json {
+    // Call terms are IrTerm ctors (kind=ctor), never kind=atomic -- atomic is
+    // only the formula shell of `=`. A wrong kind makes sugar.enumerate fact
+    // payload decode fail and the warm path degrade (honest, but never
+    // exercises un-degraded contradiction).
     json!({
         "kind": "ir-document",
         "diagnostics": [],
@@ -276,7 +291,7 @@ fn contract_ir_document(name: &str, file: &str, rhs: &str) -> Json {
                 "kind": "atomic",
                 "name": "=",
                 "args": [
-                    {"kind": "atomic", "name": "call:encodeBase64", "args": [
+                    {"kind": "ctor", "name": "call:encodeBase64", "args": [
                         {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": "xyz"}
                     ]},
                     {"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": rhs}
@@ -676,5 +691,90 @@ fn truthful_twin_stays_green_or_honestly_degrades() {
             outcome.rows
         );
     }
+    fs::remove_dir_all(&root).ok();
+}
+
+/// Real daemon-path receipt for #3802 + #3808: same `solve_buffer` door the
+/// LSP `didOpen`/`didChange` path calls (not a hand-built pool). Prints the
+/// twin flip so a re-verify can read the statuses without re-deriving them.
+#[test]
+fn real_solve_buffer_path_twin_flip_receipts_3802_3808() {
+    if !z3_available() {
+        eprintln!("SKIP: z3 required for twin-flip receipts");
+        return;
+    }
+    let (root, file) = stage_consumer_with_vendor("receipts", "dynamic", "eHl6", "AAAA");
+    // Declared import deps (post-bearing vendor) -- #3808 surface.
+    assert!(
+        sugar_cli::cmd_mint::project_declares_import_dependencies(&root),
+        "fixture must declare .sugar/imports deps"
+    );
+    let ctx = sugar_lsp::prove_engine::build_prove_context_for(&root);
+
+    let bad = sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// BAD_MARKER lie\n");
+    let good =
+        sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// GOOD_MARKER truthful\n");
+
+    let summarize = |label: &str, o: &sugar_lsp::prove_engine::SolveOutcome| {
+        let statuses: Vec<&str> = o
+            .rows
+            .iter()
+            .filter_map(|r| r.get("status").and_then(|s| s.as_str()))
+            .collect();
+        let unsat = statuses.iter().filter(|s| **s == "unsatisfied").count();
+        eprintln!(
+            "RECEIPT {label}: degraded={} reason={:?} rows={} statuses={:?} unsat={}",
+            o.degraded,
+            o.degraded_reason,
+            o.rows.len(),
+            statuses,
+            unsat
+        );
+        (unsat, o.degraded, o.rows.is_empty())
+    };
+
+    let (bad_unsat, bad_degraded, bad_empty) = summarize("consumer-bad", &bad);
+    let (good_unsat, good_degraded, _good_empty) = summarize("consumer-good", &good);
+
+    // #3802: planted lie -- never un-degraded empty, and never silent green.
+    assert!(
+        !(bad_empty && !bad_degraded),
+        "LAW VIOLATION #3802: consumer-bad un-degraded 0-diagnostics (false green)"
+    );
+    assert!(
+        bad_unsat > 0 || bad_degraded,
+        "LAW VIOLATION #3802: consumer-bad neither contradiction nor degraded"
+    );
+
+    // Prefer the live warm path: un-degraded feed + real contradiction on the
+    // lie, green twin free of unsatisfied. That is the #3808 inject-then-solve
+    // shape the unit guards alone cannot prove.
+    assert!(
+        !bad_degraded,
+        "warm feed must be live for this fixture (not degrade); reason={:?}",
+        bad.degraded_reason
+    );
+    assert!(
+        bad_unsat > 0,
+        "consumer-bad un-degraded must surface contradiction: {:?}",
+        bad.rows
+    );
+    let mut probe = MementoPool::default();
+    let n = sugar_cli::cmd_mint::inject_dependency_bridges_into_pool(&root, &mut probe);
+    assert!(
+        n > 0,
+        "LAW VIOLATION #3808: inject minted 0 bridges for declared post-bearing imports"
+    );
+    assert!(
+        !good_degraded,
+        "consumer-good warm feed must be live; reason={:?}",
+        good.degraded_reason
+    );
+    assert_eq!(
+        good_unsat, 0,
+        "consumer-good un-degraded must not report unsatisfied: {:?}",
+        good.rows
+    );
+
     fs::remove_dir_all(&root).ok();
 }
