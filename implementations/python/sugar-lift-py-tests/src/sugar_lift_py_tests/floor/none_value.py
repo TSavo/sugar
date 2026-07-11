@@ -18,6 +18,34 @@ class NoneValue(FloorValue):
 
         return Complete(FalseBoolLiteralSugar(site=site))
 
+    def less_than(self, other, site):
+        # None orders against nothing: any ground comparison is TypeError -- a
+        # recognized runtime halt. Symbolic falls to super() emit.
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.set_value import SetValue
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+        if type(other) in (
+            NoneValue,
+            TermValue,
+            StringValue,
+            ListValue,
+            TupleValue,
+            SetValue,
+        ):
+            from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            return Incomplete(
+                TypeErrorRuntimeEffect(
+                    f"unorderable types runtime boundary: "
+                    f"NoneValue and {type(other).__name__}; site={site}"
+                )
+            )
+        return super().less_than(other, site)
+
     def equals(self, other, site):
         # None stands on the equals floor only against itself. Cross-type is the
         # honest default gap until a ruling lands.

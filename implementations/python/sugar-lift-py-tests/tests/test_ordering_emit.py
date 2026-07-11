@@ -9,9 +9,8 @@ import pytest
 
 from factory_reduce import reduce_value
 
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue
-from sugar_lift_py_tests.ir import ctor, make_var, not_, num, py_lt
+from sugar_lift_py_tests.ir import make_var, not_, num, py_lt
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
 
@@ -47,11 +46,21 @@ def test_ground_sides_still_fold_not_emit() -> None:
     assert isinstance(reduce_value("1 < 2"), TrueBoolLiteralSugar)
 
 
-def test_ground_none_ordering_emits_for_now() -> None:
-    # Python raises TypeError for None < 5 -- a recognized runtime fact that
-    # should become a named effect under the gap/fact discriminator. That
-    # ruling has not landed; today the emit default states py.lt(None, 5).
-    # This pin is EXACT so the effect ruling flips it loudly when it comes.
-    value = reduce_value("None < 5")
-    assert isinstance(value, PredicateValue)
-    assert value.formula == py_lt(ctor("None", []), num(5))
+def test_ground_none_ordering_is_the_typeerror_effect() -> None:
+    # Python raises TypeError for None < 5 -- a recognized runtime fact under
+    # the gap/fact discriminator: Incomplete(TypeErrorRuntimeEffect), not emit.
+    import ast
+
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+    from sugar_lift_py_tests.factory.build import build_node, default_catalog
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    node = ast.parse("None < 5", mode="eval").body
+    sugar = build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx).sugar
+    outcome = sugar.desugar(ctx)
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+
