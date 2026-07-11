@@ -3114,7 +3114,118 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
     if let Some(coverage) = &report.lift_coverage {
         value["liftCoverage"] = coverage.clone();
     }
+    // #3764 / #3706: directory-lift lineAccounting via shared SourcePartition.
+    render_lift_source_partition(&mut value, report);
     value
+}
+
+/// Directory-lift (whole-package) `lineAccounting` (#3764, part of #3706):
+/// the lift-source-report path has no verifier rows, so its warrant/effect
+/// claims come from the lift side itself -- every contract `sourceWarrants`
+/// span (warrant, grounds = canonical contract CID) and every non-complete
+/// factory-walk boundary (effect, grounds = the named reason). The claims
+/// feed the SAME `SourcePartition` constructor the prove path uses
+/// (`build_line_accounting_from_claims`), which layers inert support from the
+/// source text and either projects totals (`conserved: true`) or names its
+/// residue loudly (`conserved: false`) -- one classifier owner, no parallel
+/// logic. Without a project root there is no source to tile: the fields are
+/// omitted, never faked.
+fn render_lift_source_partition(value: &mut Value, report: &LiftSourceReport) {
+    let Some(project_root) = report.project_root.as_deref() else {
+        return;
+    };
+    let (files, claims) = lift_line_accounting_claims(report);
+    let (entries, partitions) = crate::source_partition::build_line_accounting_from_claims(
+        &files,
+        claims,
+        project_root,
+    );
+    value["lineAccounting"] = Value::Array(entries);
+    value["lineAccountingPartition"] = Value::Array(partitions);
+}
+
+/// Lift-side warrant/effect claims for the source partition.
+///
+/// Warrant: each `sourceWarrants` memento of a contract with a mintable
+/// canonical contract CID claims every line of its span; the grounds are the
+/// followable CID (the identity `mint` assigns). A contract with no mintable
+/// CID claims nothing -- a warrant without a followable CID is NOT a warrant,
+/// its lines stay residue-eligible (same rule as `row_line_accounting`).
+///
+/// Effect: each factory-walk row that is not `complete` and carries a source
+/// memento is a named boundary; the blame line and grounds come from the SAME
+/// extractors the `--visual` painter uses (`visual_red_blame` /
+/// `visual_red_grounds_from_factory_row`), so JSON and visual cannot drift.
+fn lift_line_accounting_claims(
+    report: &LiftSourceReport,
+) -> (Vec<String>, Vec<crate::source_partition::LineAccountingEntry>) {
+    use crate::source_partition::{LineAccountingEntry, LineClass};
+    let mut files: Vec<String> = Vec::new();
+    let mut claims: Vec<LineAccountingEntry> = Vec::new();
+
+    for contract in &report.contracts {
+        let Some(cid) = contract_cid_of_ir_decl(contract) else {
+            continue;
+        };
+        for warrant in contract_source_warrants(contract) {
+            let Some(file) = warrant.get("file").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(span) = warrant.get("span") else {
+                continue;
+            };
+            let start = span
+                .get("start_line")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            let end = span
+                .get("end_line")
+                .and_then(Value::as_u64)
+                .unwrap_or(start as u64) as usize;
+            if start == 0 {
+                continue;
+            }
+            files.push(file.to_string());
+            for line in start..=end.max(start) {
+                claims.push(LineAccountingEntry {
+                    file: file.to_string(),
+                    line,
+                    class: LineClass::Warrant,
+                    grounds: Some(cid.clone()),
+                });
+            }
+        }
+    }
+
+    for row in &report.factory_walk {
+        let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+        let raw_verdict = if status == "unresolved" {
+            "gap"
+        } else {
+            row.get("verdict")
+                .and_then(Value::as_str)
+                .unwrap_or("incomplete")
+        };
+        if raw_verdict == "complete" {
+            continue;
+        }
+        let Some(memento) = row.get("sourceMemento") else {
+            continue;
+        };
+        let grounds = visual_red_grounds_from_factory_row(row, raw_verdict, memento);
+        if grounds.line == 0 || grounds.file == "<unknown>" {
+            continue;
+        }
+        files.push(grounds.file.clone());
+        claims.push(LineAccountingEntry {
+            file: grounds.file,
+            line: grounds.line as usize,
+            class: LineClass::Effect,
+            grounds: Some(grounds.reason),
+        });
+    }
+
+    (files, claims)
 }
 
 fn render_report_json(
@@ -7926,6 +8037,186 @@ mod tests {
             parsed["prove"]["rows"][0]["verification"]["solverInvocations"][0]
                 ["solverInvocationCid"],
             "blake3-512:invoke"
+        );
+    }
+
+    // -- #3764: directory-lift (whole-package) JSON emits lineAccounting ----
+
+    fn line_accounting_lift_report(root: &std::path::Path) -> LiftSourceReport {
+        std::fs::write(
+            root.join("alpha.py"),
+            "import base64\n\ndef test_enc():\n    assert base64.b64encode(b\"a\") == b\"YQ==\"\n",
+        )
+        .expect("write alpha.py");
+        std::fs::write(
+            root.join("beta.py"),
+            "# helper\nimport os\n\ndef run():\n    os.system(\"x\")\n",
+        )
+        .expect("write beta.py");
+        let mut report = minimal_source_report();
+        report.project_root = Some(root.to_path_buf());
+        report.contracts = vec![serde_json::json!({
+            "kind": "contract",
+            "name": "b64encode#euf#c:callresult_b64encode(s:a)::assertion",
+            "outBinding": "out",
+            "post": {
+                "kind": "atomic",
+                "name": "=",
+                "args": [{"kind": "var", "name": "out"}, {"kind": "var", "name": "expected"}]
+            },
+            "sourceWarrants": [{
+                "file": "alpha.py",
+                "span": {"start_line": 3, "start_col": 0, "end_line": 4, "end_col": 40}
+            }]
+        })];
+        report.factory_walk = vec![serde_json::json!({
+            "kind": "factory-walk",
+            "status": "boundary",
+            "verdict": "incomplete",
+            "reason": "os.system is a named process effect",
+            "sourceMemento": {
+                "kind": "source-memento",
+                "file": "beta.py",
+                "span": {"start_line": 5, "start_col": 4, "end_line": 5, "end_col": 18}
+            }
+        })];
+        report
+    }
+
+    #[test]
+    fn directory_lift_json_emits_line_accounting_per_file() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let report = line_accounting_lift_report(root.path());
+        let rendered = render_report_json(&report, None).expect("json report");
+        let parsed: Value = serde_json::from_str(&rendered).expect("valid json");
+
+        assert_eq!(parsed["kind"], "lift-source-report");
+        let entries = parsed["lineAccounting"]
+            .as_array()
+            .expect("lineAccounting must be an array on the directory-lift path");
+        let class_of = |file: &str, line: u64| -> Option<String> {
+            entries
+                .iter()
+                .find(|e| e["file"] == file && e["line"] == line)
+                .and_then(|e| e["class"].as_str().map(str::to_string))
+        };
+        // alpha.py: the contract's sourceWarrants span claims lines 3-4 as
+        // warrant, grounds = the canonical contract CID (followable).
+        assert_eq!(class_of("alpha.py", 3).as_deref(), Some("warrant"));
+        assert_eq!(class_of("alpha.py", 4).as_deref(), Some("warrant"));
+        let warrant_grounds = entries
+            .iter()
+            .find(|e| e["file"] == "alpha.py" && e["line"] == 4)
+            .and_then(|e| e["grounds"].as_str())
+            .expect("warrant grounds");
+        assert!(
+            warrant_grounds.starts_with("blake3-512:"),
+            "warrant grounds must be a followable CID, got: {warrant_grounds}"
+        );
+        // alpha.py lines 1-2: inert support (import, blank).
+        assert_eq!(class_of("alpha.py", 1).as_deref(), Some("support"));
+        assert_eq!(class_of("alpha.py", 2).as_deref(), Some("support"));
+        // beta.py line 5: the factory-walk boundary is a per-line effect with
+        // its named grounds.
+        assert_eq!(class_of("beta.py", 5).as_deref(), Some("effect"));
+        let effect_grounds = entries
+            .iter()
+            .find(|e| e["file"] == "beta.py" && e["line"] == 5)
+            .and_then(|e| e["grounds"].as_str())
+            .expect("effect grounds");
+        assert_eq!(effect_grounds, "os.system is a named process effect");
+        // Both files tile totally: partitions conserved, residue zero.
+        let partitions = parsed["lineAccountingPartition"]
+            .as_array()
+            .expect("partition array");
+        assert_eq!(partitions.len(), 2, "{partitions:?}");
+        for partition in partitions {
+            assert_eq!(partition["conserved"], true, "{partition}");
+            assert_eq!(partition["residue"], 0, "{partition}");
+        }
+    }
+
+    #[test]
+    fn directory_lift_json_names_residue_loudly_when_tiling_fails() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let mut report = line_accounting_lift_report(root.path());
+        // Plant an unaccounted semantic line: chained statement after the
+        // effect line that no claim and no inert witness covers.
+        std::fs::write(
+            root.path().join("beta.py"),
+            "# helper\nimport os\n\ndef run():\n    os.system(\"x\")\n    launch_missiles()\n",
+        )
+        .expect("rewrite beta.py");
+        report.project_root = Some(root.path().to_path_buf());
+        let rendered = render_report_json(&report, None).expect("json report");
+        let parsed: Value = serde_json::from_str(&rendered).expect("valid json");
+        let beta = parsed["lineAccountingPartition"]
+            .as_array()
+            .expect("partition array")
+            .iter()
+            .find(|p| p["file"] == "beta.py")
+            .expect("beta partition")
+            .clone();
+        assert_eq!(beta["conserved"], false, "{beta}");
+        assert_eq!(beta["residue"], 1, "{beta}");
+        assert_eq!(beta["unaccounted"][0]["line"], 6, "{beta}");
+    }
+
+    #[test]
+    fn lift_json_without_project_root_omits_line_accounting() {
+        // No project root means no source to tile: the fields are omitted,
+        // never faked from claims alone.
+        let report = minimal_source_report();
+        let rendered = render_report_json(&report, None).expect("json report");
+        let parsed: Value = serde_json::from_str(&rendered).expect("valid json");
+        assert!(parsed.get("lineAccounting").is_none());
+        assert!(parsed.get("lineAccountingPartition").is_none());
+    }
+
+    #[test]
+    fn lift_prove_json_expresses_per_line_support_and_effect() {
+        // #3706: the prove side of a lift+prove report carries per-line
+        // support (inert witness) alongside row-derived warrant/effect once
+        // source is in hand.
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            root.path().join("gamma.py"),
+            "# vendor test\n\ndef test_match():\n    assert is_match(\"a\")\n",
+        )
+        .expect("write gamma.py");
+        let mut lift = minimal_source_report();
+        lift.project_root = Some(root.path().to_path_buf());
+        let mut prove = prove_report_with_sat_witness();
+        if let Some(row) = prove.rows.get_mut(0) {
+            row.callsite.file = Some("gamma.py".to_string());
+            row.callsite.line = Some(4);
+        }
+        let rendered = render_report_json(&lift, Some(&prove)).expect("render");
+        let parsed: Value = serde_json::from_str(&rendered).expect("json");
+        let entries = parsed["prove"]["lineAccounting"]
+            .as_array()
+            .expect("prove lineAccounting");
+        let classes: Vec<(u64, String)> = entries
+            .iter()
+            .filter(|e| e["file"] == "gamma.py")
+            .map(|e| {
+                (
+                    e["line"].as_u64().unwrap_or(0),
+                    e["class"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        assert!(
+            classes.contains(&(1, "support".to_string())),
+            "{classes:?}"
+        );
+        assert!(
+            classes.contains(&(2, "support".to_string())),
+            "{classes:?}"
+        );
+        assert!(
+            classes.contains(&(3, "support".to_string())),
+            "{classes:?}"
         );
     }
 

@@ -584,24 +584,47 @@ pub fn build_line_accounting(
     project_root: &Path,
 ) -> (Vec<Json>, Vec<Json>) {
     let row_claims = row_line_accounting(&prove_report.rows);
+    let files: Vec<String> = prove_report
+        .rows
+        .iter()
+        .filter_map(|row| row.callsite.file.clone())
+        .collect();
+    build_line_accounting_from_claims(&files, row_claims, project_root)
+}
 
-    // Group row claims by file, preserving order for stable output.
-    let mut files: Vec<String> = Vec::new();
+/// The claim-driven core of `build_line_accounting`: tile per-file
+/// `SourcePartition`s from ANY set of warrant/effect claims, layering the
+/// inert-support minter over each readable file. The prove path feeds it
+/// verifier-row claims; the directory (whole-package) lift path (#3764) feeds
+/// it lift-side claims (contract `sourceWarrants` spans and factory-walk
+/// effect boundaries), so both report shapes render `lineAccounting` /
+/// `lineAccountingPartition` from the SAME partition type -- one classifier
+/// owner, no parallel logic. `files` is the ordered (possibly repeated) file
+/// universe; a claim over a file not in the universe still tiles its file.
+pub fn build_line_accounting_from_claims(
+    files: &[String],
+    claims: Vec<LineAccountingEntry>,
+    project_root: &Path,
+) -> (Vec<Json>, Vec<Json>) {
+    // Group claims by file, preserving first-seen order for stable output.
+    let mut ordered_files: Vec<String> = Vec::new();
     let mut claims_by_file: BTreeMap<String, Vec<LineAccountingEntry>> = BTreeMap::new();
-    for row in &prove_report.rows {
-        if let Some(file) = &row.callsite.file {
-            if !claims_by_file.contains_key(file) {
-                files.push(file.clone());
-                claims_by_file.insert(file.clone(), Vec::new());
-            }
+    for file in files {
+        if !claims_by_file.contains_key(file) {
+            ordered_files.push(file.clone());
+            claims_by_file.insert(file.clone(), Vec::new());
         }
     }
-    for claim in row_claims {
-        claims_by_file.entry(claim.file.clone()).or_default();
+    for claim in claims {
+        if !claims_by_file.contains_key(&claim.file) {
+            ordered_files.push(claim.file.clone());
+            claims_by_file.insert(claim.file.clone(), Vec::new());
+        }
         if let Some(v) = claims_by_file.get_mut(&claim.file) {
             v.push(claim);
         }
     }
+    let files = ordered_files;
 
     let mut entries: Vec<Json> = Vec::new();
     let mut partitions: Vec<Json> = Vec::new();
