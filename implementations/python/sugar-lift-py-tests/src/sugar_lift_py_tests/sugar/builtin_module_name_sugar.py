@@ -51,6 +51,15 @@ _BUILTIN_MODULE_NAMES = frozenset(
         "pandas",
         "itsdangerous",
         "requests",
+        "freezegun",
+        "hashlib",
+        "secrets",
+        "urllib",
+        "http",
+        "email",
+        "logging",
+        "pickle",
+        "base64",
     }
 )
 
