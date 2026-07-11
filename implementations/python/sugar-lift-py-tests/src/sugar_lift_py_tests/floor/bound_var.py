@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .floor_value import FloorValue
 
@@ -27,3 +27,16 @@ class BoundVar(FloorValue):
     # the current scope, so a self-referential rebind (`x = x + 1`) reads the old x and
     # terminates instead of recomposing against itself forever.
     scope: object = None
+
+    def contribution(self):
+        # A let is support: present, threaded into scope, contributes nothing to the
+        # block record.
+        return ()
+
+    def extend_scope(self, ctx):
+        # Thread this binding forward so later statements resolve the name.
+        return replace(ctx, temporal=ctx.temporal.bind_value(self.name, self))
+
+    def answer(self, ctx=None):
+        # A reference recomposes the source against the DEFINITION scope.
+        return self.source.reduce(self.scope if self.scope is not None else ctx)

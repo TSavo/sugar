@@ -1,81 +1,58 @@
-"""AssignSugar is a statement sugar. `name = <rhs>` is a BoundVar: the name is an
-ALIAS for the rhs expression, not a snapshot of its value. The binding carries the
-SOURCE (recoverable + recomposable) -- a reference recomposes it, and a later pass
-(map element, curried arg, temporal rewrite) can recover the original expression. The
-block threads the bound var; a comment never disturbs it."""
+"""AssignSugar: `x = <expr>` is a BoundVar -- the name aliases the rhs SOURCE, not
+a snapshot of its value. The block threads the binding as a let (support: nothing
+joins the record); a reference recomposes the source against the DEFINITION scope
+so `x = x + 1` reads the OLD x. Tuple targets stay a loud factory gap."""
 
 from __future__ import annotations
 
 import ast
-from dataclasses import replace
+
+import pytest
 
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     BlockValue,
-    BoundVar,
     ReturnValue,
     SymbolicValue,
     TermValue,
 )
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import complete_value
-from sugar_lift_py_tests.sugar.tuple_assign_sugar import TupleAssignSugar
 
 
-def _desugar_assign(src: str):
-    node = ast.parse(src).body[0]
-    ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
-    sugar = build_node(node, filename="f.py", role=SugarRole.STATEMENT, ctx=ctx).sugar
-    return complete_value(sugar.desugar(ctx), owner="assign"), ctx
-
-
-def test_assign_is_a_bound_var_that_preserves_its_source():
-    # `b = x` does NOT collapse to x's value -- it aliases b to the expression `x`,
-    # keeping the source recoverable (what map / curry / temporal-rewrite need).
-    bound, ctx = _desugar_assign("b = x")
-    assert isinstance(bound, BoundVar)
-    assert bound.name == "b"
-    # the source is the rhs, recomposable: under a binding for x it recovers x.
-    scoped = replace(
-        ctx, temporal=ctx.temporal.bind_value("x", SymbolicValue(make_var("x")))
-    )
-    assert complete_value(bound.source.reduce(scoped), owner="src") == SymbolicValue(
-        make_var("x")
+def test_assign_bind_then_read_folds() -> None:
+    assert compose_block("    x = 1\n    return x\n") == BlockValue(
+        (ReturnValue(TermValue(1)),)
     )
 
 
-def test_assign_binds_a_name_resolved_by_a_later_return():
-    # y = 5; return y -> the return recomposes the alias y to 5.
-    assert compose_block("    y = 5\n    return y\n") == BlockValue(
-        (ReturnValue(TermValue(5)),)
-    )
-
-
-def test_tuple_assign_binds_each_name_resolved_by_later_return():
-    assert compose_block("    x, y = 1, 2\n    return y\n") == BlockValue(
+def test_rebind_reads_the_old_x() -> None:
+    # BoundVar.scope is the DEFINITION ctx -- `x = x + 1` terminates on the old x.
+    assert compose_block("    x = 1\n    x = x + 1\n    return x\n") == BlockValue(
         (ReturnValue(TermValue(2)),)
     )
 
 
-def test_tuple_assign_selects_tuple_assign_sugar():
-    result = build_node(
-        ast.parse("x, y = 1, 2").body[0],
-        filename="f.py",
-        role=SugarRole.STATEMENT,
-    )
-    assert isinstance(result.sugar, TupleAssignSugar)
+def test_assign_aliases_a_symbolic_carrier() -> None:
+    assert compose_block(
+        "    x = z\n    return x\n",
+        binds={"z": SymbolicValue(make_var("z"))},
+    ) == BlockValue((ReturnValue(SymbolicValue(make_var("z"))),))
 
 
-def test_comment_then_assign_then_return():
-    assert compose_block('    "doc"\n    y = 5\n    return y\n') == BlockValue(
-        (ReturnValue(TermValue(5)),)
-    )
+def test_assignment_contributes_nothing_to_the_record() -> None:
+    # The record holds ONLY the ReturnValue -- the assign is support (a let).
+    record = compose_block("    x = 1\n    return x\n")
+    assert record == BlockValue((ReturnValue(TermValue(1)),))
+    assert len(record.statements) == 1
 
 
-def test_assign_with_no_later_use_is_a_scope_only_block():
-    # a block of just a binding has no return outcome -- the binding is scope-local.
-    assert compose_block("    y = 5\n") == BlockValue(())
+def test_tuple_target_is_a_loud_factory_gap() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    node = ast.parse("a, b = 1, 2\n").body[0]
+    with pytest.raises(FactoryPanic):
+        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
