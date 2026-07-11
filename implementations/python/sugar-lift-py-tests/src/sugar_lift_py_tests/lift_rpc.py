@@ -1408,6 +1408,7 @@ def _handle_lift(
                 continue
             payload.ir.extend(file_payload.ir)
             payload.call_edges.extend(file_payload.call_edges)
+            payload.factory_walk.extend(file_payload.factory_walk)
             payload.source_mementos.extend(file_payload.source_mementos)
         # #4013: dual-axis lift coverage as first-class --report line items.
         # Independent AST census (second computation) vs this payload's accounting.

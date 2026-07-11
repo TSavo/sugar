@@ -92,7 +92,18 @@ class SugarBody(Generic[ReductionT_co]):
         from sugar_lift_py_tests.canonicalizer import blake3_512_of
 
         rows: list = []
-        if self.audit_row is not None:
+        # One row per source STATEMENT (the walk's historical grain, and what
+        # the visual renders one line per): term-role children still recurse
+        # (their statements nest, e.g. an if's faces) but emit no row of their
+        # own -- their statement's row is their line.
+        from sugar_lift_py_tests.claim import SugarRole
+
+        # Block is the factory's synthetic suite node, not a source statement:
+        # its row would render on its first statement's line, doubling it.
+        emit_row = self.role == SugarRole.STATEMENT and (
+            self.audit_row is None or self.audit_row.observed != "Block"
+        )
+        if emit_row and self.audit_row is not None:
             audit = self.audit_row
             site = getattr(self.sugar, "site", None)
             if site is not None:

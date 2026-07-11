@@ -19,17 +19,13 @@ _DEMO = (
 )
 
 _ENC_SELECTED = [
+    # One row per source STATEMENT -- term-role children (the if's Compare,
+    # the return's literal) render on their statement's line, no row of
+    # their own.
     "FunctionDefSugar",
-    "BlockSugar",
     "IfSugar",
-    "EqualityOpSugar",
-    "NameSugar",
-    "StringLiteralSugar",
-    "BlockSugar",
     "ReturnSugar",
-    "StringLiteralSugar",
     "ReturnSugar",
-    "NameSugar",
 ]
 
 
@@ -61,13 +57,11 @@ def test_enc_selected_sequence_is_source_order() -> None:
 
 
 def test_one_statement_def_has_exactly_its_subtree() -> None:
-    # def A(z): return z  -- FunctionDef, Block, Return, Name.
+    # def A(z): return z -- statement rows only: FunctionDef, Block, Return.
     source = "def A(z):\n    return z\n"
     payload = lift_file_payload(source, "t.py")
     assert [row.selected for row in payload.factory_walk] == [
         "FunctionDefSugar",
-        "BlockSugar",
         "ReturnSugar",
-        "NameSugar",
     ]
-    assert len(payload.factory_walk) == 4
+    assert len(payload.factory_walk) == 2
