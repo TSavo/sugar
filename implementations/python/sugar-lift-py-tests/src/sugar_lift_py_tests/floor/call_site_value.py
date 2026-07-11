@@ -72,6 +72,52 @@ class CallSiteValue(FloorValue):
         # inv that consumes the term can still project the edge later.
         return (self,)
 
+
+    def add(self, other, site):
+        """Addition floor via interface dispatch: dig then redispatch, else EUF +.
+
+        AddOpSugar calls left.add(right) — not binary_operator_with. Without this
+        totalizer, dig of `want_bytes(x) + self.sep` factory_panics mid-body.
+        """
+        return self._dig_or_symbolic_binop(other, site, op="+", floor_method="add")
+
+    def subtract(self, other, site):
+        return self._dig_or_symbolic_binop(other, site, op="-", floor_method="subtract")
+
+    def multiply(self, other, site):
+        return self._dig_or_symbolic_binop(other, site, op="*", floor_method="multiply")
+
+    def _dig_or_symbolic_binop(self, other, site, *, op: str, floor_method: str):
+        """Dig body when present; redispatch op on dug floor; else SymbolicValue join.
+
+        No invent of concrete sums. Ctx is None-tolerant (add(site) has no ctx).
+        Mid-dig FactoryPanic → treat as opaque (same as dig_floor soft path).
+        """
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        dug = self._dig_floor_or_none(
+            None,
+            owner=f"CallSiteValue.{floor_method}",
+        )
+        if dug is not None and dug is not self:
+            method = getattr(dug, floor_method, None)
+            if callable(method):
+                return method(other, site)
+
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    op,
+                    [
+                        self.to_term(owner=str(site)),
+                        other.to_term(owner=str(site)),
+                    ],
+                )
+            )
+        )
+
     def edge_contribution(self, source_contract):
         # Project one call-edge row: the coordinates this value already carries.
         # Seal/link fields (targetContract, cids) stay absent -- never faked.
