@@ -7,6 +7,7 @@ from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .call_site_value import CallSiteValue
 from .dict_literal_value import DictLiteralValue
+from .dict_value import DictValue
 from .encoded_string_value import EncodedStringValue
 from .floor_dispatch_surface import (
     BinaryOperatorFloor,
@@ -53,6 +54,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     Bv32Value,
     CallSiteValue,
     DictLiteralValue,
+    DictValue,
     EncodedStringValue,
     FunctionCallable,
     GuardedRaise,
@@ -97,6 +99,7 @@ __all__ = [
     "Bv32Value",
     "CallSiteValue",
     "DictLiteralValue",
+    "DictValue",
     "EncodedStringValue",
     "FLOOR_OPERATION_METHOD_NAMES",
     "FloorDispatchSurface",
