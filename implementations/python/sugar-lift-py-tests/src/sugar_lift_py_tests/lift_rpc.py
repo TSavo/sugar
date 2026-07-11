@@ -1584,6 +1584,10 @@ def _build_lift_coverage(
     disk = census_paths(paths, root=root)
     # Account against the same RPC shape the report serializes — built without
     # liftCoverage to avoid self-reference (coverage is the field being filled).
+    from sugar_lift_py_tests.kit_rpc.factory_audit_summary_dto import (
+        FactoryAuditSummaryDto,
+    )
+
     interim = {
         "sourceAudits": [to_rpc_value(a) for a in payload.source_audits],
         "sourceMementos": [to_rpc_value(m) for m in payload.source_mementos],
@@ -1595,6 +1599,10 @@ def _build_lift_coverage(
         # Minority projection joins function-contract rows to call_edges.
         "ir": [to_rpc_value(item) for item in payload.ir],
         "callEdges": [to_rpc_value(edge) for edge in payload.call_edges],
+        # Doctrine: factory instrument engagement must be visible to coverage
+        # accounting so unimplemented → refuse-loud, never silent (#4016).
+        "factoryAuditSummary": FactoryAuditSummaryDto(rows=payload.factory_walk).to_rpc(),
+        "factoryAudits": [to_rpc_value(a) for a in payload.factory_audits],
     }
     coverage = account_lift_coverage(disk, interim)
     body = coverage.to_json()

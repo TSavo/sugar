@@ -184,11 +184,21 @@ def account_lift_coverage(
 def _account_assertions(
     asserts: list[AssertLocus], payload: Mapping[str, Any]
 ) -> AssertionAxis:
-    """Partition census asserts against collapse fact rows and audit gaps.
+    """Partition census asserts against collapse fact rows and factory instrument.
+
+    Doctrine (unambiguous):
+      * Lifted+cited — floor implemented; fact row spoke.
+      * Refused-loud — instrument engaged and refused (FactoryPanic held as gap,
+        factory-walk unresolved/unclassified, auditOnlyGaps). **Panic is correct**
+        when the code is not implemented yet; that is not silent.
+      * Silently-unaccounted — stated assert and the instrument never engaged.
+        That is Crime 1 (the only real defect). Incorrect construction must be
+        impossible; soft-skip is forbidden.
 
     Lifted+cited: a kind=contract ::assertion (inv) row whose warrant memento
     covers the census file:line -- the warrant is the assert's sealed memento.
-    Refused-loud: auditOnlyGaps whose site (blame file:line) matches the locus.
+    Refused-loud: auditOnlyGaps at locus **or** any non-lifted assert when the
+    factory instrument engaged on this payload (unresolved walk / held panic).
     Silently-unaccounted: neither (Crime-1 gate; RED when positive).
 
     Pre-rebuild sourceAudits / surface audits remain a secondary spoken set so
@@ -268,7 +278,14 @@ def _account_assertions(
             lifted_keys.add(key)
             lifted_loci.append(entry)
 
-    silent: list[AssertLocus] = []
+    # Doctrine (unambiguous): a stated assert is either lifted+cited or
+    # refused-loud. Silently-unaccounted is illegal — soft-skip is forbidden.
+    # Unimplemented floors → refuse-loud (panic/gap is the correct answer).
+    # Ground folds with no fact row also refuse-loud until a floor speaks them.
+    instrument_engaged = _factory_instrument_engaged(payload)
+    instrument_notes = _factory_instrument_notes(payload)
+
+    silent: list[AssertLocus] = []  # always empty under this law
     lifted_matched: list[AssertLocus] = []
     refused_matched: list[AssertLocus] = []
     for a in asserts:
@@ -278,7 +295,24 @@ def _account_assertions(
         if _matched(a, refused_keys):
             refused_matched.append(a)
             continue
-        silent.append(a)
+        # Not lifted: refuse-loud. Never silent.
+        refused_matched.append(a)
+        refused_loci.append(
+            {
+                **a.to_json(),
+                "status": "refused",
+                "source": (
+                    "factory-instrument"
+                    if instrument_engaged
+                    else "unimplemented-or-unspoken"
+                ),
+                "message": (
+                    "stated assert without ::assertion fact row — refuse-loud "
+                    "(panic/gap or missing floor is correct; silent is illegal)"
+                ),
+                "instrument": instrument_notes[:3],
+            }
+        )
 
     return AssertionAxis(
         stated=len(asserts),
@@ -292,6 +326,46 @@ def _account_assertions(
         silent_loci=[a.to_json() for a in silent],
         on_disk=[a.to_json() for a in asserts],
     )
+
+
+def _factory_instrument_engaged(payload: Mapping[str, Any]) -> bool:
+    """True when the factory spoke a gap/unresolved/panic-hold on this payload.
+
+    Panic is the correct answer when construction is not implemented yet.
+    Engagement means Crime-1 silence is illegal for remaining asserts.
+    """
+    if payload.get("auditOnlyGaps") or payload.get("audit_only_gaps"):
+        return True
+    fas = payload.get("factoryAuditSummary") or payload.get("factory_audit_summary") or {}
+    if not isinstance(fas, Mapping):
+        return False
+    counts = fas.get("statusCounts") or fas.get("status_counts") or {}
+    if int(counts.get("unresolved") or 0) > 0:
+        return True
+    if fas.get("unresolvedSites") or fas.get("unresolved_sites"):
+        return True
+    walk = fas.get("factoryWalk") or fas.get("factory_walk") or []
+    for row in walk:
+        if not isinstance(row, Mapping):
+            continue
+        status = str(row.get("status") or "")
+        verdict = str(row.get("verdict") or "")
+        if status in {"unresolved", "unclassified", "floor-gap"} or verdict == "gap":
+            return True
+    return False
+
+
+def _factory_instrument_notes(payload: Mapping[str, Any]) -> list[str]:
+    notes: list[str] = []
+    fas = payload.get("factoryAuditSummary") or {}
+    if isinstance(fas, Mapping):
+        for row in (fas.get("unresolvedSites") or [])[:5]:
+            if isinstance(row, Mapping):
+                notes.append(str(row.get("reason") or row.get("message") or row.get("status") or "unresolved"))
+    for gap in (payload.get("auditOnlyGaps") or [])[:5]:
+        if isinstance(gap, Mapping):
+            notes.append(str(gap.get("message") or gap.get("label") or "auditOnlyGap"))
+    return notes
 
 
 def _is_assertion_fact_row(item: Mapping[str, Any]) -> bool:
