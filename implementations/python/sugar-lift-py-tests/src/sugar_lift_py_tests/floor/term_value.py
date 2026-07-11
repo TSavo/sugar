@@ -151,6 +151,36 @@ class TermValue(FloorValue):
             return Complete(TermValue(self.value % other.value))
         return super().modulo(other, site)
 
+    def unary_minus(self, site):
+        # Arithmetic negation: fold to -value.
+        del site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(TermValue(-self.value))
+
+    def unary_plus(self, site):
+        # Unary plus: fold to +value (identity for numbers).
+        del site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(TermValue(+self.value))
+
+    def bitwise_invert(self, site):
+        # Bitwise NOT: fold ints; floats raise TypeError at runtime in Python.
+        if type(self.value) is int:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(~self.value))
+        from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            TypeErrorRuntimeEffect(
+                f"bad operand type for unary ~: "
+                f"'float'; owner=TermValue.bitwise_invert site={site}"
+            )
+        )
+
     def to_term(self, *, owner: str):
         del owner
         # Int embeds in Real losslessly (3 and 3.0 are the same number), but the

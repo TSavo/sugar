@@ -41,6 +41,6 @@ def test_not_folds_to_false_when_negating_true() -> None:
     )
 
 
-def test_not_on_number_panics_for_free() -> None:
-    with pytest.raises(FactoryPanic):
-        _term("not 5")
+def test_not_on_number_folds_via_truth_floor() -> None:
+    # Python `not 5` is False: truth floor then negate (UnaryOpSugar).
+    assert isinstance(_term("not 5").value, FalseBoolLiteralSugar)
