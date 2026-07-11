@@ -1,0 +1,1215 @@
+{
+  "results": [
+    {
+      "package": "requests",
+      "package_path": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests",
+      "files_scanned": 19,
+      "files_ok": 19,
+      "census_asserts_total": 16,
+      "census_bodies_total": 267,
+      "agg": {
+        "stated": 16,
+        "lifted": 0,
+        "refused": 0,
+        "silent": 16,
+        "census_bodies": 267,
+        "dug": 0,
+        "un_asserted": 3,
+        "dig_floors": 0,
+        "forged": 0
+      },
+      "gate_crime1_zero": false,
+      "gate_crime2_zero": true,
+      "silent_loci": [
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/__init__.py",
+          "line": 66,
+          "col": 4,
+          "end_line": 66,
+          "end_col": 42,
+          "preview": "assert urllib3_version_list != [\"dev\"]  # Verify urllib3 isn't installed from git."
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/__init__.py",
+          "line": 76,
+          "col": 4,
+          "end_line": 76,
+          "end_col": 21,
+          "preview": "assert major >= 1"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/__init__.py",
+          "line": 78,
+          "col": 8,
+          "end_line": 78,
+          "end_col": 26,
+          "preview": "assert minor >= 21"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/__init__.py",
+          "line": 85,
+          "col": 8,
+          "end_line": 85,
+          "end_col": 61,
+          "preview": "assert (3, 0, 2) <= (major, minor, patch) < (8, 0, 0)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/__init__.py",
+          "line": 90,
+          "col": 8,
+          "end_line": 90,
+          "end_col": 61,
+          "preview": "assert (2, 0, 0) <= (major, minor, patch) < (4, 0, 0)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/_internal_utils.py",
+          "line": 46,
+          "col": 4,
+          "end_line": 46,
+          "end_col": 36,
+          "preview": "assert isinstance(u_string, str)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/adapters.py",
+          "line": 375,
+          "col": 8,
+          "end_line": 375,
+          "end_col": 32,
+          "preview": "assert _is_prepared(req)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/adapters.py",
+          "line": 481,
+          "col": 8,
+          "end_line": 481,
+          "end_col": 36,
+          "preview": "assert _is_prepared(request)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/adapters.py",
+          "line": 581,
+          "col": 8,
+          "end_line": 581,
+          "end_col": 36,
+          "preview": "assert _is_prepared(request)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/adapters.py",
+          "line": 659,
+          "col": 8,
+          "end_line": 659,
+          "end_col": 36,
+          "preview": "assert _is_prepared(request)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/cookies.py",
+          "line": 46,
+          "col": 8,
+          "end_line": 46,
+          "end_col": 36,
+          "preview": "assert _is_prepared(request)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/sessions.py",
+          "line": 317,
+          "col": 8,
+          "end_line": 317,
+          "end_col": 45,
+          "preview": "assert _is_prepared(original_request)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/sessions.py",
+          "line": 318,
+          "col": 8,
+          "end_line": 318,
+          "end_col": 45,
+          "preview": "assert _is_prepared(prepared_request)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/sessions.py",
+          "line": 350,
+          "col": 8,
+          "end_line": 350,
+          "end_col": 45,
+          "preview": "assert _is_prepared(prepared_request)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/sessions.py",
+          "line": 637,
+          "col": 8,
+          "end_line": 637,
+          "end_col": 33,
+          "preview": "assert _is_prepared(prep)"
+        },
+        {
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/sessions.py",
+          "line": 770,
+          "col": 8,
+          "end_line": 770,
+          "end_col": 36,
+          "preview": "assert _is_prepared(request)"
+        }
+      ],
+      "forged_loci": [],
+      "un_asserted_sample": [
+        {
+          "name": "get_cookie_header",
+          "qualname": "get_cookie_header",
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/cookies.py",
+          "line": 153,
+          "col": 0,
+          "bridge_source_symbol": "get_cookie_header"
+        },
+        {
+          "name": "session",
+          "qualname": "session",
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/sessions.py",
+          "line": 908,
+          "col": 0,
+          "bridge_source_symbol": "session"
+        },
+        {
+          "name": "add_dict_to_cookiejar",
+          "qualname": "add_dict_to_cookiejar",
+          "file": "/opt/data/itsdangerous-logo-venv/lib/python3.11/site-packages/requests/utils.py",
+          "line": 511,
+          "col": 0,
+          "bridge_source_symbol": "add_dict_to_cookiejar"
+        }
+      ],
+      "disagreements": [
+        {
+          "file": "__init__.py",
+          "census_present": 2,
+          "collapse_present": 0,
+          "census_names": [
+            "_check_cryptography",
+            "check_compatibility"
+          ]
+        },
+        {
+          "file": "_internal_utils.py",
+          "census_present": 2,
+          "collapse_present": 0,
+          "census_names": [
+            "to_native_string",
+            "unicode_is_ascii"
+          ]
+        },
+        {
+          "file": "adapters.py",
+          "census_present": 20,
+          "collapse_present": 0,
+          "census_names": [
+            "SOCKSProxyManager",
+            "__getstate__",
+            "__init__",
+            "__setstate__",
+            "_urllib3_request_context",
+            "add_headers",
+            "build_connection_pool_key_attributes",
+            "build_response",
+            "cert_verify",
+            "close",
+            "get_connection",
+            "get_connection_with_tls_context"
+          ]
+        },
+        {
+          "file": "cookies.py",
+          "census_present": 52,
+          "collapse_present": 1,
+          "census_names": [
+            "__contains__",
+            "__delitem__",
+            "__getitem__",
+            "__getstate__",
+            "__init__",
+            "__iter__",
+            "__setitem__",
+            "__setstate__",
+            "_copy_cookie_jar",
+            "_find",
+            "_find_no_duplicates",
+            "add_header"
+          ]
+        },
+        {
+          "file": "sessions.py",
+          "census_present": 29,
+          "collapse_present": 1,
+          "census_names": [
+            "__enter__",
+            "__exit__",
+            "__getstate__",
+            "__init__",
+            "__setstate__",
+            "close",
+            "delete",
+            "get",
+            "get_adapter",
+            "get_redirect_target",
+            "head",
+            "merge_environment_settings"
+          ]
+        },
+        {
+          "file": "_types.py",
+          "census_present": 3,
+          "collapse_present": 0,
+          "census_names": [
+            "is_prepared",
+            "items",
+            "read"
+          ]
+        },
+        {
+          "file": "api.py",
+          "census_present": 8,
+          "collapse_present": 0,
+          "census_names": [
+            "delete",
+            "get",
+            "head",
+            "options",
+            "patch",
+            "post",
+            "put",
+            "request"
+          ]
+        },
+        {
+          "file": "auth.py",
+          "census_present": 24,
+          "collapse_present": 0,
+          "census_names": [
+            "KD",
+            "__call__",
+            "__eq__",
+            "__init__",
+            "__ne__",
+            "_basic_auth_str",
+            "build_digest_header",
+            "handle_401",
+            "handle_redirect",
+            "init_per_thread_state",
+            "md5_utf8",
+            "sha256_utf8"
+          ]
+        },
+        {
+          "file": "compat.py",
+          "census_present": 1,
+          "collapse_present": 0,
+          "census_names": [
+            "_resolve_char_detection"
+          ]
+        },
+        {
+          "file": "exceptions.py",
+          "census_present": 3,
+          "collapse_present": 0,
+          "census_names": [
+            "__init__",
+            "__reduce__"
+          ]
+        },
+        {
+          "file": "help.py",
+          "census_present": 3,
+          "collapse_present": 0,
+          "census_names": [
+            "_implementation",
+            "info",
+            "main"
+          ]
+        },
+        {
+          "file": "hooks.py",
+          "census_present": 2,
+          "collapse_present": 0,
+          "census_names": [
+            "default_hooks",
+            "dispatch_hook"
+          ]
+        },
+        {
+          "file": "models.py",
+          "census_present": 52,
+          "collapse_present": 0,
+          "census_names": [
+            "__bool__",
+            "__enter__",
+            "__exit__",
+            "__getstate__",
+            "__init__",
+            "__iter__",
+            "__nonzero__",
+            "__repr__",
+            "__setstate__",
+            "_encode_files",
+            "_encode_params",
+            "_get_idna_encoded_host"
+          ]
+        },
+        {
+          "file": "status_codes.py",
+          "census_present": 2,
+          "collapse_present": 0,
+          "census_names": [
+            "_init",
+            "doc"
+          ]
+        },
+        {
+          "file": "structures.py",
+          "census_present": 17,
+          "collapse_present": 0,
+          "census_names": [
+            "__delitem__",
+            "__eq__",
+            "__getattr__",
+            "__getitem__",
+            "__init__",
+            "__iter__",
+            "__len__",
+            "__repr__",
+            "__setitem__",
+            "copy",
+            "get",
+            "lower_items"
+          ]
+        },
+        {
+          "file": "utils.py",
+          "census_present": 47,
+          "collapse_present": 1,
+          "census_names": [
+            "_parse_content_type_header",
+            "_validate_header_part",
+            "add_dict_to_cookiejar",
+            "address_in_network",
+            "atomic_open",
+            "check_header_validity",
+            "default_headers",
+            "default_user_agent",
+            "dict_from_cookiejar",
+            "dict_to_sequence",
+            "dotted_netmask",
+            "extract_zipped_paths"
+          ]
+        }
+      ],
+      "disagreements_n": 16,
+      "per_file_top_silent": [
+        {
+          "file": "__init__.py",
+          "stated": 5,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 5,
+          "census_bodies": 2,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "sessions.py",
+          "stated": 5,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 5,
+          "census_bodies": 29,
+          "minority_present": 1,
+          "dug": 0,
+          "un_asserted": 1,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "adapters.py",
+          "stated": 4,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 4,
+          "census_bodies": 20,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "_internal_utils.py",
+          "stated": 1,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 1,
+          "census_bodies": 2,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "cookies.py",
+          "stated": 1,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 1,
+          "census_bodies": 52,
+          "minority_present": 1,
+          "dug": 0,
+          "un_asserted": 1,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "__version__.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 0,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "_types.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 3,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "api.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 8,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "auth.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 24,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "certs.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 0,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "compat.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 1,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "exceptions.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 3,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "help.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 3,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "hooks.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 2,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "models.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 52,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        }
+      ],
+      "per_file_top_bodies": [
+        {
+          "file": "cookies.py",
+          "stated": 1,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 1,
+          "census_bodies": 52,
+          "minority_present": 1,
+          "dug": 0,
+          "un_asserted": 1,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "models.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 52,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "utils.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 47,
+          "minority_present": 1,
+          "dug": 0,
+          "un_asserted": 1,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "sessions.py",
+          "stated": 5,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 5,
+          "census_bodies": 29,
+          "minority_present": 1,
+          "dug": 0,
+          "un_asserted": 1,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "auth.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 24,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "adapters.py",
+          "stated": 4,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 4,
+          "census_bodies": 20,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "structures.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 17,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "api.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 8,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "_types.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 3,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        },
+        {
+          "file": "exceptions.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 3,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        }
+      ],
+      "errors_n": 0,
+      "errors_sample": []
+    },
+    {
+      "package": "csv",
+      "package_path": "/usr/local/lib/python3.11",
+      "files_scanned": 1,
+      "files_ok": 1,
+      "census_asserts_total": 0,
+      "census_bodies_total": 17,
+      "agg": {
+        "stated": 0,
+        "lifted": 0,
+        "refused": 0,
+        "silent": 0,
+        "census_bodies": 17,
+        "dug": 0,
+        "un_asserted": 0,
+        "dig_floors": 0,
+        "forged": 0
+      },
+      "gate_crime1_zero": true,
+      "gate_crime2_zero": true,
+      "silent_loci": [],
+      "forged_loci": [],
+      "un_asserted_sample": [],
+      "disagreements": [
+        {
+          "file": "csv.py",
+          "census_present": 17,
+          "collapse_present": 0,
+          "census_names": [
+            "__init__",
+            "__iter__",
+            "__next__",
+            "_dict_to_list",
+            "_guess_delimiter",
+            "_guess_quote_and_delimiter",
+            "_validate",
+            "fieldnames",
+            "has_header",
+            "sniff",
+            "writeheader",
+            "writerow"
+          ]
+        }
+      ],
+      "disagreements_n": 1,
+      "per_file_top_silent": [
+        {
+          "file": "csv.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 17,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        }
+      ],
+      "per_file_top_bodies": [
+        {
+          "file": "csv.py",
+          "stated": 0,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 0,
+          "census_bodies": 17,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        }
+      ],
+      "errors_n": 0,
+      "errors_sample": []
+    },
+    {
+      "package": "datetime",
+      "package_path": "/usr/local/lib/python3.11",
+      "files_scanned": 1,
+      "files_ok": 1,
+      "census_asserts_total": 45,
+      "census_bodies_total": 184,
+      "agg": {
+        "stated": 45,
+        "lifted": 0,
+        "refused": 0,
+        "silent": 45,
+        "census_bodies": 184,
+        "dug": 0,
+        "un_asserted": 0,
+        "dig_floors": 0,
+        "forged": 0
+      },
+      "gate_crime1_zero": false,
+      "gate_crime2_zero": true,
+      "silent_loci": [
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 53,
+          "col": 4,
+          "end_line": 53,
+          "end_col": 34,
+          "preview": "assert 1 <= month <= 12, month"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 60,
+          "col": 4,
+          "end_line": 60,
+          "end_col": 53,
+          "preview": "assert 1 <= month <= 12, 'month must be in 1..12'"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 65,
+          "col": 4,
+          "end_line": 65,
+          "end_col": 53,
+          "preview": "assert 1 <= month <= 12, 'month must be in 1..12'"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 67,
+          "col": 4,
+          "end_line": 67,
+          "end_col": 58,
+          "preview": "assert 1 <= day <= dim, ('day must be in 1..%d' % dim)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 78,
+          "col": 0,
+          "end_line": 78,
+          "end_col": 27,
+          "preview": "assert _DI4Y == 4 * 365 + 1"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 82,
+          "col": 0,
+          "end_line": 82,
+          "end_col": 33,
+          "preview": "assert _DI400Y == 4 * _DI100Y + 1"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 86,
+          "col": 0,
+          "end_line": 86,
+          "end_col": 32,
+          "preview": "assert _DI100Y == 25 * _DI4Y - 1"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 131,
+          "col": 8,
+          "end_line": 131,
+          "end_col": 21,
+          "preview": "assert n == 0"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 137,
+          "col": 4,
+          "end_line": 137,
+          "end_col": 37,
+          "preview": "assert leapyear == _is_leap(year)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 144,
+          "col": 4,
+          "end_line": 144,
+          "end_col": 47,
+          "preview": "assert 0 <= n < _days_in_month(year, month)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 243,
+          "col": 20,
+          "end_line": 243,
+          "end_col": 46,
+          "preview": "assert '%' not in zreplace"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 274,
+          "col": 4,
+          "end_line": 274,
+          "end_col": 24,
+          "preview": "assert len_dtstr > 7"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 328,
+          "col": 4,
+          "end_line": 328,
+          "end_col": 35,
+          "preview": "assert len(dtstr) in (7, 8, 10)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 504,
+          "col": 4,
+          "end_line": 504,
+          "end_col": 39,
+          "preview": "assert name in (\"utcoffset\", \"dst\")"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 618,
+          "col": 12,
+          "end_line": 618,
+          "end_col": 58,
+          "preview": "assert daysecondswhole == int(daysecondswhole)  # can't overflow"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 620,
+          "col": 12,
+          "end_line": 620,
+          "end_col": 36,
+          "preview": "assert days == int(days)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 625,
+          "col": 8,
+          "end_line": 625,
+          "end_col": 48,
+          "preview": "assert isinstance(daysecondsfrac, float)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 626,
+          "col": 8,
+          "end_line": 626,
+          "end_col": 41,
+          "preview": "assert abs(daysecondsfrac) <= 1.0"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 627,
+          "col": 8,
+          "end_line": 627,
+          "end_col": 33,
+          "preview": "assert isinstance(d, int)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 628,
+          "col": 8,
+          "end_line": 628,
+          "end_col": 34,
+          "preview": "assert abs(s) <= 24 * 3600"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 633,
+          "col": 12,
+          "end_line": 633,
+          "end_col": 42,
+          "preview": "assert seconds == int(seconds)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 636,
+          "col": 12,
+          "end_line": 636,
+          "end_col": 42,
+          "preview": "assert abs(secondsfrac) <= 2.0"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 640,
+          "col": 8,
+          "end_line": 640,
+          "end_col": 45,
+          "preview": "assert isinstance(secondsfrac, float)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 641,
+          "col": 8,
+          "end_line": 641,
+          "end_col": 38,
+          "preview": "assert abs(secondsfrac) <= 2.0"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 643,
+          "col": 8,
+          "end_line": 643,
+          "end_col": 39,
+          "preview": "assert isinstance(seconds, int)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 647,
+          "col": 8,
+          "end_line": 647,
+          "end_col": 33,
+          "preview": "assert isinstance(s, int)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 648,
+          "col": 8,
+          "end_line": 648,
+          "end_col": 38,
+          "preview": "assert abs(s) <= 2 * 24 * 3600"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 652,
+          "col": 8,
+          "end_line": 652,
+          "end_col": 36,
+          "preview": "assert abs(usdouble) < 2.1e6    # exact value not critical"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 668,
+          "col": 8,
+          "end_line": 668,
+          "end_col": 33,
+          "preview": "assert isinstance(s, int)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 669,
+          "col": 8,
+          "end_line": 669,
+          "end_col": 44,
+          "preview": "assert isinstance(microseconds, int)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 670,
+          "col": 8,
+          "end_line": 670,
+          "end_col": 38,
+          "preview": "assert abs(s) <= 3 * 24 * 3600"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 671,
+          "col": 8,
+          "end_line": 671,
+          "end_col": 40,
+          "preview": "assert abs(microseconds) < 3.1e6"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 679,
+          "col": 8,
+          "end_line": 679,
+          "end_col": 33,
+          "preview": "assert isinstance(d, int)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 680,
+          "col": 8,
+          "end_line": 680,
+          "end_col": 54,
+          "preview": "assert isinstance(s, int) and 0 <= s < 24*3600"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 681,
+          "col": 8,
+          "end_line": 681,
+          "end_col": 56,
+          "preview": "assert isinstance(us, int) and 0 <= us < 1000000"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 867,
+          "col": 8,
+          "end_line": 867,
+          "end_col": 43,
+          "preview": "assert isinstance(other, timedelta)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 1126,
+          "col": 8,
+          "end_line": 1126,
+          "end_col": 38,
+          "preview": "assert isinstance(other, date)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 1440,
+          "col": 8,
+          "end_line": 1440,
+          "end_col": 38,
+          "preview": "assert isinstance(other, time)"
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 1480,
+          "col": 16,
+          "end_line": 1480,
+          "end_col": 67,
+          "preview": "assert not m % timedelta(minutes=1), \"whole minute\""
+        },
+        {
+          "file": "/usr/local/lib/python3.11/datetime.py",
+          "line": 1507,
+          "col": 12,
+          "end_line": 1507,
+          "end_col": 32,
+          "preview": "assert s[-1:] == \")\""
+        }
+      ],
+      "forged_loci": [],
+      "un_asserted_sample": [],
+      "disagreements": [
+        {
+          "file": "datetime.py",
+          "census_present": 184,
+          "collapse_present": 0,
+          "census_names": [
+            "__abs__",
+            "__add__",
+            "__bool__",
+            "__divmod__",
+            "__eq__",
+            "__floordiv__",
+            "__format__",
+            "__ge__",
+            "__getinitargs__",
+            "__gt__",
+            "__hash__",
+            "__le__"
+          ]
+        }
+      ],
+      "disagreements_n": 1,
+      "per_file_top_silent": [
+        {
+          "file": "datetime.py",
+          "stated": 45,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 45,
+          "census_bodies": 184,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        }
+      ],
+      "per_file_top_bodies": [
+        {
+          "file": "datetime.py",
+          "stated": 45,
+          "lifted": 0,
+          "refused": 0,
+          "silent": 45,
+          "census_bodies": 184,
+          "minority_present": 0,
+          "dug": 0,
+          "un_asserted": 0,
+          "dig_floors": 0,
+          "forged": 0
+        }
+      ],
+      "errors_n": 0,
+      "errors_sample": []
+    }
+  ],
+  "method": "lift_file_payload + account_lift_coverage + census_paths; assert-preferring sample for multi-file packages"
+}
