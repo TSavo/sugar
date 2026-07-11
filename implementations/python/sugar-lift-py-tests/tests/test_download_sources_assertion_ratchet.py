@@ -95,15 +95,16 @@ def test_diggable_vendor_assert_lifts_not_silent() -> None:
     assert ax["silently_unaccounted"] == 0
 
 
-def test_download_tree_still_mostly_silent_on_raw_pytest_suite(
+def test_download_tree_instrument_refuses_not_silent(
     itsdangerous_sdist_root: Path,
 ) -> None:
-    """Honesty ratchet: raw sdist tests are stated but largely silent today.
+    """Doctrine: factory engagement → refuse-loud; Crime-1 silent must be 0.
 
-    Prevents claiming 'download fixed Crime 1' when only census grew.
+    Download sources put stated mass on disk. Unimplemented floors must panic /
+    refuse-loud, never soft-silent past a stated assert.
     """
     test_files = sorted((itsdangerous_sdist_root / "tests").rglob("*.py"))
-    stated = lifted = silent = 0
+    stated = lifted = silent = refused = 0
     for p in test_files:
         src = p.read_text(encoding="utf-8", errors="replace")
         rpc = lift_file_payload(src, str(p)).to_rpc()
@@ -112,7 +113,11 @@ def test_download_tree_still_mostly_silent_on_raw_pytest_suite(
         stated += a["stated"]
         lifted += a["lifted_cited"]
         silent += a["silently_unaccounted"]
+        refused += a["refused_loud"]
     assert stated >= 50
-    # Document current membrane: pytest/parametrize/isinstance remain silent.
-    assert silent + lifted == stated
-    assert silent >= 40, "if this drops a lot, update the honesty note + gallery"
+    assert silent + lifted + refused == stated
+    assert silent == 0, (
+        f"stated asserts must not be silent when instrument can engage; silent={silent}"
+    )
+    # Most of the wall is still refuse-loud (floors not implemented) — correct.
+    assert refused >= 40, f"expected mostly refuse-loud unimplemented; refused={refused}"
