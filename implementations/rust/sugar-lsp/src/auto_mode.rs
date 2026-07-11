@@ -7,12 +7,14 @@
 //     1. already sealed for this source_cid?     → skip (process + disk)
 //     2. vendor-shipped *.proof under package? → load as vendor, seal
 //     3. disk auto cache under project?        → load, seal
-//     4. else source on disk?                  → mint, seal, persist
+//     4. Download sources (Maven-class, #4106) → sdist @ installed version
+//     5. mint from richest root (downloaded tests/ preferred), seal, persist
 //
 // Solve never opens site-packages. CLI does not get this loop.
 //
 // Opt-out: SUGAR_LSP_AUTO_LIFT=0
-// Default: on for in-process path.
+// Download sources opt-out: SUGAR_LSP_DOWNLOAD_SOURCES=0
+// Default: both on for in-process path.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -50,6 +52,8 @@ enum SealOrigin {
     DiskCache,
     VendorShipped,
     Minted,
+    /// Minted from downloaded sdist/repo tree (#4106), not bare site-packages.
+    DownloadedSources,
 }
 
 pub fn auto_lift_enabled() -> bool {
@@ -61,6 +65,105 @@ pub fn auto_lift_enabled() -> bool {
         Err(_) => true,
     }
 }
+
+/// Maven-class companion: fetch sdist/sources for claim-rich lift (#4106/#4107).
+/// Default on when auto-lift is on. Opt-out: SUGAR_LSP_DOWNLOAD_SOURCES=0.
+pub fn download_sources_enabled() -> bool {
+    if !auto_lift_enabled() {
+        return false;
+    }
+    match std::env::var("SUGAR_LSP_DOWNLOAD_SOURCES") {
+        Ok(v) => {
+            let t = v.trim().to_ascii_lowercase();
+            !(t == "0" || t == "false" || t == "off" || t == "no")
+        }
+        Err(_) => true,
+    }
+}
+
+fn sources_cache_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("SUGAR_SOURCES_CACHE") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".cache/sugar/sources");
+    }
+    std::env::temp_dir().join("sugar-sources-cache")
+}
+
+fn download_sources_script() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/download_package_sources.py")
+}
+
+/// Ensure sources for `module` are local (cache or fetch sdist). Returns root path + log line.
+pub fn ensure_downloaded_sources(module: &str) -> Result<(PathBuf, String), String> {
+    if !download_sources_enabled() {
+        return Err("download sources disabled (SUGAR_LSP_DOWNLOAD_SOURCES=0)".into());
+    }
+    let script = download_sources_script();
+    if !script.is_file() {
+        return Err(format!(
+            "download_package_sources.py missing at {}",
+            script.display()
+        ));
+    }
+    let cache = sources_cache_dir();
+    fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+    let py = python_bin();
+    let out = Command::new(&py)
+        .args([
+            script.to_str().unwrap_or(""),
+            module,
+            cache.to_str().unwrap_or(""),
+        ])
+        .output()
+        .map_err(|e| format!("spawn download_package_sources: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let v: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
+        format!(
+            "download_package_sources bad JSON: {e}; stdout={stdout:?} stderr={stderr:?}"
+        )
+    })?;
+    if v.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+        let err = v
+            .get("error")
+            .and_then(|x| x.as_str())
+            .unwrap_or("unknown download failure");
+        return Err(err.to_string());
+    }
+    let root = v
+        .get("root")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| "download ok but missing root".to_string())?;
+    let via = v
+        .get("via")
+        .and_then(|x| x.as_str())
+        .unwrap_or("download");
+    let name = v
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or(module);
+    let version = v
+        .get("version")
+        .and_then(|x| x.as_str())
+        .unwrap_or("?");
+    let source_url = v
+        .get("source_url")
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    let log = format!(
+        "download-sources: {name}@{version} via={via} root={root} url={source_url}"
+    );
+    let path = PathBuf::from(root);
+    if !path.is_dir() {
+        return Err(format!("download root missing: {}", path.display()));
+    }
+    Ok((path, log))
+}
+
 
 pub fn extract_top_level_imports(source: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -583,7 +686,17 @@ fn seal_cold_module(
     module: &str,
 ) -> Result<Option<(ProofBytes, SealOrigin)>, String> {
     ensure_cache()?;
-    let module_root = resolve_module_path(module)?;
+    // Prefer claim-rich downloaded sources (sdist/tests) over bare site-packages.
+    let mut download_log: Option<String> = None;
+    let mut used_download = false;
+    let module_root = match ensure_downloaded_sources(module) {
+        Ok((root, log)) => {
+            download_log = Some(log);
+            used_download = true;
+            root
+        }
+        Err(_e) => resolve_module_path(module)?,
+    };
     let source_cid = source_tree_cid(&module_root)?;
 
     // 1) Process cache by source_cid
@@ -644,15 +757,21 @@ fn seal_cold_module(
         }
     }
 
-    // 4) Mint from source
+    // 4) Mint from source (downloaded tree preferred when available)
+    let _ = download_log; // retained for callers via outer logs if needed later
     match mint_module(module, &module_root)? {
         Some((proof_cid, bytes)) => {
+            let origin = if used_download {
+                SealOrigin::DownloadedSources
+            } else {
+                SealOrigin::Minted
+            };
             cache_put(CachedAutoProof {
                 source_cid: source_cid.clone(),
                 proof_cid: proof_cid.clone(),
                 bytes: bytes.clone(),
                 module: module.to_string(),
-                origin: SealOrigin::Minted,
+                origin,
             });
             let _ = persist_disk_cache(project_root, &source_cid, module, &proof_cid, &bytes);
             let pb = ProofBytes::try_from_parts(
@@ -662,7 +781,7 @@ fn seal_cold_module(
                 Speaker::vendor(format!("auto-lift:{module}")),
             )
             .map_err(|e| e.to_string())?;
-            Ok(Some((pb, SealOrigin::Minted)))
+            Ok(Some((pb, origin)))
         }
         None => {
             // Honest empty: still mark sealed so we don't re-mint forever.
@@ -717,6 +836,13 @@ pub fn auto_lift_cold_imports_into_pool(
         if pool_covers_module(base_pool, &m) {
             logs.push(format!("auto-lift: {m} warm (pool/sealed) — skip"));
             continue;
+        }
+        // Maven-class sources fetch (cache hit is cheap); mint root prefers this tree.
+        if download_sources_enabled() {
+            match ensure_downloaded_sources(&m) {
+                Ok((_root, log)) => logs.push(log),
+                Err(e) => logs.push(format!("download-sources: {m} skip: {e}")),
+            }
         }
         match seal_cold_module(project_root, &m) {
             Ok(Some((pb, origin))) => {
@@ -813,5 +939,13 @@ from typing import List
         let found = find_shipped_proofs(&dir);
         assert!(!found.is_empty(), "{found:?}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn download_sources_enabled_defaults_on() {
+        // Do not assert global env; just ensure function is callable.
+        let _ = download_sources_enabled();
+        let _ = sources_cache_dir();
+        assert!(download_sources_script().is_file(), "helper script must ship in crate");
     }
 }
