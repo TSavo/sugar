@@ -267,7 +267,15 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
         reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
-        outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
+        try:
+            outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
+        except Exception as exc:
+            # FactoryPanic mid-dig: opaque residual, not process-terminal for dig_floor.
+            from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+
+            if isinstance(exc, FactoryPanic):
+                return None
+            raise
         if isinstance(outcome, Incomplete):
             return None
         value = complete_value(outcome, owner=owner)

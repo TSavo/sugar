@@ -831,11 +831,27 @@ def audit_lift_file(
     # Seed import bindings once for every def in this module (deeper floors).
     module_temporal = _module_import_temporal(module)
     import_aliases, from_imports = _module_import_maps(module)
-    # Same-module name_resolver: bare f() digs body of def f in this file.
+    # Same-module name_resolver: bare f() and Class.method dig bodies.
     name_resolver: dict = {}
     for stmt in _iter_liftable_function_defs(module):
         if stmt.observed == "FunctionDef":
             name_resolver[stmt.function_name()] = stmt.node
+    # Class methods (same module) for method body dig.
+    for stmt in module.statements():
+        if stmt.observed != "ClassDef":
+            continue
+        cname = stmt.class_name()
+        for body_stmt in stmt.class_body():
+            if body_stmt.observed == "FunctionDef":
+                name_resolver[f"{cname}.{body_stmt.function_name()}"] = body_stmt.node
+            elif body_stmt.observed == "ClassDef":
+                # one-level nested class
+                nested = body_stmt.class_name()
+                for nested_stmt in body_stmt.class_body():
+                    if nested_stmt.observed == "FunctionDef":
+                        name_resolver[
+                            f"{nested}.{nested_stmt.function_name()}"
+                        ] = nested_stmt.node
     for stmt in _iter_liftable_function_defs(module):
         # Either ordinary FunctionDef or test_* testimony (both owns shapes).
         # Class methods included (pytest TestCase-style / mixin tests).
