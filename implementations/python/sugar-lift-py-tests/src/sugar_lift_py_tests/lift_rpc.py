@@ -694,6 +694,54 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     return payload
 
 
+
+def _module_import_temporal(module) -> "object":
+    """Bind module-level Import / ImportFrom names into a TemporalContext.
+
+    Deeper floors: names introduced by ``import pytest`` / ``from x import Y``
+    must stand when reducing function bodies. Without this, TemporalContext
+    panics on unbound import names even though the source stated the import.
+    Bindings are ``python:module`` / ``python:from_import`` terms — coordinates,
+    not fabricated contracts.
+    """
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    temporal = TemporalContext.empty()
+    for stmt in module.statements():
+        observed = stmt.observed
+        if observed == "Import":
+            for name, asname in stmt.import_names():
+                bound = asname or name.split(".")[0]
+                # ``import a.b as c`` binds c; ``import a.b`` binds a
+                if asname is None and "." in name:
+                    bound = name.split(".")[0]
+                    mod_term = name.split(".")[0]
+                else:
+                    mod_term = name
+                temporal = temporal.bind_value(
+                    bound,
+                    SymbolicValue(ctor("python:module", [str_const(mod_term)])),
+                )
+        elif observed == "ImportFrom":
+            mod = stmt.importfrom_module() or ""
+            for name, asname in stmt.importfrom_names():
+                if name == "*":
+                    continue  # star-import stays loud / unsupported
+                bound = asname or name
+                temporal = temporal.bind_value(
+                    bound,
+                    SymbolicValue(
+                        ctor(
+                            "python:from_import",
+                            [str_const(mod), str_const(name)],
+                        )
+                    ),
+                )
+    return temporal
+
+
 def audit_lift_file(
     source: str,
     filename: str,
@@ -728,13 +776,17 @@ def audit_lift_file(
         # fabricated support row.
         return payload, gaps
     module = roots[0]
+    # Seed import bindings once for every def in this module (deeper floors).
+    module_temporal = _module_import_temporal(module)
     for stmt in module.statements():
         # Either ordinary FunctionDef or test_* testimony (both owns shapes).
         if not (FunctionDefSugar.owns(stmt) or TestFunctionDefSugar.owns(stmt)):
             continue
         label = f"{filename}:{stmt.line}:{stmt.col}"
         try:
-            ctx = FactoryBuildContext(filename=filename, catalog=catalog)
+            ctx = FactoryBuildContext(
+                filename=filename, catalog=catalog, temporal=module_temporal
+            )
             result = build_node(
                 stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx
             )

@@ -14,7 +14,9 @@ class TestFunctionDefSugar(
     Sugar, role=SugarRole.STATEMENT, comes_before=("FunctionDefSugar",)
 ):
     """`def test_*(...): body` is TESTIMONY, not a contract. The pytest
-    `test_` prefix IS syntax; recognition stays syntactic. The body becomes
+    `test_` prefix IS syntax; recognition stays syntactic. Decorators
+    (``@pytest.mark.parametrize``, …) are allowed on owns — body is still
+    testimony; decorator effects are not invented as floors. The body becomes
     a TestimonyValue: its asserts are the vendor facts. Comes before
     FunctionDefSugar so testimony wins over the ordinary universe path."""
 
@@ -30,7 +32,10 @@ class TestFunctionDefSugar(
         if not site.function_name().startswith("test_"):
             return False
         min_args, max_args = site.function_positional_arity()
-        return min_args == max_args and not site.function_decorators()
+        # Deeper floors: pytest.mark.* (and similar) decorate testimony without
+        # changing the body. Require plain positional arity still; decorators
+        # are not reduced (not fabricated) — body asserts remain the facts.
+        return min_args == max_args
 
     @classmethod
     def new(cls, site, ctx) -> "TestFunctionDefSugar":
