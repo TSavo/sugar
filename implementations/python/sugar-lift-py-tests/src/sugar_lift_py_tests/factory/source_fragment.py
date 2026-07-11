@@ -497,6 +497,14 @@ class SourceFragment:
             return ()
         return (name,)
 
+    def except_handler_type(self) -> "SourceFragment | None":
+        """Return the exception type expression of an ExceptHandler, or None if bare."""
+        self._require(ast.ExceptHandler)
+        typ = self.node.type  # type: ignore[attr-defined]
+        if typ is None:
+            return None
+        return SourceFragment.from_node(typ, self.filename, source=self.source)
+
     def except_handler_name(self) -> "str | None":
         """Return the bound exception name in `except X as name`, if any."""
         self._require(ast.ExceptHandler)
