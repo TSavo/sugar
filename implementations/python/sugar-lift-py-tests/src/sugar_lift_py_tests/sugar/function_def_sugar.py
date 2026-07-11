@@ -33,9 +33,14 @@ class FunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "FunctionDefSugar":
         # The body is factory-built as ONE Block (audited), never reduced here.
+        formals = list(site.function_params())
+        if (vn := site.function_vararg_name()) is not None:
+            formals.append(vn)
+        if (kn := site.function_kwarg_name()) is not None:
+            formals.append(kn)
         return cls(
             name=site.function_name(),
-            formals=tuple(site.function_params()),
+            formals=tuple(formals),
             body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
             site=site,
         )

@@ -17,8 +17,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
     `call:<method>(receiver, *positional, *keyword_values)` -- receiver first,
     then positional args, then keyword VALUES in source order. Keyword names
     ride in `parameters` (not dropped). Disjoint from CallSugar (plain-name,
-    no receiver) and OsSugar (`os.exit`). ``**kwargs`` expansion stays a loud
-    gap (unowned). Body dig via install_source_dig when receiver class resolves.
+    no receiver) and OsSugar (`os.exit`). ``**kwargs`` / ``*args`` ride coordinates. Body dig via install_source_dig when receiver class resolves.
     """
 
     method_name: str
@@ -38,7 +37,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             site.observed == "Call"
             and site.call_receiver() is not None
             and site.call_qualified_target_name() != "os.exit"
-            and not site.call_has_kwargs_expansion()
+            # *args / **kwargs ride as coordinates (StarredSugar / ** param)
         )
 
     @classmethod
@@ -52,11 +51,8 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
         keyword_bodies: list[SugarBody] = []
         for kw in site.call_keywords():
             name = kw.keyword_arg_name()
-            if name is None:
-                raise AssertionError(
-                    "MethodCallSugar.new saw **kwargs expansion after owns() filter"
-                )
-            keyword_names.append(name)
+            # **kwargs expansion: parameter name is "**" (not dropped).
+            keyword_names.append(name if name is not None else "**")
             keyword_bodies.append(
                 ctx.build_body(kw.keyword_value(), SugarRole.TERM)
             )
