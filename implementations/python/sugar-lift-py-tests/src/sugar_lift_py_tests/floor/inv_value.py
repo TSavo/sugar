@@ -28,3 +28,34 @@ class InvValue(FloorValue):
         from sugar_lift_py_tests.ir import implies
 
         return InvValue(implies(formula, self.formula), self.site)
+
+    def mint_contribution(self, name, formals):
+        # The stated fact mints its own row: slot="inv", Stated provenance (the
+        # vendor spoke it; the locus is this site), the sealed source warrant
+        # read straight off the carried fragment. Carried, projected -- nothing
+        # assembled from outside.
+        from sugar_lift_py_tests.floor.universe_mint_projection import (
+            claim_formula,
+            construction_site,
+        )
+        from sugar_lift_py_tests.proofir.nodes import Provenance, Stated
+        from sugar_lift_py_tests.proofir.nodes.universe_mint import UniverseMint
+
+        locus = construction_site(self.site)
+        provenance = Provenance(
+            node_class="UniverseMint",
+            construction_site=locus,
+            warrant=Stated(locus=locus),
+        )
+        return (
+            UniverseMint(
+                name=name,
+                slot="inv",
+                formula=claim_formula(
+                    self.formula, formals=formals, provenance=provenance, role="inv"
+                ),
+                provenance=provenance,
+                source_warrants=(self.site.memento(),),
+                formals=formals,
+            ),
+        )

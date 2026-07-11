@@ -45,6 +45,11 @@ class Incomplete:
         # An effect posts no exit.
         return ()
 
+    def mint_contribution(self, name, formals):
+        # An effect mints no row.
+        del name, formals
+        return ()
+
     def and_then(self, step):
         # An effect never continues: it propagates by returning itself, the next step
         # never runs.

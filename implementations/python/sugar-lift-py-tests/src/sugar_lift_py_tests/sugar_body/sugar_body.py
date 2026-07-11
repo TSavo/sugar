@@ -68,3 +68,8 @@ class SugarBody(Generic[ReductionT_co]):
         # Raw, unreached sugar stays raw under any guard.
         del formula
         return self
+
+    def mint_contribution(self, name, formals):
+        # Raw, unreached sugar mints nothing.
+        del name, formals
+        return ()
