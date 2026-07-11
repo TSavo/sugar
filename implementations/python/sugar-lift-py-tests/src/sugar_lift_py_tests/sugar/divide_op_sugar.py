@@ -64,3 +64,6 @@ class DivideOpSugar(Sugar, role=SugarRole.TERM):
                 lambda right: left.divide(right, self.site)
             )
         )
+
+    def walk_children(self):
+        return (self.left, self.right)

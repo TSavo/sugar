@@ -48,3 +48,6 @@ class ReturnSugar(Sugar, role=SugarRole.STATEMENT):
         return self.value.reduce(ctx).and_then(
             lambda value: Complete(ReturnValue(value))
         )
+
+    def walk_children(self):
+        return (self.value,)

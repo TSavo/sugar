@@ -59,3 +59,8 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
         return self.condition.reduce(ctx).binary_conditional(
             self.then, self.else_body, ctx, self.site
         )
+
+    def walk_children(self):
+        if self.else_body is None:
+            return (self.condition, self.then)
+        return (self.condition, self.then, self.else_body)

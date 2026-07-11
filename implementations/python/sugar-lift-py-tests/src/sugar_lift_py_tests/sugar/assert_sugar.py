@@ -50,3 +50,6 @@ class AssertSugar(Sugar, role=SugarRole.STATEMENT):
         return self.condition.reduce(ctx).and_then(
             lambda value: value.stated(self.site)
         )
+
+    def walk_children(self):
+        return (self.condition,)

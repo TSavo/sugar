@@ -187,3 +187,8 @@ class Sugar(ABC):
             "reduces itself to an Outcome (Complete floor value or Incomplete effect)"
         )
 
+    def walk_children(self) -> tuple[SugarBody, ...]:
+        # Default: a leaf. Sugars that hold SugarBody children override to
+        # return them in source order -- the factory walk projects those.
+        return ()
+

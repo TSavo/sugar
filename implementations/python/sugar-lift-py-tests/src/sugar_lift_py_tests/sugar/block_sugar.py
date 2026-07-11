@@ -66,3 +66,6 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
             *outcome.contribution(),
             *outcome.follow(rest, lambda more: self._collect(more, next_ctx)),
         )
+
+    def walk_children(self):
+        return self.statements

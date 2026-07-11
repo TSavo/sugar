@@ -51,3 +51,6 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     def desugar(self, ctx: object = None) -> Outcome:
         # Reduce the argument, and ask it for its length.
         return self.arg.reduce(ctx).and_then(lambda value: value.length(self.site))
+
+    def walk_children(self):
+        return (self.arg,)

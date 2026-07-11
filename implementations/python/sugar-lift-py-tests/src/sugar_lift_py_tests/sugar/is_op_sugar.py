@@ -57,3 +57,6 @@ class IsOpSugar(Sugar, role=SugarRole.TERM):
                 lambda right: left.is_identical(right, self.site)
             )
         )
+
+    def walk_children(self):
+        return (self.left, self.right)

@@ -82,3 +82,6 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         return head.reduce(ctx).and_then(
             lambda value: self._collect(tuple(rest), (*accumulated, value), ctx)
         )
+
+    def walk_children(self):
+        return self.args

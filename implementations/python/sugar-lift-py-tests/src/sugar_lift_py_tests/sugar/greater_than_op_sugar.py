@@ -58,3 +58,6 @@ class GreaterThanOpSugar(Sugar, role=SugarRole.TERM):
                 lambda right: right.less_than(left, self.site)
             )
         )
+
+    def walk_children(self):
+        return (self.left, self.right)
