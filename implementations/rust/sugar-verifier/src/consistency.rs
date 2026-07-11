@@ -641,6 +641,22 @@ fn consistency_verdict(
 /// term-const faces: `py.eq(call:A(), 3) ∧ py.eq(call:A(), 4)` is the same
 /// "equals both" contradiction as with `=`. Arithmetic operator ctors stay
 /// non-values via `is_const_value` (#3924).
+///
+/// # Scope (NaN / non-reflexivity) — DO NOT WIDEN CASUALLY
+///
+/// Python `==` is not SMT `=`: `float('nan') != float('nan')`, so symbolic
+/// comparison emits `py.eq` rather than IR `=`. Treating `py.eq` as an
+/// equality *atom name* here is sound **only** because
+/// [`collect_ground_equalities`] still routes through
+/// [`ground_term_const_equality`]: one side must be a ground **term** (call /
+/// data ctor tree) and the other a ground **value** (const / data value).
+/// That path:
+/// - never asserts reflexivity of an uninterpreted / possibly-NaN `x`
+///   (`py.eq(x, x)` does not orient — both sides are not term+const);
+/// - only records dual *values* for the same term (`equals both 3 and 4`).
+/// `A()==3 ∧ A()==4` is contradiction on the integers 3 and 4, independent of
+/// NaN. A later PR that rewrites general `py.eq` → `=` (or treats `py.eq` as
+/// reflexive identity) would lose NaN non-reflexivity — keep this scoped.
 fn is_structural_equality_atom(name: &str) -> bool {
     matches!(name, "=" | "py.eq")
 }
@@ -4937,6 +4953,53 @@ mod tests {
             res[0].reason.contains("equals both"),
             "reason should name the dual values: {}",
             res[0].reason
+        );
+    }
+
+
+    /// Scope pin: `py.eq` is NOT general reflexivity. `py.eq(x, x)` must not
+    /// structural-discharge (NaN watch — Python == is non-reflexive).
+    #[test]
+    fn py_eq_var_reflexivity_is_not_structural() {
+        let inv = json!({"kind":"atomic","name":"py.eq","args":[
+            {"kind":"var","name":"x"},
+            {"kind":"var","name":"x"},
+        ]});
+        assert_eq!(
+            structural_contradiction_reason(&inv),
+            None,
+            "py.eq(x,x) must not enter term-const dual orientation"
+        );
+        let and = json!({"kind":"and","operands":[inv.clone(), inv]});
+        assert_eq!(structural_contradiction_reason(&and), None);
+    }
+
+    /// Scope pin: single ground py.eq(call:A(), 3) is not a dual contradiction.
+    #[test]
+    fn single_py_eq_ground_rhs_is_not_structural_contradiction() {
+        let call_a = json!({"kind":"ctor","name":"call:A","args":[]});
+        let inv = json!({"kind":"atomic","name":"py.eq","args":[
+            call_a,
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":3},
+        ]});
+        assert_eq!(
+            structural_contradiction_reason(&inv),
+            None,
+            "one face is not equals-both"
+        );
+    }
+
+    /// const-const py.eq does not orient (NaN/reflexivity fence).
+    #[test]
+    fn py_eq_const_const_does_not_orient_structurally() {
+        let inv = json!({"kind":"atomic","name":"py.eq","args":[
+            {"kind":"const","sort":{"kind":"primitive","name":"Real"},"value":null},
+            {"kind":"const","sort":{"kind":"primitive","name":"Real"},"value":null},
+        ]});
+        assert_eq!(
+            structural_contradiction_reason(&inv),
+            None,
+            "const-const py.eq must not structural-orient"
         );
     }
 
