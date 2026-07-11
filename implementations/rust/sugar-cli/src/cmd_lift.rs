@@ -3504,6 +3504,66 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
     out
 }
 
+/// One visual universe block: contracts that share a name under a
+/// function-contract anchor render together (post + invs). Rows with no
+/// function-contract anchor stay standalone (enclosing-only test functions).
+struct VisualUniverseGroup<'a> {
+    name: &'a str,
+    /// Drives source walk, mode, and forensic context -- the function-contract
+    /// when present, otherwise the sole row.
+    anchor: &'a Value,
+    /// All rows in this block, first-seen order (anchor first when merged).
+    members: Vec<&'a Value>,
+}
+
+/// Pure grouping for the universe visual: merge by exact contract name when a
+/// function-contract anchors that name; otherwise keep each row standalone.
+fn group_contracts_for_universe_visual(contracts: &[Value]) -> Vec<VisualUniverseGroup<'_>> {
+    let anchored_names: BTreeSet<&str> = contracts
+        .iter()
+        .filter(|contract| {
+            contract.get("kind").and_then(Value::as_str) == Some("function-contract")
+        })
+        .filter_map(|contract| contract_value_name(contract))
+        .collect();
+
+    let mut groups = Vec::new();
+    let mut emitted_anchored: BTreeSet<&str> = BTreeSet::new();
+    for contract in contracts {
+        let name = contract_value_name(contract).unwrap_or("<unknown contract>");
+        if anchored_names.contains(name) {
+            if !emitted_anchored.insert(name) {
+                continue;
+            }
+            let mut members: Vec<&Value> = contracts
+                .iter()
+                .filter(|row| contract_value_name(row) == Some(name))
+                .collect();
+            // Anchor first so post leads FOL and warrants drive the source walk.
+            members.sort_by_key(|row| {
+                if row.get("kind").and_then(Value::as_str) == Some("function-contract") {
+                    0_u8
+                } else {
+                    1_u8
+                }
+            });
+            let anchor = members[0];
+            groups.push(VisualUniverseGroup {
+                name,
+                anchor,
+                members,
+            });
+        } else {
+            groups.push(VisualUniverseGroup {
+                name,
+                anchor: contract,
+                members: vec![contract],
+            });
+        }
+    }
+    groups
+}
+
 fn render_universe_visual_report(
     report: &LiftSourceReport,
     source_lookup: VisualSourceLookup<'_>,
@@ -3514,11 +3574,29 @@ fn render_universe_visual_report(
     let boundaries = visual_boundary_rows(&report.factory_walk, source_lookup);
     let mut out = String::new();
     out.push_str("universe visual:\n");
-    for contract in &report.contracts {
-        let name = contract_value_name(contract).unwrap_or("<unknown contract>");
-        let predicates = contract_predicate_rows(contract);
+    for group in group_contracts_for_universe_visual(&report.contracts) {
+        let contract = group.anchor;
+        let name = group.name;
+        // Predicates for line citations: every member's formulas (assert invs
+        // pair with their own warrants when factory walk is empty).
+        let predicates: Vec<String> = group
+            .members
+            .iter()
+            .flat_map(|member| contract_predicate_rows(member))
+            .collect();
         let fact_universe = contract_inv_is_observed_fact(contract);
-        let warrants = contract_visual_warrants(report, contract);
+        // Source walk / mode from the anchor; inv members contribute FOL only.
+        let mut warrants = contract_visual_warrants(report, contract);
+        for member in group.members.iter().skip(1) {
+            for warrant in contract_visual_warrants(report, member) {
+                if warrants
+                    .iter()
+                    .all(|existing| !std::ptr::eq(*existing, warrant))
+                {
+                    warrants.push(warrant);
+                }
+            }
+        }
         let context = warrants
             .first()
             .map(|warrant| source_memento_context_key(warrant));
@@ -3543,10 +3621,18 @@ fn render_universe_visual_report(
                 out.push_str(&format!("    incomplete: {reason}\n"));
             }
             UniverseVisualMode::Fact | UniverseVisualMode::BodyComplete => {
-                out.push_str(&format!(
-                    "    FOL: {}\n",
-                    format_contract_visual_fol(contract)
-                ));
+                // One FOL line per member: post from the anchor, then each inv.
+                for member in &group.members {
+                    if member.get("post").is_some()
+                        || member.get("inv").is_some()
+                        || member.get("pre").is_some()
+                    {
+                        out.push_str(&format!(
+                            "    FOL: {}\n",
+                            format_contract_visual_fol(member)
+                        ));
+                    }
+                }
             }
         }
         if mode == UniverseVisualMode::BodyComplete {
@@ -11988,6 +12074,81 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         assert_eq!(
             report_contract_group_key("method:x#euf#c:method:x(v:m)::assertion"),
             "method:x#euf#c:method:x(v:m)"
+        );
+    }
+
+    #[test]
+    fn universe_visual_groups_function_contract_and_inv_by_name() {
+        // Two IR rows, one name: function-contract (post) + contract (inv) merge
+        // into a single visual group; a test assertion with no function-contract
+        // anchor stays standalone.
+        let contracts = vec![
+            serde_json::json!({
+                "kind": "function-contract",
+                "name": "A",
+                "post": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        {"kind": "var", "name": "out"},
+                        {"kind": "const", "value": 1, "sort": {"name": "Int"}}
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "kind": "contract",
+                "name": "A",
+                "inv": {
+                    "kind": "atomic",
+                    "name": "py.truthy",
+                    "args": [{"kind": "var", "name": "z"}]
+                }
+            }),
+            serde_json::json!({
+                "kind": "contract",
+                "name": "tests::only_assert::assertion",
+                "inv": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        {"kind": "const", "value": 1, "sort": {"name": "Int"}},
+                        {"kind": "const", "value": 1, "sort": {"name": "Int"}}
+                    ]
+                }
+            }),
+        ];
+        let groups = group_contracts_for_universe_visual(&contracts);
+        assert_eq!(groups.len(), 2, "expected one merged A + one standalone assert");
+        assert_eq!(groups[0].name, "A");
+        assert_eq!(groups[0].members.len(), 2);
+        assert_eq!(
+            groups[0].anchor.get("kind").and_then(Value::as_str),
+            Some("function-contract")
+        );
+        assert_eq!(groups[1].name, "tests::only_assert::assertion");
+        assert_eq!(groups[1].members.len(), 1);
+
+        // Full visual: exactly one "universe A" heading; both formulas present.
+        let mut report = minimal_source_report();
+        report.audits = Vec::new();
+        report.contracts = contracts;
+        let visual = render_visual_source_report(&report);
+        let universe_section = visual.split("factory visual:").next().unwrap_or(&visual);
+        assert_eq!(
+            universe_section.matches("  universe A\n").count(),
+            1,
+            "post + inv must not re-print the universe heading:\n{visual}"
+        );
+        assert!(
+            universe_section.contains("universe A\n")
+                && universe_section.contains("⊢")
+                && universe_section.contains("out = 1")
+                && universe_section.contains("py.truthy(z)"),
+            "merged block must carry post and inv FOL:\n{visual}"
+        );
+        assert!(
+            universe_section.contains("  universe tests::only_assert::assertion\n"),
+            "unanchored test contracts stay standalone:\n{visual}"
         );
     }
 
