@@ -360,6 +360,20 @@ class SourceFragment:
         self._require(ast.Lambda)
         return [a.arg for a in self.node.args.args]  # type: ignore[attr-defined]
 
+    def lambda_is_simple_positional(self) -> bool:
+        """True when a Lambda has only plain positional names -- no defaults,
+        posonly, kwonly, *args, or **kwargs."""
+        self._require(ast.Lambda)
+        args = self.node.args  # type: ignore[attr-defined]
+        return (
+            not args.posonlyargs
+            and not args.defaults
+            and args.vararg is None
+            and not args.kwonlyargs
+            and not args.kw_defaults
+            and args.kwarg is None
+        )
+
     def return_value(self) -> "SourceFragment | None":
         """Return a SourceFragment for the Return value, or None if bare return."""
         self._require(ast.Return)
