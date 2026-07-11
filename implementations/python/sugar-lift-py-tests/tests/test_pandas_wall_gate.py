@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.idd.command_result import CommandResult
 from sugar_lift_py_tests.idd.pandas_wall import (
     PandasWallFloors,
@@ -350,6 +352,101 @@ def test_build_complete_mode_runs_json_report_and_checks_full_floors(
     manifest_text = manifest.read_text(encoding="utf-8")
     assert '"--rpc"' in manifest_text
     assert '"--audit-only"' not in manifest_text
+
+
+def test_complete_mode_retries_production_factory_panic_through_audit_door(
+    tmp_path: Path,
+) -> None:
+    root = _fake_repo_root(tmp_path)
+    package = tmp_path / "pandas"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        'def f():\n    return config["mode"]\n', encoding="utf-8"
+    )
+    commands: list[list[str]] = []
+
+    def fake_runner(
+        command: list[str], cwd: Path, env: dict[str, str]
+    ) -> CommandResult:
+        commands.append(command)
+        if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
+            return CommandResult(0, str(tmp_path / "sugar") + "\n", "")
+        manifest = Path(command[-1]) / ".sugar/lift/python/manifest.toml"
+        if '"--audit-only"' not in manifest.read_text(encoding="utf-8"):
+            return CommandResult(
+                2,
+                "",
+                "FactoryPanic: observed=Subscript; lift plugin closed stdout",
+            )
+        return CommandResult(
+            2,
+            "",
+            _structured_gap_output(
+                [_gap("Sugar", "python.factory", observed="Subscript", requested="term")]
+            ),
+        )
+
+    result = build_pandas_wall(
+        root=root,
+        output_dir=tmp_path / "wall",
+        floors=PandasWallFloors(
+            mode="complete",
+            gaps_total_ceiling=0,
+            gap_template_ceilings={},
+            green=0,
+            pre_bearing=0,
+            implications=0,
+            frontier_needle="",
+            frontier_owner="",
+            frontier_shape="",
+        ),
+        package_path_resolver=lambda _package: package,
+        run_command=fake_runner,
+    )
+
+    assert result.summary.mode == "construction-gaps"
+    assert result.summary.gaps_total == 1
+    assert result.summary.gaps_by_bucket["Sugar"] == 1
+    assert (tmp_path / "wall/wall.audit.txt").is_file()
+    assert len(commands) == 3
+
+
+def test_complete_mode_audit_retry_does_not_relabel_unexpected_failure(
+    tmp_path: Path,
+) -> None:
+    root = _fake_repo_root(tmp_path)
+    package = tmp_path / "pandas"
+    package.mkdir()
+    (package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+
+    def fake_runner(
+        command: list[str], cwd: Path, env: dict[str, str]
+    ) -> CommandResult:
+        if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
+            return CommandResult(0, str(tmp_path / "sugar") + "\n", "")
+        manifest = Path(command[-1]) / ".sugar/lift/python/manifest.toml"
+        if '"--audit-only"' in manifest.read_text(encoding="utf-8"):
+            return CommandResult(7, "", "ordinary RPC framing failure")
+        return CommandResult(2, "", "production process exited")
+
+    with pytest.raises(RuntimeError, match="ordinary RPC framing failure"):
+        build_pandas_wall(
+            root=root,
+            output_dir=tmp_path / "wall",
+            floors=PandasWallFloors(
+                mode="complete",
+                gaps_total_ceiling=0,
+                gap_template_ceilings={},
+                green=0,
+                pre_bearing=0,
+                implications=0,
+                frontier_needle="",
+                frontier_owner="",
+                frontier_shape="",
+            ),
+            package_path_resolver=lambda _package: package,
+            run_command=fake_runner,
+        )
 
 
 def _gap(

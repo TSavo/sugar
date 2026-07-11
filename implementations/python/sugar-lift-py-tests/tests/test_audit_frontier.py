@@ -77,3 +77,12 @@ def test_audit_frontier_feeds_pandas_wall_construction_gap_scrape() -> None:
     assert any(
         "While" in template for template in summary.gap_templates
     ), summary.gap_templates
+
+
+def test_audit_empty_module_is_an_honest_empty_set() -> None:
+    payload, gaps = audit_lift_file("# package marker only\n", "pkg/__init__.py")
+
+    assert payload.ir == []
+    assert payload.factory_walk == []
+    assert payload.source_mementos == []
+    assert gaps == []
