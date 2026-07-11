@@ -55,3 +55,16 @@ class SugarBody(Generic[ReductionT_co]):
 
     def reduce(self, ctx: ReductionContext = None) -> ReductionT_co:
         return self.sugar.desugar(ctx)
+
+    def inv_contribution(self):
+        # Raw, unreached sugar states nothing.
+        return ()
+
+    def post_contribution(self):
+        # Raw, unreached sugar posts nothing.
+        return ()
+
+    def guarded(self, formula):
+        # Raw, unreached sugar stays raw under any guard.
+        del formula
+        return self

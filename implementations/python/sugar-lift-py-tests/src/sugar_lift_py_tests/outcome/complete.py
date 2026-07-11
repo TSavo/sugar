@@ -16,8 +16,10 @@ class Complete:
         return self.value.binary_conditional(then, else_body, ctx)
 
     def follow(self, rest, reduce):
-        # A completed statement lets the run go on: reduce the rest of the block.
-        return reduce(rest)
+        # The value owns whether and how the rest reduces: an ordinary value
+        # lets the run go on, an exit keeps the rest raw (unreachable), a
+        # guarded-faces value guards the continuation by its negated test.
+        return self.value.follow_rest(rest, reduce)
 
     def contribution(self):
         # The value owns its contribution to the block record -- no interrogation.
