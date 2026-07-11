@@ -25,7 +25,6 @@ from .lift_coverage_census import (
     AssertLocus,
     BodyLocus,
     DiskCensus,
-    body_contains_assert,
 )
 
 # Report statuses that mean the lifter *spoke* about the assertion.
@@ -125,9 +124,13 @@ class LiftCoverageReport:
     minority: MinorityAxis
     crime2: Crime2Axis = field(default_factory=Crime2Axis)
     files: list[str] = field(default_factory=list)
+    # Census is the only sanctioned second computation: disagreement with the
+    # collapse body count is a lift hole, never silently preferred either way.
+    census_disagreement: dict | None = None
 
     def to_json(self) -> dict:
-        return {
+        body = {
+
             "kind": "lift-coverage",
             "version": "4016.crime2.v1",
             "files": list(self.files),
@@ -149,26 +152,32 @@ class LiftCoverageReport:
                 "crime2_forged_warrant": self.crime2.forged_warrant,
             },
         }
+        if self.census_disagreement is not None:
+            body["census_disagreement"] = dict(self.census_disagreement)
+        return body
 
 
 def account_lift_coverage(
     disk: DiskCensus,
     report_payload: Mapping[str, Any] | None,
 ) -> LiftCoverageReport:
-    """Diff independent disk census against a lift-report payload.
+    """Partition the lift report against the collapse join and the disk census.
 
-    ``report_payload`` is the kit ``ir-document`` / lift response body
-    (sourceAudits, sourceMementos, diagnostics, …).
+    Minority bodies are the function-contract rows the collapse minted, joined
+    to call_edges by bridge_source_symbol / targetSymbol. The AST census is
+    only a cross-check: disagreement is a finding, never preferred.
     """
     payload = report_payload or {}
     assertions = _account_assertions(disk.asserts, payload)
-    minority = _account_minority(disk.bodies, disk.asserts, payload)
+    minority = _account_minority(payload)
     crime2 = _account_crime2(payload)
+    disagreement = _census_disagreement(disk.bodies, minority)
     return LiftCoverageReport(
         assertions=assertions,
         minority=minority,
         crime2=crime2,
         files=list(disk.files),
+        census_disagreement=disagreement,
     )
 
 
@@ -314,78 +323,135 @@ def _iter_report_assertion_loci(
             yield (file, line, col_i, "warranted", {"source_memento": True})
 
 
-def _account_minority(
-    bodies: list[BodyLocus],
-    asserts: list[AssertLocus],
-    payload: Mapping[str, Any],
-) -> MinorityAxis:
-    """Bodies present vs dig/assertion-triggered interrogation.
+def _account_minority(payload: Mapping[str, Any]) -> MinorityAxis:
+    """Bodies present vs asked -- a projection of the collapse join.
 
-    A body is *dug* if:
-      - the report names it as a dig target / source function of a cited claim, OR
-      - an on-disk assert falls inside its span (assertion targets that body).
-
-    Un-asserted = present − dug. Visible scope remainder, never folded into
-    the default assertion accounting.
+    Bodies = function-contract rows the collapse minted (not re-scraped AST;
+    not testimony test_* rows). Asked = a body whose bridge_source_symbol is
+    hit by any call_edges targetSymbol (call:<name>). Minority = present minus
+    asked. Visible scope remainder, never a red gate.
     """
-    dug_keys: set[tuple[str, int, str]] = set()
+    bodies = _collapse_bodies(payload)
+    asked = _asked_bridge_names(payload)
     dug_loci: list[dict] = []
-
-    # 1) Bodies that contain an assert (assertion targets the body by living in it).
+    un_asserted_loci: list[dict] = []
     for body in bodies:
-        if body_contains_assert(body, asserts):
-            dug_keys.add(body.key)
-            dug_loci.append({**body.to_json(), "reason": "contains-assert"})
-
-    # 2) Report-named source functions (cited claims / digs).
-    named = _report_named_functions(payload)
-    for body in bodies:
-        if body.key in dug_keys:
-            continue
-        if body.name in named or body.qualname in named:
-            dug_keys.add(body.key)
-            dug_loci.append({**body.to_json(), "reason": "report-named"})
-
-    un: list[BodyLocus] = [b for b in bodies if b.key not in dug_keys]
+        if _body_is_asked(body, asked):
+            dug_loci.append({**body, "reason": "call-edge-target"})
+        else:
+            un_asserted_loci.append(body)
     return MinorityAxis(
         present=len(bodies),
-        dug=len(dug_keys),
-        un_asserted=len(un),
+        dug=len(dug_loci),
+        un_asserted=len(un_asserted_loci),
         dug_loci=dug_loci,
-        un_asserted_loci=[b.to_json() for b in un],
-        on_disk=[b.to_json() for b in bodies],
+        un_asserted_loci=un_asserted_loci,
+        on_disk=list(bodies),
     )
 
 
-def _report_named_functions(payload: Mapping[str, Any]) -> set[str]:
-    names: set[str] = set()
-    for audit in payload.get("sourceAudits") or payload.get("source_audits") or []:
-        if not isinstance(audit, Mapping):
+def _collapse_bodies(payload: Mapping[str, Any]) -> list[dict]:
+    """function-contract rows: name, file, line, bridge from the payload join."""
+    bodies: list[dict] = []
+    for item in payload.get("ir") or []:
+        if not isinstance(item, Mapping):
             continue
-        for key in ("sourceFunctionName", "source_function_name"):
-            val = audit.get(key)
-            if isinstance(val, str) and val:
-                names.add(val)
-                names.add(val.rsplit(".", 1)[-1])
-    for memento in payload.get("sourceMementos") or payload.get("source_mementos") or []:
-        if not isinstance(memento, Mapping):
+        if item.get("kind") != "function-contract":
             continue
-        for key in ("sourceFunctionName", "source_function_name"):
-            val = memento.get(key)
-            if isinstance(val, str) and val:
-                names.add(val)
-                names.add(val.rsplit(".", 1)[-1])
-    for diag in payload.get("diagnostics") or []:
-        if not isinstance(diag, Mapping):
+        name = str(item.get("name") or "")
+        if not name:
             continue
-        if diag.get("kind") != "dig-boundary":
+        bridge = item.get("bridgeSourceSymbol") or item.get("bridge_source_symbol") or name
+        file, line, col = _warrant_locus(item)
+        bodies.append(
+            {
+                "name": name,
+                "qualname": name,
+                "file": file,
+                "line": line,
+                "col": col,
+                "bridge_source_symbol": str(bridge),
+            }
+        )
+    return bodies
+
+
+def _warrant_locus(item: Mapping[str, Any]) -> tuple[str, int, int]:
+    """file:line from the function-contract's first sealed warrant memento."""
+    warrants = item.get("sourceWarrants") or item.get("source_warrants") or []
+    for warrant in warrants:
+        if not isinstance(warrant, Mapping):
             continue
-        for key in ("callee", "blame", "function", "name"):
-            val = diag.get(key)
-            if isinstance(val, str) and val:
-                names.add(val)
-                names.add(val.rsplit(".", 1)[-1])
-    return names
+        file = str(warrant.get("file") or "")
+        span = warrant.get("span") or {}
+        if not isinstance(span, Mapping):
+            span = {}
+        line = int(span.get("start_line") or span.get("startLine") or 0)
+        col = int(span.get("start_col") or span.get("startCol") or 0)
+        if file or line:
+            return file, line, col
+    return "", 0, 0
+
+
+def _asked_bridge_names(payload: Mapping[str, Any]) -> set[str]:
+    """Bare and call:-prefixed symbols that call_edges target."""
+    asked: set[str] = set()
+    for edge in payload.get("callEdges") or payload.get("call_edges") or []:
+        if not isinstance(edge, Mapping):
+            continue
+        target = edge.get("targetSymbol") or edge.get("target_symbol")
+        if not isinstance(target, str) or not target:
+            continue
+        asked.add(target)
+        if target.startswith("call:"):
+            asked.add(target[len("call:") :])
+        elif target.startswith("method:"):
+            asked.add(target[len("method:") :])
+        else:
+            asked.add(f"call:{target}")
+    return asked
+
+
+def _body_is_asked(body: Mapping[str, Any], asked: set[str]) -> bool:
+    bridge = str(body.get("bridge_source_symbol") or body.get("name") or "")
+    if not bridge:
+        return False
+    if bridge in asked:
+        return True
+    if bridge.startswith("call:") and bridge[len("call:") :] in asked:
+        return True
+    if f"call:{bridge}" in asked:
+        return True
+    bare = bridge.rsplit(".", 1)[-1]
+    return bare in asked or f"call:{bare}" in asked
+
+
+def _census_disagreement(
+    census_bodies: list[BodyLocus], minority: MinorityAxis
+) -> dict | None:
+    """AST census of production bodies vs collapse function-contract count.
+
+    test_* names are testimony, not bodies -- excluded from the census side so
+    the cross-check matches the collapse definition of a body. Disagreement is
+    a lift hole; agreement returns None (field stays absent).
+    """
+    census_production = [
+        b for b in census_bodies if not b.name.startswith("test_")
+    ]
+    census_names = sorted({b.name for b in census_production})
+    collapse_names = sorted({str(b.get("name") or "") for b in minority.on_disk})
+    if len(census_production) == minority.present and census_names == collapse_names:
+        return None
+    return {
+        "census_present": len(census_production),
+        "collapse_present": minority.present,
+        "census_names": census_names,
+        "collapse_names": collapse_names,
+        "note": (
+            "AST census of non-test FunctionDefs disagrees with collapse "
+            "function-contract rows -- a lift hole, not silent preference"
+        ),
+    }
 
 
 

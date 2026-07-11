@@ -1486,6 +1486,9 @@ def _build_lift_coverage(
         ],
         "diagnostics": [to_rpc_value(d) for d in payload.diagnostics],
         "sourceLedger": to_rpc_value(payload.source_ledger or {}),
+        # Minority projection joins function-contract rows to call_edges.
+        "ir": [to_rpc_value(item) for item in payload.ir],
+        "callEdges": [to_rpc_value(edge) for edge in payload.call_edges],
     }
     coverage = account_lift_coverage(disk, interim)
     body = coverage.to_json()
