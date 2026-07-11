@@ -677,24 +677,18 @@ def _lift_file_for_enumeration(
 
 def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     """The RPC door over the collapse. Build each def through the factory,
-    slam it, and serve the record's projections as wire rows: one
-    function-contract row per universe (post, formals, the def's sealed
-    warrant) and one contract row per stated inv (Stated provenance, its own
-    warrant read off the carried fragment). Enumeration is functions by
-    design: module statements no FunctionDefSugar owns are not lifted here.
+    slam it, and serve the value's payload_rows: a universe mints a
+    function-contract plus inv rows; testimony mints only ::assertion fact
+    rows (no post, no contract). Enumeration is functions by design: module
+    statements no FunctionDefSugar owns are not lifted here.
     """
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
     from sugar_lift_py_tests.factory.build import build_node, default_catalog
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-    from sugar_lift_py_tests.floor.universe_mint_projection import (
-        claim_formula,
-        construction_site,
-    )
-    from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
     from sugar_lift_py_tests.outcome import complete_value
-    from sugar_lift_py_tests.proofir.nodes import Derived, Provenance, Stated
     from sugar_lift_py_tests.sugar.function_def_sugar import FunctionDefSugar
+    from sugar_lift_py_tests.sugar.test_function_def_sugar import TestFunctionDefSugar
 
     from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -702,7 +696,8 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     catalog = default_catalog()
     module = SourceFragment.from_source(source, filename).statements()[0]
     for stmt in module.statements():
-        if not FunctionDefSugar.owns(stmt):
+        # Either ordinary FunctionDef or test_* testimony (both owns shapes).
+        if not (FunctionDefSugar.owns(stmt) or TestFunctionDefSugar.owns(stmt)):
             continue
         ctx = FactoryBuildContext(filename=filename, catalog=catalog)
         result = build_node(stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx)
@@ -713,51 +708,15 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
             audit_row=result.audit_row,
         )
         payload.factory_walk.extend(root.factory_walk_rows())
-        universe = complete_value(result.sugar.desugar(ctx), owner="lift_file_payload")
+        value = complete_value(result.sugar.desugar(ctx), owner="lift_file_payload")
         def_memento = dataclasses.replace(
             stmt.memento(),
-            source_function_name=universe.name,
+            source_function_name=value.name,
             role="function-contract",
         )
-        post_provenance = Provenance(
-            node_class="BodyUniverseDto",
-            construction_site=construction_site(stmt),
-            warrant=Derived(floor_chain=("UniverseValue.post",)),
-        )
-        payload.ir.append(
-            BodyUniverseDto(
-                name=universe.name,
-                post=claim_formula(
-                    universe.post(),
-                    formals=universe.formals,
-                    provenance=post_provenance,
-                    role="post",
-                ),
-                source_warrants=[def_memento],
-                formals=list(universe.formals),
-                kind="function-contract",
-                bridge_source_symbol=universe.name,
-            )
-        )
-        for entry in universe.record.statements:
-            for row in entry.mint_contribution(universe.name, universe.formals):
-                payload.ir.append(
-                    BodyUniverseDto(
-                        name=row.name,
-                        inv=row.formula,
-                        source_warrants=[
-                            dataclasses.replace(
-                                warrant,
-                                source_function_name=universe.name,
-                                role="assertion",
-                            )
-                            for warrant in row.source_warrants
-                        ],
-                        formals=list(row.formals),
-                        kind="contract",
-                    )
-                )
-        payload.call_edges.extend(universe.call_edges())
+        # The value owns the wire rows -- universe vs testimony, no fork here.
+        payload.ir.extend(value.payload_rows(def_memento))
+        payload.call_edges.extend(value.call_edges())
         payload.source_mementos.append(def_memento)
     return payload
 

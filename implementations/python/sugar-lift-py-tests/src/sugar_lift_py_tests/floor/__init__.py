@@ -40,6 +40,7 @@ from .string_value import StringValue
 from .support_value import SupportValue
 from .symbolic_value import SymbolicValue
 from .term_value import TermValue
+from .testimony_value import TestimonyValue
 from .tuple_literal_value import TupleLiteralValue
 from .tuple_value import TupleValue
 from .universe_value import UniverseValue
@@ -77,6 +78,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     SupportValue,
     SymbolicValue,
     TermValue,
+    TestimonyValue,
     TupleLiteralValue,
     TupleValue,
     UniverseValue,
@@ -124,6 +126,7 @@ __all__ = [
     "SupportValue",
     "SymbolicValue",
     "TermValue",
+    "TestimonyValue",
     "TupleLiteralValue",
     "TupleValue",
     "UniverseValue",
