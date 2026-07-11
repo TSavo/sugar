@@ -60,7 +60,7 @@ def _project_urls(dist) -> dict[str, str]:
     return urls
 
 
-def _direct_url(dist) -> dict | None:
+def _direct_url(dist) -> dict:
     try:
         raw = dist.read_text("direct_url.json")
         if raw:
@@ -152,59 +152,166 @@ def download_sources(module: str, cache_dir: Path) -> dict:
     else:
         sdist_err = None
 
-    if not sdist:
-        # Metadata map still useful for diagnostics
-        return {
-            "ok": False,
-            "error": sdist_err or "no sdist on PyPI for this version",
-            "name": name,
-            "version": version,
-            "project_urls": project_urls,
-            "direct_url": direct,
-        }
 
-    url, filename = sdist
-    req = urllib.request.Request(url, headers={"User-Agent": "sugar-lsp-download-sources/0.1"})
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            blob = resp.read()
-    except urllib.error.URLError as e:
-        return {
-            "ok": False,
-            "error": f"download failed: {e}",
-            "name": name,
-            "version": version,
-            "source_url": url,
-            "project_urls": project_urls,
-        }
+    force_vcs = os.environ.get("SUGAR_LSP_DOWNLOAD_VCS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
-    root = _extract_archive(blob, filename, dest)
-    marker.write_text(url + "\n", encoding="utf-8")
-    # sidecar metadata for humans / later VCS
-    (dest / "project_urls.json").write_text(
-        json.dumps(
-            {
+    if sdist and not force_vcs:
+        url, filename = sdist
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "sugar-lsp-download-sources/0.1"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                blob = resp.read()
+        except urllib.error.URLError as e:
+            sdist = None
+            sdist_err = f"download failed: {e}"
+        else:
+            root = _extract_archive(blob, filename, dest)
+            marker.write_text(url + "\n", encoding="utf-8")
+            (dest / "project_urls.json").write_text(
+                json.dumps(
+                    {
+                        "name": name,
+                        "version": version,
+                        "source_url": url,
+                        "project_urls": project_urls,
+                        "direct_url": direct,
+                        "via": "pypi-sdist",
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return {
+                "ok": True,
+                "root": str(root.resolve()),
                 "name": name,
                 "version": version,
+                "via": "pypi-sdist",
                 "source_url": url,
                 "project_urls": project_urls,
                 "direct_url": direct,
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+            }
+
+    # VCS fallback / forced clone from Project-URL Source (#4106 follow-up)
+    vcs = _vcs_clone(name, version, project_urls, direct, dest)
+    if vcs.get("ok"):
+        return vcs
+
     return {
-        "ok": True,
-        "root": str(root.resolve()),
+        "ok": False,
+        "error": sdist_err
+        or vcs.get("error")
+        or "no sdist and VCS clone failed",
         "name": name,
         "version": version,
-        "via": "pypi-sdist",
-        "source_url": url,
         "project_urls": project_urls,
         "direct_url": direct,
     }
+
+
+def _pick_vcs_url(project_urls: dict, direct: dict) -> str | None:
+    if direct and isinstance(direct, dict):
+        url = (direct.get("url") or "").strip()
+        if url.startswith("git+") or "github.com" in url or "gitlab" in url:
+            return url.removeprefix("git+").split("#", 1)[0]
+    for key in ("source", "repository", "code", "homepage"):
+        u = (project_urls.get(key) or "").strip()
+        if not u:
+            continue
+        if "github.com" in u or "gitlab.com" in u or u.endswith(".git"):
+            return u.rstrip("/")
+    return None
+
+
+def _vcs_clone(name, version, project_urls, direct, dest: Path):
+    import subprocess
+
+    url = _pick_vcs_url(project_urls, direct)
+    if not url:
+        return {"ok": False, "error": "no VCS URL in Project-URL / direct_url"}
+    # normalize github tree URLs
+    if url.endswith("/"):
+        url = url[:-1]
+    if not url.endswith(".git") and "github.com" in url:
+        url_git = url + ".git"
+    else:
+        url_git = url
+
+    dest.mkdir(parents=True, exist_ok=True)
+    final = dest / "src"
+    if final.exists():
+        shutil.rmtree(final)
+    final.mkdir(parents=True)
+    # shallow clone; try version tag
+    env = os.environ.copy()
+    cmds = [
+        ["git", "clone", "--depth", "1", "--branch", version, url_git, str(final)],
+        ["git", "clone", "--depth", "1", "--branch", f"v{version}", url_git, str(final)],
+        ["git", "clone", "--depth", "1", url_git, str(final)],
+    ]
+    last_err = None
+    for cmd in cmds:
+        if final.exists():
+            shutil.rmtree(final)
+            final.mkdir(parents=True)
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                env=env,
+            )
+        except Exception as e:
+            last_err = str(e)
+            continue
+        if r.returncode == 0:
+            marker = dest / ".sugar-sources-ok"
+            marker.write_text(url_git + "\n", encoding="utf-8")
+            (dest / "project_urls.json").write_text(
+                json.dumps(
+                    {
+                        "name": name,
+                        "version": version,
+                        "source_url": url_git,
+                        "project_urls": project_urls,
+                        "direct_url": direct,
+                        "via": "vcs-clone",
+                        "git_cmd": cmd,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return {
+                "ok": True,
+                "root": str(final.resolve()),
+                "name": name,
+                "version": version,
+                "via": "vcs-clone",
+                "source_url": url_git,
+                "project_urls": project_urls,
+                "direct_url": direct,
+            }
+        last_err = (r.stderr or r.stdout or "")[-500:]
+    return {
+        "ok": False,
+        "error": f"git clone failed: {last_err}",
+        "name": name,
+        "version": version,
+        "project_urls": project_urls,
+        "source_url": url,
+    }
+
 
 
 def _safe(s: str) -> str:

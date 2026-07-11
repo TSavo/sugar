@@ -60,3 +60,18 @@ pip install foo
 ```text
 cargo test -p sugar-lsp --test auto_mode_download_sources -- --nocapture
 ```
+
+## Ratchets (2026-07-11 follow-up)
+
+| Test | Proves |
+|------|--------|
+| `test_download_sources_stated_assert_count_ratchet` | sdist census **stated ≥ 50** |
+| `test_diggable_vendor_assert_lifts_not_silent` | diggable itsdangerous claim **lifted_cited ≥ 1** |
+| `test_download_tree_still_mostly_silent_on_raw_pytest_suite` | honesty: raw pytest suite still mostly **silent** |
+
+Mint staging **preserves package layout** + puts `src/` on PYTHONPATH so dig can resolve vendor packages.
+
+### VCS follow-up (#4106)
+- `SUGAR_LSP_DOWNLOAD_VCS=1` forces git clone from `Project-URL: Source`
+- Automatic VCS fallback when sdist missing/fails
+- Still open: LSP UI prompt, recursive Requires-Dist
