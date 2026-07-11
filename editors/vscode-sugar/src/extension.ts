@@ -1,19 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// extension.ts: the VS Code side of the-flip (retiring the daemon).
+// extension.ts: thin VS Code LanguageClient host for sugar-lsp --in-process.
 //
-// The extension is now a thin `vscode-languageclient` client. It spawns
-// `sugar-lsp --in-process` (resolved via `bin/sugarbin --bin sugar-lsp`) over
-// stdio and lets the LANGUAGE SERVER do everything: diagnostics, hover, and
-// the "replace with proven value" code action all come FROM the server
-// (`sugar-lsp/src/prove_engine.rs` + `fol_format.rs` + `prove_diagnostics.rs`),
-// which builds the resident `ProveContext` once from the workspace root and
-// solves each edited buffer in-process (mint the overlay, verify against the
-// resident base index, THE ONE DOOR) -- no daemon RPC, no cold `sugar prove`
-// shell-out, no client-side re-rendering of the three-fact message.
+// THE PRODUCT IS THE LSP. Report mode, prove, diagnostics, and decorations
+// policy live in sugar-lsp (see #4149). This file only:
+//   1) resolves sugar-lsp binary + child env
+//   2) starts vscode-languageclient over stdio
 //
-// There is no shadow verifier here: the editor shows exactly what
-// `sugar-lsp --in-process` says because it asks it, over the LSP wire.
+// Do not reintroduce proveClient / cold sugar prove shell-out here.
 
 import * as vscode from "vscode";
 import {
