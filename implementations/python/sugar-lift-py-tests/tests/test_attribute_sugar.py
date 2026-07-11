@@ -57,10 +57,12 @@ def test_unowned_receiver_panics_at_construction() -> None:
 
 
 def test_method_call_is_not_owned_by_attribute_sugar() -> None:
-    # CallSugar/OsSugar own Call nodes. AttributeSugar owns Attribute terms.
-    # `x.m()` is a Call whose func is an Attribute -- the Call is still unowned
-    # (method-call sugar is a different arm); the func Attribute is never built
-    # as a TERM by the call path, so the shapes stay disjoint.
-    with pytest.raises(FactoryPanic) as raised:
-        reduce_value("x.m()", binds={"x": SymbolicValue(make_var("x"))})
-    assert raised.value.info.observed == "Call"
+    # AttributeSugar owns Attribute terms only. MethodCallSugar owns the Call
+    # node of `x.m()` -- the func Attribute is never built as a TERM by that
+    # path, so the shapes stay disjoint. Bare attribute still uses AttributeSugar.
+    bare = reduce_value("x.m", binds={"x": SymbolicValue(make_var("x"))})
+    called = reduce_value("x.m()", binds={"x": SymbolicValue(make_var("x"))})
+    assert bare.term == ctor("call:m", [make_var("x")])
+    assert called.term == ctor("call:m", [make_var("x")])
+    # Same coordinate head family; the Call path is MethodCallSugar's.
+    assert bare.target_name == called.target_name == "m"
