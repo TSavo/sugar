@@ -10,8 +10,34 @@ class DictValue(FloorValue):
     """A dict of reduced (key, value) floor pairs, in source order.
 
     The sugar reduces each key and each value; the floor holds what those
-    reductions were. No methods -- floors this dict does not implement panic
-    for free via FloorValue defaults.
+    reductions were. No methods beyond the dataclass and the subscript floor --
+    floors this dict does not implement panic for free via FloorValue defaults.
     """
 
     entries: tuple
+
+    def subscript(self, index, site):
+        # Concrete key match returns the value; concrete miss is KeyError.
+        # Symbolic index (or non-ground key compare) stays the py.subscript
+        # coordinate when the sides can project to terms.
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        concrete = type(index) is StringValue or type(index) is TermValue
+        if concrete:
+            for key, value in self.entries:
+                if type(key) is type(index):
+                    if type(key) is StringValue and key.value == index.value:
+                        return Complete(value)
+                    if type(key) is TermValue and key.value == index.value:
+                        return Complete(value)
+            from sugar_lift_py_tests.effect import KeyErrorRuntimeEffect
+
+            return Incomplete(
+                KeyErrorRuntimeEffect(
+                    f"dict key missing runtime boundary: "
+                    f"key={index!r}; owner=DictValue.subscript site={site}"
+                )
+            )
+        return self.py_subscript_coordinate(index, site)

@@ -49,3 +49,24 @@ class ListValue(FloorValue):
 
         return Complete(ListValue((*self.elements, value)))
 
+    def subscript(self, index, site):
+        # Concrete list + in-range TermValue int folds to the element; out of
+        # range is IndexError. Non-concrete index stays the py.subscript coordinate.
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if type(index) is TermValue and type(index.value) is int:
+            i = index.value
+            n = len(self.elements)
+            if -n <= i < n:
+                return Complete(self.elements[i])
+            from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect
+
+            return Incomplete(
+                IndexErrorRuntimeEffect(
+                    f"list index out of range runtime boundary: "
+                    f"index={i} length={n}; owner=ListValue.subscript site={site}"
+                )
+            )
+        return self.py_subscript_coordinate(index, site)
+

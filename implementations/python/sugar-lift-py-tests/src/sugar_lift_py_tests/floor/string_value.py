@@ -85,6 +85,27 @@ class StringValue(FloorValue):
 
         return Complete(TermValue(len(self.value)))
 
+    def subscript(self, index, site):
+        # Concrete string + in-range TermValue int folds to the one-char string;
+        # out of range is IndexError. Non-concrete index stays py.subscript.
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if type(index) is TermValue and type(index.value) is int:
+            i = index.value
+            n = len(self.value)
+            if -n <= i < n:
+                return Complete(StringValue(self.value[i]))
+            from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect
+
+            return Incomplete(
+                IndexErrorRuntimeEffect(
+                    f"string index out of range runtime boundary: "
+                    f"index={i} length={n}; owner=StringValue.subscript site={site}"
+                )
+            )
+        return self.py_subscript_coordinate(index, site)
+
     def add(self, other, site):
         # A string's addition IS concatenation: two strings fold to their join.
         # Anything else falls to the honest addition-floor gap.

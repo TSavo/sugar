@@ -505,6 +505,67 @@ class FloorValue:
             ),
         )
 
+    def subscript(self, index, site):
+        # Default: this value does not stand on the subscript floor -- it cannot
+        # answer what it yields at an index. Values that CAN implement subscript
+        # (concrete folds, symbolic stays the py.subscript coordinate); absence
+        # here is the honest "no".
+        del index
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="subscript",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the subscript floor",
+            fix=f"write more Floor: implement {observed}.subscript",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="subscript",
+                status="floor-gap",
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
+    def py_subscript_coordinate(self, index, site):
+        # The legacy symbolic spelling: ctor("py.subscript", [recv, index]).
+        # Match symbolic_term.py so coordinates join that vocabulary.
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            CallSiteValue(
+                target_name="py.subscript",
+                arg_values=(self, index),
+                parameters=(),
+                term=ctor(
+                    "py.subscript",
+                    [
+                        self.to_term(owner=str(site)),
+                        index.to_term(owner=str(site)),
+                    ],
+                ),
+                body=None,
+                site=site,
+            )
+        )
+
     def binary_conditional(self, then, else_body, ctx=None, site=None):
         # Default: ask truth, then the standing dispatches the two faces.
         # Base cases (True/False literals, PredicateValue) override.

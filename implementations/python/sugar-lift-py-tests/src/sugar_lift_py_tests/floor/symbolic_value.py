@@ -52,6 +52,11 @@ class SymbolicValue(FloorValue):
             )
         )
 
+    def subscript(self, index, site):
+        # A symbolic receiver stays the py.subscript coordinate regardless of index.
+        return self.py_subscript_coordinate(index, site)
+
+
     def project_callsite_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
 

@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field as dataclass_field
+
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar_body import SugarBody
+
+
+@dataclass(frozen=True)
+class SubscriptSugar(Sugar, role=SugarRole.TERM):
+    """`x[i]` subscript. Reduce the receiver and the index, and ask the receiver
+    to subscript by the index. Concrete containers fold; out-of-range / missing
+    key is a named runtime effect; symbolic sides stay the py.subscript
+    coordinate. Slice indexes are not owned -- a loud factory gap this PR."""
+
+    receiver: SugarBody
+    index: SugarBody
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        # Syntactic: Subscript whose index is not a Slice (slice stays unowned).
+        return (
+            site.observed == "Subscript"
+            and site.subscript_index().observed != "Slice"
+        )
+
+    @classmethod
+    def new(cls, site, ctx) -> "SubscriptSugar":
+        # Receiver and index are factory-built (audited), never reduced here.
+        return cls(
+            receiver=ctx.build_body(site.subscript_receiver(), SugarRole.TERM),
+            index=ctx.build_body(site.subscript_index(), SugarRole.TERM),
+            site=site,
+        )
+
+    @classmethod
+    def witnesses(cls):
+        # Concrete list index folds: truthful rides 20, lying asserts 21.
+        prefix = "def A(z):\n    xs = [10, 20, 30]\n    return xs[1]\n\n"
+        return _call_pair(
+            name="subscript_return",
+            owner_sugar="SubscriptSugar",
+            truthful=prefix + "def test_a():\n    assert A(5) == 20\n",
+            lying=prefix + "def test_a():\n    assert A(5) == 21\n",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        # Reduce receiver, reduce index, ask the receiver to subscript by the index.
+        return self.receiver.reduce(ctx).and_then(
+            lambda receiver: self.index.reduce(ctx).and_then(
+                lambda index: receiver.subscript(index, self.site)
+            )
+        )
+
+    def walk_children(self):
+        return (self.receiver, self.index)

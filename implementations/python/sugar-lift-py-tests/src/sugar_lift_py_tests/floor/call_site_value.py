@@ -62,6 +62,11 @@ class CallSiteValue(FloorValue):
             )
         )
 
+    def subscript(self, index, site):
+        # A callsite receiver stays the py.subscript coordinate regardless of index.
+        return self.py_subscript_coordinate(index, site)
+
+
     def callsites(self):
         # A CallSiteValue carries itself -- equals emit collects it so the
         # inv that consumes the term can still project the edge later.
