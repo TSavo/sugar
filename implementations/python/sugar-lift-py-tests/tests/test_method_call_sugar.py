@@ -8,13 +8,10 @@ from __future__ import annotations
 
 import ast
 
-import pytest
-
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
 from sugar_lift_py_tests.ir import ctor, make_var, num
@@ -67,11 +64,15 @@ def test_owns_method_call_not_plain_name_or_os_exit() -> None:
     assert "OsSugar" in exit_cands
 
 
-def test_keyword_method_call_stays_a_loud_gap() -> None:
-    # Keywords are not owned -- recognition gap, not silent drop.
-    with pytest.raises(FactoryPanic) as raised:
-        reduce_value("z.m(a=1)", binds={"z": SymbolicValue(make_var("z"))})
-    assert raised.value.info.observed == "Call"
+def test_keyword_method_call_rides_the_coordinate() -> None:
+    # Keyword VALUES ride the method coordinate (not dropped). **kwargs
+    # expansion stays a loud gap -- see test_call_kwargs_sugar.py.
+    value = reduce_value(
+        "z.m(a=1)", binds={"z": SymbolicValue(make_var("z"))}
+    )
+    assert isinstance(value, CallSiteValue)
+    assert value.term == ctor("call:m", [make_var("z"), num(1)])
+    assert value.parameters == ("a",)
 
 
 def test_zero_arg_method_call() -> None:
