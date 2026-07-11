@@ -4,6 +4,7 @@ import re
 from typing import Callable, Iterable, TypeAlias
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, GapKind
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.factory_gap_info import gap_kind_status
 
 from .audit_only_gap import AuditOnlyGap
@@ -20,16 +21,46 @@ _BACKTICK = re.compile(r"`([^`]+)`")
 
 
 def collect_construction_gaps(walkers: Iterable[AuditWalker]) -> list[AuditOnlyGap]:
+    """Run each walker; hold FactoryPanic (the audit door) and loud TypeError
+    construction gaps; re-raise everything else. Walkers continue after a gap
+    so the frontier enumerates every offender, not just the first."""
     gaps: list[AuditOnlyGap] = []
     for label, walker in walkers:
         try:
             walker()
+        except FactoryPanic as panic:
+            # The ONE place FactoryPanic may be held -- audit enumeration.
+            gaps.append(gap_from_factory_panic(label, panic))
         except TypeError as exc:
             gap = _gap_from_loud_type_error(label, str(exc))
             if gap is None:
                 raise
             gaps.append(gap)
     return gaps
+
+
+def gap_from_factory_panic(label: str, panic: FactoryPanic) -> AuditOnlyGap:
+    """Structure the panic's FactoryGapInfo as an audit-only gap row."""
+    info = panic.info.to_json()
+    audit_row = panic.audit_row
+    if audit_row is None:
+        status = gap_kind_status(panic.info.gap_kind)
+        audit_row = FactoryAuditRow(
+            role=info["requested"],
+            status=status,
+            observed=info["observed"],
+            blame=info["blame"],
+            selected=None,
+            candidates=[],
+            message=panic.info.message,
+        )
+    return AuditOnlyGap(
+        label=label,
+        info=info,
+        audit_row=audit_row,
+        message=panic.info.message,
+    )
+
 
 
 def _gap_from_loud_type_error(label: str, message: str) -> AuditOnlyGap | None:
