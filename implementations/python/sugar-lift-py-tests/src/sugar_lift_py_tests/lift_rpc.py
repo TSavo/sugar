@@ -742,6 +742,28 @@ def _module_import_temporal(module) -> "object":
     return temporal
 
 
+
+def _iter_liftable_function_defs(module):
+    """Yield FunctionDef fragments at module top-level and inside ClassDef bodies.
+
+    Deeper floors: pytest class-based tests put ``test_*`` methods on classes.
+    Without walking ClassDef bodies, those asserts never enter the factory
+    (owned=0) and stay refuse-loud mass. Nested classes included recursively.
+    """
+    stack = list(module.statements())
+    while stack:
+        stmt = stack.pop(0)
+        observed = stmt.observed
+        if observed == "FunctionDef":
+            yield stmt
+        elif observed == "ClassDef":
+            # class body may contain methods and nested classes
+            try:
+                stack[0:0] = list(stmt.class_body())
+            except Exception:
+                continue
+
+
 def audit_lift_file(
     source: str,
     filename: str,
@@ -778,8 +800,9 @@ def audit_lift_file(
     module = roots[0]
     # Seed import bindings once for every def in this module (deeper floors).
     module_temporal = _module_import_temporal(module)
-    for stmt in module.statements():
+    for stmt in _iter_liftable_function_defs(module):
         # Either ordinary FunctionDef or test_* testimony (both owns shapes).
+        # Class methods included (pytest TestCase-style / mixin tests).
         if not (FunctionDefSugar.owns(stmt) or TestFunctionDefSugar.owns(stmt)):
             continue
         label = f"{filename}:{stmt.line}:{stmt.col}"
