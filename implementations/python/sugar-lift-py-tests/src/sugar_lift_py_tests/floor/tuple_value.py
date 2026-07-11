@@ -16,6 +16,16 @@ class TupleValue(FloorValue):
 
     elements: tuple
 
+    def to_term(self, *, owner: str):
+        # Project each element; vendor digs return tuples (sign/unsign pairs,
+        # return_timestamp) that must enter FOL for assert equality.
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "tuple",
+            [elt.to_term(owner=owner) for elt in self.elements],
+        )
+
     def truth(self, site):
         # A tuple's truth is nonempty.
         from sugar_lift_py_tests.outcome import Complete

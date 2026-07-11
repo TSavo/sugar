@@ -764,6 +764,36 @@ def _iter_liftable_function_defs(module):
                 continue
 
 
+
+def _module_import_maps(module) -> "tuple[dict, dict]":
+    """Return (import_aliases, from_imports) for FactoryBuildContext.
+
+    Vendor dig: CallSugar / MethodCallSugar / dig resolve need the same maps
+    SourceFragment.call_import_target_name uses — temporal SymbolicValue alone
+    does not populate them. Closed, structural: only what the module states.
+    """
+    import_aliases: dict[str, str] = {}
+    from_imports: dict[str, tuple[str, str]] = {}
+    for stmt in module.statements():
+        observed = stmt.observed
+        if observed == "Import":
+            for name, asname in stmt.import_names():
+                bound = asname or name.split(".")[0]
+                # ``import a.b as c`` binds c -> a.b; ``import a.b`` binds a -> a
+                if asname is not None:
+                    import_aliases[bound] = name
+                else:
+                    import_aliases[name.split(".")[0]] = name.split(".")[0]
+        elif observed == "ImportFrom":
+            mod = stmt.importfrom_module() or ""
+            for name, asname in stmt.importfrom_names():
+                if name == "*":
+                    continue
+                bound = asname or name
+                from_imports[bound] = (mod, name)
+    return import_aliases, from_imports
+
+
 def audit_lift_file(
     source: str,
     filename: str,
@@ -800,6 +830,7 @@ def audit_lift_file(
     module = roots[0]
     # Seed import bindings once for every def in this module (deeper floors).
     module_temporal = _module_import_temporal(module)
+    import_aliases, from_imports = _module_import_maps(module)
     for stmt in _iter_liftable_function_defs(module):
         # Either ordinary FunctionDef or test_* testimony (both owns shapes).
         # Class methods included (pytest TestCase-style / mixin tests).
@@ -808,7 +839,11 @@ def audit_lift_file(
         label = f"{filename}:{stmt.line}:{stmt.col}"
         try:
             ctx = FactoryBuildContext(
-                filename=filename, catalog=catalog, temporal=module_temporal
+                filename=filename,
+                catalog=catalog,
+                temporal=module_temporal,
+                import_aliases=import_aliases,
+                from_imports=from_imports,
             )
             result = build_node(
                 stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx
