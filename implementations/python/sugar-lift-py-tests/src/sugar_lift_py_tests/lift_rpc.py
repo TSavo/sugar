@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -704,7 +705,11 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
         ctx = FactoryBuildContext(filename=filename, catalog=catalog)
         result = build_node(stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx)
         universe = complete_value(result.sugar.desugar(ctx), owner="lift_file_payload")
-        def_memento = stmt.memento()
+        def_memento = dataclasses.replace(
+            stmt.memento(),
+            source_function_name=universe.name,
+            role="function-contract",
+        )
         post_provenance = Provenance(
             node_class="BodyUniverseDto",
             construction_site=construction_site(stmt),
@@ -731,7 +736,14 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
                     BodyUniverseDto(
                         name=row.name,
                         inv=row.formula,
-                        source_warrants=list(row.source_warrants),
+                        source_warrants=[
+                            dataclasses.replace(
+                                warrant,
+                                source_function_name=universe.name,
+                                role="assertion",
+                            )
+                            for warrant in row.source_warrants
+                        ],
                         formals=list(row.formals),
                         kind="contract",
                     )
@@ -1027,6 +1039,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # Dedup key is (name, span) so same-named nested functions with
                 # distinct spans each get a node (self-locating SourceMemento).
                 seen_keys: set = set()
+                contract_names: set = set()
+                for item in ir_items:
+                    if item.get("kind") == "function-contract":
+                        contract_names.add(item.get("name"))
                 nodes = []
 
                 def _fn_key(memento):
@@ -1082,6 +1098,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         "sourceFunctionName"
                     )
                     if not fn_name:
+                        continue
+                    if fn_name in contract_names:
+                        # The function already owns a contract row; the
+                        # enclosing-only fallback must not mint a duplicate.
                         continue
                     # Degenerate span: enclosing-only functions have no body
                     # contract locus; call_sites falls back to name scoping.
