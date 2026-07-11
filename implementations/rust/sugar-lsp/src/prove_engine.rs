@@ -320,6 +320,78 @@ pub fn feed_overlay_pool(overlay_root: &Path) -> Result<sugar_verifier::types::M
         .map_err(|e| format!("fold→pool speaker stamp failed: {e}"))
 }
 
+/// #3802 consumer-testimony half of the soundness floor.
+///
+/// Call on the pure enumerate→fold pool **before** dependency-bridge injection
+/// (injection loads vendor members, which must not count as consumer testimony).
+pub fn assess_consumer_overlay_testimony(
+    pool: &sugar_verifier::types::MementoPool,
+) -> Result<(), String> {
+    use sugar_verifier::types::MemberKind;
+
+    let contracts = pool.member_count_by_kind(MemberKind::Contract);
+    let sources = pool.member_count_by_kind(MemberKind::SourceMemento);
+    if contracts == 0 && sources == 0 {
+        return Err(
+            "overlay produced no consumer testimony; falling back to resident disk-pool"
+                .to_string(),
+        );
+    }
+
+    // Consistency candidates are the anchored claims the scoped solve door
+    // can actually discharge. Contracts that are not candidates (setup
+    // bindings, pre-bearing shells) do not count as testimony for this guard.
+    let index = sugar_verifier::consistency::build_consistency_index(pool);
+    if index.candidate_count() == 0 {
+        return Err(
+            "overlay produced no consumer-anchored consistency candidates; falling back to resident disk-pool"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// #3808 binding half of the soundness floor.
+///
+/// Call **after** `inject_dependency_bridges_into_pool`. When the project
+/// declares import deps whose contracts need post/universe bridges, the
+/// overlay must carry at least one Bridge or LibrarySugarBindingEntry.
+pub fn assess_overlay_vendor_bindings(
+    pool: &sugar_verifier::types::MementoPool,
+    project_root: &Path,
+) -> Result<(), String> {
+    use sugar_verifier::types::MemberKind;
+
+    if !sugar_cli::cmd_mint::project_declares_import_dependencies(project_root) {
+        return Ok(());
+    }
+    let dep_bindings =
+        sugar_cli::cmd_mint::contract_bindings_from_dependency_proofs(project_root);
+    if !sugar_cli::cmd_mint::dependency_bindings_need_bridges(&dep_bindings) {
+        // Case-1 (same-name sworn conjoins) does not need bridges.
+        return Ok(());
+    }
+    let bridges = pool.member_count_by_kind(MemberKind::Bridge);
+    let bindings = pool.member_count_by_kind(MemberKind::LibrarySugarBindingEntry);
+    if bridges == 0 && bindings == 0 {
+        return Err(
+            "overlay produced no vendor bindings despite declared dependencies; falling back to resident disk-pool"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Combined soundness check for tests that hold a fully prepared overlay pool
+/// (consumer feed + dependency bridges already applied).
+pub fn assess_overlay_soundness(
+    pool: &sugar_verifier::types::MementoPool,
+    project_root: &Path,
+) -> Result<(), String> {
+    assess_consumer_overlay_testimony(pool)?;
+    assess_overlay_vendor_bindings(pool, project_root)
+}
+
 /// Solve one edited buffer against the resident base index: stage the
 /// SOURCE-OVERLAY, FEED consumer claims via enumerate→fold (one composition
 /// with the API), and drive THE resident-base SOLVE door
@@ -364,23 +436,38 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
         };
     }
 
-    // #3809: one feed — enumerate→fold→pool. No mint_project_scratch_proof.
+    // #3809: one feed -- enumerate→fold→pool. No mint_project_scratch_proof.
+    // #3802/#3808 soundness floor: never return un-degraded when the overlay
+    // produced no real anchored testimony, or declared deps but no vendor
+    // bindings/bridges (case-2 universe laws would silently vanish).
     let (overlay_pool, degraded, degraded_reason) = match feed_overlay_pool(&overlay_root) {
-        Ok(pool) => {
-            use sugar_verifier::types::MemberKind;
-            let contracts = pool.member_count_by_kind(MemberKind::Contract);
-            let sources = pool.member_count_by_kind(MemberKind::SourceMemento);
-            if contracts == 0 && sources == 0 {
+        Ok(mut pool) => {
+            // Consumer testimony first -- before injection loads vendor members
+            // that must not masquerade as consumer-anchored candidates (#3802).
+            if let Err(reason) = assess_consumer_overlay_testimony(&pool) {
                 (
                     sugar_verifier::types::MementoPool::default(),
                     true,
-                    Some(
-                        "enumerate→fold produced no consumer testimony; falling back to resident disk-pool"
-                            .to_string(),
-                    ),
+                    Some(reason),
                 )
             } else {
-                (pool, false, None)
+                // #3808 root cause: stage consumer→vendor bridges from the
+                // resident import set (in-process; overlay tree deliberately
+                // excludes `.sugar/imports`). Case-2 ambient-post specialization
+                // needs these bridges so target contract bodies resolve.
+                let _injected = sugar_cli::cmd_mint::inject_dependency_bridges_into_pool(
+                    &ctx.project_root,
+                    &mut pool,
+                );
+                if let Err(reason) = assess_overlay_vendor_bindings(&pool, &ctx.project_root) {
+                    (
+                        sugar_verifier::types::MementoPool::default(),
+                        true,
+                        Some(reason),
+                    )
+                } else {
+                    (pool, false, None)
+                }
             }
         }
         Err(err) => (

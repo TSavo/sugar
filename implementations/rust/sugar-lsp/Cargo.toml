@@ -42,3 +42,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3.14"
 libc = "0.2"
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
+sugar-claim-envelope = { path = "../sugar-claim-envelope" }
+sugar-proof-envelope = { path = "../sugar-proof-envelope" }
+sugar-canonicalizer = { path = "../sugar-canonicalizer" }
+sugar-cli = { path = "../sugar-cli" }
+sugar-verifier = { path = "../sugar-verifier" }
