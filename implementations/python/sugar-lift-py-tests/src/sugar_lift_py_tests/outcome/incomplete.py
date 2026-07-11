@@ -37,6 +37,14 @@ class Incomplete:
         # An effect does not rebind: the rest never runs under a new scope.
         return ctx
 
+    def inv_contribution(self):
+        # An effect states no inv.
+        return ()
+
+    def post_contribution(self):
+        # An effect posts no exit.
+        return ()
+
     def and_then(self, step):
         # An effect never continues: it propagates by returning itself, the next step
         # never runs.

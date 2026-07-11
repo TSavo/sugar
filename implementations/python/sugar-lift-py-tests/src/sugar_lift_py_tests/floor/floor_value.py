@@ -116,6 +116,14 @@ class FloorValue:
         del ctx
         return Complete(self)
 
+    def inv_contribution(self):
+        # Default: a record entry states no inv. InvValue overrides.
+        return ()
+
+    def post_contribution(self):
+        # Default: a record entry posts no exit. ReturnValue overrides.
+        return ()
+
     def add_with(
         self, operation: AddOperation, ctx: FactoryBuildContext | None
     ) -> Outcome:

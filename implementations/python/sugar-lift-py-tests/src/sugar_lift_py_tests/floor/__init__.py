@@ -40,6 +40,7 @@ from .symbolic_value import SymbolicValue
 from .term_value import TermValue
 from .tuple_literal_value import TupleLiteralValue
 from .tuple_value import TupleValue
+from .universe_value import UniverseValue
 
 REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ArrayLiteral,
@@ -74,6 +75,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     TermValue,
     TupleLiteralValue,
     TupleValue,
+    UniverseValue,
 )
 
 for _floor_type in REGISTERED_FLOOR_TYPES:
@@ -118,6 +120,7 @@ __all__ = [
     "TermValue",
     "TupleLiteralValue",
     "TupleValue",
+    "UniverseValue",
     "REGISTERED_FLOOR_TYPES",
     "require_floor_dispatch_surface",
 ]

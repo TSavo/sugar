@@ -17,3 +17,7 @@ class InvValue(FloorValue):
     It contributes itself to the record (the record IS the emission surface)."""
 
     formula: Formula
+
+    def inv_contribution(self):
+        # The stated fact IS the inv slot's row.
+        return (self.formula,)
