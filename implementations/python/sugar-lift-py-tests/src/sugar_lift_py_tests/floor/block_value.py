@@ -37,10 +37,23 @@ class BlockValue(FloorValue):
         )
 
     def follow_rest(self, rest, reduce):
-        # A face that exits makes the continuation unreachable: keep it raw.
-        if any(entry.post_contribution() for entry in self.statements):
+        # Only an *unguarded* return makes the entire continuation unreachable.
+        # GuardedReturn (if/except path) and other posts coexist with a live tail
+        # — e.g. try/except: return; assert ... must still reduce the assert.
+        from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+        if any(type(entry) is ReturnValue for entry in self.statements):
             return rest
         return reduce(rest)
+
+    def extend_scope(self, ctx):
+        # Nested with / pytest.raises as-bindings live on entries (RaisesWithValue,
+        # ScopeRebind). Thread them into the *rest of the enclosing block* so
+        # ``with freeze_time: with raises as exc_info: ...; assert exc_info`` works.
+        for entry in self.statements:
+            if hasattr(entry, "extend_scope"):
+                ctx = entry.extend_scope(ctx)
+        return ctx
 
     def guard_with(self, operation: Any, ctx: Any) -> Any:
         return operation.guard_block(self, ctx)
