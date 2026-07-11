@@ -9,15 +9,17 @@ from .floor_value import FloorValue
 
 @dataclass(frozen=True)
 class GuardedFaces(FloorValue):
-    """A symbolic condition's `if`: it cannot pick a face, so it guards. The
-    entries are the face records already riding under their polarity. When the
-    then-face exits and there is no else, the block's continuation IS the else:
-    it rides under the negated guard (`then_exits` carries that). The faces
-    splice into the enclosing record like a block."""
+    """A symbolic condition's `if`/`else`: it cannot pick a face, so it guards.
+    The entries are the face records already riding under their polarity. Exits
+    decide what the continuation rides: both faces exit -- the tail is
+    unreachable (raw); only then exits -- the tail rides under not(guard); only
+    else exits -- the tail rides under guard; neither -- the tail is
+    unconditional. The faces splice into the enclosing record like a block."""
 
     guard: Formula
     entries: tuple
     then_exits: bool
+    else_exits: bool
 
     def contribution(self):
         return self.entries
@@ -45,12 +47,18 @@ class GuardedFaces(FloorValue):
         )
 
     def follow_rest(self, rest, reduce):
-        # The continuation after a then-only `if` whose face exits IS the else:
-        # it rides under the negated guard. A non-exiting face constrains
-        # nothing downstream -- the continuation runs either way.
+        # Exits decide what the continuation rides -- no type interrogation:
+        # both exit -> unreachable (raw, like code after an unguarded return);
+        # only then -> tail under not(guard); only else -> tail under guard;
+        # neither -> reduce plain.
+        if self.then_exits and self.else_exits:
+            del reduce
+            return rest
         entries = reduce(rest)
-        if not self.then_exits:
-            return entries
-        from sugar_lift_py_tests.ir import not_
+        if self.then_exits:
+            from sugar_lift_py_tests.ir import not_
 
-        return tuple(entry.guarded(not_(self.guard)) for entry in entries)
+            return tuple(entry.guarded(not_(self.guard)) for entry in entries)
+        if self.else_exits:
+            return tuple(entry.guarded(self.guard) for entry in entries)
+        return entries
