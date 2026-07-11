@@ -242,6 +242,11 @@ def py_truthy(a: Term) -> Formula:
     return atomic("py.truthy", [a])
 
 
+def py_raises(exc: Term) -> Formula:
+    """Testimony: pytest.raises(exc) / with-raises pattern stated as inv."""
+    return atomic("pytest.raises", [exc])
+
+
 def identity(a: Term, b: Term) -> Formula:
     return atomic("identity", [a, b])
 

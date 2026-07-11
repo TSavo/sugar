@@ -19,7 +19,18 @@ def _block(src: str):
 
 
 def test_raise_desugars_directly_to_a_routeable_raise_exit():
-    outcome = RaiseSugar().desugar()
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.factory.build import default_catalog
+
+    src = "def f():\n    raise ValueError('x')\n"
+    mod = SourceFragment.from_source(src, "t.py").statements()[0]
+    fn = [s for s in mod.statements() if s.observed == "FunctionDef"][0]
+    # body block first stmt is raise
+    block = fn.function_body_block()
+    raise_site = block.statements()[0]
+    sugar = RaiseSugar.new(raise_site, FactoryBuildContext(filename="t.py", catalog=default_catalog()))
+    outcome = sugar.desugar()
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, RaiseValue)
