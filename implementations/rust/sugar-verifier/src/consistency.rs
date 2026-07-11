@@ -634,31 +634,57 @@ fn consistency_verdict(
 }
 
 
-/// Equality atoms that orient as term ≃ ground value for structural dual.
+/// Ground **term** half of a dual structural face (callsite / data ctor tree).
+/// Not a free formula — only built via [`DualGroundEqFace::try_from_atomic`].
+#[derive(Clone, Copy, Debug)]
+struct DualTerm<'a>(&'a Json);
+
+/// Ground **value** half of a dual structural face (const / data value).
+/// Not a free formula — only built via [`DualGroundEqFace::try_from_atomic`].
+#[derive(Clone, Copy, Debug)]
+struct DualValue<'a>(&'a Json);
+
+/// The **only** type-system door for dual structural equality.
 ///
-/// IR `=` is the reflexive post/slot equality. Python assert lifts as `py.eq`
-/// (vendor Python `==`). Structural dual must treat both the same for
-/// term-const faces: `py.eq(call:A(), 3) ∧ py.eq(call:A(), 4)` is the same
-/// "equals both" contradiction as with `=`. Arithmetic operator ctors stay
-/// non-values via `is_const_value` (#3924).
+/// Carries an oriented pair `term ≃ value`. There is no constructor that takes
+/// a bare atom name or that asserts reflexivity (`x ≃ x`). Construction is
+/// [`DualGroundEqFace::try_from_atomic`] only:
+/// 1. atomic name is IR `=` **or** Python `py.eq` (assert `==`);
+/// 2. [`ground_term_const_equality`] orients **term + ground value**.
 ///
-/// # Scope (NaN / non-reflexivity) — DO NOT WIDEN CASUALLY
+/// # Why this cuts NaN off at the type system
 ///
-/// Python `==` is not SMT `=`: `float('nan') != float('nan')`, so symbolic
-/// comparison emits `py.eq` rather than IR `=`. Treating `py.eq` as an
-/// equality *atom name* here is sound **only** because
-/// [`collect_ground_equalities`] still routes through
-/// [`ground_term_const_equality`]: one side must be a ground **term** (call /
-/// data ctor tree) and the other a ground **value** (const / data value).
-/// That path:
-/// - never asserts reflexivity of an uninterpreted / possibly-NaN `x`
-///   (`py.eq(x, x)` does not orient — both sides are not term+const);
-/// - only records dual *values* for the same term (`equals both 3 and 4`).
-/// `A()==3 ∧ A()==4` is contradiction on the integers 3 and 4, independent of
-/// NaN. A later PR that rewrites general `py.eq` → `=` (or treats `py.eq` as
-/// reflexive identity) would lose NaN non-reflexivity — keep this scoped.
-fn is_structural_equality_atom(name: &str) -> bool {
-    matches!(name, "=" | "py.eq")
+/// Python `==` is not SMT `=` (`nan != nan`). Symbolic comparison therefore
+/// emits `py.eq`, not IR `=`. We allow `py.eq` **only** as a dual-face atom
+/// name inside this type — never as a general rewrite to reflexive `=`.
+/// `DualGroundEqFace` cannot represent `py.eq(x, x)` (does not orient).
+/// Callers that need dual injectivity take `DualGroundEqFace`; they cannot
+/// pass an un-oriented formula without going through `try_from_atomic`.
+///
+/// Arithmetic operator ctors stay non-values via `is_const_value` (#3924).
+#[derive(Clone, Copy, Debug)]
+struct DualGroundEqFace<'a> {
+    term: DualTerm<'a>,
+    value: DualValue<'a>,
+}
+
+impl<'a> DualGroundEqFace<'a> {
+    /// Sole construction site for dual structural equality faces.
+    fn try_from_atomic(node: &'a Json) -> Option<Self> {
+        if node.get("kind").and_then(|k| k.as_str()) != Some("atomic") {
+            return None;
+        }
+        let name = node.get("name").and_then(|v| v.as_str())?;
+        // Dual-face atom names only — not a public "is equality?" predicate.
+        if !matches!(name, "=" | "py.eq") {
+            return None;
+        }
+        let (term, value) = ground_term_const_equality(node)?;
+        Some(Self {
+            term: DualTerm(term),
+            value: DualValue(value),
+        })
+    }
 }
 
 fn structural_contradiction_reason(inv: &Json) -> Option<String> {
@@ -688,22 +714,16 @@ fn collect_ground_equalities(
             }
             collect_ground_equalities(&operands[1], equalities)
         }
-        Some("atomic")
-            if node
-                .get("name")
-                .and_then(|v| v.as_str())
-                .is_some_and(is_structural_equality_atom) =>
-        {
-            let (term, value) = ground_term_const_equality(node)?;
-            record_ground_equality(term, value, equalities)
+        Some("atomic") => {
+            let face = DualGroundEqFace::try_from_atomic(node)?;
+            record_ground_equality(face, equalities)
         }
         _ => None,
     }
 }
 
 fn record_ground_equality(
-    term: &Json,
-    value: &Json,
+    face: DualGroundEqFace<'_>,
     equalities: &mut std::collections::BTreeMap<String, (String, String, String)>,
 ) -> Option<String> {
     // Federate platform-width primitive sorts BEFORE keying: width is a range
@@ -713,6 +733,8 @@ fn record_ground_equality(
     // of a fake discharge). The solver path already federates via
     // sort_translate; this closes the same leak in the structural pre-check.
     // Only the KEY federates; the display keeps the original width for audit.
+    let term = face.term.0;
+    let value = face.value.0;
     let term_key = libsugar::canonical::json_jcs(&federate_primitive_sorts(term)).ok()?;
     let value_key = libsugar::canonical::json_jcs(&federate_primitive_sorts(value)).ok()?;
     let term_display = compact_json(term);
@@ -2261,16 +2283,11 @@ fn collect_ambient_ground_callsite_facts(
                 );
             }
         }
-        Some("atomic")
-            if inv
-                .get("name")
-                .and_then(|v| v.as_str())
-                .is_some_and(is_structural_equality_atom) =>
-        {
-            let Some((term, _value)) = ground_term_const_equality(inv) else {
+        Some("atomic") => {
+            let Some(face) = DualGroundEqFace::try_from_atomic(inv) else {
                 return;
             };
-            let Some(term_key) = ground_callsite_term_key(term) else {
+            let Some(term_key) = ground_callsite_term_key(face.term.0) else {
                 return;
             };
             out.push(AmbientGroundCallsiteFact {
@@ -2305,15 +2322,10 @@ fn ground_callsite_witness_keys(
 }
 
 fn is_ground_callsite_fact_formula(formula: &Json) -> bool {
-    if formula.get("kind").and_then(|k| k.as_str()) != Some("atomic")
-        || formula.get("name").and_then(|v| v.as_str()).is_none_or(|n| !is_structural_equality_atom(n))
-    {
-        return false;
-    }
-    let Some((term, _value)) = ground_term_const_equality(formula) else {
+    let Some(face) = DualGroundEqFace::try_from_atomic(formula) else {
         return false;
     };
-    ground_callsite_term_key(term).is_some()
+    ground_callsite_term_key(face.term.0).is_some()
 }
 
 fn is_derived_ground_callsite_support(
@@ -5001,6 +5013,36 @@ mod tests {
             None,
             "const-const py.eq must not structural-orient"
         );
+    }
+
+    /// Type fence: only DualGroundEqFace::try_from_atomic orients; bare names
+    /// and non-oriented atoms produce None (no free "py.eq is equality" API).
+    #[test]
+    fn dual_ground_eq_face_is_sole_construction_door() {
+        let call_a = json!({"kind":"ctor","name":"call:A","args":[]});
+        let oriented = json!({"kind":"atomic","name":"py.eq","args":[
+            call_a.clone(),
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":3},
+        ]});
+        assert!(DualGroundEqFace::try_from_atomic(&oriented).is_some());
+
+        let ir_eq = json!({"kind":"atomic","name":"=","args":[
+            call_a.clone(),
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":3},
+        ]});
+        assert!(DualGroundEqFace::try_from_atomic(&ir_eq).is_some());
+
+        let reflexive = json!({"kind":"atomic","name":"py.eq","args":[
+            {"kind":"var","name":"x"},
+            {"kind":"var","name":"x"},
+        ]});
+        assert!(DualGroundEqFace::try_from_atomic(&reflexive).is_none());
+
+        let other_atom = json!({"kind":"atomic","name":"py.lt","args":[
+            call_a,
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":3},
+        ]});
+        assert!(DualGroundEqFace::try_from_atomic(&other_atom).is_none());
     }
 
     /// ARITHMETIC OPERATORS ARE NOT STRUCTURAL VALUES: a truthful binop body dig
