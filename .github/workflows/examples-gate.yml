@@ -31,6 +31,8 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
+      - name: Install lift package deps
+        run: python -m pip install --quiet blake3 pynacl cbor2
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
