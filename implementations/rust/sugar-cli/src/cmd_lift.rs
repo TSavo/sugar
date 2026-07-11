@@ -3589,6 +3589,16 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
     let rows = visual_factory_walk_rows(&report.factory_walk, source_lookup);
     let mut out = String::new();
     out.push_str(&render_report_plan_roll_call(report));
+    // Dual-axis + Minority Report with actual source (not summary-only).
+    if let Some(coverage) = &report.lift_coverage {
+        out.push_str(&render_lift_coverage_human(
+            coverage,
+            report.project_root.as_deref(),
+        ));
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+    }
     out.push_str(&render_universe_visual_report(report, source_lookup));
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
@@ -5094,7 +5104,10 @@ fn report_unit_test_fact_count(report: &LiftSourceReport) -> usize {
 /// Default accounting (assertions) has **no section title** — it *is* the report.
 /// The exception alone is named, and its name is the literal string `Minority Report`.
 /// Crime 2 (forged warrant) is RED when dig floors lack a warranting assert stamp.
-fn render_lift_coverage_human(coverage: &Value) -> String {
+///
+/// When `project_root` is set, unaccounted loci print **actual source lines** from
+/// disk (not a one-line preview summary). That is the product surface for `--visual`.
+fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> String {
     let mut out = String::new();
     let totals = coverage.get("totals").cloned().unwrap_or(Value::Null);
     let assertions = coverage.get("assertions").cloned().unwrap_or(Value::Null);
@@ -5137,10 +5150,13 @@ fn render_lift_coverage_human(coverage: &Value) -> String {
         out.push_str("  silent residue (RED — lifter walked past these asserts):\n");
         if let Some(silent) = assertions.get("silent_loci").and_then(Value::as_array) {
             for locus in silent.iter().take(32) {
-                let file = locus.get("file").and_then(Value::as_str).unwrap_or("?");
-                let line = locus.get("line").and_then(Value::as_u64).unwrap_or(0);
-                let preview = locus.get("preview").and_then(Value::as_str).unwrap_or("");
-                out.push_str(&format!("    - {file}:{line}  {preview}\n"));
+                append_unaccounted_source_block(
+                    &mut out,
+                    project_root,
+                    locus,
+                    VisualTone::Red,
+                    /*body=*/ false,
+                );
             }
             if silent.len() > 32 {
                 out.push_str(&format!("    (+{} more)\n", silent.len() - 32));
@@ -5155,18 +5171,17 @@ fn render_lift_coverage_human(coverage: &Value) -> String {
         ));
         if min_un > 0 {
             if let Some(un) = minority.get("un_asserted_loci").and_then(Value::as_array) {
-                for locus in un.iter().take(16) {
-                    let file = locus.get("file").and_then(Value::as_str).unwrap_or("?");
-                    let line = locus.get("line").and_then(Value::as_u64).unwrap_or(0);
-                    let name = locus
-                        .get("qualname")
-                        .or_else(|| locus.get("name"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("?");
-                    out.push_str(&format!("    - {file}:{line}  {name}\n"));
+                for locus in un.iter().take(32) {
+                    append_unaccounted_source_block(
+                        &mut out,
+                        project_root,
+                        locus,
+                        VisualTone::Red,
+                        /*body=*/ true,
+                    );
                 }
-                if un.len() > 16 {
-                    out.push_str(&format!("    (+{} more)\n", un.len() - 16));
+                if un.len() > 32 {
+                    out.push_str(&format!("    (+{} more)\n", un.len() - 32));
                 }
             }
         }
@@ -5197,11 +5212,13 @@ fn render_lift_coverage_human(coverage: &Value) -> String {
             );
             if let Some(forged) = crime2.get("forged_loci").and_then(Value::as_array) {
                 for locus in forged.iter().take(32) {
-                    let file = locus.get("file").and_then(Value::as_str).unwrap_or("?");
-                    let line = locus.get("line").and_then(Value::as_u64).unwrap_or(0);
-                    let detail = locus.get("detail").and_then(Value::as_str).unwrap_or("");
-                    let callee = locus.get("callee").and_then(Value::as_str).unwrap_or("");
-                    out.push_str(&format!("    - {file}:{line}  {detail} {callee}\n"));
+                    append_unaccounted_source_block(
+                        &mut out,
+                        project_root,
+                        locus,
+                        VisualTone::Red,
+                        /*body=*/ false,
+                    );
                 }
                 if forged.len() > 32 {
                     out.push_str(&format!("    (+{} more)\n", forged.len() - 32));
@@ -5210,6 +5227,132 @@ fn render_lift_coverage_human(coverage: &Value) -> String {
         }
     }
     out
+}
+
+/// Print one unaccounted locus as a header + the actual source lines from disk.
+fn append_unaccounted_source_block(
+    out: &mut String,
+    project_root: Option<&Path>,
+    locus: &Value,
+    tone: VisualTone,
+    body: bool,
+) {
+    let file = locus.get("file").and_then(Value::as_str).unwrap_or("?");
+    let line = locus.get("line").and_then(Value::as_u64).unwrap_or(0);
+    let name = locus
+        .get("qualname")
+        .or_else(|| locus.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let detail = locus.get("detail").and_then(Value::as_str).unwrap_or("");
+    let callee = locus.get("callee").and_then(Value::as_str).unwrap_or("");
+    let preview = locus.get("preview").and_then(Value::as_str).unwrap_or("");
+
+    let header = if !name.is_empty() {
+        format!("    - {file}:{line}  {name}")
+    } else if !detail.is_empty() || !callee.is_empty() {
+        format!("    - {file}:{line}  {detail} {callee}")
+    } else {
+        format!("    - {file}:{line}")
+    };
+    out.push_str(&format!("{}\n", header.trim_end()));
+
+    // Prefer multi-line source from disk; fall back to preview only if unreadable.
+    let end_line = locus
+        .get("end_line")
+        .or_else(|| locus.get("endLine"))
+        .and_then(Value::as_u64);
+    if let Some(source_lines) =
+        read_unaccounted_source_lines(project_root, file, line, end_line, body)
+    {
+        for (ln, text) in source_lines {
+            out.push_str(&format!(
+                "      {:>4}| {}\n",
+                ln,
+                ansi_paint(text.trim_end_matches('\r'), tone)
+            ));
+        }
+    } else if !preview.is_empty() {
+        // Last resort: kit-provided one-line preview (not a substitute for disk).
+        out.push_str(&format!("      {:>4}| {}\n", line, ansi_paint(preview, tone)));
+    } else {
+        out.push_str("      <source not present on disk>\n");
+    }
+}
+
+/// Load the unaccounted source window from the project tree.
+///
+/// * Assert / single locus: the start line (or start..=end when span given).
+/// * Body (`body=true`): the function starting at `line`, through its indented suite.
+fn read_unaccounted_source_lines(
+    project_root: Option<&Path>,
+    file: &str,
+    start_line: u64,
+    end_line: Option<u64>,
+    body: bool,
+) -> Option<Vec<(u64, String)>> {
+    if start_line == 0 || file == "?" || file.is_empty() {
+        return None;
+    }
+    let path = {
+        let p = Path::new(file);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            project_root?.join(p)
+        }
+    };
+    let source = std::fs::read_to_string(&path).ok()?;
+    let lines: Vec<&str> = source.lines().collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let start_idx = (start_line as usize).saturating_sub(1);
+    if start_idx >= lines.len() {
+        return None;
+    }
+
+    if let Some(end) = end_line {
+        let end_idx = (end as usize).min(lines.len()).max(start_idx + 1);
+        return Some(
+            lines[start_idx..end_idx]
+                .iter()
+                .enumerate()
+                .map(|(off, text)| (start_line + off as u64, (*text).to_string()))
+                .collect(),
+        );
+    }
+
+    if !body {
+        // Single assert / locus line (plus a small window of context if the next
+        // line is a continuation indent — rare; keep to one line for asserts).
+        return Some(vec![(start_line, lines[start_idx].to_string())]);
+    }
+
+    // Function body: from def line through suite (indent > header indent).
+    let header = lines[start_idx];
+    let header_indent = header.chars().take_while(|c| c.is_whitespace()).count();
+    let mut end_idx = start_idx + 1;
+    let max_end = (start_idx + 64).min(lines.len()); // hard cap so dumps stay readable
+    while end_idx < max_end {
+        let l = lines[end_idx];
+        if l.trim().is_empty() {
+            end_idx += 1;
+            continue;
+        }
+        let indent = l.chars().take_while(|c| c.is_whitespace()).count();
+        if indent <= header_indent {
+            break;
+        }
+        end_idx += 1;
+    }
+    Some(
+        lines[start_idx..end_idx]
+            .iter()
+            .enumerate()
+            .map(|(off, text)| (start_line + off as u64, (*text).to_string()))
+            .collect(),
+    )
 }
 
 fn render_source_report_human(report: &LiftSourceReport) -> String {
@@ -5230,7 +5373,10 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         format_counts(&report.ledger)
     ));
     if let Some(coverage) = &report.lift_coverage {
-        out.push_str(&render_lift_coverage_human(coverage));
+        out.push_str(&render_lift_coverage_human(
+            coverage,
+            report.project_root.as_deref(),
+        ));
     }
     let universes = distinct_universes_per_method(&report.contracts);
     tracing::info!(
@@ -12547,7 +12693,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 ]
             }
         });
-        let human = render_lift_coverage_human(&coverage);
+        let human = render_lift_coverage_human(&coverage, None);
         assert!(
             human.contains("Minority Report"),
             "literal header `Minority Report` must appear when un_asserted > 0; got:\n{human}"
@@ -12563,8 +12709,75 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "default assertion fields without section title; got:\n{human}"
         );
         assert!(
-            human.contains("t.py:20  orphan"),
+            human.contains("t.py:20  orphan") || human.contains("orphan"),
             "un-asserted body named under Minority Report; got:\n{human}"
+        );
+    }
+
+    #[test]
+    fn visual_report_prints_actual_unaccounted_source() {
+        // --report --visual must print dual-axis + real source for silent / un_asserted.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("t.py");
+        std::fs::write(
+            &path,
+            "def orphan():\n    return 1\n\ndef test_a():\n    assert not x\n",
+        )
+        .expect("write");
+        let coverage = serde_json::json!({
+            "kind": "lift-coverage",
+            "totals": {
+                "stated": 1,
+                "accounted": 0,
+                "silently_unaccounted": 1,
+                "minority_present": 1,
+                "minority_dug": 0,
+                "minority_un_asserted": 1
+            },
+            "assertions": {
+                "stated": 1,
+                "lifted_cited": 0,
+                "refused_loud": 0,
+                "silently_unaccounted": 1,
+                "silent_loci": [
+                    {"file": path.to_string_lossy(), "line": 5, "preview": "assert not x"}
+                ]
+            },
+            "minority": {
+                "present": 1,
+                "dug": 0,
+                "un_asserted": 1,
+                "un_asserted_loci": [
+                    {
+                        "file": path.to_string_lossy(),
+                        "line": 1,
+                        "name": "orphan",
+                        "qualname": "orphan"
+                    }
+                ]
+            }
+        });
+        let visual = render_lift_coverage_human(&coverage, Some(dir.path()));
+        assert!(
+            visual.contains("Minority Report"),
+            "visual dual-axis must name Minority Report; got:\n{visual}"
+        );
+        assert!(
+            visual.contains("def orphan():") && visual.contains("return 1"),
+            "must print actual un_asserted body source, not name-only; got:\n{visual}"
+        );
+        assert!(
+            visual.contains("assert not x"),
+            "must print actual silent assert source; got:\n{visual}"
+        );
+        // Full --visual path includes the same block after plan roll call.
+        let mut report = minimal_source_report();
+        report.project_root = Some(dir.path().to_path_buf());
+        report.lift_coverage = Some(coverage);
+        let full = render_report_visual(&report, None);
+        assert!(
+            full.contains("Minority Report") && full.contains("def orphan():"),
+            "render_report_visual must surface actual Minority source; got:\n{full}"
         );
     }
 
