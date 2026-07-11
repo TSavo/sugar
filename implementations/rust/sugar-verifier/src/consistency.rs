@@ -634,58 +634,92 @@ fn consistency_verdict(
 }
 
 
-/// Ground **term** half of a dual structural face (callsite / data ctor tree).
-/// Not a free formula — only built via [`DualGroundEqFace::try_from_atomic`].
-#[derive(Clone, Copy, Debug)]
-struct DualTerm<'a>(&'a Json);
+/// Construction-closure module for dual structural equality (#4141).
+///
+/// `DualGroundEqFace` fields are **private to this submodule**. Even the
+/// parent `consistency` module cannot form a struct literal -- private fields
+/// are inaccessible outside the defining module. The sole door is
+/// [`dual_ground_eq_face::DualGroundEqFace::try_from_atomic`].
+///
+/// Compile-time proof: any attempt in the parent like
+/// `DualGroundEqFace { term: ..., value: ... }` fails with E0451 (private
+/// field). Wrong orientation (py.eq as free equality without term+value) is
+/// therefore not expressible as a `DualGroundEqFace` value except through the
+/// door's checks.
+mod dual_ground_eq_face {
+    use serde_json::Value as Json;
 
-/// Ground **value** half of a dual structural face (const / data value).
-/// Not a free formula — only built via [`DualGroundEqFace::try_from_atomic`].
-#[derive(Clone, Copy, Debug)]
-struct DualValue<'a>(&'a Json);
+    /// Ground **term** half of a dual structural face (callsite / data ctor tree).
+    /// Field is private to this module -- not constructible from the parent.
+    #[derive(Clone, Copy, Debug)]
+    struct DualTerm<'a>(&'a Json);
 
-/// The **only** type-system door for dual structural equality.
-///
-/// Carries an oriented pair `term ≃ value`. There is no constructor that takes
-/// a bare atom name or that asserts reflexivity (`x ≃ x`). Construction is
-/// [`DualGroundEqFace::try_from_atomic`] only:
-/// 1. atomic name is IR `=` **or** Python `py.eq` (assert `==`);
-/// 2. [`ground_term_const_equality`] orients **term + ground value**.
-///
-/// # Why this cuts NaN off at the type system
-///
-/// Python `==` is not SMT `=` (`nan != nan`). Symbolic comparison therefore
-/// emits `py.eq`, not IR `=`. We allow `py.eq` **only** as a dual-face atom
-/// name inside this type — never as a general rewrite to reflexive `=`.
-/// `DualGroundEqFace` cannot represent `py.eq(x, x)` (does not orient).
-/// Callers that need dual injectivity take `DualGroundEqFace`; they cannot
-/// pass an un-oriented formula without going through `try_from_atomic`.
-///
-/// Arithmetic operator ctors stay non-values via `is_const_value` (#3924).
-#[derive(Clone, Copy, Debug)]
-struct DualGroundEqFace<'a> {
-    term: DualTerm<'a>,
-    value: DualValue<'a>,
-}
+    /// Ground **value** half of a dual structural face (const / data value).
+    /// Field is private to this module -- not constructible from the parent.
+    #[derive(Clone, Copy, Debug)]
+    struct DualValue<'a>(&'a Json);
 
-impl<'a> DualGroundEqFace<'a> {
-    /// Sole construction site for dual structural equality faces.
-    fn try_from_atomic(node: &'a Json) -> Option<Self> {
-        if node.get("kind").and_then(|k| k.as_str()) != Some("atomic") {
-            return None;
+    /// The **only** type-system door for dual structural equality.
+    ///
+    /// Carries an oriented pair `term ≃ value`. There is no constructor that takes
+    /// a bare atom name or that asserts reflexivity (`x ≃ x`). Construction is
+    /// [`DualGroundEqFace::try_from_atomic`] only:
+    /// 1. atomic name is IR `=` **or** Python `py.eq` (assert `==`);
+    /// 2. [`super::ground_term_const_equality`] orients **term + ground value**.
+    ///
+    /// # Why this cuts NaN off at the type system
+    ///
+    /// Python `==` is not SMT `=` (`nan != nan`). Symbolic comparison therefore
+    /// emits `py.eq`, not IR `=`. We allow `py.eq` **only** as a dual-face atom
+    /// name inside this type -- never as a general rewrite to reflexive `=`.
+    /// `DualGroundEqFace` cannot represent `py.eq(x, x)` (does not orient).
+    /// Callers that need dual injectivity take `DualGroundEqFace`; they cannot
+    /// pass an un-oriented formula without going through `try_from_atomic`.
+    ///
+    /// Arithmetic operator ctors stay non-values via `is_const_value` (#3924).
+    ///
+    /// # Construction closure (#4141)
+    ///
+    /// Fields are private to this submodule. Same-module (parent) code cannot
+    /// bypass `try_from_atomic` with a struct literal -- that is a compile
+    /// error (E0451), not a runtime check.
+    #[derive(Clone, Copy, Debug)]
+    pub(super) struct DualGroundEqFace<'a> {
+        term: DualTerm<'a>,
+        value: DualValue<'a>,
+    }
+
+    impl<'a> DualGroundEqFace<'a> {
+        /// Sole construction site for dual structural equality faces.
+        pub(super) fn try_from_atomic(node: &'a Json) -> Option<Self> {
+            if node.get("kind").and_then(|k| k.as_str()) != Some("atomic") {
+                return None;
+            }
+            let name = node.get("name").and_then(|v| v.as_str())?;
+            // Dual-face atom names only -- not a public "is equality?" predicate.
+            if !matches!(name, "=" | "py.eq") {
+                return None;
+            }
+            let (term, value) = super::ground_term_const_equality(node)?;
+            Some(Self {
+                term: DualTerm(term),
+                value: DualValue(value),
+            })
         }
-        let name = node.get("name").and_then(|v| v.as_str())?;
-        // Dual-face atom names only — not a public "is equality?" predicate.
-        if !matches!(name, "=" | "py.eq") {
-            return None;
+
+        /// Oriented ground term half (callsite / data ctor tree).
+        pub(super) fn term_json(self) -> &'a Json {
+            self.term.0
         }
-        let (term, value) = ground_term_const_equality(node)?;
-        Some(Self {
-            term: DualTerm(term),
-            value: DualValue(value),
-        })
+
+        /// Oriented ground value half (const / data value).
+        pub(super) fn value_json(self) -> &'a Json {
+            self.value.0
+        }
     }
 }
+
+use dual_ground_eq_face::DualGroundEqFace;
 
 fn structural_contradiction_reason(inv: &Json) -> Option<String> {
     let mut equalities: std::collections::BTreeMap<String, (String, String, String)> =
@@ -733,8 +767,8 @@ fn record_ground_equality(
     // of a fake discharge). The solver path already federates via
     // sort_translate; this closes the same leak in the structural pre-check.
     // Only the KEY federates; the display keeps the original width for audit.
-    let term = face.term.0;
-    let value = face.value.0;
+    let term = face.term_json();
+    let value = face.value_json();
     let term_key = libsugar::canonical::json_jcs(&federate_primitive_sorts(term)).ok()?;
     let value_key = libsugar::canonical::json_jcs(&federate_primitive_sorts(value)).ok()?;
     let term_display = compact_json(term);
@@ -2287,7 +2321,7 @@ fn collect_ambient_ground_callsite_facts(
             let Some(face) = DualGroundEqFace::try_from_atomic(inv) else {
                 return;
             };
-            let Some(term_key) = ground_callsite_term_key(face.term.0) else {
+            let Some(term_key) = ground_callsite_term_key(face.term_json()) else {
                 return;
             };
             out.push(AmbientGroundCallsiteFact {
@@ -2325,7 +2359,7 @@ fn is_ground_callsite_fact_formula(formula: &Json) -> bool {
     let Some(face) = DualGroundEqFace::try_from_atomic(formula) else {
         return false;
     };
-    ground_callsite_term_key(face.term.0).is_some()
+    ground_callsite_term_key(face.term_json()).is_some()
 }
 
 fn is_derived_ground_callsite_support(
@@ -5017,6 +5051,18 @@ mod tests {
 
     /// Type fence: only DualGroundEqFace::try_from_atomic orients; bare names
     /// and non-oriented atoms produce None (no free "py.eq is equality" API).
+    ///
+    /// # Construction closure (#4141)
+    ///
+    /// `DualGroundEqFace` lives in private submodule `dual_ground_eq_face` with
+    /// private fields. Even this parent module cannot write
+    /// `DualGroundEqFace { term: ..., value: ... }` -- that is E0451 at compile
+    /// time. The wrong construction (py.eq treated as free equality without
+    /// ground term+value orientation) is therefore not expressible as a face
+    /// value except through `try_from_atomic` (which rejects non-oriented
+    /// atoms at the door). Structural proof: DualTerm/DualValue are not
+    /// `use`d outside the submodule; only `try_from_atomic` + read accessors
+    /// are `pub(super)`.
     #[test]
     fn dual_ground_eq_face_is_sole_construction_door() {
         let call_a = json!({"kind":"ctor","name":"call:A","args":[]});
@@ -5024,7 +5070,13 @@ mod tests {
             call_a.clone(),
             {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":3},
         ]});
-        assert!(DualGroundEqFace::try_from_atomic(&oriented).is_some());
+        let face = DualGroundEqFace::try_from_atomic(&oriented);
+        assert!(face.is_some());
+        // Read accessors (not public field projection) are the only way to
+        // recover the oriented halves after the door admits a face.
+        let face = face.unwrap();
+        assert_eq!(face.term_json()["kind"], "ctor");
+        assert_eq!(face.value_json()["kind"], "const");
 
         let ir_eq = json!({"kind":"atomic","name":"=","args":[
             call_a.clone(),
