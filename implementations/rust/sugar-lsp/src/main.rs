@@ -906,14 +906,21 @@ async fn in_process_solve_and_publish(
     prove_diagnostics.lock().await.insert(uri.clone(), row_diags);
     publish_and_cache(client, last_diagnostics, uri.clone(), diagnostics).await;
 
-    // #4149 report mode: project prove rows → paint payload (facts blue / unsat).
-    // Dig-stop green→red + Minority yellow join when liftCoverage is fed later.
-    let payload = report_mode::project_from_prove_rows(
+    // #4149 report mode: facts (blue) / dig green→red / Minority yellow / unsat.
+    let mut payload = report_mode::project_from_prove_rows(
         uri.as_str(),
         &outcome.rows,
         &file,
         &project_root,
     );
+    if let Some(report) = &outcome.report_lift {
+        report_mode::merge_report_lift_response(
+            &mut payload,
+            report,
+            &file,
+            &project_root,
+        );
+    }
     client
         .send_notification::<ReportModeNotification>(payload)
         .await;
