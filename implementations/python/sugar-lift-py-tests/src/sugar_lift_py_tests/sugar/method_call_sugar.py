@@ -11,49 +11,71 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class MethodCallSugar(Sugar, role=SugarRole.TERM):
-    """A method call `recv.method(<args>)`.
+    """A method call `recv.method(<args>)` / `recv.method(<args>, k=v)`.
 
     Composes on the AttributeSugar coordinate family: the term is
-    `call:<method>(receiver, *args)` -- receiver first, then positional
-    args. Disjoint from CallSugar (plain-name, no receiver) and OsSugar
-    (`os.exit`). Keyword arguments are not owned (loud factory gap).
+    `call:<method>(receiver, *positional, *keyword_values)` -- receiver first,
+    then positional args, then keyword VALUES in source order. Keyword names
+    ride in `parameters` (not dropped). Disjoint from CallSugar (plain-name,
+    no receiver) and OsSugar (`os.exit`). ``**kwargs`` expansion stays a loud
+    gap (unowned).
     """
 
     method_name: str
     receiver: SugarBody
     args: tuple[SugarBody, ...]
+    # Keyword names in source order for the trailing keyword value slots of
+    # `args` (empty when the call is positional-only).
+    keyword_names: tuple[str, ...]
     site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
         # Method Call with a receiver Attribute func. OsSugar keeps os.exit.
-        # Keywords stay unowned so they panic loud at recognition, not dropped.
+        # Keywords are owned (values ride the coordinate). **kwargs expansion
+        # stays unowned so it panics loud at recognition, not dropped.
         return (
             site.observed == "Call"
             and site.call_receiver() is not None
             and site.call_qualified_target_name() != "os.exit"
-            and not site.call_has_keywords()
+            and not site.call_has_kwargs_expansion()
         )
 
     @classmethod
     def new(cls, site, ctx) -> "MethodCallSugar":
-        # Receiver and positional args are factory-built (audited), never reduced.
+        # Receiver, positional args, and keyword VALUES are factory-built
+        # (audited), never reduced here.
+        positional = tuple(
+            ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
+        )
+        keyword_names: list[str] = []
+        keyword_bodies: list[SugarBody] = []
+        for kw in site.call_keywords():
+            name = kw.keyword_arg_name()
+            if name is None:
+                raise AssertionError(
+                    "MethodCallSugar.new saw **kwargs expansion after owns() filter"
+                )
+            keyword_names.append(name)
+            keyword_bodies.append(
+                ctx.build_body(kw.keyword_value(), SugarRole.TERM)
+            )
         return cls(
             method_name=site.call_target_name(),
             receiver=ctx.build_body(site.call_receiver(), SugarRole.TERM),
-            args=tuple(
-                ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
-            ),
+            args=(*positional, *keyword_bodies),
+            keyword_names=tuple(keyword_names),
             site=site,
         )
 
     @classmethod
     def witnesses(cls):
-        # Coordinate rides inside the body; the pair discriminates on the
-        # enclosing return face (coordinates stay symbolic -- no concrete fold).
+        # Keyword method call on the return-adjacent face: groupby(level=3)
+        # so the keyword value rides the coordinate; the pair discriminates
+        # on the enclosing return face (coordinates stay symbolic).
         prefix = (
             "def A(z):\n"
-            "    y = z.groupby(3)\n"
+            "    y = z.groupby(level=3)\n"
             "    return 1\n"
             "\n"
         )
@@ -65,7 +87,8 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Reduce receiver, then each arg; the result is the method coordinate.
+        # Reduce receiver, then each arg (positional then keyword values);
+        # the result is the method coordinate.
         return self.receiver.reduce(ctx).and_then(
             lambda recv: self._collect(self.args, (recv,), ctx)
         )
@@ -79,7 +102,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                 CallSiteValue(
                     target_name=self.method_name,
                     arg_values=accumulated,
-                    parameters=(),
+                    parameters=self.keyword_names,
                     term=ctor(
                         f"call:{self.method_name}",
                         [

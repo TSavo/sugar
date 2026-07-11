@@ -293,6 +293,11 @@ class SourceFragment:
         self._require(ast.Call)
         return bool(self.node.keywords)  # type: ignore[attr-defined]
 
+    def call_has_kwargs_expansion(self) -> bool:
+        """Return True if the Call has a bare ``**kwargs`` expansion keyword."""
+        self._require(ast.Call)
+        return any(kw.arg is None for kw in self.node.keywords)  # type: ignore[attr-defined]
+
     def operator_kind(self) -> str:
         """Return the operator class name for BinOp or UnaryOp (e.g. 'Add', 'Not')."""
         self._require(ast.BinOp, ast.UnaryOp)

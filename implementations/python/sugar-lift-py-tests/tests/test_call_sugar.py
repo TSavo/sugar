@@ -11,7 +11,6 @@ import pytest
 
 from factory_reduce import compose_block, reduce_value
 
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import CallSiteValue, InvValue, SymbolicValue
 from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq
 
@@ -37,6 +36,10 @@ def test_assert_on_a_call_result_states_the_dig_coordinate() -> None:
     assert inv.formula == py_eq(ctor("call:f", [num(3)]), num(7))
 
 
-def test_keyword_arguments_stay_a_loud_gap() -> None:
-    with pytest.raises(FactoryPanic):
-        reduce_value("f(x=1)")
+def test_keyword_arguments_ride_the_coordinate() -> None:
+    # Keyword VALUES are part of the call coordinate (not dropped). **kwargs
+    # expansion stays a loud gap -- see test_call_kwargs_sugar.py.
+    value = reduce_value("f(x=1)")
+    assert isinstance(value, CallSiteValue)
+    assert value.term == ctor("call:f", [num(1)])
+    assert value.parameters == ("x",)
