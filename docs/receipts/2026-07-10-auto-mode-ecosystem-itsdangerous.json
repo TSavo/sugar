@@ -1,0 +1,315 @@
+{
+  "package": "itsdangerous",
+  "package_path": "/opt/data/py-site/itsdangerous",
+  "py_files": 8,
+  "census_asserts_total": 0,
+  "census_bodies_total": 62,
+  "agg": {
+    "stated": 0,
+    "silent": 0,
+    "census_bodies": 62,
+    "dig_floors": 0,
+    "forged": 0
+  },
+  "story_headline": "pip-installed itsdangerous: 0 vendor asserts, 62 function bodies on disk; stated contracts empty \u2014 danger surface is the Minority (voiceless bodies) and census_disagreement (lift holes), not silenced asserts.",
+  "per_file": [
+    {
+      "file": "__init__.py",
+      "stated": 0,
+      "silent": 0,
+      "census_bodies": 1,
+      "minority_present_reported": 0,
+      "un_asserted_reported": 0,
+      "dig_floors": 0,
+      "forged": 0,
+      "census_disagreement": {
+        "census_present": 1,
+        "collapse_present": 0,
+        "census_names": [
+          "__getattr__"
+        ],
+        "collapse_names": [],
+        "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+      }
+    },
+    {
+      "file": "_json.py",
+      "stated": 0,
+      "silent": 0,
+      "census_bodies": 2,
+      "minority_present_reported": 0,
+      "un_asserted_reported": 0,
+      "dig_floors": 0,
+      "forged": 0,
+      "census_disagreement": {
+        "census_present": 2,
+        "collapse_present": 0,
+        "census_names": [
+          "dumps",
+          "loads"
+        ],
+        "collapse_names": [],
+        "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+      }
+    },
+    {
+      "file": "encoding.py",
+      "stated": 0,
+      "silent": 0,
+      "census_bodies": 5,
+      "minority_present_reported": 0,
+      "un_asserted_reported": 0,
+      "dig_floors": 0,
+      "forged": 0,
+      "census_disagreement": {
+        "census_present": 5,
+        "collapse_present": 0,
+        "census_names": [
+          "base64_decode",
+          "base64_encode",
+          "bytes_to_int",
+          "int_to_bytes",
+          "want_bytes"
+        ],
+        "collapse_names": [],
+        "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+      }
+    },
+    {
+      "file": "exc.py",
+      "stated": 0,
+      "silent": 0,
+      "census_bodies": 6,
+      "minority_present_reported": 0,
+      "un_asserted_reported": 0,
+      "dig_floors": 0,
+      "forged": 0,
+      "census_disagreement": {
+        "census_present": 6,
+        "collapse_present": 0,
+        "census_names": [
+          "__init__",
+          "__str__"
+        ],
+        "collapse_names": [],
+        "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+      }
+    },
+    {
+      "file": "serializer.py",
+      "stated": 0,
+      "silent": 0,
+      "census_bodies": 21,
+      "minority_present_reported": 0,
+      "un_asserted_reported": 0,
+      "dig_floors": 0,
+      "forged": 0,
+      "census_disagreement": {
+        "census_present": 21,
+        "collapse_present": 0,
+        "census_names": [
+          "__init__",
+          "_loads_unsafe_impl",
+          "dump",
+          "dump_payload",
+          "dumps",
+          "is_text_serializer",
+          "iter_unsigners",
+          "load",
+          "load_payload",
+          "load_unsafe",
+          "loads",
+          "loads_unsafe",
+          "make_signer",
+          "secret_key"
+        ],
+        "collapse_names": [],
+        "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+      }
+    },
+    {
+      "file": "signer.py",
+      "stated": 0,
+      "silent": 0,
+      "census_bodies": 15,
+      "minority_present_reported": 0,
+      "un_asserted_reported": 0,
+      "dig_floors": 0,
+      "forged": 0,
+      "census_disagreement": {
+        "census_present": 15,
+        "collapse_present": 0,
+        "census_names": [
+          "__init__",
+          "_lazy_sha1",
+          "_make_keys_list",
+          "derive_key",
+          "get_signature",
+          "secret_key",
+          "sign",
+          "unsign",
+          "validate",
+          "verify_signature"
+        ],
+        "collapse_names": [],
+        "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+      }
+    },
+    {
+      "file": "timed.py",
+      "stated": 0,
+      "silent": 0,
+      "census_bodies": 10,
+      "minority_present_reported": 0,
+      "un_asserted_reported": 0,
+      "dig_floors": 0,
+      "forged": 0,
+      "census_disagreement": {
+        "census_present": 10,
+        "collapse_present": 0,
+        "census_names": [
+          "get_timestamp",
+          "iter_unsigners",
+          "loads",
+          "loads_unsafe",
+          "sign",
+          "timestamp_to_datetime",
+          "unsign",
+          "validate"
+        ],
+        "collapse_names": [],
+        "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+      }
+    },
+    {
+      "file": "url_safe.py",
+      "stated": 0,
+      "silent": 0,
+      "census_bodies": 2,
+      "minority_present_reported": 0,
+      "un_asserted_reported": 0,
+      "dig_floors": 0,
+      "forged": 0,
+      "census_disagreement": {
+        "census_present": 2,
+        "collapse_present": 0,
+        "census_names": [
+          "dump_payload",
+          "load_payload"
+        ],
+        "collapse_names": [],
+        "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+      }
+    }
+  ],
+  "disagreements": [
+    {
+      "file": "__init__.py",
+      "census_present": 1,
+      "collapse_present": 0,
+      "census_names": [
+        "__getattr__"
+      ],
+      "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+    },
+    {
+      "file": "_json.py",
+      "census_present": 2,
+      "collapse_present": 0,
+      "census_names": [
+        "dumps",
+        "loads"
+      ],
+      "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+    },
+    {
+      "file": "encoding.py",
+      "census_present": 5,
+      "collapse_present": 0,
+      "census_names": [
+        "base64_decode",
+        "base64_encode",
+        "bytes_to_int",
+        "int_to_bytes",
+        "want_bytes"
+      ],
+      "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+    },
+    {
+      "file": "exc.py",
+      "census_present": 6,
+      "collapse_present": 0,
+      "census_names": [
+        "__init__",
+        "__str__"
+      ],
+      "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+    },
+    {
+      "file": "serializer.py",
+      "census_present": 21,
+      "collapse_present": 0,
+      "census_names": [
+        "__init__",
+        "_loads_unsafe_impl",
+        "dump",
+        "dump_payload",
+        "dumps",
+        "is_text_serializer",
+        "iter_unsigners",
+        "load",
+        "load_payload",
+        "load_unsafe",
+        "loads",
+        "loads_unsafe",
+        "make_signer",
+        "secret_key"
+      ],
+      "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+    },
+    {
+      "file": "signer.py",
+      "census_present": 15,
+      "collapse_present": 0,
+      "census_names": [
+        "__init__",
+        "_lazy_sha1",
+        "_make_keys_list",
+        "derive_key",
+        "get_signature",
+        "secret_key",
+        "sign",
+        "unsign",
+        "validate",
+        "verify_signature"
+      ],
+      "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+    },
+    {
+      "file": "timed.py",
+      "census_present": 10,
+      "collapse_present": 0,
+      "census_names": [
+        "get_timestamp",
+        "iter_unsigners",
+        "loads",
+        "loads_unsafe",
+        "sign",
+        "timestamp_to_datetime",
+        "unsign",
+        "validate"
+      ],
+      "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+    },
+    {
+      "file": "url_safe.py",
+      "census_present": 2,
+      "collapse_present": 0,
+      "census_names": [
+        "dump_payload",
+        "load_payload"
+      ],
+      "note": "AST census of non-test FunctionDefs disagrees with collapse function-contract rows -- a lift hole, not silent preference"
+    }
+  ]
+}
