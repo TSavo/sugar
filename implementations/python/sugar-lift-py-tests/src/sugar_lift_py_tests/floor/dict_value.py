@@ -16,6 +16,21 @@ class DictValue(FloorValue):
 
     entries: tuple
 
+    def to_term(self, *, owner: str):
+        # Project as python:dict of entry pairs (layout-preserving coordinate).
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:dict",
+            [
+                ctor(
+                    "python:dict_entry",
+                    [k.to_term(owner=owner), v.to_term(owner=owner)],
+                )
+                for k, v in self.entries
+            ],
+        )
+
     def subscript(self, index, site):
         # Concrete key match returns the value; concrete miss is KeyError.
         # Symbolic index (or non-ground key compare) stays the py.subscript

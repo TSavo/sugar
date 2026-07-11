@@ -11,12 +11,17 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class TryExceptArm:
-    """One `except Type [as name]: body` arm."""
+    """One `except Type [as name]: body` arm (Type may be multi-name)."""
 
-    type_name: str
+    type_names: tuple[str, ...]
     type_body: SugarBody
     as_name: str | None
     body: SugarBody
+
+    @property
+    def type_name(self) -> str:
+        # Primary name for single-type; joined for multi (display / py.except).
+        return self.type_names[0] if len(self.type_names) == 1 else ",".join(self.type_names)
 
 
 @dataclass(frozen=True)
@@ -31,14 +36,14 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
     OWNED shapes (this arm):
       * observed == "Try"
       * one or more except handlers
-      * each handler has exactly one simple exception type name (Name/Attribute)
+      * each handler has one or more simple exception type names (Name/Attribute)
+      * multi-type `except (A, B):` owned (names joined in py.except coordinate)
       * no bare `except:`
-      * no multi-type `except (A, B):`
       * no else: clause
       * no finally: clause
 
     LOUD gaps (not owned -- FactoryPanic):
-      * bare except, tuple except types, else, finally, TryStar, zero handlers
+      * bare except, else, finally, TryStar, zero handlers, empty/unresolvable types
 
     Does NOT model exception control-flow execution -- recognition + threading
     only. Never silently drops a body, handler, else, or finally.
@@ -62,8 +67,8 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             return False
         for handler in handlers:
             names = handler.except_handler_type_names()
-            # Bare except -> None; unowned multi-type or empty tuple -> not exactly one.
-            if names is None or len(names) != 1:
+            # Bare except -> None; empty / unresolvable types refuse loud.
+            if names is None or len(names) < 1:
                 return False
         return True
 
@@ -76,7 +81,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             type_frag = handler.except_handler_type()
             arms.append(
                 TryExceptArm(
-                    type_name=names[0],
+                    type_names=tuple(names),
                     type_body=ctx.build_body(type_frag, SugarRole.TERM),
                     as_name=handler.except_handler_name(),
                     body=ctx.build_body(
@@ -131,7 +136,10 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             target_name="except",
             arg_values=(),
             parameters=(),
-            term=ctor("py.except", [str_const(arm.type_name)]),
+            term=ctor(
+                "py.except",
+                [str_const(n) for n in arm.type_names],
+            ),
             body=None,
             site=self.site,
         )

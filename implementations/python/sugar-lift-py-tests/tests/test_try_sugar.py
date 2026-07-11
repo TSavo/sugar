@@ -1,7 +1,7 @@
 """TrySugar: try/except threads body + guarded handlers with py.except(type).
 
 Owned: Try with one+ single-type except handlers, no else/finally.
-Loud: bare except, multi-type except, else, finally.
+Loud: bare except, else, finally. Multi-type except (A, B) is owned.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def test_owns_typed_except_not_bare_else_finally_or_tuple() -> None:
         TrySugar.owns(
             _site("try:\n    pass\nexcept (ValueError, TypeError):\n    pass\n")
         )
-        is False
+        is True
     )
     assert (
         TrySugar.owns(

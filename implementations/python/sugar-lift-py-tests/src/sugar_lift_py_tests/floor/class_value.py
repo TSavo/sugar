@@ -20,6 +20,13 @@ class ClassValue(FloorValue):
     bases: tuple
     record: object  # BlockValue
 
+    def to_term(self, *, owner: str):
+        # Class coordinate — type name for FOL equality / dig faces.
+        del owner
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor("python:type", [str_const(self.name)])
+
     def contribution(self):
         # Splice body entries (methods, assigns) into the enclosing record.
         return self.record.contribution()

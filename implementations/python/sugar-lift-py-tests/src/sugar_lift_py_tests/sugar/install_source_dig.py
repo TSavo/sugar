@@ -256,12 +256,23 @@ def method_body_is_attachable(fn_site) -> bool:
     if not frags:
         return False
     *prefix, last = frags
-    if last.observed != "Return" or last.return_value() is None:
-        return False
     for stmt in prefix:
-        if stmt.observed not in ("Assign", "AnnAssign", "Expr", "Pass"):
+        if stmt.observed not in (
+            "Assign",
+            "AnnAssign",
+            "AugAssign",
+            "Expr",
+            "Pass",
+            "Try",
+            "If",
+        ):
             return False
-    return _return_expr_attachable(last.return_value())
+    # Terminal Return with attachable expr, or Try/If that carries return (e.g. base64_decode).
+    if last.observed == "Return" and last.return_value() is not None:
+        return _return_expr_attachable(last.return_value())
+    if last.observed in ("Try", "If"):
+        return True
+    return False
 
 
 def _return_expr_attachable(rv) -> bool:
