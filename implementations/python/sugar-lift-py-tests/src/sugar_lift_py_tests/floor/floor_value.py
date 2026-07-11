@@ -388,39 +388,18 @@ class FloorValue:
         )
 
     def equals(self, other, blame):
-        # Default: this value does not stand on the equals floor -- it cannot answer
-        # whether it equals another value. The None arm: a value that CAN implements
-        # equals and gives back a True/False literal; absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
-            FactoryGapInfo,
-            GapKind,
-            GapLocus,
-            factory_panic,
-        )
+        # Default: EMIT. The contract: fold when both sides are ground (the
+        # literal pair overrides), emit when either side stands on the term
+        # floor, panic only inside to_term when a side cannot enter FOL at all.
+        # The panic lives on the TERM floor, so a false "equals gap" can never
+        # fire for a comparison the lift fully understands -- `1 == z` emits
+        # eq(1, z); nothing is missing there.
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import eq
+        from sugar_lift_py_tests.outcome import Complete
 
-        observed = type(self).__name__
-        info = FactoryGapInfo(
-            owner="equals",
-            blame=blame,
-            observed=observed,
-            requested="stand on the equals floor",
-            fix=f"write more Floor: implement {observed}.equals",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="equals",
-                status="floor-gap",
-                observed=observed,
-                blame=blame,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
+        return Complete(
+            PredicateValue(eq(self.to_term(owner=blame), other.to_term(owner=blame)))
         )
 
     def less_than(self, other, blame):
