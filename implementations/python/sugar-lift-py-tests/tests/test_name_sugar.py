@@ -50,8 +50,12 @@ def test_ground_sides_still_fold_not_emit() -> None:
     assert isinstance(reduce_value("1 == 1"), TrueBoolLiteralSugar)
 
 
-def test_a_value_with_no_term_projection_still_panics() -> None:
-    # None cannot fold against a number and NoneValue has no to_term: the
-    # panic moved INTO the term floor, and it still fires.
-    with pytest.raises(FactoryPanic):
-        reduce_value("None == 5")
+def test_ground_none_comparison_folds_false() -> None:
+    # None gained to_term for the identity floor, and ground-vs-ground FOLDS
+    # (an unconstrained py.eq atom would be vacuously SAT-able): Python says
+    # None == 5 is False, and the fold says so too.
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+
+    assert isinstance(reduce_value("None == 5"), FalseBoolLiteralSugar)
