@@ -40,6 +40,43 @@ class StringValue(FloorValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
+    def less_than(self, other, site):
+        # A string stands on the ordering floor: two strings order by Python's
+        # lexicographic rule and fold to the True/False literal. Ground
+        # cross-type is TypeError -- a named runtime effect, not an emit.
+        # Symbolic falls to super() emit.
+        if type(other) is StringValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if self.value < other.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.set_value import SetValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+        if type(other) in (TermValue, NoneValue, ListValue, TupleValue, SetValue):
+            from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            return Incomplete(
+                TypeErrorRuntimeEffect(
+                    f"unorderable types runtime boundary: "
+                    f"StringValue and {type(other).__name__}; site={site}"
+                )
+            )
+        return super().less_than(other, site)
+
     def add(self, other, site):
         # A string's addition IS concatenation: two strings fold to their join.
         # Anything else falls to the honest addition-floor gap.

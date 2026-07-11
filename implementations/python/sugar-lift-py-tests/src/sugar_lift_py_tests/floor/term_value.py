@@ -55,6 +55,8 @@ class TermValue(FloorValue):
     def less_than(self, other, site):
         # A number stands on the ordering floor: two numbers are ordered or not, and
         # it gives back the True or False literal -- the boolean IS the type.
+        # Ground cross-type is TypeError (Python defines no ordering) -- a named
+        # runtime effect, not an unconstrained py.lt emit. Symbolic falls to emit.
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import Complete
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -68,6 +70,22 @@ class TermValue(FloorValue):
                 TrueBoolLiteralSugar(site=site)
                 if self.value < other.value
                 else FalseBoolLiteralSugar(site=site)
+            )
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.set_value import SetValue
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+        if type(other) in (StringValue, NoneValue, ListValue, TupleValue, SetValue):
+            from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            return Incomplete(
+                TypeErrorRuntimeEffect(
+                    f"unorderable types runtime boundary: "
+                    f"TermValue and {type(other).__name__}; site={site}"
+                )
             )
         return super().less_than(other, site)
 
