@@ -403,40 +403,18 @@ class FloorValue:
         )
 
     def less_than(self, other, blame):
-        # Default: this value does not stand on the ordering floor -- it cannot answer
-        # whether it is less than another value. The None arm: a value that CAN
-        # implements less_than and gives back a True/False literal; absence here is
-        # the honest "no".
-        del other
-        from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
-            FactoryGapInfo,
-            GapKind,
-            GapLocus,
-            factory_panic,
-        )
+        # Default: EMIT. The contract: fold when both sides are ground (the
+        # literal pair overrides), emit when either side stands on the term
+        # floor, panic only inside to_term when a side cannot enter FOL at all.
+        # The panic lives on the TERM floor, so a false "ordering gap" can never
+        # fire for a comparison the lift fully understands -- `1 < z` emits
+        # lt(1, z); nothing is missing there.
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import lt
+        from sugar_lift_py_tests.outcome import Complete
 
-        observed = type(self).__name__
-        info = FactoryGapInfo(
-            owner="less_than",
-            blame=blame,
-            observed=observed,
-            requested="stand on the ordering floor",
-            fix=f"write more Floor: implement {observed}.less_than",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="less_than",
-                status="floor-gap",
-                observed=observed,
-                blame=blame,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
+        return Complete(
+            PredicateValue(lt(self.to_term(owner=blame), other.to_term(owner=blame)))
         )
 
     def add(self, other, blame):
