@@ -36,6 +36,14 @@ class GuardedFaces(FloorValue):
             for formula in entry.post_contribution()
         )
 
+    def edge_contribution(self, source_contract):
+        # Faces splice into the record; each entry projects its own edges.
+        return tuple(
+            edge
+            for entry in self.entries
+            for edge in entry.edge_contribution(source_contract)
+        )
+
     def follow_rest(self, rest, reduce):
         # The continuation after a then-only `if` whose face exits IS the else:
         # it rides under the negated guard. A non-exiting face constrains

@@ -75,6 +75,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         [value.to_term(owner=str(self.site)) for value in accumulated],
                     ),
                     body=None,
+                    site=self.site,
                 )
             )
         head, *rest = remaining

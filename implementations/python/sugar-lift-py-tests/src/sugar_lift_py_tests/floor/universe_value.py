@@ -50,6 +50,15 @@ class UniverseValue(FloorValue):
 
         return and_(list(exits))
 
+    def call_edges(self):
+        # The record entries project their own call edges (CallSiteValue direct,
+        # InvValue via carried operand_callsites, GuardedFaces via children).
+        return tuple(
+            edge
+            for entry in self.record.statements
+            for edge in entry.edge_contribution(self.name)
+        )
+
     def mints(self):
         # The record entries mint their own rows; the universe mints its post
         # (Derived: the lift composed it from the exits).

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import field as dataclass_field, dataclass, field as dataclass_field
+from dataclasses import field as dataclass_field, dataclass
 
 from sugar_lift_py_tests.ir import Formula
 
@@ -18,16 +18,29 @@ class InvValue(FloorValue):
 
     formula: Formula
     site: object = dataclass_field(default=None, compare=False)
+    # CallSiteValues consumed into the formula when the inv was stated --
+    # carried so callEdges project from the collapse without a side channel.
+    operand_callsites: tuple = dataclass_field(default=(), compare=False)
 
     def inv_contribution(self):
         # The stated fact IS the inv slot's row.
         return (self.formula,)
 
     def guarded(self, formula):
-        # A fact stated under a guard IS an implication.
+        # A fact stated under a guard IS an implication; operand callsites ride.
         from sugar_lift_py_tests.ir import implies
 
-        return InvValue(implies(formula, self.formula), self.site)
+        return InvValue(
+            implies(formula, self.formula), self.site, self.operand_callsites
+        )
+
+    def edge_contribution(self, source_contract):
+        # Project edges from the CallSiteValues that rode into this inv.
+        return tuple(
+            edge
+            for callsite in self.operand_callsites
+            for edge in callsite.edge_contribution(source_contract)
+        )
 
     def mint_contribution(self, name, formals):
         # The stated fact mints its own row: slot="inv", Stated provenance (the

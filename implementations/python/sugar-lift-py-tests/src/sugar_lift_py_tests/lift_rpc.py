@@ -669,10 +669,8 @@ def _lift_file_for_enumeration(
     source = full_path.read_text(encoding="utf-8")
     file_payload = lift_file_payload(source, str(full_path))
     ir_items = [to_rpc_value(item) for item in file_payload.ir]
-    # callEdges from the collapse are a follow-up: CallSiteValues in the record
-    # carry the coordinates, but the edge rows are not projected yet. This is a
-    # named gap, not silent truncation.
-    return ir_items, []
+    call_edges = [to_rpc_value(edge) for edge in file_payload.call_edges]
+    return ir_items, call_edges
 
 
 
@@ -738,6 +736,7 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
                         kind="contract",
                     )
                 )
+        payload.call_edges.extend(universe.call_edges())
         payload.source_mementos.append(def_memento)
     return payload
 
@@ -1375,11 +1374,11 @@ def _handle_lift(
             with open(path, "r", encoding="utf-8") as handle:
                 file_payload = lift_file_payload(handle.read(), path)
             if bindings_backed_pass:
-                # The collapse does not project call edges or implications yet
-                # (named gap; the coordinates ride in the record). Nothing to
-                # merge on a bindings-backed pass.
+                # Implications are not projected from the collapse yet (named
+                # gap). callEdges ride on the source-lifted path below.
                 continue
             payload.ir.extend(file_payload.ir)
+            payload.call_edges.extend(file_payload.call_edges)
             payload.source_mementos.extend(file_payload.source_mementos)
         # #4013: dual-axis lift coverage as first-class --report line items.
         # Independent AST census (second computation) vs this payload's accounting.

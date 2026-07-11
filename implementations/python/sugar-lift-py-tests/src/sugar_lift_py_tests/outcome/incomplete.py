@@ -50,6 +50,11 @@ class Incomplete:
         del name, formals
         return ()
 
+    def edge_contribution(self, source_contract):
+        # An effect projects no call edge.
+        del source_contract
+        return ()
+
     def and_then(self, step):
         # An effect never continues: it propagates by returning itself, the next step
         # never runs.
