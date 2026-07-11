@@ -633,6 +633,18 @@ fn consistency_verdict(
     }
 }
 
+
+/// Equality atoms that orient as term ≃ ground value for structural dual.
+///
+/// IR `=` is the reflexive post/slot equality. Python assert lifts as `py.eq`
+/// (vendor Python `==`). Structural dual must treat both the same for
+/// term-const faces: `py.eq(call:A(), 3) ∧ py.eq(call:A(), 4)` is the same
+/// "equals both" contradiction as with `=`. Arithmetic operator ctors stay
+/// non-values via `is_const_value` (#3924).
+fn is_structural_equality_atom(name: &str) -> bool {
+    matches!(name, "=" | "py.eq")
+}
+
 fn structural_contradiction_reason(inv: &Json) -> Option<String> {
     let mut equalities: std::collections::BTreeMap<String, (String, String, String)> =
         std::collections::BTreeMap::new();
@@ -660,7 +672,12 @@ fn collect_ground_equalities(
             }
             collect_ground_equalities(&operands[1], equalities)
         }
-        Some("atomic") if node.get("name").and_then(|v| v.as_str()) == Some("=") => {
+        Some("atomic")
+            if node
+                .get("name")
+                .and_then(|v| v.as_str())
+                .is_some_and(is_structural_equality_atom) =>
+        {
             let (term, value) = ground_term_const_equality(node)?;
             record_ground_equality(term, value, equalities)
         }
@@ -2228,7 +2245,12 @@ fn collect_ambient_ground_callsite_facts(
                 );
             }
         }
-        Some("atomic") if inv.get("name").and_then(|v| v.as_str()) == Some("=") => {
+        Some("atomic")
+            if inv
+                .get("name")
+                .and_then(|v| v.as_str())
+                .is_some_and(is_structural_equality_atom) =>
+        {
             let Some((term, _value)) = ground_term_const_equality(inv) else {
                 return;
             };
@@ -2268,7 +2290,7 @@ fn ground_callsite_witness_keys(
 
 fn is_ground_callsite_fact_formula(formula: &Json) -> bool {
     if formula.get("kind").and_then(|k| k.as_str()) != Some("atomic")
-        || formula.get("name").and_then(|v| v.as_str()) != Some("=")
+        || formula.get("name").and_then(|v| v.as_str()).is_none_or(|n| !is_structural_equality_atom(n))
     {
         return false;
     }
@@ -4859,6 +4881,56 @@ mod tests {
         assert!(
             res[0].reason.contains("structural:"),
             "must fire pre-SMT structural path (not z3 ADT): {}",
+            res[0].reason
+        );
+        assert!(
+            res[0].reason.contains("equals both"),
+            "reason should name the dual values: {}",
+            res[0].reason
+        );
+    }
+
+
+    /// `py.eq` is Python assert equality — same structural dual as IR `=`.
+    /// Dual `py.eq(call:A(), 3) ∧ py.eq(call:A(), 4)` must refuse pre-SMT
+    /// (CallSiteValue binary dig witnesses / logo dual-assert path).
+    #[test]
+    fn pure_callsite_py_eq_value_contradiction_refuses_structurally() {
+        let (plan, reg) = z3_plan_and_registry();
+        let call_a = json!({"kind":"ctor","name":"call:A","args":[]});
+        let py_eq = |rhs: i64| {
+            json!({"kind":"atomic","name":"py.eq","args":[
+                call_a.clone(),
+                {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":rhs},
+            ]})
+        };
+        let inv = json!({"kind":"and","operands":[
+            py_eq(3),
+            py_eq(4),
+        ]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:py-eq-contradiction",
+            "test_dual::assertion",
+            inv,
+        );
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "py.eq(call:A(),3) ∧ py.eq(call:A(),4) MUST refuse structurally: {res:?}"
+        );
+        assert!(
+            res[0].reason.contains("structural:"),
+            "must fire pre-SMT structural path: {}",
             res[0].reason
         );
         assert!(
