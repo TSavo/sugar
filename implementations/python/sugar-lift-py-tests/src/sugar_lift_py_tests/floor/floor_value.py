@@ -109,12 +109,58 @@ class FloorValue:
         # Default: a statement value does not rebind the rest of the block.
         return ctx
 
+    def as_expression_statement(self):
+        # An expression statement discards ordinary values as support. A rebind
+        # (ScopeRebind) overrides to keep itself so the block threads the scope.
+        from sugar_lift_py_tests.floor.support_value import SupportValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(SupportValue())
+
     def answer(self, ctx=None):
         # Default: a binding stands as itself (NameSugar asks; the value answers).
         from sugar_lift_py_tests.outcome import Complete
 
         del ctx
         return Complete(self)
+
+    def append_with(self, value, site):
+        # Default: this value does not stand on the append floor -- it cannot answer
+        # what appending another value yields. The None arm: a value that CAN
+        # implements append_with (ListValue folds the history); absence here is the
+        # honest "no". Symbolic append is out of scope this tranche.
+        del value
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="append_with",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the append floor",
+            fix=f"write more Floor: implement {observed}.append_with",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="append_with",
+                status="floor-gap",
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
 
     def mint_contribution(self, name, formals):
         # Default: a record entry mints no row of its own.

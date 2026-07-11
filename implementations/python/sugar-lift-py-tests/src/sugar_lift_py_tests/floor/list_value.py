@@ -40,3 +40,12 @@ class ListValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(TermValue(len(self.elements)))
+
+    def append_with(self, value, site):
+        # Concrete history folds: the updated list is the old elements plus the
+        # new value. Symbolic receivers stay on the default panic.
+        del site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(ListValue((*self.elements, value)))
+
