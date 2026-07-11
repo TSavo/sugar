@@ -1,0 +1,9 @@
+[package]
+name = "rust-forall-universe-federation-consumer-good"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+blockfmt = { path = "../vendor" }

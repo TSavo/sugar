@@ -390,11 +390,23 @@ pub(crate) fn verification_with_fol(verification: Option<&Json>) -> Json {
     };
 
     // VENDOR UNIVERSE: render each distinct linked vendor post's ProofIR.
+    // When the linked post carries its own quantification metadata (`call`,
+    // `formals`, `outBinding` -- the shape a lifted rust function-post universe
+    // travels with, e.g. the bounded-loop law `forall x. block_width(x)==64`),
+    // present the post AS the universal law it is (`∀ _level:Int.
+    // block_width(_level) = 64`) instead of the bare out-binding body
+    // (`out = 64`), which reads as an unanchored equality. Wire-don't-invent:
+    // the quantified IR is assembled ONLY from the post's own fields and
+    // rendered by the same shared renderer; posts without the metadata keep
+    // the plain body rendering.
     if let Some(posts) = v.get("linkedPosts").and_then(|x| x.as_array()) {
         let mut readings: Vec<String> = Vec::new();
         for post in posts {
             if let Some(ir) = post.get("vendorPost") {
-                let fol = crate::fol_render::proofir_formula_to_fol_with_instances(ir);
+                let fol = match quantified_vendor_post(post, ir) {
+                    Some(q) => crate::fol_render::proofir_formula_to_fol_with_instances(&q),
+                    None => crate::fol_render::proofir_formula_to_fol_with_instances(ir),
+                };
                 if !readings.contains(&fol) {
                     readings.push(fol);
                 }
@@ -446,6 +458,76 @@ pub(crate) fn verification_with_fol(verification: Option<&Json>) -> Json {
     }
 
     out
+}
+
+/// Assemble the universal-law reading of a linked vendor post from the post's
+/// OWN quantification metadata: `∀ <formals>. <call(formals)> substituted for
+/// the out-binding in the post body`. Every ingredient comes from the linked
+/// post (`call` gives the callee ctor and the argument sorts, `formals` the
+/// lifted parameter names, `outBinding` the result variable the post body
+/// speaks about); nothing is invented. None (fail-open -> plain body
+/// rendering) when any piece is missing or the arity disagrees.
+fn quantified_vendor_post(post: &Json, vendor_post: &Json) -> Option<Json> {
+    let formals: Vec<&str> = post
+        .get("formals")?
+        .as_array()?
+        .iter()
+        .map(|f| f.as_str())
+        .collect::<Option<Vec<_>>>()?;
+    if formals.is_empty() {
+        return None;
+    }
+    let out_binding = post.get("outBinding")?.as_str()?;
+    let call = post.get("call")?;
+    let call_args = call.get("args")?.as_array()?;
+    if call.get("kind").and_then(|k| k.as_str()) != Some("ctor")
+        || call_args.len() != formals.len()
+    {
+        return None;
+    }
+    // The callee applied to the FORMALS (not the consumer's concrete args);
+    // each formal var carries the sort of the corresponding call argument.
+    let mut formal_call = call.clone();
+    let mut sorts = Vec::with_capacity(formals.len());
+    {
+        let args = formal_call.get_mut("args")?.as_array_mut()?;
+        for (arg, formal) in args.iter_mut().zip(&formals) {
+            let sort = arg.get("sort")?.clone();
+            sorts.push(sort.clone());
+            *arg = json!({ "kind": "var", "name": formal, "sort": sort });
+        }
+    }
+    // The post body with the out-binding var replaced by the call term.
+    let mut body = vendor_post.clone();
+    substitute_var(&mut body, out_binding, &formal_call);
+    // Quantify over each formal (innermost = last formal).
+    for (formal, sort) in formals.iter().zip(sorts.iter()).rev() {
+        body = json!({ "kind": "forall", "name": formal, "sort": sort, "body": body });
+    }
+    Some(body)
+}
+
+/// Replace every `{"kind":"var","name":<name>}` node with `replacement`.
+fn substitute_var(node: &mut Json, name: &str, replacement: &Json) {
+    if node.get("kind").and_then(|k| k.as_str()) == Some("var")
+        && node.get("name").and_then(|n| n.as_str()) == Some(name)
+    {
+        *node = replacement.clone();
+        return;
+    }
+    match node {
+        Json::Object(map) => {
+            for child in map.values_mut() {
+                substitute_var(child, name, replacement);
+            }
+        }
+        Json::Array(arr) => {
+            for child in arr.iter_mut() {
+                substitute_var(child, name, replacement);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The vendor's sworn fact for the consumer's OWN callsite: an `=(lhs, value)`
@@ -698,6 +780,121 @@ mod tests {
         assert_eq!(cs.file, None);
         assert_eq!(cs.line, None);
         assert_eq!(cs.source_column, None);
+    }
+
+    #[test]
+    fn forall_universe_row_renders_quantified_law_and_instantiated_vendor_fact() {
+        // The rust bounded-loop universe case (#3774 case 2, the shape
+        // examples/rust-forall-universe-federation produces): the linked post
+        // carries its own quantification metadata (call/formals/outBinding),
+        // so the universe must render as the ∀ law -- NOT the bare out-binding
+        // body `out = 64` -- and the vendor's fact at the consumer's OWN
+        // argument (materialized by the verifier into vendorFactIr) must
+        // surface as the third conjunct.
+        let mut r = Report::default();
+        add_consistency_with_verification(
+            &cid_string("c"),
+            "tests/consumer_test.rs::consumer_asserts_block_width_at_3::block_width#euf#c:callresult_block_width_a1(i:3)::assertion",
+            ObligationVerdict::Unsatisfied,
+            "contradictory",
+            Some(json!({
+                "kind": "consistency",
+                "linkedPosts": [{
+                    "sourceSymbol": "call:block_width",
+                    "formals": ["_level"],
+                    "outBinding": "out",
+                    "call": { "kind": "ctor", "name": "call:block_width", "args": [
+                        { "kind": "const", "value": 3,
+                          "sort": { "kind": "primitive", "name": "Int" } }
+                    ]},
+                    "vendorPost": {
+                        "kind": "atomic", "name": "=",
+                        "args": [
+                            { "kind": "var", "name": "out" },
+                            { "kind": "const", "value": 64,
+                              "sort": { "kind": "primitive", "name": "Int" } }
+                        ]
+                    }
+                }],
+                "clientFactIr": {
+                    "kind": "and",
+                    "operands": [{
+                        "kind": "atomic", "name": "=",
+                        "args": [
+                            { "kind": "ctor", "name": "call:block_width", "args": [
+                                { "kind": "const", "value": 3,
+                                  "sort": { "kind": "primitive", "name": "Int" } }
+                            ]},
+                            { "kind": "const", "value": 128,
+                              "sort": { "kind": "primitive", "name": "Int" } }
+                        ]
+                    }]
+                },
+                "vendorFactIr": [{
+                    "kind": "atomic", "name": "=",
+                    "args": [
+                        { "kind": "ctor", "name": "call:block_width", "args": [
+                            { "kind": "const", "value": 3,
+                              "sort": { "kind": "primitive", "name": "Int" } }
+                        ]},
+                        { "kind": "const", "value": 64,
+                          "sort": { "kind": "primitive", "name": "Int" } }
+                    ]
+                }],
+            })),
+            None,
+            &mut r,
+        );
+
+        let j = row_to_json(&r.rows[0]);
+        let v = &j["verification"];
+        let universe = v["vendorUniverseFol"].as_str().unwrap_or_default();
+        let client = v["clientFactFol"].as_str().unwrap_or_default();
+        let vendor = v["vendorFactFol"].as_str().unwrap_or_default();
+        assert!(universe.contains('∀'), "universe must quantify: {universe}");
+        assert!(universe.contains("_level"), "universe: {universe}");
+        assert!(
+            universe.contains("block_width(_level) = 64"),
+            "universe: {universe}"
+        );
+        assert!(client.contains("block_width(3) = 128"), "client: {client}");
+        assert!(vendor.contains("block_width(3) = 64"), "vendor: {vendor}");
+    }
+
+    #[test]
+    fn universe_post_without_quantification_metadata_keeps_body_rendering() {
+        // A linked post WITHOUT call/formals/outBinding must keep the existing
+        // plain-body rendering (fail-open, no invented quantifier).
+        let mut r = Report::default();
+        add_consistency_with_verification(
+            &cid_string("c"),
+            "some::assertion",
+            ObligationVerdict::Unsatisfied,
+            "contradictory",
+            Some(json!({
+                "kind": "consistency",
+                "linkedPosts": [{
+                    "sourceSymbol": "call:block_width",
+                    "vendorPost": {
+                        "kind": "atomic", "name": "=",
+                        "args": [
+                            { "kind": "var", "name": "out" },
+                            { "kind": "const", "value": 64,
+                              "sort": { "kind": "primitive", "name": "Int" } }
+                        ]
+                    }
+                }],
+            })),
+            None,
+            &mut r,
+        );
+
+        let j = row_to_json(&r.rows[0]);
+        let universe = j["verification"]["vendorUniverseFol"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(!universe.contains('∀'), "no invented ∀: {universe}");
+        assert!(universe.contains("out = 64"), "universe: {universe}");
     }
 
     #[test]
