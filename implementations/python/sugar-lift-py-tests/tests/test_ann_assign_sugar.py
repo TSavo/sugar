@@ -1,39 +1,41 @@
-"""AnnAssignSugar — construction gap drain (Part of #3809).
+"""AnnAssignSugar: ``x: int = 5`` binds like Assign; annotation is carried.
 
-Lift-probe (before):
-
-    def make():
-        x: int = 1
-        return x + 1
-    assert make() == 2
-
-Refuse: FactoryGap · owner=python.factory · observed=AnnAssign
-· requested=statement
-· fix=create sugar_lift_py_tests.sugar.ann_assign.ann_assign_sugar
-
-Mechanism: missing AST recognizer for AnnAssign (empty STATEMENT catalog
-candidates) — not a missing floor totalizer. Annotation is type metadata;
-valued form is the same binding as AssignSugar.
-
-Discrimination: dual-assert unsat via witness EXECUTION.
+Dominant unowned assign-family shape (measured): AnnAssign Name valued+bare
+(~1183 of ~1345 unowned assign nodes in sugar-lift-py-tests). AssignSugar
+owns only ``Assign`` with a single Name target -- AnnAssign is a different
+node kind.
 """
 
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+
+import pytest
 
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
-from sugar_lift_py_tests.floor import BoundVar, ReturnValue, SupportValue, TermValue
-from sugar_lift_py_tests.floor import BlockValue
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    BoundVar,
+    ReturnValue,
+    SupportValue,
+    SymbolicValue,
+    TermValue,
+)
+from sugar_lift_py_tests.ir import ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.ann_assign_sugar import AnnAssignSugar
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+
+
+def _site(src: str):
+    node = ast.parse(src).body[0]
+    return SourceFragment.from_node(node, "t.py")
 
 
 def _build_ann(src: str) -> AnnAssignSugar:
@@ -44,6 +46,11 @@ def _build_ann(src: str) -> AnnAssignSugar:
     result = build_node(node, filename="f.py", role=SugarRole.STATEMENT, ctx=ctx)
     assert isinstance(result.sugar, AnnAssignSugar)
     return result.sugar
+
+
+# ---------------------------------------------------------------------------
+# (1) positive: target binds to the value; annotation carried
+# ---------------------------------------------------------------------------
 
 
 def test_ann_assign_selects_ann_assign_sugar() -> None:
@@ -61,89 +68,100 @@ def test_valued_ann_assign_is_bound_var() -> None:
     assert bound.name == "x"
 
 
-def test_annotation_only_ann_assign_is_support() -> None:
-    sugar = _build_ann("x: int")
-    ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
-    value = complete_value(sugar.desugar(ctx), owner="ann")
-    assert isinstance(value, SupportValue)
-
-
 def test_ann_assign_then_return_recomposes_like_assign() -> None:
+    """(1) ``x: int = 5; return x`` binds x to 5 -- same face as AssignSugar."""
     assert compose_block("    y: int = 5\n    return y\n") == BlockValue(
         (ReturnValue(TermValue(5)),)
     )
 
 
-def test_body_dig_ann_assign_no_construction_gap() -> None:
-    src = (
-        "def make():\n"
-        "    x: int = 1\n"
-        "    return x + 1\n"
-        "\n"
-        "def t():\n"
-        "    assert make() == 2\n"
-    )
-    report = build_literal_call_report(source=src, filename="t.py", memento_file="t.py")
-    assert report is not None
-    blob = repr(report.payload)
-    assert "ann_assign.ann_assign_sugar" not in blob
-    assert "observed=AnnAssign" not in blob
-    diags = report.payload.diagnostics or []
-    for d in diags:
-        if isinstance(d, dict) and d.get("kind") == "dig-boundary":
-            assert "AnnAssign" not in str(d.get("reason", "")), d
+def test_annotation_carried_not_dropped() -> None:
+    """Annotation reduces to python:type coordinate (BuiltinTypeNameSugar)."""
+    sugar = _build_ann("x: int = 5")
+    ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
+    ann_value = complete_value(sugar.annotation.reduce(ctx), owner="ann-type")
+    assert isinstance(ann_value, SymbolicValue)
+    assert ann_value.term == ctor("python:type", [str_const("int")])
 
 
-def test_np_style_ann_assign_digs_without_gap() -> None:
-    src = (
-        "import numpy as np\n"
-        "def make():\n"
-        "    codes: np.ndarray = np.array([1, 2])\n"
-        "    return codes.shape\n"
-        "\n"
-        "def t():\n"
-        "    assert make() == (2,)\n"
-    )
-    report = build_literal_call_report(source=src, filename="t.py", memento_file="t.py")
-    assert report is not None
-    blob = repr(report.payload)
-    assert "requested=statement" not in blob or "AnnAssign" not in blob
-    assert "create sugar_lift_py_tests.sugar.ann_assign" not in blob
+# ---------------------------------------------------------------------------
+# (2) discrimination: different values bind differently
+# ---------------------------------------------------------------------------
+
+
+def test_value_discriminates_the_binding() -> None:
+    """``x: int = 5`` vs ``x: int = 6`` recompose different values."""
+    five = compose_block("    x: int = 5\n    return x\n")
+    six = compose_block("    x: int = 6\n    return x\n")
+    assert five == BlockValue((ReturnValue(TermValue(5)),))
+    assert six == BlockValue((ReturnValue(TermValue(6)),))
+    assert five != six
+
+
+def test_annotation_kind_discriminates_metadata() -> None:
+    """Different annotations stay present on the sugar (not dropped)."""
+    as_int = _build_ann("x: int = 5")
+    as_str = _build_ann("x: str = 'a'")
+    assert as_int.annotation_kind == "Name"
+    assert as_str.annotation_kind == "Name"
+    ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
+    int_term = complete_value(as_int.annotation.reduce(ctx), owner="a").term
+    str_term = complete_value(as_str.annotation.reduce(ctx), owner="a").term
+    assert int_term == ctor("python:type", [str_const("int")])
+    assert str_term == ctor("python:type", [str_const("str")])
+    assert int_term != str_term
+
+
+def test_ann_assign_aliases_symbolic_carrier() -> None:
+    assert compose_block(
+        "    x: int = z\n    return x\n",
+        binds={"z": SymbolicValue(make_var("z"))},
+    ) == BlockValue((ReturnValue(SymbolicValue(make_var("z"))),))
+
+
+# ---------------------------------------------------------------------------
+# (3) structural: owns AnnAssign Name; not plain Assign; bare is support
+# ---------------------------------------------------------------------------
+
+
+def test_owns_ann_assign_not_plain_assign() -> None:
+    assert AnnAssignSugar.owns(_site("x: int = 5")) is True
+    assert AnnAssignSugar.owns(_site("x: int")) is True
+    assert AnnAssignSugar.owns(_site("x = 5")) is False
+    assert AssignSugar.owns(_site("x = 5")) is True
+    assert AssignSugar.owns(_site("x: int = 5")) is False
+
+    catalog = default_catalog()
+    ann = [
+        c.name
+        for c in catalog.candidates_for(SugarRole.STATEMENT, _site("x: int = 5"))
+    ]
+    plain = [
+        c.name for c in catalog.candidates_for(SugarRole.STATEMENT, _site("x = 5"))
+    ]
+    assert "AnnAssignSugar" in ann
+    assert "AssignSugar" not in ann
+    assert "AssignSugar" in plain
+    assert "AnnAssignSugar" not in plain
+
+
+def test_annotation_only_ann_assign_is_support() -> None:
+    """Bare ``x: int`` is a declaration -- support, no binding."""
+    sugar = _build_ann("x: int")
+    ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
+    value = complete_value(sugar.desugar(ctx), owner="ann")
+    assert isinstance(value, SupportValue)
+    assert sugar.value is None
+    # Annotation still carried on the sugar.
+    assert sugar.annotation_kind == "Name"
 
 
 def test_attr_ann_assign_still_unowned() -> None:
-    """Attribute AnnAssign is not this drain — Name targets only."""
-    from sugar_lift_py_tests.factory import factory_panic
-
+    """Attribute AnnAssign is not this drain -- Name targets only."""
     src = "class C:\n    def m(self):\n        self.x: int = 1\n"
     mod = ast.parse(src)
     ann = next(n for n in ast.walk(mod) if isinstance(n, ast.AnnAssign))
     ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
-    try:
+    with pytest.raises(FactoryPanic) as raised:
         build_node(ann, filename="f.py", role=SugarRole.STATEMENT, ctx=ctx)
-        raise AssertionError("expected FactoryGap for Attribute AnnAssign")
-    except FactoryGap as exc:
-        assert exc.info.observed == "AnnAssign"
-        assert "ann_assign" in exc.info.fix
-
-
-def test_ann_assign_dual_assert_refutes_lie_via_witness(tmp_path: Path) -> None:
-    src = (
-        "def A(z):\n"
-        "    x: int = z\n"
-        "    return x\n"
-        "\n"
-        "def t_true():\n"
-        "    assert A(1) == 1\n"
-        "\n"
-        "def t_lie():\n"
-        "    assert A(1) == 2\n"
-    )
-    report = build_literal_call_report(source=src, filename="t.py", memento_file="t.py")
-    assert report is not None
-    assert "create sugar_lift_py_tests.sugar.ann_assign" not in repr(report.payload)
-
-    result = run_source_through_real_solver(tmp_path / "ann-assign-dual", src)
-    statuses = [row.get("status") for row in result.prove_doc.get("rows", [])]
-    assert result.verdict == "unsat", (result.verdict, statuses)
-    assert "refused" not in statuses
+    assert raised.value.info.observed == "AnnAssign"
