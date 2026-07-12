@@ -741,16 +741,22 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
 
 
 
-def _module_import_temporal(module) -> "object":
-    """Bind module-level imports and declared class names into a TemporalContext.
+def _module_import_temporal(module, catalog) -> "object":
+    """Bind constructed module declarations into a TemporalContext.
 
     Deeper floors: names introduced by ``import pytest`` / ``from x import Y``
     must stand when reducing function bodies. Without this, TemporalContext
     panics on unbound import names even though the source stated the import.
-    Bindings use the same ``ImportAliasValue`` constructed by ``AliasSugar``.
-    The floor records name binding only and never fabricates module semantics.
+    Imports use the same ``ImportAliasValue`` constructed by ``AliasSugar``.
+    A single-name Assign uses the same factory-built ``BoundVar`` representation
+    as ``_ctx_with_module_global_binds``. Each assignment is independent: an
+    unowned or runtime-effect RHS stays unbound without poisoning siblings.
     """
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
     from sugar_lift_py_tests.floor import BlockValue, ClassValue, ImportAliasValue
+    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.temporal import TemporalContext
 
     temporal = TemporalContext.empty()
@@ -784,6 +790,22 @@ def _module_import_temporal(module) -> "object":
                 name,
                 ClassValue(name=name, bases=(), record=BlockValue(())),
             )
+        elif observed == "Assign":
+            name = stmt.assign_target_name()
+            if name is None:
+                continue
+            ctx = FactoryBuildContext(
+                filename=stmt.filename,
+                catalog=catalog,
+                temporal=temporal,
+            )
+            try:
+                outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
+            except (FactoryPanic, TypeError, ValueError, AssertionError):
+                continue
+            if isinstance(outcome, Incomplete):
+                continue
+            temporal = outcome.extend_scope(ctx).temporal
     return temporal
 
 
@@ -976,8 +998,8 @@ def audit_lift_file(
             return RecoveredAuditDto()
         return payload, gaps
     module = roots[0]
-    # Seed import bindings once for every def in this module (deeper floors).
-    module_temporal = _module_import_temporal(module)
+    # Seed module declarations once for every def in this module (deeper floors).
+    module_temporal = _module_import_temporal(module, catalog)
     import_aliases, from_imports = _module_import_maps(module)
     # Same-module name_resolver: bare f() and Class.method dig bodies.
     name_resolver: dict = {}
