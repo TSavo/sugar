@@ -12,6 +12,7 @@ from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .raise_effect import RaiseEffect
 from .runtime_effect import RuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
+from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
 from .type_error_runtime_effect import TypeErrorRuntimeEffect
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "RaiseEffect",
     "RuntimeEffect",
     "SourceOracleEffect",
+    "SubscriptStoreRuntimeEffect",
     "TypeErrorRuntimeEffect",
     "effect_kind",
     "effect_reason",
