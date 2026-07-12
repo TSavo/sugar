@@ -16,6 +16,7 @@ from .collect_panic_audit import (
     CachedAuditWorkspace,
 )
 from .command_result import CommandResult
+from .recovered_frontier import mint_recovered_frontier
 from .numpy_wall import (
     _resolve_sugar_bin,
     _run_subprocess,
@@ -379,36 +380,15 @@ def build_pandas_wall(
             # Normal lift remains fail-fast and produces no report. The only lawful
             # continuation is the CLI's separately typed recovered-audit lane.
             frontier_path = output_dir / "frontier.json"
-            frontier_result = runner(
-                [
-                    os.fspath(sugar_bin),
-                    "lift",
-                    "--audit-frontier",
-                    "--continue-on-construction-gaps",
-                    "-o",
-                    os.fspath(frontier_path),
-                    os.fspath(workspace),
-                ],
-                root,
-                env,
+            frontier_json = mint_recovered_frontier(
+                label="pandas wall",
+                sugar_bin=sugar_bin,
+                workspace=workspace,
+                root=root,
+                env=env,
+                output_dir=output_dir,
+                runner=runner,
             )
-            frontier_receipt = output_dir / "wall.frontier.txt"
-            _write_command_receipt(frontier_receipt, frontier_result)
-            if not frontier_path.is_file():
-                combined = _combined_output(frontier_result)
-                tail = combined[-4000:] if combined else "<no output captured>"
-                raise RuntimeError(
-                    "pandas wall recovered frontier failed without frontier.json "
-                    f"exit={frontier_result.returncode}; last words follow:\n{tail}"
-                ) from None
-            try:
-                frontier_json = json.loads(frontier_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    f"pandas wall frontier.json was not valid JSON: {exc}"
-                ) from exc
-            if not isinstance(frontier_json, Mapping):
-                raise RuntimeError("pandas wall frontier.json must be a JSON object")
             frontier_summary = summarize_pandas_recovered_frontier(frontier_json)
             summary_path = _write_summary(output_dir, frontier_summary)
             return PandasWallResult(
