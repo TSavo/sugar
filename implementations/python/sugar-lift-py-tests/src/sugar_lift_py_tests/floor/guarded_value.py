@@ -158,6 +158,12 @@ class GuardedValue(FloorValue):
     def multiply(self, other, site):
         return self._map("multiply", other, site)
 
+    def modulo(self, other, site):
+        return self._map("modulo", other, site)
+
+    def floor_divide(self, other, site):
+        return self._map("floor_divide", other, site)
+
     def absolute(self, site):
         return self._map("absolute", site)
 

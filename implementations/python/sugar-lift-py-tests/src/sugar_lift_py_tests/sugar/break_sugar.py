@@ -14,7 +14,10 @@ class BreakSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "Break" and site.has_enclosing_loop()
+        # Python's parser admits Break only inside a loop. Dig fragments may no
+        # longer carry the whole source needed to reconstruct that ancestor;
+        # the AST construction itself is sufficient testimony.
+        return site.observed == "Break"
 
     @classmethod
     def new(cls, site, ctx) -> "BreakSugar":

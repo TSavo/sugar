@@ -152,6 +152,15 @@ class StringValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(StringValue(self.value + other.value))
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if isinstance(other, GuardedValue):
+            return other.map_from_left("add", self, site)
+        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+            return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
         return super().add(other, site)
 
     def multiply(self, other, site):

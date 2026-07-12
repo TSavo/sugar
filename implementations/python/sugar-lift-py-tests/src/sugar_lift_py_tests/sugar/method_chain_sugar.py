@@ -41,7 +41,16 @@ class MethodChainSugar(
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
         receiver_site = site.call_receiver()
-        if receiver_site is None or receiver_site.call_receiver() is None:
+        from sugar_lift_py_tests.temporal import builtin_callable_names
+
+        plain_builtin_receiver = (
+            receiver_site is not None
+            and receiver_site.call_receiver() is None
+            and receiver_site.call_target_name() in builtin_callable_names()
+        )
+        if receiver_site is None or (
+            receiver_site.call_receiver() is None and not plain_builtin_receiver
+        ):
             factory_panic_gap(
                 owner=cls.__name__,
                 blame=str(site),
