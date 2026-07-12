@@ -1172,6 +1172,16 @@ class SourceFragment:
         self._require(ast.For, ast.AsyncFor)
         return type(self.node.target).__name__  # type: ignore[attr-defined]
 
+    def for_flat_tuple_target_names(self) -> "tuple[str, ...] | None":
+        """Return names for a flat all-Name tuple loop target, else None."""
+        self._require(ast.For, ast.AsyncFor)
+        target = self.node.target  # type: ignore[attr-defined]
+        if not isinstance(target, ast.Tuple) or not target.elts:
+            return None
+        if not all(isinstance(element, ast.Name) for element in target.elts):
+            return None
+        return tuple(element.id for element in target.elts)
+
     def for_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the body statements of a For or AsyncFor node."""
         self._require(ast.For, ast.AsyncFor)
