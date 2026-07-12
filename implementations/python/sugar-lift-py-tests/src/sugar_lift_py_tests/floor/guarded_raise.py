@@ -18,3 +18,10 @@ class GuardedRaise(FloorValue):
     guards: tuple
     effect: RaiseEffect
     scope: object = None
+
+    def guarded(self, formula):
+        return GuardedRaise(
+            guards=(formula, *self.guards),
+            effect=self.effect,
+            scope=self.scope,
+        )
