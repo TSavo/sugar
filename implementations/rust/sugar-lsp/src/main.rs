@@ -84,7 +84,6 @@ impl tower_lsp::lsp_types::notification::Notification for ReportModeNotification
     const METHOD: &'static str = "sugar/reportMode";
 }
 
-
 use backend::JsonRpcBackend;
 use config::LspConfig;
 use parser::{Annotation, AnnotationKind, SourceAnnotations};
@@ -144,6 +143,8 @@ struct SugarLanguageServer {
     /// unimplemented handler surfaces as `-32601: Method not found` in the
     /// client's log the moment such a client attaches.
     last_diagnostics: Arc<Mutex<HashMap<Url, Vec<Diagnostic>>>>,
+    /// Server-owned workspace report rollup; renderer receives ready totals/ranges.
+    report_rollup: Arc<Mutex<report_mode::WorkspaceReportRollup>>,
 }
 
 /// Push `diagnostics` to the client via `publishDiagnostics` and mirror the
@@ -585,6 +586,7 @@ impl SugarLanguageServer {
             &self.lifted,
             &self.prove_diagnostics,
             &self.last_diagnostics,
+            &self.report_rollup,
             uri,
             text,
         )
@@ -595,10 +597,7 @@ impl SugarLanguageServer {
     /// sees the latest text), then solve after a 250ms debounce window --
     /// only if no NEWER change has landed for this `uri` while we slept.
     async fn in_process_debounced_change(&self, uri: Url, text: String) {
-        self.lifted
-            .lock()
-            .await
-            .insert(uri.clone(), text.clone());
+        self.lifted.lock().await.insert(uri.clone(), text.clone());
 
         let generation = {
             let mut gens = self.change_generation.lock().await;
@@ -613,12 +612,13 @@ impl SugarLanguageServer {
         let prove_diagnostics = self.prove_diagnostics.clone();
         let change_generation = self.change_generation.clone();
         let last_diagnostics = self.last_diagnostics.clone();
+        let report_rollup = self.report_rollup.clone();
         let uri_for_task = uri.clone();
 
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            let still_latest = change_generation.lock().await.get(&uri_for_task).copied()
-                == Some(generation);
+            let still_latest =
+                change_generation.lock().await.get(&uri_for_task).copied() == Some(generation);
             if !still_latest {
                 // A newer edit landed during the debounce window; that task
                 // (or a didSave) will solve instead.
@@ -630,6 +630,7 @@ impl SugarLanguageServer {
                 &lifted,
                 &prove_diagnostics,
                 &last_diagnostics,
+                &report_rollup,
                 uri_for_task,
                 text,
             )
@@ -758,8 +759,13 @@ impl SugarLanguageServer {
                         match backend.verify(&function_name, &cid).await {
                             Ok(result) => {
                                 let diagnostics = build_diagnostics(&result, range);
-                                publish_and_cache(&client, &last_diagnostics, uri_clone, diagnostics)
-                                    .await;
+                                publish_and_cache(
+                                    &client,
+                                    &last_diagnostics,
+                                    uri_clone,
+                                    diagnostics,
+                                )
+                                .await;
                             }
                             Err(e) => {
                                 client
@@ -829,6 +835,7 @@ async fn in_process_solve_and_publish(
     lifted: &Arc<Mutex<HashMap<Url, String>>>,
     prove_diagnostics: &Arc<Mutex<HashMap<Url, Vec<prove_diagnostics::RowDiag>>>>,
     last_diagnostics: &Arc<Mutex<HashMap<Url, Vec<Diagnostic>>>>,
+    report_rollup: &Arc<Mutex<report_mode::WorkspaceReportRollup>>,
     uri: Url,
     text: String,
 ) {
@@ -856,7 +863,10 @@ async fn in_process_solve_and_publish(
         Ok(o) => o,
         Err(e) => {
             client
-                .log_message(MessageType::ERROR, format!("in-process solve panicked: {e}"))
+                .log_message(
+                    MessageType::ERROR,
+                    format!("in-process solve panicked: {e}"),
+                )
                 .await;
             return;
         }
@@ -896,31 +906,29 @@ async fn in_process_solve_and_publish(
         .map(|rd| Diagnostic {
             range: rd.range,
             severity: Some(DiagnosticSeverity::ERROR),
-            code: Some(NumberOrString::String("sugar.prove.unsatisfied".to_string())),
+            code: Some(NumberOrString::String(
+                "sugar.prove.unsatisfied".to_string(),
+            )),
             source: Some("sugar-prove".to_string()),
             message: rd.message.clone(),
             ..Diagnostic::default()
         })
         .collect();
 
-    prove_diagnostics.lock().await.insert(uri.clone(), row_diags);
+    prove_diagnostics
+        .lock()
+        .await
+        .insert(uri.clone(), row_diags);
     publish_and_cache(client, last_diagnostics, uri.clone(), diagnostics).await;
 
     // #4149 report mode: facts (blue) / dig green→red / Minority yellow / unsat.
-    let mut payload = report_mode::project_from_prove_rows(
-        uri.as_str(),
-        &outcome.rows,
-        &file,
-        &project_root,
-    );
+    let mut payload =
+        report_mode::project_from_prove_rows(uri.as_str(), &outcome.rows, &file, &project_root);
     if let Some(report) = &outcome.report_lift {
-        report_mode::merge_report_lift_response(
-            &mut payload,
-            report,
-            &file,
-            &project_root,
-        );
+        report_mode::merge_report_lift_response(&mut payload, report, &file, &project_root);
     }
+    let workspace = report_rollup.lock().await.update(payload.clone());
+    payload.workspace = Some(workspace);
     client
         .send_notification::<ReportModeNotification>(payload)
         .await;
@@ -993,14 +1001,10 @@ fn build_diagnostics(result: &backend::VerifyResult, range: Range) -> Vec<Diagno
     }
 }
 
-
 fn apply_auto_config_env(auto: &config::AutoConfig) {
     // Only fill unset env so operators can still override from the shell.
     if std::env::var_os("SUGAR_LSP_AUTO_LIFT").is_none() {
-        std::env::set_var(
-            "SUGAR_LSP_AUTO_LIFT",
-            if auto.lift { "1" } else { "0" },
-        );
+        std::env::set_var("SUGAR_LSP_AUTO_LIFT", if auto.lift { "1" } else { "0" });
     }
     if std::env::var_os("SUGAR_LSP_DOWNLOAD_SOURCES").is_none() {
         std::env::set_var(
@@ -1076,6 +1080,7 @@ async fn main() {
         prove_diagnostics: Arc::new(Mutex::new(HashMap::new())),
         change_generation: Arc::new(Mutex::new(HashMap::new())),
         last_diagnostics: Arc::new(Mutex::new(HashMap::new())),
+        report_rollup: Arc::new(Mutex::new(report_mode::WorkspaceReportRollup::default())),
     });
 
     Server::new(stdin, stdout, socket).serve(service).await;

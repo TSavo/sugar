@@ -15,11 +15,12 @@
 // yellow join when liftCoverage/factoryWalk feed this module. Totals and paint
 // must match `sugar lift --report` dual-axis — editor is a renderer (#4149).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp::lsp_types::{Position, Range, Url};
 
 /// Paint kind for report mode. Wire string is stable for the VS host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +73,72 @@ pub struct ReportModePayload {
     pub uri: String,
     pub totals: ReportModeTotals,
     pub ranges: Vec<ReportModeRange>,
+    /// Server-owned ranges outside the active buffer (dependencies included).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_ranges: Vec<WorkspaceReportRange>,
+    /// Workspace rollup of the same census. Hosts render; they never recount.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceReportPayload>,
+}
+
+impl ReportModePayload {
+    pub fn empty(uri: impl Into<String>) -> Self {
+        Self {
+            uri: uri.into(),
+            totals: ReportModeTotals::default(),
+            ranges: Vec::new(),
+            workspace_ranges: Vec::new(),
+            workspace: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceReportRange {
+    pub uri: String,
+    #[serde(flatten)]
+    pub range: ReportModeRange,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceReportPayload {
+    pub totals: ReportModeTotals,
+    pub ranges: Vec<WorkspaceReportRange>,
+}
+
+/// Stateful server-side rollup. Totals are the latest liftCoverage census,
+/// never a sum/recount of paint ranges; ranges are retained per source URI.
+#[derive(Debug, Default)]
+pub struct WorkspaceReportRollup {
+    totals: ReportModeTotals,
+    by_owner: HashMap<String, Vec<WorkspaceReportRange>>,
+}
+
+impl WorkspaceReportRollup {
+    pub fn update(&mut self, payload: ReportModePayload) -> WorkspaceReportPayload {
+        self.totals = payload.totals;
+        let owner = payload.uri.clone();
+        let mut ranges: Vec<_> = payload
+            .ranges
+            .into_iter()
+            .map(|range| WorkspaceReportRange {
+                uri: owner.clone(),
+                range,
+            })
+            .collect();
+        ranges.extend(payload.workspace_ranges);
+        self.by_owner.insert(owner, ranges);
+        WorkspaceReportPayload {
+            totals: self.totals.clone(),
+            ranges: self.by_owner.values().flatten().cloned().collect(),
+        }
+    }
+
+    pub fn remove(&mut self, uri: &str) {
+        self.by_owner.remove(uri);
+    }
 }
 
 /// Dual-axis one-liner matching CLI `sugar lift --report` shape.
@@ -82,10 +149,7 @@ pub struct ReportModePayload {
 pub fn dual_axis_one_liner(totals: &ReportModeTotals) -> String {
     format!(
         "stated={} accounted={} silently_unaccounted={} | minority un_asserted={}",
-        totals.stated,
-        totals.accounted,
-        totals.silently_unaccounted,
-        totals.minority_un_asserted
+        totals.stated, totals.accounted, totals.silently_unaccounted, totals.minority_un_asserted
     )
 }
 
@@ -196,6 +260,8 @@ pub fn project_from_prove_rows(
             unsat,
         },
         ranges,
+        workspace_ranges: Vec::new(),
+        workspace: None,
     }
 }
 
@@ -278,12 +344,25 @@ pub fn merge_lift_coverage(payload: &mut ReportModePayload, coverage: &Json, pro
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string())
                 });
-                payload.ranges.push(ReportModeRange {
+                let report_range = ReportModeRange {
                     kind: ReportPaint::Minority,
                     range: r,
                     label: format!("Minority {name}"),
                     source,
-                });
+                };
+                let locus_uri = locus_file_uri(locus, project_root);
+                if locus_uri
+                    .as_deref()
+                    .map(|u| u == payload.uri)
+                    .unwrap_or(true)
+                {
+                    payload.ranges.push(report_range);
+                } else if let Some(uri) = locus_uri {
+                    payload.workspace_ranges.push(WorkspaceReportRange {
+                        uri,
+                        range: report_range,
+                    });
+                }
             }
         }
     }
@@ -302,6 +381,12 @@ pub fn merge_lift_coverage(payload: &mut ReportModePayload, coverage: &Json, pro
             }
         }
     }
+}
+
+fn locus_file_uri(locus: &Json, project_root: &Path) -> Option<String> {
+    let file = locus.get("file").and_then(|v| v.as_str())?;
+    let path = resolve_row_file(file, project_root);
+    Url::from_file_path(path).ok().map(|u| u.to_string())
 }
 
 fn locus_to_range(locus: &Json, _project_root: &Path) -> Option<Range> {
@@ -420,7 +505,6 @@ fn body_locus_range_and_source(
     ))
 }
 
-
 /// Merge factory walk rows into dig green→red paint for `target_file`.
 ///
 /// * warranted / support / complete → **WalkOpen** (green — dig may continue)
@@ -450,7 +534,10 @@ pub fn merge_factory_walk(
         if let Some(ref f) = file_hint {
             let resolved = resolve_row_file(f, project_root);
             if !same_file(&resolved, target_file) {
-                let tf = target_file.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                let tf = target_file
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
                 let rf = resolved.file_name().and_then(|s| s.to_str()).unwrap_or("");
                 if !tf.is_empty() && tf != rf {
                     continue;
@@ -496,7 +583,10 @@ pub fn merge_factory_walk(
 }
 
 fn factory_row_range(row: &Json, _project_root: &Path) -> Option<(Range, Option<String>)> {
-    if let Some(memento) = row.get("sourceMemento").or_else(|| row.get("source_memento")) {
+    if let Some(memento) = row
+        .get("sourceMemento")
+        .or_else(|| row.get("source_memento"))
+    {
         if let Some(span) = memento.get("span") {
             let start_line = span.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0);
             if start_line > 0 {
@@ -535,7 +625,10 @@ fn factory_row_range(row: &Json, _project_root: &Path) -> Option<(Range, Option<
         .or_else(|| row.get("column"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as u32;
-    let file = row.get("file").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let file = row
+        .get("file")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     Some((
         Range {
             start: Position {
@@ -582,6 +675,84 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn workspace_rollup_reuses_latest_census_and_collects_ranges_by_uri() {
+        let mut rollup = WorkspaceReportRollup::default();
+        let mut first = ReportModePayload::empty("file:///work/a.py");
+        first.totals = ReportModeTotals {
+            stated: 3,
+            accounted: 3,
+            minority_un_asserted: 1,
+            ..Default::default()
+        };
+        first.workspace_ranges.push(WorkspaceReportRange {
+            uri: "file:///venv/pkg/dep.py".into(),
+            range: ReportModeRange {
+                kind: ReportPaint::Minority,
+                range: Range::new(Position::new(4, 0), Position::new(5, u32::MAX)),
+                label: "Minority dep.orphan".into(),
+                source: Some("def orphan():\n    return 1".into()),
+            },
+        });
+        let workspace = rollup.update(first);
+        assert_eq!(
+            workspace.totals.stated, 3,
+            "reuse the lift census; do not recount ranges"
+        );
+        assert_eq!(workspace.ranges.len(), 1);
+        assert_eq!(workspace.ranges[0].uri, "file:///venv/pkg/dep.py");
+        assert_eq!(workspace.ranges[0].range.kind, ReportPaint::Minority);
+        assert!(workspace.ranges[0]
+            .range
+            .source
+            .as_deref()
+            .unwrap()
+            .contains("return 1"));
+    }
+
+    #[test]
+    fn dependency_minority_is_yellow_with_source_and_never_silent_unsat_or_dig_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("app.py");
+        let dep = dir.path().join("site-packages/dep/body.py");
+        std::fs::create_dir_all(dep.parent().unwrap()).unwrap();
+        std::fs::write(&app, "import dep\n").unwrap();
+        std::fs::write(&dep, "def orphan():\n    return 7\n").unwrap();
+        let mut payload = ReportModePayload::empty("file:///app.py");
+        merge_lift_coverage(
+            &mut payload,
+            &json!({
+                "totals": {"stated": 1, "accounted": 1, "silently_unaccounted": 0,
+                           "minority_present": 1, "minority_dug": 0, "minority_un_asserted": 1},
+                "assertions": {"silent_loci": []},
+                "minority": {"un_asserted_loci": [{"file": dep, "line": 1, "qualname": "dep.orphan"}]}
+            }),
+            dir.path(),
+        );
+        assert!(
+            payload.ranges.is_empty(),
+            "dependency coordinates must not paint the app buffer"
+        );
+        let dep_range = payload
+            .workspace_ranges
+            .iter()
+            .find(|r| r.uri.contains("dep/body.py"))
+            .unwrap();
+        assert_eq!(dep_range.range.kind, ReportPaint::Minority);
+        assert!(dep_range
+            .range
+            .source
+            .as_deref()
+            .unwrap()
+            .contains("return 7"));
+        assert!(!matches!(
+            dep_range.range.kind,
+            ReportPaint::Silent | ReportPaint::Unsat | ReportPaint::DigStop
+        ));
+        assert_eq!(payload.totals.silently_unaccounted, 0);
+        assert_eq!(payload.totals.unsat, 0);
+    }
+
+    #[test]
     fn prove_rows_project_fact_and_unsat() {
         let rows = vec![
             json!({
@@ -614,6 +785,8 @@ mod tests {
             uri: "file:///tmp/t.py".into(),
             totals: ReportModeTotals::default(),
             ranges: vec![],
+            workspace_ranges: vec![],
+            workspace: None,
         };
         let walk = vec![
             json!({
@@ -636,8 +809,14 @@ mod tests {
             Path::new("/tmp/t.py"),
             Path::new("/tmp"),
         );
-        assert!(payload.ranges.iter().any(|r| r.kind == ReportPaint::WalkOpen));
-        assert!(payload.ranges.iter().any(|r| r.kind == ReportPaint::DigStop));
+        assert!(payload
+            .ranges
+            .iter()
+            .any(|r| r.kind == ReportPaint::WalkOpen));
+        assert!(payload
+            .ranges
+            .iter()
+            .any(|r| r.kind == ReportPaint::DigStop));
     }
 
     #[test]
@@ -646,6 +825,8 @@ mod tests {
             uri: "file:///tmp/t.py".into(),
             totals: ReportModeTotals::default(),
             ranges: vec![],
+            workspace_ranges: vec![],
+            workspace: None,
         };
         let coverage = json!({
             "totals": {
@@ -685,6 +866,8 @@ mod tests {
             uri: "file:///tmp/itsd.py".into(),
             totals: ReportModeTotals::default(),
             ranges: vec![],
+            workspace_ranges: vec![],
+            workspace: None,
         };
         // Known dual-axis census from `sugar lift --report` on itsdangerous tests
         // (see docs/receipts/2026-07-11-visual-minority-source.md).
@@ -718,7 +901,10 @@ mod tests {
         merge_lift_coverage(&mut payload, &coverage, Path::new("/tmp"));
         assert_eq!(payload.totals.stated, 57);
         assert_eq!(payload.totals.accounted, 57);
-        assert_eq!(payload.totals.silently_unaccounted, 0, "silent stays 0 doctrine");
+        assert_eq!(
+            payload.totals.silently_unaccounted, 0,
+            "silent stays 0 doctrine"
+        );
         assert_eq!(payload.totals.minority_present, 2);
         assert_eq!(payload.totals.minority_dug, 0);
         assert_eq!(payload.totals.minority_un_asserted, 2);
@@ -732,11 +918,19 @@ mod tests {
                 .ranges
                 .iter()
                 .filter(|r| r.kind == ReportPaint::Minority)
-                .count(),
+                .count()
+                + payload
+                    .workspace_ranges
+                    .iter()
+                    .filter(|r| r.range.kind == ReportPaint::Minority)
+                    .count(),
             2
         );
         assert!(!payload.ranges.iter().any(|r| r.kind == ReportPaint::Unsat));
-        assert!(!payload.ranges.iter().any(|r| r.kind == ReportPaint::DigStop));
+        assert!(!payload
+            .ranges
+            .iter()
+            .any(|r| r.kind == ReportPaint::DigStop));
     }
 
     /// Minority yellow carries actual body source (CLI #4147 parity for IDE hover).
@@ -753,6 +947,8 @@ mod tests {
             uri: format!("file://{}", path.display()),
             totals: ReportModeTotals::default(),
             ranges: vec![],
+            workspace_ranges: vec![],
+            workspace: None,
         };
         let coverage = json!({
             "totals": {
@@ -813,7 +1009,8 @@ mod tests {
             "line": 20,
             "column": 0
         })];
-        let mut payload = project_from_prove_rows("file:///tmp/t.py", &rows, &path, Path::new("/tmp"));
+        let mut payload =
+            project_from_prove_rows("file:///tmp/t.py", &rows, &path, Path::new("/tmp"));
         let walk = vec![json!({
             "status": "unresolved",
             "verdict": "gap",
