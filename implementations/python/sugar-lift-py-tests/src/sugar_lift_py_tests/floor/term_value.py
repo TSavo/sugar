@@ -187,6 +187,17 @@ class TermValue(FloorValue):
             return Complete(TermValue(self.value // other.value))
         return super().floor_divide(other, site)
 
+    def right_shift(self, other, site):
+        if (
+            type(other) is TermValue
+            and type(self.value) is int
+            and type(other.value) is int
+        ):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value >> other.value))
+        return super().right_shift(other, site)
+
     def unary_minus(self, site):
         # Arithmetic negation: fold to -value.
         del site
