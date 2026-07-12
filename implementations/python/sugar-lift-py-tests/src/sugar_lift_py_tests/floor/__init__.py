@@ -3,6 +3,7 @@ from __future__ import annotations
 from .array_literal import ArrayLiteral
 from .block_value import BlockValue
 from .bound_var import BoundVar
+from .module_bound_var import ModuleBoundVar
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .call_site_value import CallSiteValue
@@ -109,6 +110,7 @@ __all__ = [
     "BinaryOperatorFloor",
     "BlockValue",
     "BoundVar",
+    "ModuleBoundVar",
     "BuilderState",
     "Bv32Value",
     "CallSiteValue",

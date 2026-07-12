@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import BoundVar
+from sugar_lift_py_tests.floor import BoundVar, ModuleBoundVar
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
@@ -51,7 +51,8 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
         # Capture the DEFINITION scope: ctx still holds the OLD binding for the name
         # (the block threads the new one AFTER this), so a self-referential rebind
         # reads the old value. The rhs stays as source -- not reduced here.
-        return Complete(BoundVar(self.name, self.value, scope=ctx))
+        binding = ModuleBoundVar if self.name in ctx.global_names else BoundVar
+        return Complete(binding(self.name, self.value, scope=ctx))
 
     def walk_children(self):
         return (self.value,)
