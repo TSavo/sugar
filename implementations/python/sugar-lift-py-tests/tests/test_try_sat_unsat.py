@@ -357,18 +357,20 @@ def test_try_finally_override_stays_a_loud_construction_gap(
     assert "FACTORY PANIC" in completed.stderr
 
 
-def test_try_finally_inert_body_stays_a_loud_construction_gap(
+def test_try_finally_inert_body_preserves_try_return(
     tmp_path: Path,
 ) -> None:
     body = "    try:\n" "        return x + 1\n" "    finally:\n" "        'cleanup'\n"
     project = tmp_path / "loud"
     _write_project(project, body=body, expected=6)
 
-    completed = _run_lift_rpc_process(project)
+    document = _run_lift_rpc(project)
 
-    assert completed.returncode == 1
-    assert "observed=Try requested=statement" in completed.stderr
-    assert "FACTORY PANIC" in completed.stderr
+    assert _post(document) == {
+        "kind": "atomic",
+        "name": "=",
+        "args": [{"kind": "var", "name": "out"}, _add_rhs(1)],
+    }
 
 
 def test_try_conditional_raise_except_curries_guarded_universe_through_lift_rpc(
