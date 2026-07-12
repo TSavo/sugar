@@ -84,6 +84,22 @@ class SymbolicValue(FloorValue):
 
         return Complete(SymbolicValue(ctor("py.neg", [self.term])))
 
+    def absolute(self, site):
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            CallSiteValue(
+                target_name="abs",
+                arg_values=(self,),
+                parameters=(),
+                term=ctor("call:abs", [self.to_term(owner=str(site))]),
+                body=None,
+                site=site,
+            )
+        )
+
     def multiply(self, other, site):
         # Symbolic multiplication: emit ``*(self, other)`` -- same BinOp Mult
         # spelling as symbolic_term (operator map Mult -> "*"). Needed so list

@@ -542,6 +542,38 @@ class FloorValue:
             ),
         )
 
+    def absolute(self, site):
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="absolute",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the abs floor",
+            fix=f"write more Floor: implement {observed}.absolute",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="absolute",
+                status="floor-gap",
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def py_subscript_coordinate(self, index, site):
         # The legacy symbolic spelling: ctor("py.subscript", [recv, index]).
         # Match symbolic_term.py so coordinates join that vocabulary.
