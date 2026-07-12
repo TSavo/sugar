@@ -64,10 +64,8 @@ def test_floor_division_selects_distinct_term_and_statement_sugars() -> None:
     assert not FloorDivideOpSugar.owns(floor_div_assign)
 
 
-def test_real_datetime_full_file_measurement() -> None:
-    path = Path.home() / ".cache/sugar/sources/cpython-3.11/datetime.py"
-    if not path.is_file():
-        pytest.skip("real CPython 3.11 datetime.py source is not installed")
+def test_real_datetime_full_file_measurement(cpython_311_datetime_path) -> None:
+    path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     payload, gaps = audit_lift_file(source, str(path))
     rpc = payload.to_rpc()
@@ -83,7 +81,11 @@ def test_real_datetime_full_file_measurement() -> None:
     assert not any(
         "observed=AugAssign" in message and ":1481:" in message for message in messages
     )
-    assert {
-        locus["line"] for locus in axis["refused_loci"] if locus["line"] in {1507, 1510}
-    } == {1507, 1510}
-    assert any("observed=s requested=value" in message for message in messages)
+    # This test owns exactly the floor-division blockers (:1462, :1481). The
+    # downstream :1507/:1510 fate and the once-next "s unbound" blocker belong
+    # to the branch-join and string-modulo suites; pinning them here went stale
+    # the moment those sibling floors landed (#4198, #4199).
+    assert axis["stated"] == 45
+    assert not any(
+        "floor_divide" in message and "floor-gap" in message for message in messages
+    )

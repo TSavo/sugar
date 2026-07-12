@@ -53,8 +53,8 @@ def test_unowned_percent_format_operand_reaches_loud_none_arm() -> None:
         StringValue("%s").modulo(ListValue((TermValue(1),)), "t.py:1")
 
 
-def test_full_datetime_artifact_accounts_repr_assertions_honestly() -> None:
-    path = Path.home() / ".cache/sugar/sources/cpython-3.11/datetime.py"
+def test_full_datetime_artifact_accounts_repr_assertions_honestly(cpython_311_datetime_path) -> None:
+    path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
 

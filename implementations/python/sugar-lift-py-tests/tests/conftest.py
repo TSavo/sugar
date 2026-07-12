@@ -85,3 +85,27 @@ def refuse_non_hermetic_sugar_cli(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_run(cmd, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", guarded_run)
+
+
+# Hermetic CPython 3.11 datetime.py artifact (#4200). The full-file floor
+# measurements pin this exact source; the hash makes corpus movement
+# reproducible and a drifted copy loud instead of silently re-baselined.
+_CPYTHON_311_DATETIME = Path(_HERE) / "vendor" / "cpython-3.11" / "datetime.py"
+_CPYTHON_311_DATETIME_SHA256 = (
+    "cc9bcb0f1c2f44e1a6cd51882979e113e973c2e65ed84b9aaedabb48d47aa356"
+)
+
+
+@pytest.fixture(scope="session")
+def cpython_311_datetime_path() -> Path:
+    import hashlib
+
+    data = _CPYTHON_311_DATETIME.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != _CPYTHON_311_DATETIME_SHA256:
+        raise AssertionError(
+            "vendored cpython-3.11 datetime.py drifted: "
+            f"sha256={digest} expected={_CPYTHON_311_DATETIME_SHA256}; "
+            "re-pin the hash together with every full-file locus assertion"
+        )
+    return _CPYTHON_311_DATETIME

@@ -64,10 +64,8 @@ def test_joined_binding_is_structurally_guarded_not_an_ite_euf() -> None:
     assert "ite" not in repr(value)
 
 
-def test_real_datetime_repr_assertions_measure_after_join() -> None:
-    path = Path.home() / ".cache/sugar/sources/cpython-3.11/datetime.py"
-    if not path.is_file():
-        pytest.skip("real CPython 3.11 datetime.py source is not installed")
+def test_real_datetime_repr_assertions_measure_after_join(cpython_311_datetime_path) -> None:
+    path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     payload, gaps = audit_lift_file(source, str(path))
     axis = account_lift_coverage(
