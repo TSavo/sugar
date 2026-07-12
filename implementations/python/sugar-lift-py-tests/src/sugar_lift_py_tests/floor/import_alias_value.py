@@ -26,6 +26,16 @@ class ImportAliasValue(FloorValue):
             "python:import_alias", [str_const(self.bound_name), str_const(self.name)]
         )
 
+    def test_python_type(self, value, site):
+        from sugar_lift_py_tests.floor.type_tester import native_type_tester
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return native_type_tester(
+            value,
+            ctor("python:type", [str_const(self.name)]),
+            site,
+        )
+
     def call_method_with(self, operation: Any, ctx: object):
         del ctx
         return _runtime_alias_effect(

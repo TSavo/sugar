@@ -46,6 +46,18 @@ class CallSiteValue(FloorValue):
             PredicateValue(py_truthy(self.term), site, operand_callsites=(self,))
         )
 
+    def test_python_type(self, value, site):
+        if self.target_name != "type":
+            return super().test_python_type(value, site)
+        from sugar_lift_py_tests.floor.type_tester import native_type_tester
+
+        return native_type_tester(
+            value,
+            self.term,
+            site,
+            type_callsites=(self,),
+        )
+
     def length(self, site):
         # A callsite length stays the call:len coordinate over this value's term.
         from sugar_lift_py_tests.ir import ctor
