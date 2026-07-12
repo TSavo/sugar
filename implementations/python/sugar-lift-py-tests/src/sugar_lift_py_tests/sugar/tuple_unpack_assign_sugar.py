@@ -42,11 +42,11 @@ class TupleElementProjection:
 
 @dataclass(frozen=True)
 class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
-    """One flat tuple target whose elements are all names.
+    """One tuple target whose leaves are all names.
 
     Each name aliases an indexed projection of the same factory-built rhs source.
-    Starred, nested, attribute, subscript, chained, and statically mismatched
-    targets stay unowned so factory dispatch reaches its loud None arm.
+    Starred, attribute, subscript, chained, and statically mismatched targets
+    stay unowned so factory dispatch reaches its loud None arm.
     """
 
     names: tuple[str, ...]
@@ -60,31 +60,22 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
         targets = site.assign_targets()
         if len(targets) != 1 or targets[0].observed != "Tuple":
             return False
-        elements = targets[0].tuple_elts()
-        if not elements or not all(element.observed == "Name" for element in elements):
+        bindings = _target_paths(targets[0])
+        if not bindings:
             return False
-        rhs = site.assign_value()
-        if rhs.observed in {"Tuple", "List"}:
-            rhs_elements = (
-                rhs.tuple_elts() if rhs.observed == "Tuple" else rhs.list_elts()
-            )
-            if len(rhs_elements) != len(elements):
-                return False
         return True
 
     @classmethod
     def new(cls, site, ctx) -> "TupleUnpackAssignSugar":
         target = site.assign_targets()[0]
-        names = tuple(element.name_id() for element in target.tuple_elts())
+        bindings = _target_paths(target)
+        names = tuple(name for name, _path in bindings)
         receiver = ctx.build_body(site.assign_value(), SugarRole.TERM)
         return cls(
             names=names,
             projections=tuple(
-                SugarBody(
-                    TupleElementProjection(receiver=receiver, index=index, site=site),
-                    SugarRole.TERM,
-                )
-                for index in range(len(names))
+                _projection(receiver, path, site)
+                for _name, path in bindings
             ),
             site=site,
         )
@@ -113,3 +104,30 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
 
     def walk_children(self):
         return self.projections
+
+
+def _target_paths(target, prefix=()):
+    if target.observed == "Name":
+        return ((target.name_id(), prefix),)
+    if target.observed not in {"Tuple", "List"}:
+        return None
+    elements = target.tuple_elts() if target.observed == "Tuple" else target.list_elts()
+    if not elements:
+        return None
+    bindings = []
+    for index, element in enumerate(elements):
+        nested = _target_paths(element, (*prefix, index))
+        if nested is None:
+            return None
+        bindings.extend(nested)
+    return tuple(bindings)
+
+
+def _projection(receiver, path, site):
+    projected = receiver
+    for index in path:
+        projected = SugarBody(
+            TupleElementProjection(receiver=projected, index=index, site=site),
+            SugarRole.TERM,
+        )
+    return projected
