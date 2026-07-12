@@ -13,7 +13,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class TupleUnpackBindings(FloorValue):
-    bindings: tuple[BoundVar, ...]
+    bindings: tuple[FloorValue, ...]
 
     def contribution(self):
         return ()
@@ -41,6 +41,18 @@ class TupleElementProjection:
 
 
 @dataclass(frozen=True)
+class TupleNameStore:
+    name: str
+    projection: SugarBody
+
+    def desugar(self, ctx: Any = None) -> Outcome:
+        return Complete(BoundVar(self.name, self.projection, scope=ctx))
+
+    def walk_children(self):
+        return (self.projection,)
+
+
+@dataclass(frozen=True)
 class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
     """One tuple target whose leaves are all names.
 
@@ -49,8 +61,7 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
     stay unowned so factory dispatch reaches its loud None arm.
     """
 
-    names: tuple[str, ...]
-    projections: tuple[SugarBody, ...]
+    stores: tuple[SugarBody, ...]
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -60,23 +71,40 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
         targets = site.assign_targets()
         if len(targets) != 1 or targets[0].observed != "Tuple":
             return False
-        bindings = _target_paths(targets[0])
-        if not bindings:
+        leaves = _target_leaves(targets[0])
+        if not leaves:
             return False
         return True
 
     @classmethod
     def new(cls, site, ctx) -> "TupleUnpackAssignSugar":
         target = site.assign_targets()[0]
-        bindings = _target_paths(target)
-        names = tuple(name for name, _path in bindings)
+        leaves = _target_leaves(target)
         receiver = ctx.build_body(site.assign_value(), SugarRole.TERM)
+        stores = []
+        from sugar_lift_py_tests.sugar.attribute_assign_sugar import AttributeAssignSugar
+        from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+
+        for kind, first, second, path in leaves:
+            projection = _projection(receiver, path, site)
+            if kind == "name":
+                stores.append(SugarBody(TupleNameStore(first, projection), SugarRole.STATEMENT))
+            else:
+                receiver_body = SugarBody(NameSugar(first, site), SugarRole.TERM)
+                stores.append(
+                    SugarBody(
+                        AttributeAssignSugar(
+                            receiver_name=first,
+                            field_name=second,
+                            receiver=receiver_body,
+                            value=projection,
+                            site=site,
+                        ),
+                        SugarRole.STATEMENT,
+                    )
+                )
         return cls(
-            names=names,
-            projections=tuple(
-                _projection(receiver, path, site)
-                for _name, path in bindings
-            ),
+            stores=tuple(stores),
             site=site,
         )
 
@@ -91,24 +119,30 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        return Complete(
-            TupleUnpackBindings(
-                tuple(
-                    BoundVar(name, projection, scope=ctx)
-                    for name, projection in zip(
-                        self.names, self.projections, strict=True
-                    )
-                )
+        return self._reduce_stores(self.stores, (), ctx)
+
+    def _reduce_stores(self, remaining, accumulated, ctx):
+        if not remaining:
+            return Complete(TupleUnpackBindings(accumulated))
+        head, *rest = remaining
+        return head.reduce(ctx).and_then(
+            lambda value: self._reduce_stores(
+                tuple(rest), (*accumulated, value), value.extend_scope(ctx)
             )
         )
 
     def walk_children(self):
-        return self.projections
+        return self.stores
 
 
-def _target_paths(target, prefix=()):
+def _target_leaves(target, prefix=()):
     if target.observed == "Name":
-        return ((target.name_id(), prefix),)
+        return (("name", target.name_id(), None, prefix),)
+    if target.observed == "Attribute":
+        receiver = target.attr_receiver()
+        if receiver.observed != "Name":
+            return None
+        return (("attribute", receiver.name_id(), target.attr_name(), prefix),)
     if target.observed not in {"Tuple", "List"}:
         return None
     elements = target.tuple_elts() if target.observed == "Tuple" else target.list_elts()
@@ -116,7 +150,7 @@ def _target_paths(target, prefix=()):
         return None
     bindings = []
     for index, element in enumerate(elements):
-        nested = _target_paths(element, (*prefix, index))
+        nested = _target_leaves(element, (*prefix, index))
         if nested is None:
             return None
         bindings.extend(nested)
