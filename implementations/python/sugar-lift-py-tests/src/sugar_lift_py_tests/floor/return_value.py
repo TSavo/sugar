@@ -19,7 +19,11 @@ class ReturnValue(FloorValue):
         # reflexive-safe, so ir.eq (SMT =), not py.eq (vendor Python ==).
         from sugar_lift_py_tests.ir import eq, make_var
 
-        return (eq(make_var("out"), self.value.to_term(owner="post")),)
+        out = make_var("out")
+        conditional_post = getattr(self.value, "post_formula", None)
+        if callable(conditional_post):
+            return (conditional_post(out),)
+        return (eq(out, self.value.to_term(owner="post")),)
 
     def follow_rest(self, rest, reduce):
         # Code after an unguarded return never runs: keep it raw, unreduced.

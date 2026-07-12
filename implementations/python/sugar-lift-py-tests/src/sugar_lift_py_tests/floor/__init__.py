@@ -21,6 +21,7 @@ from .floor_value import BASE_CONSTRUCTION_GAP_METHOD_NAMES, FloorValue
 from .function_callable import FunctionCallable
 from .guarded_raise import GuardedRaise
 from .guarded_faces import GuardedFaces
+from .guarded_value import GuardedValue
 from .guarded_return import GuardedReturn
 from .import_alias_value import ImportAliasValue
 from .lambda_callable import LambdaCallable
@@ -63,6 +64,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     FunctionCallable,
     GuardedRaise,
     GuardedFaces,
+    GuardedValue,
     GuardedReturn,
     ImportAliasValue,
     LambdaCallable,
@@ -113,6 +115,7 @@ __all__ = [
     "FunctionCallable",
     "GuardedRaise",
     "GuardedFaces",
+    "GuardedValue",
     "GuardedReturn",
     "ImportAliasValue",
     "LambdaCallable",
