@@ -162,6 +162,44 @@ fn resolve_row_file(file: &str, project_root: &Path) -> PathBuf {
     }
 }
 
+fn windows_drive_path(file: &str) -> bool {
+    let bytes = file.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
+}
+
+fn report_file_uri(file: &str, project_root: &Path) -> Result<String, String> {
+    if windows_drive_path(file) {
+        let mut slash_path = file.replace('\\', "/");
+        slash_path[..1].make_ascii_uppercase();
+        return Url::parse(&format!("file:///{slash_path}"))
+            .map(|url| url.to_string())
+            .map_err(|error| format!("invalid Windows report path {file:?}: {error}"));
+    }
+
+    let path = resolve_row_file(file, project_root);
+    Url::from_file_path(&path)
+        .map(|url| url.to_string())
+        .map_err(|()| format!("report path cannot become a file URI: {}", path.display()))
+}
+
+fn normalize_report_uri(uri: &str, project_root: &Path) -> Result<String, String> {
+    if let Some(file) = uri.strip_prefix("file://") {
+        let file = file.strip_prefix('/').unwrap_or(file);
+        if windows_drive_path(file) {
+            return report_file_uri(file, project_root);
+        }
+    }
+
+    let url = Url::parse(uri).map_err(|error| format!("invalid report URI {uri:?}: {error}"))?;
+    if url.scheme() != "file" {
+        return Err(format!("report URI is not a file URI: {uri:?}"));
+    }
+    Ok(url.to_string())
+}
+
 fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(ca), Ok(cb)) => ca == cb,
@@ -351,9 +389,11 @@ pub fn merge_lift_coverage(payload: &mut ReportModePayload, coverage: &Json, pro
                     source,
                 };
                 let locus_uri = locus_file_uri(locus, project_root);
+                let payload_uri = normalize_report_uri(&payload.uri, project_root)
+                    .unwrap_or_else(|error| panic!("report-mode active URI must resolve: {error}"));
                 if locus_uri
                     .as_deref()
-                    .map(|u| u == payload.uri)
+                    .map(|u| u == payload_uri)
                     .unwrap_or(true)
                 {
                     payload.ranges.push(report_range);
@@ -385,8 +425,10 @@ pub fn merge_lift_coverage(payload: &mut ReportModePayload, coverage: &Json, pro
 
 fn locus_file_uri(locus: &Json, project_root: &Path) -> Option<String> {
     let file = locus.get("file").and_then(|v| v.as_str())?;
-    let path = resolve_row_file(file, project_root);
-    Url::from_file_path(path).ok().map(|u| u.to_string())
+    Some(
+        report_file_uri(file, project_root)
+            .unwrap_or_else(|error| panic!("report-mode locus path must resolve: {error}")),
+    )
 }
 
 fn locus_to_range(locus: &Json, _project_root: &Path) -> Option<Range> {
@@ -994,6 +1036,66 @@ mod tests {
         assert_eq!(
             dual_axis_one_liner(&payload.totals),
             "stated=1 accounted=0 silently_unaccounted=1 | minority un_asserted=1"
+        );
+    }
+
+    #[test]
+    fn windows_drive_paths_route_active_and_dependency_minority_by_uri() {
+        let mut payload = ReportModePayload::empty("file://C:\\work\\app.py");
+        let coverage = json!({
+            "kind": "lift-coverage",
+            "totals": {
+                "stated": 0,
+                "accounted": 0,
+                "silently_unaccounted": 0,
+                "minority_present": 2,
+                "minority_dug": 0,
+                "minority_un_asserted": 2
+            },
+            "assertions": {
+                "stated": 0,
+                "lifted_cited": 0,
+                "refused_loud": 0,
+                "silently_unaccounted": 0,
+                "silent_loci": []
+            },
+            "minority": {
+                "present": 2,
+                "dug": 0,
+                "un_asserted": 2,
+                "un_asserted_loci": [
+                    {
+                        "file": "c:\\work\\app.py",
+                        "line": 1,
+                        "end_line": 2,
+                        "name": "active_orphan",
+                        "qualname": "active_orphan",
+                        "preview": "def active_orphan():\n    return 1"
+                    },
+                    {
+                        "file": "D:\\site-packages\\dep.py",
+                        "line": 4,
+                        "end_line": 5,
+                        "name": "dependency_orphan",
+                        "qualname": "dependency_orphan",
+                        "preview": "def dependency_orphan():\n    return 2"
+                    }
+                ]
+            }
+        });
+
+        merge_lift_coverage(&mut payload, &coverage, Path::new("C:\\work"));
+
+        assert_eq!(payload.ranges.len(), 1);
+        assert_eq!(payload.ranges[0].label, "Minority active_orphan");
+        assert_eq!(payload.workspace_ranges.len(), 1);
+        assert_eq!(
+            payload.workspace_ranges[0].uri,
+            "file:///D:/site-packages/dep.py"
+        );
+        assert_eq!(
+            payload.workspace_ranges[0].range.label,
+            "Minority dependency_orphan"
         );
     }
 
