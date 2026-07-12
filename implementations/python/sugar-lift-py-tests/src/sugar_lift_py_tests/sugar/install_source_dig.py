@@ -430,16 +430,26 @@ class SequentialDigBody:
         if last_return is not None:
             # Dig wants the returned floor, not the ReturnValue wrapper.
             return Complete(last_return.value)
-        from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect
+        from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect, RuntimeEffectWitness
+        from sugar_lift_py_tests.ir import ctor, str_const
 
         terminal = self.statements[-1] if self.statements else None
         audit_row = getattr(terminal, "audit_row", None)
         blame = getattr(audit_row, "blame", "<install-source-dig>")
         observed = getattr(audit_row, "observed", "SequentialDigBody")
+        terminal_selection = ctor(
+            "py.sequential_terminal",
+            [str_const(str(blame)), str_const(str(observed))],
+        )
         return Incomplete(
             ConditionalExpressionRuntimeEffect(
                 f"{blame}: {observed} leaves the sequential dig return value "
-                "dependent on runtime control flow"
+                "dependent on runtime control flow",
+                witness=RuntimeEffectWitness(
+                    operation=ctor("py.conditional_select", [terminal_selection]),
+                    operand=terminal_selection,
+                    locus=str(blame),
+                ),
             )
         )
 
