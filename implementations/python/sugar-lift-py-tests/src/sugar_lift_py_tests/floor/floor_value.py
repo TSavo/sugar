@@ -98,6 +98,50 @@ BASE_CONSTRUCTION_GAP_METHOD_NAMES = tuple(
 
 
 class FloorValue:
+    def _floor_gap(
+        self,
+        *,
+        owner: str,
+        blame: str,
+        observed: str,
+        requested: str,
+        fix: str,
+    ) -> NoReturn:
+        """The common loud arm for unsupported floor protocol construction."""
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        info = FactoryGapInfo(
+            owner=owner,
+            blame=blame,
+            observed=observed,
+            requested=requested,
+            fix=fix,
+            gap_kind=(
+                GapKind.CONSTRUCTOR
+                if requested.startswith("constructor-bound ")
+                else GapKind.FLOOR
+            ),
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role=requested,
+                status="floor-gap",
+                observed=observed,
+                blame=blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     non_fol_support = False
 
     def contribution(self):

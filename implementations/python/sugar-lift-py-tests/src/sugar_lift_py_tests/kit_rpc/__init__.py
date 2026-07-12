@@ -21,7 +21,12 @@ from .open_lane_dto import (
     VendorConjoinDto,
 )
 from .plan_atom_dto import PlanAtomDto
-from .recovered_audit_dto import RecoveredAuditDto, RecoveredFactoryPanicDto, SuppressedAuditLocusDto
+from .recovered_audit_dto import (
+    RecoveredAuditDto,
+    RecoveredEffectDto,
+    RecoveredFactoryPanicDto,
+    SuppressedAuditLocusDto,
+)
 from .source_memento_dto import SourceMementoDto
 from .source_span_dto import SourceSpanDto
 
@@ -44,6 +49,7 @@ __all__ = [
     "LiftReportPayloadDto",
     "PlanAtomDto",
     "RecoveredAuditDto",
+    "RecoveredEffectDto",
     "RecoveredFactoryPanicDto",
     "SourceAuditDto",
     "SourceMementoDto",
