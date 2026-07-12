@@ -56,3 +56,25 @@ class DictValue(FloorValue):
                 )
             )
         return self.py_subscript_coordinate(index, site)
+
+    def setitem(self, index, value, site):
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if type(index) is StringValue or type(index) is TermValue:
+            entries = list(self.entries)
+            for position, (key, _old_value) in enumerate(entries):
+                if type(key) is type(index) and key.value == index.value:
+                    entries[position] = (key, value)
+                    return Complete(DictValue(tuple(entries)))
+            entries.append((index, value))
+            return Complete(DictValue(tuple(entries)))
+        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+
+        return Incomplete(
+            SubscriptStoreRuntimeEffect(
+                "dict subscript store requires a concrete key; "
+                f"owner=DictValue.setitem site={site}"
+            )
+        )

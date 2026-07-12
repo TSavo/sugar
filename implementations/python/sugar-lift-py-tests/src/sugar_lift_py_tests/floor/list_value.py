@@ -79,3 +79,34 @@ class ListValue(FloorValue):
             )
         return self.py_subscript_coordinate(index, site)
 
+    def setitem(self, index, value, site):
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if type(index) is TermValue and type(index.value) is int:
+            i = index.value
+            n = len(self.elements)
+            if -n <= i < n:
+                resolved = i if i >= 0 else n + i
+                updated = (
+                    *self.elements[:resolved],
+                    value,
+                    *self.elements[resolved + 1 :],
+                )
+                return Complete(ListValue(updated))
+            from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect
+
+            return Incomplete(
+                IndexErrorRuntimeEffect(
+                    "list assignment index out of range runtime boundary: "
+                    f"index={i} length={n}; owner=ListValue.setitem site={site}"
+                )
+            )
+        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+
+        return Incomplete(
+            SubscriptStoreRuntimeEffect(
+                "list subscript store requires a concrete integer index; "
+                f"owner=ListValue.setitem site={site}"
+            )
+        )
