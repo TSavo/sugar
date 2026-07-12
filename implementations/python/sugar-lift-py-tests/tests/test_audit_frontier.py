@@ -56,6 +56,34 @@ def test_audit_frontier_demand_histogram_buckets_sugar() -> None:
     assert by_observed.get("While", 0) >= 1
 
 
+def test_unowned_default_arg_function_def_refuses_loud_in_factory_walk() -> None:
+    """Bad twin: an unowned def is a factory gap, never an invisible subtree."""
+    source = "def hidden(x=1):\n    assert x == 1\n"
+
+    payload, gaps = audit_lift_file(source, "default_arg.py")
+
+    assert len(gaps) == 1
+    assert gaps[0].info["observed"] == "FunctionDef"
+    assert gaps[0].info["requested"] == "statement"
+    assert gaps[0].info["blame"] == "default_arg.py:1:0"
+    assert len(payload.factory_walk) == 1
+    row = payload.factory_walk[0]
+    assert row.ast_kind == "FunctionDef"
+    assert row.status == "unclassified"
+    assert row.to_rpc()["status"] == "unresolved"
+    assert row.to_rpc()["verdict"] == "gap"
+
+
+def test_owned_ordinary_function_def_still_lifts() -> None:
+    payload, gaps = audit_lift_file(
+        "def ordinary(x):\n    return x\n", "ordinary.py"
+    )
+
+    assert gaps == []
+    assert payload.ir
+    assert payload.factory_walk[0].selected == "FunctionDefSugar"
+
+
 def test_audit_frontier_feeds_pandas_wall_construction_gap_scrape() -> None:
     """The wall drinks auditOnlyGaps from the RPC error line -- the ONE door."""
     import json
