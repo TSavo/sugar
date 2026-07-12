@@ -12,28 +12,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 def _floor_as_term(value, *, owner: str):
     """Project a reduced floor value to a Term for the listcomp coordinate.
 
-    PredicateValue (conditions like ``x > 0``) carries a Formula -- reify an
-    atomic formula as a ctor term so it rides the coordinate, not dropped.
+    PredicateValue owns its formula reification at the floor membrane, so
+    comprehension coordinates use the same projection as every other caller.
     """
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.ir import _Atomic, _Connective, ctor
-
-    if isinstance(value, PredicateValue):
-        formula = value.formula
-        if isinstance(formula, _Atomic):
-            return ctor(formula.name, list(formula.args))
-        if isinstance(formula, _Connective):
-            return ctor(
-                f"py.{formula.kind}",
-                [
-                    _floor_as_term(
-                        PredicateValue(operand, value.site), owner=owner
-                    )
-                    for operand in formula.operands
-                ],
-            )
-        # Quantifier and other shapes: refuse to invent a term spelling.
-        return value.to_term(owner=owner)
     return value.to_term(owner=owner)
 
 

@@ -9,11 +9,35 @@ from .floor_value import FloorValue
 
 @dataclass(frozen=True)
 class PredicateValue(FloorValue):
+    """A boolean formula carried as a floor value.
+
+    Atomic formulas project to a same-name constructor term. Connectives
+    project recursively to the established ``py.<kind>`` constructor family.
+    Quantifiers stay loud because the term algebra has no binder-bearing term
+    shape, so projecting one would lose its bound variable or invent a parallel
+    vocabulary.
+    """
+
     formula: Formula
     site: object = dataclass_field(default=None, compare=False)
     # CallSiteValues that stood as operands when this formula was emitted --
     # carried so callEdges project from the collapse without a side channel.
     operand_callsites: tuple = dataclass_field(default=(), compare=False)
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import _Atomic, _Connective, ctor
+
+        if isinstance(self.formula, _Atomic):
+            return ctor(self.formula.name, list(self.formula.args))
+        if isinstance(self.formula, _Connective):
+            return ctor(
+                f"py.{self.formula.kind}",
+                [
+                    PredicateValue(operand, self.site).to_term(owner=owner)
+                    for operand in self.formula.operands
+                ],
+            )
+        return super().to_term(owner=owner)
 
     def negate(self):
         # A predicate flips by wrapping its formula in not_ -- the formula owns
