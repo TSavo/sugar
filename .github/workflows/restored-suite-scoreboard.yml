@@ -1,0 +1,77 @@
+name: Restored Suite Scoreboard
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: restored-suite-scoreboard
+  cancel-in-progress: false
+
+jobs:
+  restored-suite:
+    name: mint restored-suite telemetry
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install restored-suite environment
+        run: |
+          make bcargo-python-kit-env \
+            BCARGO_PYTHON_VENV="$RUNNER_TEMP/restored-suite-python"
+          bin/sugarbin --profile release >/dev/null
+
+      - name: Run restored suite and retain red telemetry
+        id: suite
+        shell: bash
+        run: |
+          set +e
+          SUGAR_BIN="$PWD/implementations/rust/target/release/sugar" \
+            "$RUNNER_TEMP/restored-suite-python/bin/pytest" -q \
+            implementations/python/sugar-lift-py-tests/tests \
+            2>&1 | tee restored-suite.log
+          pytest_exit=${PIPESTATUS[0]}
+          set -e
+          echo "pytest_exit=$pytest_exit" >> "$GITHUB_OUTPUT"
+          test -s restored-suite.log
+
+      - name: Publish restored-suite vector
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python tools/restored_suite_telemetry.py \
+            --log restored-suite.log \
+            --pytest-exit "${{ steps.suite.outputs.pytest_exit }}" \
+            --run-url "$RUN_URL" \
+            --output restored-suite-telemetry.md \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          gh issue comment 4208 --repo "$GITHUB_REPOSITORY" \
+            --body-file restored-suite-telemetry.md
+
+      - name: Upload restored-suite artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restored-suite-scoreboard
+          path: |
+            restored-suite.log
+            restored-suite-telemetry.md
+          if-no-files-found: error
