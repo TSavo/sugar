@@ -1308,3 +1308,13 @@ class FloorValue:
                 site,
             )
         )
+
+    def format_data_model(self, spec, site, ctx):
+        del spec, ctx
+        return self._floor_gap(
+            owner="FormatDunderCallSugar",
+            blame=str(site),
+            observed=type(self).__name__,
+            requested="format data-model method",
+            fix="construct __format__",
+        )

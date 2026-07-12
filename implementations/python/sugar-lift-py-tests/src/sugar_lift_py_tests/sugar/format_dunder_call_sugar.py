@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import ObjectValue, StringValue
+from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
@@ -36,9 +36,7 @@ class FormatDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar
         return self.receiver.reduce(ctx).and_then(lambda receiver: self.spec.reduce(ctx).and_then(lambda spec: self._finish(receiver, spec, ctx)))
 
     def _finish(self, receiver, spec, ctx):
-        if isinstance(receiver, ObjectValue):
-            return receiver.call_method_value("__format__", (spec,), owner=type(self).__name__, blame=str(self.site), ctx=ctx)
-        return receiver._floor_gap(owner=type(self).__name__, blame=str(self.site), observed=type(receiver).__name__, requested="format data-model method", fix="construct __format__")
+        return receiver.format_data_model(spec, self.site, ctx)
 
     def walk_children(self):
         return (self.receiver,) if self.spec is None else (self.receiver, self.spec)
