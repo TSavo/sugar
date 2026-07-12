@@ -95,7 +95,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.sugar.install_source_dig import (
                 build_dig_body,
-                dig_parameters_for_body,
+                bind_positional_defaults,
                 resolve_method_funcdef,
             )
 
@@ -109,17 +109,11 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                 if fn is not None
                 else None
             )
-            parameters = dig_parameters_for_body(
-                fn, len(accumulated), self.keyword_names
-            )
             if body is None:
-                parameters = self.keyword_names
-
-            return Complete(
-                CallSiteValue(
+                return Complete(CallSiteValue(
                     target_name=self.method_name,
                     arg_values=accumulated,
-                    parameters=parameters,
+                    parameters=self.keyword_names,
                     term=ctor(
                         f"call:{self.method_name}",
                         [
@@ -129,6 +123,22 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                     ),
                     body=body,
                     site=self.site,
+                ))
+
+            source_term = ctor(
+                f"call:{self.method_name}",
+                [value.to_term(owner=str(self.site)) for value in accumulated],
+            )
+            return bind_positional_defaults(fn, accumulated, ctx).and_then(
+                lambda binding: Complete(
+                    CallSiteValue(
+                        target_name=self.method_name,
+                        arg_values=binding[1],
+                        parameters=binding[0],
+                        term=source_term,
+                        body=body,
+                        site=self.site,
+                    )
                 )
             )
         head, *rest = remaining

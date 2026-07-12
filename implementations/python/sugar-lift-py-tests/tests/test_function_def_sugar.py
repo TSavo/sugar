@@ -8,12 +8,9 @@ from __future__ import annotations
 
 import ast
 
-import pytest
-
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import UniverseValue
 from sugar_lift_py_tests.ir import ctor, eq, make_var, num, py_eq
 from sugar_lift_py_tests.outcome import complete_value
@@ -49,6 +46,7 @@ def test_concrete_return_posts_the_folded_term() -> None:
     assert universe.post() == eq(make_var("out"), num(2))
 
 
-def test_default_arguments_stay_a_loud_gap() -> None:
-    with pytest.raises(FactoryPanic):
-        _universe("def A(z=1):\n    return z\n")
+def test_default_arguments_bind_the_formal_universe() -> None:
+    universe = _universe("def A(z=1):\n    return z\n")
+    assert universe.formals == ("z",)
+    assert universe.post() == eq(make_var("out"), make_var("z"))

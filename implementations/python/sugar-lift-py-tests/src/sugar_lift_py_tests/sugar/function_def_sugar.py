@@ -15,11 +15,14 @@ class FunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     binds a SymbolicValue (the universe variable whose sort is the compiler's
     to decide), the body reduces to its record under that scope, and the
     result is a UniverseValue -- name, formals, record. The slots are
-    projections of the record. Plain positional parameters only; defaults,
-    keyword-only, *args/**kwargs, and decorators stay loud gaps."""
+    projections of the record. Ordinary positional parameters may have
+    factory-liftable default expressions. Keyword-only, positional-only,
+    *args/**kwargs, decorators, and unliftable defaults stay loud gaps. Every
+    default is factory-built and reduced, never dropped."""
 
     name: str
     formals: tuple[str, ...]
+    defaults: tuple[SugarBody, ...]
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -27,20 +30,22 @@ class FunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     def owns(cls, site) -> bool:
         if site.observed != "FunctionDef":
             return False
-        min_args, max_args = site.function_positional_arity()
-        return min_args == max_args and not site.function_decorators()
+        return (
+            site.function_has_simple_positional_params()
+            and not site.function_decorators()
+        )
 
     @classmethod
     def new(cls, site, ctx) -> "FunctionDefSugar":
         # The body is factory-built as ONE Block (audited), never reduced here.
         formals = list(site.function_params())
-        if (vn := site.function_vararg_name()) is not None:
-            formals.append(vn)
-        if (kn := site.function_kwarg_name()) is not None:
-            formals.append(kn)
         return cls(
             name=site.function_name(),
             formals=tuple(formals),
+            defaults=tuple(
+                ctx.build_body(default, SugarRole.TERM)
+                for default in site.function_defaults()
+            ),
             body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
             site=site,
         )
@@ -60,8 +65,17 @@ class FunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     def desugar(self, ctx: object = None) -> Outcome:
         # Bind each parameter to its universe variable, reduce the body under
         # that scope, and the result is the universe.
+        return self._reduce_defaults(self.defaults, ctx)
+
+    def _reduce_defaults(self, remaining: tuple[SugarBody, ...], ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor import SymbolicValue, UniverseValue
         from sugar_lift_py_tests.ir import make_var
+
+        if remaining:
+            head, *rest = remaining
+            return head.reduce(ctx).and_then(
+                lambda _value: self._reduce_defaults(tuple(rest), ctx)
+            )
 
         temporal = ctx.temporal
         for formal in self.formals:
@@ -74,4 +88,4 @@ class FunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def walk_children(self):
-        return (self.body,)
+        return (*self.defaults, self.body)

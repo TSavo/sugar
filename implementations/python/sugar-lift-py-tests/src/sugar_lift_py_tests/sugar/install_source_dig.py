@@ -451,5 +451,38 @@ def dig_parameters_for_body(fn_site, arg_count: int, keyword_names: tuple[str, .
     return ()
 
 
+def bind_positional_defaults(fn_site, arg_values: tuple, ctx: Any):
+    """Fill omitted trailing positional arguments from a resolved def's defaults.
+
+    Only the FunctionDefSugar-owned ordinary positional shape reaches this
+    helper. Invalid arities remain unmatched so CallSiteValue raises its normal
+    loud arity gap when the body is forced.
+    """
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.outcome import Complete
+
+    if fn_site is None or not fn_site.function_has_simple_positional_params():
+        return Complete(((), arg_values))
+    formals = tuple(fn_site.function_params())
+    min_args, max_args = fn_site.function_positional_arity()
+    if not min_args <= len(arg_values) <= max_args:
+        return Complete(((), arg_values))
+    missing = max_args - len(arg_values)
+    if missing == 0:
+        return Complete((formals, arg_values))
+    defaults = tuple(fn_site.function_defaults())
+    selected = defaults[len(defaults) - missing :]
+
+    def collect(remaining: tuple, accumulated: tuple):
+        if not remaining:
+            return Complete((formals, (*arg_values, *accumulated)))
+        head, *rest = remaining
+        return ctx.build_body(head, SugarRole.TERM).reduce(ctx).and_then(
+            lambda value: collect(tuple(rest), (*accumulated, value))
+        )
+
+    return collect(selected, ())
+
+
 _resolve_install_source_funcdef = resolve_install_source_funcdef
 _module_sibling_function_nodes = module_sibling_function_nodes
