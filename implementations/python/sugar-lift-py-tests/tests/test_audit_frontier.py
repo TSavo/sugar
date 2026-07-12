@@ -56,6 +56,23 @@ def test_audit_frontier_demand_histogram_buckets_sugar() -> None:
     assert by_observed.get("While", 0) >= 1
 
 
+def test_audit_frontier_holds_unowned_default_arg_def_as_loud_gap() -> None:
+    source = "def f(a, b=1):\n    assert a == 3\n    return a\n"
+
+    payload, gaps = audit_lift_file(source, "default_def.py")
+
+    def_rows = [
+        row.to_rpc()
+        for row in payload.factory_walk
+        if row.to_rpc().get("ast_kind") == "FunctionDef"
+    ]
+    assert def_rows, "unowned FunctionDef must reach the None arm and speak"
+    assert def_rows[0]["verdict"] == "gap"
+    assert "write more Sugar" in def_rows[0]["reason"]
+    assert "FunctionDef" in def_rows[0]["reason"]
+    assert any(gap.info.get("observed") == "FunctionDef" for gap in gaps)
+
+
 def test_audit_frontier_feeds_pandas_wall_construction_gap_scrape() -> None:
     """The wall drinks auditOnlyGaps from the RPC error line -- the ONE door."""
     import json
