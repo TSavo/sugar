@@ -17,6 +17,7 @@ class ImportAliasValue(FloorValue):
 
     name: str
     bound_name: str
+    import_target: str | None = None
 
     def extend_scope(self, ctx):
         """Thread the source-stated import binding into following statements."""
@@ -174,8 +175,37 @@ def _runtime_alias_effect(
 def _runtime_alias_effect_at_site(
     value: ImportAliasValue, *, shape: str, blame: str, replacement: str
 ):
-    from sugar_lift_py_tests.effect import ImportedModuleRuntimeEffect
+    import importlib.util
+
+    target = value.import_target or value.name
+    module_name = target.rsplit(".", 1)[0] if "." in target else target
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, ModuleNotFoundError, ValueError):
+        spec = None
+    origin = getattr(spec, "origin", None)
+    if origin and origin.endswith((".py", ".pyi")):
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+        factory_panic_gap(
+            owner="ImportAliasValue",
+            blame=blame,
+            observed=target,
+            requested="dig installed import source before applying floor operation",
+            fix=f"route `{shape}` through install_source_dig for source `{origin}`",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+
+    from sugar_lift_py_tests.effect import (
+        ImportedModuleRuntimeEffect,
+        RuntimeEffectWitness,
+    )
+    from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.outcome import Incomplete
+
+    operand = value.to_term(owner="ImportedModuleRuntimeEffect")
 
     return Incomplete(
         ImportedModuleRuntimeEffect(
@@ -184,6 +214,14 @@ def _runtime_alias_effect_at_site(
             f"`{value.bound_name} -> {value.name}` at runtime. "
             "The alias floor records name binding only; it does not fabricate "
             "module object semantics. "
-            f"replacement={replacement}; blame={blame}"
+            f"replacement={replacement}; blame={blame}",
+            witness=RuntimeEffectWitness(
+                operation=ctor(
+                    "python:import_floor_operation",
+                    [str_const(replacement), str_const(shape)],
+                ),
+                operand=operand,
+                locus=blame,
+            ),
         )
     )
