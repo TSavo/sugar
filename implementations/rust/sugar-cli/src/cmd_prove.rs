@@ -211,9 +211,8 @@ pub(crate) fn build_prove_artifact_with_options(
 
     // #3809 PR A: CLI is the client that reads config.toml. Solve receives
     // signers + solvers already on RunnerConfig — never re-opens config.
-    let solvers_config = SolversConfig::load(project_root).map_err(|e| {
-        format!("load solvers from .sugar/config.toml: {e}")
-    })?;
+    let solvers_config = SolversConfig::load(project_root)
+        .map_err(|e| format!("load solvers from .sugar/config.toml: {e}"))?;
     // #3809 cut #2: CLI hashes named run inputs; solve does not open them.
     let link_bundle_cid =
         sugar_verifier::runner::hash_named_project_artifact(project_root, "link-bundle.json");
@@ -274,10 +273,7 @@ pub(crate) fn build_prove_artifact_with_options(
 
 /// #3809 cut #8: solve seals the proof-run in memory; the CLI face persists
 /// durable receipts under `project_root/.sugar/runs/`.
-fn cli_persist_proof_run(
-    project_root: &Path,
-    mut artifact: ProofRunArtifact,
-) -> ProofRunArtifact {
+fn cli_persist_proof_run(project_root: &Path, mut artifact: ProofRunArtifact) -> ProofRunArtifact {
     if artifact.bundle_bytes.is_empty() {
         return artifact;
     }

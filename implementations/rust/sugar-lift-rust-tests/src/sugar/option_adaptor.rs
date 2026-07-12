@@ -1703,8 +1703,9 @@ mod symbolic_collapse_family_tests {
         let sugar_ir_compiler::CompilerInput::Formula(ir_formula) = input else {
             panic!("expected a formula input");
         };
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(ir_formula.formula())
-            .expect("guarded-split formula must compile to SMT-LIB");
+        let parts =
+            sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(ir_formula.formula())
+                .expect("guarded-split formula must compile to SMT-LIB");
         let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
         let path = std::env::temp_dir().join(format!("sugar_3445_collapse_{label}.smt2"));
         std::fs::write(&path, &script).expect("write smt2");
@@ -1728,7 +1729,9 @@ mod symbolic_collapse_family_tests {
         let split = match symbolic_unwrap_or_guarded_split(carrier, "unwrap_or", &r, default) {
             Outcome::Complete(Desugared::Term(term)) => term,
             Outcome::Complete(_) => panic!("expected a Term, got a non-Term Desugared"),
-            Outcome::Incomplete(_) => panic!("expected a completed guarded-split term, got Incomplete"),
+            Outcome::Incomplete(_) => {
+                panic!("expected a completed guarded-split term, got Incomplete")
+            }
         };
         let (is_present, selector) = match carrier {
             Carrier::Option => (ADT_IS_SOME, OPT_SOME_SELECTOR),
@@ -1744,10 +1747,7 @@ mod symbolic_collapse_family_tests {
             num(5),
         );
         let claim_fact = eq(split, num(claimed));
-        sugar_ir_symbolic::connective_(
-            "and",
-            vec![is_present_fact, payload_fact, claim_fact],
-        )
+        sugar_ir_symbolic::connective_("and", vec![is_present_fact, payload_fact, claim_fact])
     }
 
     #[test]
@@ -1800,7 +1800,8 @@ mod symbolic_collapse_family_tests {
         // it must refuse by NAME -- never guess a family, never panic.
         let r = make_var("r");
         let default = num(9);
-        let outcome = symbolic_unwrap_or_guarded_split(Carrier::Any, "unwrap_or_default", &r, default);
+        let outcome =
+            symbolic_unwrap_or_guarded_split(Carrier::Any, "unwrap_or_default", &r, default);
         match outcome {
             Outcome::Incomplete(Effect::UnestablishableMonadicFamily { method }) => {
                 assert_eq!(method, "unwrap_or_default");

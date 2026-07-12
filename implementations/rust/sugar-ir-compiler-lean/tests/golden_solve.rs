@@ -164,10 +164,7 @@ fn lake_env_lean_discharges_the_golden_script_and_refutes_its_bad_twin() {
         return;
     };
 
-    let dir = std::env::temp_dir().join(format!(
-        "sugar-lean-golden-solve-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("sugar-lean-golden-solve-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create scratch dir");
 
     let golden_script = compile_script(golden_fixture());
@@ -177,7 +174,10 @@ fn lake_env_lean_discharges_the_golden_script_and_refutes_its_bad_twin() {
         "golden_solve must exercise the exact same script golden_compile pins"
     );
     let (ok, out) = lake_env_lean(&project, &dir, "golden", &golden_script);
-    assert!(ok, "lake env lean must discharge the golden fixture; output:\n{out}");
+    assert!(
+        ok,
+        "lake env lean must discharge the golden fixture; output:\n{out}"
+    );
     assert!(
         !out.contains("sorryAx") && !out.contains("declaration uses 'sorry'"),
         "golden fixture must discharge without sorry; output:\n{out}"

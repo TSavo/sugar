@@ -26,7 +26,6 @@ use std::sync::{Arc, OnceLock};
 
 use base64::Engine;
 use libsugar::canonical::local_op_cid as canonical_local_op_cid;
-use sugar_ir_types::panic_freedom;
 use quote::ToTokens;
 use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
@@ -34,6 +33,7 @@ use sugar_claim_envelope::{
     body_discharge_policy_from_object, body_discharge_policy_from_object_with_default,
     BodyDischargePolicyWarning, KIT_DECLARATION_RPC_METHOD,
 };
+use sugar_ir_types::panic_freedom;
 use sugar_ir_types::{EvidenceMemento, IrFormula, IrTerm, SourceKind};
 use sugar_lift_contracts::lift_file_with_docstring_evidence;
 use sugar_walk::emit::{rust_function_term_json_for_file, shadow_proof_ir_cid, shadow_to_proof_ir};
@@ -8376,8 +8376,8 @@ fn rust_source_type_to_concept_hub_sort_cid(
     rust_type: &str,
     expansions: &mut Vec<sugar_walk::source_aliases::ParametricSortExpansion>,
 ) -> Option<String> {
-    let aliases = RUST_ALIASES
-        .get_or_init(|| sugar_walk::source_aliases::load_kit_source_aliases("rust"));
+    let aliases =
+        RUST_ALIASES.get_or_init(|| sugar_walk::source_aliases::load_kit_source_aliases("rust"));
     sugar_walk::source_aliases::rust_type_to_sort_cid(rust_type, aliases, expansions)
 }
 
@@ -10209,7 +10209,6 @@ mod tests {
     use super::*;
     use libsugar::core::Term;
     use std::collections::BTreeSet;
-    use sugar_walk::{bind_result_payload, bind_term_document, BindOptions};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
     use sugar_claim_envelope::{
@@ -10222,6 +10221,7 @@ mod tests {
         ProofEnvelopeInput, ProofGraph,
     };
     use sugar_walk::source_oracle::block_to_ast_template;
+    use sugar_walk::{bind_result_payload, bind_term_document, BindOptions};
 
     // ---- Source Oracle + materialize (#1359) --------------------------------
 

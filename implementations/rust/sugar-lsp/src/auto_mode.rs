@@ -123,9 +123,7 @@ pub fn ensure_downloaded_sources(module: &str) -> Result<(PathBuf, String), Stri
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
     let v: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
-        format!(
-            "download_package_sources bad JSON: {e}; stdout={stdout:?} stderr={stderr:?}"
-        )
+        format!("download_package_sources bad JSON: {e}; stdout={stdout:?} stderr={stderr:?}")
     })?;
     if v.get("ok").and_then(|x| x.as_bool()) != Some(true) {
         let err = v
@@ -138,32 +136,17 @@ pub fn ensure_downloaded_sources(module: &str) -> Result<(PathBuf, String), Stri
         .get("root")
         .and_then(|x| x.as_str())
         .ok_or_else(|| "download ok but missing root".to_string())?;
-    let via = v
-        .get("via")
-        .and_then(|x| x.as_str())
-        .unwrap_or("download");
-    let name = v
-        .get("name")
-        .and_then(|x| x.as_str())
-        .unwrap_or(module);
-    let version = v
-        .get("version")
-        .and_then(|x| x.as_str())
-        .unwrap_or("?");
-    let source_url = v
-        .get("source_url")
-        .and_then(|x| x.as_str())
-        .unwrap_or("");
-    let log = format!(
-        "download-sources: {name}@{version} via={via} root={root} url={source_url}"
-    );
+    let via = v.get("via").and_then(|x| x.as_str()).unwrap_or("download");
+    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or(module);
+    let version = v.get("version").and_then(|x| x.as_str()).unwrap_or("?");
+    let source_url = v.get("source_url").and_then(|x| x.as_str()).unwrap_or("");
+    let log = format!("download-sources: {name}@{version} via={via} root={root} url={source_url}");
     let path = PathBuf::from(root);
     if !path.is_dir() {
         return Err(format!("download root missing: {}", path.display()));
     }
     Ok((path, log))
 }
-
 
 pub fn extract_top_level_imports(source: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -216,12 +199,12 @@ pub fn resolve_module_path(module: &str) -> Result<PathBuf, String> {
     let py = python_bin();
     let code = format!(
         "import importlib.util,os,sys;\
-spec=importlib.util.find_spec({mod:?});\
-sys.exit(2) if spec is None else None;\
-paths=list(spec.submodule_search_locations or []);\
-print(paths[0]) if paths else (\
-  print(os.path.dirname(os.path.abspath(spec.origin))) if (spec.origin and spec.origin!='built-in') else sys.exit(3)\
-)",
+    spec=importlib.util.find_spec({mod:?});\
+    sys.exit(2) if spec is None else None;\
+    paths=list(spec.submodule_search_locations or []);\
+    print(paths[0]) if paths else (\
+    print(os.path.dirname(os.path.abspath(spec.origin))) if (spec.origin and spec.origin!='built-in') else sys.exit(3)\
+    )",
         mod = module
     );
     let out = Command::new(&py)
@@ -294,9 +277,7 @@ fn source_tree_cid(root: &Path) -> Result<String, String> {
 
 /// Stable filesystem token for source_cid (no path separators).
 fn source_cid_token(source_cid: &str) -> String {
-    let hex = source_cid
-        .strip_prefix("blake3-512:")
-        .unwrap_or(source_cid);
+    let hex = source_cid.strip_prefix("blake3-512:").unwrap_or(source_cid);
     // Keep it filename-safe and bounded.
     hex.chars()
         .filter(|c| c.is_ascii_hexdigit())
@@ -500,10 +481,7 @@ pub fn warm_disk_auto_cache(project_root: &Path) -> Vec<String> {
             Ok(b) => b,
             Err(_) => continue,
         };
-        let proof_cid = format!(
-            "blake3-512:{}",
-            sugar_canonicalizer::blake3_512_hex(&bytes)
-        );
+        let proof_cid = format!("blake3-512:{}", sugar_canonicalizer::blake3_512_hex(&bytes));
         cache_put(CachedAutoProof {
             source_cid: source_cid.clone(),
             proof_cid,
@@ -542,7 +520,10 @@ fn persist_disk_cache(
     Ok(())
 }
 
-fn load_shipped_as_proof_bytes(module: &str, paths: &[PathBuf]) -> Result<Option<ProofBytes>, String> {
+fn load_shipped_as_proof_bytes(
+    module: &str,
+    paths: &[PathBuf],
+) -> Result<Option<ProofBytes>, String> {
     if paths.is_empty() {
         return Ok(None);
     }
@@ -553,10 +534,7 @@ fn load_shipped_as_proof_bytes(module: &str, paths: &[PathBuf]) -> Result<Option
             Ok(b) if !b.is_empty() => b,
             _ => continue,
         };
-        let proof_cid = format!(
-            "blake3-512:{}",
-            sugar_canonicalizer::blake3_512_hex(&bytes)
-        );
+        let proof_cid = format!("blake3-512:{}", sugar_canonicalizer::blake3_512_hex(&bytes));
         match ProofBytes::try_from_parts(
             format!("shipped:{module}"),
             proof_cid,
@@ -612,10 +590,8 @@ fn stage_vendor_project(module: &str, module_root: &Path) -> Result<PathBuf, Str
     }
 
     // PYTHONPATH: kit + staged tree + src-layout package root if present.
-    let mut path_entries: Vec<String> = vec![
-        kit.display().to_string(),
-        src_dst.display().to_string(),
-    ];
+    let mut path_entries: Vec<String> =
+        vec![kit.display().to_string(), src_dst.display().to_string()];
     let src_layout = src_dst.join("src");
     if src_layout.is_dir() {
         path_entries.push(src_layout.display().to_string());
@@ -748,10 +724,8 @@ fn seal_cold_module(
     if disk_path.is_file() {
         if let Ok(bytes) = fs::read(&disk_path) {
             if !bytes.is_empty() {
-                let proof_cid = format!(
-                    "blake3-512:{}",
-                    sugar_canonicalizer::blake3_512_hex(&bytes)
-                );
+                let proof_cid =
+                    format!("blake3-512:{}", sugar_canonicalizer::blake3_512_hex(&bytes));
                 cache_put(CachedAutoProof {
                     source_cid: source_cid.clone(),
                     proof_cid: proof_cid.clone(),
@@ -812,10 +786,7 @@ fn pool_covers_module(pool: &MementoPool, module: &str) -> bool {
         return true;
     }
     // Speaker ids we stamp: auto-lift:{m}, shipped:{m}
-    let needles = [
-        format!("auto-lift:{module}"),
-        format!("shipped:{module}"),
-    ];
+    let needles = [format!("auto-lift:{module}"), format!("shipped:{module}")];
     // Walk member_speaker map if accessible
     for (_cid, speaker) in pool.member_speaker.iter() {
         let id = speaker.id.as_str();
@@ -860,9 +831,7 @@ pub fn auto_lift_cold_imports_into_pool(
         }
         match seal_cold_module(project_root, &m) {
             Ok(Some((pb, origin))) => {
-                logs.push(format!(
-                    "auto-lift: {m} cold → sealed via {origin:?}"
-                ));
+                logs.push(format!("auto-lift: {m} cold → sealed via {origin:?}"));
                 batch.push(pb);
             }
             Ok(None) => {
@@ -960,6 +929,9 @@ from typing import List
         // Do not assert global env; just ensure function is callable.
         let _ = download_sources_enabled();
         let _ = sources_cache_dir();
-        assert!(download_sources_script().is_file(), "helper script must ship in crate");
+        assert!(
+            download_sources_script().is_file(),
+            "helper script must ship in crate"
+        );
     }
 }

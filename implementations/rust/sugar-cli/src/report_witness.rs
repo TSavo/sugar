@@ -199,7 +199,8 @@ impl WitnessMintOptions {
 
 #[derive(Debug, Clone)]
 pub(crate) enum WitnessSource {
-    #[allow(dead_code)] // constructed via WitnessSource::{report,command,file} from cmd_prove (binary) and report_witness unit tests
+    #[allow(dead_code)]
+    // constructed via WitnessSource::{report,command,file} from cmd_prove (binary) and report_witness unit tests
     Report(ReportWitnessSource),
     Command(CommandWitnessSource),
     File(FileWitnessSource),

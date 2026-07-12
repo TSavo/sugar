@@ -297,7 +297,12 @@ fn write_static_mock_lifter(project: &Path, surface: &str, lift_result: &Value) 
 }
 
 /// DYNAMIC mock: GOOD_MARKER in overlay `src/lib.rs` selects good IR.
-fn write_dynamic_mock_lifter(project: &Path, surface: &str, good_result: &Value, bad_result: &Value) {
+fn write_dynamic_mock_lifter(
+    project: &Path,
+    surface: &str,
+    good_result: &Value,
+    bad_result: &Value,
+) {
     write_enumerate_mock_kit(project, surface, "dynamic", good_result, bad_result);
 }
 
@@ -425,7 +430,9 @@ impl LspServer {
     fn send(&mut self, msg: &Value) {
         let body = serde_json::to_string(msg).unwrap();
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
-        self.stdin.write_all(header.as_bytes()).expect("write header");
+        self.stdin
+            .write_all(header.as_bytes())
+            .expect("write header");
         self.stdin.write_all(body.as_bytes()).expect("write body");
         self.stdin.flush().expect("flush");
     }
@@ -547,7 +554,10 @@ fn in_process_did_open_bad_twin_reports_three_fact_contradiction() {
 
     let mut lsp = LspServer::spawn_in_process(&missing_config_path("open-bad"));
     let init_resp = lsp.initialize(&root_uri);
-    assert!(init_resp.get("result").is_some(), "initialize failed: {init_resp}");
+    assert!(
+        init_resp.get("result").is_some(),
+        "initialize failed: {init_resp}"
+    );
     lsp.initialized();
 
     let bad_source = "// BAD_MARKER: fn check(a,b) asserted == 6\n";
@@ -582,7 +592,10 @@ fn in_process_did_open_bad_twin_reports_three_fact_contradiction() {
         .and_then(|m| m.as_str())
         .unwrap_or("");
     assert!(message.contains("Vendor fact:"), "message: {message}");
-    assert!(message.contains("Vendor universe:") || true, "message: {message}");
+    assert!(
+        message.contains("Vendor universe:") || true,
+        "message: {message}"
+    );
     assert!(message.contains("Your fact:"), "message: {message}");
     assert!(message.contains("Conjoined:"), "message: {message}");
     assert!(message.contains("UNSAT"), "message: {message}");
@@ -620,8 +633,16 @@ fn in_process_did_change_to_good_twin_clears_diagnostics() {
     let opened = lsp
         .wait_for_publish_diagnostics(&file_uri, Duration::from_secs(20))
         .unwrap_or_else(|| panic!("no publishDiagnostics after didOpen (bad twin)"));
-    let opened_diags = opened.get("diagnostics").and_then(|d| d.as_array()).cloned().unwrap_or_default();
-    assert_eq!(opened_diags.len(), 1, "bad twin must open red: {opened_diags:?}");
+    let opened_diags = opened
+        .get("diagnostics")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        opened_diags.len(),
+        1,
+        "bad twin must open red: {opened_diags:?}"
+    );
 
     // didChange to the GOOD twin: the mock lifter re-reads this exact buffer
     // content off the overlay path and picks the agreeing (==5) response.
@@ -680,7 +701,10 @@ fn in_process_proof_watcher_event_reflects_through_the_same_one_function() {
 
     let mut lsp = LspServer::spawn_in_process(&missing_config_path("proof-watcher"));
     let init_resp = lsp.initialize(&root_uri);
-    assert!(init_resp.get("result").is_some(), "initialize failed: {init_resp}");
+    assert!(
+        init_resp.get("result").is_some(),
+        "initialize failed: {init_resp}"
+    );
     lsp.initialized();
 
     // didOpen the BAD twin (asserts == 6). No vendor proof is staged, so
@@ -700,7 +724,11 @@ fn in_process_proof_watcher_event_reflects_through_the_same_one_function() {
     let opened = lsp
         .wait_for_publish_diagnostics(&file_uri, Duration::from_secs(20))
         .unwrap_or_else(|| panic!("no publishDiagnostics after didOpen (no vendor proof yet)"));
-    let opened_diags = opened.get("diagnostics").and_then(|d| d.as_array()).cloned().unwrap_or_default();
+    let opened_diags = opened
+        .get("diagnostics")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
     assert!(
         opened_diags.is_empty(),
         "no vendor proof staged yet: nothing to contradict: {opened_diags:?}"

@@ -99,9 +99,7 @@
 use serde_json::Value as Json;
 
 use libsugar::core::types::Term;
-use libsugar::wp::{
-    self, lower_term, OpContractInfo, OpContractResolver, SlotInfo, WpError,
-};
+use libsugar::wp::{self, lower_term, OpContractInfo, OpContractResolver, SlotInfo, WpError};
 use sugar_ir_types::{IrFormula, IrTerm};
 
 use crate::types::{BundleScopedCallsiteKey, CallSite, MementoCid, MementoPool, StoredMember};
@@ -1219,8 +1217,8 @@ fn extract_eq_nested_reduce_obligation(
 #[cfg(test)]
 mod discharge_method_tests {
     use super::*;
-    use sugar_ir_types::panic_freedom;
     use serde_json::json;
+    use sugar_ir_types::panic_freedom;
 
     fn ok_ctor(arg: &str) -> Json {
         json!({"kind": "ctor", "name": "Ok", "args": [{"kind": "var", "name": arg}]})
@@ -1478,8 +1476,8 @@ mod callee_post_guard_fact_tests {
     //!   - a `var` arg_term (not a call) does NOT yield a fact (structural).
     use super::*;
     use crate::types::{CallSite, MementoPool};
-    use sugar_ir_types::panic_freedom;
     use serde_json::json;
+    use sugar_ir_types::panic_freedom;
 
     // CIDs for hand-built contracts in these tests.
     const TOTAL_CONTRACT_LABEL: &str = "serde-value-totality";

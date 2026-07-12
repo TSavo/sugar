@@ -10,7 +10,11 @@ use sugar_verifier::superposition::{reports_from_report, Strength, Superposition
 use sugar_verifier::{LoadError, ObligationVerdict, Report};
 
 pub fn report_to_json(r: &Report) -> Json {
-    let rows: Vec<Json> = r.rows.iter().map(sugar_verifier::report::row_to_json).collect();
+    let rows: Vec<Json> = r
+        .rows
+        .iter()
+        .map(sugar_verifier::report::row_to_json)
+        .collect();
     let load_errors: Vec<Json> = r.load_errors.iter().map(load_error_to_json).collect();
     let call_edges: Vec<Json> = r
         .call_edges

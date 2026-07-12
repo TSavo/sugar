@@ -591,11 +591,8 @@ impl Runner {
         )?;
         // #3809 cut #8: always seal in memory. Faces persist via
         // `persist_proof_run_to_project` if they want a durable receipt.
-        let (bundle_cid, bundle_bytes) = write_proof_run_bundle(
-            &memento,
-            &stages,
-            self.cfg.plan_artifact.as_ref(),
-        )?;
+        let (bundle_cid, bundle_bytes) =
+            write_proof_run_bundle(&memento, &stages, self.cfg.plan_artifact.as_ref())?;
 
         Ok(ProofRunArtifact {
             report,
@@ -1138,11 +1135,7 @@ fn discover_input_artifact_cids_from_pool(
     pool: &MementoPool,
     cfg: &RunnerConfig,
 ) -> BTreeSet<String> {
-    let mut cids: BTreeSet<String> = pool
-        .mementos
-        .keys()
-        .map(|cid| cid.to_string())
-        .collect();
+    let mut cids: BTreeSet<String> = pool.mementos.keys().map(|cid| cid.to_string()).collect();
     for proof in &cfg.extra_proofs {
         cids.insert(sugar_canonicalizer::blake3_512_of(&proof.bytes));
     }
@@ -1766,13 +1759,7 @@ fn work_one(
                 if let (Some((_, post_hash)), Some(pre_hash)) =
                     (producer_post.as_ref(), consumer_pre_hash.as_ref())
                 {
-                    queue_proven_implication(
-                        minted_sink,
-                        post_hash,
-                        pre_hash,
-                        "tier3a-tactic",
-                        0,
-                    );
+                    queue_proven_implication(minted_sink, post_hash, pre_hash, "tier3a-tactic", 0);
                 }
                 return (
                     cs.clone(),
@@ -1941,24 +1928,13 @@ fn work_one(
         {
             let prover_tag = invs
                 .first()
-                .map(|inv| {
-                    format!(
-                        "{}@{}",
-                        inv.result.solver_name, inv.result.solver_version
-                    )
-                })
+                .map(|inv| format!("{}@{}", inv.result.solver_name, inv.result.solver_version))
                 .unwrap_or_else(|| "tier3-discharged".to_string());
             let prover_run_ms = invs
                 .first()
                 .map(|inv| inv.result.wall_clock.as_millis() as i64)
                 .unwrap_or(0);
-            queue_proven_implication(
-                minted_sink,
-                post_hash,
-                pre_hash,
-                &prover_tag,
-                prover_run_ms,
-            );
+            queue_proven_implication(minted_sink, post_hash, pre_hash, &prover_tag, prover_run_ms);
         }
     }
     if verdict != ObligationVerdict::Discharged && verdict != ObligationVerdict::Disagreement {
@@ -2353,12 +2329,8 @@ mod consistency_owned_callsite_tests {
         );
 
         let project_root = make_unique_cache_dir("plan-artifact-bundle");
-        let (bundle_cid, bytes) = write_proof_run_bundle(
-            &memento,
-            &[stage],
-            Some(&plan_artifact),
-        )
-        .expect("proof-run bundle");
+        let (bundle_cid, bytes) = write_proof_run_bundle(&memento, &[stage], Some(&plan_artifact))
+            .expect("proof-run bundle");
         // Face-side persist (solve never writes).
         let bundle_path =
             persist_proof_run_to_project(&project_root, &bundle_cid, &bytes).expect("persist");
@@ -2456,9 +2428,9 @@ mod prove_then_feed_teeth {
         let pool = MementoPool::default();
         match pool.can_implies(&post_hash, &pre_hash) {
             ImplicationResult::Unknown => {}
-            other => panic!(
-                "lying twin must not be in pool; Tier 0c must be Unknown, got {other:?}"
-            ),
+            other => {
+                panic!("lying twin must not be in pool; Tier 0c must be Unknown, got {other:?}")
+            }
         }
     }
 
@@ -2497,7 +2469,10 @@ mod prove_then_feed_teeth {
         let a = mint_proven_implication_memento(&post_hash, &pre_hash, "p", 0).unwrap();
         let b = mint_proven_implication_memento(&post_hash, &pre_hash, "p", 0).unwrap();
         assert_eq!(a.0, b.0, "same discharged edge must mint identical CID");
-        assert_eq!(a.1, b.1, "same discharged edge must mint identical envelope bytes");
+        assert_eq!(
+            a.1, b.1,
+            "same discharged edge must mint identical envelope bytes"
+        );
     }
 
     /// queue_proven_implication + post-fanout insert path (production insert shape).

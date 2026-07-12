@@ -171,7 +171,10 @@ mod tests {
         let target = project_root.join("src").join("lib.rs");
         let rows = vec![row("discharged", "src/lib.rs", 3, Json::Null)];
         let diags = build_row_diags(&rows, &target, &project_root);
-        assert!(diags.is_empty(), "discharged rows must not squiggle: {diags:?}");
+        assert!(
+            diags.is_empty(),
+            "discharged rows must not squiggle: {diags:?}"
+        );
     }
 
     #[test]
@@ -180,6 +183,9 @@ mod tests {
         let target = project_root.join("src").join("lib.rs");
         let rows = vec![row("unsatisfied", "vendor/internal_test.py", 9, Json::Null)];
         let diags = build_row_diags(&rows, &target, &project_root);
-        assert!(diags.is_empty(), "vendor-anchored rows must not paint the consumer buffer: {diags:?}");
+        assert!(
+            diags.is_empty(),
+            "vendor-anchored rows must not paint the consumer buffer: {diags:?}"
+        );
     }
 }

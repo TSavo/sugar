@@ -395,7 +395,7 @@ fn atomic_eq_named(name: &str) -> sugar_ir_types::IrFormula {
 #[test]
 fn seal_obligation_is_pure_function_same_post_pre_same_cids() {
     use sugar_claim_envelope::{
-        seal_spoken_obligation, spoken_obligation_content_cid, formula_endpoint_cid,
+        formula_endpoint_cid, seal_spoken_obligation, spoken_obligation_content_cid,
         OBLIGATION_ANTECEDENT_SLOT, OBLIGATION_CONSEQUENT_SLOT,
     };
     let post = atomic_eq_named("post_holds");

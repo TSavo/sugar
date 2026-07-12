@@ -730,7 +730,10 @@ fn proof_bytes_intake_honors_constructed_speaker_role() {
         &mut pool,
     );
     assert!(pool.load_errors.is_empty(), "{:#?}", pool.load_errors);
-    assert!(!pool.member_speaker.is_empty(), "members must be attributed");
+    assert!(
+        !pool.member_speaker.is_empty(),
+        "members must be attributed"
+    );
 
     let vendor_members = pool
         .member_speaker

@@ -154,7 +154,9 @@ sync_paths=(
 )
 "#,
     );
-    let runs = temp.path().join("examples/planted-showcase/good/.sugar/runs");
+    let runs = temp
+        .path()
+        .join("examples/planted-showcase/good/.sugar/runs");
     fs::create_dir_all(&runs).expect("mkdir runs");
     fs::write(runs.join("blake3-512_planted.proof"), "run product").expect("write run product");
 
@@ -415,10 +417,7 @@ fn is_tracked_dir(tracked: Option<&BTreeSet<String>>, rel_path: &str) -> bool {
     })
 }
 
-fn collect_artifacts(
-    root: &Path,
-    tracked: Option<&BTreeSet<String>>,
-) -> io::Result<Vec<Artifact>> {
+fn collect_artifacts(root: &Path, tracked: Option<&BTreeSet<String>>) -> io::Result<Vec<Artifact>> {
     let mut artifacts = BTreeSet::new();
     collect_artifacts_from(root, root, tracked, &mut artifacts)?;
     Ok(artifacts.into_iter().collect())

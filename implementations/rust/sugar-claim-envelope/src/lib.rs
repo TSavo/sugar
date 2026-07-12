@@ -1584,7 +1584,7 @@ pub fn spoken_obligation_proof_bytes(
     pre: &sugar_ir_types::IrFormula,
 ) -> (MintedEnvelope, Vec<u8>, String) {
     use sugar_proof_envelope::{
-        ed25519_pubkey_string, build_proof_envelope, ImplicationMemento, ProofEnvelopeInput,
+        build_proof_envelope, ed25519_pubkey_string, ImplicationMemento, ProofEnvelopeInput,
         ProofGraph,
     };
     let sealed = seal_spoken_obligation(post, pre);

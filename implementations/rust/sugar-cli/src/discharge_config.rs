@@ -363,13 +363,13 @@ mod tests {
         let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
 
         // project_dir is canonicalized.
-        assert_eq!(
-            config.project_dir,
-            Some(dir.path().canonicalize().unwrap())
-        );
+        assert_eq!(config.project_dir, Some(dir.path().canonicalize().unwrap()));
         // Resolver entry carries argv + working_dir + default method.
         assert_eq!(config.resolvers.len(), 1);
-        assert_eq!(config.resolvers[0]["argv"], json!(["resolve-cmd", "--json"]));
+        assert_eq!(
+            config.resolvers[0]["argv"],
+            json!(["resolve-cmd", "--json"])
+        );
         assert_eq!(
             config.resolvers[0]["method"],
             json!("sugar.plugin.resolve_witness")
@@ -377,7 +377,9 @@ mod tests {
         // Discharge key is uppercased with non-alphanumerics replaced by `_`,
         // value is the space-joined argv.
         assert_eq!(
-            config.discharge_commands.get("SUGAR_WITNESS_DISCHARGE_MY_TOOL_9"),
+            config
+                .discharge_commands
+                .get("SUGAR_WITNESS_DISCHARGE_MY_TOOL_9"),
             Some(&"discharge --tool my-tool.9".to_string())
         );
         assert_eq!(config.discharge_commands.len(), 1);
@@ -485,7 +487,9 @@ mod tests {
         let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
 
         assert_eq!(
-            config.discharge_commands.get("SUGAR_WITNESS_DISCHARGE_SAMETOOL"),
+            config
+                .discharge_commands
+                .get("SUGAR_WITNESS_DISCHARGE_SAMETOOL"),
             Some(&"discharge --tool sametool".to_string())
         );
         assert_eq!(config.discharge_commands.len(), 1);
@@ -520,7 +524,9 @@ witness_tool = "localtool"
         let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
 
         assert_eq!(
-            config.discharge_commands.get("SUGAR_WITNESS_DISCHARGE_LOCALTOOL"),
+            config
+                .discharge_commands
+                .get("SUGAR_WITNESS_DISCHARGE_LOCALTOOL"),
             Some(&"local-discharge".to_string())
         );
         assert!(
@@ -577,12 +583,18 @@ witness_tool = "localtool"
     #[test]
     fn manifest_lookup_warning_names_surface_and_error() {
         let msg = manifest_lookup_warning("rust-kit-3872", "no plugin manifest for surface");
-        assert!(msg.contains("rust-kit-3872"), "must name plugin.surface: {msg}");
+        assert!(
+            msg.contains("rust-kit-3872"),
+            "must name plugin.surface: {msg}"
+        );
         assert!(
             msg.contains("no plugin manifest for surface"),
             "must carry the lookup error: {msg}"
         );
-        assert!(msg.contains("skipping"), "must say the plugin was omitted: {msg}");
+        assert!(
+            msg.contains("skipping"),
+            "must say the plugin was omitted: {msg}"
+        );
     }
 
     /// Err arm: a plugin whose manifest lookup fails contributes nothing —

@@ -62,7 +62,9 @@ impl LspServer {
     fn send(&mut self, msg: &Value) {
         let body = serde_json::to_string(msg).unwrap();
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
-        self.stdin.write_all(header.as_bytes()).expect("write header");
+        self.stdin
+            .write_all(header.as_bytes())
+            .expect("write header");
         self.stdin.write_all(body.as_bytes()).expect("write body");
         self.stdin.flush().expect("flush");
     }
@@ -134,7 +136,10 @@ fn pull_diagnostic_request_is_not_method_not_found() {
 
     let mut lsp = LspServer::spawn_in_process(&missing_config_path("pull"));
     let init_resp = lsp.initialize(&root_uri);
-    assert!(init_resp.get("result").is_some(), "initialize failed: {init_resp}");
+    assert!(
+        init_resp.get("result").is_some(),
+        "initialize failed: {init_resp}"
+    );
 
     // The capability this server declares is exactly what makes a real
     // client (Neovim 0.10+, VS Code) decide to pull via

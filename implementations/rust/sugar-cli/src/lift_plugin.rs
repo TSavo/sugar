@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use libsugar::core::{
-    address, Dialect, DomainClaim, HashMapInputCatalog, Input, Path as CorePath, PathAlgebra,
-    Term, Verb,
+    address, Dialect, DomainClaim, HashMapInputCatalog, Input, Path as CorePath, PathAlgebra, Term,
+    Verb,
 };
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};

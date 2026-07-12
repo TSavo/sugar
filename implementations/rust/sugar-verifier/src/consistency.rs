@@ -638,7 +638,6 @@ fn consistency_verdict(
     }
 }
 
-
 /// Construction-closure module for dual structural equality (#4141).
 ///
 /// `DualGroundEqFace` fields are **private to this submodule**. Even the
@@ -1348,7 +1347,8 @@ struct WitnessCtxGuard {
 
 impl WitnessCtxGuard {
     fn enter(ctx: &WitnessDischargeContext) -> Self {
-        let prev = ACTIVE_WITNESS_CTX.with(|c| std::mem::replace(&mut *c.borrow_mut(), ctx.clone()));
+        let prev =
+            ACTIVE_WITNESS_CTX.with(|c| std::mem::replace(&mut *c.borrow_mut(), ctx.clone()));
         Self { prev }
     }
 }
@@ -2306,13 +2306,7 @@ fn collect_ambient_ground_callsite_facts(
         Some("and") => {
             if let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) {
                 for op in ops {
-                    collect_ambient_ground_callsite_facts(
-                        op,
-                        source,
-                        scope,
-                        provenance_kind,
-                        out,
-                    );
+                    collect_ambient_ground_callsite_facts(op, source, scope, provenance_kind, out);
                 }
             }
         }
@@ -2321,13 +2315,7 @@ fn collect_ambient_ground_callsite_facts(
                 return;
             };
             if ops.len() == 2 && eval_ground_bool(&ops[0]) == Some(true) {
-                collect_ambient_ground_callsite_facts(
-                    &ops[1],
-                    source,
-                    scope,
-                    provenance_kind,
-                    out,
-                );
+                collect_ambient_ground_callsite_facts(&ops[1], source, scope, provenance_kind, out);
             }
         }
         Some("atomic") => {
@@ -2888,11 +2876,11 @@ fn with_ambient_ground_callsite_facts(
     for fact in ambient {
         // A stated row is not independent testimony for itself. The ambient
         // replay path may only add facts sourced from other mementos.
-        if fact
-            .attribution
-            .source_cid()
-            .is_some_and(|sc| excluded_source_cids.iter().any(|source_cid| source_cid == sc))
-        {
+        if fact.attribution.source_cid().is_some_and(|sc| {
+            excluded_source_cids
+                .iter()
+                .any(|source_cid| source_cid == sc)
+        }) {
             continue;
         }
         // Exact call-term identity -- never callee name, never first-writer among
@@ -3204,10 +3192,7 @@ fn with_ambient_posts_with_instances(
     let mut operands = Vec::with_capacity(partition.kept.len() + 1);
     operands.push(inv);
     operands.extend(partition.kept.iter().map(|p| p.instantiated_post.clone()));
-    (
-        IrFormula::And(operands).to_value(),
-        partition,
-    )
+    (IrFormula::And(operands).to_value(), partition)
 }
 
 fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
@@ -3558,9 +3543,10 @@ fn build_consistency_index_filtered(
     // degraded=false (the false green). Scan BOTH kinds; `locus_from_body`
     // applies the identical field contract to each.
     let mut locus_entries: Vec<(String, SourceLocus, Option<SpeakerRole>)> = Vec::new();
-    for (cid, member) in pool.source_memento_members().chain(
-        pool.members_by_kind(sugar_proof_envelope::MemberKind::AssertionSurfaceMemento),
-    ) {
+    for (cid, member) in pool
+        .source_memento_members()
+        .chain(pool.members_by_kind(sugar_proof_envelope::MemberKind::AssertionSurfaceMemento))
+    {
         let Some(body) = pool
             .contract_body_for_member(member)
             .filter(|v| v.is_object())
@@ -3720,7 +3706,11 @@ pub fn verify_consistency_from_indexes(
         .ambient_foralls
         .iter()
         .cloned()
-        .chain(overlay.iter().flat_map(|o| o.ambient_foralls.iter().cloned()))
+        .chain(
+            overlay
+                .iter()
+                .flat_map(|o| o.ambient_foralls.iter().cloned()),
+        )
         .collect();
     let ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact> = base
         .ambient_ground_callsite_facts
@@ -3739,10 +3729,18 @@ pub fn verify_consistency_from_indexes(
     if let Some(o) = overlay {
         let seen: std::collections::HashSet<(String, String)> = ambient_posts
             .iter()
-            .map(|p| (p.binding.source_symbol.clone(), p.binding.target_cid.clone()))
+            .map(|p| {
+                (
+                    p.binding.source_symbol.clone(),
+                    p.binding.target_cid.clone(),
+                )
+            })
             .collect();
         for p in &o.ambient_posts {
-            if !seen.contains(&(p.binding.source_symbol.clone(), p.binding.target_cid.clone())) {
+            if !seen.contains(&(
+                p.binding.source_symbol.clone(),
+                p.binding.target_cid.clone(),
+            )) {
                 ambient_posts.push(p.clone());
             }
         }
@@ -3893,44 +3891,84 @@ fn process_consistency_group(
 ) -> Vec<ConsistencyResult> {
     let property_name = &property_name.to_string();
     {
-            let mut out: Vec<ConsistencyResult> = Vec::new();
+        let mut out: Vec<ConsistencyResult> = Vec::new();
 
-            // WITNESS members are settled from the rust-recomputed package body,
-            // PER MEMBER. They are NEVER folded into the symbolic conjunction
-            // AND never short-circuit the group: a witness member must not mask
-            // a contradictory inv group.
-            let mut inv_cids: Vec<String> = Vec::new();
-            let mut inv_candidates: Vec<ConsistencyCandidate> = Vec::new();
-            for candidate in members {
-                let body = &candidate.body;
-                // Answer "solver or witness?" ONCE via the discharge-strategy sum
-                // type, then dispatch. The WitnessedByExecution arm wraps
-                // `try_witness_discharge` unchanged; ProvedBySolver falls through
-                // to the symbolic group-solve path below (byte-identical control
-                // flow to the prior `if is_witness_member { try_witness_discharge }`).
-                let strategy = DischargeStrategy::classify(body);
-                if let Some(res) =
-                    strategy.discharge(body, candidate.cid.clone(), property_name.clone())
-                {
-                    out.push(res);
-                    continue;
-                }
-                inv_cids.push(candidate.cid.clone());
-                inv_candidates.push(candidate.clone());
+        // WITNESS members are settled from the rust-recomputed package body,
+        // PER MEMBER. They are NEVER folded into the symbolic conjunction
+        // AND never short-circuit the group: a witness member must not mask
+        // a contradictory inv group.
+        let mut inv_cids: Vec<String> = Vec::new();
+        let mut inv_candidates: Vec<ConsistencyCandidate> = Vec::new();
+        for candidate in members {
+            let body = &candidate.body;
+            // Answer "solver or witness?" ONCE via the discharge-strategy sum
+            // type, then dispatch. The WitnessedByExecution arm wraps
+            // `try_witness_discharge` unchanged; ProvedBySolver falls through
+            // to the symbolic group-solve path below (byte-identical control
+            // flow to the prior `if is_witness_member { try_witness_discharge }`).
+            let strategy = DischargeStrategy::classify(body);
+            if let Some(res) =
+                strategy.discharge(body, candidate.cid.clone(), property_name.clone())
+            {
+                out.push(res);
+                continue;
             }
-            if inv_candidates.is_empty() {
-                return out;
-            }
+            inv_cids.push(candidate.cid.clone());
+            inv_candidates.push(candidate.clone());
+        }
+        if inv_candidates.is_empty() {
+            return out;
+        }
 
-            // CROSS-PROOF CONJOIN only for CALLSITE-KEYED names (`#euf#`). That key
-            // is `(callee, args)`, so same name == same call == sound to conjoin a
-            // consumer's assertion with an imported vendor contract -> `and(==5,==6)`
-            // -> unsat -> refused. A bare test/location name does NOT guarantee the
-            // same subject, so those stay PER-CONTRACT (conjoining them could falsely
-            // refuse two unrelated tests that happen to share a function name).
-            let callsite_keyed = EufCoordinate::parse(property_name).is_callsite_keyed();
-            if callsite_keyed && inv_candidates.len() > 1 {
-                let invs: Vec<(Json, ProofIrProvenanceKind)> = inv_candidates
+        // CROSS-PROOF CONJOIN only for CALLSITE-KEYED names (`#euf#`). That key
+        // is `(callee, args)`, so same name == same call == sound to conjoin a
+        // consumer's assertion with an imported vendor contract -> `and(==5,==6)`
+        // -> unsat -> refused. A bare test/location name does NOT guarantee the
+        // same subject, so those stay PER-CONTRACT (conjoining them could falsely
+        // refuse two unrelated tests that happen to share a function name).
+        let callsite_keyed = EufCoordinate::parse(property_name).is_callsite_keyed();
+        if callsite_keyed && inv_candidates.len() > 1 {
+            let invs: Vec<(Json, ProofIrProvenanceKind)> = inv_candidates
+                .iter()
+                .map(|candidate| {
+                    (
+                        canonicalize_formula_json(&axiom_context_formula(&candidate.body)),
+                        candidate.provenance_kind,
+                    )
+                })
+                .collect();
+            let (inv, collapsed_same_kind_duplicate) = conjoin_distinct_provenance_witnesses(invs);
+            // #3807/#3812: the group's SOLVER INPUT (`inv`, above) stays
+            // the full conjunction of every candidate -- consumer-spoken
+            // AND vendor-spoken -- byte-identical to before this change.
+            // What changes is what gets LABELED "your fact" for the
+            // report/IDE row: partition the group's candidates by their
+            // CONSTRUCTED speaker attribution
+            // (`ConsistencyCandidate::spoken_by_vendor`, stamped at
+            // intake from which speaker each member's bytes actually
+            // came from) instead of treating the whole conjoined group
+            // as the client's own fact. `clientFactIr` is the
+            // conjunction of the CONSUMER-spoken candidates ONLY (a
+            // single candidate needs no `and` wrapper); `vendorFactIr`
+            // gathers the VENDOR-spoken candidates' equalities alongside
+            // the imported ambient sworn facts. A group with no
+            // consumer-spoken candidate at all (vendor-internal, e.g.
+            // two staged vendor mementos sharing an `#euf#` name)
+            // attaches nothing new, matching pre-#3774 behavior.
+            let (own_candidates, vendor_candidates): (Vec<_>, Vec<_>) =
+                inv_candidates.iter().partition(|c| !c.spoken_by_vendor);
+            // ONE construction (#3813 review): the client fact is built
+            // by the SAME conjoin/flatten/dedup helper that builds the
+            // solver input, restricted to the consumer-spoken
+            // candidates. For an all-consumer group this is
+            // byte-identical to the pre-partition `clientFactIr` (the
+            // whole group's flattened, provenance-deduped conjunction);
+            // for a mixed group it is that same construction minus the
+            // vendor's conjuncts.
+            let client_fact_partitioned: Option<Json> = if own_candidates.is_empty() {
+                None
+            } else {
+                let own_invs: Vec<(Json, ProofIrProvenanceKind)> = own_candidates
                     .iter()
                     .map(|candidate| {
                         (
@@ -3939,65 +3977,80 @@ fn process_consistency_group(
                         )
                     })
                     .collect();
-                let (inv, collapsed_same_kind_duplicate) =
-                    conjoin_distinct_provenance_witnesses(invs);
-                // #3807/#3812: the group's SOLVER INPUT (`inv`, above) stays
-                // the full conjunction of every candidate -- consumer-spoken
-                // AND vendor-spoken -- byte-identical to before this change.
-                // What changes is what gets LABELED "your fact" for the
-                // report/IDE row: partition the group's candidates by their
-                // CONSTRUCTED speaker attribution
-                // (`ConsistencyCandidate::spoken_by_vendor`, stamped at
-                // intake from which speaker each member's bytes actually
-                // came from) instead of treating the whole conjoined group
-                // as the client's own fact. `clientFactIr` is the
-                // conjunction of the CONSUMER-spoken candidates ONLY (a
-                // single candidate needs no `and` wrapper); `vendorFactIr`
-                // gathers the VENDOR-spoken candidates' equalities alongside
-                // the imported ambient sworn facts. A group with no
-                // consumer-spoken candidate at all (vendor-internal, e.g.
-                // two staged vendor mementos sharing an `#euf#` name)
-                // attaches nothing new, matching pre-#3774 behavior.
-                let (own_candidates, vendor_candidates): (Vec<_>, Vec<_>) =
-                    inv_candidates.iter().partition(|c| !c.spoken_by_vendor);
-                // ONE construction (#3813 review): the client fact is built
-                // by the SAME conjoin/flatten/dedup helper that builds the
-                // solver input, restricted to the consumer-spoken
-                // candidates. For an all-consumer group this is
-                // byte-identical to the pre-partition `clientFactIr` (the
-                // whole group's flattened, provenance-deduped conjunction);
-                // for a mixed group it is that same construction minus the
-                // vendor's conjuncts.
-                let client_fact_partitioned: Option<Json> = if own_candidates.is_empty() {
-                    None
-                } else {
-                    let own_invs: Vec<(Json, ProofIrProvenanceKind)> = own_candidates
-                        .iter()
-                        .map(|candidate| {
-                            (
-                                canonicalize_formula_json(&axiom_context_formula(&candidate.body)),
-                                candidate.provenance_kind,
-                            )
-                        })
-                        .collect();
-                    let (client_fact, _) = conjoin_distinct_provenance_witnesses(own_invs);
-                    Some(client_fact)
-                };
-                let vendor_spoken_equalities: Vec<Json> = vendor_candidates
-                    .iter()
-                    .map(|c| canonicalize_formula_json(&axiom_context_formula(&c.body)))
-                    .collect();
-                let current_ground_witnesses: std::collections::BTreeSet<_> = inv_candidates
-                    .iter()
-                    .flat_map(|candidate| {
-                        let scope = ambient_ground_callsite_scope(property_name);
-                        let inv =
-                            canonicalize_formula_json(&axiom_context_formula(&candidate.body));
-                        ground_callsite_witness_keys(&inv, &scope, candidate.provenance_kind)
-                            .into_iter()
-                    })
-                    .collect();
-                let (inv, ambient_partition) = with_ambient_posts_with_instances(inv, &ambient_posts);
+                let (client_fact, _) = conjoin_distinct_provenance_witnesses(own_invs);
+                Some(client_fact)
+            };
+            let vendor_spoken_equalities: Vec<Json> = vendor_candidates
+                .iter()
+                .map(|c| canonicalize_formula_json(&axiom_context_formula(&c.body)))
+                .collect();
+            let current_ground_witnesses: std::collections::BTreeSet<_> = inv_candidates
+                .iter()
+                .flat_map(|candidate| {
+                    let scope = ambient_ground_callsite_scope(property_name);
+                    let inv = canonicalize_formula_json(&axiom_context_formula(&candidate.body));
+                    ground_callsite_witness_keys(&inv, &scope, candidate.provenance_kind)
+                        .into_iter()
+                })
+                .collect();
+            let (inv, ambient_partition) = with_ambient_posts_with_instances(inv, &ambient_posts);
+            let linked_posts = ambient_partition.kept.clone();
+            let dropped_ambient_posts = ambient_partition.dropped.clone();
+            let (inv, skipped_same_kind_duplicate, vendor_facts) =
+                with_ambient_ground_callsite_facts(
+                    inv,
+                    property_name,
+                    &ambient_ground_callsite_facts,
+                    &inv_cids,
+                    &current_ground_witnesses,
+                );
+            let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
+            let mut result = if collapsed_same_kind_duplicate || skipped_same_kind_duplicate {
+                check_inv_consistency_with_vacuity_reason(
+                    inv_cids[0].clone(),
+                    property_name,
+                    inv,
+                    linked_posts,
+                    plan,
+                    registry,
+                    compilers,
+                    VacuityRefusalKind::MissingIndependentKindWitness,
+                )
+            } else {
+                check_inv_consistency(
+                    inv_cids[0].clone(),
+                    property_name,
+                    inv,
+                    linked_posts,
+                    plan,
+                    registry,
+                    compilers,
+                )
+            };
+            if let Some(client_fact_own) = &client_fact_partitioned {
+                let sworn = collect_vendor_sworn_facts(
+                    client_fact_own,
+                    &ambient_ground_callsite_facts,
+                    &inv_cids,
+                );
+                attach_conjoined_facts(
+                    &mut result,
+                    client_fact_own,
+                    &union_facts(vendor_facts, vendor_spoken_equalities),
+                    &sworn,
+                );
+            }
+            result.dropped_ambient_posts = dropped_ambient_posts;
+            out.push(result);
+        } else {
+            for candidate in &inv_candidates {
+                let original_inv =
+                    canonicalize_formula_json(&axiom_context_formula(&candidate.body));
+                let scope = ambient_ground_callsite_scope(property_name);
+                let current_ground_witnesses =
+                    ground_callsite_witness_keys(&original_inv, &scope, candidate.provenance_kind);
+                let (inv, ambient_partition) =
+                    with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
                 let linked_posts = ambient_partition.kept.clone();
                 let dropped_ambient_posts = ambient_partition.dropped.clone();
                 let (inv, skipped_same_kind_duplicate, vendor_facts) =
@@ -4005,13 +4058,13 @@ fn process_consistency_group(
                         inv,
                         property_name,
                         &ambient_ground_callsite_facts,
-                        &inv_cids,
+                        std::slice::from_ref(&candidate.cid),
                         &current_ground_witnesses,
                     );
                 let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
-                let mut result = if collapsed_same_kind_duplicate || skipped_same_kind_duplicate {
+                let mut result = if skipped_same_kind_duplicate {
                     check_inv_consistency_with_vacuity_reason(
-                        inv_cids[0].clone(),
+                        candidate.cid.clone(),
                         property_name,
                         inv,
                         linked_posts,
@@ -4022,7 +4075,7 @@ fn process_consistency_group(
                     )
                 } else {
                     check_inv_consistency(
-                        inv_cids[0].clone(),
+                        candidate.cid.clone(),
                         property_name,
                         inv,
                         linked_posts,
@@ -4031,111 +4084,51 @@ fn process_consistency_group(
                         compilers,
                     )
                 };
-                if let Some(client_fact_own) = &client_fact_partitioned {
+                // #3807/#3812: this branch processes ONE candidate at a
+                // time (no cross-proof conjoin), so `original_inv` is
+                // already that candidate's own formula with nothing else
+                // folded in. It is the client's own fact ONLY when the
+                // candidate was spoken by the consumer; a lone
+                // VENDOR-spoken candidate (a vendor-internal contract
+                // that never joined an `#euf#` group) must attach
+                // nothing new rather than mislabel a vendor fact as the
+                // client's.
+                if !candidate.spoken_by_vendor {
                     let sworn = collect_vendor_sworn_facts(
-                        client_fact_own,
+                        &original_inv,
                         &ambient_ground_callsite_facts,
-                        &inv_cids,
+                        std::slice::from_ref(&candidate.cid),
                     );
-                    attach_conjoined_facts(
-                        &mut result,
-                        client_fact_own,
-                        &union_facts(vendor_facts, vendor_spoken_equalities),
-                        &sworn,
-                    );
+                    attach_conjoined_facts(&mut result, &original_inv, &vendor_facts, &sworn);
                 }
                 result.dropped_ambient_posts = dropped_ambient_posts;
-                out.push(result);
-            } else {
-                for candidate in &inv_candidates {
-                    let original_inv =
-                        canonicalize_formula_json(&axiom_context_formula(&candidate.body));
-                    let scope = ambient_ground_callsite_scope(property_name);
-                    let current_ground_witnesses = ground_callsite_witness_keys(
-                        &original_inv,
-                        &scope,
-                        candidate.provenance_kind,
-                    );
-                    let (inv, ambient_partition) =
-                        with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
-                    let linked_posts = ambient_partition.kept.clone();
-                    let dropped_ambient_posts = ambient_partition.dropped.clone();
-                    let (inv, skipped_same_kind_duplicate, vendor_facts) =
-                        with_ambient_ground_callsite_facts(
-                            inv,
-                            property_name,
-                            &ambient_ground_callsite_facts,
-                            std::slice::from_ref(&candidate.cid),
-                            &current_ground_witnesses,
-                        );
-                    let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
-                    let mut result = if skipped_same_kind_duplicate {
-                        check_inv_consistency_with_vacuity_reason(
-                            candidate.cid.clone(),
-                            property_name,
-                            inv,
-                            linked_posts,
-                            plan,
-                            registry,
-                            compilers,
-                            VacuityRefusalKind::MissingIndependentKindWitness,
-                        )
-                    } else {
-                        check_inv_consistency(
-                            candidate.cid.clone(),
-                            property_name,
-                            inv,
-                            linked_posts,
-                            plan,
-                            registry,
-                            compilers,
-                        )
-                    };
-                    // #3807/#3812: this branch processes ONE candidate at a
-                    // time (no cross-proof conjoin), so `original_inv` is
-                    // already that candidate's own formula with nothing else
-                    // folded in. It is the client's own fact ONLY when the
-                    // candidate was spoken by the consumer; a lone
-                    // VENDOR-spoken candidate (a vendor-internal contract
-                    // that never joined an `#euf#` group) must attach
-                    // nothing new rather than mislabel a vendor fact as the
-                    // client's.
-                    if !candidate.spoken_by_vendor {
-                        let sworn = collect_vendor_sworn_facts(
-                            &original_inv,
-                            &ambient_ground_callsite_facts,
-                            std::slice::from_ref(&candidate.cid),
-                        );
-                        attach_conjoined_facts(&mut result, &original_inv, &vendor_facts, &sworn);
-                    }
-                    result.dropped_ambient_posts = dropped_ambient_posts;
-                    if !suppress_standalone_support_vacuity(
-                        property_name,
-                        candidate,
-                        &original_inv,
-                        &result,
-                    ) {
-                        out.push(result);
-                    }
+                if !suppress_standalone_support_vacuity(
+                    property_name,
+                    candidate,
+                    &original_inv,
+                    &result,
+                ) {
+                    out.push(result);
                 }
             }
-            // Stamp the group's source locus onto every result so an
-            // `unsatisfied` verdict says WHERE. All members of a group share
-            // one property_name (one call site / one assertion), so the first
-            // member with a readable `file`+`span` is the right anchor. Only
-            // fills a locus we do not already have (fail-open, never overwrite).
-            let group_locus = members
-                .iter()
-                .find_map(|c| locus_from_body(&c.body))
-                .or_else(|| locus_by_name.get(property_name).cloned());
-            if group_locus.is_some() {
-                for r in out.iter_mut() {
-                    if r.locus.is_none() {
-                        r.locus = group_locus.clone();
-                    }
+        }
+        // Stamp the group's source locus onto every result so an
+        // `unsatisfied` verdict says WHERE. All members of a group share
+        // one property_name (one call site / one assertion), so the first
+        // member with a readable `file`+`span` is the right anchor. Only
+        // fills a locus we do not already have (fail-open, never overwrite).
+        let group_locus = members
+            .iter()
+            .find_map(|c| locus_from_body(&c.body))
+            .or_else(|| locus_by_name.get(property_name).cloned());
+        if group_locus.is_some() {
+            for r in out.iter_mut() {
+                if r.locus.is_none() {
+                    r.locus = group_locus.clone();
                 }
             }
-            out
+        }
+        out
     }
 }
 
@@ -4161,17 +4154,13 @@ mod tests {
         );
         // An own-origin fact is never excluded by any real cid set.
         let excluded = [cid.clone()];
-        assert!(
-            !Attribution::OwnOrigin
-                .source_cid()
-                .is_some_and(|sc| excluded.iter().any(|c| c == sc))
-        );
+        assert!(!Attribution::OwnOrigin
+            .source_cid()
+            .is_some_and(|sc| excluded.iter().any(|c| c == sc)));
         // An imported fact IS excluded when its source cid is in the set.
-        assert!(
-            Attribution::Imported(cid.clone())
-                .source_cid()
-                .is_some_and(|sc| excluded.iter().any(|c| c == sc))
-        );
+        assert!(Attribution::Imported(cid.clone())
+            .source_cid()
+            .is_some_and(|sc| excluded.iter().any(|c| c == sc)));
     }
 
     fn test_cid(label: &str) -> MementoCid {
@@ -4200,8 +4189,8 @@ mod tests {
         );
         // to_json() is the production lowering used at the report handoff.
         assert_eq!(detail.to_json(), legacy);
-        let back: VerificationDetail =
-            serde_json::from_value(legacy).expect("legacy shape deserializes into the typed detail");
+        let back: VerificationDetail = serde_json::from_value(legacy)
+            .expect("legacy shape deserializes into the typed detail");
         assert_eq!(&back, detail, "round-trip must be lossless");
     }
 
@@ -4399,7 +4388,10 @@ mod tests {
             &[json!({"value": 5})],
             &[json!({"value": 7})],
         );
-        assert_eq!(witness.verification, before, "witness arm is not a facts sink");
+        assert_eq!(
+            witness.verification, before,
+            "witness arm is not a facts sink"
+        );
 
         let mut solver = ConsistencyResult {
             contract_cid: "c".to_string(),
@@ -4505,7 +4497,10 @@ mod tests {
         assert!(c.is_callsite_keyed());
         assert_eq!(c.scope().as_deref(), Some("src/lib.rs::tests::t"));
         assert_eq!(c.callee(), Some("enc"));
-        assert_eq!(c.euf_cid(), Some("c:callresult_enc_a1(s:\"def\")::assertion"));
+        assert_eq!(
+            c.euf_cid(),
+            Some("c:callresult_enc_a1(s:\"def\")::assertion")
+        );
 
         // Unscoped prefix (no `::` before `#euf#`): the WHOLE prefix is the
         // scope AND the callee -- mirrors the old `unwrap_or_else(prefix)`.
@@ -5041,7 +5036,6 @@ mod tests {
         );
     }
 
-
     /// `py.eq` is Python assert equality — same structural dual as IR `=`.
     /// Dual `py.eq(call:A(), 3) ∧ py.eq(call:A(), 4)` must refuse pre-SMT
     /// (CallSiteValue binary dig witnesses / logo dual-assert path).
@@ -5090,7 +5084,6 @@ mod tests {
             res[0].reason
         );
     }
-
 
     /// Scope pin: `py.eq` is NOT general reflexivity. `py.eq(x, x)` must not
     /// structural-discharge (NaN watch — Python == is non-reflexive).
@@ -6875,7 +6868,13 @@ mod tests {
             SolverSeat::Z3,
             Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
         );
-        let res = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         let point = res
             .iter()
             .find(|r| r.contract_cid == test_cid_string("blake3-512:point"))
@@ -7386,11 +7385,8 @@ mod tests {
                 method: ORACLE_RESOLVE_METHOD.to_string(),
             }],
         };
-        let claim = witness_package_claim(
-            body.get("evidence").expect("evidence"),
-            "pytest",
-        )
-        .expect("claim");
+        let claim = witness_package_claim(body.get("evidence").expect("evidence"), "pytest")
+            .expect("claim");
         let resolvers: Vec<WitnessResolver> = typed
             .resolvers
             .iter()
@@ -7403,8 +7399,7 @@ mod tests {
 
         // Path A — consistency arm (typed resolvers, no env).
         let _typed_guard = WitnessCtxGuard::enter(&typed);
-        let via_arm =
-            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
+        let via_arm = try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
         drop(_typed_guard);
 
         // Path B — explicit oracle door (resolve via kit RPC + package_outcome seal).
@@ -7541,7 +7536,13 @@ mod tests {
         let inv = ne(var("x"), none());
         let pool = pool_with_contract("test_consistent", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -7568,7 +7569,13 @@ mod tests {
         ]});
         let pool = pool_with_contract("test_contradictory", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -7600,7 +7607,13 @@ mod tests {
         });
         pool.insert_unanchored_for_tests(test_cid("bridge"), env);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert!(
             results.is_empty(),
             "pre-bearing contract must not be a consistency candidate"
@@ -7627,7 +7640,13 @@ mod tests {
         });
         pool.insert_unanchored_for_tests(test_cid("inv-post"), env);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
 
         assert_eq!(
             results.len(),
@@ -7651,7 +7670,13 @@ mod tests {
         let facts_inv = eqf(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::facts", facts_inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert!(
             results.is_empty(),
             "::facts setup-binding contract must not be a consistency candidate; got: {:?}",
@@ -7666,7 +7691,13 @@ mod tests {
         let facts_inv = eqf(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::facts::1", facts_inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert!(
             results.is_empty(),
             "::facts::N setup-binding contract must not be a consistency candidate; got: {:?}",
@@ -7685,7 +7716,13 @@ mod tests {
         let inv = ne(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             results.len(),
             1,
@@ -7705,7 +7742,13 @@ mod tests {
         let inv = ne(var("x"), none());
         let pool = pool_with_contract("test_x_consistent", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(
             results.len(),
             1,
@@ -7732,7 +7775,13 @@ mod tests {
         let inv = eqf(var("r"), string_const(r#"{"a":1}"#));
         let pool = pool_with_contract("encode_jcs::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -7762,7 +7811,13 @@ mod tests {
         ]});
         let pool = pool_with_contract("encode_jcs_two_literals::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -7785,7 +7840,13 @@ mod tests {
         let inv = eqf(var("r"), string_const(r#"{"a":"x"}"#));
         let pool = pool_with_contract("encode_jcs_brace::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_ne!(
             results[0].verdict,
@@ -7819,7 +7880,13 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_str_int::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -7838,7 +7905,13 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_none_int::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -7859,7 +7932,13 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_none_false::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -7881,7 +7960,13 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_true_one::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -7900,7 +7985,13 @@ mod tests {
         ]});
         let pool = pool_with_contract("same_str::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry, &test_compilers(), std::path::Path::new("."));
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].verdict, ObligationVerdict::Unsatisfied);
     }
@@ -8066,7 +8157,8 @@ mod tests {
             "fixture must produce at least one consistency row"
         );
         assert!(
-            warm.iter().any(|r| r.verdict == ObligationVerdict::Unsatisfied),
+            warm.iter()
+                .any(|r| r.verdict == ObligationVerdict::Unsatisfied),
             "vendor==5 ∧ consumer==6 must be Unsatisfied: {warm:?}"
         );
 

@@ -5726,15 +5726,13 @@ fn factory_audit_status_counts(rows: &[Value]) -> Value {
             "support" => support += 1,
             "unresolved" | "unclassified" => unresolved += 1,
             // factory-gap/dig-boundary deleted; absent/drifted are gaps not incomplete.
-            "boundary" | "raise-effect" | "runtime-effect" | "coverage-gap" => {
-                incomplete += 1
-            }
+            "boundary" | "raise-effect" | "runtime-effect" | "coverage-gap" => incomplete += 1,
             "absent" | "drifted" => unresolved += 1,
             "factory-gap" | "dig-boundary" => panic!(
                 "third state deleted: factory-gap/dig-boundary in factory_audit_status_counts \
                  (match(Sugar) {{ Some => cite_or_effect, None => panic!() }})"
             ),
-            other => panic!("unowned factory walk status {other:?} in status counts")
+            other => panic!("unowned factory walk status {other:?} in status counts"),
         }
     }
     json!({

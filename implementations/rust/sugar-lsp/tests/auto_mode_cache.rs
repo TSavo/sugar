@@ -29,7 +29,11 @@ print(paths[0] if paths else os.path.dirname(os.path.abspath(spec.origin)))",
         ])
         .output()
         .expect("python3");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
     assert!(PathBuf::from(&p).exists(), "{p}");
 }

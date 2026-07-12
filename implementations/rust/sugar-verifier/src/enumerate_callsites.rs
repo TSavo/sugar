@@ -6,8 +6,8 @@
 //
 // Mirrors implementations/cpp/.../verifier/enumerate_callsites.cpp.
 
-use sugar_ir_types::panic_freedom;
 use serde_json::Value as Json;
+use sugar_ir_types::panic_freedom;
 use tracing::{debug, info, warn};
 
 use crate::types::{
@@ -1221,8 +1221,8 @@ mod guard_propagation_tests {
     //! property and is pinned in `sugar-walk`'s lift tests, not here.
 
     use super::*;
-    use sugar_ir_types::panic_freedom;
     use serde_json::json;
+    use sugar_ir_types::panic_freedom;
 
     fn test_cid(label: &str) -> MementoCid {
         MementoCid::try_parse(label.to_string()).unwrap_or_else(|_| {

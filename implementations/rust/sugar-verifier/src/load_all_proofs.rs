@@ -364,13 +364,8 @@ pub(crate) fn load_bytes_into_pool(
     pool: &mut MementoPool,
     speaker: &Speaker,
 ) {
-    if let Err(e) = load_catalog_bytes(
-        source_label.to_string(),
-        expected_cid,
-        bytes,
-        pool,
-        speaker,
-    ) {
+    if let Err(e) = load_catalog_bytes(source_label.to_string(), expected_cid, bytes, pool, speaker)
+    {
         pool.load_errors.push(LoadError {
             proof_path: source_label.to_string(),
             reason: format!("read/decode: {e}"),
@@ -1103,7 +1098,10 @@ mod tests {
         // Project-root staging: the FIRST two components under root.
         let staged = Path::new("/proj/.sugar/imports/pkg/blake3-512_abc.proof");
         assert!(path_is_imported(staged, Some(root)));
-        assert_eq!(speaker_for_path(staged, Some(root)).role, SpeakerRole::Vendor);
+        assert_eq!(
+            speaker_for_path(staged, Some(root)).role,
+            SpeakerRole::Vendor
+        );
 
         // Nested subproject staging deeper in the tree: NOT the active
         // project's imports -> must be Consumer, not Vendor (the bug).

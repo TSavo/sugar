@@ -17,12 +17,12 @@ use libsugar::core::{
     Term, Verb,
 };
 use owo_colors::OwoColorize;
-use sugar_walk::{BindKit, BindOptions};
 use serde_json::Value as Json;
 use sugar_ir_types::{CompositionBoundaryMemento, Sort};
+use sugar_walk::{BindKit, BindOptions};
 
-use sugar_compiler::kit_path::{execute_path, KitRegistry, PathExecutionError};
 use crate::{EXIT_OK, EXIT_USER_ERROR};
+use sugar_compiler::kit_path::{execute_path, KitRegistry, PathExecutionError};
 
 #[derive(Parser, Debug, Clone)]
 pub struct BindArgs {

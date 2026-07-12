@@ -476,8 +476,7 @@ fn connect_or_spawn(socket_path: &Path, project_cid: &str) -> std::io::Result<Un
 
     // Inherit SUGAR_RESOLVE_ORACLE / SUGAR_RUST_ANALYZER so the oracle's
     // RA host honours the same opt-in as the cold path did.
-    let binary =
-        std::env::var("SUGAR_RA_ORACLE_BIN").unwrap_or_else(|_| "sugar-ra-oracle".into());
+    let binary = std::env::var("SUGAR_RA_ORACLE_BIN").unwrap_or_else(|_| "sugar-ra-oracle".into());
     debug!(binary = %binary, socket = %socket_path.display(), "ra-daemon: spawning sugar-ra-oracle");
     // The oracle detaches its stdio. For diagnosis, SUGAR_RA_ORACLE_LOG can
     // redirect the oracle's stderr to a file (otherwise it is discarded so the

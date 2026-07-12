@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use owo_colors::OwoColorize;
-use serde_json::{Map, Value};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use sugar_claim_envelope::contract_cid_of_ir_decl;
 use sugar_proof_envelope::Member;
@@ -152,34 +152,61 @@ pub fn run(args: LiftArgs) -> u8 {
                 trace_lift_report_response("after_lift_plugin_response", response);
             }
             if args.audit_frontier {
-                let audit: RecoveredAudit = match serde_json::from_value::<RecoveredAudit>(response.clone()) {
-                    Ok(audit) if audit.kind == "recovered-construction-audit" && audit.recovery_override => audit,
-                    Ok(_) => {
-                        eprintln!("{}: audit lifter returned the wrong artifact kind", "error".red().bold());
-                        return EXIT_VERIFY_FAIL;
-                    }
-                    Err(error) => {
-                        eprintln!("{}: invalid recovered construction audit: {error}", "error".red().bold());
-                        return EXIT_VERIFY_FAIL;
-                    }
-                };
+                let audit: RecoveredAudit =
+                    match serde_json::from_value::<RecoveredAudit>(response.clone()) {
+                        Ok(audit)
+                            if audit.kind == "recovered-construction-audit"
+                                && audit.recovery_override =>
+                        {
+                            audit
+                        }
+                        Ok(_) => {
+                            eprintln!(
+                                "{}: audit lifter returned the wrong artifact kind",
+                                "error".red().bold()
+                            );
+                            return EXIT_VERIFY_FAIL;
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "{}: invalid recovered construction audit: {error}",
+                                "error".red().bold()
+                            );
+                            return EXIT_VERIFY_FAIL;
+                        }
+                    };
                 let rendered = match serde_json::to_string_pretty(&audit) {
                     Ok(value) => format!("{value}\n"),
                     Err(error) => {
-                        eprintln!("{}: serialize recovered construction audit: {error}", "error".red().bold());
+                        eprintln!(
+                            "{}: serialize recovered construction audit: {error}",
+                            "error".red().bold()
+                        );
                         return EXIT_USER_ERROR;
                     }
                 };
-                let frontier_path = args.output.as_ref().cloned().unwrap_or_else(|| project_root.join("frontier.json"));
+                let frontier_path = args
+                    .output
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| project_root.join("frontier.json"));
                 if let Err(error) = write_output(Some(&frontier_path), rendered.as_bytes()) {
                     eprintln!("{}: {error}", "error".red().bold());
                     return EXIT_USER_ERROR;
                 }
                 eprintln!("RECOVERY OVERRIDE: wrote mandatory FactoryPanic inventory to {} (not a lift artifact)", frontier_path.display());
-                return if audit.panics.is_empty() { EXIT_OK } else { EXIT_VERIFY_FAIL };
+                return if audit.panics.is_empty() {
+                    EXIT_OK
+                } else {
+                    EXIT_VERIFY_FAIL
+                };
             }
-            if response.get("kind").and_then(Value::as_str) == Some("recovered-construction-audit") {
-                eprintln!("{}: recovered audit cannot be consumed as ProofIR or a lift report", "error".red().bold());
+            if response.get("kind").and_then(Value::as_str) == Some("recovered-construction-audit")
+            {
+                eprintln!(
+                    "{}: recovered audit cannot be consumed as ProofIR or a lift report",
+                    "error".red().bold()
+                );
                 return EXIT_VERIFY_FAIL;
             }
             if args.identify_only
@@ -3207,11 +3234,8 @@ fn render_lift_source_partition(value: &mut Value, report: &LiftSourceReport) {
         return;
     };
     let (files, claims) = lift_line_accounting_claims(report);
-    let (entries, partitions) = crate::source_partition::build_line_accounting_from_claims(
-        &files,
-        claims,
-        project_root,
-    );
+    let (entries, partitions) =
+        crate::source_partition::build_line_accounting_from_claims(&files, claims, project_root);
     value["lineAccounting"] = Value::Array(entries);
     value["lineAccountingPartition"] = Value::Array(partitions);
 }
@@ -3230,7 +3254,10 @@ fn render_lift_source_partition(value: &mut Value, report: &LiftSourceReport) {
 /// `visual_red_grounds_from_factory_row`), so JSON and visual cannot drift.
 fn lift_line_accounting_claims(
     report: &LiftSourceReport,
-) -> (Vec<String>, Vec<crate::source_partition::LineAccountingEntry>) {
+) -> (
+    Vec<String>,
+    Vec<crate::source_partition::LineAccountingEntry>,
+) {
     use crate::source_partition::{LineAccountingEntry, LineClass};
     let mut files: Vec<String> = Vec::new();
     let mut claims: Vec<LineAccountingEntry> = Vec::new();
@@ -3246,10 +3273,7 @@ fn lift_line_accounting_claims(
             let Some(span) = warrant.get("span") else {
                 continue;
             };
-            let start = span
-                .get("start_line")
-                .and_then(Value::as_u64)
-                .unwrap_or(0) as usize;
+            let start = span.get("start_line").and_then(Value::as_u64).unwrap_or(0) as usize;
             let end = span
                 .get("end_line")
                 .and_then(Value::as_u64)
@@ -5201,14 +5225,15 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
         .and_then(Value::as_u64)
         .or_else(|| assertions.get("stated").and_then(Value::as_u64))
         .unwrap_or(0);
-    let accounted = totals
-        .get("accounted")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let accounted = totals.get("accounted").and_then(Value::as_u64).unwrap_or(0);
     let silent_n = totals
         .get("silently_unaccounted")
         .and_then(Value::as_u64)
-        .or_else(|| assertions.get("silently_unaccounted").and_then(Value::as_u64))
+        .or_else(|| {
+            assertions
+                .get("silently_unaccounted")
+                .and_then(Value::as_u64)
+        })
         .unwrap_or(0);
     let min_present = totals
         .get("minority_present")
@@ -5290,9 +5315,7 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
             "crime2 dig_floors={c2_floors} warranted={c2_warranted} forged_warrant={c2_forged}\n"
         ));
         if c2_forged > 0 {
-            out.push_str(
-                "  forged warrants (RED — dig floor with no warranting assertion):\n",
-            );
+            out.push_str("  forged warrants (RED — dig floor with no warranting assertion):\n");
             if let Some(forged) = crime2.get("forged_loci").and_then(Value::as_array) {
                 for locus in forged.iter().take(32) {
                     append_unaccounted_source_block(
@@ -5357,7 +5380,11 @@ fn append_unaccounted_source_block(
         }
     } else if !preview.is_empty() {
         // Last resort: kit-provided one-line preview (not a substitute for disk).
-        out.push_str(&format!("      {:>4}| {}\n", line, ansi_paint(preview, tone)));
+        out.push_str(&format!(
+            "      {:>4}| {}\n",
+            line,
+            ansi_paint(preview, tone)
+        ));
     } else {
         out.push_str("      <source not present on disk>\n");
     }
@@ -6680,10 +6707,9 @@ fn normalized_source_status(status: Option<&str>) -> &str {
         // Generic rust-lifter boundary, plus the python factory-walk kit's
         // typed-effect family (#3632 batch 6): all are a named lift-side
         // boundary, not a verifier refusal. Collapsed to one display bucket.
-        Some("boundary")
-        | Some("raise-effect")
-        | Some("runtime-effect")
-        | Some("coverage-gap") => "boundary",
+        Some("boundary") | Some("raise-effect") | Some("runtime-effect") | Some("coverage-gap") => {
+            "boundary"
+        }
         // factory-gap / dig-boundary deleted third state: residual is unresolved gap.
         // absent / drifted are source-oracle gaps, not soft incomplete boundary.
         Some("factory-gap") | Some("dig-boundary") | Some("absent") | Some("drifted") => {
@@ -7955,10 +7981,7 @@ mod tests {
         assert_eq!(effect.effect, "GetattrRuntimeEffect");
         assert_eq!(effect.category, "runtime");
         assert_eq!(effect.status, "boundary");
-        assert_eq!(
-            effect.reason,
-            "attribute access crosses a runtime boundary"
-        );
+        assert_eq!(effect.reason, "attribute access crosses a runtime boundary");
         assert_eq!(serde_json::to_value(audit).expect("round trip"), fixture);
     }
 
@@ -8467,18 +8490,9 @@ mod tests {
                 )
             })
             .collect();
-        assert!(
-            classes.contains(&(1, "support".to_string())),
-            "{classes:?}"
-        );
-        assert!(
-            classes.contains(&(2, "support".to_string())),
-            "{classes:?}"
-        );
-        assert!(
-            classes.contains(&(3, "support".to_string())),
-            "{classes:?}"
-        );
+        assert!(classes.contains(&(1, "support".to_string())), "{classes:?}");
+        assert!(classes.contains(&(2, "support".to_string())), "{classes:?}");
+        assert!(classes.contains(&(3, "support".to_string())), "{classes:?}");
     }
 
     #[test]
@@ -9410,9 +9424,9 @@ mod tests {
         assert!(human.contains("∀ b0:Int. ∀ b1:Int. ∀ b2:Int."));
         assert!(human.contains("encodeBase64String(bytes(b0, b1, b2))"));
         assert!(human.contains("instantiated FOL:"));
-        assert!(human.contains(
-            "b0=102, b1=111, b2=111 ⊢ str.eq-bv-blocks(encodeBase64String(\"foo\")"
-        ));
+        assert!(
+            human.contains("b0=102, b1=111, b2=111 ⊢ str.eq-bv-blocks(encodeBase64String(\"foo\")")
+        );
     }
 
     #[test]
@@ -12672,7 +12686,11 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             }),
         ];
         let groups = group_contracts_for_universe_visual(&contracts);
-        assert_eq!(groups.len(), 2, "expected one merged A + one standalone assert");
+        assert_eq!(
+            groups.len(),
+            2,
+            "expected one merged A + one standalone assert"
+        );
         assert_eq!(groups[0].name, "A");
         assert_eq!(groups[0].members.len(), 2);
         assert_eq!(

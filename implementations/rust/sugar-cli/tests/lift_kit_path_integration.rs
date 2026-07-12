@@ -8,8 +8,8 @@ use libsugar::core::{
     address, ConformanceDeclaration, Dialect, DomainClaim, HashMapInputCatalog, Input, Kit,
     KitError, Path as CorePath, PathAlgebra, Term, Verb, Verdict, Witness,
 };
-use sugar_compiler::kit_path::{execute_path, KitRegistry, LiftKit, LiftPluginKit};
 use serde_json::json;
+use sugar_compiler::kit_path::{execute_path, KitRegistry, LiftKit, LiftPluginKit};
 use sugar_ir_types::Sort;
 
 fn sugar_bin() -> PathBuf {

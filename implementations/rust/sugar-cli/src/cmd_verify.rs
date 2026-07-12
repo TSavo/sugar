@@ -1806,9 +1806,18 @@ mod tests {
         assert!(rendered.contains("true"), "got: {rendered}");
         assert!(rendered.contains("<redacted>"), "got: {rendered}");
         // Negative arm: no seed bytes in any common rendering.
-        assert!(!rendered.contains("171"), "decimal seed byte leaked: {rendered}");
-        assert!(!rendered.to_lowercase().contains("ab"), "hex seed byte leaked: {rendered}");
-        assert!(!rendered.contains('['), "array rendering leaked: {rendered}");
+        assert!(
+            !rendered.contains("171"),
+            "decimal seed byte leaked: {rendered}"
+        );
+        assert!(
+            !rendered.to_lowercase().contains("ab"),
+            "hex seed byte leaked: {rendered}"
+        );
+        assert!(
+            !rendered.contains('['),
+            "array rendering leaked: {rendered}"
+        );
     }
 
     fn test_cid(label: &str) -> sugar_verifier::MementoCid {
@@ -2055,7 +2064,10 @@ mod tests {
             &obligation,
             "z3@4.x",
             &tmp,
-            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
+            &SignerConfig {
+                seed: VERIFY_SIGNER_SEED_DEV,
+                is_authoritative: false,
+            },
         )
         .expect("witness mint must succeed");
         assert!(cid.starts_with("blake3-512:"));
@@ -2236,7 +2248,10 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
+            &SignerConfig {
+                seed: VERIFY_SIGNER_SEED_DEV,
+                is_authoritative: false,
+            },
         );
         assert_eq!(
             guarded.verdict,
@@ -2263,7 +2278,10 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
+            &SignerConfig {
+                seed: VERIFY_SIGNER_SEED_DEV,
+                is_authoritative: false,
+            },
         );
         assert_ne!(
             unguarded.verdict,
@@ -2637,7 +2655,10 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
+            &SignerConfig {
+                seed: VERIFY_SIGNER_SEED_DEV,
+                is_authoritative: false,
+            },
         );
         assert_eq!(
             positive.verdict,
@@ -2666,7 +2687,10 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
+            &SignerConfig {
+                seed: VERIFY_SIGNER_SEED_DEV,
+                is_authoritative: false,
+            },
         );
         assert_ne!(
             control.verdict,
@@ -2705,7 +2729,10 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
+            &SignerConfig {
+                seed: VERIFY_SIGNER_SEED_DEV,
+                is_authoritative: false,
+            },
         );
         assert_eq!(
             positive.verdict,
@@ -2739,7 +2766,10 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
+            &SignerConfig {
+                seed: VERIFY_SIGNER_SEED_DEV,
+                is_authoritative: false,
+            },
         );
         assert_ne!(
             wrong_predicate.verdict,
@@ -2764,7 +2794,10 @@ mod tests {
             &registry,
             &test_compilers(),
             &witness_dir,
-            &SignerConfig { seed: VERIFY_SIGNER_SEED_DEV, is_authoritative: false },
+            &SignerConfig {
+                seed: VERIFY_SIGNER_SEED_DEV,
+                is_authoritative: false,
+            },
         );
         assert_ne!(
             wrong_receiver.verdict,
