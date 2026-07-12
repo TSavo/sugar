@@ -7,12 +7,13 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   pandas-wall:
     name: build pandas wall
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 45
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -32,8 +33,30 @@ jobs:
       - name: Install Python wall inputs
         run: python -m pip install --quiet pandas
 
-      - name: Build and check pandas wall
-        run: make pandas-wall
+      - name: Mint recovered pandas frontier
+        id: wall
+        shell: bash
+        run: |
+          set +e
+          make pandas-wall
+          wall_exit=$?
+          set -e
+          echo "wall_exit=$wall_exit" >> "$GITHUB_OUTPUT"
+          test -s .sugar/pandas-wall/frontier.json
+
+      - name: Publish pandas telemetry vector
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python tools/wall_frontier_telemetry.py \
+            --frontier .sugar/pandas-wall/frontier.json \
+            --wall pandas \
+            --run-url "$RUN_URL" \
+            --output .sugar/pandas-wall/telemetry.md \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          gh issue comment 4102 --repo "$GITHUB_REPOSITORY" \
+            --body-file .sugar/pandas-wall/telemetry.md
 
       - name: Upload pandas wall artifacts
         if: always()
@@ -41,4 +64,4 @@ jobs:
         with:
           name: pandas-wall
           path: .sugar/pandas-wall/
-          if-no-files-found: ignore
+          if-no-files-found: error
