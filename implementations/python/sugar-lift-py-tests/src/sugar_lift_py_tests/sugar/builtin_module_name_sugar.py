@@ -4,9 +4,9 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
-
 
 # Well-known top-level modules often referenced in tests without a local binding
 # surviving into the function temporal (or when import stmt is not yet staged).
@@ -80,6 +80,7 @@ class BuiltinModuleNameSugar(
     """
 
     name: str
+    bound_value: FloorValue | None
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -88,8 +89,12 @@ class BuiltinModuleNameSugar(
 
     @classmethod
     def new(cls, site, ctx) -> "BuiltinModuleNameSugar":
-        del ctx
-        return cls(name=site.name_id(), site=site)
+        name = site.name_id()
+        return cls(
+            name=name,
+            bound_value=ctx.temporal.value_if_bound(name),
+            site=site,
+        )
 
     @classmethod
     def witnesses(cls):
@@ -103,9 +108,9 @@ class BuiltinModuleNameSugar(
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
+        if self.bound_value is not None:
+            return Complete(self.bound_value)
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        return Complete(
-            SymbolicValue(ctor("python:module", [str_const(self.name)]))
-        )
+        return Complete(SymbolicValue(ctor("python:module", [str_const(self.name)])))

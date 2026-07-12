@@ -46,6 +46,16 @@ class RaisesWithValue(FloorValue):
             for formula in entry.post_contribution()
         )
 
+    def mint_contribution(self, name, formals):  # type: ignore[override]
+        return (
+            *self.raises_inv.mint_contribution(name, formals),
+            *(
+                row
+                for entry in self.body_entries
+                for row in entry.mint_contribution(name, formals)
+            ),
+        )
+
     def edge_contribution(self, source_contract):
         return tuple(
             edge

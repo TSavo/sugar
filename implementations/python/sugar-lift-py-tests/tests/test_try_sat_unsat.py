@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[4]
 PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
 
 
-def _run_lift_rpc(project: Path) -> dict:
+def _run_lift_rpc_process(project: Path) -> subprocess.CompletedProcess[str]:
     env = {
         **os.environ,
         "PYTHONPATH": str(PY_TESTS / "src"),
@@ -29,7 +29,7 @@ def _run_lift_rpc(project: Path) -> dict:
         ]
     )
 
-    completed = subprocess.run(
+    return subprocess.run(
         [sys.executable, "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"],
         input=request + "\n",
         text=True,
@@ -38,6 +38,9 @@ def _run_lift_rpc(project: Path) -> dict:
         env=env,
     )
 
+
+def _run_lift_rpc(project: Path) -> dict:
+    completed = _run_lift_rpc_process(project)
     assert completed.returncode == 0, completed.stderr
     responses = [
         json.loads(line) for line in completed.stdout.splitlines() if line.strip()
@@ -70,7 +73,7 @@ def _callsite_values(doc: dict, *, argument: int = 5) -> list[int]:
             continue
         inv = contract["inv"]
         assert inv["kind"] == "atomic"
-        assert inv["name"] == "="
+        assert inv["name"] == "py.eq"
         left, right = inv["args"]
         if left == _wrapped_call_term(argument):
             values.append(right["value"])
@@ -169,6 +172,40 @@ def _gt_zero_guard() -> dict:
     }
 
 
+def _except_guard(name: str) -> dict:
+    return {
+        "kind": "atomic",
+        "name": "py.except",
+        "args": [
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "String"},
+                "value": name,
+            }
+        ],
+    }
+
+
+def _threaded_try_post(body_post: dict, exception: str, handler_rhs: dict) -> dict:
+    return {
+        "kind": "and",
+        "operands": [
+            body_post,
+            {
+                "kind": "implies",
+                "operands": [
+                    _except_guard(exception),
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [{"kind": "var", "name": "out"}, handler_rhs],
+                    },
+                ],
+            },
+        ],
+    }
+
+
 def _guarded_add_post(*, true_addend: int, false_addend: int) -> dict:
     guard = _gt_zero_guard()
     return {
@@ -253,9 +290,21 @@ def test_try_body_lift_rpc_emits_callsite_values(tmp_path: Path) -> None:
     good_doc = _run_lift_rpc(good)
     bad_doc = _run_lift_rpc(bad)
 
-    assert _post_rhs(good_doc) == _add_rhs(1)
+    assert _post(good_doc) == _threaded_try_post(
+        {
+            "kind": "atomic",
+            "name": "=",
+            "args": [{"kind": "var", "name": "out"}, _add_rhs(1)],
+        },
+        "Exception",
+        {
+            "kind": "const",
+            "sort": {"kind": "primitive", "name": "Int"},
+            "value": 99,
+        },
+    )
     assert _callsite_values(good_doc) == [6]
-    assert _callsite_values(bad_doc) == [6, 7]
+    assert _callsite_values(bad_doc) == [7]
     assert "TrySugar" in _selected_sugars(good_doc)
 
 
@@ -276,48 +325,50 @@ def test_try_except_raise_lift_rpc_emits_callsite_values(
     good_doc = _run_lift_rpc(good)
     bad_doc = _run_lift_rpc(bad)
 
-    assert _post_rhs(good_doc) == _add_rhs(1)
+    assert _post(good_doc) == {
+        "kind": "implies",
+        "operands": [
+            _except_guard("ValueError"),
+            {
+                "kind": "atomic",
+                "name": "=",
+                "args": [{"kind": "var", "name": "out"}, _add_rhs(1)],
+            },
+        ],
+    }
     assert _callsite_values(good_doc) == [6]
-    assert _callsite_values(bad_doc) == [6, 7]
+    assert _callsite_values(bad_doc) == [7]
     assert "TrySugar" in _selected_sugars(good_doc)
 
 
-def test_try_finally_override_lift_rpc_emits_callsite_values(
+def test_try_finally_override_stays_a_loud_construction_gap(
     tmp_path: Path,
 ) -> None:
     body = (
         "    try:\n" "        return x + 1\n" "    finally:\n" "        return x + 2\n"
     )
-    good = tmp_path / "good"
-    bad = tmp_path / "bad"
-    _write_project(good, body=body, expected=7)
-    _write_project(bad, body=body, expected=6)
+    project = tmp_path / "loud"
+    _write_project(project, body=body, expected=7)
 
-    good_doc = _run_lift_rpc(good)
-    bad_doc = _run_lift_rpc(bad)
+    completed = _run_lift_rpc_process(project)
 
-    assert _post_rhs(good_doc) == _add_rhs(2)
-    assert _callsite_values(good_doc) == [7]
-    assert _callsite_values(bad_doc) == [7, 6]
-    assert "TrySugar" in _selected_sugars(good_doc)
+    assert completed.returncode == 1
+    assert "observed=Try requested=statement" in completed.stderr
+    assert "FACTORY PANIC" in completed.stderr
 
 
-def test_try_finally_inert_body_preserves_complete_universe_through_lift_rpc(
+def test_try_finally_inert_body_stays_a_loud_construction_gap(
     tmp_path: Path,
 ) -> None:
     body = "    try:\n" "        return x + 1\n" "    finally:\n" "        'cleanup'\n"
-    good = tmp_path / "good"
-    bad = tmp_path / "bad"
-    _write_project(good, body=body, expected=6)
-    _write_project(bad, body=body, expected=7)
+    project = tmp_path / "loud"
+    _write_project(project, body=body, expected=6)
 
-    good_doc = _run_lift_rpc(good)
-    bad_doc = _run_lift_rpc(bad)
+    completed = _run_lift_rpc_process(project)
 
-    assert _post_rhs(good_doc) == _add_rhs(1)
-    assert _callsite_values(good_doc) == [6]
-    assert _callsite_values(bad_doc) == [6, 7]
-    assert "TrySugar" in _selected_sugars(good_doc)
+    assert completed.returncode == 1
+    assert "observed=Try requested=statement" in completed.stderr
+    assert "FACTORY PANIC" in completed.stderr
 
 
 def test_try_conditional_raise_except_curries_guarded_universe_through_lift_rpc(
@@ -339,8 +390,17 @@ def test_try_conditional_raise_except_curries_guarded_universe_through_lift_rpc(
     good_doc = _run_lift_rpc(good)
     bad_doc = _run_lift_rpc(bad)
 
-    assert _post(good_doc) == _guarded_add_post(true_addend=2, false_addend=1)
-    assert _post(bad_doc) == _guarded_add_post(true_addend=2, false_addend=1)
+    expected = _threaded_try_post(
+        {
+            "kind": "atomic",
+            "name": "=",
+            "args": [{"kind": "var", "name": "out"}, _add_rhs(1)],
+        },
+        "ValueError",
+        _add_rhs(2),
+    )
+    assert _post(good_doc) == expected
+    assert _post(bad_doc) == expected
     assert _callsite_values(good_doc) == [7]
     assert _callsite_values(bad_doc) == [6]
     assert "TrySugar" in _selected_sugars(good_doc)
@@ -366,14 +426,17 @@ def test_try_conditional_raise_except_uses_raise_scope_in_lift_rpc(
     good_doc = _run_lift_rpc(good)
     bad_doc = _run_lift_rpc(bad)
 
-    assert _post(good_doc) == _guarded_post(
-        true_rhs=_nested_add_rhs(1, 2),
-        false_rhs=_var_x(),
+    expected = _threaded_try_post(
+        {
+            "kind": "atomic",
+            "name": "=",
+            "args": [{"kind": "var", "name": "out"}, _var_x()],
+        },
+        "ValueError",
+        _nested_add_rhs(1, 2),
     )
-    assert _post(bad_doc) == _guarded_post(
-        true_rhs=_nested_add_rhs(1, 2),
-        false_rhs=_var_x(),
-    )
+    assert _post(good_doc) == expected
+    assert _post(bad_doc) == expected
     assert _callsite_values(good_doc) == [8]
     assert _callsite_values(bad_doc) == [5]
     assert "TrySugar" in _selected_sugars(good_doc)

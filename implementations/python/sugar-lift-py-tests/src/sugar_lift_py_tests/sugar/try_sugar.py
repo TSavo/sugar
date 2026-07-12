@@ -21,7 +21,11 @@ class TryExceptArm:
     @property
     def type_name(self) -> str:
         # Primary name for single-type; joined for multi (display / py.except).
-        return self.type_names[0] if len(self.type_names) == 1 else ",".join(self.type_names)
+        return (
+            self.type_names[0]
+            if len(self.type_names) == 1
+            else ",".join(self.type_names)
+        )
 
 
 @dataclass(frozen=True)
@@ -82,8 +86,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             ):
                 return False
             handler_shapes = tuple(
-                stmt.observed
-                for stmt in handlers[0].except_handler_body().statements()
+                stmt.observed for stmt in handlers[0].except_handler_body().statements()
             )
             if handler_shapes != ("Raise",):
                 return False
@@ -147,9 +150,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             )
         )
 
-    def _collect_handlers(
-        self, accumulated: tuple, index: int, ctx: object
-    ) -> Outcome:
+    def _collect_handlers(self, accumulated: tuple, index: int, ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ScopeRebind
         from sugar_lift_py_tests.ir import ctor, str_const
 
@@ -169,9 +170,9 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             body=None,
             site=self.site,
         )
-        body_ctx = ctx
+        body_ctx = _handler_scope(accumulated, arm, ctx)
         if arm.as_name is not None:
-            body_ctx = ScopeRebind(arm.as_name, catch).extend_scope(ctx)
+            body_ctx = ScopeRebind(arm.as_name, catch).extend_scope(body_ctx)
 
         return arm.body.reduce(body_ctx).and_then(
             lambda hblock: self._collect_handlers(
@@ -187,24 +188,21 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
     def _desugar_else(self, ctx: object) -> Outcome:
         """Reduce the narrow lookup fallback without choosing an exception face."""
         from sugar_lift_py_tests.floor import BlockValue
-        from sugar_lift_py_tests.ir import ctor, not_, str_const
+        from sugar_lift_py_tests.ir import atomic, not_, str_const
         from sugar_lift_py_tests.outcome import complete_value
 
         arm = self.handlers[0]
-        exception_guard = ctor(
+        exception_guard = atomic(
             "py.except", [str_const(name) for name in arm.type_names]
         )
         body_scope = self.body.sugar.scope_after(ctx)
-        handler_value = complete_value(
-            arm.body.reduce(ctx), owner="try except handler"
-        )
+        handler_value = complete_value(arm.body.reduce(ctx), owner="try except handler")
         else_value = complete_value(
             self.else_body.reduce(body_scope), owner="try else body"
         )
         entries = (
             *tuple(
-                entry.guarded(exception_guard)
-                for entry in handler_value.contribution()
+                entry.guarded(exception_guard) for entry in handler_value.contribution()
             ),
             *tuple(
                 entry.guarded(not_(exception_guard))
@@ -234,9 +232,9 @@ def _except_arm_contributions(entries: tuple, arm: "TryExceptArm") -> tuple:
     """
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.floor.return_value import ReturnValue
-    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.ir import atomic, str_const
 
-    guard = ctor("py.except", [str_const(n) for n in arm.type_names])
+    guard = atomic("py.except", [str_const(n) for n in arm.type_names])
     out = []
     for entry in entries:
         if type(entry) is ReturnValue:
@@ -244,3 +242,22 @@ def _except_arm_contributions(entries: tuple, arm: "TryExceptArm") -> tuple:
         else:
             out.append(entry)
     return tuple(out)
+
+
+def _handler_scope(accumulated: tuple, arm: TryExceptArm, fallback):
+    """Use the temporal scope captured at the matching raise site.
+
+    A handler observes bindings established before the raise. Searching the
+    already-reduced try record preserves that execution-time scope without
+    making bindings from later or non-raising paths visible to the handler.
+    """
+    from sugar_lift_py_tests.floor import GuardedRaise, RaiseValue
+
+    for entry in reversed(accumulated):
+        if not isinstance(entry, (RaiseValue, GuardedRaise)):
+            continue
+        if entry.effect.exception_name not in arm.type_names:
+            continue
+        if entry.scope is not None:
+            return entry.scope
+    return fallback

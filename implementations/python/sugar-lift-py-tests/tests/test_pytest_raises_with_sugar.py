@@ -37,12 +37,12 @@ def test_raise_statement_not_unresolved() -> None:
 def test_pytest_raises_states_inv() -> None:
     src = (
         "import pytest\n"
-        "def boom():\n"
-        "    raise ValueError('x')\n"
         "def test_r():\n"
         "    with pytest.raises(ValueError):\n"
         "        boom()\n"
         "    assert 1 == 1\n"
+        "def boom():\n"
+        "    raise ValueError('x')\n"
     )
     rpc = _audit_rpc(src)
     fas = rpc.get("factoryAuditSummary") or {}
