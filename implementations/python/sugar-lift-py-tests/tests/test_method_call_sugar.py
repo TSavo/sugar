@@ -13,8 +13,8 @@ from factory_reduce import reduce_value
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
-from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
+from sugar_lift_py_tests.floor import CallSiteValue, GuardedValue, SymbolicValue
+from sugar_lift_py_tests.ir import atomic, ctor, make_var, num, str_const
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
 
@@ -82,3 +82,36 @@ def test_keyword_method_call_rides_the_coordinate() -> None:
 def test_zero_arg_method_call() -> None:
     value = reduce_value("z.copy()", binds={"z": SymbolicValue(make_var("z"))})
     assert value.term == ctor("call:copy", [make_var("z")])
+
+
+def test_method_call_distributes_over_a_guarded_receiver() -> None:
+    guard = atomic("guard", [])
+    receiver = GuardedValue(
+        guard,
+        SymbolicValue(make_var("left")),
+        SymbolicValue(make_var("right")),
+    )
+
+    value = reduce_value("z.utcoffset()", binds={"z": receiver})
+
+    assert isinstance(value, GuardedValue)
+    assert value.guard == guard
+    assert value.when_true.term == ctor("call:utcoffset", [make_var("left")])
+    assert value.when_false.term == ctor("call:utcoffset", [make_var("right")])
+
+
+def test_method_call_distributes_over_a_guarded_argument() -> None:
+    guard = atomic("guard", [])
+    argument = GuardedValue(
+        guard,
+        SymbolicValue(make_var("left")),
+        SymbolicValue(make_var("right")),
+    )
+
+    value = reduce_value(
+        '"".join(z)',
+        binds={"z": argument},
+    )
+
+    assert isinstance(value, GuardedValue)
+    assert value.guard == guard
