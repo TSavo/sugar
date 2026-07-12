@@ -11,15 +11,15 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
-    """A flat two-name loop target over one iterable element address.
+    """A flat all-name loop target over one iterable element address.
 
     The loop element remains the existing ``py.iter_elem(iterable)``
     coordinate. Each target name binds to its indexed projection before the
-    body reduces. Other arities, nested or starred targets, and loop ``else``
-    remain separate loud partitions.
+    body reduces. Nested or starred targets and loop ``else`` remain separate
+    loud partitions.
     """
 
-    names: tuple[str, str]
+    names: tuple[str, ...]
     iterable: SugarBody
     body: SugarBody
     site: object = dataclass_field(compare=False)
@@ -29,13 +29,13 @@ class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
         if site.observed != "For" or site.for_orelse_count() != 0:
             return False
         names = site.for_flat_tuple_target_names()
-        return names is not None and len(names) == 2
+        return names is not None and len(names) >= 2
 
     @classmethod
     def new(cls, site, ctx) -> "TupleForSugar":
         names = site.for_flat_tuple_target_names()
         return cls(
-            names=(names[0], names[1]),
+            names=tuple(names),
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
             body=ctx.build_body(site.for_body_block(), SugarRole.STATEMENT),
             site=site,
@@ -58,12 +58,12 @@ class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.iterable.reduce(ctx).and_then(
-            lambda iterable: self._bind_pair_and_body(iterable, ctx)
+            lambda iterable: self._bind_targets_and_body(iterable, ctx)
         )
 
-    def _bind_pair_and_body(self, iterable, ctx: object) -> Outcome:
-        from sugar_lift_py_tests.floor import CallSiteValue, TermValue
-        from sugar_lift_py_tests.ir import ctor
+    def _bind_targets_and_body(self, iterable, ctx: object) -> Outcome:
+        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor, num
 
         element = CallSiteValue(
             target_name="iter_elem",
@@ -76,15 +76,19 @@ class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
             body=None,
             site=self.site,
         )
-        return element.subscript(TermValue(0), self.site).and_then(
-            lambda left: element.subscript(TermValue(1), self.site).and_then(
-                lambda right: self._reduce_body(left, right, ctx)
+        temporal = ctx.temporal
+        for index, name in enumerate(self.names):
+            temporal = temporal.bind_value(
+                name,
+                CallSiteValue(
+                    target_name="py.subscript",
+                    arg_values=(element,),
+                    parameters=(),
+                    term=ctor("py.subscript", [element.term, num(index)]),
+                    body=None,
+                    site=self.site,
+                ),
             )
-        )
-
-    def _reduce_body(self, left, right, ctx: object) -> Outcome:
-        temporal = ctx.temporal.bind_value(self.names[0], left)
-        temporal = temporal.bind_value(self.names[1], right)
         return self.body.reduce(ctx.with_temporal(temporal))
 
     def walk_children(self):

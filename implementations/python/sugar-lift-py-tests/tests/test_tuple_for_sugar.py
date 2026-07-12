@@ -35,9 +35,8 @@ def test_pair_target_binds_both_iter_element_projections() -> None:
     assert returned.value.term == ctor("py.subscript", [element, num(0)])
 
 
-def test_other_arity_starred_and_for_else_targets_stay_loud() -> None:
+def test_starred_and_for_else_targets_stay_loud() -> None:
     for source in (
-        "for a, b, c in rows:\n    pass\n",
         "for a, *rest in rows:\n    pass\n",
         "for a, b in rows:\n    pass\nelse:\n    pass\n",
     ):
@@ -64,6 +63,31 @@ def test_pair_for_owner_is_exactly_flat_two_name_no_else_partition() -> None:
         candidate.name
         for candidate in catalog.candidates_for(SugarRole.STATEMENT, simple)
     ] == ["ForSugar"]
+
+
+@pytest.mark.parametrize("arity", [3, 4, 5, 6])
+def test_flat_multi_name_target_binds_each_projection(arity: int) -> None:
+    names = [f"item_{index}" for index in range(arity)]
+    block = compose_block(
+        f"    for {', '.join(names)} in rows:\n        return {names[-1]}\n",
+        binds={"rows": SymbolicValue(make_var("rows"))},
+    )
+
+    returned = next(
+        entry for entry in block.statements if isinstance(entry, ReturnValue)
+    )
+    element = ctor("py.iter_elem", [make_var("rows")])
+    assert returned.value.term == ctor("py.subscript", [element, num(arity - 1)])
+
+
+def test_flat_all_name_target_owner_accepts_any_arity_from_two_up() -> None:
+    catalog = default_catalog()
+    for target in ("a, b", "a, b, c", "a, b, c, d, e, f"):
+        site = _site(f"for {target} in rows:\n    pass\n")
+        assert [
+            candidate.name
+            for candidate in catalog.candidates_for(SugarRole.STATEMENT, site)
+        ] == ["TupleForSugar"]
 
 
 def test_real_testing_file_shape_has_no_pair_for_factory_panic() -> None:
