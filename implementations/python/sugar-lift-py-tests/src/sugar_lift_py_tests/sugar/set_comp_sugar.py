@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.floor import ComprehensionValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.comprehension_clauses import (
+    build_clauses,
+    clause_children,
+    reduce_clauses,
+    supports_clauses,
+)
 from sugar_lift_py_tests.sugar.list_comp_sugar import _floor_as_term
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
@@ -12,58 +19,27 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class SetCompSugar(Sugar, role=SugarRole.TERM):
-    """A set comprehension ``{<elt> for <target> in <iter> (if <cond>)*}``.
-
-    Single-generator, simple-Name target only. Multi-generator and
-    tuple-unpack targets stay unowned (loud factory gap).
-
-    LAW: do not enumerate the iterable. Reduce the iter to its coordinate,
-    bind the target to ``py.iter_elem(iter)``, reduce elt and conditions under
-    that extended scope, and build
-    ``py.setcomp(elt_term, iter_term, *cond_terms)``. Mirror of ListCompSugar.
-    """
-
-    target_name: str
-    iter_body: SugarBody
+    clauses: tuple
     elt_body: SugarBody
-    condition_bodies: tuple[SugarBody, ...]
     site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
-        if site.observed != "SetComp":
-            return False
-        generators = site.setcomp_generators()
-        if len(generators) != 1:
-            return False
-        gen = generators[0]
-        if gen.comprehension_is_async():
-            return False
-        target = gen.comprehension_target()
-        return target.observed == "Name"
+        return site.observed == "SetComp" and supports_clauses(
+            site.setcomp_generators()
+        )
 
     @classmethod
     def new(cls, site, ctx) -> "SetCompSugar":
-        gen = site.setcomp_generators()[0]
         return cls(
-            target_name=gen.comprehension_target().name_id(),
-            iter_body=ctx.build_body(gen.comprehension_iter(), SugarRole.TERM),
+            clauses=build_clauses(site.setcomp_generators(), ctx),
             elt_body=ctx.build_body(site.setcomp_element(), SugarRole.TERM),
-            condition_bodies=tuple(
-                ctx.build_body(guard, SugarRole.TERM)
-                for guard in gen.comprehension_ifs()
-            ),
             site=site,
         )
 
     @classmethod
     def witnesses(cls):
-        prefix = (
-            "def A(z):\n"
-            "    y = {x for x in z}\n"
-            "    return 1\n"
-            "\n"
-        )
+        prefix = "def A(z):\n    y = {x for x in z}\n    return 1\n\n"
         return _call_pair(
             name="set_comp_return",
             owner_sugar="SetCompSugar",
@@ -72,31 +48,24 @@ class SetCompSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        return self.iter_body.reduce(ctx).and_then(
-            lambda iterable: self._bind_and_collect(iterable, ctx)
-        )
+        clause = self.clauses[0]
+        if (
+            len(self.clauses) == 1
+            and len(clause.bindings) == 1
+            and clause.bindings[0][1] == ()
+            and not clause.conditions
+        ):
+            return clause.iterable.reduce(ctx).and_then(
+                lambda iterable: self._finite_or_coordinate(iterable, ctx)
+            )
+        return self._coordinate(ctx)
 
-    def _bind_and_collect(self, iterable, ctx: object) -> Outcome:
+    def _finite_or_coordinate(self, iterable, ctx):
         from sugar_lift_py_tests.floor import ListValue, TupleValue
 
-        if not self.condition_bodies and isinstance(iterable, (ListValue, TupleValue)):
+        if isinstance(iterable, (ListValue, TupleValue)):
             return self._collect_finite(iterable.elements, (), ctx)
-        from sugar_lift_py_tests.floor import ScopeRebind, SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
-
-        owner = str(self.site)
-        iter_term = iterable.to_term(owner=owner)
-        element = SymbolicValue(ctor("py.iter_elem", [iter_term]))
-        bound_ctx = ScopeRebind(self.target_name, element).extend_scope(ctx)
-        return self.elt_body.reduce(bound_ctx).and_then(
-            lambda elt: self._collect_conditions(
-                remaining=self.condition_bodies,
-                accumulated=(),
-                elt=elt,
-                iterable=iterable,
-                bound_ctx=bound_ctx,
-            )
-        )
+        return self._coordinate(ctx, iterable)
 
     def _collect_finite(self, remaining, accumulated, ctx):
         from sugar_lift_py_tests.floor import ScopeRebind, SetValue
@@ -104,7 +73,8 @@ class SetCompSugar(Sugar, role=SugarRole.TERM):
         if not remaining:
             return Complete(SetValue(accumulated))
         item, *rest = remaining
-        item_ctx = ScopeRebind(self.target_name, item).extend_scope(ctx)
+        name = self.clauses[0].bindings[0][0]
+        item_ctx = ScopeRebind(name, item).extend_scope(ctx)
         return self.elt_body.reduce(item_ctx).and_then(
             lambda value: self._collect_finite(
                 tuple(rest),
@@ -113,44 +83,29 @@ class SetCompSugar(Sugar, role=SugarRole.TERM):
             )
         )
 
-    def _collect_conditions(
-        self,
-        remaining: tuple,
-        accumulated: tuple,
-        elt,
-        iterable,
-        bound_ctx: object,
-    ) -> Outcome:
-        if not remaining:
-            from sugar_lift_py_tests.floor import ComprehensionValue
-            from sugar_lift_py_tests.ir import ctor
+    def _coordinate(self, ctx, first_iterable=None):
+        from sugar_lift_py_tests.ir import ctor
 
-            owner = str(self.site)
-            return Complete(
-                ComprehensionValue(
-                    ctor(
-                        "py.setcomp",
-                        [
-                            _floor_as_term(elt, owner=owner),
-                            iterable.to_term(owner=owner),
-                            *accumulated,
-                        ],
+        return reduce_clauses(
+            self.clauses,
+            ctx,
+            lambda bound_ctx, generator_args: self.elt_body.reduce(
+                bound_ctx
+            ).and_then(
+                lambda elt: Complete(
+                    ComprehensionValue(
+                        ctor(
+                            "py.setcomp",
+                            [
+                                _floor_as_term(elt, owner=str(self.site)),
+                                *generator_args,
+                            ],
+                        )
                     )
                 )
-            )
-        head, *rest = remaining
-        return head.reduce(bound_ctx).and_then(
-            lambda cond: self._collect_conditions(
-                remaining=tuple(rest),
-                accumulated=(
-                    *accumulated,
-                    _floor_as_term(cond, owner=str(self.site)),
-                ),
-                elt=elt,
-                iterable=iterable,
-                bound_ctx=bound_ctx,
-            )
+            ),
+            first_iterable=first_iterable,
         )
 
     def walk_children(self):
-        return (self.elt_body, self.iter_body, *self.condition_bodies)
+        return (self.elt_body, *clause_children(self.clauses))

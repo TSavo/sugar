@@ -16,7 +16,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.floor import ComprehensionValue, SymbolicValue
 from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.sugar.dict_comp_sugar import DictCompSugar
 from sugar_lift_py_tests.sugar.generator_exp_sugar import GeneratorExpSugar
@@ -44,7 +44,7 @@ def _ys():
 
 def test_set_comp_reduces_to_setcomp_coordinate() -> None:
     value = reduce_value("{x for x in xs}", binds=_xs())
-    assert isinstance(value, SymbolicValue)
+    assert isinstance(value, ComprehensionValue)
     elem = ctor("py.iter_elem", [make_var("xs")])
     assert value.term == ctor("py.setcomp", [elem, make_var("xs")])
 
@@ -61,19 +61,21 @@ def test_set_comp_elt_and_iter_discriminate() -> None:
     assert plain.term != from_ys.term
 
 
-def test_set_comp_owns_only_setcomp_single_name() -> None:
+def test_set_comp_owns_supported_setcomp_clauses() -> None:
     assert SetCompSugar.owns(_site("{x for x in xs}")) is True
-    assert SetCompSugar.owns(_site("{x for a in A for b in B}")) is False
-    assert SetCompSugar.owns(_site("{x for (x, y) in pairs}")) is False
+    assert SetCompSugar.owns(_site("{(a, b) for a in A for b in B}")) is True
+    assert SetCompSugar.owns(_site("{x for (x, y) in pairs}")) is True
     assert SetCompSugar.owns(_site("[x for x in xs]")) is False
     assert SetCompSugar.owns(_site("{x: x for x in xs}")) is False
     assert SetCompSugar.owns(_site("(x for x in xs)")) is False
 
 
-def test_set_comp_multi_generator_is_loud() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        reduce_value("{x for a in A for b in B}")
-    assert raised.value.info.observed == "SetComp"
+def test_set_comp_multi_generator_is_citable() -> None:
+    value = reduce_value(
+        "{(a, b) for a in A for b in B}",
+        {"A": SymbolicValue(make_var("A")), "B": SymbolicValue(make_var("B"))},
+    )
+    assert value.term.name == "py.setcomp"
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +86,7 @@ def test_set_comp_multi_generator_is_loud() -> None:
 def test_dict_comp_carries_key_value_and_iter() -> None:
     """{x: x * 2 for x in xs} carries key, value, and iter -- never drops either."""
     value = reduce_value("{x: x * 2 for x in xs}", binds=_xs())
-    assert isinstance(value, SymbolicValue)
+    assert isinstance(value, ComprehensionValue)
     elem = ctor("py.iter_elem", [make_var("xs")])
     assert value.term == ctor(
         "py.dictcomp",
@@ -101,19 +103,21 @@ def test_dict_comp_key_and_value_discriminate() -> None:
     assert doubled.term != key_doubled.term
 
 
-def test_dict_comp_owns_only_dictcomp_single_name() -> None:
+def test_dict_comp_owns_supported_dictcomp_clauses() -> None:
     assert DictCompSugar.owns(_site("{x: x for x in xs}")) is True
-    assert DictCompSugar.owns(_site("{x: x for a in A for b in B}")) is False
-    assert DictCompSugar.owns(_site("{k: v for (k, v) in pairs}")) is False
+    assert DictCompSugar.owns(_site("{a: b for a in A for b in B}")) is True
+    assert DictCompSugar.owns(_site("{k: v for (k, v) in pairs}")) is True
     assert DictCompSugar.owns(_site("[x for x in xs]")) is False
     assert DictCompSugar.owns(_site("{x for x in xs}")) is False
     assert DictCompSugar.owns(_site("(x for x in xs)")) is False
 
 
-def test_dict_comp_tuple_target_is_loud() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        reduce_value("{k: v for (k, v) in pairs}")
-    assert raised.value.info.observed == "DictComp"
+def test_dict_comp_tuple_target_is_citable() -> None:
+    value = reduce_value(
+        "{k: v for (k, v) in pairs}",
+        {"pairs": SymbolicValue(make_var("pairs"))},
+    )
+    assert value.term.name == "py.dictcomp"
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +127,7 @@ def test_dict_comp_tuple_target_is_loud() -> None:
 
 def test_genexp_reduces_to_genexp_coordinate() -> None:
     value = reduce_value("(x for x in xs)", binds=_xs())
-    assert isinstance(value, SymbolicValue)
+    assert isinstance(value, ComprehensionValue)
     elem = ctor("py.iter_elem", [make_var("xs")])
     assert value.term == ctor("py.genexp", [elem, make_var("xs")])
 
@@ -136,19 +140,21 @@ def test_genexp_elt_and_iter_discriminate() -> None:
     assert plain.term != from_ys.term
 
 
-def test_genexp_owns_only_genexp_single_name() -> None:
+def test_genexp_owns_supported_genexp_clauses() -> None:
     assert GeneratorExpSugar.owns(_site("(x for x in xs)")) is True
-    assert GeneratorExpSugar.owns(_site("(x for a in A for b in B)")) is False
-    assert GeneratorExpSugar.owns(_site("(x for (x, y) in pairs)")) is False
+    assert GeneratorExpSugar.owns(_site("((a, b) for a in A for b in B)")) is True
+    assert GeneratorExpSugar.owns(_site("(x for (x, y) in pairs)")) is True
     assert GeneratorExpSugar.owns(_site("[x for x in xs]")) is False
     assert GeneratorExpSugar.owns(_site("{x for x in xs}")) is False
     assert GeneratorExpSugar.owns(_site("{x: x for x in xs}")) is False
 
 
-def test_genexp_multi_generator_is_loud() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        reduce_value("(x for a in A for b in B)")
-    assert raised.value.info.observed == "GeneratorExp"
+def test_genexp_multi_generator_is_citable() -> None:
+    value = reduce_value(
+        "((a, b) for a in A for b in B)",
+        {"A": SymbolicValue(make_var("A")), "B": SymbolicValue(make_var("B"))},
+    )
+    assert value.term.name == "py.genexp"
 
 
 # ---------------------------------------------------------------------------
