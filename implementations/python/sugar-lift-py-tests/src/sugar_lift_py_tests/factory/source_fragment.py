@@ -15,7 +15,6 @@ def _is_suite(value) -> bool:
         and all(isinstance(item, ast.stmt) for item in value)
     )
 
-
 def _dotted_expr_name(node: ast.AST) -> str | None:
     if isinstance(node, ast.Name):
         return node.id
@@ -1202,6 +1201,28 @@ class SourceFragment:
         Replaces bare ast.unparse(node) calls so callers never import ast.
         """
         return ast.unparse(self.node)
+
+    def loaded_names(self) -> "frozenset[str]":
+        """Names read by this fragment, including reads nested in expressions."""
+        return frozenset(
+            node.id
+            for node in ast.walk(self.node)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        )
+
+    def stored_or_deleted_names(self) -> "frozenset[str]":
+        """Names rebound or deleted anywhere inside this fragment.
+
+        This deliberately follows every syntactic child. Assignments, augmented
+        assignments, loop targets, with-as targets, deletes, and walrus targets
+        all carry Store/Del context in Python's native AST.
+        """
+        return frozenset(
+            node.id
+            for node in ast.walk(self.node)
+            if isinstance(node, ast.Name)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        )
 
 
 # ---------------------------------------------------------------------------

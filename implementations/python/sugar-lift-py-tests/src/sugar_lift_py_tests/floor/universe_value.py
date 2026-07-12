@@ -135,6 +135,16 @@ class UniverseValue(FloorValue):
                 bridge_source_symbol=self.name,
             )
         ]
+        rows.extend(self.inv_payload_rows())
+        return rows
+
+    def inv_payload_rows(self):
+        """Project stated body claims without requiring a constructed post."""
+        import dataclasses
+
+        from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
+
+        rows = []
         for entry in self.record.statements:
             for row in entry.mint_contribution(self.name, self.formals):
                 rows.append(
