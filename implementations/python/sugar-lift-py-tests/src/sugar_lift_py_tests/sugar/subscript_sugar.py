@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import Any
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
@@ -23,10 +24,16 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         # Syntactic: Subscript whose index is not a Slice (slice stays unowned).
-        return (
-            site.observed == "Subscript"
-            and site.subscript_index().observed != "Slice"
-        )
+        if site.observed != "Subscript":
+            return False
+        index = site.subscript_index()
+        if index.observed == "Slice":
+            return False
+        if index.observed == "Tuple" and any(
+            element.observed == "Slice" for element in index.tuple_elts()
+        ):
+            return False
+        return True
 
     @classmethod
     def new(cls, site, ctx) -> "SubscriptSugar":
@@ -48,7 +55,7 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
             lying=prefix + "def test_a():\n    assert A(5) == 21\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: Any = None) -> Outcome:
         # Reduce receiver, reduce index, ask the receiver to subscript by the index.
         return self.receiver.reduce(ctx).and_then(
             lambda receiver: self.index.reduce(ctx).and_then(

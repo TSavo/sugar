@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, NoReturn, cast
 
 from .floor_value import FloorValue
 
@@ -104,8 +104,32 @@ class StringValue(FloorValue):
     def subscript(self, index, site):
         # Concrete string + in-range TermValue int folds to the one-char string;
         # out of range is IndexError. Non-concrete index stays py.subscript.
+        from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if type(index) is SliceValue:
+            bounds = (index.lower, index.upper, index.step)
+            if all(
+                bound is None
+                or (type(bound) is TermValue and type(bound.value) is int)
+                for bound in bounds
+            ):
+                lower, upper, step = (
+                    cast(int, bound.value) if type(bound) is TermValue else None
+                    for bound in bounds
+                )
+                if step == 0:
+                    from sugar_lift_py_tests.factory import factory_panic_gap
+
+                    factory_panic_gap(
+                        owner="StringValue.subscript",
+                        blame=str(site),
+                        observed="slice step 0",
+                        requested="ground Python string slice",
+                        fix="use a nonzero literal integer step or emit ValueErrorRuntimeEffect",
+                    )
+                return Complete(StringValue(self.value[slice(lower, upper, step)]))
 
         if type(index) is TermValue and type(index.value) is int:
             i = index.value
