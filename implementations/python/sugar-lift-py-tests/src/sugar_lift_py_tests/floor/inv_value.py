@@ -21,6 +21,7 @@ class InvValue(FloorValue):
     # CallSiteValues consumed into the formula when the inv was stated --
     # carried so callEdges project from the collapse without a side channel.
     operand_callsites: tuple = dataclass_field(default=(), compare=False)
+    derived_formulas: tuple = dataclass_field(default=(), compare=False)
 
     def inv_contribution(self):
         # The stated fact IS the inv slot's row.
@@ -60,7 +61,7 @@ class InvValue(FloorValue):
             construction_site=locus,
             warrant=Stated(locus=locus),
         )
-        return (
+        stated = (
             UniverseMint(
                 name=name,
                 slot="inv",
@@ -72,3 +73,33 @@ class InvValue(FloorValue):
                 formals=formals,
             ),
         )
+        if not self.derived_formulas:
+            return stated
+
+        from sugar_lift_py_tests.proofir.nodes import Derived
+
+        derived = tuple(
+            UniverseMint(
+                name=name,
+                slot="inv",
+                formula=claim_formula(
+                    formula,
+                    formals=formals,
+                    provenance=Provenance(
+                        node_class="UniverseMint",
+                        construction_site=locus,
+                        warrant=Derived(floor_chain=("OpaqueOpCallsite.computed",)),
+                    ),
+                    role="inv",
+                ),
+                provenance=Provenance(
+                    node_class="UniverseMint",
+                    construction_site=locus,
+                    warrant=Derived(floor_chain=("OpaqueOpCallsite.computed",)),
+                ),
+                source_warrants=(self.site.memento(),),
+                formals=formals,
+            )
+            for formula in self.derived_formulas
+        )
+        return (*stated, *derived)

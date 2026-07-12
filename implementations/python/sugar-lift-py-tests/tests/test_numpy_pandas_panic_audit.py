@@ -165,7 +165,8 @@ def test_audit_workspace_manifest_passes_audit_flag_to_python_lifter(tmp_path) -
     assert (audit_workspace / "pkg/sample.py").is_file()
     assert 'emit = "ir-document"' in config
     assert "sugar_lift_py_tests/lift_rpc.py" in manifest
-    assert '"--rpc", "--audit-only"' in manifest
+    assert '"--rpc"' in manifest
+    assert '"--audit-only"' not in manifest
     assert "sugar_lift_py_tests.lsp" not in manifest
 
 
@@ -403,8 +404,8 @@ def test_installed_numpy_totality_gate_is_stable_zero() -> None:
     assert not report.records
 
 
-def test_installed_pandas_totality_gate_is_stable_zero() -> None:
-    """Installed pandas package construction-gap R stays at 0 (per-package arm)."""
+def test_installed_pandas_totality_frontier_is_measured() -> None:
+    """Installed pandas package pins the native construction frontier."""
     import pandas
 
     report = collect_panic_audit(
@@ -416,8 +417,17 @@ def test_installed_pandas_totality_gate_is_stable_zero() -> None:
     assert report.r.values == {
         "numpy_sugar_panics": 0,
         "numpy_floor_panics": 0,
-        "pandas_sugar_panics": 0,
-        "pandas_floor_panics": 0,
+        # Measured on pandas 3.0.3 after the audit-only backdoor was removed.
+        # The installed source universe did not shrink. #4240 moved 249 Pow
+        # rows from generic BinOp sugar accounting to the native power owner:
+        # 93 reach named floor gaps and 156 now construct. The measured native
+        # #4242 then moved 417 bitwise rows to native owners: 75 reach named
+        # floor gaps and 342 construct. The measured frontier is therefore
+        # #4244 moves 345 raise-bearing post gaps into guarded typed effects;
+        # four newly reachable loci stop at named sugar gaps. The same source
+        # universe therefore measures 7,717 rather than the retired false zero.
+        "pandas_sugar_panics": 3399,
+        "pandas_floor_panics": 4318,
         "statistics_sugar_panics": 0,
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
@@ -431,11 +441,12 @@ def test_installed_pandas_totality_gate_is_stable_zero() -> None:
         f"pandas {pandas.__version__} construction-gap gate reopened: "
         f"{render_text(report)}"
     )
-    assert not report.records
+    assert len(report.records) == 7717
+    assert not report.diagnostics
 
 
-def test_numpy_pandas_wall_construction_gap_r_is_stable_zero() -> None:
-    """Capstone ratchet: combined installed numpy+pandas construction-gap R == 0.
+def test_numpy_pandas_wall_construction_frontier_is_measured() -> None:
+    """Capstone ratchet: combined installed numpy+pandas native frontier.
 
     Part of #3809. The drain sequence repeatedly unmasked deeper floors once a
     recognizer/totalizer closed; this gate measures the same combined R vector
@@ -449,18 +460,31 @@ def test_numpy_pandas_wall_construction_gap_r_is_stable_zero() -> None:
         include_showcases=False,
     )
 
-    assert report.is_zero, (
+    assert report.r.values == {
+        "numpy_sugar_panics": 0,
+        "numpy_floor_panics": 0,
+        "pandas_sugar_panics": 3399,
+        "pandas_floor_panics": 4318,
+        "statistics_sugar_panics": 0,
+        "statistics_floor_panics": 0,
+        "decimal_sugar_panics": 0,
+        "decimal_floor_panics": 0,
+        "fractions_sugar_panics": 0,
+        "fractions_floor_panics": 0,
+        "pathlib_sugar_panics": 0,
+        "pathlib_floor_panics": 0,
+        "unexpected_panics": 0,
+    }, (
         f"numpy {numpy.__version__} + pandas {pandas.__version__} wall R reopened: "
         f"{render_text(report)}"
     )
-    assert report.r.is_zero
-    assert not report.records
+    assert len(report.records) == 7717
     assert not report.diagnostics
-    assert sum(report.r.values.values()) == 0
+    assert sum(report.r.values.values()) == 7717
 
 
-def test_installed_statistics_totality_gate_is_stable_zero() -> None:
-    """Third-vendor pin: installed stdlib statistics construction-gap R == 0.
+def test_installed_statistics_totality_frontier_is_measured() -> None:
+    """Third-vendor pin: measure the current stdlib statistics frontier.
 
     Part of #3809 Task G. Single-module packages resolve to the module *file*
     (not the parent stdlib directory — that would audit asyncio/inspect and
@@ -480,8 +504,19 @@ def test_installed_statistics_totality_gate_is_stable_zero() -> None:
         "numpy_floor_panics": 0,
         "pandas_sugar_panics": 0,
         "pandas_floor_panics": 0,
-        "statistics_sugar_panics": 0,
-        "statistics_floor_panics": 0,
+        # Measured on Python 3.12.3 after the audit-only backdoor was removed:
+        # the universe is unchanged, but the native frontier now reports every
+        # named gap instead of returning a false zero at the first RPC stop.
+        # #4239 moved one incomplete branch result from a construction panic
+        # into its typed conditional effect.  The source universe is unchanged.
+        # #4240 moved one remaining Pow from generic BinOp sugar accounting to
+        # the native power floor. At that ownership step, total R remained 39.
+        # #4242 moves one bitwise row from generic BinOp sugar accounting to
+        # its native floor. At that ownership step, total R remained 39.
+        "statistics_sugar_panics": 15,
+        # #4244 carries one raise-bearing record as a guarded typed effect
+        # instead of fabricating a post gap. The universe is unchanged; R=38.
+        "statistics_floor_panics": 23,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
@@ -493,14 +528,14 @@ def test_installed_statistics_totality_gate_is_stable_zero() -> None:
         f"statistics module construction-gap gate reopened (R={r_total}): "
         f"path={statistics.__file__} {render_text(report)}"
     )
-    assert r_total == 0
-    assert report.is_zero
-    assert not report.records
+    assert r_total == 38
+    assert len(report.records) == 38
+    assert not report.diagnostics
     assert [t.name for t in report.targets] == ["statistics-all"]
 
 
-def test_installed_decimal_totality_gate_is_stable_zero() -> None:
-    """Fourth-vendor pin: pure-python decimal body construction-gap R == 0.
+def test_installed_decimal_totality_frontier_is_measured() -> None:
+    """Fourth-vendor pin: measure the pure-python decimal body frontier.
 
     Part of #3809. Public ``decimal`` prefers C ``_decimal``; the audit resolves
     to pure-python ``_pydecimal.py`` (never the C extension, never the thin
@@ -522,8 +557,20 @@ def test_installed_decimal_totality_gate_is_stable_zero() -> None:
         "pandas_floor_panics": 0,
         "statistics_sugar_panics": 0,
         "statistics_floor_panics": 0,
-        "decimal_sugar_panics": 0,
-        "decimal_floor_panics": 0,
+        # Python 3.12.3 native-frontier measurement.  These named gaps were
+        # hidden, not eliminated, by the retired audit-only execution path.
+        # #4239 likewise carries one incomplete branch as a typed effect rather
+        # than counting that same locus as a construction gap.
+        # #4240 moved nine Pow rows from generic BinOp sugar accounting to the
+        # native power owner. Seven reach named floor gaps and two construct,
+        # so the same source universe now measures R=107 rather than R=109.
+        # #4242 moves eleven bitwise rows from BinOp sugar accounting to their
+        # native floors. Ten reach named floor gaps and one now constructs, so
+        # the same source universe measured R=106 at that ownership step.
+        "decimal_sugar_panics": 34,
+        # #4244 carries two raise-bearing records as guarded typed effects,
+        # moving them out of construction-gap accounting. Current R=104.
+        "decimal_floor_panics": 70,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
         "pathlib_sugar_panics": 0,
@@ -533,16 +580,16 @@ def test_installed_decimal_totality_gate_is_stable_zero() -> None:
         f"decimal pure-python body construction-gap gate reopened (R={r_total}): "
         f"path={path} {render_text(report)}"
     )
-    assert r_total == 0
-    assert report.is_zero
-    assert not report.records
+    assert r_total == 104
+    assert len(report.records) == 104
+    assert not report.diagnostics
     assert [t.name for t in report.targets] == ["decimal-all"]
     assert path.is_file()
     assert path.name == "_pydecimal.py", path
 
 
-def test_installed_fractions_totality_gate_is_stable_zero() -> None:
-    """Fifth-vendor pin: installed stdlib fractions construction-gap R == 0.
+def test_installed_fractions_totality_frontier_is_measured() -> None:
+    """Fifth-vendor pin: measure the stdlib fractions construction frontier.
 
     Part of #3809. Pure-python single-module ``fractions.py`` (like statistics) —
     resolve to the module *file*, never the parent stdlib directory. Panic / R>0
@@ -568,8 +615,11 @@ def test_installed_fractions_totality_gate_is_stable_zero() -> None:
         "statistics_floor_panics": 0,
         "decimal_sugar_panics": 0,
         "decimal_floor_panics": 0,
-        "fractions_sugar_panics": 0,
-        "fractions_floor_panics": 0,
+        # Python 3.12.3 native-frontier measurement after deleting audit-only.
+        # #4240 reclassifies three Pow rows from BinOp sugar gaps to native
+        # power floor gaps. Total R and the source universe both remain 28.
+        "fractions_sugar_panics": 6,
+        "fractions_floor_panics": 22,
         "pathlib_sugar_panics": 0,
         "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
@@ -577,9 +627,9 @@ def test_installed_fractions_totality_gate_is_stable_zero() -> None:
         f"fractions module construction-gap gate reopened (R={r_total}): "
         f"path={path} {render_text(report)}"
     )
-    assert r_total == 0
-    assert report.is_zero
-    assert not report.records
+    assert r_total == 28
+    assert len(report.records) == 28
+    assert not report.diagnostics
     assert [t.name for t in report.targets] == ["fractions-all"]
     assert path.is_file()
     assert path.name == "fractions.py", path
@@ -597,8 +647,8 @@ def test_fractions_resolves_to_module_file_not_stdlib_dir() -> None:
     assert len(text) > 5_000, "expected full pure-python body"
 
 
-def test_installed_pathlib_totality_gate_is_stable_zero() -> None:
-    """Sixth-vendor pin: installed stdlib pathlib construction-gap R == 0.
+def test_installed_pathlib_totality_frontier_is_measured() -> None:
+    """Sixth-vendor pin: measure the stdlib pathlib construction frontier.
 
     Part of #3809. Pure-python ``pathlib`` — on 3.12 a single ``pathlib.py``;
     on 3.13+ may be a ``pathlib/`` package. Never the parent stdlib directory
@@ -624,16 +674,19 @@ def test_installed_pathlib_totality_gate_is_stable_zero() -> None:
         "decimal_floor_panics": 0,
         "fractions_sugar_panics": 0,
         "fractions_floor_panics": 0,
-        "pathlib_sugar_panics": 0,
-        "pathlib_floor_panics": 0,
+        # Python 3.12.3 native-frontier measurement after deleting audit-only.
+        "pathlib_sugar_panics": 24,
+        # #4244 carries one raise-bearing record as a guarded typed effect;
+        # the source universe is unchanged and current R is 58.
+        "pathlib_floor_panics": 34,
         "unexpected_panics": 0,
     }, (
         f"pathlib construction-gap gate reopened (R={r_total}): "
         f"path={path} {render_text(report)}"
     )
-    assert r_total == 0
-    assert report.is_zero
-    assert not report.records
+    assert r_total == 58
+    assert len(report.records) == 58
+    assert not report.diagnostics
     assert [t.name for t in report.targets] == ["pathlib-all"]
     assert path.name in ("pathlib.py", "pathlib"), path
 

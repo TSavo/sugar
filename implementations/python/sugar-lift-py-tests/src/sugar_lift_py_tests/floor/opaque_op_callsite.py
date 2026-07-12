@@ -48,6 +48,29 @@ class OpaqueOpCallsite(FloorValue):
         args.extend(extra.to_term(owner=owner) for extra in self.extra_args)
         return ctor(f"call:{self.callee}", args)
 
+    def callsites(self):
+        return (self,)
+
+    def equals(self, other, site):
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import eq, py_eq
+        from sugar_lift_py_tests.outcome import Complete
+
+        coordinate = self.to_term(owner=str(site))
+        companions = (
+            (eq(coordinate, self.computed.to_term(owner=str(site))),)
+            if self.computed is not None
+            else ()
+        )
+        return Complete(
+            PredicateValue(
+                py_eq(coordinate, other.to_term(owner=str(site))),
+                site,
+                operand_callsites=(self,),
+                derived_formulas=companions,
+            )
+        )
+
     def _downstream(self) -> FloorValue:
         """The value a downstream operation consumes.
 

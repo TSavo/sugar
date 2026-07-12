@@ -23,6 +23,7 @@ class PredicateValue(FloorValue):
     # CallSiteValues that stood as operands when this formula was emitted --
     # carried so callEdges project from the collapse without a side channel.
     operand_callsites: tuple = dataclass_field(default=(), compare=False)
+    derived_formulas: tuple = dataclass_field(default=(), compare=False)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import _Atomic, _Connective, ctor
@@ -55,7 +56,14 @@ class PredicateValue(FloorValue):
         from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.outcome import Complete
 
-        return Complete(InvValue(self.formula, site, self.operand_callsites))
+        return Complete(
+            InvValue(
+                self.formula,
+                site,
+                self.operand_callsites,
+                self.derived_formulas,
+            )
+        )
 
     def binary_conditional(self, then, else_body, ctx=None, site=None):
         # A symbolic condition cannot pick a face, so it GUARDS: both faces
@@ -120,10 +128,7 @@ class PredicateValue(FloorValue):
         for name in sorted(then_bindings.keys() & else_bindings.keys()):
             then_binding = then_bindings[name]
             else_binding = else_bindings[name]
-            if (
-                before.get(name) is then_binding
-                and before.get(name) is else_binding
-            ):
+            if before.get(name) is then_binding and before.get(name) is else_binding:
                 continue
             then_answer = then_binding.answer(then_scope)
             else_answer = else_binding.answer(else_scope)

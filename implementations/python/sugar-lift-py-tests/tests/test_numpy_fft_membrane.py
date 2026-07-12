@@ -15,8 +15,7 @@ def test_numpy_fft_projection_mints_as_opaque_membrane(tmp_path: Path) -> None:
     trace = _trace(result)
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert "ProjectedEqualityAssertionSugar" in result.selected_sugars
-    assert "CallSugar" in result.selected_sugars
+    assert "AssertSugar" in result.selected_sugars
     assert _fft_projection_rows(result.lift_doc) == [_fft_contract(rhs=1)]
     assert _prove_statuses(result.prove_doc) == ["refused"]
     assert "single constraint has no sibling" in result.prove_doc["rows"][0]["reason"]
@@ -71,15 +70,16 @@ def _fft_projection_rows(lift_doc: dict) -> list[dict]:
     return [
         row["inv"]
         for row in lift_doc["ir"]
-        if row.get("sourceWarrants", [{}])[0].get("role")
-        == "python.projected-equality-assertion-sugar"
+        if row.get("sourceWarrants", [{}])[0].get("role") == "assertion"
+        and row.get("inv", {}).get("args", [{}])[0].get("args", [{}])[0].get("name")
+        == "call:numpy.fft.fft"
     ]
 
 
 def _fft_contract(*, rhs: int) -> dict:
     return {
         "kind": "atomic",
-        "name": "=",
+        "name": "py.eq",
         "args": [
             {
                 "kind": "ctor",
