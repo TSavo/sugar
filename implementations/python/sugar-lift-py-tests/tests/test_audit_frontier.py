@@ -103,3 +103,16 @@ def test_audit_empty_module_is_an_honest_empty_set() -> None:
     assert payload.factory_walk == []
     assert payload.source_mementos == []
     assert gaps == []
+
+
+def test_owned_ordinary_function_def_still_lifts() -> None:
+    # Good-twin ratchet (salvaged from the superseded #4171): the #4168 loud-fix
+    # must not regress ordinary owned defs -- they still select FunctionDefSugar
+    # and emit IR, with no gaps.
+    payload, gaps = audit_lift_file(
+        "def ordinary(x):\n    return x\n", "ordinary.py"
+    )
+
+    assert gaps == []
+    assert payload.ir
+    assert payload.factory_walk[0].selected == "FunctionDefSugar"
