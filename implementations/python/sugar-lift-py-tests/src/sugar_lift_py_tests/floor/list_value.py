@@ -58,6 +58,20 @@ class ListValue(FloorValue):
 
         return Complete(ListValue((*self.elements, value)))
 
+    def add(self, other, site):
+        """Python list concatenation, or a cited coordinate for an opaque peer."""
+        if type(other) is ListValue:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(ListValue((*self.elements, *other.elements)))
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+            return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        return super().add(other, site)
+
     def multiply(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
