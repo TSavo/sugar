@@ -245,30 +245,29 @@ def test_completed_wall_counts_factory_walk_gaps_not_false_green() -> None:
         ],
         "contracts": [{"pre": {"kind": "atomic"}}],
         "callEdges": [],
-        "factoryAuditSummary": {
-            "factoryWalk": [
-                {
-                    "kind": "factory-walk-row",
-                    "verdict": "complete",
-                    "status": "warranted",
-                },
-                _factory_walk_gap(
-                    "Sugar", observed="While", requested="statement"
-                ),
-                _factory_walk_gap(
-                    "Sugar", observed="NamedExpr", requested="term"
-                ),
-                _factory_walk_gap(
-                    "Sugar", observed="ListComp", requested="term"
-                ),
-                _factory_walk_gap(
-                    "Floor",
-                    owner="attribute",
-                    observed="TermValue",
-                    requested="stand on the attribute floor",
-                ),
-            ]
-        },
+                "factoryWalk": [
+            {
+                "kind": "factory-walk-row",
+                "verdict": "complete",
+                "status": "warranted",
+            },
+            _factory_walk_gap(
+                "Sugar", observed="While", requested="statement"
+            ),
+            _factory_walk_gap(
+                "Sugar", observed="NamedExpr", requested="term"
+            ),
+            _factory_walk_gap(
+                "Sugar", observed="ListComp", requested="term"
+            ),
+            _factory_walk_gap(
+                "Floor",
+                owner="attribute",
+                observed="TermValue",
+                requested="stand on the attribute floor",
+            ),
+        ]
+    ,
     }
 
     summary = summarize_pandas_completed_wall(report)
@@ -297,14 +296,13 @@ def test_completed_wall_gap_ceiling_reds_the_wall() -> None:
         "lineAccounting": [],
         "contracts": [],
         "callEdges": [],
-        "factoryAuditSummary": {
-            "factoryWalk": [
-                _factory_walk_gap("Sugar", observed="While"),
-                _factory_walk_gap(
-                    "Floor", owner="attribute", observed="TermValue"
-                ),
-            ]
-        },
+                "factoryWalk": [
+            _factory_walk_gap("Sugar", observed="While"),
+            _factory_walk_gap(
+                "Floor", owner="attribute", observed="TermValue"
+            ),
+        ]
+    ,
     }
     summary = summarize_pandas_completed_wall(report)
     floors = PandasWallFloors(
@@ -339,20 +337,19 @@ def test_completed_wall_zero_gaps_stays_clean() -> None:
         ],
         "contracts": [{"pre": {"kind": "atomic"}}],
         "callEdges": [{"kind": "implication"}],
-        "factoryAuditSummary": {
-            "factoryWalk": [
-                {
-                    "kind": "factory-walk-row",
-                    "verdict": "complete",
-                    "status": "warranted",
-                },
-                {
-                    "kind": "factory-walk-row",
-                    "verdict": "incomplete",
-                    "status": "runtime-effect",
-                },
-            ]
-        },
+                "factoryWalk": [
+            {
+                "kind": "factory-walk-row",
+                "verdict": "complete",
+                "status": "warranted",
+            },
+            {
+                "kind": "factory-walk-row",
+                "verdict": "incomplete",
+                "status": "runtime-effect",
+            },
+        ]
+    ,
     }
     summary = summarize_pandas_completed_wall(report)
     assert summary.gaps_total == 0
