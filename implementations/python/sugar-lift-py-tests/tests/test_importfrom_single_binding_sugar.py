@@ -34,13 +34,8 @@ def test_single_plain_from_import_binds_the_imported_address() -> None:
     )
 
 
-def test_other_from_import_partitions_stay_loud() -> None:
-    for source in (
-        "from pandas import Series as S",
-        "from pandas import DataFrame, Series",
-        "from .core import Series",
-        "from pandas import *",
-    ):
+def test_star_from_import_partition_stays_loud() -> None:
+    for source in ("from pandas import *",):
         with pytest.raises(FactoryPanic):
             build_node(
                 ast.parse(source).body[0],

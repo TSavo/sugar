@@ -40,6 +40,20 @@ class ImportAliasValue(FloorValue):
             site,
         )
 
+    def truth(self, site):
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(PredicateValue(py_truthy(self.to_term(owner="truth")), site))
+
+    def subscript(self, index, site):
+        return self.py_subscript_coordinate(index, site)
+
+    def guarded(self, formula):
+        del formula
+        return self
+
     def call_method_with(self, operation: Any, ctx: object):
         del ctx
         return _runtime_alias_effect(
@@ -93,11 +107,11 @@ def _runtime_alias_effect(
     shape: str,
     replacement: str,
 ):
-    from sugar_lift_py_tests.effect import RuntimeEffect
+    from sugar_lift_py_tests.effect import ImportedModuleRuntimeEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
     return Incomplete(
-        RuntimeEffect(
+        ImportedModuleRuntimeEffect(
             "import alias runtime boundary: "
             f"`{shape}` requires evaluating imported module binding "
             f"`{value.bound_name} -> {value.name}` at runtime. "

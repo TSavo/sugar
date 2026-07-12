@@ -81,7 +81,7 @@ class PredicateValue(FloorValue):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, complete_value
 
-        then_record = complete_value(then.reduce(ctx), owner="guarded-then")
+        then_record, then_scope = then.sugar.reduce_with_scope(ctx)
         then_own = then_record.contribution()
         then_effect = _conditional_effect(then_own, self.formula)
         if then_effect is not None:
@@ -93,7 +93,7 @@ class PredicateValue(FloorValue):
         joined_bindings = ()
         joined_effects = ()
         if else_body is not None:
-            else_record = complete_value(else_body.reduce(ctx), owner="guarded-else")
+            else_record, else_scope = else_body.sugar.reduce_with_scope(ctx)
             else_own = else_record.contribution()
             else_effect = _conditional_effect(else_own, not_(self.formula))
             if else_effect is not None:
@@ -104,7 +104,7 @@ class PredicateValue(FloorValue):
             )
             if not then_exits and not else_exits:
                 joined_bindings, joined_effects = self._joined_bindings(
-                    then, else_body, ctx
+                    then_scope, else_scope, ctx
                 )
         return Complete(
             GuardedFaces(
@@ -116,13 +116,11 @@ class PredicateValue(FloorValue):
             )
         )
 
-    def _joined_bindings(self, then, else_body, ctx):
+    def _joined_bindings(self, then_scope, else_scope, ctx):
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        then_scope = then.sugar.scope_after(ctx)
-        else_scope = else_body.sugar.scope_after(ctx)
         before = {binding.name: binding.value for binding in ctx.temporal.bindings}
         then_bindings = {
             binding.name: binding.value for binding in then_scope.temporal.bindings

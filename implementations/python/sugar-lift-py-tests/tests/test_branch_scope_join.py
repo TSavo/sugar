@@ -191,3 +191,38 @@ def test_real_datetime_repr_assertions_measure_after_join(
         locus["line"] for locus in axis["lifted_loci"] if locus["line"] in {1507, 1510}
     } == {1507, 1510}
     assert not any(gap.label.endswith(":1495:4") for gap in gaps)
+
+
+def test_nested_branch_join_reduces_each_assignment_once(monkeypatch) -> None:
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    depth = 8
+    lines = []
+    for level in range(depth):
+        lines.append("    " * (level + 1) + f"if p{level}:")
+    deepest_line = len(lines) + 2
+    lines.append("    " * (depth + 1) + "value = 'deep'")
+    for level in reversed(range(depth)):
+        lines.append("    " * (level + 1) + "else:")
+        lines.append("    " * (level + 2) + f"value = 'fallback-{level}'")
+
+    visits = 0
+    original_reduce = SugarBody.reduce
+
+    def counted_reduce(self, ctx):
+        nonlocal visits
+        site = getattr(self.sugar, "site", None)
+        if (
+            type(self.sugar).__name__ == "AssignSugar"
+            and getattr(site, "line", None) == deepest_line
+        ):
+            visits += 1
+        return original_reduce(self, ctx)
+
+    monkeypatch.setattr(SugarBody, "reduce", counted_reduce)
+    compose_block(
+        "\n".join(lines) + "\n",
+        {f"p{level}": SymbolicValue(make_var(f"p{level}")) for level in range(depth)},
+    )
+
+    assert visits == 1
