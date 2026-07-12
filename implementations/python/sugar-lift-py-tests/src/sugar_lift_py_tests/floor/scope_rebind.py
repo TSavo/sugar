@@ -28,3 +28,27 @@ class ScopeRebind(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(self)
+
+    def guarded(self, formula):
+        return GuardedScopeRebind((formula,), self.name, self.value)
+
+
+@dataclass(frozen=True)
+class GuardedScopeRebind(FloorValue):
+    """A branch-local rebind carried in the record under one or more guards.
+
+    It deliberately does not extend temporal scope. Definite assignment is owned by
+    PredicateValue._joined_bindings, which only joins names present in both faces.
+    Keeping this marker non-binding preserves the one-arm NameError path while the
+    outer join can still construct a GuardedValue when both faces bind the name.
+    """
+
+    guards: tuple
+    name: str
+    value: FloorValue
+
+    def contribution(self):
+        return ()
+
+    def guarded(self, formula):
+        return GuardedScopeRebind((formula, *self.guards), self.name, self.value)

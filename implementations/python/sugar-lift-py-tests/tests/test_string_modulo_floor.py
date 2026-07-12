@@ -67,7 +67,9 @@ def test_unowned_percent_format_operand_reaches_loud_none_arm() -> None:
         StringValue("%s").modulo(ListValue((TermValue(1),)), "t.py:1")
 
 
-def test_full_datetime_artifact_accounts_repr_assertions_honestly(cpython_311_datetime_path) -> None:
+def test_full_datetime_artifact_accounts_repr_assertions_honestly(
+    cpython_311_datetime_path,
+) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
@@ -100,7 +102,10 @@ def test_full_datetime_repr_reaches_next_loud_composition_gap(
     ).to_json()["assertions"]
 
     repr_gap = next(gap for gap in gaps if gap.label.endswith(":1495:4"))
-    assert "observed=ScopeRebind requested=ride under a guard" in repr_gap.message
+    assert (
+        "observed=GuardedValue requested=project this floor value to a term"
+        in repr_gap.message
+    )
     assert not any(
         ":1500:16 observed=StringValue requested=stand on the modulo floor"
         in gap.message
