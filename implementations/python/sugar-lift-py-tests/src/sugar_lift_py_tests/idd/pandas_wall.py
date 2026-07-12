@@ -234,13 +234,35 @@ def _completed_wall_gap_rows(
     """
     walk = report_json.get("factoryWalk")
     if not isinstance(walk, list):
-        return ()
+        walk = []
     rows: list[Mapping[str, Any]] = []
     for row in walk:
         if not isinstance(row, Mapping):
             continue
         if row.get("verdict") == "gap":
             rows.append(row)
+    conservation = report_json.get("sourceFactoryConservation")
+    if not isinstance(conservation, Mapping):
+        audit = report_json.get("factoryAuditSummary")
+        if isinstance(audit, Mapping):
+            conservation = audit.get("sourceFactoryConservation")
+    if isinstance(conservation, Mapping):
+        violations = conservation.get("violations")
+        if isinstance(violations, list):
+            for violation in violations:
+                if isinstance(violation, Mapping):
+                    rows.append(
+                        {
+                            "verdict": "gap",
+                            "gap_kind": "Conservation",
+                            "owner": "source→factory",
+                            "observed": violation.get("astKind", "unknown"),
+                            "requested": "classification",
+                            "reason": violation.get(
+                                "reason", "conservation violation"
+                            ),
+                        }
+                    )
     return tuple(rows)
 
 
