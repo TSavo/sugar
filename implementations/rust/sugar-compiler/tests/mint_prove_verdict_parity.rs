@@ -67,16 +67,26 @@ fn sugar_bin() -> Option<PathBuf> {
             return Some(pb);
         }
     }
-    let rust_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()?
-        .to_path_buf();
-    for rel in ["target/debug/sugar", "target/release/sugar"] {
-        let p = rust_root.join(rel);
-        if p.is_file() {
-            return Some(p);
-        }
+        .parent()?
+        .parent()?;
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let output = Command::new(repo.join("bin/sugarbin"))
+        .arg("--profile")
+        .arg(profile)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
-    None
+    let path = String::from_utf8(output.stdout).ok()?;
+    let path = PathBuf::from(path.trim());
+    path.is_file().then_some(path)
 }
 
 fn write_executable(path: &Path, text: &str) {
