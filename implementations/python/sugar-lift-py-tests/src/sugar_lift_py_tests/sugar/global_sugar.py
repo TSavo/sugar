@@ -7,6 +7,7 @@ from sugar_lift_py_tests.factory import factory_panic_gap
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,22 @@ class GlobalSugar(Sugar, role=SugarRole.STATEMENT):
     def new(cls, site, ctx) -> "GlobalSugar":
         del ctx
         return cls(names=tuple(site.node.names), site=site)
+
+    @classmethod
+    def witnesses(cls):
+        prefix = (
+            "shared = 1\n"
+            "def A(z):\n"
+            "    global shared\n"
+            "    shared = z\n"
+            "    return shared\n\n"
+        )
+        return _call_pair(
+            name="global_module_binding",
+            owner_sugar=cls.__name__,
+            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         if ctx is None or ctx.module_temporal is None:
