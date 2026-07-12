@@ -864,6 +864,13 @@ def audit_lift_file(
         # Empty/comment-only modules have no source site to construct. Their
         # honest audit result is the empty set, not an indexing crash and not a
         # fabricated support row.
+        from sugar_lift_py_tests.idd.lift_coverage_census import reconcile_body_owner_loci
+
+        object.__setattr__(
+            payload,
+            "source_factory_conservation",
+            reconcile_body_owner_loci(source, file=filename, factory_rows=[]),
+        )
         return payload, gaps
     module = roots[0]
     # Seed import bindings once for every def in this module (deeper floors).
@@ -929,6 +936,44 @@ def audit_lift_file(
                 raise
             # ONE door: hold the panic, name the gap, paint it red, keep walking.
             gap = gap_from_factory_panic(label, panic)
+            gaps.append(gap)
+            payload.factory_walk.append(_factory_walk_red_from_gap(gap))
+    from sugar_lift_py_tests.idd.lift_coverage_census import reconcile_body_owner_loci
+
+    conservation = reconcile_body_owner_loci(
+        source, file=filename, factory_rows=payload.factory_walk
+    )
+    object.__setattr__(payload, "source_factory_conservation", conservation)
+    if conservation.violations:
+        from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
+
+        for violation in conservation.violations:
+            locus = violation.locus
+            message = (
+                "source→factory conservation violation: body-owning source locus "
+                f"{locus.identity} disappeared before factory classification"
+            )
+            audit = FactoryAuditRow(
+                role="statement",
+                status="sugar-gap",
+                observed=locus.kind,
+                blame=f"{locus.file}:{locus.line}:{locus.col}",
+                selected=None,
+                candidates=[],
+                message=message,
+            )
+            gap = AuditOnlyGap(
+                label=locus.identity,
+                info={
+                    "gap_kind": "Conservation",
+                    "gap_locus": locus.identity,
+                    "observed": locus.kind,
+                    "requested": "source→factory classification",
+                    "fix": "remove the pre-factory skip or classify an explicit boundary",
+                },
+                audit_row=audit,
+                message=message,
+            )
             gaps.append(gap)
             payload.factory_walk.append(_factory_walk_red_from_gap(gap))
     return payload, gaps

@@ -15,8 +15,174 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, Mapping, Sequence
+
+
+class BodyOwnerDisposition(str, Enum):
+    """Closed source→factory classification; there is no optional/unknown arm."""
+
+    CONSTRUCTED = "constructed"
+    LOUD_GAP = "loud-gap"
+    INACTIVE_BOUNDARY = "inactive-boundary"
+    VIOLATION = "violation"
+
+
+_BODY_OWNER_KINDS = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+    ast.With,
+    ast.AsyncWith,
+    ast.Try,
+    ast.If,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
+
+
+@dataclass(frozen=True)
+class BodyOwnerLocus:
+    file: str
+    line: int
+    col: int
+    kind: str
+
+    @property
+    def identity(self) -> str:
+        return f"{self.file}:{self.line}:{self.col}:{self.kind}"
+
+
+@dataclass(frozen=True)
+class BodyOwnerClassification:
+    locus: BodyOwnerLocus
+    disposition: BodyOwnerDisposition
+    reason: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "locus": self.locus.identity,
+            "file": self.locus.file,
+            "line": self.locus.line,
+            "col": self.locus.col,
+            "astKind": self.locus.kind,
+            "classification": self.disposition.value,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class SourceFactoryConservation:
+    entries: tuple[BodyOwnerClassification, ...]
+
+    @property
+    def violations(self) -> tuple[BodyOwnerClassification, ...]:
+        return tuple(
+            entry
+            for entry in self.entries
+            if entry.disposition is BodyOwnerDisposition.VIOLATION
+        )
+
+    @property
+    def complete(self) -> bool:
+        return not self.violations
+
+    def to_json(self) -> dict[str, Any]:
+        counts = {disposition.value: 0 for disposition in BodyOwnerDisposition}
+        for entry in self.entries:
+            counts[entry.disposition.value] += 1
+        return {
+            "complete": self.complete,
+            "sourceLoci": len(self.entries),
+            "classificationCounts": dict(sorted(counts.items())),
+            "violations": [entry.to_json() for entry in self.violations],
+            "entries": [entry.to_json() for entry in self.entries],
+        }
+
+
+def reconcile_body_owner_loci(
+    source: str, *, file: str, factory_rows: Sequence[Any]
+) -> SourceFactoryConservation:
+    """Conserve every body-owning AST locus across the factory boundary.
+
+    A locus is reached (constructed or loud), explicitly outside the current
+    per-function audit frontier, or a typed violation.  A loud ancestor owns
+    suppression of its descendants, preventing both double-counting and silent
+    subtree disappearance.
+    """
+    tree = ast.parse(source, filename=file)
+    reached = _factory_row_index(factory_rows)
+    entries: list[BodyOwnerClassification] = []
+
+    def walk(node: ast.AST, active: bool, loud_ancestor: BodyOwnerLocus | None) -> None:
+        is_owner = isinstance(node, _BODY_OWNER_KINDS)
+        locus = (
+            BodyOwnerLocus(file, node.lineno, node.col_offset, type(node).__name__)
+            if is_owner
+            else None
+        )
+        row = reached.get((node.lineno, node.col_offset, type(node).__name__)) if locus else None
+        this_active = active or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        next_loud = loud_ancestor
+        if locus is not None:
+            if loud_ancestor is not None:
+                disposition = BodyOwnerDisposition.INACTIVE_BOUNDARY
+                reason = f"suppressed by loud ancestor {loud_ancestor.identity}"
+            elif row is not None:
+                is_gap, reason = row
+                disposition = (
+                    BodyOwnerDisposition.LOUD_GAP
+                    if is_gap
+                    else BodyOwnerDisposition.CONSTRUCTED
+                )
+                if is_gap:
+                    next_loud = locus
+            elif not this_active:
+                disposition = BodyOwnerDisposition.INACTIVE_BOUNDARY
+                reason = "outside per-function factory audit frontier"
+            else:
+                disposition = BodyOwnerDisposition.VIOLATION
+                reason = "source body owner disappeared before factory classification"
+            entries.append(BodyOwnerClassification(locus, disposition, reason))
+        for child in ast.iter_child_nodes(node):
+            walk(child, this_active, next_loud)
+
+    walk(tree, False, None)
+    entries.sort(key=lambda entry: (entry.locus.line, entry.locus.col, entry.locus.kind))
+    return SourceFactoryConservation(tuple(entries))
+
+
+def _factory_row_index(rows: Sequence[Any]) -> dict[tuple[int, int, str], tuple[bool, str]]:
+    indexed: dict[tuple[int, int, str], tuple[bool, str]] = {}
+    for raw in rows:
+        row: Mapping[str, Any]
+        if isinstance(raw, Mapping):
+            row = raw
+        elif hasattr(raw, "to_rpc"):
+            row = raw.to_rpc()
+        else:
+            continue
+        line = row.get("line")
+        kind = row.get("ast_kind", row.get("astKind"))
+        span = row.get("span")
+        if not isinstance(span, Mapping):
+            memento = row.get("sourceMemento")
+            if isinstance(memento, Mapping):
+                span = memento.get("span")
+        col = 0
+        if isinstance(span, Mapping):
+            col = int(span.get("start_col", span.get("startCol", 0)) or 0)
+        if isinstance(line, int) and isinstance(kind, str):
+            key = (line, col, kind)
+            gap = row.get("verdict") == "gap"
+            indexed[key] = (gap, str(row.get("reason") or row.get("status") or "factory reached"))
+    return indexed
 
 
 @dataclass(frozen=True)

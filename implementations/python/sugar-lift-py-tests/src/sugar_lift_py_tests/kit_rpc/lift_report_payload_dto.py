@@ -19,6 +19,7 @@ from .open_lane_dto import (
 )
 from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
+from sugar_lift_py_tests.idd.lift_coverage_census import SourceFactoryConservation
 
 
 @dataclass(frozen=True)
@@ -54,9 +55,13 @@ class LiftReportPayloadDto:
     # #4013 dual-axis lift coverage (assertions default / minority bodies).
     # Optional: filled by lift_rpc after the independent AST census.
     lift_coverage: dict[str, Any] | None = None
+    source_factory_conservation: SourceFactoryConservation | None = None
 
     def to_rpc(self) -> dict[str, Any]:
-        factory_summary = FactoryAuditSummaryDto(rows=self.factory_walk)
+        factory_summary = FactoryAuditSummaryDto(
+            rows=self.factory_walk,
+            source_factory_conservation=self.source_factory_conservation,
+        )
         source_ledger = self.source_ledger or _default_source_ledger(
             len(self.source_mementos)
         )
