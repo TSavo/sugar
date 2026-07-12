@@ -12,7 +12,7 @@ import pytest
 from factory_reduce import compose_block, reduce_value
 
 from sugar_lift_py_tests.floor import CallSiteValue, InvValue, SymbolicValue
-from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq
+from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq, str_const
 
 
 def test_call_reduces_to_its_coordinate() -> None:
@@ -41,5 +41,7 @@ def test_keyword_arguments_ride_the_coordinate() -> None:
     # expansion stays a loud gap -- see test_call_kwargs_sugar.py.
     value = reduce_value("f(x=1)")
     assert isinstance(value, CallSiteValue)
-    assert value.term == ctor("call:f", [num(1)])
+    # The keyword NAME rides inside the term as a kw wrapper (richer than the
+    # original names-in-parameters spelling): f(x=1) != f(y=1) at term level.
+    assert value.term == ctor("call:f", [ctor("kw", [str_const("x"), num(1)])])
     assert value.parameters == ("x",)
