@@ -8,7 +8,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, UniverseValue
+from sugar_lift_py_tests.floor import CallSiteValue, TermValue, UniverseValue
 from sugar_lift_py_tests.outcome import complete_value
 
 
@@ -39,9 +39,26 @@ def test_nested_def_binds_named_callable_and_later_call_digs_body() -> None:
     assert isinstance(callsite, CallSiteValue)
     ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
     dug = callsite.force_floor(ctx, owner="nested def regression", project_callsite=False)
-    assert isinstance(dug, BlockValue)
-    assert "+" in repr(dug)
+    assert isinstance(dug, TermValue)
+    assert dug.value == 6
     assert "inner" in repr(universe.record)
+
+
+def test_nested_callable_captures_lexical_bindings_and_overlays_actuals() -> None:
+    universe = _root_universe(
+        "def outer(x):\n"
+        "    offset = 4\n"
+        "    def inner(y):\n"
+        "        adjusted = y + offset\n"
+        "        return adjusted\n"
+        "    return inner(x)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    dug = callsite.force_floor(ctx, owner="nested closure regression", project_callsite=False)
+    assert dug == TermValue(9)
 
 
 def test_decorated_statement_def_stays_loud() -> None:
