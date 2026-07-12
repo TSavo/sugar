@@ -51,8 +51,8 @@ def test_assignment_contributes_nothing_to_the_record() -> None:
     assert len(record.statements) == 1
 
 
-def test_tuple_target_is_a_loud_factory_gap() -> None:
+def test_starred_tuple_target_is_a_loud_factory_gap() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    node = ast.parse("a, b = 1, 2\n").body[0]
+    node = ast.parse("a, *b = 1, 2\n").body[0]
     with pytest.raises(FactoryPanic):
         build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
