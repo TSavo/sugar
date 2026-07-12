@@ -36,6 +36,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     carried: tuple[str, ...]
     curried: bool
     unclassified_mutation: bool
+    static_elements: tuple[SugarBody, ...] | None
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -53,6 +54,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "ForSugar":
         # Iterable (TERM), target name, body block (STATEMENT). Never reduce here.
+        static_elements = _static_iterable_elements(site.for_iter(), ctx, site)
         return cls(
             target_name=site.for_target_name(),
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
@@ -62,6 +64,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             ),
             curried=_has_loop_control(site),
             unclassified_mutation=_has_unclassified_mutation(site),
+            static_elements=static_elements,
             site=site,
         )
 
@@ -83,9 +86,39 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        if self.static_elements is not None:
+            return self._unfold_static(self.static_elements, ctx)
         # Reduce the iterable; bind target to the element coordinate; thread body.
         return self.iterable.reduce(ctx).and_then(
             lambda iterable: self._bind_and_body(iterable, ctx)
+        )
+
+    def _unfold_static(self, remaining, ctx, entries=()):
+        from sugar_lift_py_tests.floor import BlockValue, ScopeRebind
+
+        if not remaining:
+            bindings = tuple(
+                ScopeRebind(name, value)
+                for name in self.carried
+                if (value := ctx.temporal.value_if_bound(name)) is not None
+            )
+            return Complete(BlockValue((*entries, *bindings)))
+        head, *rest = remaining
+        return head.reduce(ctx).and_then(
+            lambda element: self._unfold_iteration(
+                element, tuple(rest), ctx, entries
+            )
+        )
+
+    def _unfold_iteration(self, element, remaining, ctx, entries):
+        from sugar_lift_py_tests.floor import ScopeRebind
+
+        iteration_ctx = ScopeRebind(self.target_name, element).extend_scope(ctx)
+        record, next_ctx = self.body.sugar.reduce_with_scope(iteration_ctx)
+        return self._unfold_static(
+            remaining,
+            next_ctx,
+            (*entries, *record.contribution()),
         )
 
     def _bind_and_body(self, iterable, ctx: object) -> Outcome:
@@ -147,4 +180,45 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         return self.body.reduce(body_ctx)
 
     def walk_children(self):
-        return (self.iterable, self.body)
+        return (
+            self.iterable,
+            self.body,
+            *(self.static_elements or ()),
+        )
+
+
+def _static_iterable_elements(iterable_site, ctx, loop_site):
+    import ast
+
+    node = iterable_site.node
+    values = None
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "range":
+        if node.keywords or not 1 <= len(node.args) <= 3:
+            return None
+        if not all(isinstance(arg, ast.Constant) and type(arg.value) is int for arg in node.args):
+            return None
+        values = tuple(range(*(arg.value for arg in node.args)))
+    elif isinstance(node, (ast.Tuple, ast.List)):
+        values = tuple(element for element in node.elts)
+    else:
+        return None
+
+    if len(values) > 64:
+        from sugar_lift_py_tests.factory import factory_panic_gap
+
+        factory_panic_gap(
+            owner="ForSugar.static_unfold",
+            blame=str(loop_site),
+            observed=f"statically finite iterable with {len(values)} elements",
+            requested="at most 64 concrete loop self-applications",
+            fix="reduce the literal iterable size or raise the reviewed unfold cap",
+        )
+    return tuple(
+        ctx.build_body(
+            ast.copy_location(ast.Constant(value=value), node)
+            if not isinstance(value, ast.AST)
+            else value,
+            SugarRole.TERM,
+        )
+        for value in values
+    )
