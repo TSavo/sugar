@@ -75,6 +75,7 @@ class PredicateValue(FloorValue):
         then_entries = tuple(entry.guarded(self.formula) for entry in then_own)
         else_entries = ()
         else_exits = False
+        joined_bindings = ()
         if else_body is not None:
             else_record = complete_value(else_body.reduce(ctx), owner="guarded-else")
             else_own = else_record.contribution()
@@ -85,14 +86,52 @@ class PredicateValue(FloorValue):
             else_entries = tuple(
                 entry.guarded(not_(self.formula)) for entry in else_own
             )
+            if not then_exits and not else_exits:
+                joined_bindings = self._joined_bindings(
+                    then, else_body, ctx
+                )
         return Complete(
             GuardedFaces(
                 guard=self.formula,
                 entries=(*then_entries, *else_entries),
                 then_exits=then_exits,
                 else_exits=else_exits,
+                joined_bindings=joined_bindings,
             )
         )
+
+    def _joined_bindings(self, then, else_body, ctx):
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.outcome import complete_value
+
+        then_scope = then.sugar.scope_after(ctx)
+        else_scope = else_body.sugar.scope_after(ctx)
+        before = {binding.name: binding.value for binding in ctx.temporal.bindings}
+        then_bindings = {
+            binding.name: binding.value for binding in then_scope.temporal.bindings
+        }
+        else_bindings = {
+            binding.name: binding.value for binding in else_scope.temporal.bindings
+        }
+        joined = []
+        for name in sorted(then_bindings.keys() & else_bindings.keys()):
+            then_binding = then_bindings[name]
+            else_binding = else_bindings[name]
+            if (
+                before.get(name) is then_binding
+                and before.get(name) is else_binding
+            ):
+                continue
+            then_value = complete_value(
+                then_binding.answer(then_scope), owner=f"branch join {name} then"
+            )
+            else_value = complete_value(
+                else_binding.answer(else_scope), owner=f"branch join {name} else"
+            )
+            joined.append(
+                (name, GuardedValue(self.formula, then_value, else_value))
+            )
+        return tuple(joined)
 
 
 def _conditional_effect(entries: tuple, formula):

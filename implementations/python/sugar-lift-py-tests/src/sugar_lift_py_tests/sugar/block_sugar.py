@@ -69,3 +69,10 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
 
     def walk_children(self):
         return self.statements
+
+    def scope_after(self, ctx):
+        """Thread only the temporal effects of this block in execution order."""
+        for statement in self.statements:
+            outcome = statement.reduce(ctx)
+            ctx = outcome.extend_scope(ctx)
+        return ctx
