@@ -137,6 +137,30 @@ class OpenFormula:
         return self.formula.ir_formula
 
 
+@dataclass(frozen=True)
+class ScopedLoopControlWitness:
+    """A cited loop transfer whose private coordinate is contract-local."""
+
+    action: str
+    locus: str
+
+    @property
+    def variable(self) -> str:
+        return f"loop-control:{self.locus}"
+
+    def close(self, formula: IrFormula) -> IrFormula:
+        from sugar_lift_py_tests.ir import PrimitiveSort, exists
+
+        if self.action not in {"break", "continue"}:
+            proofir_construction_gap(
+                owner="proofir.scope.ScopedLoopControlWitness",
+                observed=self.action,
+                requested="break or continue loop transfer",
+                fix="construct a witness only at BreakSugar or ContinueSugar",
+            )
+        return exists(self.variable, PrimitiveSort("LoopControl"), formula)
+
+
 @dataclass(frozen=True, init=False)
 class ScopedFormula:
     open_formula: OpenFormula
@@ -152,6 +176,7 @@ class ScopedFormula:
         open_formula = (
             formula if isinstance(formula, OpenFormula) else OpenFormula(formula)
         )
+        _validate_scoped_loop_control_witnesses(open_formula.formula.ir_formula)
         _require_sorted_scope(
             open_formula.formula,
             formals=allowed_vars,
@@ -170,6 +195,24 @@ class ScopedFormula:
     @property
     def ir_formula(self):
         return self.closed.ir_formula
+
+
+def _validate_scoped_loop_control_witnesses(formula: IrFormula) -> None:
+    """Keep loop-control closure on the ordinary ScopedFormula validation door."""
+    if isinstance(formula, _Quantifier):
+        if formula.name.startswith("loop-control:") and (
+            formula.kind != "exists" or formula.sort.name != "LoopControl"
+        ):
+            proofir_construction_gap(
+                owner="proofir.scope.ScopedFormula",
+                observed=f"{formula.kind} {formula.name}: {formula.sort.name}",
+                requested="existential ScopedLoopControlWitness binder",
+                fix="close the cited loop transfer with ScopedLoopControlWitness",
+            )
+        _validate_scoped_loop_control_witnesses(formula.body)
+    elif isinstance(formula, _Connective):
+        for operand in formula.operands:
+            _validate_scoped_loop_control_witnesses(operand)
 
 
 @dataclass(frozen=True, init=False)
@@ -404,6 +447,7 @@ __all__ = [
     "PostCondition",
     "PreCondition",
     "ProvenancedFormula",
+    "ScopedLoopControlWitness",
     "ScopedFormula",
     "claim_formula_from_ir",
 ]

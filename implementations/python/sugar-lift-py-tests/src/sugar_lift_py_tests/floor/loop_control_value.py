@@ -31,7 +31,9 @@ def _loop_control_formula(action: str, locus: str, guards: tuple = ()):
         make_var(f"loop-control:{locus}"),
         ctor(spelling, [str_const(locus)]),
     )
-    if not guards:
-        return formula
-    guard = guards[0] if len(guards) == 1 else and_(list(guards))
-    return implies(guard, formula)
+    if guards:
+        guard = guards[0] if len(guards) == 1 else and_(list(guards))
+        formula = implies(guard, formula)
+    from sugar_lift_py_tests.proofir.scope import ScopedLoopControlWitness
+
+    return ScopedLoopControlWitness(action=action, locus=locus).close(formula)
