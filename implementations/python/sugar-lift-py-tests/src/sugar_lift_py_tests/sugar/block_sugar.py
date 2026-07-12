@@ -52,6 +52,33 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
     def desugar(self, ctx: object = None) -> Outcome:
         return Complete(BlockValue(self._collect(self.statements, ctx)))
 
+    def reduce_with_scope(self, ctx: object):
+        """Reduce once, returning both the record and its terminal context."""
+        statements, final_ctx = self._collect_with_scope(self.statements, ctx)
+        return BlockValue(statements), final_ctx
+
+    def _collect_with_scope(self, statements: tuple, ctx: object):
+        if not statements:
+            return (), ctx
+        head, *rest = statements
+        rest = tuple(rest)
+        outcome = head.reduce(ctx)
+        next_ctx = outcome.extend_scope(ctx)
+        final_ctx = next_ctx
+
+        def reduce_tail(more):
+            nonlocal final_ctx
+            entries, final_ctx = self._collect_with_scope(more, next_ctx)
+            return entries
+
+        return (
+            (
+                *outcome.contribution(),
+                *outcome.follow(rest, reduce_tail),
+            ),
+            final_ctx,
+        )
+
     def _collect(self, statements: tuple, ctx: object) -> tuple:
         if not statements:
             return ()
