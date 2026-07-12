@@ -742,7 +742,7 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
 
 
 
-def _module_import_temporal(module, catalog) -> "object":
+def _module_import_temporal(module, catalog, *, recovered_panics=None) -> "object":
     """Bind constructed module declarations into a TemporalContext.
 
     Deeper floors: names introduced by ``import pytest`` / ``from x import Y``
@@ -796,15 +796,24 @@ def _module_import_temporal(module, catalog) -> "object":
                     temporal=temporal,
                     module_temporal=temporal,
                 )
+                try:
+                    resolved_value = resolve_install_source_value(
+                        import_target, import_ctx
+                    )
+                except FactoryPanic as panic:
+                    if recovered_panics is None:
+                        raise
+                    recovered_panics.append(
+                        (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                    )
+                    resolved_value = None
                 temporal = temporal.bind_value(
                     bound,
                     ImportAliasValue(
                         name,
                         bound,
                         import_target=import_target,
-                        resolved_value=resolve_install_source_value(
-                            import_target, import_ctx
-                        ),
+                        resolved_value=resolved_value,
                     ),
                 )
         elif observed == "ClassDef":
@@ -832,7 +841,13 @@ def _module_import_temporal(module, catalog) -> "object":
             )
             try:
                 outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
-            except (FactoryPanic, TypeError, ValueError, AssertionError):
+            except FactoryPanic as panic:
+                if recovered_panics is not None:
+                    recovered_panics.append(
+                        (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                    )
+                continue
+            except (TypeError, ValueError, AssertionError):
                 continue
             if isinstance(outcome, Incomplete):
                 continue
@@ -1031,7 +1046,18 @@ def audit_lift_file(
         return payload, gaps
     module = roots[0]
     # Seed module declarations once for every def in this module (deeper floors).
-    module_temporal = _module_import_temporal(module, catalog)
+    seed_panics: list[tuple[str, FactoryPanic]] | None = [] if recover_panics else None
+    module_temporal = _module_import_temporal(
+        module, catalog, recovered_panics=seed_panics
+    )
+    for label, panic in seed_panics or ():
+        recovered_panics.append(
+            RecoveredFactoryPanicDto(
+                locus=label,
+                reason=panic.info.message,
+                gap=panic.info.to_json(),
+            )
+        )
     import_aliases, from_imports = _module_import_maps(module)
     # Same-module name_resolver: bare f() and Class.method dig bodies.
     name_resolver: dict = {}
