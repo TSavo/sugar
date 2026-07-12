@@ -15,7 +15,7 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-from sugar_lift_py_tests.lift_rpc import lift_file_payload
+from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
 
 
 def _site(source: str) -> SourceFragment:
@@ -82,13 +82,16 @@ def test_full_datetime_delete_is_owned_and_later_assertions_now_lift(cpython_311
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
 
-    report = lift_file_payload(source, str(path))
+    report, gaps = audit_lift_file(source, str(path), hold_panic=True)
     delete_row = next(
         row.to_rpc()
         for row in report.factory_walk
         if row.to_rpc()["line"] == 2037 and row.to_rpc()["ast_kind"] == "Delete"
     )
     assert delete_row["selected"] == "SubscriptDeleteSugar"
+    assert gaps
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(source, str(path))
 
     payload = report.to_rpc()
     assertions = account_lift_coverage(

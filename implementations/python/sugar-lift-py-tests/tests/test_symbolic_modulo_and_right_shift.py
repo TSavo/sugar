@@ -66,18 +66,16 @@ def test_full_datetime_clears_precursors_and_names_next_blockers(
     assert not any(
         ":138:12" in message and "observed=BinOp" in message for message in messages
     )
-    assert any(
-        "observed=_DAYS_IN_MONTH requested=value" in message for message in messages
-    )
-    assert any(
+    assert not any("observed=_DAYS_IN_MONTH requested=value" in message for message in messages)
+    assert not any(
         "observed=_DAYS_BEFORE_MONTH requested=value" in message for message in messages
     )
-    assert any("observed=_DI400Y requested=value" in message for message in messages)
-    assert assertions["lifted_cited"] == 9
-    assert assertions["refused_loud"] == 36
+    assert not any("observed=_DI400Y requested=value" in message for message in messages)
+    assert assertions["lifted_cited"] == 14
+    assert assertions["refused_loud"] == 31
     assert assertions["silently_unaccounted"] == 0
     assert {
         locus["line"]
-        for locus in assertions["refused_loci"]
+        for locus in assertions["lifted_loci"]
         if locus["line"] in {53, 60, 144}
     } == {53, 60, 144}

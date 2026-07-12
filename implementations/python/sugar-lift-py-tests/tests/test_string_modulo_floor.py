@@ -137,8 +137,8 @@ def test_full_datetime_repr_distributes_guarded_format_and_lifts_assertions(
         in gap.message
         for gap in gaps
     )
-    assert assertions["lifted_cited"] == 9
-    assert assertions["refused_loud"] == 36
+    assert assertions["lifted_cited"] == 14
+    assert assertions["refused_loud"] == 31
     assert assertions["silently_unaccounted"] == 0
     assert {
         locus["line"]

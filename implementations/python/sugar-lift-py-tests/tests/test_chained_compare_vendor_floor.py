@@ -5,13 +5,15 @@ import pytest
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.floor import PredicateValue
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
 
 
 def _axis(source: str, file: str) -> dict:
-    rpc = lift_file_payload(source, file).to_rpc()
+    payload, _gaps = audit_lift_file(source, file, hold_panic=True)
+    rpc = payload.to_rpc()
     return account_lift_coverage(census_source(source, file=file), rpc).to_json()[
         "assertions"
     ]
@@ -114,6 +116,8 @@ def test_chain_with_unliftable_operand_stays_refused_loud() -> None:
     assert axis["lifted_cited"] == 0
     assert axis["refused_loud"] == 1
     assert axis["silently_unaccounted"] == 0
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(source, file)
 
 
 def test_shared_call_operand_is_built_and_cited_once() -> None:

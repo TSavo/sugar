@@ -3,9 +3,19 @@
 
 from __future__ import annotations
 
+import pytest
+
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-from sugar_lift_py_tests.lift_rpc import lift_file_payload
+from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
+
+
+def _audit_rpc(source: str) -> dict:
+    payload, _gaps = audit_lift_file(source, "t.py", hold_panic=True)
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(source, "t.py")
+    return payload.to_rpc()
 
 
 def test_raise_statement_not_unresolved() -> None:
@@ -15,7 +25,7 @@ def test_raise_statement_not_unresolved() -> None:
         "def test_b():\n"
         "    assert True\n"
     )
-    rpc = lift_file_payload(src, "t.py").to_rpc()
+    rpc = _audit_rpc(src)
     reasons = " ".join(
         str(r.get("reason") or "")
         for r in ((rpc.get("factoryAuditSummary") or {}).get("unresolvedSites") or [])
@@ -34,7 +44,7 @@ def test_pytest_raises_states_inv() -> None:
         "        boom()\n"
         "    assert 1 == 1\n"
     )
-    rpc = lift_file_payload(src, "t.py").to_rpc()
+    rpc = _audit_rpc(src)
     fas = rpc.get("factoryAuditSummary") or {}
     reasons = " ".join(
         str(r.get("reason") or "") for r in (fas.get("unresolvedSites") or [])
@@ -64,7 +74,7 @@ def test_pytest_raises_as_exc_info_binds() -> None:
         "        boom()\n"
         "    assert 'missing' in str(exc_info.value)\n"
     )
-    rpc = lift_file_payload(src, "t.py").to_rpc()
+    rpc = _audit_rpc(src)
     reasons = " ".join(
         str(r.get("reason") or "")
         for r in ((rpc.get("factoryAuditSummary") or {}).get("unresolvedSites") or [])
@@ -87,7 +97,7 @@ def test_raises_message_in_str_lifts() -> None:
         "        boom()\n"
         "    assert 'missing' in str(exc_info.value)\n"
     )
-    rpc = lift_file_payload(src, "t.py").to_rpc()
+    rpc = _audit_rpc(src)
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
         "assertions"
     ]

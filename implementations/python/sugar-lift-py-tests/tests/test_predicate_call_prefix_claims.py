@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
 
 
 def _axis(source: str, file: str) -> dict:
-    rpc = lift_file_payload(source, file).to_rpc()
+    payload, gaps = audit_lift_file(source, file, hold_panic=True)
+    rpc = payload.to_rpc()
+    if gaps:
+        with pytest.raises(FactoryPanic):
+            lift_file_payload(source, file)
     return account_lift_coverage(census_source(source, file=file), rpc).to_json()[
         "assertions"
     ]
@@ -102,7 +107,11 @@ def test_all_prior_store_and_del_shapes_fence_formal_replay(rebind: str) -> None
 
 
 def test_retained_prefix_claim_is_truthy_call_with_call_edge() -> None:
-    payload = lift_file_payload(_requests_481_source(), "requests/adapters.py").to_rpc()
+    source = _requests_481_source()
+    held, _gaps = audit_lift_file(
+        source, "requests/adapters.py", hold_panic=True
+    )
+    payload = held.to_rpc()
     assertion = next(
         row
         for row in payload["ir"]
