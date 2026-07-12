@@ -32,12 +32,12 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         # Method Call with a receiver Attribute func. OsSugar keeps os.exit.
-        # Keywords are owned (values ride the coordinate). **kwargs expansion
-        # stays unowned so it panics loud at recognition, not dropped.
+        # KeywordCallSugar owns every keyword-bearing call shape.
         return (
             site.observed == "Call"
             and site.call_receiver() is not None
             and site.call_qualified_target_name() != "os.exit"
+            and not site.call_has_keywords()
             # *args / **kwargs ride as coordinates (StarredSugar / ** param)
         )
 

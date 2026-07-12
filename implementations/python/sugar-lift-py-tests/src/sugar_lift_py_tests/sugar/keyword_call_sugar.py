@@ -15,7 +15,7 @@ class KeywordCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar", "M
 
     Deeper floors: CallSugar/MethodCallSugar leave keywords as loud gaps; many
     vendor tests use ``Signer(secret_key=...)`` / ``unsign(..., max_age=10)``.
-    This sugar owns keyword calls (no ``**kwargs`` expansion) and reduces to a
+    This sugar owns keyword calls, including ``**kwargs`` expansion, and reduces to a
     CallSiteValue coordinate whose term is
     ``call:f(pos..., kw:name=val, ...)`` — still a coordinate, not a fold.
 
@@ -35,10 +35,6 @@ class KeywordCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar", "M
             return False
         if not site.call_has_keywords():
             return False
-        # Reject **kwargs expansion (keyword with arg=None).
-        for kw in site.call_keywords():
-            if kw.keyword_arg_name() is None:
-                return False
         # Need a plain name or attribute receiver method.
         if site.call_receiver() is None:
             return site.call_target_name() is not None
@@ -54,7 +50,7 @@ class KeywordCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar", "M
         )
         kwargs = tuple(
             (
-                kw.keyword_arg_name(),
+                kw.keyword_arg_name() or "**",
                 ctx.build_body(kw.keyword_value(), SugarRole.TERM),
             )
             for kw in site.call_keywords()
