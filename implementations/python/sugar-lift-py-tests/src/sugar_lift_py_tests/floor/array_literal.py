@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from sugar_lift_py_tests.effect import runtime_effect_witness
 from typing import Any
 
 from .floor_value import FloorValue
@@ -100,7 +101,7 @@ class ArrayLiteral(FloorValue):
                     SequenceRepetitionRuntimeEffect(
                         "sequence repetition construction boundary: ArrayLiteral "
                         f"would materialize {repeated} literal floor items; "
-                        f"site={site}"
+                        f"site={site}", witness=runtime_effect_witness("py.sequence_repeat", other, site)
                     )
                 )
             return Complete(ArrayLiteral(self.items * other.value))
@@ -111,7 +112,7 @@ class ArrayLiteral(FloorValue):
             return Incomplete(
                 SequenceRepetitionRuntimeEffect(
                     "sequence repetition by symbolic count: ArrayLiteral depends "
-                    f"on runtime __index__/length semantics; site={site}"
+                    f"on runtime __index__/length semantics; site={site}", witness=runtime_effect_witness("py.sequence_repeat", other, site)
                 )
             )
         return super().multiply(other, site)

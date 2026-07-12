@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from sugar_lift_py_tests.effect import runtime_effect_witness
 
 from .floor_value import FloorValue
 
@@ -88,7 +89,7 @@ class ListValue(FloorValue):
                     SequenceRepetitionRuntimeEffect(
                         "sequence repetition construction boundary: ListValue "
                         f"would materialize {repeated} literal floor items; "
-                        f"site={site}"
+                        f"site={site}", witness=runtime_effect_witness("py.sequence_repeat", other, site)
                     )
                 )
 
@@ -113,7 +114,7 @@ class ListValue(FloorValue):
             return Incomplete(
                 IndexErrorRuntimeEffect(
                     f"list index out of range runtime boundary: "
-                    f"index={i} length={n}; owner=ListValue.subscript site={site}"
+                    f"index={i} length={n}; owner=ListValue.subscript site={site}", witness=runtime_effect_witness("py.subscript", index, site)
                 )
             )
         return self.py_subscript_coordinate(index, site)
@@ -138,7 +139,7 @@ class ListValue(FloorValue):
             return Incomplete(
                 IndexErrorRuntimeEffect(
                     "list assignment index out of range runtime boundary: "
-                    f"index={i} length={n}; owner=ListValue.setitem site={site}"
+                    f"index={i} length={n}; owner=ListValue.setitem site={site}", witness=runtime_effect_witness("py.setitem", index, site)
                 )
             )
         from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
@@ -146,7 +147,7 @@ class ListValue(FloorValue):
         return Incomplete(
             SubscriptStoreRuntimeEffect(
                 "list subscript store requires a concrete integer index; "
-                f"owner=ListValue.setitem site={site}"
+                f"owner=ListValue.setitem site={site}", witness=runtime_effect_witness("py.setitem", index, site)
             )
         )
 
@@ -181,7 +182,7 @@ class ListValue(FloorValue):
             return Incomplete(
                 SubscriptStoreRuntimeEffect(
                     "list slice deletion depends on runtime slice bounds; "
-                    f"owner=ListValue.delitem site={site}"
+                    f"owner=ListValue.delitem site={site}", witness=runtime_effect_witness("py.delitem", index, site)
                 )
             )
 
@@ -200,7 +201,7 @@ class ListValue(FloorValue):
             return Incomplete(
                 IndexErrorRuntimeEffect(
                     "list deletion index out of range runtime boundary: "
-                    f"index={i} length={n}; owner=ListValue.delitem site={site}"
+                    f"index={i} length={n}; owner=ListValue.delitem site={site}", witness=runtime_effect_witness("py.delitem", index, site)
                 )
             )
         from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
@@ -208,6 +209,6 @@ class ListValue(FloorValue):
         return Incomplete(
             SubscriptStoreRuntimeEffect(
                 "list subscript delete requires a concrete integer index; "
-                f"owner=ListValue.delitem site={site}"
+                f"owner=ListValue.delitem site={site}", witness=runtime_effect_witness("py.delitem", index, site)
             )
         )
