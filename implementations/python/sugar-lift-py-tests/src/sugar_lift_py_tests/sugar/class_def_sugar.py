@@ -17,7 +17,8 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
     coordinate (Name/Attribute TERM), reduce the body block (method FunctionDefs
     become nested UniverseValues, class-var assigns bind as usual), and the
     result is a ClassValue. contribution splices the body into the enclosing
-    record; extend_scope binds the class name.
+    record; methods remain deferred FunctionCallable bindings and extend_scope
+    binds the class name.
 
     Owns the plain shape only:
       * no decorators

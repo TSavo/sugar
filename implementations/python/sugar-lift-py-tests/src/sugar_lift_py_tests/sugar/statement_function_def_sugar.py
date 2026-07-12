@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field as dataclass_field
+
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar_body import SugarBody
+
+
+@dataclass(frozen=True)
+class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
+    """An executable ``def`` binds a named callable without reducing its body."""
+
+    name: str
+    signature: tuple[tuple[str, str], ...]
+    decorators: tuple[SugarBody, ...]
+    body: SugarBody
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return site.observed == "FunctionDef"
+
+    @classmethod
+    def new(cls, site, ctx) -> "StatementFunctionDefSugar":
+        return cls(
+            name=site.function_name(),
+            signature=site.function_binding_signature(),
+            decorators=tuple(
+                ctx.build_body(decorator, SugarRole.TERM)
+                for decorator in site.function_decorators()
+            ),
+            body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
+            site=site,
+        )
+
+    @classmethod
+    def witnesses(cls):
+        prefix = (
+            "def A(z):\n"
+            "    def inner(x):\n"
+            "        return x\n"
+            "    return inner(z)\n\n"
+        )
+        return _call_pair(
+            name="statement_function_def_return",
+            owner_sugar="StatementFunctionDefSugar",
+            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        return self._reduce_decorators(self.decorators, (), ctx)
+
+    def _reduce_decorators(self, remaining, accumulated, ctx) -> Outcome:
+        from sugar_lift_py_tests.floor import FunctionCallable
+
+        if remaining:
+            head, *rest = remaining
+            return head.reduce(ctx).and_then(
+                lambda value: self._reduce_decorators(
+                    tuple(rest), (*accumulated, value), ctx
+                )
+            )
+        return Complete(
+            FunctionCallable(
+                name=self.name,
+                parameters=tuple(name for name, _kind in self.signature),
+                parameter_kinds=tuple(kind for _name, kind in self.signature),
+                decorators=accumulated,
+                body=self.body,
+            )
+        )
+
+    def walk_children(self):
+        return (*self.decorators, self.body)

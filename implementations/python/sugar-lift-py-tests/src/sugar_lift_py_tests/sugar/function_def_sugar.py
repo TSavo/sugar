@@ -10,7 +10,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class FunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
+class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
     """`def name(params): body`. The body becomes a universe: each parameter
     binds a SymbolicValue (the universe variable whose sort is the compiler's
     to decide), the body reduces to its record under that scope, and the

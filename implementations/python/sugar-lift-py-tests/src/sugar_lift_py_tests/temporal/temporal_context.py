@@ -46,6 +46,12 @@ class TemporalContext:
     def receiver_for(self, name: str) -> FloorValue:
         return self.value_for(name)
 
+    def value_if_bound(self, name: str) -> FloorValue | None:
+        for binding in reversed(self.bindings):
+            if binding.name == name:
+                return binding.value
+        return None
+
     def bind_value(
         self, name: str, value: FloorValue, *, blame: str | None = None
     ) -> "TemporalContext":

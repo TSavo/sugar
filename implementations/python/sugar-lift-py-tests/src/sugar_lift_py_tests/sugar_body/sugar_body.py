@@ -100,7 +100,7 @@ class SugarBody(Generic[ReductionT_co]):
 
         # Block is the factory's synthetic suite node, not a source statement:
         # its row would render on its first statement's line, doubling it.
-        emit_row = self.role == SugarRole.STATEMENT and (
+        emit_row = self.role in {SugarRole.STATEMENT, SugarRole.DEFINITION} and (
             self.audit_row is None or self.audit_row.observed != "Block"
         )
         if emit_row and self.audit_row is not None:
@@ -167,4 +167,3 @@ class SugarBody(Generic[ReductionT_co]):
         for child in self.sugar.walk_children():
             rows.extend(child.factory_walk_rows())
         return tuple(rows)
-

@@ -22,7 +22,7 @@ from sugar_lift_py_tests.outcome import complete_value
 def _build_function(source: str):
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse(source).body[0]
-    return build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx), ctx
+    return build_node(node, filename="t.py", role=SugarRole.DEFINITION, ctx=ctx), ctx
 
 
 def _reduce_call(source: str, call: str) -> CallSiteValue:

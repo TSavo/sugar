@@ -96,13 +96,17 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
         if not remaining:
-            from sugar_lift_py_tests.floor import CallSiteValue
+            from sugar_lift_py_tests.floor import CallSiteValue, FunctionCallable
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.sugar.install_source_dig import (
                 build_dig_body,
                 bind_positional_defaults,
                 resolve_call_funcdef,
             )
+
+            bound = ctx.temporal.value_if_bound(self.target_name)
+            if isinstance(bound, FunctionCallable):
+                return bound.callsite(accumulated, self.keyword_names, self.site)
 
             # Install-source / same-module body dig: attach factory-built body
             # when resolve succeeds. body=None remains lawful coordinate-only.
