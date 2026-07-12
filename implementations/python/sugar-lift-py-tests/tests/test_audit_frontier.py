@@ -14,8 +14,9 @@ def clean():
     return 1
 
 def broken(xs):
-    while xs:
-        return xs[0]
+    match xs:
+        case 0:
+            return xs
     return None
 """
 
@@ -23,21 +24,21 @@ def broken(xs):
 def test_audit_frontier_enumerates_gap_and_keeps_clean_def() -> None:
     payload, gaps = audit_lift_file(_SOURCE, "frontier.py")
 
-    # One structured gap naming the unowned While (write more Sugar ...).
+    # One structured gap naming the unowned Match (write more Sugar ...).
     assert len(gaps) >= 1
     assert all(isinstance(gap, AuditOnlyGap) for gap in gaps)
     while_gaps = [
         gap
         for gap in gaps
-        if gap.info.get("observed") == "While"
-        or "While" in gap.info.get("fix", "")
-        or "While" in gap.message
+        if gap.info.get("observed") == "Match"
+        or "Match" in gap.info.get("fix", "")
+        or "Match" in gap.message
     ]
-    assert while_gaps, f"expected a While gap, got {[g.info for g in gaps]}"
+    assert while_gaps, f"expected a Match gap, got {[g.info for g in gaps]}"
     gap = while_gaps[0]
     assert gap.message.startswith("write more Sugar") or gap.info.get("gap_kind") == "Sugar"
-    assert gap.info.get("observed") == "While"
-    assert "While" in gap.info.get("fix", "") or "while" in gap.info.get("fix", "").lower()
+    assert gap.info.get("observed") == "Match"
+    assert "match" in gap.info.get("fix", "").lower()
 
     # Clean def still produces a universe / function-contract row.
     ir_names = [
@@ -53,11 +54,12 @@ def test_audit_frontier_demand_histogram_buckets_sugar() -> None:
     for gap in gaps:
         observed = gap.info.get("observed", "unknown")
         by_observed[observed] = by_observed.get(observed, 0) + 1
-    assert by_observed.get("While", 0) >= 1
+    assert by_observed.get("Match", 0) >= 1
 
 
-def test_audit_frontier_holds_unowned_default_arg_def_as_loud_gap() -> None:
-    source = "def f(a, b=1):\n    assert a == 3\n    return a\n"
+def test_audit_frontier_holds_unowned_vararg_def_as_loud_gap() -> None:
+    # default-arg defs became owned (#4169); a vararg def stays unowned.
+    source = "def f(*args):\n    assert args\n    return args\n"
 
     payload, gaps = audit_lift_file(source, "default_def.py")
 
@@ -92,7 +94,7 @@ def test_audit_frontier_feeds_pandas_wall_construction_gap_scrape() -> None:
     assert summary.gaps_total >= 1
     assert summary.gaps_by_bucket.get("Sugar", 0) >= 1
     assert any(
-        "While" in template for template in summary.gap_templates
+        "Match" in template for template in summary.gap_templates
     ), summary.gap_templates
 
 
