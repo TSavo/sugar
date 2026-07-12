@@ -155,14 +155,29 @@ class GuardedValue(FloorValue):
     def add(self, other, site):
         return self._map("add", other, site)
 
+    def subtract(self, other, site):
+        return self._map("subtract", other, site)
+
     def multiply(self, other, site):
         return self._map("multiply", other, site)
+
+    def divide(self, other, site):
+        return self._map("divide", other, site)
 
     def modulo(self, other, site):
         return self._map("modulo", other, site)
 
     def floor_divide(self, other, site):
         return self._map("floor_divide", other, site)
+
+    def left_shift(self, other, site):
+        return self._map("left_shift", other, site)
+
+    def right_shift(self, other, site):
+        return self._map("right_shift", other, site)
+
+    def unary_minus(self, site):
+        return self._map("unary_minus", site)
 
     def absolute(self, site):
         return self._map("absolute", site)
