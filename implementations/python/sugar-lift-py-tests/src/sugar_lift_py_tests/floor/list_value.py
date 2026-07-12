@@ -58,6 +58,20 @@ class ListValue(FloorValue):
 
         return Complete(ListValue((*self.elements, value)))
 
+    def multiply(self, other, site):
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+
+        if type(other) is TermValue and type(other.value) is int:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(ListValue(self.elements * other.value))
+        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+            return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
+        return super().multiply(other, site)
+
     def subscript(self, index, site):
         # Concrete list + in-range TermValue int folds to the element; out of
         # range is IndexError. Non-concrete index stays the py.subscript coordinate.
