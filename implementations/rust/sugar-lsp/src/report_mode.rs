@@ -153,12 +153,75 @@ pub fn dual_axis_one_liner(totals: &ReportModeTotals) -> String {
     )
 }
 
-fn resolve_row_file(file: &str, project_root: &Path) -> PathBuf {
-    let p = PathBuf::from(file);
-    if p.is_absolute() {
-        p
-    } else {
-        project_root.join(p)
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedReportFile {
+    uri: String,
+    source_path: PathBuf,
+}
+
+impl ResolvedReportFile {
+    fn from_row(row: &Json, project_root: &Path) -> Result<Self, String> {
+        let file = row
+            .get("file")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "report row is missing string field `file`".to_string())?;
+        Self::resolve(file, project_root)
+    }
+
+    fn resolve(file: &str, project_root: &Path) -> Result<Self, String> {
+        if windows_drive_path(file) {
+            let mut normalized = file.replace('\\', "/");
+            normalized[..1].make_ascii_uppercase();
+            let uri = Url::parse(&format!("file:///{normalized}"))
+                .map(|url| url.to_string())
+                .map_err(|error| format!("invalid Windows report path {file:?}: {error}"))?;
+            return Ok(Self {
+                uri,
+                source_path: PathBuf::from(normalized),
+            });
+        }
+
+        if posix_absolute_path(file) {
+            let normalized = file.replace('\\', "/");
+            let mut url = Url::parse("file:///")
+                .map_err(|error| format!("file URI base must parse: {error}"))?;
+            url.set_path(&normalized);
+            return Ok(Self {
+                uri: url.to_string(),
+                source_path: PathBuf::from(normalized),
+            });
+        }
+
+        let normalized = file.replace('\\', "/");
+        let source_path = project_root.join(normalized);
+        let uri = Url::from_file_path(&source_path)
+            .map(|url| url.to_string())
+            .map_err(|()| {
+                format!(
+                    "report path cannot become a file URI: {}",
+                    source_path.display()
+                )
+            })?;
+        Ok(Self { uri, source_path })
+    }
+
+    fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    fn source_path(&self) -> &Path {
+        &self.source_path
+    }
+
+    fn read_source(&self) -> Option<String> {
+        self.read_source_with(|path| std::fs::read_to_string(path))
+    }
+
+    fn read_source_with(
+        &self,
+        read: impl FnOnce(&Path) -> std::io::Result<String>,
+    ) -> Option<String> {
+        read(&self.source_path).ok()
     }
 }
 
@@ -175,26 +238,7 @@ fn posix_absolute_path(file: &str) -> bool {
 }
 
 fn report_file_uri(file: &str, project_root: &Path) -> Result<String, String> {
-    if windows_drive_path(file) {
-        let mut slash_path = file.replace('\\', "/");
-        slash_path[..1].make_ascii_uppercase();
-        return Url::parse(&format!("file:///{slash_path}"))
-            .map(|url| url.to_string())
-            .map_err(|error| format!("invalid Windows report path {file:?}: {error}"));
-    }
-
-    if posix_absolute_path(file) {
-        let slash_path = file.replace('\\', "/");
-        let mut url =
-            Url::parse("file:///").map_err(|error| format!("file URI base must parse: {error}"))?;
-        url.set_path(&slash_path);
-        return Ok(url.to_string());
-    }
-
-    let path = resolve_row_file(file, project_root);
-    Url::from_file_path(&path)
-        .map(|url| url.to_string())
-        .map_err(|()| format!("report path cannot become a file URI: {}", path.display()))
+    ResolvedReportFile::resolve(file, project_root).map(|resolved| resolved.uri)
 }
 
 fn normalize_report_uri(uri: &str, project_root: &Path) -> Result<String, String> {
@@ -267,8 +311,9 @@ pub fn project_from_prove_rows(
         let Some(file) = row.get("file").and_then(|v| v.as_str()) else {
             continue;
         };
-        let resolved = resolve_row_file(file, project_root);
-        if !same_file(&resolved, target_file) {
+        let resolved = ResolvedReportFile::resolve(file, project_root)
+            .unwrap_or_else(|error| panic!("prove report row path must resolve: {error}"));
+        if !same_file(resolved.source_path(), target_file) {
             continue;
         }
         let Some(range) = locus_range(row) else {
@@ -380,7 +425,13 @@ pub fn merge_lift_coverage(payload: &mut ReportModePayload, coverage: &Json, pro
 
     if let Some(un) = minority.get("un_asserted_loci").and_then(|v| v.as_array()) {
         for locus in un {
-            if let Some((r, body_src)) = body_locus_range_and_source(locus, project_root) {
+            let resolved_file = locus.get("file").map(|_| {
+                ResolvedReportFile::from_row(locus, project_root).unwrap_or_else(|error| {
+                    panic!("report-mode minority row path must resolve: {error}")
+                })
+            });
+            if let Some((r, body_src)) = body_locus_range_and_source(locus, resolved_file.as_ref())
+            {
                 let name = locus
                     .get("qualname")
                     .or_else(|| locus.get("name"))
@@ -400,7 +451,7 @@ pub fn merge_lift_coverage(payload: &mut ReportModePayload, coverage: &Json, pro
                     label: format!("Minority {name}"),
                     source,
                 };
-                let locus_uri = locus_file_uri(locus, project_root);
+                let locus_uri = resolved_file.as_ref().map(|file| file.uri.clone());
                 let payload_uri = normalize_report_uri(&payload.uri, project_root)
                     .unwrap_or_else(|error| panic!("report-mode active URI must resolve: {error}"));
                 if locus_uri
@@ -435,14 +486,6 @@ pub fn merge_lift_coverage(payload: &mut ReportModePayload, coverage: &Json, pro
     }
 }
 
-fn locus_file_uri(locus: &Json, project_root: &Path) -> Option<String> {
-    let file = locus.get("file").and_then(|v| v.as_str())?;
-    Some(
-        report_file_uri(file, project_root)
-            .unwrap_or_else(|error| panic!("report-mode locus path must resolve: {error}")),
-    )
-}
-
 fn locus_to_range(locus: &Json, _project_root: &Path) -> Option<Range> {
     let line = locus.get("line").and_then(|v| v.as_u64())?;
     if line == 0 {
@@ -473,7 +516,7 @@ fn locus_to_range(locus: &Json, _project_root: &Path) -> Option<Range> {
 /// * `source` is the joined body text for yellow hover in the IDE.
 fn body_locus_range_and_source(
     locus: &Json,
-    project_root: &Path,
+    resolved_file: Option<&ResolvedReportFile>,
 ) -> Option<(Range, Option<String>)> {
     let line = locus.get("line").and_then(|v| v.as_u64())?;
     if line == 0 {
@@ -481,16 +524,7 @@ fn body_locus_range_and_source(
     }
     let start = (line as u32).saturating_sub(1);
 
-    let file = locus.get("file").and_then(|v| v.as_str());
-    let path = file.map(|file| {
-        let p = Path::new(file);
-        if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            project_root.join(p)
-        }
-    });
-    let disk = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
+    let disk = resolved_file.and_then(ResolvedReportFile::read_source);
     let lines: Option<Vec<&str>> = disk.as_ref().map(|s| s.lines().collect());
 
     // Prefer end_line when present; still load source from disk when available.
@@ -586,13 +620,18 @@ pub fn merge_factory_walk(
             continue;
         };
         if let Some(ref f) = file_hint {
-            let resolved = resolve_row_file(f, project_root);
-            if !same_file(&resolved, target_file) {
+            let resolved = ResolvedReportFile::resolve(f, project_root)
+                .unwrap_or_else(|error| panic!("factory report row path must resolve: {error}"));
+            if !same_file(resolved.source_path(), target_file) {
                 let tf = target_file
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or("");
-                let rf = resolved.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                let rf = resolved
+                    .source_path()
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
                 if !tf.is_empty() && tf != rf {
                     continue;
                 }
@@ -1123,6 +1162,50 @@ mod tests {
             "file:///tmp/tests/test_serializer.py"
         );
         assert!(report_file_uri("relative.py", Path::new("relative-root")).is_err());
+    }
+
+    #[test]
+    fn report_row_resolution_unifies_uri_and_source_path_for_both_producers() {
+        let rows = [
+            (
+                json!({
+                    "file": "C:\\work\\tests\\test_serializer.py",
+                    "line": 29,
+                    "name": "coerce_str",
+                    "end_line": 34
+                }),
+                "file:///C:/work/tests/test_serializer.py",
+                "C:/work/tests/test_serializer.py",
+            ),
+            (
+                json!({
+                    "file": "/tmp\\tests/test_signer.py",
+                    "line": 14,
+                    "name": "get_signature",
+                    "end_line": 15
+                }),
+                "file:///tmp/tests/test_signer.py",
+                "/tmp/tests/test_signer.py",
+            ),
+        ];
+
+        for (row, expected_uri, expected_source_path) in rows {
+            let resolved = ResolvedReportFile::from_row(&row, Path::new("/project"))
+                .expect("real report row path resolves once");
+            assert_eq!(resolved.uri(), expected_uri);
+            assert_eq!(
+                resolved.source_path().to_string_lossy().replace('\\', "/"),
+                expected_source_path
+            );
+            let loaded = resolved.read_source_with(|path| {
+                assert_eq!(
+                    path.to_string_lossy().replace('\\', "/"),
+                    expected_source_path
+                );
+                Ok("producer source".to_string())
+            });
+            assert_eq!(loaded.as_deref(), Some("producer source"));
+        }
     }
 
     /// Dig-stop (walk red) is a distinct paint channel from prove UNSAT.
