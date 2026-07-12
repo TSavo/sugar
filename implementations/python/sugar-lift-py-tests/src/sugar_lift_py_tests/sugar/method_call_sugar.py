@@ -204,19 +204,17 @@ def _numpy_literal_call(callee: str, values: tuple):
 
 def _numpy_literal_result(callee: str, left, right):
     if callee == "numpy.divide":
-        # The current proof type bridge cannot give one call coordinate both
-        # Int and fractional Real result sorts.  Fold only exact integral
-        # integer division here; fractional results remain refused-loud until
-        # the typed call-result representation owns that distinction.
-        if (
-            type(left) is int
-            and type(right) is int
-            and right != 0
-            and left % right == 0
-        ):
-            result = left // right
-            return result if _fits_numpy_int64(result) else None
-        return None
+        if right == 0:
+            return None
+        result = left / right
+        # Preserve the exact Int construction when true division lands on an
+        # integer. Fractional results retain their Real construction. The call
+        # coordinate is shared; each assertion's typed sibling determines its
+        # result sort without weakening either fact.
+        if result.is_integer():
+            integral = int(result)
+            return integral if _fits_numpy_int64(integral) else None
+        return result
     if type(left) is not int or type(right) is not int:
         return None
     if not (_fits_numpy_int64(left) and _fits_numpy_int64(right)):

@@ -105,8 +105,12 @@ class SymbolicValue(FloorValue):
         # spelling as symbolic_term (operator map Mult -> "*"). Needed so list
         # comprehension elts like ``x * 2`` reduce under a bound element
         # coordinate instead of panicking on the multiplication floor.
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+
+        if isinstance(other, GuardedValue):
+            return other.map_from_left("multiply", self, site)
 
         return Complete(
             SymbolicValue(
@@ -139,8 +143,12 @@ class SymbolicValue(FloorValue):
     def add(self, other, site):
         # Symbolic / EUF addition: emit ``+(self, other)``. CallSiteValue dig
         # redispatches here when body is opaque; never invent a concrete sum.
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+
+        if isinstance(other, GuardedValue):
+            return other.map_from_left("add", self, site)
 
         return Complete(
             SymbolicValue(

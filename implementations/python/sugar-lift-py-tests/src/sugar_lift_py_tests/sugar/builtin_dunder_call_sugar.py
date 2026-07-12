@@ -42,6 +42,22 @@ class BuiltinDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("AbsCallS
         return self.arg.reduce(ctx).and_then(lambda value: self._finish(value, ctx))
 
     def _finish(self, value, ctx):
+        from sugar_lift_py_tests.floor import GuardedValue
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        if isinstance(value, GuardedValue):
+            true_outcome = self._finish(value.when_true, ctx)
+            if isinstance(true_outcome, Incomplete):
+                return true_outcome.guarded(value.guard)
+            false_outcome = self._finish(value.when_false, ctx)
+            if isinstance(false_outcome, Incomplete):
+                return false_outcome.guarded(not_(value.guard))
+            return Complete(
+                GuardedValue(
+                    value.guard, true_outcome.value, false_outcome.value
+                )
+            )
         if self.external_target is not None:
             from sugar_lift_py_tests.floor import SymbolicValue
             from sugar_lift_py_tests.ir import ctor

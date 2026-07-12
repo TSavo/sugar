@@ -656,6 +656,38 @@ mod tests {
     }
 
     #[test]
+    fn python_equality_and_derived_equality_share_real_call_result_sort() {
+        let call = ctor("call:numpy.divide", vec![int_const(7), int_const(2)]);
+        let real = serde_json::json!({
+            "kind": "const",
+            "value": "3.5",
+            "sort": {"kind": "primitive", "name": "Real"}
+        });
+        let inv = serde_json::json!({
+            "kind": "and",
+            "operands": [
+                atomic("py.eq", vec![call.clone(), real.clone()]),
+                eq(call, real),
+            ]
+        });
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
+        assert!(
+            parts
+                .preamble
+                .contains("(declare-fun |call:numpy.divide| (Int Int) Real)"),
+            "py.eq and = must agree on the Real result sort:\n{}",
+            parts.preamble
+        );
+        assert!(
+            !parts
+                .preamble
+                .contains("(declare-fun |call:numpy.divide| (Int Int) Int)"),
+            "the same call coordinate must not also be declared Int:\n{}",
+            parts.preamble
+        );
+    }
+
+    #[test]
     fn float_refinement_predicate_uses_real_call_result_sort_and_has_unsat_teeth() {
         let z3 = which_z3().expect("z3 required for float refinement predicate check");
         for (predicate, call_name) in [

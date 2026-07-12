@@ -57,6 +57,12 @@ class CallSiteValue(FloorValue):
 
         return SymbolicValue(self.term).bitwise_invert(site)
 
+    def absolute(self, site):
+        """Cite ``abs(call(...))`` without claiming the call's concrete value."""
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        return SymbolicValue(self.term).absolute(site)
+
     def test_python_type(self, value, site):
         type_coordinate = self.python_type_coordinate
         if type_coordinate is None and self.target_name == "type":
@@ -156,9 +162,13 @@ class CallSiteValue(FloorValue):
         No invent of concrete sums. Ctx is None-tolerant (add(site) has no ctx).
         Mid-dig FactoryPanic → treat as opaque (same as dig_floor soft path).
         """
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+
+        if isinstance(other, GuardedValue):
+            return other.map_from_left(floor_method, self, site)
 
         dug = self._dig_floor_or_none(
             None,
