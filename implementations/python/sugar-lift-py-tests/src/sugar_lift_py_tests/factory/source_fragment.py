@@ -112,6 +112,53 @@ class SourceFragment:
             source_cid=blake3_512_of(segment.encode()),
         )
 
+    def has_enclosing_loop(self) -> bool:
+        return self._has_source_ancestor((ast.For, ast.While, ast.AsyncFor))
+
+    def has_enclosing_function(self) -> bool:
+        return self._has_source_ancestor(
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        )
+
+    def _has_source_ancestor(self, wanted: tuple[type[ast.AST], ...]) -> bool:
+        if self.source is None:
+            return False
+        try:
+            tree = ast.parse(self.source)
+        except SyntaxError:
+            return False
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        target = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if type(node) is type(self.node)
+                and getattr(node, "lineno", None) == self.line
+                and getattr(node, "col_offset", None) == self.col
+            ),
+            None,
+        )
+        while target in parents:
+            target = parents[target]
+            if isinstance(target, wanted):
+                return True
+            if isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                return False
+        return False
+
+    def yield_value(self) -> "SourceFragment | None":
+        self._require(ast.Yield)
+        value = self.node.value
+        return (
+            SourceFragment.from_node(value, self.filename, source=self.source)
+            if value is not None
+            else None
+        )
+
     def is_within_annotation(self) -> bool:
         """Whether this exact source node is nested under a Python annotation."""
         if self.source is None:
