@@ -55,7 +55,11 @@ class SetLiteralSugar(Sugar, role=SugarRole.TERM):
             return Complete(SetValue(accumulated))
         head, *rest = remaining
         return head.reduce(ctx).and_then(
-            lambda value: self._collect(tuple(rest), (*accumulated, value), ctx)
+            lambda value: self._collect(
+                tuple(rest),
+                accumulated if value in accumulated else (*accumulated, value),
+                ctx,
+            )
         )
 
     def walk_children(self):

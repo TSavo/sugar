@@ -16,6 +16,13 @@ class DictValue(FloorValue):
 
     entries: tuple
 
+    def length(self, site):
+        del site
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(TermValue(len(self.entries)))
+
     def to_term(self, *, owner: str):
         # Project as python:dict of entry pairs (layout-preserving coordinate).
         from sugar_lift_py_tests.ir import ctor
