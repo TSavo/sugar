@@ -18,6 +18,10 @@ class ImportAliasValue(FloorValue):
     name: str
     bound_name: str
 
+    def extend_scope(self, ctx):
+        """Thread the source-stated import binding into following statements."""
+        return ctx.with_temporal(ctx.temporal.bind_value(self.bound_name, self))
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
