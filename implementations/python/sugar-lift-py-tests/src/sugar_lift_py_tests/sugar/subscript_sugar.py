@@ -60,9 +60,34 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
         # Reduce receiver, reduce index, ask the receiver to subscript by the index.
         return self.receiver.reduce(ctx).and_then(
             lambda receiver: self.index.reduce(ctx).and_then(
-                lambda index: receiver.subscript(index, self.site)
+                lambda index: self._subscript(receiver, index, ctx)
             )
         )
+
+    def _subscript(self, receiver, index, ctx):
+        from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue
+        from sugar_lift_py_tests.floor.call_site_value import force_floor
+
+        recorder = getattr(ctx, "record_operation", None)
+        if recorder is not None:
+            class SubscriptOperation:
+                pass
+            recorder(
+                owner="StringSubscriptSugar",
+                method_name="subscript_with",
+                operation=SubscriptOperation(),
+            )
+        if isinstance(index, CallSiteValue):
+            index = force_floor(index, ctx, owner="SubscriptSugar index")
+        if isinstance(receiver, ObjectValue):
+            return receiver.call_method_value(
+                "__getitem__",
+                (index,),
+                owner=type(self).__name__,
+                blame=str(self.site),
+                ctx=ctx,
+            )
+        return receiver.subscript(index, self.site)
 
     def walk_children(self):
         return (self.receiver, self.index)

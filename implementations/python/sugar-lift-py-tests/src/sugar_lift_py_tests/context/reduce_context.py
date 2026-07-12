@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+import logging
 from typing import Any
 
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -56,7 +58,21 @@ class ReduceContext:
     def record_operation(
         self, *, owner: str, method_name: str, operation: object
     ) -> None:
-        self.operation_log.append((owner, method_name, type(operation).__name__))
+        operation_name = type(operation).__name__
+        self.operation_log.append((owner, method_name, operation_name))
+        logging.getLogger("sugar_lift_py_tests.engine").debug(
+            json.dumps(
+                {
+                    "schema": "sugar.engine.log.v1",
+                    "event": "operation",
+                    "owner": owner,
+                    "method": method_name,
+                    "operation": operation_name,
+                    "operation_sequence": len(self.operation_log),
+                },
+                sort_keys=True,
+            )
+        )
 
     def with_temporal(self, temporal: TemporalContext) -> "ReduceContext":
         return ReduceContext(

@@ -54,7 +54,19 @@ class SugarBody(Generic[ReductionT_co]):
             )
 
     def reduce(self, ctx: ReductionContext = None) -> ReductionT_co:
-        return self.sugar.desugar(ctx)
+        from sugar_lift_py_tests.engine_log import reduction_span
+
+        site = (
+            self.audit_row.blame
+            if self.audit_row is not None
+            else str(getattr(self.sugar, "site", getattr(self.sugar, "blame", "<unknown>")))
+        )
+        with reduction_span(
+            sugar=type(self.sugar).__name__,
+            role=self.role.value,
+            site=site,
+        ):
+            return self.sugar.desugar(ctx)
 
     def inv_contribution(self):
         # Raw, unreached sugar states nothing.

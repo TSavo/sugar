@@ -64,8 +64,15 @@ class CallResultCallSugar(Sugar, role=SugarRole.TERM):
                 lambda value: self._collect(tuple(rest), (*accumulated, value), ctx)
             )
 
-        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue
         from sugar_lift_py_tests.ir import ctor
+
+        receiver, *arguments = accumulated
+        if isinstance(receiver, ObjectValue):
+            return receiver.call_method_value(
+                "__call__", tuple(arguments), owner=type(self).__name__,
+                blame=str(self.site), ctx=ctx,
+            )
 
         return Complete(
             CallSiteValue(

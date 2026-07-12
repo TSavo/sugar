@@ -138,10 +138,14 @@ def collect_dunder_frontier(root: Path) -> DunderFrontierReport:
 
 def _owned_dunder_slots() -> dict[str, str]:
     from sugar_lift_py_tests.floor import object_value
-    from sugar_lift_py_tests.sugar import builtin_call_sugar
-    from sugar_lift_py_tests.sugar.object_rich_comparison_term_sugar import (
-        _RICH_COMPARISON_DUNDERS,
-    )
+    from sugar_lift_py_tests.sugar import builtin_dunder_call_sugar
+    rich_comparison_dunders = {
+        "NotEq": "__ne__",
+        "Lt": "__lt__",
+        "LtE": "__le__",
+        "Gt": "__gt__",
+        "GtE": "__ge__",
+    }
 
     owners = {
         "__init__": "ConstructorStrategy",
@@ -182,9 +186,14 @@ def _owned_dunder_slots() -> dict[str, str]:
         owners[name] = "ObjectValue._INPLACE_BINARY_DUNDER_METHODS"
     for name in object_value._UNARY_DUNDER_METHODS.values():
         owners[name] = "ObjectValue._UNARY_DUNDER_METHODS"
-    for name in builtin_call_sugar._BUILTIN_DUNDER_METHODS.values():
+    for name in builtin_dunder_call_sugar._METHODS.values():
         owners[name] = "BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
-    for name in _RICH_COMPARISON_DUNDERS.values():
+    owners["__len__"] = "BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
+    owners["__abs__"] = "BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
+    owners["__index__"] = "BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
+    owners["__next__"] = "NextOperation"
+    owners["__str__"] = "StrCoercionOperation"
+    for name in rich_comparison_dunders.values():
         owners[name] = "ObjectRichComparisonTermSugar"
     return owners
 
