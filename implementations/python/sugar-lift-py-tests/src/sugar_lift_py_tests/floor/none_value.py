@@ -75,6 +75,18 @@ class NoneValue(FloorValue):
             return Complete(FalseBoolLiteralSugar(site=site))
         return super().equals(other, site)
 
+    def floor_divide(self, other, site):
+        from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            TypeErrorRuntimeEffect(
+                "unsupported floor division runtime boundary: NoneType // "
+                f"{type(other).__name__}; site={site}",
+                witness=runtime_effect_witness("py.floor_divide", other, site),
+            )
+        )
+
     def is_identical(self, other, site):
         # None is a singleton: None is None folds True. Against anything else,
         # emit identity -- the general case (e.g. z is None).
