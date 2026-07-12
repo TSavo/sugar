@@ -114,6 +114,36 @@ class TupleValue(FloorValue):
             fix="implement the element's native python:type tester result",
         )
 
+    def multiply(self, other, site):
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+
+        if type(other) is TermValue and type(other.value) is int:
+            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            repeated = len(self.elements) * max(other.value, 0)
+            if repeated > 65520:
+                return Incomplete(
+                    SequenceRepetitionRuntimeEffect(
+                        "sequence repetition construction boundary: TupleValue "
+                        f"would materialize {repeated} literal floor items; "
+                        f"site={site}"
+                    )
+                )
+            return Complete(TupleValue(self.elements * other.value))
+        if type(other) is SymbolicValue:
+            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            return Incomplete(
+                SequenceRepetitionRuntimeEffect(
+                    "sequence repetition by symbolic count: TupleValue depends "
+                    f"on runtime __index__/length semantics; site={site}"
+                )
+            )
+        return super().multiply(other, site)
+
     def subscript(self, index, site):
         # Concrete tuple + in-range TermValue int folds to the element; out of
         # range is IndexError. Non-concrete index stays the py.subscript coordinate.

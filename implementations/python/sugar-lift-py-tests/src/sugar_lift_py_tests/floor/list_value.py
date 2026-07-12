@@ -65,7 +65,18 @@ class ListValue(FloorValue):
         from sugar_lift_py_tests.floor.term_value import TermValue
 
         if type(other) is TermValue and type(other.value) is int:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            repeated = len(self.elements) * max(other.value, 0)
+            if repeated > 65520:
+                return Incomplete(
+                    SequenceRepetitionRuntimeEffect(
+                        "sequence repetition construction boundary: ListValue "
+                        f"would materialize {repeated} literal floor items; "
+                        f"site={site}"
+                    )
+                )
 
             return Complete(ListValue(self.elements * other.value))
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):

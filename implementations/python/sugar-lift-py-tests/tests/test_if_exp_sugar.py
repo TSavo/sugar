@@ -62,8 +62,8 @@ def test_literal_ifexp_bad_twin_flips(tmp_path: Path) -> None:
     assert lying.verdict == "unsat"
 
 
-def test_runtime_condition_ifexp_is_py_if_exp_coordinate() -> None:
-    """Symbolic condition is py.if_exp term coordinate — not RuntimeEffect red."""
+def test_runtime_condition_ifexp_is_typed_runtime_effect() -> None:
+    """A symbolic condition stays typed until guarded term values exist."""
     ctx = FactoryBuildContext(filename="if_exp.py", catalog=default_catalog())
     body = ctx.build_body(
         ast.parse("1 if flag else 2", mode="eval").body, SugarRole.TERM
@@ -77,14 +77,9 @@ def test_runtime_condition_ifexp_is_py_if_exp_coordinate() -> None:
 
     outcome = body.reduce(reduce_ctx)
 
-    from sugar_lift_py_tests.floor import CallSiteValue
-    from sugar_lift_py_tests.outcome import Complete
-
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.target_name == "if_exp"
-    term = outcome.value.term
-    assert getattr(term, "name", None) == "py.if_exp"
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "ConditionalExpressionRuntimeEffect"
+    assert "conditional expression runtime boundary" in outcome.reason
 
 
 def test_ifexp_factory_selects_shape_recognizer() -> None:
