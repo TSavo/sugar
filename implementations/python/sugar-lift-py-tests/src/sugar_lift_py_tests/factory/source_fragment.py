@@ -546,6 +546,26 @@ class SourceFragment:
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         return [a.arg for a in self.node.args.args]  # type: ignore[attr-defined]
 
+    def function_defaults(self) -> "list[SourceFragment]":
+        """Return trailing positional default expressions in formal order."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        return [
+            SourceFragment.from_node(value, self.filename, source=self.source)
+            for value in self.node.args.defaults  # type: ignore[attr-defined]
+        ]
+
+    def function_has_simple_positional_params(self) -> bool:
+        """Whether a def has only ordinary positional parameters."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        args = self.node.args  # type: ignore[attr-defined]
+        return (
+            not args.posonlyargs
+            and args.vararg is None
+            and not args.kwonlyargs
+            and not args.kw_defaults
+            and args.kwarg is None
+        )
+
     def function_positional_arity(self) -> "tuple[int, int]":
         """Return ``(min_args, max_args)`` for positional parameters (with defaults).
 
