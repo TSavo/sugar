@@ -20,29 +20,36 @@ class GuardedValue(FloorValue):
     when_false: FloorValue
 
     def _map(self, method: str, *args):
-        from sugar_lift_py_tests.outcome import Complete, complete_value
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        true_value = complete_value(
-            getattr(self.when_true, method)(*args), owner=f"GuardedValue.{method}.true"
+        true_outcome = getattr(self.when_true, method)(*args)
+        if isinstance(true_outcome, Incomplete):
+            return true_outcome.guarded(self.guard)
+        false_outcome = getattr(self.when_false, method)(*args)
+        if isinstance(false_outcome, Incomplete):
+            return false_outcome.guarded(not_(self.guard))
+        assert isinstance(true_outcome, Complete)
+        assert isinstance(false_outcome, Complete)
+        return Complete(
+            GuardedValue(self.guard, true_outcome.value, false_outcome.value)
         )
-        false_value = complete_value(
-            getattr(self.when_false, method)(*args),
-            owner=f"GuardedValue.{method}.false",
-        )
-        return Complete(GuardedValue(self.guard, true_value, false_value))
 
     def _predicate(self, method: str, *args):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import and_, implies, not_
-        from sugar_lift_py_tests.outcome import Complete, complete_value
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        true_value = complete_value(
-            getattr(self.when_true, method)(*args), owner=f"GuardedValue.{method}.true"
-        )
-        false_value = complete_value(
-            getattr(self.when_false, method)(*args),
-            owner=f"GuardedValue.{method}.false",
-        )
+        true_outcome = getattr(self.when_true, method)(*args)
+        if isinstance(true_outcome, Incomplete):
+            return true_outcome.guarded(self.guard)
+        false_outcome = getattr(self.when_false, method)(*args)
+        if isinstance(false_outcome, Incomplete):
+            return false_outcome.guarded(not_(self.guard))
+        assert isinstance(true_outcome, Complete)
+        assert isinstance(false_outcome, Complete)
+        true_value = true_outcome.value
+        false_value = false_outcome.value
         if not isinstance(true_value, PredicateValue) or not isinstance(
             false_value, PredicateValue
         ):
