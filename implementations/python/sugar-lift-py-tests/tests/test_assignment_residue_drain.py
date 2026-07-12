@@ -8,12 +8,10 @@ from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.effect import GlobalScopeRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
-from sugar_lift_py_tests.outcome import Incomplete
 
 
 def _site(source: str) -> SourceFragment:
@@ -69,11 +67,10 @@ def test_nested_tuple_unpack_recursively_projects_names() -> None:
     assert record == BlockValue((ReturnValue(TermValue(5)),))
 
 
-def test_global_declaration_is_named_runtime_effect() -> None:
-    record = compose_block("    global shared\n")
-    assert len(record.statements) == 1
-    assert isinstance(record.statements[0], Incomplete)
-    assert isinstance(record.statements[0].effect, GlobalScopeRuntimeEffect)
+def test_global_declaration_returns_to_the_loud_factory_none_arm() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _build("global shared")
+    assert raised.value.info.observed == "Global"
 
 
 def test_assignment_residue_owners_are_structurally_disjoint() -> None:
@@ -83,7 +80,6 @@ def test_assignment_residue_owners_are_structurally_disjoint() -> None:
         "xs[0] *= 2": "ResidualSubscriptAugAssignSugar",
         "self.x: int = 1": "AttributeAnnAssignSugar",
         "(a, b), (c, d) = value": "TupleUnpackAssignSugar",
-        "global x": "GlobalSugar",
     }
     for source, expected in cases.items():
         names = [
@@ -93,3 +89,7 @@ def test_assignment_residue_owners_are_structurally_disjoint() -> None:
             )
         ]
         assert names == [expected]
+
+    assert not list(
+        catalog.candidates_for(SugarRole.STATEMENT, _site("global x"))
+    )

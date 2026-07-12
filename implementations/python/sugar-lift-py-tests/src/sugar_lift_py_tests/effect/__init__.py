@@ -11,7 +11,6 @@ from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .dynamic_format_runtime_effect import DynamicFormatRuntimeEffect
 from .getattr_runtime_effect import GetattrRuntimeEffect
 from .generator_yield_runtime_effect import GeneratorYieldRuntimeEffect
-from .global_scope_runtime_effect import GlobalScopeRuntimeEffect
 from .effect import Effect, effect_kind, effect_reason, effect_status, require_effect
 from .index_error_runtime_effect import IndexErrorRuntimeEffect
 from .imported_module_runtime_effect import ImportedModuleRuntimeEffect
@@ -19,7 +18,7 @@ from .key_error_runtime_effect import KeyErrorRuntimeEffect
 from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .raise_effect import RaiseEffect
-from .runtime_effect import RuntimeEffect
+from .runtime_effect import RuntimeEffect, RuntimeEffectWitness
 from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
@@ -36,7 +35,6 @@ __all__ = [
     "DynamicFormatRuntimeEffect",
     "GetattrRuntimeEffect",
     "GeneratorYieldRuntimeEffect",
-    "GlobalScopeRuntimeEffect",
     "Effect",
     "IndexErrorRuntimeEffect",
     "ImportedModuleRuntimeEffect",
@@ -45,6 +43,7 @@ __all__ = [
     "OSExitRuntimeEffect",
     "RaiseEffect",
     "RuntimeEffect",
+    "RuntimeEffectWitness",
     "SequenceRepetitionRuntimeEffect",
     "SourceOracleEffect",
     "SubscriptStoreRuntimeEffect",
