@@ -6,6 +6,7 @@ from sugar_lift_py_tests.idd.lift_coverage_census import (
 )
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.idd.pandas_wall import summarize_pandas_completed_wall
+from sugar_lift_py_tests.idd.pandas_wall import PandasWallFloors, check_pandas_wall_floors
 
 
 def test_bad_twin_pre_factory_skip_is_a_typed_conservation_violation() -> None:
@@ -91,3 +92,40 @@ def test_pandas_wall_counts_a_conservation_violation_as_a_gap() -> None:
     assert summary.gap_templates == {
         "Conservation|source→factory|If|classification": 1
     }
+
+    floors = PandasWallFloors(
+        mode="complete",
+        gaps_total_ceiling=99,
+        gap_template_ceilings={
+            "Conservation|source→factory|If|classification": 99
+        },
+        green=summary.green,
+        pre_bearing=summary.pre_bearing,
+        implications=summary.implications,
+        frontier_needle="",
+        frontier_owner="",
+        frontier_shape="",
+    )
+    assert any(
+        "source-to-factory conservation violation" in breach
+        for breach in check_pandas_wall_floors(summary, floors)
+    )
+
+
+def test_generator_expression_registers_its_deferred_body_universe() -> None:
+    source = (
+        "def validate(tz_comps):\n"
+        "    return all(x == 0 for x in tz_comps)\n"
+    )
+    payload, _ = audit_lift_file(source, "datetime.py")
+    conservation = payload.source_factory_conservation
+    assert conservation is not None
+    assert conservation.complete is True
+    generator = next(
+        entry for entry in conservation.entries if entry.locus.kind == "GeneratorExp"
+    )
+    assert generator.disposition is BodyOwnerDisposition.CONSTRUCTED
+    assert any(
+        row.ast_kind == "GeneratorExp" and row.line == 2
+        for row in payload.factory_walk
+    )

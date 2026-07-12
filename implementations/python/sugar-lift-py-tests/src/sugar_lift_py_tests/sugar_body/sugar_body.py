@@ -112,9 +112,16 @@ class SugarBody(Generic[ReductionT_co]):
 
         # Block is the factory's synthetic suite node, not a source statement:
         # its row would render on its first statement's line, doubling it.
-        emit_row = self.role in {SugarRole.STATEMENT, SugarRole.DEFINITION} and (
-            self.audit_row is None or self.audit_row.observed != "Block"
+        deferred_body_term = (
+            self.role is SugarRole.TERM
+            and self.audit_row is not None
+            and self.audit_row.observed
+            in {"GeneratorExp", "ListComp", "SetComp", "DictComp"}
         )
+        emit_row = (
+            self.role in {SugarRole.STATEMENT, SugarRole.DEFINITION}
+            or deferred_body_term
+        ) and (self.audit_row is None or self.audit_row.observed != "Block")
         if emit_row and self.audit_row is not None:
             audit = self.audit_row
             site = getattr(self.sugar, "site", None)

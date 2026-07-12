@@ -624,6 +624,17 @@ def _check_completed_wall_floors(
     summary: PandasWallSummary, floors: PandasWallFloors
 ) -> list[str]:
     breaches: list[str] = []
+    conservation_gaps = sum(
+        count
+        for template, count in summary.gap_templates.items()
+        if template.startswith("Conservation|")
+    )
+    if conservation_gaps:
+        breaches.append(
+            "source-to-factory conservation violation: "
+            f"observed={conservation_gaps}; every body-owning source locus "
+            "must be constructed, loud, or explicitly inactive"
+        )
     if floors.mode != "complete":
         breaches.append(
             "pandas wall completed; switch tools/pandas-wall-floors.json "
