@@ -40,9 +40,49 @@ PYTHON_SOURCE_ORACLE_NAME = "python-source-oracle"
 COMPONENT_PLAN_INTENTS = {"lift", "prove", "verify"}
 PARSE_ERROR = object()
 
+# UTF-16 surrogate code points. Python's json.dumps emits them as \\udxxx;
+# serde_json rejects unpaired surrogates with "unexpected end of hex escape"
+# and aborts the whole lift (pandas wall never writes report.json). Scrub at
+# the RPC boundary so stdout carries only framed JSON the Rust client accepts.
+_SURROGATE_MIN = 0xD800
+_SURROGATE_MAX = 0xDFFF
+
+
+def _scrub_lone_surrogates(value: Any) -> Any:
+    """Replace unpaired UTF-16 surrogates so JSON is serde_json-safe.
+
+    Source text can legally contain lone surrogates (pandas tests that assert
+    on them). Those must not travel on the kit->cli JSON-RPC channel as raw
+    ``\\udxxx`` escapes -- the Rust client dies mid-parse and the wall has no
+    report. U+FFFD is the loud, standard stand-in for invalid Unicode.
+    """
+    if isinstance(value, str):
+        if not any(_SURROGATE_MIN <= ord(ch) <= _SURROGATE_MAX for ch in value):
+            return value
+        return "".join(
+            "\ufffd" if _SURROGATE_MIN <= ord(ch) <= _SURROGATE_MAX else ch
+            for ch in value
+        )
+    if isinstance(value, dict):
+        return {
+            (
+                _scrub_lone_surrogates(key) if isinstance(key, str) else key
+            ): _scrub_lone_surrogates(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_scrub_lone_surrogates(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub_lone_surrogates(item) for item in value)
+    return value
+
 
 def _send(obj: Dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(obj, separators=(",", ":")) + "\n")
+    # stdout is the framed JSON-RPC channel only. Scrub before dumps so a lone
+    # surrogate in an IR string constant cannot break the Rust parse of the
+    # whole response line (#4155 / #4102 wall transport).
+    safe = _scrub_lone_surrogates(obj)
+    sys.stdout.write(json.dumps(safe, separators=(",", ":")) + "\n")
     sys.stdout.flush()
 
 

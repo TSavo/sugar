@@ -16,6 +16,21 @@ def test_term_value_projects_via_ownership() -> None:
     assert floor_to_term(TermValue(3), owner="test") == num(3)
 
 
+def test_term_value_nonfinite_float_does_not_hard_crash_to_term() -> None:
+    """#4155 wall: int(inf) must not kill the lift RPC mid-package.
+
+    Integral floats still take the Int arm; inf/nan take the Real arm.
+    """
+    from sugar_lift_py_tests.ir import real_lit
+
+    assert TermValue(3.0).to_term(owner="test") == num(3)
+    inf_term = TermValue(float("inf")).to_term(owner="test")
+    nan_term = TermValue(float("nan")).to_term(owner="test")
+    assert inf_term == real_lit("Infinity")
+    # nan str is platform-stable 'nan' via Decimal(str(nan))
+    assert nan_term == real_lit("NaN") or str(nan_term).lower().find("nan") >= 0
+
+
 def test_bool_value_projects_via_ownership() -> None:
     assert BoolValue(True).to_term(owner="test") == bool_const(True)
 
