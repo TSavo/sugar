@@ -25,3 +25,8 @@ class GuardedRaise(FloorValue):
             effect=self.effect,
             scope=self.scope,
         )
+
+    def post_contribution(self):
+        from sugar_lift_py_tests.floor.raise_value import _exceptional_exit_formula
+
+        return (_exceptional_exit_formula(self.effect, self.guards),)
