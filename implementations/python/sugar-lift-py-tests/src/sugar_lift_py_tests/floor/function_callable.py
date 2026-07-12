@@ -20,9 +20,9 @@ class FunctionCallable(FloorValue):
     def to_term(self, *, owner: str):
         """Project the callable as the coordinate bound by its def statement."""
         del owner
-        from sugar_lift_py_tests.ir import make_var
+        from sugar_lift_py_tests.ir import ctor, str_const
 
-        return make_var(self.name)
+        return ctor("python:function", [str_const(self.name)])
 
     def apply(self, value: TermValue) -> TermValue:
         if self.return_name != self.parameter:
