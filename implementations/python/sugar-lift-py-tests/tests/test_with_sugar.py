@@ -1,4 +1,4 @@
-"""WithSugar: with cm as y: body threads over call:__enter__(cm).
+"""WithSugar: with cm as y substitutes the frozen cm coordinate for y.
 
 Single-item synchronous With only. Multi-item and AsyncWith stay loud gaps.
 """
@@ -23,7 +23,6 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.with_sugar import WithSugar
 
 
@@ -113,7 +112,7 @@ def test_with_without_as_still_reduces_context_and_body() -> None:
     assert ret.value == TermValue(1)
 
 
-def test_opaque_callsite_context_manager_is_a_named_runtime_effect() -> None:
+def test_callsite_context_manager_substitutes_coordinate_for_as_name() -> None:
     opaque = CallSiteValue(
         target_name="manager",
         arg_values=(),
@@ -123,15 +122,52 @@ def test_opaque_callsite_context_manager_is_a_named_runtime_effect() -> None:
     )
 
     outcome = compose_block(
-        "    with manager:\n"
-        "        return 1\n",
+        "    with manager as entered:\n"
+        "        return entered\n",
         binds={"manager": opaque},
     )
 
-    effect = outcome.statements[0]
-    assert isinstance(effect, Incomplete)
-    assert type(effect.effect).__name__ == "CallResultContextManagerRuntimeEffect"
-    assert "call:manager" in effect.reason
+    returned = outcome.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert returned.value is not opaque
+    assert returned.value.target_name == "__enter__"
+    assert "call:__enter__" in repr(returned.value)
+    assert repr(returned.value.term) != repr(opaque.term)
+
+
+def test_enter_result_twin_cannot_inherit_bare_manager_coordinate() -> None:
+    manager = CallSiteValue(
+        target_name="transaction",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:transaction", []),
+        body=None,
+    )
+    block = compose_block(
+        "    with manager as cursor:\n"
+        "        return cursor\n",
+        binds={"manager": manager},
+    )
+
+    cursor = block.statements[0].value
+    assert cursor.term == ctor("call:__enter__", [manager.term])
+    assert cursor.term != manager.term
+
+
+def test_unresolved_exit_contract_keeps_raise_carrying_body_loud() -> None:
+    manager = CallSiteValue(
+        target_name="manager",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:manager", []),
+        body=None,
+    )
+    with pytest.raises(FactoryPanic, match="__exit__"):
+        compose_block(
+            "    with manager:\n"
+            "        raise ValueError('boom')\n",
+            binds={"manager": manager},
+        )
 
 
 def test_complex_as_target_is_a_loud_factory_gap() -> None:

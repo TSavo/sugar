@@ -142,6 +142,22 @@ class CallSiteValue(FloorValue):
         # inv that consumes the term can still project the edge later.
         return (self,)
 
+    def linear_method_call(self, method_name: str, args: tuple, site):
+        """Name the next link in a timeless receiver-method rewrite."""
+        from sugar_lift_py_tests.ir import ctor
+
+        return CallSiteValue(
+            target_name=method_name,
+            arg_values=(self, *args),
+            parameters=(),
+            term=ctor(
+                f"call:{method_name}",
+                [self.to_term(owner=str(site)), *(arg.to_term(owner=str(site)) for arg in args)],
+            ),
+            body=None,
+            site=site,
+        )
+
 
     def add(self, other, site):
         """Addition floor via interface dispatch: dig then redispatch, else EUF +.
