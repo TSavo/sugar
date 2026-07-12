@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .floor_value import FloorValue
@@ -18,6 +18,7 @@ class ImportAliasValue(FloorValue):
     name: str
     bound_name: str
     import_target: str | None = None
+    resolved_value: FloorValue | None = field(default=None, compare=False)
 
     def extend_scope(self, ctx):
         """Thread the source-stated import binding into following statements."""
@@ -86,7 +87,8 @@ class ImportAliasValue(FloorValue):
         return self._unary_runtime_effect(site, "~")
 
     def format_data_model(self, spec, site, ctx):
-        del spec, ctx
+        if self.resolved_value is not None:
+            return self.resolved_value.format_data_model(spec, site, ctx)
         return _runtime_alias_effect_at_site(
             self,
             shape=f"format({self.bound_name}, ...)",
@@ -95,7 +97,17 @@ class ImportAliasValue(FloorValue):
         )
 
     def _binary_runtime_effect(self, other, site, operator):
-        del other
+        if self.resolved_value is not None:
+            methods = {
+                "+": "add",
+                "-": "subtract",
+                "*": "multiply",
+                "/": "divide",
+                "**": "power",
+                "&": "bitwise_and",
+                "^": "bitwise_xor",
+            }
+            return getattr(self.resolved_value, methods[operator])(other, site)
         return _runtime_alias_effect_at_site(
             self,
             shape=f"{self.bound_name} {operator} ...",
@@ -104,6 +116,9 @@ class ImportAliasValue(FloorValue):
         )
 
     def _unary_runtime_effect(self, site, operator):
+        if self.resolved_value is not None:
+            methods = {"-": "unary_minus", "+": "unary_plus", "~": "bitwise_invert"}
+            return getattr(self.resolved_value, methods[operator])(site)
         return _runtime_alias_effect_at_site(
             self,
             shape=f"{operator}{self.bound_name}",
