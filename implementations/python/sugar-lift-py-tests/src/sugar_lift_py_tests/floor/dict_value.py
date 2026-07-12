@@ -23,6 +23,24 @@ class DictValue(FloorValue):
 
         return Complete(TermValue(len(self.entries)))
 
+    def bitwise_or(self, other, site):
+        if type(other) is not DictValue:
+            return super().bitwise_or(other, site)
+        del site
+        entries = list(self.entries)
+        for right_key, right_value in other.entries:
+            for index, (left_key, _left_value) in enumerate(entries):
+                if type(left_key) is type(right_key) and getattr(
+                    left_key, "value", object()
+                ) == getattr(right_key, "value", object()):
+                    entries[index] = (left_key, right_value)
+                    break
+            else:
+                entries.append((right_key, right_value))
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(DictValue(tuple(entries)))
+
     def to_term(self, *, owner: str):
         # Project as python:dict of entry pairs (layout-preserving coordinate).
         from sugar_lift_py_tests.ir import ctor

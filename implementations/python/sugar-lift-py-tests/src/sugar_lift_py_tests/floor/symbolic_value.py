@@ -224,6 +224,9 @@ class SymbolicValue(FloorValue):
     def bitwise_xor(self, other, site):
         return self._runtime_bitwise_coordinate(other, site, "^")
 
+    def bitwise_or(self, other, site):
+        return self._runtime_bitwise_coordinate(other, site, "|")
+
     def left_shift(self, other, site):
         return self._runtime_bitwise_coordinate(other, site, "<<")
 
@@ -239,6 +242,9 @@ class SymbolicValue(FloorValue):
                 )
             )
         )
+
+    def matrix_multiply(self, other, site):
+        return self._runtime_bitwise_coordinate(other, site, "@")
 
     def unary_plus(self, site):
         # Unary plus on a symbolic is identity (symbolic_term UAdd returns the

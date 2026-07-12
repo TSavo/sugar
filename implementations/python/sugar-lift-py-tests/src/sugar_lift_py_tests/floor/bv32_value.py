@@ -30,6 +30,9 @@ class Bv32Value(FloorValue):
     def bitwise_xor(self, other, site):
         return self._binary_bitwise(other, site, "bv32.xor")
 
+    def bitwise_or(self, other, site):
+        return self._binary_bitwise(other, site, "bv32.or")
+
     def left_shift(self, other, site):
         return self._binary_bitwise(other, site, "bv32.shl")
 

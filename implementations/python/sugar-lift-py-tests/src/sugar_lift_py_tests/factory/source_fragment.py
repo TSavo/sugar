@@ -112,6 +112,43 @@ class SourceFragment:
             source_cid=blake3_512_of(segment.encode()),
         )
 
+    def is_within_annotation(self) -> bool:
+        """Whether this exact source node is nested under a Python annotation."""
+        if self.source is None:
+            return False
+        try:
+            tree = ast.parse(self.source)
+        except SyntaxError:
+            return False
+        target = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if type(node) is type(self.node)
+                and getattr(node, "lineno", None) == self.line
+                and getattr(node, "col_offset", None) == self.col
+                and getattr(node, "end_lineno", None)
+                == getattr(self.node, "end_lineno", None)
+                and getattr(node, "end_col_offset", None)
+                == getattr(self.node, "end_col_offset", None)
+            ),
+            None,
+        )
+        if target is None:
+            return False
+        roots = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.arg) and node.annotation is not None:
+                roots.append(node.annotation)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.returns is not None:
+                roots.append(node.returns)
+            if isinstance(node, ast.AnnAssign):
+                roots.append(node.annotation)
+            type_alias = getattr(ast, "TypeAlias", ())
+            if type_alias and isinstance(node, type_alias):
+                roots.append(node.value)
+        return any(target in ast.walk(root) for root in roots)
+
     def fragments(self) -> List["SourceFragment"]:
         """The immediate child fragments, in source order. A `list[stmt]` suite (a
         `body`/`orelse`) becomes ONE Block fragment (it composes its own statements);

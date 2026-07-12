@@ -144,6 +144,12 @@ class CallSiteValue(FloorValue):
     def multiply(self, other, site):
         return self._dig_or_symbolic_binop(other, site, op="*", floor_method="multiply")
 
+    def bitwise_or(self, other, site):
+        return self._dig_or_symbolic_binop(other, site, op="|", floor_method="bitwise_or")
+
+    def matrix_multiply(self, other, site):
+        return self._dig_or_symbolic_binop(other, site, op="@", floor_method="matrix_multiply")
+
     def _dig_or_symbolic_binop(self, other, site, *, op: str, floor_method: str):
         """Dig body when present; redispatch op on dug floor; else SymbolicValue join.
 

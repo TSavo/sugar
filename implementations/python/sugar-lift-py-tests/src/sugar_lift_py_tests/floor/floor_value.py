@@ -1181,8 +1181,24 @@ class FloorValue:
     def bitwise_xor(self, other, site):
         return self._runtime_bitwise_gap(other, site, "bitwise_xor", "xor")
 
+    def bitwise_or(self, other, site):
+        return self._runtime_bitwise_gap(other, site, "bitwise_or", "or")
+
     def left_shift(self, other, site):
         return self._runtime_bitwise_gap(other, site, "left_shift", "left-shift")
+
+    def matrix_multiply(self, other, site):
+        del other
+        from sugar_lift_py_tests.factory import factory_panic_gap
+
+        observed = type(self).__name__
+        factory_panic_gap(
+            owner="matrix_multiply",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the matrix-multiplication floor",
+            fix=f"write more Floor: implement {observed}.matrix_multiply",
+        )
 
     def _runtime_bitwise_gap(self, other, site, owner, label):
         del other

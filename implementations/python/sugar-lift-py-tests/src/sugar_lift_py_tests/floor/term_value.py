@@ -239,6 +239,15 @@ class TermValue(FloorValue):
             return Complete(TermValue(self.value ^ other.value))
         return self._symbolic_or_bv32_bitwise(other, site, "^", "bv32.xor")
 
+    def bitwise_or(self, other, site):
+        if type(other) is TermValue and all(
+            type(value) is int for value in (self.value, other.value)
+        ):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value | other.value))
+        return self._symbolic_or_bv32_bitwise(other, site, "|", "bv32.or")
+
     def left_shift(self, other, site):
         if type(other) is TermValue and all(
             type(value) is int for value in (self.value, other.value)
@@ -257,6 +266,7 @@ class TermValue(FloorValue):
                 SymbolicValue(self.to_term(owner=str(site))),
                 {
                     "&": "bitwise_and",
+                    "|": "bitwise_or",
                     "^": "bitwise_xor",
                     "<<": "left_shift",
                     ">>": "right_shift",
@@ -276,11 +286,21 @@ class TermValue(FloorValue):
             )
         method = {
             "&": "bitwise_and",
+            "|": "bitwise_or",
             "^": "bitwise_xor",
             "<<": "left_shift",
             ">>": "right_shift",
         }[operator]
         return getattr(super(), method)(other, site)
+
+    def matrix_multiply(self, other, site):
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) is SymbolicValue:
+            return SymbolicValue(self.to_term(owner=str(site))).matrix_multiply(
+                other, site
+            )
+        return super().matrix_multiply(other, site)
 
     def unary_minus(self, site):
         # Arithmetic negation: fold to -value.
