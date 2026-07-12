@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -186,3 +187,83 @@ def test_wall_gate_fails_on_breach(tmp_path: Path) -> None:
         "pre_bearing floor breached: observed=0 floor=1 delta=-1",
         "implications floor breached: observed=0 floor=1 delta=-1",
     )
+
+
+def test_frontier_mode_mints_recovered_artifact_over_construction_gaps(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin/sugarbin").write_text("#!/bin/sh\n", encoding="utf-8")
+    package = tmp_path / "numpy"
+    package.mkdir()
+    (package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+
+    def runner(command, _cwd, _env):
+        if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
+            return CommandResult(0, str(root / "sugar") + "\n", "")
+        if command[1:4] == ["lift", "--report", "--json"]:
+            return CommandResult(2, "", "FactoryPanic")
+        if "--audit-frontier" in command:
+            frontier = Path(command[command.index("-o") + 1])
+            frontier.write_text(
+                json.dumps(
+                    {
+                        "kind": "recovered-construction-audit",
+                        "recoveryOverride": True,
+                        "status": "failed",
+                        "panics": [{"kind": "FactoryPanic"}],
+                        "suppressedDescendants": [{"kind": "suppressed"}],
+                        "effects": [{"kind": "RuntimeEffect"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return CommandResult(2, "", "red by design")
+        raise AssertionError(command)
+
+    result = build_numpy_wall(
+        root=root,
+        output_dir=tmp_path / "wall",
+        floors=NumpyWallFloors(green=0, pre_bearing=0, implications=0),
+        package_path_resolver=lambda _package: package,
+        run_command=runner,
+        mode="frontier",
+    )
+
+    assert result.frontier_path is not None
+    assert result.report_path is None
+    assert result.summary.frontier == {
+        "kind": "recovered-construction-audit",
+        "independentPanicCount": 1,
+        "suppressedDescendantCount": 1,
+        "effectCount": 1,
+    }
+
+
+def test_report_mode_still_refuses_construction_gaps_without_frontier(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin/sugarbin").write_text("#!/bin/sh\n", encoding="utf-8")
+    package = tmp_path / "numpy"
+    package.mkdir()
+    (package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+
+    def runner(command, _cwd, _env):
+        if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
+            return CommandResult(0, str(root / "sugar") + "\n", "")
+        return CommandResult(2, "", "FactoryPanic")
+
+    with pytest.raises(RuntimeError, match="json report failed exit=2"):
+        build_numpy_wall(
+            root=root,
+            output_dir=tmp_path / "wall",
+            floors=NumpyWallFloors(green=0, pre_bearing=0, implications=0),
+            package_path_resolver=lambda _package: package,
+            run_command=runner,
+            mode="report",
+        )
+
+    assert not (tmp_path / "wall" / "frontier.json").exists()

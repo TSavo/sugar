@@ -5,15 +5,16 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Literal, Mapping, Optional, Sequence
 
 from .collect_panic_audit import (
     _prepare_audit_workspace,
     _resolve_installed_package_path,
 )
 from .command_result import CommandResult
+from .recovered_frontier import mint_recovered_frontier
 
 RunCommand = Callable[[list[str], Path, dict[str, str]], CommandResult]
 PackagePathResolver = Callable[[str], Path]
@@ -29,7 +30,10 @@ class NumpyWallSummary:
     call_edges_resolved: int
     implications: int
 
-    def to_json_dict(self) -> dict[str, int]:
+    mode: Literal["report", "frontier"] = "report"
+    frontier: dict[str, Any] = field(default_factory=dict)
+
+    def to_json_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -58,8 +62,9 @@ class NumpyWallFloors:
 class NumpyWallResult:
     summary: NumpyWallSummary
     breaches: tuple[str, ...]
-    report_path: Path
+    report_path: Optional[Path]
     summary_path: Path
+    frontier_path: Optional[Path]
 
 
 def load_wall_floors(path: Path) -> NumpyWallFloors:
@@ -97,6 +102,7 @@ def summarize_numpy_wall(report_json: Mapping[str, Any]) -> NumpyWallSummary:
     contracts = _json_array(report_json, "contracts")
     call_edges = _json_array(report_json, "callEdges")
     return NumpyWallSummary(
+        mode="report",
         green=green,
         red_reasoned=red_reasoned,
         red_bare=red_bare,
@@ -108,6 +114,7 @@ def summarize_numpy_wall(report_json: Mapping[str, Any]) -> NumpyWallSummary:
             1 for edge in call_edges if _resolved_regular_call_edge(edge)
         ),
         implications=sum(1 for edge in call_edges if _implication_edge(edge)),
+        frontier={},
     )
 
 
@@ -138,6 +145,7 @@ def build_numpy_wall(
     package_path_resolver: Optional[PackagePathResolver] = None,
     run_command: Optional[RunCommand] = None,
     profile: str = "release",
+    mode: Literal["report", "frontier"] = "frontier",
 ) -> NumpyWallResult:
     root = root.resolve()
     output_dir = output_dir.resolve()
@@ -166,6 +174,45 @@ def build_numpy_wall(
     report_path = output_dir / "report.json"
     _write_command_receipt(report_path, report_result)
     if report_result.returncode != 0:
+        if mode == "frontier":
+            report_path.unlink(missing_ok=True)
+            frontier_json = mint_recovered_frontier(
+                label="numpy wall",
+                sugar_bin=sugar_bin,
+                workspace=workspace,
+                root=root,
+                env=env,
+                output_dir=output_dir,
+                runner=runner,
+            )
+            summary = NumpyWallSummary(
+                mode="frontier",
+                green=0,
+                red_reasoned=0,
+                red_bare=0,
+                contracts=0,
+                pre_bearing=0,
+                call_edges_resolved=0,
+                implications=0,
+                frontier={
+                    "kind": frontier_json["kind"],
+                    "independentPanicCount": len(frontier_json["panics"]),
+                    "suppressedDescendantCount": len(frontier_json["suppressedDescendants"]),
+                    "effectCount": len(frontier_json["effects"]),
+                },
+            )
+            summary_path = output_dir / "summary.json"
+            summary_path.write_text(
+                json.dumps(summary.to_json_dict(), indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            return NumpyWallResult(
+                summary=summary,
+                breaches=("recovered construction audit is red",),
+                report_path=None,
+                summary_path=summary_path,
+                frontier_path=output_dir / "frontier.json",
+            )
         raise RuntimeError(
             "numpy wall json report failed "
             f"exit={report_result.returncode}; see {report_path}"
@@ -189,6 +236,7 @@ def build_numpy_wall(
         breaches=breaches,
         report_path=report_path,
         summary_path=summary_path,
+        frontier_path=None,
     )
 
 
@@ -197,6 +245,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     parser = argparse.ArgumentParser(
         description="Build and ratchet-check the installed NumPy lift wall."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("report", "frontier"),
+        default="frontier",
+        help="strict report or recovered diagnostic frontier",
     )
     parser.add_argument(
         "--root",
@@ -232,6 +286,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         output_dir=output_dir,
         floors=load_wall_floors(floors_path),
         profile=args.profile,
+        mode=args.mode,
     )
     print(json.dumps(result.summary.to_json_dict(), indent=2, sort_keys=True))
     if result.breaches:
@@ -239,8 +294,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for breach in result.breaches:
             print(f"- {breach}", file=sys.stderr)
         print(f"summary: {result.summary_path}", file=sys.stderr)
-        print(f"report: {result.report_path}", file=sys.stderr)
-        return 1
+        if result.report_path is not None:
+            print(f"report: {result.report_path}", file=sys.stderr)
+        if result.frontier_path is not None:
+            print(f"frontier: {result.frontier_path}", file=sys.stderr)
+        return 0 if result.summary.mode == "frontier" else 1
     print(f"numpy wall ratchet PASS: {result.summary_path}", file=sys.stderr)
     return 0
 
