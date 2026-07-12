@@ -50,18 +50,28 @@ pub enum OracleHostLocatability {
 #[derive(Debug, Clone)]
 pub enum OracleHostReadiness {
     NotRequested,
-    Ready { detail: String },
+    Ready {
+        detail: String,
+    },
     #[allow(dead_code)] // constructed by non-unix probe_ra_oracle_readiness + doctor unit tests
-    Degraded { detail: String },
-    NotReady { detail: String },
+    Degraded {
+        detail: String,
+    },
+    NotReady {
+        detail: String,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum OracleHostEngagement {
     NotRequested,
     #[allow(dead_code)] // exercised by doctor MockOracleAdapter unit tests (ready path)
-    Engaged { detail: String },
-    Unknown { detail: String },
+    Engaged {
+        detail: String,
+    },
+    Unknown {
+        detail: String,
+    },
 }
 
 #[derive(Debug, Clone)]

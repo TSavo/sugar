@@ -150,9 +150,7 @@ fn source_returns_self_locating_file_memento() {
         memento_locus_display(m)
     );
 
-    let sought = kit
-        .source_file(&project, m)
-        .expect("source_file seek");
+    let sought = kit.source_file(&project, m).expect("source_file seek");
     assert_eq!(sought.source_memento().file, m.file);
 }
 
@@ -219,10 +217,7 @@ fn levels_return_self_locating_mementos_with_tree_nesting() {
                     // Factory 1:1 — same self-locating locus as site
                     assert_eq!(a_m.file, site_m.file);
                     assert_eq!(a_m.span, site_m.span);
-                    eprintln!(
-                        "RECEIPT assertion memento {}",
-                        memento_locus_display(a_m)
-                    );
+                    eprintln!("RECEIPT assertion memento {}", memento_locus_display(a_m));
 
                     for fact in assertion.facts().expect("facts") {
                         let f_m = fact.source_memento();
@@ -355,8 +350,10 @@ fn full_descent_every_level_self_locating() {
                 eprintln!("RECEIPT level=call_sites {}", memento_locus_display(site_m));
 
                 if let Some(universe) = site.universe().expect("universe") {
-                    assert!(!universe.source_memento().file.is_empty()
-                        || !universe.source_memento().function_name.is_empty());
+                    assert!(
+                        !universe.source_memento().file.is_empty()
+                            || !universe.source_memento().function_name.is_empty()
+                    );
                     n_universe += 1;
                     eprintln!(
                         "RECEIPT level=universe {}",
@@ -389,7 +386,10 @@ fn full_descent_every_level_self_locating() {
     );
     assert!(n_source > 0 && n_function > 0 && n_site > 0);
     assert!(n_assertion > 0 && n_fact > 0 && n_universe > 0);
-    assert_eq!(n_site, n_assertion, "factory 1:1 site count == assertion count");
+    assert_eq!(
+        n_site, n_assertion,
+        "factory 1:1 site count == assertion count"
+    );
 }
 
 #[test]

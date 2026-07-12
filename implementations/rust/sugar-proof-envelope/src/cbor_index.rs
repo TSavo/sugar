@@ -278,7 +278,7 @@ pub(crate) fn new(
 /// No new logic -- a named entry point for future incremental callers that
 /// want exactly one CID's typed entry without folding over the whole index.
 #[allow(dead_code)] // named entry point for future incremental callers; the
-// differential test one_matches_new_for_the_same_cid is its only caller today.
+                    // differential test one_matches_new_for_the_same_cid is its only caller today.
 pub(crate) fn one(
     bytes: &[u8],
     index: &CatalogIndex,

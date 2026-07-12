@@ -131,7 +131,10 @@ fn real_kit_required() -> bool {
 fn real_python_kit_available(py: &Path) -> Result<(), String> {
     let kit_src = python_kit_src();
     if !kit_src.join("sugar_lift_py_tests/lift_rpc.py").is_file() {
-        return Err(format!("python kit source missing at {}", kit_src.display()));
+        return Err(format!(
+            "python kit source missing at {}",
+            kit_src.display()
+        ));
     }
     let probe = Command::new(py)
         .env("PYTHONPATH", &kit_src)
@@ -496,10 +499,7 @@ fn capture_real_kit_conversation() -> String {
     });
     // Force next_id alignment: request() uses next_id starting at 1.
     lsp.next_id = 1;
-    turns.push((
-        "client".into(),
-        normalize_message(&init_req, &project),
-    ));
+    turns.push(("client".into(), normalize_message(&init_req, &project)));
     // Send via request path (records response)
     let init_resp = {
         let id = lsp.next_id;
@@ -521,10 +521,7 @@ fn capture_real_kit_conversation() -> String {
 
     // 3. client initialized
     let initialized = json!({"jsonrpc": "2.0", "method": "initialized", "params": {}});
-    turns.push((
-        "client".into(),
-        normalize_message(&initialized, &project),
-    ));
+    turns.push(("client".into(), normalize_message(&initialized, &project)));
     lsp.notify("initialized", json!({}));
 
     // Drain optional registerCapability without recording (filter).
@@ -569,7 +566,10 @@ fn capture_real_kit_conversation() -> String {
         "lying twin must be real UNSAT: {bad_text}"
     );
     turns.push(("server".into(), diags_bad_norm));
-    eprintln!("RECEIPT golden capture: lying twin -> UNSAT (n={})", bad_msgs.len());
+    eprintln!(
+        "RECEIPT golden capture: lying twin -> UNSAT (n={})",
+        bad_msgs.len()
+    );
 
     // 6. client didChange (truthful)
     let did_change = json!({

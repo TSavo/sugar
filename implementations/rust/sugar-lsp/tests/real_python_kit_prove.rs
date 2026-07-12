@@ -38,8 +38,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn python_kit_src() -> PathBuf {
-    repo_root()
-        .join("implementations/python/sugar-lift-py-tests/src")
+    repo_root().join("implementations/python/sugar-lift-py-tests/src")
 }
 
 fn z3_available() -> bool {
@@ -253,7 +252,7 @@ done
 }
 
 fn shell_single_quote(s: &str) -> String {
-    // POSIX single-quote: wrap and escape embedded ' as '\'' 
+    // POSIX single-quote: wrap and escape embedded ' as '\''
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
@@ -322,7 +321,9 @@ impl LspServer {
     fn send(&mut self, msg: &Value) {
         let body = serde_json::to_string(msg).unwrap();
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
-        self.stdin.write_all(header.as_bytes()).expect("write header");
+        self.stdin
+            .write_all(header.as_bytes())
+            .expect("write header");
         self.stdin.write_all(body.as_bytes()).expect("write body");
         self.stdin.flush().expect("flush");
     }

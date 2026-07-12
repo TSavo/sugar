@@ -16,11 +16,14 @@
 // figure refers to. That number needs to be re-measured on the actual
 // pandas kit project, which this worktree does not contain.
 use std::time::Instant;
-use sugar_verifier::runner::{load_pool, build_plan_and_registry_pub, RunnerConfig};
+use sugar_verifier::runner::{build_plan_and_registry_pub, load_pool, RunnerConfig};
 
 fn main() {
     let root = std::env::args().nth(1).expect("project root");
-    let cfg = RunnerConfig { project_root: root.into(), ..Default::default() };
+    let cfg = RunnerConfig {
+        project_root: root.into(),
+        ..Default::default()
+    };
 
     // Cold: reload the pool + rebuild plan/registry every "request".
     let n = 20;
@@ -43,6 +46,15 @@ fn main() {
     let reuse_total = reuse_start.elapsed();
 
     println!("members={}", pool.mementos.len());
-    println!("cold: {} calls, total={:?}, avg={:?}", n, cold_total, cold_total / n);
-    println!("warm: first_load={:?}, reuse avg={:?}", first_load, reuse_total / n);
+    println!(
+        "cold: {} calls, total={:?}, avg={:?}",
+        n,
+        cold_total,
+        cold_total / n
+    );
+    println!(
+        "warm: first_load={:?}, reuse avg={:?}",
+        first_load,
+        reuse_total / n
+    );
 }

@@ -125,10 +125,7 @@ fn coqc_discharges_the_golden_script_and_refutes_its_bad_twin() {
         return;
     }
 
-    let dir = std::env::temp_dir().join(format!(
-        "sugar-coq-golden-solve-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("sugar-coq-golden-solve-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create scratch dir");
 
     let golden_script = compile_script(golden_fixture());

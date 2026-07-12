@@ -311,8 +311,14 @@ mod tests {
     #[test]
     fn pretty_fol_breaks_multi_arg_call_on_commas() {
         let out = pretty_fol("call:f(1, 2, 3) = 4", "    ");
-        assert!(out.contains("call:f(\n"), "expected a broken call, got: {out}");
-        assert!(out.contains("        1,\n"), "expected indented args, got: {out}");
+        assert!(
+            out.contains("call:f(\n"),
+            "expected a broken call, got: {out}"
+        );
+        assert!(
+            out.contains("        1,\n"),
+            "expected indented args, got: {out}"
+        );
     }
 
     #[test]

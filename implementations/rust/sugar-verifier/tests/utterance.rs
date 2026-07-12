@@ -98,7 +98,9 @@ fn row_projection(r: &ConsistencyResult) -> (String, String, Option<String>, Opt
     )
 }
 
-fn sorted_projections(rows: &[ConsistencyResult]) -> Vec<(String, String, Option<String>, Option<String>)> {
+fn sorted_projections(
+    rows: &[ConsistencyResult],
+) -> Vec<(String, String, Option<String>, Option<String>)> {
     let mut v: Vec<_> = rows.iter().map(row_projection).collect();
     v.sort();
     v
@@ -185,7 +187,8 @@ fn spoken_pool_folds_to_the_disk_loaded_pool_with_identical_rows() {
     let root = root.as_path();
     let imports = root.join(".sugar").join("imports");
     std::fs::create_dir_all(&imports).expect("mkdir imports");
-    let disk_name = |p: &ProofBytes| format!("{}.proof", p.expected_cid.to_string().replace(':', "_"));
+    let disk_name =
+        |p: &ProofBytes| format!("{}.proof", p.expected_cid.to_string().replace(':', "_"));
     std::fs::write(root.join(disk_name(&consumer_proof)), &consumer_proof.bytes).unwrap();
     std::fs::write(imports.join(disk_name(&vendor_proof)), &vendor_proof.bytes).unwrap();
     let disk_pool = load_all_proofs::run(root);
@@ -394,7 +397,10 @@ fn speak_implication_positive_and_re_speak_is_idempotent() {
     let mut pool = MementoPool::default();
 
     let first = speak_implication(&mut pool, &speaker, &proof).expect("positive speak succeeds");
-    assert_eq!(first.kind, sugar_verifier::utterance::UtteranceKind::Implication);
+    assert_eq!(
+        first.kind,
+        sugar_verifier::utterance::UtteranceKind::Implication
+    );
     assert!(
         !first.members_spoken.is_empty(),
         "first speak must attribute implication members: {:?}",
@@ -450,10 +456,8 @@ fn seal_same_obligation_twice_same_implication_member_in_pool() {
     assert_eq!(c1, c2, "catalog CID pure under fixed seal identity");
     assert_eq!(b1, b2, "catalog bytes pure");
 
-    let p1 = ProofBytes::try_from_parts("o1.proof", c1, b1, Speaker::vendor("a"))
-        .expect("stage");
-    let p2 = ProofBytes::try_from_parts("o2.proof", c2, b2, Speaker::vendor("b"))
-        .expect("stage");
+    let p1 = ProofBytes::try_from_parts("o1.proof", c1, b1, Speaker::vendor("a")).expect("stage");
+    let p2 = ProofBytes::try_from_parts("o2.proof", c2, b2, Speaker::vendor("b")).expect("stage");
     let mut pool = MementoPool::default();
     let first = speak_implication(&mut pool, &Speaker::vendor("a"), &p1).unwrap();
     let second = speak_implication(&mut pool, &Speaker::vendor("b"), &p2).unwrap();
@@ -483,13 +487,9 @@ fn refusal_records_decode_load_errors_in_the_pool() {
     // to zero members with a load error -> `speak_universe` refuses.
     let bytes = b"not a proof catalog".to_vec();
     let wrong_cid = sugar_canonicalizer::blake3_512_of(b"some other content");
-    let proof = ProofBytes::try_from_parts(
-        "mismatched.proof",
-        wrong_cid,
-        bytes,
-        Speaker::vendor("v"),
-    )
-    .expect("valid CID format stages into ProofBytes");
+    let proof =
+        ProofBytes::try_from_parts("mismatched.proof", wrong_cid, bytes, Speaker::vendor("v"))
+            .expect("valid CID format stages into ProofBytes");
 
     let mut pool = MementoPool::default();
     let refusal = speak_universe(&mut pool, &Speaker::vendor("v"), &proof)

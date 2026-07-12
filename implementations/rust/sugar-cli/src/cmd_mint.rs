@@ -2125,7 +2125,6 @@ pub fn mint_project_scratch_proof(
     }
 }
 
-
 /// Convenience: run configured lift plugins for a project and return the report JSON.
 /// Best-effort face for sugar-lsp report mode (dig green→red + Minority yellow).
 #[allow(dead_code)] // called by sugar-lsp prove_engine report mode (external crate)
@@ -6576,13 +6575,11 @@ mod tests {
         .expect("merge ir-documents");
 
         assert_eq!(
-            merged["liftCoverage"]["totals"]["minority_un_asserted"],
-            1,
+            merged["liftCoverage"]["totals"]["minority_un_asserted"], 1,
             "workspace liftCoverage must survive the bindings-backed merge: {merged}"
         );
         assert_eq!(
-            merged["liftCoverage"]["minority"]["un_asserted_loci"][0]["name"],
-            "helper",
+            merged["liftCoverage"]["minority"]["un_asserted_loci"][0]["name"], "helper",
             "Minority Report loci must survive: {merged}"
         );
         // Empty object from a later pass must not clobber a populated census.
@@ -6608,8 +6605,7 @@ mod tests {
         ])
         .expect("merge with empty second coverage");
         assert_eq!(
-            merged_empty_second["liftCoverage"]["totals"]["minority_un_asserted"],
-            1,
+            merged_empty_second["liftCoverage"]["totals"]["minority_un_asserted"], 1,
             "empty liftCoverage must not clobber a populated census: {merged_empty_second}"
         );
     }
@@ -7738,8 +7734,10 @@ mod tests {
             .expect("ir array present");
         let witness = ir
             .iter()
-            .find(|decl| decl.get("witness_kind").and_then(Value::as_str)
-                == Some("toolchain-plan-self-attestation"))
+            .find(|decl| {
+                decl.get("witness_kind").and_then(Value::as_str)
+                    == Some("toolchain-plan-self-attestation")
+            })
             .expect("a toolchain-plan-self-attestation witness was appended to `ir`");
 
         assert_eq!(

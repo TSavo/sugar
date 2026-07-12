@@ -145,7 +145,16 @@ fn golden_script_declares_the_sort_from_the_identity_atomic() {
 #[test]
 fn golden_script_carries_atomic_and_implies() {
     let script = compile(&fixture());
-    assert!(script.contains("(> x 0)"), "atomic predicate missing:\n{script}");
-    assert!(script.contains("(and "), "and connective missing:\n{script}");
-    assert!(script.contains("(=> "), "implies connective missing:\n{script}");
+    assert!(
+        script.contains("(> x 0)"),
+        "atomic predicate missing:\n{script}"
+    );
+    assert!(
+        script.contains("(and "),
+        "and connective missing:\n{script}"
+    );
+    assert!(
+        script.contains("(=> "),
+        "implies connective missing:\n{script}"
+    );
 }

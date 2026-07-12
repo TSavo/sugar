@@ -836,19 +836,15 @@ fn exe_relative_component_roots() -> Vec<PathBuf> {
         .and_then(Path::parent) // target/
         .and_then(Path::parent) // rust/
         .and_then(Path::parent) // implementations/
-        .and_then(Path::parent) // <repo>
+        .and_then(Path::parent)
+    // <repo>
     {
         roots.push(repo_root.join(".sugar").join("components"));
     }
     // A relocatable install layout: components/ shipped next to the binary
     // (<install>/bin/sugar -> <install>/share/sugar/components).
     if let Some(install_root) = exe.parent().and_then(Path::parent) {
-        roots.push(
-            install_root
-                .join("share")
-                .join("sugar")
-                .join("components"),
-        );
+        roots.push(install_root.join("share").join("sugar").join("components"));
     }
     roots
 }

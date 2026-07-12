@@ -1022,8 +1022,7 @@ impl GrammarOpRegistry {
         let cid = libsugar::canonical::op_cid_from_shape(&shape)
             .expect("compiled-in grammar op shape must canonicalize");
         Some(
-            Cid::try_from(cid.as_str())
-                .expect("op_cid_from_shape yields a well-formed CID string"),
+            Cid::try_from(cid.as_str()).expect("op_cid_from_shape yields a well-formed CID string"),
         )
     }
 }

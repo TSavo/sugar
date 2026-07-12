@@ -69,10 +69,8 @@ fn write_executable(path: &Path, text: &str) {
 }
 
 fn python_kit_manifest(dir: &Path) -> LiftManifest {
-    let py_tests_src = repo_root()
-        .join("implementations/python/sugar-lift-py-tests/src");
-    let py_source_src = repo_root()
-        .join("implementations/python/sugar-lift-python-source/src");
+    let py_tests_src = repo_root().join("implementations/python/sugar-lift-py-tests/src");
+    let py_source_src = repo_root().join("implementations/python/sugar-lift-python-source/src");
     let script = dir.join("python-lift.sh");
     write_executable(
         &script,
@@ -108,10 +106,8 @@ fn stage_enumerate_fixture(dir: &Path) -> PathBuf {
     .expect("config.toml");
     let lift_dir = project.join(".sugar/lift/python");
     fs::create_dir_all(&lift_dir).expect("mkdir lift");
-    let py_tests_src = repo_root()
-        .join("implementations/python/sugar-lift-py-tests/src");
-    let py_source_src = repo_root()
-        .join("implementations/python/sugar-lift-python-source/src");
+    let py_tests_src = repo_root().join("implementations/python/sugar-lift-py-tests/src");
+    let py_source_src = repo_root().join("implementations/python/sugar-lift-python-source/src");
     let wrapper = lift_dir.join("python-lift.sh");
     write_executable(
         &wrapper,
@@ -276,7 +272,8 @@ fn lsp_feed_buffer_rows_match_api_enumerate_solve() {
         "status multiset must match\n  LSP={lsp_statuses:?}\n  API={api_statuses:?}"
     );
     assert_eq!(
-        lsp_blobs, api_blobs,
+        lsp_blobs,
+        api_blobs,
         "row_to_json wire blobs must be byte-identical (sorted)\n  LSP count={}\n  API count={}",
         lsp_blobs.len(),
         api_blobs.len()

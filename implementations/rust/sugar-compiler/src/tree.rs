@@ -65,10 +65,7 @@ pub fn memento_locus_display(m: &SourceMemento) -> String {
 }
 
 fn span_is_degenerate(span: &SrcSpan) -> bool {
-    span.start_line == 0
-        && span.start_col == 0
-        && span.end_line == 0
-        && span.end_col == 0
+    span.start_line == 0 && span.start_col == 0 && span.end_line == 0 && span.end_col == 0
 }
 
 fn span_display(span: &SrcSpan) -> String {

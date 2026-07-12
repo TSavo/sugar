@@ -28,13 +28,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::rc::Rc;
 
-use sugar_ir_types::panic_freedom;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use sugar_floor_algebra::{
     guard_exit, Desugared, PredicateValue, PredicateValueFloorAccept,
     RequiredPredicateValueVisitor, SymbolicValue,
 };
 use sugar_ir_symbolic::Term as AlgebraTerm;
+use sugar_ir_types::panic_freedom;
 use sugar_ir_types::{IrFormula, IrTerm, LetBinding};
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};

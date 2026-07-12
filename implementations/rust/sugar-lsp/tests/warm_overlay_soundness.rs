@@ -205,7 +205,6 @@ fn mint_base64_style_vendor_proof() -> (String, Vec<u8>) {
     (sealed.cid, sealed.bytes)
 }
 
-
 /// Vendor proof whose post STAYS OPEN after specialization: free var
 /// `unbound` is not a formal and is not substituted. linkedPosts drops it
 /// (formula_is_closed fails) -- the #4148 vacuous-refuse false-green shape.
@@ -270,7 +269,8 @@ fn mint_open_post_vendor_proof() -> (String, Vec<u8>) {
         },
         signer_seed: seed(),
     };
-    let minted = mint_contract_with_body_cid(&args, Some(&body_cid)).expect("mint open-post vendor");
+    let minted =
+        mint_contract_with_body_cid(&args, Some(&body_cid)).expect("mint open-post vendor");
     graph.push_claim_contract(ClaimContractMemento::new(minted.canonical_bytes));
 
     let bridge = mint_bridge(&MintBridgeArgs {
@@ -818,8 +818,7 @@ fn truthful_twin_stays_green_or_honestly_degrades() {
     let (root, file) = stage_consumer_with_vendor("truth", "dynamic", "eHl6", "AAAA");
     let ctx = sugar_lsp::prove_engine::build_prove_context_for(&root);
 
-    let outcome =
-        sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// GOOD_MARKER truthful\n");
+    let outcome = sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// GOOD_MARKER truthful\n");
     if !outcome.degraded {
         let unsat = outcome
             .rows
@@ -853,8 +852,7 @@ fn real_solve_buffer_path_twin_flip_receipts_3802_3808() {
     let ctx = sugar_lsp::prove_engine::build_prove_context_for(&root);
 
     let bad = sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// BAD_MARKER lie\n");
-    let good =
-        sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// GOOD_MARKER truthful\n");
+    let good = sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// GOOD_MARKER truthful\n");
 
     let summarize = |label: &str, o: &sugar_lsp::prove_engine::SolveOutcome| {
         let statuses: Vec<&str> = o
@@ -920,7 +918,6 @@ fn real_solve_buffer_path_twin_flip_receipts_3802_3808() {
     fs::remove_dir_all(&root).ok();
 }
 
-
 /// #4148 anti-false-green teeth: open vendor post after specialization is
 /// DROPPED (not conjoined). BEFORE the fix this returned degraded=false with
 /// a vacuous refuse (or empty unsat) -- a silent green on a planted lie.
@@ -938,8 +935,7 @@ fn open_vendor_post_degrades_never_false_green_4148() {
     );
     let ctx = sugar_lsp::prove_engine::build_prove_context_for(&root);
 
-    let outcome =
-        sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// BAD_MARKER planted lie\n");
+    let outcome = sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// BAD_MARKER planted lie\n");
 
     let statuses: Vec<&str> = outcome
         .rows
@@ -1121,8 +1117,7 @@ fn open_post_degraded_reason_is_assess_channel_not_silent() {
     }
     let (root, file) = stage_consumer_with_open_post_vendor("open-post-assess-channel");
     let ctx = sugar_lsp::prove_engine::build_prove_context_for(&root);
-    let outcome =
-        sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// BAD_MARKER planted lie\n");
+    let outcome = sugar_lsp::prove_engine::solve_buffer(&ctx, &file, "// BAD_MARKER planted lie\n");
     assert!(
         outcome.degraded,
         "open-post must degrade; reason={:?}",
@@ -1142,4 +1137,3 @@ fn open_post_degraded_reason_is_assess_channel_not_silent() {
     assert_never_false_green(&outcome, "open-post assess-channel");
     fs::remove_dir_all(&root).ok();
 }
-

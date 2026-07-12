@@ -248,11 +248,17 @@ fn enumerate_wire_mementos_are_self_locating_e2e() {
          universes={n_universes} fn_contracts={n_fn_contracts}"
     );
 
-    assert!(n_body_sites > 0, "expected body-level call sites with full memento");
+    assert!(
+        n_body_sites > 0,
+        "expected body-level call sites with full memento"
+    );
     assert!(n_assertions > 0, "expected assertions");
     assert!(n_facts > 0, "expected facts");
     assert!(n_universes > 0, "mathy must link at least one universe");
-    assert!(n_fn_contracts > 0, "mathy must expose function-contract with cid");
+    assert!(
+        n_fn_contracts > 0,
+        "mathy must expose function-contract with cid"
+    );
     assert_eq!(n_body_sites, n_assertions, "factory 1:1 site≡assertion");
 }
 

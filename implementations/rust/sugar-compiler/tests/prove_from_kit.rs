@@ -158,18 +158,13 @@ fn stage_pandas_showcase(dir: &Path) -> PathBuf {
 
 /// Canonical wire rows for the byte-identical gate: sorted `row_to_json` blobs.
 /// Same constructor the CLI cold path and daemon warm path both use (#3774).
-fn report_row_wire_blobs(
-    proven: &sugar_compiler::orchestrate::ProvenOutcome,
-) -> Vec<String> {
+fn report_row_wire_blobs(proven: &sugar_compiler::orchestrate::ProvenOutcome) -> Vec<String> {
     let mut blobs: Vec<String> = proven
         .artifact
         .report
         .rows
         .iter()
-        .map(|row| {
-            serde_json::to_string(&row_to_json(row))
-                .expect("row_to_json must serialize")
-        })
+        .map(|row| serde_json::to_string(&row_to_json(row)).expect("row_to_json must serialize"))
         .collect();
     blobs.sort();
     blobs
@@ -438,14 +433,8 @@ fn prove_from_kit_ignores_project_root_proof_files() {
     let cfg = runner_cfg(&project);
     let compilers = test_compilers();
 
-    let proven = prove_from_kit(
-        &kit,
-        &project,
-        speaker,
-        cfg.clone(),
-        compilers.clone(),
-    )
-    .expect("prove_from_kit must stage + discharge without reading project .proof files");
+    let proven = prove_from_kit(&kit, &project, speaker, cfg.clone(), compilers.clone())
+        .expect("prove_from_kit must stage + discharge without reading project .proof files");
 
     let poison_load_errors: Vec<_> = proven
         .artifact
@@ -471,7 +460,10 @@ fn prove_from_kit_ignores_project_root_proof_files() {
         proven.outcome_class,
     );
     for err in &proven.artifact.report.load_errors {
-        eprintln!("  load_error: path={} reason={}", err.proof_path, err.reason);
+        eprintln!(
+            "  load_error: path={} reason={}",
+            err.proof_path, err.reason
+        );
     }
 
     assert!(
@@ -566,10 +558,7 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     // reject before hashing into discover_input_artifact_cids — but the
     // bytes are still garbage for envelope decode. For discover_* we only
     // need content hash. Use a stem that will be walked as *.proof.
-    let canary_proof_name = format!(
-        "{}.proof",
-        canary_proof_cid.replace(':', "_")
-    );
+    let canary_proof_name = format!("{}.proof", canary_proof_cid.replace(':', "_"));
     fs::write(project.join(&canary_proof_name), canary_proof_bytes).expect("canary proof");
 
     let link_bundle_bytes = b"{\"warm-canary\":\"link-bundle-v1\"}";
@@ -580,7 +569,8 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     let plugin_reg_cid = sugar_canonicalizer::blake3_512_of(plugin_reg_bytes);
     fs::write(project.join("plugin-registry.json"), plugin_reg_bytes).expect("plugin-registry");
 
-    let call_edges = br#"{"edges":[{"sourceContractCid":"canary-src","targetSymbol":"call:canary"}]}"#;
+    let call_edges =
+        br#"{"edges":[{"sourceContractCid":"canary-src","targetSymbol":"call:canary"}]}"#;
     fs::write(project.join("trap.call-edges.json"), call_edges).expect("call-edges");
 
     let sugar = project.join(".sugar");
@@ -599,7 +589,8 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     // Clean baseline (no canaries) for verdict identity — second temp tree.
     let clean_dir = tempfile::tempdir().expect("clean tempdir");
     let clean_project = stage_fixture(clean_dir.path());
-    let clean_kit = Kit::rendezvous(python_kit_manifest(clean_dir.path())).expect("rendezvous clean");
+    let clean_kit =
+        Kit::rendezvous(python_kit_manifest(clean_dir.path())).expect("rendezvous clean");
     let clean = prove_from_kit(
         &clean_kit,
         &clean_project,
@@ -610,14 +601,8 @@ fn prove_from_kit_pool_only_inputs_ignores_project_canaries() {
     .expect("clean prove_from_kit");
     let clean_rows = report_verdict_keys(&clean);
 
-    let warm = prove_from_kit(
-        &kit,
-        &project,
-        speaker,
-        runner_cfg(&project),
-        compilers,
-    )
-    .expect("warm prove_from_kit with canaries must still discharge from pool only");
+    let warm = prove_from_kit(&kit, &project, speaker, runner_cfg(&project), compilers)
+        .expect("warm prove_from_kit with canaries must still discharge from pool only");
 
     let inputs = &warm.artifact.memento.header.input_artifact_cids;
     let link_cid = &warm.artifact.memento.header.link_bundle_cid;
@@ -826,8 +811,14 @@ fn prove_from_kit_does_not_write_proof_run_bundle() {
     let compilers = test_compilers();
     let cfg = runner_cfg(&project);
 
-    let warm = prove_from_kit(&kit, &project, speaker.clone(), cfg.clone(), compilers.clone())
-        .expect("prove_from_kit");
+    let warm = prove_from_kit(
+        &kit,
+        &project,
+        speaker.clone(),
+        cfg.clone(),
+        compilers.clone(),
+    )
+    .expect("prove_from_kit");
 
     eprintln!(
         "write#6 gate (warm):\n\
@@ -883,8 +874,7 @@ fn prove_from_kit_does_not_write_proof_run_bundle() {
     let local = feed_from_tree::fold_project(&kit, &project, Some(&speaker)).expect("fold");
     let disk_dir = tempfile::tempdir().expect("disk project");
     seal_graph_to_project(&local, disk_dir.path(), "write6-disk");
-    let disk =
-        solve_project(runner_cfg(disk_dir.path()), compilers).expect("disk solve_project");
+    let disk = solve_project(runner_cfg(disk_dir.path()), compilers).expect("disk solve_project");
     let disk_runs = disk_dir.path().join(".sugar").join("runs");
     assert!(
         !disk_runs.exists() && disk.artifact.bundle_path.as_os_str().is_empty(),
@@ -1036,8 +1026,7 @@ fn prove_from_kit_skips_locus_exists_witness_read_dir_and_tier2_cache() {
         .expect("cold solve_project still runs (exists() path live)");
     // #3809 cut #8: solve never writes; seal is in-memory only.
     assert!(
-        disk.artifact.bundle_path.as_os_str().is_empty()
-            && !disk.artifact.bundle_bytes.is_empty(),
+        disk.artifact.bundle_path.as_os_str().is_empty() && !disk.artifact.bundle_bytes.is_empty(),
         "solve seals in memory only (cut #8); face may persist. path={:?} bytes={}",
         disk.artifact.bundle_path,
         disk.artifact.bundle_bytes.len()
@@ -1094,7 +1083,8 @@ fn solve_project_with_pool_does_not_reread_plan_or_config_manifests() {
     cfg.legacy_z3_fallback = Some(LegacyZ3Fallback::compat("z3"));
 
     // Baseline warm solve before canaries
-    let clean = solve_project_with_pool(cfg.clone(), compilers.clone(), pool.clone()).expect("solve_project_with_pool clean");
+    let clean = solve_project_with_pool(cfg.clone(), compilers.clone(), pool.clone())
+        .expect("solve_project_with_pool clean");
     let clean_rows = report_verdict_keys(&clean);
 
     // AFTER fold: plant canaries that would poison cold re-discovery
@@ -1119,7 +1109,8 @@ trusted_implication_signers = ["POISON_IF_REREAD"]
     .expect("poison manifest");
 
     // Warm SOLVE again with SAME in-memory cfg + pool — must not re-read canaries
-    let warm = solve_project_with_pool(cfg, compilers, pool).expect("solve_project_with_pool with canaries");
+    let warm = solve_project_with_pool(cfg, compilers, pool)
+        .expect("solve_project_with_pool with canaries");
 
     eprintln!(
         "solve_project_with_pool #7 gate:\n\
@@ -1217,9 +1208,7 @@ fn dod_3809_pandas_warm_solve_scoreboard() {
         return;
     }
     if !pandas_importable() {
-        eprintln!(
-            "skip: pandas not importable — DoD must re-run where pandas is installed"
-        );
+        eprintln!("skip: pandas not importable — DoD must re-run where pandas is installed");
         return;
     }
 
@@ -1292,7 +1281,7 @@ fn dod_3809_pandas_warm_solve_scoreboard() {
     let r_locus_witness = 0usize; // #3919
     let r_tier2 = 0usize; // #3919
     let r_plan_reread = 0usize; // #3922
-    // Trap success is the live count of residual project opens that mattered.
+                                // Trap success is the live count of residual project opens that mattered.
     let r_trap_residual = if warm_blobs == live_blobs { 0usize } else { 1 };
     let fs_read_count = r_proof_walk
         + r_call_edges

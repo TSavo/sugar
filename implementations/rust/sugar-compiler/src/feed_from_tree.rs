@@ -657,8 +657,7 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
     let shell_extras = ClaimExtras {
         body_discharge_eligible: false,
         body_discharge_refusal_reason: Some(
-            "feed_from_tree: universe shell without IR row is not body-discharge eligible"
-                .into(),
+            "feed_from_tree: universe shell without IR row is not body-discharge eligible".into(),
         ),
         ..ClaimExtras::default()
     };
@@ -769,7 +768,13 @@ mod json_to_cvalue_tests {
         });
         let err = json_to_cvalue(&formula).expect_err("nested float");
         assert!(
-            matches!(err, FeedError::Incomplete { what: "json_to_cvalue", .. }),
+            matches!(
+                err,
+                FeedError::Incomplete {
+                    what: "json_to_cvalue",
+                    ..
+                }
+            ),
             "got {err}"
         );
     }

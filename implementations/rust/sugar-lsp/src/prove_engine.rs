@@ -70,7 +70,12 @@ pub fn scan_proof_manifest(root: &Path) -> BTreeMap<PathBuf, SystemTime> {
         if !entry.file_type().is_file() {
             continue;
         }
-        if entry.path().extension().map(|e| e == "proof").unwrap_or(false) {
+        if entry
+            .path()
+            .extension()
+            .map(|e| e == "proof")
+            .unwrap_or(false)
+        {
             if let Ok(meta) = entry.metadata() {
                 if let Ok(mtime) = meta.modified() {
                     out.insert(entry.path().to_path_buf(), mtime);
@@ -112,7 +117,8 @@ pub fn build_prove_context_for(project_root: &Path) -> ProveContext {
     let solvers_config = sugar_verifier::SolversConfig::load(project_root)
         .ok()
         .flatten();
-    let legacy_z3_fallback = which_on_path("z3").map(|_| sugar_verifier::LegacyZ3Fallback::compat("z3"));
+    let legacy_z3_fallback =
+        which_on_path("z3").map(|_| sugar_verifier::LegacyZ3Fallback::compat("z3"));
     let cfg = sugar_verifier::RunnerConfig {
         project_root: project_root.to_path_buf(),
         legacy_z3_fallback,
@@ -184,7 +190,10 @@ pub fn build_source_overlay_project(
         }
         let ir_compilers_dir = project_root.join(".sugar").join("ir-compilers");
         if ir_compilers_dir.is_dir() {
-            copy_tree(&ir_compilers_dir, &overlay_root.join(".sugar").join("ir-compilers"))?;
+            copy_tree(
+                &ir_compilers_dir,
+                &overlay_root.join(".sugar").join("ir-compilers"),
+            )?;
         }
         let comps = project_root.join(".sugar").join("components");
         if comps.is_dir() {
@@ -225,7 +234,9 @@ pub fn build_source_overlay_project(
         std::fs::write(&populated_marker, "").map_err(|e| e.to_string())?;
     }
 
-    let rel = request_file.strip_prefix(project_root).unwrap_or(request_file);
+    let rel = request_file
+        .strip_prefix(project_root)
+        .unwrap_or(request_file);
     let dst = overlay_root.join(rel);
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -313,7 +324,9 @@ fn try_rendezvous_lift_kit(project_root: &Path) -> Result<Kit, String> {
 /// intake (`pool_from_graph_with_speaker`). Same construction as the lift
 /// front of `prove_from_kit` / `fold_kit_to_pool` for the local graph (vendor
 /// testimony stays on the resident base index, not re-merged here).
-pub fn feed_overlay_pool(overlay_root: &Path) -> Result<sugar_verifier::types::MementoPool, String> {
+pub fn feed_overlay_pool(
+    overlay_root: &Path,
+) -> Result<sugar_verifier::types::MementoPool, String> {
     let kit = try_rendezvous_lift_kit(overlay_root)?;
     let speaker = Speaker::consumer("sugar-lsp");
     let graph = feed_from_tree::fold_project(&kit, overlay_root, Some(&speaker))
@@ -367,8 +380,7 @@ pub fn assess_overlay_vendor_bindings(
     if !sugar_cli::cmd_mint::project_declares_import_dependencies(project_root) {
         return Ok(());
     }
-    let dep_bindings =
-        sugar_cli::cmd_mint::contract_bindings_from_dependency_proofs(project_root);
+    let dep_bindings = sugar_cli::cmd_mint::contract_bindings_from_dependency_proofs(project_root);
     if !sugar_cli::cmd_mint::dependency_bindings_need_bridges(&dep_bindings) {
         // Case-1 (same-name sworn conjoins) does not need bridges.
         return Ok(());
@@ -423,9 +435,12 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
     let working_index: &sugar_verifier::consistency::ConsistencyIndex =
         owned_auto_index.as_ref().unwrap_or(&ctx.consistency_index);
 
-    let overlay_root = std::env::temp_dir().join("sugar-lsp-lift-src").join(
-        sugar_canonicalizer::blake3_512_hex(ctx.project_root.display().to_string().as_bytes()),
-    );
+    let overlay_root =
+        std::env::temp_dir()
+            .join("sugar-lsp-lift-src")
+            .join(sugar_canonicalizer::blake3_512_hex(
+                ctx.project_root.display().to_string().as_bytes(),
+            ));
 
     if let Err(err) = build_source_overlay_project(&ctx.project_root, &overlay_root, file, source) {
         return SolveOutcome {
@@ -527,16 +542,14 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
     // (factory dig green→red + Minority yellow). Failures stay silent in payload.
     let report_out = overlay_root.join(".sugar").join("report-mode-out");
     let _ = std::fs::create_dir_all(&report_out);
-    let report_lift = match sugar_cli::cmd_mint::report_lift_response_for_project(
-        &overlay_root,
-        &report_out,
-    ) {
-        Ok(v) => Some(v),
-        Err(err) => {
-            tracing::debug!(error = %err, "report-mode lift snapshot skipped");
-            None
-        }
-    };
+    let report_lift =
+        match sugar_cli::cmd_mint::report_lift_response_for_project(&overlay_root, &report_out) {
+            Ok(v) => Some(v),
+            Err(err) => {
+                tracing::debug!(error = %err, "report-mode lift snapshot skipped");
+                None
+            }
+        };
 
     SolveOutcome {
         rows,
@@ -559,8 +572,7 @@ pub fn assess_dropped_ambient_posts(
     if !sugar_cli::cmd_mint::project_declares_import_dependencies(project_root) {
         return Ok(());
     }
-    let dep_bindings =
-        sugar_cli::cmd_mint::contract_bindings_from_dependency_proofs(project_root);
+    let dep_bindings = sugar_cli::cmd_mint::contract_bindings_from_dependency_proofs(project_root);
     if !sugar_cli::cmd_mint::dependency_bindings_need_bridges(&dep_bindings) {
         return Ok(());
     }

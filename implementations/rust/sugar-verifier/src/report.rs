@@ -480,8 +480,7 @@ fn quantified_vendor_post(post: &Json, vendor_post: &Json) -> Option<Json> {
     let out_binding = post.get("outBinding")?.as_str()?;
     let call = post.get("call")?;
     let call_args = call.get("args")?.as_array()?;
-    if call.get("kind").and_then(|k| k.as_str()) != Some("ctor")
-        || call_args.len() != formals.len()
+    if call.get("kind").and_then(|k| k.as_str()) != Some("ctor") || call_args.len() != formals.len()
     {
         return None;
     }
@@ -643,7 +642,11 @@ fn derive_ready_payload(atom: &Json) -> Option<String> {
     let raw = payload_term.get("value").and_then(|x| x.as_str())?;
     let mut payload: Json = serde_json::from_str(raw).ok()?;
     // Already carries concrete bytes -> derive as-is.
-    if payload.get("input_bytes").and_then(|x| x.as_array()).is_some() {
+    if payload
+        .get("input_bytes")
+        .and_then(|x| x.as_array())
+        .is_some()
+    {
         return Some(raw.to_string());
     }
     // Otherwise bind them from the pinned input string literal.

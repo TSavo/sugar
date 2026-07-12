@@ -768,10 +768,7 @@ fn derive_link_bundle_inner(
 
     for edge in &sorted_edges {
         // Extract file from call-site locus for per-file diagnostics
-        let locus_file = edge
-            .call_site_locus
-            .as_ref()
-            .map(|l| l.file.clone());
+        let locus_file = edge.call_site_locus.as_ref().map(|l| l.file.clone());
 
         // bind: the sole minter of a `BoundContractCid`, with two outcomes —
         // the bound target, or the typed failure (undefined-symbol /
@@ -1107,7 +1104,10 @@ use symbol_table::{ResolveError, SymbolTable};
 /// index, so a kit cannot forge a bound edge to a CID with no contract behind
 /// it. The resolution logic itself now lives in [`SymbolTable::resolve`]; this
 /// function is the wire-error-context adapter over it.
-fn bind(edge: &LinkerCallEdge, symbol_table: &SymbolTable) -> Result<BoundContractCid, LinkerError> {
+fn bind(
+    edge: &LinkerCallEdge,
+    symbol_table: &SymbolTable,
+) -> Result<BoundContractCid, LinkerError> {
     symbol_table
         .resolve(edge)
         .map(|resolved| BoundContractCid(resolved.contract_cid().to_string()))
@@ -1647,7 +1647,10 @@ mod tests {
             let parsed: IrFormula =
                 serde_json::from_str(wire).expect("wire formula must parse as IrFormula");
             let reserialized = serde_json::to_string(&parsed).expect("IrFormula serializes");
-            assert_eq!(reserialized, wire, "IrFormula round-trip must be byte-identical");
+            assert_eq!(
+                reserialized, wire,
+                "IrFormula round-trip must be byte-identical"
+            );
         }
     }
 
@@ -1704,7 +1707,10 @@ mod tests {
         ] {
             let cid: Cid = serde_json::from_str(wire).expect("Cid must parse from bare string");
             let back = serde_json::to_string(&cid).expect("Cid serializes");
-            assert_eq!(back, wire, "Cid serde round-trip must be byte-identical on `{wire}`");
+            assert_eq!(
+                back, wire,
+                "Cid serde round-trip must be byte-identical on `{wire}`"
+            );
         }
 
         // Inside `Option`: both endpoint states are byte-identical to `Option<String>`.
@@ -1724,7 +1730,10 @@ mod tests {
             ..Default::default()
         };
         let v = serde_json::to_value(&edge).unwrap();
-        assert_eq!(v["source_contract_cid"], serde_json::json!("blake3-512:aaaa"));
+        assert_eq!(
+            v["source_contract_cid"],
+            serde_json::json!("blake3-512:aaaa")
+        );
         assert!(v["target_contract_cid"].is_null());
         // And a round-trip through the struct reproduces the typed value.
         let back: LinkerCallEdge = serde_json::from_value(v).unwrap();
@@ -1771,13 +1780,12 @@ mod tests {
             serde_json::to_value(&unlocated).unwrap(),
             serde_json::json!({"file": "pipeline.py", "line": null, "column": null})
         );
-        let back_unlocated: CallSiteLocus =
-            serde_json::from_value(serde_json::json!({
-                "file": "pipeline.py",
-                "line": null,
-                "column": null
-            }))
-            .unwrap();
+        let back_unlocated: CallSiteLocus = serde_json::from_value(serde_json::json!({
+            "file": "pipeline.py",
+            "line": null,
+            "column": null
+        }))
+        .unwrap();
         assert_eq!(back_unlocated, unlocated);
 
         // Absence is preserved: `None` embeds as `null` (the pre-seam
@@ -1795,7 +1803,10 @@ mod tests {
             ..Default::default()
         };
         let ev = serde_json::to_value(&edge).unwrap();
-        assert_eq!(jcs_of_json(&ev["call_site_locus"]), jcs_of_json(&typed_json));
+        assert_eq!(
+            jcs_of_json(&ev["call_site_locus"]),
+            jcs_of_json(&typed_json)
+        );
         let back_edge: LinkerCallEdge = serde_json::from_value(ev).unwrap();
         assert_eq!(back_edge.call_site_locus, Some(typed));
 
@@ -1843,7 +1854,10 @@ mod tests {
         let parsed: ImportSignature =
             serde_json::from_str(wire).expect("ImportSignature must parse");
         let back = serde_json::to_string(&parsed).expect("ImportSignature serializes");
-        assert_eq!(back, wire, "ImportSignature flat wire must be byte-identical");
+        assert_eq!(
+            back, wire,
+            "ImportSignature flat wire must be byte-identical"
+        );
 
         // Symbol-only: the flattened Signature's skip_serializing_if omits every
         // empty dimension, so the object is exactly `{"symbol":...}`.
@@ -1963,9 +1977,13 @@ mod tests {
     fn contract_formula_fields_roundtrip_in_snapshot_shape() {
         let contract = make_process_contract(); // pre: `n > 0`, post: None
         let bytes = serde_json::to_vec(&contract).expect("serialize contract");
-        let restored: LinkerContract = serde_json::from_slice(&bytes).expect("deserialize contract");
+        let restored: LinkerContract =
+            serde_json::from_slice(&bytes).expect("deserialize contract");
         let rebytes = serde_json::to_vec(&restored).expect("re-serialize contract");
-        assert_eq!(bytes, rebytes, "LinkerContract formula fields must round-trip byte-identically");
+        assert_eq!(
+            bytes, rebytes,
+            "LinkerContract formula fields must round-trip byte-identically"
+        );
         assert_eq!(restored.pre_json, contract.pre_json);
         assert_eq!(restored.post_json, contract.post_json);
     }
@@ -2159,7 +2177,10 @@ mod tests {
         // The bundle json survives a serialize -> parse round trip byte-identically.
         let serialized = serde_json::to_string(&bundle.json).expect("serialize bundle json");
         let reparsed: Json = serde_json::from_str(&serialized).expect("parse bundle json");
-        assert_eq!(reparsed, bundle.json, "bundle json must round-trip unchanged");
+        assert_eq!(
+            reparsed, bundle.json,
+            "bundle json must round-trip unchanged"
+        );
     }
 
     /// Per-type wire round-trip for the typed [`Bridge`] memento: the struct
@@ -2338,8 +2359,7 @@ mod tests {
 
         let go = make_go_caller_fail_contract();
         let edge = make_cgo_call_edge(&go);
-        let bound =
-            bind(&edge, &symbol_table).expect("resolvable edge binds to a contract");
+        let bound = bind(&edge, &symbol_table).expect("resolvable edge binds to a contract");
         // The minted CID is exactly the resolved contract's — never null.
         assert_eq!(bound.as_str(), process.contract_cid.as_str());
         assert!(!bound.as_str().is_empty());

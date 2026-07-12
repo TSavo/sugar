@@ -255,12 +255,14 @@ fn test_link_bundle_cid_is_byte_deterministic() {
     });
 
     let cid1 = out1
-        .bundle.json
+        .bundle
+        .json
         .get("linkBundleCid")
         .and_then(|v| v.as_str())
         .expect("linkBundleCid must be present in run 1");
     let cid2 = out2
-        .bundle.json
+        .bundle
+        .json
         .get("linkBundleCid")
         .and_then(|v| v.as_str())
         .expect("linkBundleCid must be present in run 2");
@@ -299,12 +301,14 @@ fn test_failure_and_success_cids_differ() {
     };
 
     let fail_cid = failure_out
-        .bundle.json
+        .bundle
+        .json
         .get("linkBundleCid")
         .and_then(|v| v.as_str())
         .expect("failure linkBundleCid");
     let ok_cid = success_out
-        .bundle.json
+        .bundle
+        .json
         .get("linkBundleCid")
         .and_then(|v| v.as_str())
         .expect("success linkBundleCid");
