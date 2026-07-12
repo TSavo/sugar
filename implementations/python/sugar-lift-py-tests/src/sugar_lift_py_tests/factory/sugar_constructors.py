@@ -205,7 +205,8 @@ def _ctx_with_formal_binds(site: SourceFragment, ctx):
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.temporal import TemporalContext, bind_temporal
 
-    body_ctx = ctx.with_temporal(TemporalContext.empty())
+    module_temporal = getattr(ctx, "module_temporal", None)
+    body_ctx = ctx.with_temporal(module_temporal or TemporalContext.empty())
     body_ctx = _ctx_with_module_global_binds(site, body_ctx)
     for param_name in site.function_params():
         body_ctx = bind_temporal(

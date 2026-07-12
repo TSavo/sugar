@@ -73,5 +73,6 @@ def test_full_datetime_module_constants_expose_target_assertions(
         for gap in gaps
         for suffix in (":51:0", ":58:0", ":88:0")
     )
-    next_gap = next(gap for gap in gaps if gap.label.endswith(":156:0"))
-    assert "observed=_DAYS_BEFORE_MONTH requested=value" in next_gap.message
+    assert not any(gap.label.endswith(":156:0") for gap in gaps)
+    next_gap = next(gap for gap in gaps if gap.label.endswith(":161:0"))
+    assert "observed=Try requested=statement" in next_gap.message
