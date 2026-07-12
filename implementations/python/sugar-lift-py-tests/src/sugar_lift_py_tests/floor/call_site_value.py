@@ -31,6 +31,12 @@ class CallSiteValue(FloorValue):
     # reduction shape with the SugarRole it was built under.
     body: SugarBody[Any] | FunctionBodyUniverse | None
     site: object = dataclass_field(default=None, compare=False)
+    # A callee contract may cite the Python type object returned by this call.
+    # Absent that citation, Python must execute the call to know whether its
+    # result is a valid isinstance type operand.
+    python_type_coordinate: Term | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def to_term(self, *, owner: str):
         del owner
@@ -52,13 +58,26 @@ class CallSiteValue(FloorValue):
         return SymbolicValue(self.term).bitwise_invert(site)
 
     def test_python_type(self, value, site):
-        if self.target_name != "type":
-            return super().test_python_type(value, site)
+        type_coordinate = self.python_type_coordinate
+        if type_coordinate is None and self.target_name == "type":
+            type_coordinate = self.term
+        if type_coordinate is None:
+            from sugar_lift_py_tests.effect import CallResultTypeRuntimeEffect
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            return Incomplete(
+                CallResultTypeRuntimeEffect(
+                    "call-result type runtime boundary: "
+                    f"`{self.target_name}(...)` has no cited return-type/native "
+                    "tester coordinate; Python must execute the call before its "
+                    f"result can serve as an isinstance type operand; site={site}"
+                )
+            )
         from sugar_lift_py_tests.floor.type_tester import native_type_tester
 
         return native_type_tester(
             value,
-            self.term,
+            type_coordinate,
             site,
             type_callsites=(self,),
         )
