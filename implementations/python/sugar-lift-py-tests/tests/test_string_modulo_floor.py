@@ -6,6 +6,7 @@ from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
+    GuardedValue,
     ListValue,
     StringValue,
     SymbolicValue,
@@ -14,8 +15,8 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
-from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
+from sugar_lift_py_tests.ir import atomic, ctor, make_var, num, str_const
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Complete
 
 
@@ -53,6 +54,35 @@ def test_attribute_callsite_percent_format_emits_native_format_coordinate() -> N
     )
 
 
+def test_percent_format_distributes_over_guarded_tuple_element() -> None:
+    guard = atomic("choose", [])
+    joined = GuardedValue(guard, StringValue("left"), StringValue("right"))
+
+    outcome = StringValue("value=%s").modulo(TupleValue((joined,)), "datetime.py:1503")
+
+    assert outcome == Complete(
+        GuardedValue(
+            guard,
+            StringValue("value=left"),
+            StringValue("value=right"),
+        )
+    )
+
+
+def test_distributed_guarded_format_still_refuses_raw_term_projection() -> None:
+    guard = atomic("choose", [])
+    outcome = StringValue("%s").modulo(
+        TupleValue((GuardedValue(guard, StringValue("a"), StringValue("b")),)),
+        "structural.py:1",
+    )
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, GuardedValue)
+    assert "ite" not in repr(outcome.value)
+
+    with pytest.raises(FactoryPanic, match="observed=GuardedValue.*to a term"):
+        outcome.value.to_term(owner="no ite escape hatch")
+
+
 def test_string_modulo_accepts_concrete_scalar_and_tuple_floors() -> None:
     assert StringValue("%d").modulo(TermValue(3), "t.py:1") == Complete(
         StringValue("3")
@@ -74,9 +104,9 @@ def test_full_datetime_artifact_accounts_repr_assertions_honestly(
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
 
-    payload = lift_file_payload(source, str(path)).to_rpc()
+    payload, _gaps = audit_lift_file(source, str(path), hold_panic=True)
     assertions = account_lift_coverage(
-        census_source(source, file=str(path)), payload
+        census_source(source, file=str(path)), payload.to_rpc()
     ).to_json()["assertions"]
 
     assert assertions["stated"] == 45
@@ -90,7 +120,7 @@ def test_full_datetime_artifact_accounts_repr_assertions_honestly(
     assert accounted == target_lines
 
 
-def test_full_datetime_repr_reaches_next_loud_composition_gap(
+def test_full_datetime_repr_distributes_guarded_format_and_lifts_assertions(
     cpython_311_datetime_path,
 ) -> None:
     path = cpython_311_datetime_path
@@ -101,21 +131,17 @@ def test_full_datetime_repr_reaches_next_loud_composition_gap(
         census_source(source, file=str(path)), payload.to_rpc()
     ).to_json()["assertions"]
 
-    repr_gap = next(gap for gap in gaps if gap.label.endswith(":1495:4"))
-    assert (
-        "observed=GuardedValue requested=project this floor value to a term"
-        in repr_gap.message
-    )
+    assert not any(gap.label.endswith(":1495:4") for gap in gaps)
     assert not any(
         ":1500:16 observed=StringValue requested=stand on the modulo floor"
         in gap.message
         for gap in gaps
     )
-    assert assertions["lifted_cited"] == 7
-    assert assertions["refused_loud"] == 38
+    assert assertions["lifted_cited"] == 9
+    assert assertions["refused_loud"] == 36
     assert assertions["silently_unaccounted"] == 0
     assert {
         locus["line"]
-        for locus in assertions["refused_loci"]
+        for locus in assertions["lifted_loci"]
         if locus["line"] in {1507, 1510}
     } == {1507, 1510}

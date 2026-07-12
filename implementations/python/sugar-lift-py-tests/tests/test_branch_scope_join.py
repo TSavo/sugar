@@ -134,10 +134,6 @@ def test_real_datetime_repr_assertions_measure_after_join(
 
     assert axis["silently_unaccounted"] == 0
     assert {
-        locus["line"] for locus in axis["refused_loci"] if locus["line"] in {1507, 1510}
+        locus["line"] for locus in axis["lifted_loci"] if locus["line"] in {1507, 1510}
     } == {1507, 1510}
-    repr_gap = next(gap for gap in gaps if gap.label.endswith(":1495:4"))
-    assert (
-        "observed=GuardedValue requested=project this floor value to a term"
-        in repr_gap.message
-    )
+    assert not any(gap.label.endswith(":1495:4") for gap in gaps)
