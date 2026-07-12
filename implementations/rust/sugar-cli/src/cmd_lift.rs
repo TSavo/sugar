@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use owo_colors::OwoColorize;
 use serde_json::{Map, Value};
+use serde::{Deserialize, Serialize};
 
 use sugar_claim_envelope::contract_cid_of_ir_decl;
 use sugar_proof_envelope::Member;
@@ -22,6 +23,33 @@ use crate::project_config::{read_project_config, read_user_config, PluginEntry, 
 use crate::report_fmt;
 use crate::{cmd_mint, cmd_prove};
 use crate::{LiftArgs, EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct RecoveredAudit {
+    kind: String,
+    recovery_override: bool,
+    status: String,
+    panics: Vec<RecoveredFactoryPanic>,
+    suppressed_descendants: Vec<SuppressedAuditLocus>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveredFactoryPanic {
+    kind: String,
+    status: String,
+    reason: String,
+    locus: String,
+    gap: Value,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SuppressedAuditLocus {
+    locus: String,
+    reason: String,
+}
 
 pub fn run(args: LiftArgs) -> u8 {
     let project_root = args.project.clone().unwrap_or_else(|| PathBuf::from("."));
@@ -82,6 +110,8 @@ pub fn run(args: LiftArgs) -> u8 {
     lift_options.identify_only = args.identify_only;
     lift_options.library_bindings = args.library_bindings;
     lift_options.report_summary = args.report_summary;
+    lift_options.audit_frontier = args.audit_frontier;
+    lift_options.continue_on_construction_gaps = args.continue_on_construction_gaps;
     tracing::trace!(
         surface = %surface,
         emit = ?lift_options.emit,
@@ -109,6 +139,37 @@ pub fn run(args: LiftArgs) -> u8 {
             };
             if args.report {
                 trace_lift_report_response("after_lift_plugin_response", response);
+            }
+            if args.audit_frontier {
+                let audit: RecoveredAudit = match serde_json::from_value::<RecoveredAudit>(response.clone()) {
+                    Ok(audit) if audit.kind == "recovered-construction-audit" && audit.recovery_override => audit,
+                    Ok(_) => {
+                        eprintln!("{}: audit lifter returned the wrong artifact kind", "error".red().bold());
+                        return EXIT_VERIFY_FAIL;
+                    }
+                    Err(error) => {
+                        eprintln!("{}: invalid recovered construction audit: {error}", "error".red().bold());
+                        return EXIT_VERIFY_FAIL;
+                    }
+                };
+                let rendered = match serde_json::to_string_pretty(&audit) {
+                    Ok(value) => format!("{value}\n"),
+                    Err(error) => {
+                        eprintln!("{}: serialize recovered construction audit: {error}", "error".red().bold());
+                        return EXIT_USER_ERROR;
+                    }
+                };
+                let frontier_path = args.output.as_ref().cloned().unwrap_or_else(|| project_root.join("frontier.json"));
+                if let Err(error) = write_output(Some(&frontier_path), rendered.as_bytes()) {
+                    eprintln!("{}: {error}", "error".red().bold());
+                    return EXIT_USER_ERROR;
+                }
+                eprintln!("RECOVERY OVERRIDE: wrote mandatory FactoryPanic inventory to {} (not a lift artifact)", frontier_path.display());
+                return if audit.panics.is_empty() { EXIT_OK } else { EXIT_VERIFY_FAIL };
+            }
+            if response.get("kind").and_then(Value::as_str) == Some("recovered-construction-audit") {
+                eprintln!("{}: recovered audit cannot be consumed as ProofIR or a lift report", "error".red().bold());
+                return EXIT_VERIFY_FAIL;
             }
             if args.identify_only
                 && response

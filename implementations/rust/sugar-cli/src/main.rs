@@ -283,6 +283,12 @@ pub struct LiftArgs {
     /// Continue after a discovered component crashes, times out, or returns malformed planning RPC.
     #[arg(long = "allow-failed-components")]
     pub allow_failed_components: bool,
+    /// Emit only a recovered construction-panic frontier, never ProofIR or a lift report.
+    #[arg(long, requires = "continue_on_construction_gaps", conflicts_with_all = ["report", "identify_only", "library_bindings", "prove", "report_summary", "visual", "contract"])]
+    pub audit_frontier: bool,
+    /// Explicitly recover at the audit boundary to inventory independent FactoryPanics.
+    #[arg(long, requires = "audit_frontier")]
+    pub continue_on_construction_gaps: bool,
     #[command(flatten)]
     pub out: OutputFlags,
 }
