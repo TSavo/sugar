@@ -1193,6 +1193,32 @@ class SourceFragment:
             return None
         return tuple(element.id for element in target.elts)
 
+    def for_nested_tuple_target_paths(
+        self,
+    ) -> "tuple[tuple[tuple[int, ...], str], ...] | None":
+        """Return indexed paths for a nested all-Name tuple target."""
+        self._require(ast.For, ast.AsyncFor)
+        target = self.node.target  # type: ignore[attr-defined]
+        if not isinstance(target, ast.Tuple):
+            return None
+        paths: list[tuple[tuple[int, ...], str]] = []
+        nested = False
+
+        def visit(node, path: tuple[int, ...]) -> bool:
+            nonlocal nested
+            if isinstance(node, ast.Name):
+                paths.append((path, node.id))
+                return True
+            if not isinstance(node, ast.Tuple) or not node.elts:
+                return False
+            if path:
+                nested = True
+            return all(visit(item, (*path, index)) for index, item in enumerate(node.elts))
+
+        if not visit(target, ()) or not nested:
+            return None
+        return tuple(paths)
+
     def for_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the body statements of a For or AsyncFor node."""
         self._require(ast.For, ast.AsyncFor)

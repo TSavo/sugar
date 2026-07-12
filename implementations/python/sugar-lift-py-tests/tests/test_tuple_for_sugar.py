@@ -35,10 +35,9 @@ def test_pair_target_binds_both_iter_element_projections() -> None:
     assert returned.value.term == ctor("py.subscript", [element, num(0)])
 
 
-def test_nested_other_arity_and_for_else_targets_stay_loud() -> None:
+def test_other_arity_starred_and_for_else_targets_stay_loud() -> None:
     for source in (
         "for a, b, c in rows:\n    pass\n",
-        "for a, (b, c) in rows:\n    pass\n",
         "for a, *rest in rows:\n    pass\n",
         "for a, b in rows:\n    pass\nelse:\n    pass\n",
     ):
@@ -79,3 +78,39 @@ def check_functions(func_names_and_expected):
         recover_panics=True,
     )
     assert all(panic.gap["observed"] != "For" for panic in recovered.panics)
+
+
+@pytest.mark.parametrize(
+    ("target", "returned", "path"),
+    [
+        ("i, (label, size)", "size", (1, 1)),
+        ("(row, col), cell", "row", (0, 0)),
+    ],
+)
+def test_nested_tuple_target_binds_recursive_projection(
+    target: str, returned: str, path: tuple[int, ...]
+) -> None:
+    block = compose_block(
+        f"    for {target} in rows:\n        return {returned}\n",
+        binds={"rows": SymbolicValue(make_var("rows"))},
+    )
+
+    value = next(
+        entry.value for entry in block.statements if isinstance(entry, ReturnValue)
+    )
+    expected = ctor("py.iter_elem", [make_var("rows")])
+    for index in path:
+        expected = ctor("py.subscript", [expected, num(index)])
+    assert value.term == expected
+
+
+def test_nested_tuple_owner_excludes_starred_and_for_else() -> None:
+    from sugar_lift_py_tests.sugar.nested_tuple_for_sugar import NestedTupleForSugar
+
+    assert NestedTupleForSugar.owns(_site("for i, (x, y) in rows:\n    pass\n"))
+    assert not NestedTupleForSugar.owns(
+        _site("for i, (x, *rest) in rows:\n    pass\n")
+    )
+    assert not NestedTupleForSugar.owns(
+        _site("for i, (x, y) in rows:\n    pass\nelse:\n    pass\n")
+    )
