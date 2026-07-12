@@ -183,6 +183,8 @@ class TermValue(FloorValue):
 
     def to_term(self, *, owner: str):
         del owner
+        import math
+
         # Int embeds in Real losslessly (3 and 3.0 are the same number), but the
         # embedding only goes one way at the term level: an Int-sorted term and
         # a Real-sorted term are structurally distinct EUF constants even when
@@ -191,7 +193,16 @@ class TermValue(FloorValue):
         # (e.g. `float('3.0') == 3`, `np.divide(6, 3) == 2`). Only a genuinely
         # fractional float needs the Real ctor, because there is no lossless
         # Int projection for it.
-        if type(self.value) is float and self.value == int(self.value):
+        #
+        # Non-finite floats (inf/nan) must NOT take the integral arm:
+        # ``int(float('inf'))`` raises OverflowError and hard-crashes the lift
+        # RPC (pandas wall after #4155 transport scrub). Keep them on the Real
+        # arm so the channel stays structured, never a bare process death.
+        if (
+            type(self.value) is float
+            and math.isfinite(self.value)
+            and self.value == int(self.value)
+        ):
             from sugar_lift_py_tests.ir import num
 
             return num(int(self.value))
@@ -203,7 +214,8 @@ class TermValue(FloorValue):
             # A canonical decimal string, never a Python float text form (see
             # `ir.real_lit`): `Decimal(str(value))` round-trips because
             # `repr`/`str` of a Python float is already the shortest exact
-            # decimal that reparses to the same double.
+            # decimal that reparses to the same double. Non-finite values
+            # become "Infinity" / "NaN" (Decimal-legal), not a crash.
             return real_lit(format(Decimal(str(self.value)), "f"))
         from sugar_lift_py_tests.ir import num
 
