@@ -65,7 +65,16 @@ class TrueBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
         site=None,
     ) -> Outcome:
         del else_body, site
-        return then.reduce(ctx)
+        record, final_ctx = then.sugar.reduce_with_scope(ctx)
+        from sugar_lift_py_tests.floor import BlockValue, ScopeRebind
+
+        before = {binding.name: binding.value for binding in ctx.temporal.bindings}
+        rebound = tuple(
+            ScopeRebind(binding.name, binding.value)
+            for binding in final_ctx.temporal.bindings
+            if before.get(binding.name) is not binding.value
+        )
+        return Complete(BlockValue((*record.contribution(), *rebound)))
 
     def stated(self, site):
         # Ground True states nothing: the assert is support, absorbed.
@@ -105,4 +114,3 @@ class TrueBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
         from sugar_lift_py_tests.ir import bool_const
 
         return bool_const(True)
-
