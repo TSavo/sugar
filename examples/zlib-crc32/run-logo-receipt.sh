@@ -3,11 +3,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-if [ -x "$REPO/implementations/rust/target/release/sugar" ]; then
-  BIN="$REPO/implementations/rust/target/release/sugar"
-else
-  BIN="$("$REPO/bin/sugarbin" --profile release)"
-fi
+BIN="$("$REPO/bin/sugarbin" --profile release)"
 export PYTHONPATH="$REPO/implementations/python/sugar-lift-py-tests/src:$REPO/implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="$(dirname "$BIN"):${PATH:-}"
 [ -x "$BIN" ] || { echo "FAIL: sugar missing"; exit 1; }
