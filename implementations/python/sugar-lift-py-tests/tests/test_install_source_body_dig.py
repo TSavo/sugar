@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
@@ -43,6 +46,26 @@ def test_resolve_install_source_base64() -> None:
 def test_module_siblings_base64() -> None:
     siblings = module_sibling_function_nodes("base64")
     assert "urlsafe_b64encode" in siblings or "base64.urlsafe_b64encode" in siblings
+
+
+def test_install_source_pytest_skip_is_a_loud_factory_gap(
+    tmp_path, monkeypatch
+) -> None:
+    module = tmp_path / "pandas_optional_dependency_repro.py"
+    module.write_text(
+        "import pytest\n"
+        "tables = pytest.importorskip('sugar_missing_tables_for_test')\n"
+        "def helper():\n"
+        "    return tables\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(
+        FactoryPanic,
+        match="observed=Skipped.*write more Sugar",
+    ):
+        module_sibling_function_nodes("pandas_optional_dependency_repro")
 
 
 def test_from_import_pure_function_lifts() -> None:
