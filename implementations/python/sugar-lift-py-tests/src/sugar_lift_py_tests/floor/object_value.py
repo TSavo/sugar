@@ -71,6 +71,15 @@ class ObjectValue(FloorValue):
     class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
 
+    def format_data_model(self, spec, site, ctx):
+        return self.call_method_value(
+            "__format__",
+            (spec,),
+            owner="FormatDunderCallSugar",
+            blame=str(site),
+            ctx=ctx,
+        )
+
     def attribute_with(
         self, operation: AttributeLookupOperation, ctx: FactoryBuildContext | None
     ) -> Outcome:

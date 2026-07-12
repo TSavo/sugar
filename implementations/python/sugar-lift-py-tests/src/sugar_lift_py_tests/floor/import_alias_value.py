@@ -54,6 +54,62 @@ class ImportAliasValue(FloorValue):
         del formula
         return self
 
+    def add(self, other, site):
+        return self._binary_runtime_effect(other, site, "+")
+
+    def subtract(self, other, site):
+        return self._binary_runtime_effect(other, site, "-")
+
+    def multiply(self, other, site):
+        return self._binary_runtime_effect(other, site, "*")
+
+    def divide(self, other, site):
+        return self._binary_runtime_effect(other, site, "/")
+
+    def power(self, other, site):
+        return self._binary_runtime_effect(other, site, "**")
+
+    def bitwise_and(self, other, site):
+        return self._binary_runtime_effect(other, site, "&")
+
+    def bitwise_xor(self, other, site):
+        return self._binary_runtime_effect(other, site, "^")
+
+    def unary_minus(self, site):
+        return self._unary_runtime_effect(site, "-")
+
+    def unary_plus(self, site):
+        return self._unary_runtime_effect(site, "+")
+
+    def bitwise_invert(self, site):
+        return self._unary_runtime_effect(site, "~")
+
+    def format_data_model(self, spec, site, ctx):
+        del spec, ctx
+        return _runtime_alias_effect_at_site(
+            self,
+            shape=f"format({self.bound_name}, ...)",
+            blame=str(site),
+            replacement="ImportedModuleFormatEffect",
+        )
+
+    def _binary_runtime_effect(self, other, site, operator):
+        del other
+        return _runtime_alias_effect_at_site(
+            self,
+            shape=f"{self.bound_name} {operator} ...",
+            blame=str(site),
+            replacement="ImportedModuleBinaryEffect",
+        )
+
+    def _unary_runtime_effect(self, site, operator):
+        return _runtime_alias_effect_at_site(
+            self,
+            shape=f"{operator}{self.bound_name}",
+            blame=str(site),
+            replacement="ImportedModuleUnaryEffect",
+        )
+
     def call_method_with(self, operation: Any, ctx: object):
         del ctx
         return _runtime_alias_effect(
@@ -107,6 +163,17 @@ def _runtime_alias_effect(
     shape: str,
     replacement: str,
 ):
+    return _runtime_alias_effect_at_site(
+        value,
+        shape=shape,
+        blame=operation.blame,
+        replacement=replacement,
+    )
+
+
+def _runtime_alias_effect_at_site(
+    value: ImportAliasValue, *, shape: str, blame: str, replacement: str
+):
     from sugar_lift_py_tests.effect import ImportedModuleRuntimeEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
@@ -117,6 +184,6 @@ def _runtime_alias_effect(
             f"`{value.bound_name} -> {value.name}` at runtime. "
             "The alias floor records name binding only; it does not fabricate "
             "module object semantics. "
-            f"replacement={replacement}; blame={operation.blame}"
+            f"replacement={replacement}; blame={blame}"
         )
     )
