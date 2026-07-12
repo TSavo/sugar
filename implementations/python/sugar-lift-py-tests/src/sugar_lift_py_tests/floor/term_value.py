@@ -135,6 +135,13 @@ class TermValue(FloorValue):
             return Complete(TermValue(self.value * other.value))
         return super().multiply(other, site)
 
+    def power(self, other, site):
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value ** other.value))
+        return super().power(other, site)
+
     def divide(self, other, site):
         # A number stands on the division floor: true division. A concrete zero
         # divisor is a runtime effect (the program halts), not a lift-side gap.
