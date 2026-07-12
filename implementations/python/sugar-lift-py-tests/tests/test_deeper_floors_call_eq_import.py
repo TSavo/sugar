@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import pytest
+
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-from sugar_lift_py_tests.lift_rpc import lift_file_payload
+from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
 
 
 def test_call_eq_name_via_assign_lifts() -> None:
@@ -17,7 +20,8 @@ def test_call_eq_name_via_assign_lifts() -> None:
         "    got = claimed()\n"
         "    assert got == 1\n"
     )
-    rpc = lift_file_payload(src, "t.py").to_rpc()
+    payload, gaps = audit_lift_file(src, "t.py", hold_panic=True)
+    rpc = payload.to_rpc()
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
         "assertions"
     ]
@@ -88,12 +92,19 @@ def test_unbound_user_module_still_panics() -> None:
         "def test_x():\n"
         "    assert totally_unknown_pkg.foo == 1\n"
     )
-    rpc = lift_file_payload(src, "t.py").to_rpc()
+    payload, gaps = audit_lift_file(src, "t.py", hold_panic=True)
+    rpc = payload.to_rpc()
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
         "assertions"
     ]
     assert ax["silently_unaccounted"] == 0
     assert ax["refused_loud"] + ax["lifted_cited"] == 1
+    assert gaps[0].info["observed"] == "totally_unknown_pkg"
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(src, "t.py")
+    assert gaps[0].info["observed"] == "totally_unknown_pkg"
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(src, "t.py")
 
 
 def test_parametrized_test_function_still_testimony() -> None:
