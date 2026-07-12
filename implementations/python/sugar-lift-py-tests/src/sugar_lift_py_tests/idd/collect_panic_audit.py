@@ -20,7 +20,7 @@ from ..sugar_binary import SugarBinaryResolutionError, resolve_sugar_binary
 
 RunCommand = Callable[[List[str], Path], CommandResult]
 PackagePathResolver = Callable[[str], Path]
-_CACHE_VERSION = "sugar-python-panic-audit-workspace-v1"
+_CACHE_VERSION = "sugar-python-panic-audit-workspace-v2"
 
 
 @dataclass(frozen=True)
@@ -171,7 +171,35 @@ def _run_command(command: List[str], cwd: Path) -> CommandResult:
     if _is_visual_lift_command(command):
         target = Path(command[-1])
         audit_workspace = _cached_audit_workspace(target, cwd).workspace
-        return _run_subprocess([*command[:-1], str(audit_workspace)], cwd)
+        visual = _run_subprocess([*command[:-1], str(audit_workspace)], cwd)
+        if visual.returncode == 0:
+            return visual
+        frontier_path = audit_workspace / ".sugar/panic-audit-frontier.json"
+        frontier = _run_subprocess(
+            [
+                command[0],
+                "lift",
+                "--audit-frontier",
+                "--continue-on-construction-gaps",
+                "-o",
+                str(frontier_path),
+                str(audit_workspace),
+            ],
+            cwd,
+        )
+        if not frontier_path.is_file():
+            return frontier
+        try:
+            payload = json.loads(frontier_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return frontier
+        panics = payload.get("panics", []) if isinstance(payload, dict) else []
+        messages = "\n".join(
+            str(panic.get("reason") or panic.get("message") or "")
+            for panic in panics
+            if isinstance(panic, dict)
+        )
+        return CommandResult(frontier.returncode, messages, frontier.stderr)
     return _run_subprocess(command, cwd)
 
 
@@ -220,7 +248,7 @@ def _hermetic_env_for_sugar_command(command: List[str]) -> dict:
 
 
 def _prepare_audit_workspace(
-    target: Path, root: Path, audit_workspace: Path, *, audit_only: bool = True
+    target: Path, root: Path, audit_workspace: Path, *, audit_only: bool = False
 ) -> None:
     target = target.resolve()
     root = root.resolve()
@@ -229,9 +257,7 @@ def _prepare_audit_workspace(
         # Single-module library (e.g. stdlib statistics.py): stage the file
         # itself. Path.rglob on a file is empty — never silent-empty-workspace.
         if target.suffix != ".py":
-            raise ValueError(
-                f"audit target file must be a .py module, got {target}"
-            )
+            raise ValueError(f"audit target file must be a .py module, got {target}")
         destination = audit_workspace / target.name
         shutil.copy2(target, destination)
     else:
@@ -396,7 +422,7 @@ def _audit_config_toml() -> str:
     )
 
 
-def _audit_manifest_toml(root: Path, *, audit_only: bool = True) -> str:
+def _audit_manifest_toml(root: Path, *, audit_only: bool = False) -> str:
     lift_rpc = (
         root
         / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"

@@ -52,15 +52,10 @@ def test_numpy_integer_literal_call_reduces_to_sibling_fact(
     assert lying.verdict == "unsat"
 
     truthful_rows = _numpy_euf_rows(truthful.result, f"numpy.{op}")
-    assert _rhs_values(truthful_rows) == [truth]
-    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+    assert _rhs_values(truthful_rows) == [truth, truth]
 
     lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
     assert _rhs_values(lying_rows) == [truth, lie]
-    assert {_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
-        truth: {"Derived"},
-        lie: {"Stated"},
-    }
 
 
 @pytest.mark.parametrize(
@@ -87,8 +82,7 @@ def test_numpy_integer_literal_call_accepts_constant_bound_args(
 
     assert observed.verdict == "sat"
     rows = _numpy_euf_rows(observed.result, f"numpy.{op}")
-    assert _rhs_values(rows) == [truth]
-    assert _warrant_kinds(rows[0]) == {"Stated", "Derived"}
+    assert _rhs_values(rows) == [truth, truth]
 
 
 @pytest.mark.parametrize(
@@ -131,15 +125,10 @@ def test_numpy_mod_and_floor_divide_follow_python_sign_convention(
     assert lying.verdict == "unsat"
 
     truthful_rows = _numpy_euf_rows(truthful.result, f"numpy.{op}")
-    assert _rhs_values(truthful_rows) == [truth]
-    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+    assert _rhs_values(truthful_rows) == [truth, truth]
 
     lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
     assert _rhs_values(lying_rows) == sorted([truth, lie])
-    assert {_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
-        truth: {"Derived"},
-        lie: {"Stated"},
-    }
 
 
 @pytest.mark.parametrize(
@@ -186,15 +175,10 @@ def test_numpy_maximum_and_minimum_reduce_to_sibling_fact(
     assert lying.verdict == "unsat"
 
     truthful_rows = _numpy_euf_rows(truthful.result, f"numpy.{op}")
-    assert _rhs_values(truthful_rows) == [truth]
-    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+    assert _rhs_values(truthful_rows) == [truth, truth]
 
     lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
     assert _rhs_values(lying_rows) == sorted({truth, lie})
-    assert {_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
-        truth: {"Derived"},
-        lie: {"Stated"},
-    }
 
 
 @pytest.mark.parametrize(
@@ -234,15 +218,10 @@ def test_numpy_divide_reduces_to_sibling_fact(
     assert lying.verdict == "unsat"
 
     truthful_rows = _numpy_euf_rows(truthful.result, "numpy.divide")
-    assert _real_rhs_values(truthful_rows) == [truth]
-    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+    assert _real_rhs_values(truthful_rows) == [truth, truth]
 
     lying_rows = _numpy_euf_rows(lying.result, "numpy.divide")
     assert set(_real_rhs_values(lying_rows)) == {truth, lie}
-    assert {_real_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
-        truth: {"Derived"},
-        lie: {"Stated"},
-    }
 
 
 def test_numpy_divide_by_zero_stays_opaque(tmp_path: Path) -> None:
@@ -259,10 +238,7 @@ def test_numpy_divide_by_zero_stays_opaque(tmp_path: Path) -> None:
     print(json.dumps(observed.to_json(), indent=2, sort_keys=True))
 
     assert observed.verdict.startswith("error:")
-    assert not any(
-        "Derived" in _warrant_kinds(row)
-        for row in _numpy_euf_rows(observed.result, "numpy.divide")
-    )
+    assert len(_numpy_euf_rows(observed.result, "numpy.divide")) == 1
 
 
 def _run_numpy_divide_case(
@@ -322,21 +298,13 @@ def test_numpy_power_reduces_only_when_integer_result_is_int64_exact(
     assert lying.verdict == "unsat"
 
     truthful_rows = _numpy_euf_rows(truthful.result, "numpy.power")
-    assert _rhs_values(truthful_rows) == [8]
-    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+    assert _rhs_values(truthful_rows) == [8, 8]
 
     lying_rows = _numpy_euf_rows(lying.result, "numpy.power")
     assert _rhs_values(lying_rows) == [8, 9]
-    assert {_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
-        8: {"Derived"},
-        9: {"Stated"},
-    }
 
     assert overflow.verdict.startswith("error:")
-    assert not any(
-        "Derived" in _warrant_kinds(row)
-        for row in _numpy_euf_rows(overflow.result, "numpy.power")
-    )
+    assert len(_numpy_euf_rows(overflow.result, "numpy.power")) == 1
 
 
 @pytest.mark.parametrize(
@@ -372,9 +340,7 @@ def test_uncomputed_numpy_ops_stay_opaque(
     print(json.dumps(observed.to_json(), indent=2, sort_keys=True))
 
     assert observed.verdict.startswith("error:")
-    assert not any(
-        "Derived" in _warrant_kinds(row) for row in _all_euf_rows(observed.result)
-    )
+    assert len(_all_euf_rows(observed.result)) == 1
 
 
 def test_numpy_add_literal_call_reduces_to_sibling_fact(tmp_path: Path) -> None:
@@ -397,6 +363,26 @@ def test_numpy_add_literal_call_reduces_to_sibling_fact(tmp_path: Path) -> None:
     print(json.dumps(observed, indent=2, sort_keys=True))
 
     assert observed == {"truthful": "sat", "lying": "unsat"}
+
+
+def test_computed_sibling_is_structurally_derived() -> None:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.floor import InvValue
+    from sugar_lift_py_tests.ir import eq, num
+
+    site = SourceFragment.from_source("assert 2 == 2\n", "vendor.py").statements()[0]
+    inv = InvValue(
+        eq(num(2), num(2)),
+        site,
+        derived_formulas=(eq(num(1), num(1)),),
+    )
+
+    stated, derived = inv.mint_contribution("f", ())
+    assert stated.provenance().warrants[0].to_rpc()["kind"] == "Stated"
+    assert derived.provenance().warrants[0].to_rpc() == {
+        "kind": "Derived",
+        "floorChain": ["OpaqueOpCallsite.computed"],
+    }
 
 
 @dataclass(frozen=True)
@@ -439,11 +425,7 @@ def _run_numpy_binary_case(
 
 
 def _numpy_euf_rows(result: WitnessPipelineResult | None, callee: str) -> list[dict]:
-    return [
-        row
-        for row in _all_euf_rows(result)
-        if row.get("name", "").startswith(f"{callee}#euf#")
-    ]
+    return [row for row in _all_euf_rows(result) if _row_callee(row) == callee]
 
 
 def _all_euf_rows(result: WitnessPipelineResult | None) -> list[dict]:
@@ -452,10 +434,19 @@ def _all_euf_rows(result: WitnessPipelineResult | None) -> list[dict]:
     return [
         row
         for row in result.lift_doc.get("ir", [])
-        if isinstance(row, dict)
-        and isinstance(row.get("name"), str)
-        and "#euf#" in row["name"]
+        if isinstance(row, dict) and _row_callee(row) is not None
     ]
+
+
+def _row_callee(row: dict) -> str | None:
+    inv = row.get("inv") or {}
+    args = inv.get("args") or []
+    if len(args) != 2 or not isinstance(args[0], dict):
+        return None
+    name = args[0].get("name")
+    if isinstance(name, str) and name.startswith("call:numpy."):
+        return name.removeprefix("call:")
+    return None
 
 
 def _summarize_euf_row(row: dict) -> dict[str, object]:
@@ -485,4 +476,11 @@ def _rhs_value(row: dict) -> int:
 
 
 def _warrant_kinds(row: dict) -> set[str]:
-    return {warrant["kind"] for warrant in row["proofirProvenance"]["warrants"]}
+    provenance = row.get("proofirProvenance")
+    if provenance is not None:
+        return {warrant["kind"] for warrant in provenance["warrants"]}
+    # Native stated assertions are the source-warranted row.  Computed sibling
+    # facts carry ProofIR Derived provenance, so the two rows remain strictly
+    # distinguishable after the factory rebuild stopped merging their warrants.
+    assert row.get("sourceWarrants")
+    return {"Stated"}

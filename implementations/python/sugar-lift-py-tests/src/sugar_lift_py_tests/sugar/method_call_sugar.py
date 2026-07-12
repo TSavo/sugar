@@ -21,6 +21,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
     """
 
     method_name: str
+    import_target: str | None
     receiver: SugarBody
     args: tuple[SugarBody, ...]
     # Keyword names in source order for the trailing keyword value slots of
@@ -53,11 +54,12 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             name = kw.keyword_arg_name()
             # **kwargs expansion: parameter name is "**" (not dropped).
             keyword_names.append(name if name is not None else "**")
-            keyword_bodies.append(
-                ctx.build_body(kw.keyword_value(), SugarRole.TERM)
-            )
+            keyword_bodies.append(ctx.build_body(kw.keyword_value(), SugarRole.TERM))
         return cls(
             method_name=site.call_target_name(),
+            import_target=site.call_import_target_name(
+                ctx.import_aliases, ctx.from_imports
+            ),
             receiver=ctx.build_body(site.call_receiver(), SugarRole.TERM),
             args=(*positional, *keyword_bodies),
             keyword_names=tuple(keyword_names),
@@ -69,12 +71,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
         # Keyword method call on the return-adjacent face: groupby(level=3)
         # so the keyword value rides the coordinate; the pair discriminates
         # on the enclosing return face (coordinates stay symbolic).
-        prefix = (
-            "def A(z):\n"
-            "    y = z.groupby(level=3)\n"
-            "    return 1\n"
-            "\n"
-        )
+        prefix = "def A(z):\n" "    y = z.groupby(level=3)\n" "    return 1\n" "\n"
         return _call_pair(
             name="method_call_return",
             owner_sugar="MethodCallSugar",
@@ -99,6 +96,12 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                 resolve_method_funcdef,
             )
 
+            source_values = accumulated[1:] if self.import_target else accumulated
+            source_name = self.import_target or self.method_name
+            numpy_value = _numpy_literal_call(source_name, source_values)
+            if numpy_value is not None:
+                return Complete(numpy_value)
+
             # Method body dig: receiver is accumulated[0]. Resolve class.method
             # from name_resolver / from_imports / install-source. body=None is
             # still lawful coordinate-only when resolve fails.
@@ -110,20 +113,22 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                 else None
             )
             if body is None:
-                return Complete(CallSiteValue(
-                    target_name=self.method_name,
-                    arg_values=accumulated,
-                    parameters=self.keyword_names,
-                    term=ctor(
-                        f"call:{self.method_name}",
-                        [
-                            value.to_term(owner=str(self.site))
-                            for value in accumulated
-                        ],
-                    ),
-                    body=body,
-                    site=self.site,
-                ))
+                return Complete(
+                    CallSiteValue(
+                        target_name=source_name,
+                        arg_values=source_values,
+                        parameters=self.keyword_names,
+                        term=ctor(
+                            f"call:{source_name}",
+                            [
+                                value.to_term(owner=str(self.site))
+                                for value in source_values
+                            ],
+                        ),
+                        body=body,
+                        site=self.site,
+                    )
+                )
 
             source_term = ctor(
                 f"call:{self.method_name}",
@@ -148,3 +153,91 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
 
     def walk_children(self):
         return (self.receiver, *self.args)
+
+
+_NUMPY_INTEGER_UFUNCS = frozenset(
+    {
+        "numpy.add",
+        "numpy.floor_divide",
+        "numpy.maximum",
+        "numpy.minimum",
+        "numpy.mod",
+        "numpy.multiply",
+        "numpy.power",
+        "numpy.subtract",
+    }
+)
+_NUMPY_INT64_MIN = -(2**63)
+_NUMPY_INT64_MAX = 2**63 - 1
+
+
+def _numpy_literal_call(callee: str, values: tuple):
+    if callee not in (*_NUMPY_INTEGER_UFUNCS, "numpy.divide") or len(values) != 2:
+        return None
+    from sugar_lift_py_tests.floor import OpaqueOpCallsite, TermValue
+
+    left, right = values
+    if type(left) is not TermValue or type(right) is not TermValue:
+        return None
+    if type(left.value) not in (int, float) or type(right.value) not in (int, float):
+        return None
+
+    result = _numpy_literal_result(callee, left.value, right.value)
+    if result is None:
+        return None
+    return OpaqueOpCallsite(
+        callee=callee,
+        arg=left,
+        extra_args=(right,),
+        computed=TermValue(result),
+    )
+
+
+def _numpy_literal_result(callee: str, left, right):
+    if callee == "numpy.divide":
+        # The current proof type bridge cannot give one call coordinate both
+        # Int and fractional Real result sorts.  Fold only exact integral
+        # integer division here; fractional results remain refused-loud until
+        # the typed call-result representation owns that distinction.
+        if (
+            type(left) is int
+            and type(right) is int
+            and right != 0
+            and left % right == 0
+        ):
+            result = left // right
+            return result if _fits_numpy_int64(result) else None
+        return None
+    if type(left) is not int or type(right) is not int:
+        return None
+    if not (_fits_numpy_int64(left) and _fits_numpy_int64(right)):
+        return None
+    if callee == "numpy.add":
+        result = left + right
+    elif callee == "numpy.multiply":
+        result = left * right
+    elif callee == "numpy.subtract":
+        result = left - right
+    elif callee == "numpy.mod":
+        if right == 0:
+            return None
+        result = left % right
+    elif callee == "numpy.floor_divide":
+        if right == 0:
+            return None
+        result = left // right
+    elif callee == "numpy.power":
+        if right < 0 or (left not in {-1, 0, 1} and right > 63):
+            return None
+        result = left**right
+    elif callee == "numpy.maximum":
+        result = max(left, right)
+    elif callee == "numpy.minimum":
+        result = min(left, right)
+    else:
+        return None
+    return result if _fits_numpy_int64(result) else None
+
+
+def _fits_numpy_int64(value: int) -> bool:
+    return _NUMPY_INT64_MIN <= value <= _NUMPY_INT64_MAX
