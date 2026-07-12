@@ -17,6 +17,7 @@ Bridge/dig doctrine:
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import ast
 import inspect
 import textwrap
@@ -31,52 +32,61 @@ def module_sibling_function_nodes(module_name: str) -> dict:
     Also indexes ``Class.method`` / ``module.Class.method`` for method body dig.
     """
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-    from _pytest.outcomes import Skipped
-
+    sourcefile = None
+    source = None
     try:
-        module = importlib.import_module(module_name)
-        sourcefile = inspect.getsourcefile(module)
-        if not sourcefile:
-            return {}
-        source = Path(sourcefile).read_text(encoding="utf-8")
-    except Skipped as skipped:
-        from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
-            FactoryGapInfo,
-            GapKind,
-            GapLocus,
-            factory_panic,
-        )
+        # Source presence is the construction boundary. Reading a module must
+        # not execute its import-time optional-dependency guards merely to dig
+        # definitions whose Python source is already installed.
+        spec = importlib.util.find_spec(module_name)
+        origin = getattr(spec, "origin", None)
+        if origin and origin.endswith((".py", ".pyi")):
+            sourcefile = origin
+            source = Path(origin).read_text(encoding="utf-8")
+    except (ImportError, ModuleNotFoundError, OSError, TypeError, UnicodeError, ValueError):
+        pass
 
-        info = FactoryGapInfo(
-            owner="install_source_dig.module_sibling_function_nodes",
-            blame=module_name,
-            observed=type(skipped).__name__,
-            requested="importable install-source module",
-            fix=(
-                "write more Sugar for optional-dependency modules or install the "
-                "dependency before install-source body dig"
-            ),
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="install-source import",
-                status="floor-gap",
-                observed=type(skipped).__name__,
+    if source is None:
+        try:
+            from _pytest.outcomes import Skipped
+
+            module = importlib.import_module(module_name)
+            sourcefile = inspect.getsourcefile(module)
+            if not sourcefile:
+                return {}
+            source = Path(sourcefile).read_text(encoding="utf-8")
+        except Skipped as skipped:
+            from sugar_lift_py_tests.factory import (
+                FactoryAuditRow,
+                FactoryGapInfo,
+                GapKind,
+                GapLocus,
+                factory_panic,
+            )
+
+            info = FactoryGapInfo(
+                owner="install_source_dig.module_sibling_function_nodes",
                 blame=module_name,
-                selected=None,
-                candidates=[],
-                message=(
-                    "install-source import raised pytest Skipped: "
-                    f"{skipped}; {info.message}"
+                observed=type(skipped).__name__,
+                requested="installed Python source for optional-dependency module",
+                fix="install the module's Python source before install-source body dig",
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
+            )
+            factory_panic(
+                info,
+                FactoryAuditRow(
+                    role="install-source import",
+                    status="floor-gap",
+                    observed=type(skipped).__name__,
+                    blame=module_name,
+                    selected=None,
+                    candidates=[],
+                    message=f"install-source import raised pytest Skipped: {skipped}; {info.message}",
                 ),
-            ),
-        )
-    except (ImportError, OSError, TypeError, UnicodeError):
-        return {}
+            )
+        except (ImportError, OSError, TypeError, UnicodeError):
+            return {}
     try:
         parsed = SourceFragment.from_source(source, sourcefile)
     except SyntaxError:

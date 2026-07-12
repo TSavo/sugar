@@ -49,7 +49,7 @@ def test_module_siblings_base64() -> None:
     assert "urlsafe_b64encode" in siblings or "base64.urlsafe_b64encode" in siblings
 
 
-def test_install_source_pytest_skip_is_a_loud_factory_gap(
+def test_install_source_reads_python_definitions_without_executing_skip(
     tmp_path, monkeypatch
 ) -> None:
     module = tmp_path / "pandas_optional_dependency_repro.py"
@@ -62,11 +62,14 @@ def test_install_source_pytest_skip_is_a_loud_factory_gap(
     )
     monkeypatch.syspath_prepend(str(tmp_path))
 
-    with pytest.raises(
-        FactoryPanic,
-        match="observed=Skipped.*write more Sugar",
-    ):
-        module_sibling_function_nodes("pandas_optional_dependency_repro")
+    siblings = module_sibling_function_nodes("pandas_optional_dependency_repro")
+
+    assert "helper" in siblings
+    assert "pandas_optional_dependency_repro" not in __import__("sys").modules
+
+
+def test_install_source_missing_module_has_no_invented_definitions() -> None:
+    assert module_sibling_function_nodes("sugar_module_that_does_not_exist") == {}
 
 
 def test_from_import_pure_function_lifts() -> None:
