@@ -567,6 +567,15 @@ def test_complete_mode_records_recovered_frontier_without_report_artifact(
                             "gap": {"gap_kind": "Sugar"},
                         }
                     ],
+                    "effects": [
+                        {
+                            "locus": "pkg.py:1:4",
+                            "effect": "GetattrRuntimeEffect",
+                            "category": "runtime",
+                            "status": "boundary",
+                            "reason": "attribute access crosses a runtime boundary",
+                        }
+                    ],
                     "suppressedDescendants": [
                         {
                             "locus": "pkg.py:2:18",
@@ -601,6 +610,7 @@ def test_complete_mode_records_recovered_frontier_without_report_artifact(
     assert result.summary.mode == "frontier"
     assert result.summary.frontier["independentPanicCount"] == 1
     assert result.summary.frontier["suppressedDescendantCount"] == 1
+    assert result.summary.frontier["effectCount"] == 1
     assert result.breaches
     assert result.frontier_path == tmp_path / "wall/frontier.json"
     assert result.frontier_path.is_file()
