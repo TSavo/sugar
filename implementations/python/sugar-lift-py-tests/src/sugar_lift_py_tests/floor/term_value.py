@@ -219,7 +219,68 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(self.value >> other.value))
-        return super().right_shift(other, site)
+        return self._symbolic_or_bv32_bitwise(other, site, ">>", "bv32.lshr")
+
+    def bitwise_and(self, other, site):
+        if type(other) is TermValue and all(
+            type(value) is int for value in (self.value, other.value)
+        ):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value & other.value))
+        return self._symbolic_or_bv32_bitwise(other, site, "&", "bv32.and")
+
+    def bitwise_xor(self, other, site):
+        if type(other) is TermValue and all(
+            type(value) is int for value in (self.value, other.value)
+        ):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value ^ other.value))
+        return self._symbolic_or_bv32_bitwise(other, site, "^", "bv32.xor")
+
+    def left_shift(self, other, site):
+        if type(other) is TermValue and all(
+            type(value) is int for value in (self.value, other.value)
+        ):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value << other.value))
+        return self._symbolic_or_bv32_bitwise(other, site, "<<", "bv32.shl")
+
+    def _symbolic_or_bv32_bitwise(self, other, site, operator, bv32_operator):
+        from sugar_lift_py_tests.floor.bv32_value import Bv32Value
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) is SymbolicValue:
+            return getattr(
+                SymbolicValue(self.to_term(owner=str(site))),
+                {
+                    "&": "bitwise_and",
+                    "^": "bitwise_xor",
+                    "<<": "left_shift",
+                    ">>": "right_shift",
+                }[operator],
+            )(other, site)
+        if type(other) is Bv32Value:
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                Bv32Value(
+                    ctor(
+                        bv32_operator,
+                        [self.to_term(owner=str(site)), other.to_term(owner=str(site))],
+                    )
+                )
+            )
+        method = {
+            "&": "bitwise_and",
+            "^": "bitwise_xor",
+            "<<": "left_shift",
+            ">>": "right_shift",
+        }[operator]
+        return getattr(super(), method)(other, site)
 
     def unary_minus(self, site):
         # Arithmetic negation: fold to -value.

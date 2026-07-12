@@ -218,6 +218,28 @@ class SymbolicValue(FloorValue):
             )
         )
 
+    def bitwise_and(self, other, site):
+        return self._runtime_bitwise_coordinate(other, site, "&")
+
+    def bitwise_xor(self, other, site):
+        return self._runtime_bitwise_coordinate(other, site, "^")
+
+    def left_shift(self, other, site):
+        return self._runtime_bitwise_coordinate(other, site, "<<")
+
+    def _runtime_bitwise_coordinate(self, other, site, operator):
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    operator,
+                    [self.to_term(owner=str(site)), other.to_term(owner=str(site))],
+                )
+            )
+        )
+
     def unary_plus(self, site):
         # Unary plus on a symbolic is identity (symbolic_term UAdd returns the
         # operand). Match the LAW; do not invent a py.pos spelling.

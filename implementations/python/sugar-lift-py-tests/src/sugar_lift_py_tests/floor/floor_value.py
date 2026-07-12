@@ -1131,6 +1131,28 @@ class FloorValue:
             ),
         )
 
+    def bitwise_and(self, other, site):
+        return self._runtime_bitwise_gap(other, site, "bitwise_and", "and")
+
+    def bitwise_xor(self, other, site):
+        return self._runtime_bitwise_gap(other, site, "bitwise_xor", "xor")
+
+    def left_shift(self, other, site):
+        return self._runtime_bitwise_gap(other, site, "left_shift", "left-shift")
+
+    def _runtime_bitwise_gap(self, other, site, owner, label):
+        del other
+        from sugar_lift_py_tests.factory import factory_panic_gap
+
+        observed = type(self).__name__
+        factory_panic_gap(
+            owner=owner,
+            blame=str(site),
+            observed=observed,
+            requested=f"stand on the runtime bitwise {label} floor",
+            fix=f"write more Floor: implement {observed}.{owner}",
+        )
+
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow, factory_panic,
