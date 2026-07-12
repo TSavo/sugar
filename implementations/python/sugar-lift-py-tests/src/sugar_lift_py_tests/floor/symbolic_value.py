@@ -170,6 +170,38 @@ class SymbolicValue(FloorValue):
             )
         )
 
+    def modulo(self, other, site):
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    "%",
+                    [
+                        self.to_term(owner=str(site)),
+                        other.to_term(owner=str(site)),
+                    ],
+                )
+            )
+        )
+
+    def right_shift(self, other, site):
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    ">>",
+                    [
+                        self.to_term(owner=str(site)),
+                        other.to_term(owner=str(site)),
+                    ],
+                )
+            )
+        )
+
     def unary_plus(self, site):
         # Unary plus on a symbolic is identity (symbolic_term UAdd returns the
         # operand). Match the LAW; do not invent a py.pos spelling.
