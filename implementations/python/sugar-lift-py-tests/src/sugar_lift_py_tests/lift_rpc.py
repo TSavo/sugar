@@ -1108,6 +1108,7 @@ def audit_lift_file(
         cname = stmt.class_name()
         for body_stmt in stmt.class_body():
             if body_stmt.observed == "FunctionDef":
+                body_stmt.node._sugar_source = body_stmt.source
                 name_resolver[f"{cname}.{body_stmt.function_name()}"] = body_stmt.node
             elif body_stmt.observed == "ClassDef":
                 # one-level nested class
@@ -1131,6 +1132,14 @@ def audit_lift_file(
                 import_aliases=import_aliases,
                 from_imports=from_imports,
                 name_resolver=name_resolver,
+                method_owner=next(
+                    (
+                        key.rsplit(".", 1)[0]
+                        for key, node in name_resolver.items()
+                        if "." in key and node is stmt.node
+                    ),
+                    None,
+                ),
             )
             # Every def enumerated by this audit door with a real
             # universe/testimony claimant is a definition root, including class

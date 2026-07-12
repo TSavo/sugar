@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
 from sugar_lift_py_tests.ir import Term
@@ -22,6 +22,9 @@ class SymbolicValue(FloorValue):
     """
 
     term: Term
+    receiver_contract_witness: object | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def test_python_type(self, value, site):
         """Dispatch a vendor type test from an existing ``python:type`` term."""

@@ -297,6 +297,10 @@ def _receiver_class_name(receiver_floor: Any) -> str | None:
     """
     if receiver_floor is None:
         return None
+    witness = getattr(receiver_floor, "receiver_contract_witness", None)
+    owner = getattr(witness, "concrete_method_owner", None)
+    if isinstance(owner, str) and owner:
+        return owner
     target = getattr(receiver_floor, "target_name", None)
     if isinstance(target, str) and target:
         return target
@@ -326,7 +330,8 @@ def resolve_method_funcdef(method_name: str, receiver_floor: Any, ctx: Any):
         node = resolver.get(key)
         if node is not None:
             filename = getattr(ctx, "filename", "<module>")
-            site = SourceFragment.from_node(node, filename)
+            source = getattr(node, "_sugar_source", None)
+            site = SourceFragment.from_node(node, filename, source)
             if site.observed == "FunctionDef":
                 sugar_file = getattr(node, "_sugar_file", None) or filename
                 sugar_source = getattr(node, "_sugar_source", None)

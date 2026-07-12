@@ -28,6 +28,7 @@ class FactoryBuildContext:
     # them separate from the live temporal, which may also contain caller
     # locals when a same-module callee body is attached for dig.
     module_temporal: TemporalContext | None = None
+    method_owner: str | None = None
     # Names declared ``global`` in the function currently being reduced. This
     # routes later stores through the statically known module frame.
     global_names: frozenset[str] = field(default_factory=frozenset[str])
@@ -105,6 +106,7 @@ class FactoryBuildContext:
             catalog=self.catalog,
             temporal=temporal,
             module_temporal=self.module_temporal,
+            method_owner=self.method_owner,
             global_names=self.global_names,
             source_oracle=self.source_oracle,
             expected_role=self.expected_role,

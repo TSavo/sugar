@@ -37,6 +37,9 @@ class CallSiteValue(FloorValue):
     python_type_coordinate: Term | None = dataclass_field(
         default=None, compare=False
     )
+    receiver_contract_witness: object | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def to_term(self, *, owner: str):
         del owner

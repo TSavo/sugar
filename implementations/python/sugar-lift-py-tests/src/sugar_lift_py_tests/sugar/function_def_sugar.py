@@ -69,6 +69,9 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
 
     def _reduce_defaults(self, remaining: tuple[SugarBody, ...], ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor import SymbolicValue, UniverseValue
+        from sugar_lift_py_tests.floor.receiver_contract_witness import (
+            ReceiverContractWitness,
+        )
         from sugar_lift_py_tests.ir import make_var
 
         if remaining:
@@ -78,8 +81,17 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
             )
 
         temporal = ctx.temporal
-        for formal in self.formals:
-            temporal = temporal.bind_value(formal, SymbolicValue(make_var(formal)))
+        for index, formal in enumerate(self.formals):
+            value = SymbolicValue(make_var(formal))
+            if index == 0 and ctx.method_owner is not None:
+                value = SymbolicValue(
+                    make_var(formal),
+                    receiver_contract_witness=ReceiverContractWitness(
+                        concrete_method_owner=ctx.method_owner,
+                        bound_self=make_var(formal),
+                    ),
+                )
+            temporal = temporal.bind_value(formal, value)
         scoped = replace(ctx, temporal=temporal)
         return self.body.reduce(scoped).and_then(
             lambda record: Complete(

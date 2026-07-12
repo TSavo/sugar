@@ -141,6 +141,18 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             # from name_resolver / from_imports / install-source. body=None is
             # still lawful coordinate-only when resolve fails.
             fn = resolve_method_funcdef(self.method_name, receiver_floor, ctx)
+            receiver_witness = getattr(
+                receiver_floor, "receiver_contract_witness", None
+            )
+            returned_receiver_witness = None
+            if fn is not None and receiver_witness is not None:
+                from sugar_lift_py_tests.floor.receiver_contract_witness import (
+                    cited_same_class_return,
+                )
+
+                returned_receiver_witness = cited_same_class_return(
+                    fn, receiver_witness
+                )
             body = (
                 build_dig_body(fn, ctx, require_attachable=True)
                 if fn is not None
@@ -161,6 +173,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                         ),
                         body=body,
                         site=self.site,
+                        receiver_contract_witness=returned_receiver_witness,
                     )
                 )
 
@@ -177,6 +190,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                         term=source_term,
                         body=body,
                         site=self.site,
+                        receiver_contract_witness=returned_receiver_witness,
                     )
                 )
             )
