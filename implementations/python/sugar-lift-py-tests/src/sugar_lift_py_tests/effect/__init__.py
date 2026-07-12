@@ -8,6 +8,7 @@ from .dynamic_format_runtime_effect import DynamicFormatRuntimeEffect
 from .getattr_runtime_effect import GetattrRuntimeEffect
 from .effect import Effect, effect_kind, effect_reason, effect_status, require_effect
 from .index_error_runtime_effect import IndexErrorRuntimeEffect
+from .imported_module_runtime_effect import ImportedModuleRuntimeEffect
 from .key_error_runtime_effect import KeyErrorRuntimeEffect
 from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
@@ -27,6 +28,7 @@ __all__ = [
     "GetattrRuntimeEffect",
     "Effect",
     "IndexErrorRuntimeEffect",
+    "ImportedModuleRuntimeEffect",
     "KeyErrorRuntimeEffect",
     "ModuloByZeroRuntimeEffect",
     "OSExitRuntimeEffect",
