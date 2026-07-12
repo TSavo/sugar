@@ -184,6 +184,11 @@ class CallSiteValue(FloorValue):
             other, site, op="//", floor_method="floor_divide"
         )
 
+    def left_shift(self, other, site):
+        return self._dig_or_symbolic_binop(
+            other, site, op="<<", floor_method="left_shift"
+        )
+
     def bitwise_or(self, other, site):
         return self._dig_or_symbolic_binop(other, site, op="|", floor_method="bitwise_or")
 
