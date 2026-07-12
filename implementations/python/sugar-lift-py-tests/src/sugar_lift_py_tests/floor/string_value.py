@@ -155,6 +155,50 @@ class StringValue(FloorValue):
             return Complete(StringValue(self.value + other.value))
         return super().add(other, site)
 
+    def modulo(self, other, site):
+        """Apply Python's printf-style string formatting floor.
+
+        Ground scalar and tuple operands use the interpreter itself. Symbolic
+        operands retain the whole operation as the same ``py.format``
+        coordinate used by formatted-string construction. Other floor shapes
+        stay on the default loud modulo gap.
+        """
+        ground = _ground_percent_operand(other)
+        if ground is not _NOT_GROUND:
+            from sugar_lift_py_tests.effect import DynamicFormatRuntimeEffect
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            try:
+                return Complete(StringValue(self.value % ground))
+            except (KeyError, OverflowError, TypeError, ValueError) as exc:
+                return Incomplete(
+                    DynamicFormatRuntimeEffect(
+                        "percent-format runtime boundary: Python rejected a "
+                        "ground format application; "
+                        f"shape={type(exc).__name__}; site={site}"
+                    )
+                )
+
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.ir import ctor, num, str_const
+        from sugar_lift_py_tests.outcome import Complete
+
+        if type(other) in (SymbolicValue, TupleValue):
+            return Complete(
+                SymbolicValue(
+                    ctor(
+                        "py.format",
+                        [
+                            other.to_term(owner=str(site)),
+                            str_const(self.value),
+                            num(-1),
+                        ],
+                    )
+                )
+            )
+        return super().modulo(other, site)
+
     def project_callsite_with(self, operation, ctx):
         return operation.project_literal(self, ctx)
 
@@ -285,6 +329,27 @@ class StringValue(FloorValue):
 
     def binary_operator_with(self, operation, ctx):
         return operation.binary_string(self, ctx)
+
+
+_NOT_GROUND = object()
+
+
+def _ground_percent_operand(value):
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    if type(value) is StringValue:
+        return value.value
+    if type(value) is TermValue:
+        return value.value
+    if type(value) is NoneValue:
+        return None
+    if type(value) is TupleValue:
+        items = tuple(_ground_percent_operand(item) for item in value.elements)
+        if all(item is not _NOT_GROUND for item in items):
+            return items
+    return _NOT_GROUND
 
 
 def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):

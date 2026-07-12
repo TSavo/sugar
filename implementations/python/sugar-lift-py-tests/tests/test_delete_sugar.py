@@ -77,7 +77,7 @@ def test_subscript_delete_reuses_store_post_state_and_negative_index_floor() -> 
     assert type(built.sugar).__name__ == "SubscriptDeleteSugar"
 
 
-def test_full_datetime_delete_is_owned_but_later_assertions_remain_refused() -> None:
+def test_full_datetime_delete_is_owned_and_later_assertions_now_lift() -> None:
     path = Path.home() / ".cache/sugar/sources/cpython-3.11/datetime.py"
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
@@ -95,11 +95,6 @@ def test_full_datetime_delete_is_owned_but_later_assertions_remain_refused() -> 
         census_source(source, file=str(path)), payload
     ).to_json()["assertions"]
     assert assertions["stated"] == 45
-    assert {2044, 2047}.isdisjoint(
+    assert {2044, 2047} <= {
         locus["line"] for locus in assertions["lifted_loci"]
-    )
-    assert {2044, 2047} == {
-        locus["line"]
-        for locus in assertions["refused_loci"]
-        if locus["line"] in {2044, 2047}
     }

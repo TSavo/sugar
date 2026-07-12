@@ -57,6 +57,6 @@ def test_modulo_by_zero_is_runtime_effect() -> None:
     assert isinstance(outcome.effect, ModuloByZeroRuntimeEffect)
 
 
-def test_string_modulo_panics_for_free() -> None:
+def test_unowned_string_modulo_operand_panics_for_free() -> None:
     with pytest.raises(FactoryPanic):
-        _term('"a" % "b"')
+        _term('"%s" % ["b"]')

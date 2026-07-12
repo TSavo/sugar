@@ -54,7 +54,7 @@ def test_line_preserving_datetime_slice_unit_fixture_lifts_and_cites() -> None:
     ]
 
 
-def test_full_datetime_artifact_records_enclosing_context_blocker() -> None:
+def test_full_datetime_artifact_lifts_slice_assertions_after_context_floors() -> None:
     path = Path.home() / ".cache/sugar/sources/cpython-3.11/datetime.py"
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
@@ -63,15 +63,16 @@ def test_full_datetime_artifact_records_enclosing_context_blocker() -> None:
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload
     ).to_json()["assertions"]
-    target_lines = {1507, 1510, 2044, 2047}
+    lifted_target_lines = {2044, 2047}
+    refused_target_lines = {1507, 1510}
 
     assert assertions["stated"] == 45
-    assert assertions["lifted_cited"] == 2
-    assert target_lines.isdisjoint(locus["line"] for locus in assertions["lifted_loci"])
-    assert target_lines == {
-        locus["line"]
-        for locus in assertions["refused_loci"]
-        if locus["line"] in target_lines
+    assert assertions["lifted_cited"] == 7
+    assert lifted_target_lines <= {
+        locus["line"] for locus in assertions["lifted_loci"]
+    }
+    assert refused_target_lines <= {
+        locus["line"] for locus in assertions["refused_loci"]
     }
 
 
