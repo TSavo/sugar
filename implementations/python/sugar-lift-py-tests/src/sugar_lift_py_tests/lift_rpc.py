@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import dataclasses
 import json
 import os
@@ -21,7 +22,12 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import (
     paint_lines,
 )
 from sugar_lift_py_tests.idd.lift_coverage_census import census_paths
-from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
+from sugar_lift_py_tests.kit_rpc import (
+    LiftReportPayloadDto,
+    RecoveredAuditDto,
+    RecoveredFactoryPanicDto,
+    SuppressedAuditLocusDto,
+)
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
 
 KIT_ID = "python"
@@ -730,7 +736,7 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     walk rows rather than crashing the LSP -- hold_panic=False remains for
     callers that demand the loud abort.
     """
-    payload, _gaps = audit_lift_file(source, filename, hold_panic=True)
+    payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
     return payload
 
 
@@ -937,7 +943,8 @@ def audit_lift_file(
     filename: str,
     *,
     hold_panic: bool = True,
-) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]]:
+    recover_panics: bool = False,
+) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]] | RecoveredAuditDto:
     """Per-def factory walk -- the ONE door that may hold FactoryPanic.
 
     For each FunctionDef / test def: try build + desugar + payload_rows.
@@ -956,6 +963,10 @@ def audit_lift_file(
 
     payload = LiftReportPayloadDto(source_ledger={})
     gaps: list[AuditOnlyGap] = []
+    recovered_panics: list[RecoveredFactoryPanicDto] = []
+    suppressed_descendants: list[SuppressedAuditLocusDto] = []
+    if recover_panics:
+        hold_panic = True
     catalog = default_catalog()
     roots = SourceFragment.from_source(source, filename).statements()
     if not roots:
@@ -969,6 +980,8 @@ def audit_lift_file(
             "source_factory_conservation",
             reconcile_body_owner_loci(source, file=filename, factory_rows=[]),
         )
+        if recover_panics:
+            return RecoveredAuditDto()
         return payload, gaps
     module = roots[0]
     # Seed import bindings once for every def in this module (deeper floors).
@@ -1032,11 +1045,30 @@ def audit_lift_file(
         except FactoryPanic as panic:
             if not hold_panic:
                 raise
-            _retain_stated_call_prefix(stmt, ctx, payload)
+            if not recover_panics:
+                _retain_stated_call_prefix(stmt, ctx, payload)
             # ONE door: hold the panic, name the gap, paint it red, keep walking.
             gap = gap_from_factory_panic(label, panic)
             gaps.append(gap)
             payload.factory_walk.append(_factory_walk_red_from_gap(gap))
+            if recover_panics:
+                recovered_panics.append(
+                    RecoveredFactoryPanicDto(
+                        locus=label,
+                        reason=panic.info.message,
+                        gap=panic.info.to_json(),
+                    )
+                )
+                for descendant in ast.walk(stmt.node):
+                    if descendant is stmt.node or not isinstance(
+                        descendant, (ast.FunctionDef, ast.AsyncFunctionDef)
+                    ):
+                        continue
+                    suppressed_descendants.append(
+                        SuppressedAuditLocusDto(
+                            locus=f"{filename}:{descendant.lineno}:{descendant.col_offset}"
+                        )
+                    )
     from sugar_lift_py_tests.idd.lift_coverage_census import reconcile_body_owner_loci
 
     conservation = reconcile_body_owner_loci(
@@ -1075,6 +1107,11 @@ def audit_lift_file(
             )
             gaps.append(gap)
             payload.factory_walk.append(_factory_walk_red_from_gap(gap))
+    if recover_panics:
+        return RecoveredAuditDto(
+            panics=recovered_panics,
+            suppressed_descendants=suppressed_descendants,
+        )
     return payload, gaps
 
 
@@ -1752,15 +1789,28 @@ def _handle_initialize(msg_id: Any) -> None:
 
 
 def _handle_lift(
-    msg_id: Any, params: Dict[str, Any], *, audit_only: bool = False
+    msg_id: Any, params: Dict[str, Any]
 ) -> None:
     workspace_root = str(params.get("workspace_root", "."))
     source_paths = list(params.get("source_paths", ["."]))
     contract_bindings = params.get("contract_bindings") or []
     if not isinstance(contract_bindings, list):
         contract_bindings = []
+    options = params.get("options") if isinstance(params.get("options"), dict) else {}
+    audit_frontier = options.get("auditFrontier") is True
+    continue_on_gaps = options.get("continueOnConstructionGaps") is True
+    if audit_frontier != continue_on_gaps:
+        _send({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {
+                "code": -32602,
+                "message": "construction-gap recovery requires both auditFrontier and continueOnConstructionGaps",
+            },
+        })
+        return
     try:
-        if audit_only:
+        if audit_frontier:
             _handle_lift_audit_only(
                 msg_id,
                 workspace_root=workspace_root,
@@ -1823,16 +1873,11 @@ def _handle_lift_audit_only(
     source_paths: List[Any],
     contract_bindings: list,
 ) -> None:
-    """Audit door: per-def factory walk, hold FactoryPanic, enumerate gaps.
-
-    The wall drinks `auditOnlyGaps` from the error payload. Clean defs still
-    contribute IR rows so the frontier is honest accounting -- not a silent
-    empty set when every file has at least one gap.
-    """
-    del contract_bindings  # factory dig does not rebind contracts here
+    """Recover mandatory panics for diagnosis; never construct a lift artifact."""
+    del contract_bindings  # recovered audits cannot consume contract bindings
     root = Path(workspace_root).resolve()
-    payload = LiftReportPayloadDto(source_ledger={})
-    gaps: list[AuditOnlyGap] = []
+    panics: list[RecoveredFactoryPanicDto] = []
+    suppressed: list[SuppressedAuditLocusDto] = []
     for path in _iter_python_files(workspace_root, source_paths):
         full_path = Path(path)
         try:
@@ -1840,37 +1885,22 @@ def _handle_lift_audit_only(
         except ValueError:
             rel_path = full_path.name
         source = full_path.read_text(encoding="utf-8")
-        file_payload, file_gaps = audit_lift_file(source, rel_path, hold_panic=True)
-        payload.ir.extend(file_payload.ir)
-        payload.call_edges.extend(file_payload.call_edges)
-        payload.factory_walk.extend(file_payload.factory_walk)
-        payload.source_mementos.extend(file_payload.source_mementos)
-        gaps.extend(file_gaps)
-
-    if gaps:
-        # Wall scrapes auditOnlyGaps from the RPC error data (ONE door).
-        _send(
-            {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {
-                    "code": -32603,
-                    "message": "audit-only construction gaps",
-                    "data": {
-                        "auditOnlyGaps": [gap.to_json() for gap in gaps],
-                        "ir": [to_rpc_value(item) for item in payload.ir],
-                    },
-                },
-            }
+        recovered = audit_lift_file(
+            source,
+            rel_path,
+            hold_panic=True,
+            recover_panics=True,
         )
-        return
-    _send(
-        {
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "result": payload.to_rpc(),
-        }
+        if not isinstance(recovered, RecoveredAuditDto):
+            raise TypeError("audit recovery returned a lift artifact")
+        panics.extend(recovered.panics)
+        suppressed.extend(recovered.suppressed_descendants)
+
+    audit = RecoveredAuditDto(
+        panics=panics,
+        suppressed_descendants=suppressed,
     )
+    _send({"jsonrpc": "2.0", "id": msg_id, "result": audit.to_rpc()})
 
 
 def _merge_source_ledger(
@@ -1970,7 +2000,11 @@ def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> No
 
 def main(argv: Optional[List[str]] = None) -> None:
     argv = argv or []
-    audit_only = "--audit-only" in argv
+    if "--audit-only" in argv:
+        raise SystemExit(
+            "--audit-only no longer enables construction-gap recovery; "
+            "use sugar lift --audit-frontier --continue-on-construction-gaps"
+        )
     while True:
         msg = _recv()
         if msg is None:
@@ -2019,13 +2053,11 @@ def main(argv: Optional[List[str]] = None) -> None:
             _handle_lift(
                 msg_id,
                 params if isinstance(params, dict) else {},
-                audit_only=audit_only,
             )
         elif method == "sugar.plugin.lift_implications":
             _handle_lift(
                 msg_id,
                 params if isinstance(params, dict) else {},
-                audit_only=audit_only,
             )
         elif method == "sugar.plugin.resolve_dependency_proofs":
             _handle_resolve_dependency_proofs(
