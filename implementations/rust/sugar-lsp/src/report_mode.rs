@@ -170,6 +170,10 @@ fn windows_drive_path(file: &str) -> bool {
         && matches!(bytes[2], b'/' | b'\\')
 }
 
+fn posix_absolute_path(file: &str) -> bool {
+    file.starts_with('/')
+}
+
 fn report_file_uri(file: &str, project_root: &Path) -> Result<String, String> {
     if windows_drive_path(file) {
         let mut slash_path = file.replace('\\', "/");
@@ -177,6 +181,14 @@ fn report_file_uri(file: &str, project_root: &Path) -> Result<String, String> {
         return Url::parse(&format!("file:///{slash_path}"))
             .map(|url| url.to_string())
             .map_err(|error| format!("invalid Windows report path {file:?}: {error}"));
+    }
+
+    if posix_absolute_path(file) {
+        let slash_path = file.replace('\\', "/");
+        let mut url =
+            Url::parse("file:///").map_err(|error| format!("file URI base must parse: {error}"))?;
+        url.set_path(&slash_path);
+        return Ok(url.to_string());
     }
 
     let path = resolve_row_file(file, project_root);
@@ -1097,6 +1109,20 @@ mod tests {
             payload.workspace_ranges[0].range.label,
             "Minority dependency_orphan"
         );
+    }
+
+    #[test]
+    fn posix_report_paths_normalize_without_host_path_semantics() {
+        assert_eq!(
+            report_file_uri("/tmp/t.py", Path::new("C:\\work")).expect("POSIX path"),
+            "file:///tmp/t.py"
+        );
+        assert_eq!(
+            report_file_uri("/tmp\\tests/test_serializer.py", Path::new("C:\\work"))
+                .expect("mixed-separator POSIX producer path"),
+            "file:///tmp/tests/test_serializer.py"
+        );
+        assert!(report_file_uri("relative.py", Path::new("relative-root")).is_err());
     }
 
     /// Dig-stop (walk red) is a distinct paint channel from prove UNSAT.
