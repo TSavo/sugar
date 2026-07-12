@@ -110,3 +110,34 @@ class ListValue(FloorValue):
                 f"owner=ListValue.setitem site={site}"
             )
         )
+
+    def delitem(self, index, site):
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if type(index) is TermValue and type(index.value) is int:
+            i = index.value
+            n = len(self.elements)
+            if -n <= i < n:
+                resolved = i if i >= 0 else n + i
+                return Complete(
+                    ListValue(
+                        (*self.elements[:resolved], *self.elements[resolved + 1 :])
+                    )
+                )
+            from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect
+
+            return Incomplete(
+                IndexErrorRuntimeEffect(
+                    "list deletion index out of range runtime boundary: "
+                    f"index={i} length={n}; owner=ListValue.delitem site={site}"
+                )
+            )
+        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+
+        return Incomplete(
+            SubscriptStoreRuntimeEffect(
+                "list subscript delete requires a concrete integer index; "
+                f"owner=ListValue.delitem site={site}"
+            )
+        )

@@ -575,6 +575,39 @@ class FloorValue:
             ),
         )
 
+    def delitem(self, index, site):
+        del index
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="delitem",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the subscript-delete floor",
+            fix=f"write more Floor: implement {observed}.delitem",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="delitem",
+                status="floor-gap",
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def absolute(self, site):
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow,
