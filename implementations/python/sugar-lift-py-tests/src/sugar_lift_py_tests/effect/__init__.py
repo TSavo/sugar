@@ -4,9 +4,6 @@ from .assertion_failed_runtime_effect import AssertionFailedRuntimeEffect
 from .coverage_gap_effect import CoverageGapEffect
 from .conditional_expression_runtime_effect import ConditionalExpressionRuntimeEffect
 from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
-from .call_result_context_manager_runtime_effect import (
-    CallResultContextManagerRuntimeEffect,
-)
 from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .dynamic_format_runtime_effect import DynamicFormatRuntimeEffect
 from .getattr_runtime_effect import GetattrRuntimeEffect
@@ -30,7 +27,6 @@ __all__ = [
     "CoverageGapEffect",
     "ConditionalExpressionRuntimeEffect",
     "CallResultTypeRuntimeEffect",
-    "CallResultContextManagerRuntimeEffect",
     "DivisionByZeroRuntimeEffect",
     "DynamicFormatRuntimeEffect",
     "GetattrRuntimeEffect",

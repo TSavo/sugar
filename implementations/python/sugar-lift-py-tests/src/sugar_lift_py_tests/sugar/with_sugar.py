@@ -11,7 +11,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class WithSugar(Sugar, role=SugarRole.STATEMENT):
-    """`with cm as y: body` -- thread the body over the enter coordinate.
+    """`with cm as y: body` -- substitute the manager coordinate into the body.
 
     Single-item synchronous With only. Multi-item `with a, b:` and
     AsyncWith stay unowned (loud factory gap) -- this arm does not take
@@ -95,21 +95,15 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         from sugar_lift_py_tests.floor.call_site_value import force_floor
 
         if isinstance(cm, CallSiteValue):
-            if cm.body is None:
-                from sugar_lift_py_tests.effect import (
-                    CallResultContextManagerRuntimeEffect,
-                )
-                from sugar_lift_py_tests.outcome import Incomplete
-
-                return Incomplete(
-                    CallResultContextManagerRuntimeEffect(
-                        "call-result context-manager runtime boundary: Python "
-                        "must execute the unresolved call before it can inspect "
-                        "and invoke __enter__ and __exit__; "
-                        f"coordinate={cm.term!r}; site={self.site}"
-                    )
-                )
-            cm = force_floor(cm, ctx, owner="WithSugar context")
+            # Timeless substitution: ``with manager() as value`` is the body
+            # with the frozen manager call coordinate written for ``value``.
+            # Enter/exit events are ghosts of motion. If the callable has a
+            # contract, ordinary downstream floors may dig it from this same
+            # coordinate; WithSugar does not execute a protocol side door.
+            body_ctx = ctx
+            if as_name is not None:
+                body_ctx = ScopeRebind(as_name, cm).extend_scope(ctx)
+            return self._enter_items(remaining, body_ctx)
 
         if not isinstance(cm, ObjectValue):
             return cm._floor_gap(owner=type(self).__name__, blame=str(self.site), observed=type(cm).__name__, requested="context manager data-model methods", fix="construct __enter__ and __exit__")
