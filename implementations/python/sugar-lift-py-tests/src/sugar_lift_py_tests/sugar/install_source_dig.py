@@ -376,6 +376,43 @@ class SequentialDigBody:
         )
 
 
+@dataclass(frozen=True)
+class ContextualizedDigBody:
+    """A dig body carrying the callee's lexical module temporal.
+
+    Legacy arithmetic floors force CallSiteValue with ``ctx=None``. The call's
+    curried actuals therefore arrive in a fresh context. Overlay those actuals
+    onto the captured callee context so module bindings survive while parameters
+    still replace their symbolic build-time placeholders.
+    """
+
+    body: object
+    base_context: Any
+
+    def desugar(self, ctx: Any = None):
+        reduce_ctx = self.base_context
+        if ctx is not None:
+            temporal = self.base_context.temporal
+            for binding in ctx.temporal.bindings:
+                temporal = temporal.bind_value(
+                    binding.name,
+                    binding.value,
+                    blame=binding.blame,
+                )
+            reduce_ctx = ctx.with_temporal(temporal)
+        return self.body.reduce(reduce_ctx)
+
+
+def _contextualized_dig_body(body, base_context):
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    return SugarBody(
+        sugar=ContextualizedDigBody(body=body, base_context=base_context),
+        role=SugarRole.TERM,
+    )
+
+
 def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
     """Build diggable body for ``fn_site`` FunctionDef, or None on failure."""
     if fn_site is None or fn_site.observed != "FunctionDef":
@@ -413,6 +450,7 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
                 merged.update(siblings)
                 body_ctx = replace(body_ctx, name_resolver=merged)
 
+        formal_ctx = _ctx_with_formal_binds(fn_site, body_ctx)
         frags = fn_site.function_body()
         # Single return expr → existing bridge body (TERM sugar).
         if (
@@ -420,17 +458,19 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
             and frags[0].observed == "Return"
             and frags[0].return_value() is not None
         ):
-            return build_bridge_body(fn_site, body_ctx)
+            return _contextualized_dig_body(
+                build_bridge_body(fn_site, body_ctx), formal_ctx
+            )
 
         # Straight-line Assign* + Return → sequential dig body under formals.
-        formal_ctx = _ctx_with_formal_binds(fn_site, body_ctx)
         statements = tuple(
             formal_ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in frags
         )
-        return SugarBody(
+        sequential = SugarBody(
             sugar=SequentialDigBody(statements=statements),
             role=SugarRole.TERM,
         )
+        return _contextualized_dig_body(sequential, formal_ctx)
     except Exception:
         return None
 

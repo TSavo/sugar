@@ -24,6 +24,10 @@ class FactoryBuildContext:
     filename: str
     catalog: SugarCatalog
     temporal: TemporalContext = field(default_factory=TemporalContext.empty)
+    # Module declarations are the lexical floor for every function body. Keep
+    # them separate from the live temporal, which may also contain caller
+    # locals when a same-module callee body is attached for dig.
+    module_temporal: TemporalContext | None = None
     source_oracle: Any = None
     expected_role: SugarRole | None = None
     name_resolver: Any = None
@@ -97,6 +101,7 @@ class FactoryBuildContext:
             filename=self.filename,
             catalog=self.catalog,
             temporal=temporal,
+            module_temporal=self.module_temporal,
             source_oracle=self.source_oracle,
             expected_role=self.expected_role,
             name_resolver=self.name_resolver,

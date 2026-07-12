@@ -1032,6 +1032,7 @@ def audit_lift_file(
                 filename=filename,
                 catalog=catalog,
                 temporal=module_temporal,
+                module_temporal=module_temporal,
                 import_aliases=import_aliases,
                 from_imports=from_imports,
                 name_resolver=name_resolver,
