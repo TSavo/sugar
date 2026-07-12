@@ -18,6 +18,21 @@ class RuntimeEffectWitness:
             raise ValueError("RuntimeEffectWitness requires a stable source locus")
 
 
+def runtime_effect_witness(operation: str, operand, locus) -> RuntimeEffectWitness:
+    """Build the required witness from the operation's real runtime operand."""
+    from sugar_lift_py_tests.ir import Term, ctor, str_const
+
+    if isinstance(operand, Term):
+        term = operand
+    elif hasattr(operand, "to_term"):
+        term = operand.to_term(owner=operation)
+    else:
+        term = str_const(str(operand))
+    return RuntimeEffectWitness(
+        operation=ctor(operation, [term]), operand=term, locus=str(locus)
+    )
+
+
 @dataclass(frozen=True)
 class RuntimeEffect:
     """A runtime effect: a value that does not exist until the program runs. Abstract --

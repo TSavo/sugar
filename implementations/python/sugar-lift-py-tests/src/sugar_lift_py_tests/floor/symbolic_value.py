@@ -523,12 +523,13 @@ class SymbolicValue(FloorValue):
 
     def setitem(self, index, value, site):
         del index, value
-        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect, runtime_effect_witness
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(
             SubscriptStoreRuntimeEffect(
                 "subscript assignment runtime boundary: symbolic receiver "
-                f"`{self.term}` may invoke __setitem__; site={site}"
+                f"`{self.term}` may invoke __setitem__; site={site}",
+                witness=runtime_effect_witness("py.setitem", self.term, site),
             )
         )
