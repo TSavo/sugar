@@ -71,7 +71,11 @@ def test_full_datetime_artifact_accounts_slice_assertions_and_named_blockers(cpy
     assert lifted_target_lines <= {
         locus["line"] for locus in assertions["lifted_loci"]
     }
-    assert any("_DAYS_BEFORE_MONTH" in gap.message for gap in gaps)
+    assert any(
+        gap.label.endswith(":182:0")
+        and gap.info.get("observed") == "GuardedValue"
+        for gap in gaps
+    )
 
 
 @pytest.mark.parametrize(

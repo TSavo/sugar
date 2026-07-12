@@ -39,11 +39,12 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
       * each handler has one or more simple exception type names (Name/Attribute)
       * multi-type `except (A, B):` owned (names joined in py.except coordinate)
       * no bare `except:`
-      * no else: clause
       * no finally: clause
+      * one narrow else shape: try assignment, one typed raise handler, return
 
     LOUD gaps (not owned -- FactoryPanic):
-      * bare except, else, finally, TryStar, zero handlers, empty/unresolvable types
+      * bare except, broad else, finally, TryStar, zero handlers,
+        empty/unresolvable types
 
     Does NOT model exception control-flow execution -- recognition + threading
     only. Never silently drops a body, handler, else, or finally.
@@ -51,14 +52,12 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
 
     body: SugarBody
     handlers: tuple[TryExceptArm, ...]
+    else_body: SugarBody | None
     site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
         if site.observed != "Try":
-            return False
-        # else / finally not threaded this arm -- require absent.
-        if site.try_orelse() is not None:
             return False
         if site.try_finalbody() is not None:
             return False
@@ -69,6 +68,26 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             names = handler.except_handler_type_names()
             # Bare except -> None; empty / unresolvable types refuse loud.
             if names is None or len(names) < 1:
+                return False
+        orelse = site.try_orelse()
+        if orelse is not None:
+            # Exception-flow joins are deliberately narrow: the vendor-common
+            # lookup fallback has one assignment in the try face, one typed
+            # handler, and one return in the no-exception face. Broader try
+            # semantics remain the loud None arm.
+            if len(handlers) != 1:
+                return False
+            if tuple(stmt.observed for stmt in site.try_body().statements()) != (
+                "Assign",
+            ):
+                return False
+            handler_shapes = tuple(
+                stmt.observed
+                for stmt in handlers[0].except_handler_body().statements()
+            )
+            if handler_shapes != ("Raise",):
+                return False
+            if tuple(stmt.observed for stmt in orelse.statements()) != ("Return",):
                 return False
         return True
 
@@ -92,6 +111,11 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         return cls(
             body=ctx.build_body(site.try_body(), SugarRole.STATEMENT),
             handlers=tuple(arms),
+            else_body=(
+                ctx.build_body(site.try_orelse(), SugarRole.STATEMENT)
+                if site.try_orelse() is not None
+                else None
+            ),
             site=site,
         )
 
@@ -114,6 +138,8 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        if self.else_body is not None:
+            return self._desugar_else(ctx)
         # Thread try body, then each guarded handler into one spliced BlockValue.
         return self.body.reduce(ctx).and_then(
             lambda body_val: self._collect_handlers(
@@ -158,11 +184,42 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             )
         )
 
+    def _desugar_else(self, ctx: object) -> Outcome:
+        """Reduce the narrow lookup fallback without choosing an exception face."""
+        from sugar_lift_py_tests.floor import BlockValue
+        from sugar_lift_py_tests.ir import ctor, not_, str_const
+        from sugar_lift_py_tests.outcome import complete_value
+
+        arm = self.handlers[0]
+        exception_guard = ctor(
+            "py.except", [str_const(name) for name in arm.type_names]
+        )
+        body_scope = self.body.sugar.scope_after(ctx)
+        handler_value = complete_value(
+            arm.body.reduce(ctx), owner="try except handler"
+        )
+        else_value = complete_value(
+            self.else_body.reduce(body_scope), owner="try else body"
+        )
+        entries = (
+            *tuple(
+                entry.guarded(exception_guard)
+                for entry in handler_value.contribution()
+            ),
+            *tuple(
+                entry.guarded(not_(exception_guard))
+                for entry in else_value.contribution()
+            ),
+        )
+        return Complete(BlockValue(entries))
+
     def walk_children(self):
         children: list[SugarBody] = [self.body]
         for arm in self.handlers:
             children.append(arm.type_body)
             children.append(arm.body)
+        if self.else_body is not None:
+            children.append(self.else_body)
         return tuple(children)
 
 
