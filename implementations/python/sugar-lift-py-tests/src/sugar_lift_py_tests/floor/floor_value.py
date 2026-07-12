@@ -980,6 +980,19 @@ class FloorValue:
             ),
         )
 
+    def power(self, other, site):
+        del other
+        from sugar_lift_py_tests.factory import factory_panic_gap
+
+        observed = type(self).__name__
+        factory_panic_gap(
+            owner="power",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the power floor",
+            fix=f"write more Floor: implement {observed}.power",
+        )
+
     def divide(self, other, site):
         # Default: this value does not stand on the division floor -- it cannot answer
         # what it divides by another value to. The None arm: a value that CAN

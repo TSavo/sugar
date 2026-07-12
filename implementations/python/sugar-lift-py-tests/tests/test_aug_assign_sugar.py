@@ -15,6 +15,8 @@ it (the Outcome short-circuit).
 from __future__ import annotations
 
 from factory_reduce import compose_block
+from sugar_lift_py_tests.effect import DivisionByZeroRuntimeEffect
+from sugar_lift_py_tests.floor import BlockValue, ListValue, ReturnValue, TermValue
 from sugar_lift_py_tests.outcome import Incomplete
 
 
@@ -72,10 +74,14 @@ def test_float_literal_collapses_three_point_zero_equals_three():
 
 def test_divide_by_zero_is_an_incomplete_effect_that_halts_propagation():
     # `x = 1 // 0` binds lazily; the effect surfaces when x is USED -- the reference
-    # reduces the source to Incomplete, which bubbles through return and halts the block.
+    # reduces the source to Incomplete, which becomes the block's sole contribution.
     halted = _block("    x = 1 // 0\n    return x\n")
-    assert isinstance(halted, Incomplete)
-    assert "zero" in halted.reason
+    assert isinstance(halted, BlockValue)
+    assert len(halted.statements) == 1
+    effect = halted.statements[0]
+    assert isinstance(effect, Incomplete)
+    assert isinstance(effect.effect, DivisionByZeroRuntimeEffect)
+    assert "zero" in effect.reason
 
 
 def test_aug_floordiv_assign_equals_the_floor_quotient():
@@ -90,9 +96,9 @@ def test_aug_pow_assign_equals_the_power():
     assert _block("    x = 2\n    x **= 3\n    return x\n") == _block("    return 8\n")
 
 
-def test_subscript_aug_assign_is_typed_runtime_mutation_effect():
-    halted = _block("    x = [0]\n    x[0] += 1\n    return x\n")
+def test_subscript_aug_assign_composes_read_add_and_store_post_state():
+    updated = _block("    x = [0]\n    x[0] += 1\n    return x\n")
 
-    assert isinstance(halted, Incomplete)
-    assert "augmented assignment runtime boundary" in halted.reason
-    assert "target Subscript" in halted.reason
+    assert updated == BlockValue(
+        (ReturnValue(ListValue((TermValue(1),))),)
+    )
