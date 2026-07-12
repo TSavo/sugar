@@ -764,6 +764,11 @@ def _module_import_temporal(
     from sugar_lift_py_tests.temporal import TemporalContext
 
     temporal = TemporalContext.empty()
+    module_function_resolver = {
+        stmt.function_name(): stmt.node
+        for stmt in module.statements()
+        if stmt.observed == "FunctionDef"
+    }
     for stmt in module.statements():
         observed = stmt.observed
         if observed == "Import":
@@ -824,6 +829,27 @@ def _module_import_temporal(
                 name,
                 ClassValue(name=name, bases=(), record=BlockValue(())),
             )
+        elif observed == "FunctionDef":
+            ctx = FactoryBuildContext(
+                filename=stmt.filename,
+                catalog=catalog,
+                temporal=temporal,
+                module_temporal=temporal,
+                name_resolver=module_function_resolver,
+            )
+            try:
+                callable_value = ctx.build_body(
+                    stmt, SugarRole.STATEMENT
+                ).reduce(ctx)
+            except FactoryPanic as panic:
+                if recovered_panics is not None:
+                    recovered_panics.append(
+                        (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                    )
+                continue
+            if isinstance(callable_value, Incomplete):
+                continue
+            temporal = callable_value.extend_scope(ctx).temporal
         elif observed in {"Assign", "AnnAssign", "Assert"}:
             if observed == "Assert":
                 ctx = FactoryBuildContext(
