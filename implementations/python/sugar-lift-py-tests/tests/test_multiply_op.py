@@ -1,17 +1,15 @@
 """The `*` operator (MultiplyOpSugar): reduce left, reduce right, ask left to
 multiply by right (the multiplication floor). Numbers fold to a TermValue product;
-string repetition is absent -- it panics for free until someone asks for it."""
+string repetition folds with Python's concrete semantics."""
 
 from __future__ import annotations
 
 import ast
 
-import pytest
-
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
@@ -48,6 +46,7 @@ def test_multiply_folds_collapsed_number() -> None:
     )
 
 
-def test_string_repetition_panics_for_free() -> None:
-    with pytest.raises(FactoryPanic):
-        _term('"ab" * 2')
+def test_string_repetition_folds_against_python() -> None:
+    expected = "ab" * 2
+
+    assert _term('"ab" * 2').value == StringValue(expected)

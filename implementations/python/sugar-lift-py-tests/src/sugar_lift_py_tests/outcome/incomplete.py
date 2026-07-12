@@ -35,6 +35,20 @@ class Incomplete:
         # beside it via follow.
         return (self,)
 
+    def guarded(self, formula):
+        """Keep a typed effect red while recording its branch condition."""
+        from dataclasses import replace
+
+        return Incomplete(
+            replace(
+                self.effect,
+                reason=(
+                    f"{self.reason}; effect occurs under branch condition "
+                    f"{formula!r}"
+                ),
+            )
+        )
+
     def extend_scope(self, ctx):
         # An effect does not rebind: the rest never runs under a new scope.
         return ctx

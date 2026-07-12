@@ -133,6 +133,17 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(self.value * other.value))
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+            return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
+        if type(other) in (ListValue, StringValue):
+            if type(self.value) is int:
+                return other.multiply(self, site)
         return super().multiply(other, site)
 
     def power(self, other, site):
