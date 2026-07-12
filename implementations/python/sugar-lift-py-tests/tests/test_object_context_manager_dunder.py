@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
@@ -100,3 +101,41 @@ def t():
         "curry_with",
         "CurryArgumentsOperation",
     )
+
+
+def test_with_call_result_digs_a_known_context_manager_body() -> None:
+    source = """\
+class Manager:
+    def __enter__(self):
+        return 1
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+def manager():
+    return Manager()
+
+def t():
+    with manager() as index:
+        return [10, 20, 30][index]
+"""
+
+    module = ast.parse(source)
+    ctx = _ctx_for_module(source)
+    operation_log: list[tuple[str, str, str]] = []
+
+    def record_operation(*, owner, method_name, operation):
+        operation_log.append((owner, method_name, type(operation).__name__))
+
+    ctx = replace(ctx, operation_log=operation_log, record_operation=record_operation)
+    function = next(
+        stmt
+        for stmt in module.body
+        if isinstance(stmt, ast.FunctionDef) and stmt.name == "t"
+    )
+    outcome = ctx.build_body(Block.of(function.body), SugarRole.STATEMENT).reduce(ctx)
+    block = complete_value(outcome, owner="known context manager call result")
+
+    assert isinstance(block, BlockValue)
+    assert block.statements == (ReturnValue(TermValue(20)),)
+    assert ("WithSugar", "context_manager_with", "ContextManagerOperation") in operation_log

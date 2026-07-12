@@ -23,6 +23,7 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.with_sugar import WithSugar
 
 
@@ -107,7 +108,7 @@ def test_with_without_as_still_reduces_context_and_body() -> None:
     assert ret.value == TermValue(1)
 
 
-def test_opaque_callsite_context_manager_stays_a_loud_floor_gap() -> None:
+def test_opaque_callsite_context_manager_is_a_named_runtime_effect() -> None:
     opaque = CallSiteValue(
         target_name="manager",
         arg_values=(),
@@ -116,12 +117,16 @@ def test_opaque_callsite_context_manager_stays_a_loud_floor_gap() -> None:
         body=None,
     )
 
-    with pytest.raises(FactoryPanic, match="context manager data-model methods"):
-        compose_block(
-            "    with manager:\n"
-            "        return 1\n",
-            binds={"manager": opaque},
-        )
+    outcome = compose_block(
+        "    with manager:\n"
+        "        return 1\n",
+        binds={"manager": opaque},
+    )
+
+    effect = outcome.statements[0]
+    assert isinstance(effect, Incomplete)
+    assert type(effect.effect).__name__ == "CallResultContextManagerRuntimeEffect"
+    assert "call:manager" in effect.reason
 
 
 def test_complex_as_target_is_a_loud_factory_gap() -> None:

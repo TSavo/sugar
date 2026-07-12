@@ -79,8 +79,30 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _enter_and_body(self, cm, ctx: object) -> Outcome:
-        from sugar_lift_py_tests.floor import ObjectValue, ScopeRebind, TermValue
+        from sugar_lift_py_tests.floor import (
+            CallSiteValue,
+            ObjectValue,
+            ScopeRebind,
+            TermValue,
+        )
         from sugar_lift_py_tests.floor.call_site_value import force_floor
+
+        if isinstance(cm, CallSiteValue):
+            if cm.body is None:
+                from sugar_lift_py_tests.effect import (
+                    CallResultContextManagerRuntimeEffect,
+                )
+                from sugar_lift_py_tests.outcome import Incomplete
+
+                return Incomplete(
+                    CallResultContextManagerRuntimeEffect(
+                        "call-result context-manager runtime boundary: Python "
+                        "must execute the unresolved call before it can inspect "
+                        "and invoke __enter__ and __exit__; "
+                        f"coordinate={cm.term!r}; site={self.site}"
+                    )
+                )
+            cm = force_floor(cm, ctx, owner="WithSugar context")
 
         if not isinstance(cm, ObjectValue):
             return cm._floor_gap(owner=type(self).__name__, blame=str(self.site), observed=type(cm).__name__, requested="context manager data-model methods", fix="construct __enter__ and __exit__")
