@@ -68,6 +68,9 @@ class PredicateValue(FloorValue):
 
         then_record = complete_value(then.reduce(ctx), owner="guarded-then")
         then_own = then_record.contribution()
+        then_effect = _conditional_effect(then_own, self.formula)
+        if then_effect is not None:
+            return then_effect
         then_exits = any(entry.post_contribution() for entry in then_own)
         then_entries = tuple(entry.guarded(self.formula) for entry in then_own)
         else_entries = ()
@@ -75,6 +78,9 @@ class PredicateValue(FloorValue):
         if else_body is not None:
             else_record = complete_value(else_body.reduce(ctx), owner="guarded-else")
             else_own = else_record.contribution()
+            else_effect = _conditional_effect(else_own, not_(self.formula))
+            if else_effect is not None:
+                return else_effect
             else_exits = any(entry.post_contribution() for entry in else_own)
             else_entries = tuple(
                 entry.guarded(not_(self.formula)) for entry in else_own
@@ -87,3 +93,22 @@ class PredicateValue(FloorValue):
                 else_exits=else_exits,
             )
         )
+
+
+def _conditional_effect(entries: tuple, formula):
+    """Propagate a branch-local named effect as the conditional's outcome."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    for entry in entries:
+        if isinstance(entry, Incomplete):
+            effect = replace(
+                entry.effect,
+                reason=(
+                    f"{entry.reason}; effect occurs under branch condition "
+                    f"{formula!r}"
+                ),
+            )
+            return Incomplete(effect)
+    return None
