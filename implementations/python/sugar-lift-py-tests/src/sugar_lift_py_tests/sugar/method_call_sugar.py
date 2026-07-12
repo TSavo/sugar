@@ -83,8 +83,33 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
         # Reduce receiver, then each arg (positional then keyword values);
         # the result is the method coordinate.
         return self.receiver.reduce(ctx).and_then(
-            lambda recv: self._collect(self.args, (recv,), ctx)
+            lambda recv: self._collect_value(self.args, (), recv, ctx)
         )
+
+    def _collect_value(
+        self, remaining: tuple, accumulated: tuple, value, ctx: object
+    ) -> Outcome:
+        from sugar_lift_py_tests.floor import GuardedValue
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        if isinstance(value, GuardedValue):
+            true_outcome = self._collect_value(
+                remaining, accumulated, value.when_true, ctx
+            )
+            if isinstance(true_outcome, Incomplete):
+                return true_outcome.guarded(value.guard)
+            false_outcome = self._collect_value(
+                remaining, accumulated, value.when_false, ctx
+            )
+            if isinstance(false_outcome, Incomplete):
+                return false_outcome.guarded(not_(value.guard))
+            return Complete(
+                GuardedValue(
+                    value.guard, true_outcome.value, false_outcome.value
+                )
+            )
+        return self._collect(remaining, (*accumulated, value), ctx)
 
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
         if not remaining:
@@ -157,7 +182,9 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             )
         head, *rest = remaining
         return head.reduce(ctx).and_then(
-            lambda value: self._collect(tuple(rest), (*accumulated, value), ctx)
+            lambda value: self._collect_value(
+                tuple(rest), accumulated, value, ctx
+            )
         )
 
     def walk_children(self):

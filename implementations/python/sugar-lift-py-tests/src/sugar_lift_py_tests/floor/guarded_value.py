@@ -149,6 +149,9 @@ class GuardedValue(FloorValue):
     def absolute(self, site):
         return self._map("absolute", site)
 
+    def truth(self, site):
+        return self._predicate("truth", site)
+
     def equals(self, other, site):
         return self._predicate("equals", other, site)
 

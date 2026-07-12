@@ -57,6 +57,11 @@ class CallSiteValue(FloorValue):
 
         return SymbolicValue(self.term).bitwise_invert(site)
 
+    def unary_minus(self, site):
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        return SymbolicValue(self.term).unary_minus(site)
+
     def absolute(self, site):
         """Cite ``abs(call(...))`` without claiming the call's concrete value."""
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
