@@ -31,7 +31,7 @@ def test_skip_keys(s):
 
 
 def test_exc_info_survives_outer_freeze_time_with() -> None:
-    src = """
+    src = """from datetime import datetime
 def test_future_age(signer):
     signed = signer.sign("value")
     with freeze_time("1971-05-31"):

@@ -142,7 +142,7 @@ $(BCARGO_PYTHON_ENV_STAMP): Makefile $(wildcard implementations/python/*/pyproje
 	$(BCARGO_PYTHON) -m pip install --quiet --upgrade pip
 	# pandas is required so the real-kit LSP gate (and witness pandas corpus)
 	# can RUN on battleaxe; a skip there is a red, not a green.
-	$(BCARGO_PYTHON) -m pip install --quiet --no-cache-dir pytest pandas pyright==1.1.411 $(PYTHON_KIT_EDITABLES)
+	$(BCARGO_PYTHON) -m pip install --quiet --no-cache-dir pytest pandas pyright==1.1.411 itsdangerous==2.2.0 $(PYTHON_KIT_EDITABLES)
 	mkdir -p $(dir $(BCARGO_PYTHON_ENV_STAMP))
 	touch $(BCARGO_PYTHON_ENV_STAMP)
 

@@ -31,11 +31,7 @@ def test_call_eq_name_via_assign_lifts() -> None:
 
 
 def test_import_pytest_binds_name() -> None:
-    src = (
-        "import pytest\n"
-        "def test_x():\n"
-        "    assert pytest is not None\n"
-    )
+    src = "import pytest\n" "def test_x():\n" "    assert pytest is not None\n"
     rpc = lift_file_payload(src, "t.py").to_rpc()
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
         "assertions"
@@ -53,10 +49,7 @@ def test_import_pytest_binds_name() -> None:
 
 def test_bare_pytest_module_name_without_import() -> None:
     """BuiltinModuleNameSugar: bare pytest Name has a floor."""
-    src = (
-        "def test_x():\n"
-        "    assert pytest is not None\n"
-    )
+    src = "def test_x():\n" "    assert pytest is not None\n"
     rpc = lift_file_payload(src, "t.py").to_rpc()
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
         "assertions"
@@ -87,11 +80,26 @@ def test_from_import_binds_name() -> None:
     assert "bind `Signer`" not in reasons, reasons
 
 
-def test_unbound_user_module_still_panics() -> None:
+def test_imported_type_shadows_builtin_module_fallback() -> None:
     src = (
-        "def test_x():\n"
-        "    assert totally_unknown_pkg.foo == 1\n"
+        "from datetime import datetime\n"
+        "def test_datetime(value):\n"
+        "    assert isinstance(value, datetime)\n"
     )
+
+    rpc = lift_file_payload(src, "t.py").to_rpc()
+    axis = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
+        "assertions"
+    ]
+
+    assert axis["lifted_cited"] == 1
+    assert axis["refused_loud"] == 0
+    assert axis["silently_unaccounted"] == 0
+    assert "python:module" not in repr(rpc["ir"])
+
+
+def test_unbound_user_module_still_panics() -> None:
+    src = "def test_x():\n" "    assert totally_unknown_pkg.foo == 1\n"
     payload, gaps = audit_lift_file(src, "t.py", hold_panic=True)
     rpc = payload.to_rpc()
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[

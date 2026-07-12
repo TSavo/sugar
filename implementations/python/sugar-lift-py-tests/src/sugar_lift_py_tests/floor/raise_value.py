@@ -27,5 +27,4 @@ class RaiseValue(FloorValue):
     def guarded(self, formula):
         from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
 
-        return GuardedRaise(guards=(formula,), effect=self.effect)
-
+        return GuardedRaise(guards=(formula,), effect=self.effect, scope=self.scope)

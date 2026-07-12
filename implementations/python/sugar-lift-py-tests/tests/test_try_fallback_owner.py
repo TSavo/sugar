@@ -19,10 +19,9 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-from sugar_lift_py_tests.ir import ctor, make_var, not_, str_const
+from sugar_lift_py_tests.ir import atomic, ctor, make_var, not_, str_const
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.sugar.try_sugar import TrySugar
-
 
 VENDOR_SHAPE = (
     "try:\n"
@@ -47,7 +46,7 @@ def test_try_except_else_keeps_both_exception_faces_guarded() -> None:
         },
     )
 
-    exception_guard = ctor("py.except", [str_const("KeyError")])
+    exception_guard = atomic("py.except", [str_const("KeyError")])
     assert len(block.statements) == 2
     guarded_raise = block.statements[0]
     assert isinstance(guarded_raise, GuardedRaise)
@@ -87,9 +86,7 @@ def test_try_else_owner_structurally_carries_every_face() -> None:
         site.node,
         filename="Lib/datetime.py",
         role=SugarRole.STATEMENT,
-        ctx=FactoryBuildContext(
-            filename="Lib/datetime.py", catalog=default_catalog()
-        ),
+        ctx=FactoryBuildContext(filename="Lib/datetime.py", catalog=default_catalog()),
     )
 
     assert TrySugar.owns(site)
@@ -117,7 +114,6 @@ def test_full_datetime_removes_try_gap_and_names_next_projection_blocker(
     assert assertions["silently_unaccounted"] == 0
     assert not any(gap.info.get("observed") == "Try" for gap in gaps)
     assert any(
-        gap.label.endswith(":182:0")
-        and gap.info.get("observed") == "GuardedValue"
+        gap.label.endswith(":182:0") and gap.info.get("observed") == "GuardedValue"
         for gap in gaps
     )

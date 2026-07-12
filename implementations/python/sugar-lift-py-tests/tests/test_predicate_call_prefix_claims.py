@@ -40,7 +40,7 @@ def test_requests_adapters_481_prefix_predicate_call_lifts_and_cites() -> None:
     assert axis["lifted_loci"][0]["line"] == 481
 
 
-def test_datetime_137_rebound_local_stays_refused_loud() -> None:
+def test_datetime_137_rebound_local_lifts_after_complete_body_construction() -> None:
     source = "\n" * 134 + (
         "def _ord_to_ymd(year, n1, n4, n100):\n"
         "    leapyear = n1 == 3 and (n4 != 24 or n100 == 3)\n"
@@ -49,10 +49,10 @@ def test_datetime_137_rebound_local_stays_refused_loud() -> None:
     )
     axis = _axis(source, "Lib/datetime.py")
 
-    assert axis["lifted_cited"] == 0
-    assert axis["refused_loud"] == 1
+    assert axis["lifted_cited"] == 1
+    assert axis["refused_loud"] == 0
     assert axis["silently_unaccounted"] == 0
-    assert axis["refused_loci"][0]["line"] == 137
+    assert axis["lifted_loci"][0]["line"] == 137
 
 
 def test_unliftable_predicate_operand_stays_refused_loud() -> None:
@@ -68,13 +68,26 @@ def test_unliftable_predicate_operand_stays_refused_loud() -> None:
     assert axis["silently_unaccounted"] == 0
 
 
-def test_rebound_formal_after_gap_stays_refused_loud() -> None:
+def test_rebound_formal_in_complete_body_cites_the_rebound_value() -> None:
     source = "def f(x):\n    x = transform()\n    assert p(x)\n"
     axis = _axis(source, "rebound-formal.py")
 
-    assert axis["lifted_cited"] == 0
-    assert axis["refused_loud"] == 1
+    assert axis["lifted_cited"] == 1
+    assert axis["refused_loud"] == 0
     assert axis["silently_unaccounted"] == 0
+    rpc = lift_file_payload(source, "rebound-formal.py").to_rpc()
+    assertion = next(row for row in rpc["ir"] if row.get("inv"))
+    assert assertion["inv"] == {
+        "kind": "atomic",
+        "name": "py.truthy",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "call:p",
+                "args": [{"kind": "ctor", "name": "call:transform", "args": []}],
+            }
+        ],
+    }
 
 
 def test_unrebound_formal_after_unrelated_gap_still_lifts() -> None:
@@ -108,9 +121,7 @@ def test_all_prior_store_and_del_shapes_fence_formal_replay(rebind: str) -> None
 
 def test_retained_prefix_claim_is_truthy_call_with_call_edge() -> None:
     source = _requests_481_source()
-    held, _gaps = audit_lift_file(
-        source, "requests/adapters.py", hold_panic=True
-    )
+    held, _gaps = audit_lift_file(source, "requests/adapters.py", hold_panic=True)
     payload = held.to_rpc()
     assertion = next(
         row
