@@ -19,6 +19,18 @@ class GuardedValue(FloorValue):
     when_true: FloorValue
     when_false: FloorValue
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, formula_term
+
+        return ctor(
+            "py.conditional",
+            [
+                formula_term(self.guard),
+                self.when_true.to_term(owner=owner),
+                self.when_false.to_term(owner=owner),
+            ],
+        )
+
     def _map(self, method: str, *args):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete

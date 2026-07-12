@@ -21,9 +21,14 @@ class GuardedReturn(FloorValue):
         from sugar_lift_py_tests.ir import and_, eq, implies, make_var
 
         guard = self.guards[0] if len(self.guards) == 1 else and_(list(self.guards))
-        return (
-            implies(guard, eq(make_var("out"), self.value.to_term(owner="post"))),
+        out = make_var("out")
+        conditional_post = getattr(self.value, "post_formula", None)
+        post = (
+            conditional_post(out)
+            if callable(conditional_post)
+            else eq(out, self.value.to_term(owner="post"))
         )
+        return (implies(guard, post),)
 
     def guarded(self, formula):
         # A nested guard stacks: the outer condition joins the conjunction.

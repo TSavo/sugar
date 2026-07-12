@@ -173,6 +173,17 @@ class CallSiteValue(FloorValue):
     def multiply(self, other, site):
         return self._dig_or_symbolic_binop(other, site, op="*", floor_method="multiply")
 
+    def divide(self, other, site):
+        return self._dig_or_symbolic_binop(other, site, op="/", floor_method="divide")
+
+    def modulo(self, other, site):
+        return self._dig_or_symbolic_binop(other, site, op="%", floor_method="modulo")
+
+    def floor_divide(self, other, site):
+        return self._dig_or_symbolic_binop(
+            other, site, op="//", floor_method="floor_divide"
+        )
+
     def bitwise_or(self, other, site):
         return self._dig_or_symbolic_binop(other, site, op="|", floor_method="bitwise_or")
 
