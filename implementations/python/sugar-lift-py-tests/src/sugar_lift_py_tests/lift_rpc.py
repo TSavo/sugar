@@ -742,7 +742,9 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
 
 
 
-def _module_import_temporal(module, catalog, *, recovered_panics=None) -> "object":
+def _module_import_temporal(
+    module, catalog, *, recovered_panics=None, assertion_sink=None
+) -> "object":
     """Bind constructed module declarations into a TemporalContext.
 
     Deeper floors: names introduced by ``import pytest`` / ``from x import Y``
@@ -822,7 +824,28 @@ def _module_import_temporal(module, catalog, *, recovered_panics=None) -> "objec
                 name,
                 ClassValue(name=name, bases=(), record=BlockValue(())),
             )
-        elif observed in {"Assign", "AnnAssign"}:
+        elif observed in {"Assign", "AnnAssign", "Assert"}:
+            if observed == "Assert":
+                ctx = FactoryBuildContext(
+                    filename=stmt.filename,
+                    catalog=catalog,
+                    temporal=temporal,
+                    module_temporal=temporal,
+                )
+                try:
+                    outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
+                except FactoryPanic as panic:
+                    if recovered_panics is not None:
+                        recovered_panics.append(
+                            (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                        )
+                    continue
+                if isinstance(outcome, Incomplete):
+                    continue
+                if assertion_sink is not None:
+                    assertion_sink.extend(outcome.contribution())
+                temporal = outcome.extend_scope(ctx).temporal
+                continue
             if observed == "Assign":
                 name = stmt.assign_target_name()
             else:
@@ -1047,8 +1070,12 @@ def audit_lift_file(
     module = roots[0]
     # Seed module declarations once for every def in this module (deeper floors).
     seed_panics: list[tuple[str, FactoryPanic]] | None = [] if recover_panics else None
+    module_assertions: list = []
     module_temporal = _module_import_temporal(
-        module, catalog, recovered_panics=seed_panics
+        module,
+        catalog,
+        recovered_panics=seed_panics,
+        assertion_sink=module_assertions,
     )
     for label, panic in seed_panics or ():
         recovered_panics.append(
@@ -1059,6 +1086,16 @@ def audit_lift_file(
             )
         )
     import_aliases, from_imports = _module_import_maps(module)
+    if module_assertions:
+        from sugar_lift_py_tests.floor import BlockValue, TestimonyValue
+
+        module_testimony = TestimonyValue(
+            name="<module>",
+            formals=(),
+            record=BlockValue(tuple(module_assertions)),
+        )
+        payload.ir.extend(module_testimony.payload_rows(None))
+        payload.call_edges.extend(module_testimony.call_edges())
     # Same-module name_resolver: bare f() and Class.method dig bodies.
     name_resolver: dict = {}
     for stmt in _iter_liftable_function_defs(module):
