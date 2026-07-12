@@ -1796,6 +1796,7 @@ pub fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Valu
 ///
 /// True when `.sugar/imports/` holds at least one `*.proof` file -- the same
 /// surface `contract_bindings_from_dependency_proofs` reads.
+#[allow(dead_code)] // called by sugar-lsp prove_engine warm overlay (external crate)
 pub fn project_declares_import_dependencies(project_root: &Path) -> bool {
     let imports_dir = project_root.join(".sugar").join("imports");
     let Ok(entries) = std::fs::read_dir(&imports_dir) else {
@@ -1812,6 +1813,7 @@ pub fn project_declares_import_dependencies(project_root: &Path) -> bool {
 
 /// True when any dependency binding carries a post-bearing universe that
 /// needs a consumer→vendor bridge for ambient-post specialization (case-2).
+#[allow(dead_code)] // called by sugar-lsp prove_engine warm overlay (external crate)
 pub fn dependency_bindings_need_bridges(bindings: &[Value]) -> bool {
     bindings.iter().any(|binding| {
         let has_post = binding
@@ -1841,6 +1843,7 @@ pub fn dependency_bindings_need_bridges(bindings: &[Value]) -> bool {
 /// bridge, and the warm path returns un-degraded 0 rows (false green).
 ///
 /// Returns the number of bridges minted into `pool`.
+#[allow(dead_code)] // called by sugar-lsp prove_engine warm overlay (external crate)
 pub fn inject_dependency_bridges_into_pool(
     project_root: &Path,
     pool: &mut sugar_verifier::types::MementoPool,
@@ -2123,6 +2126,7 @@ pub fn mint_project_scratch_proof(
 
 /// Convenience: run configured lift plugins for a project and return the report JSON.
 /// Best-effort face for sugar-lsp report mode (dig green→red + Minority yellow).
+#[allow(dead_code)] // called by sugar-lsp prove_engine report mode (external crate)
 pub fn report_lift_response_for_project(
     project_root: &Path,
     out_dir: &Path,
