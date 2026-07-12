@@ -1,6 +1,4 @@
-"""SubscriptSugar: `x[i]` folds concrete containers, halts out-of-range / missing
-key as named runtime effects, and coordinates symbolic receivers as
-ctor("py.subscript", [recv, index]). Slice indexes stay a loud factory gap."""
+"""Subscript construction and floor projection tests."""
 
 from __future__ import annotations
 
@@ -70,3 +68,47 @@ def test_literal_slice_index_selects_the_narrow_slice_owner() -> None:
     body = ctx.build_body(node, SugarRole.TERM)
 
     assert type(body.sugar).__name__ == "SliceSubscriptSugar"
+
+
+def test_dynamic_slice_is_a_citable_subscript_coordinate() -> None:
+    value = reduce_value(
+        "arr[i:i + n]",
+        binds={
+            "arr": SymbolicValue(make_var("arr")),
+            "i": SymbolicValue(make_var("i")),
+            "n": SymbolicValue(make_var("n")),
+        },
+    )
+
+    assert isinstance(value, CallSiteValue)
+    assert value.term.name == "py.subscript"
+    assert value.term.args[1].name == "py.slice"
+
+
+def test_tuple_slice_is_a_citable_multidimensional_coordinate() -> None:
+    value = reduce_value(
+        "table[:, i]",
+        binds={
+            "table": SymbolicValue(make_var("table")),
+            "i": SymbolicValue(make_var("i")),
+        },
+    )
+
+    assert isinstance(value, CallSiteValue)
+    assert value.term.name == "py.subscript"
+    assert value.term.args[1].name == "tuple"
+    assert value.term.args[1].args[0].name == "py.slice"
+
+
+def test_dynamic_slice_and_tuple_slice_have_structural_owners() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+
+    dynamic = ctx.build_body(
+        ast.parse("arr[i:i + n]", mode="eval").body, SugarRole.TERM
+    )
+    multidimensional = ctx.build_body(
+        ast.parse("table[:, i]", mode="eval").body, SugarRole.TERM
+    )
+
+    assert type(dynamic.sugar).__name__ == "SliceSubscriptSugar"
+    assert type(multidimensional.sugar).__name__ == "SubscriptSugar"

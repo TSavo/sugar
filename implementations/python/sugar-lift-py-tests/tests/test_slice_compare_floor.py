@@ -85,6 +85,7 @@ def test_full_datetime_artifact_accounts_slice_assertions_and_named_blockers(cpy
         "s[1:3:step]",
         "s[1:3, 0]",
         "3[-1:]",
+        "s[(A | B):]",
     ),
 )
 def test_unowned_slice_shapes_reach_the_loud_none_arm(source: str) -> None:
@@ -96,13 +97,14 @@ def test_unowned_slice_shapes_reach_the_loud_none_arm(source: str) -> None:
         complete_value(result.sugar.desugar(ctx), owner="test")
 
 
-def test_slice_ownership_is_literal_integer_bounds_over_liftable_receivers() -> None:
+def test_slice_ownership_is_total_except_bitor_annotation_bounds() -> None:
     assert SliceSubscriptSugar.owns(_site("s[-1:]"))
     assert SliceSubscriptSugar.owns(_site("s[:3]"))
     assert SliceSubscriptSugar.owns(_site("s[-3:-1]"))
     assert SliceSubscriptSugar.owns(_site("s[::2]"))
     assert SliceSubscriptSugar.owns(_site("'abcdef'[-2:]"))
-    assert not SliceSubscriptSugar.owns(_site("s[i:]"))
-    assert not SliceSubscriptSugar.owns(_site("s[1:3:step]"))
+    assert SliceSubscriptSugar.owns(_site("s[i:]"))
+    assert SliceSubscriptSugar.owns(_site("s[1:3:step]"))
     assert not SliceSubscriptSugar.owns(_site("s[1:3, 0]"))
-    assert not SliceSubscriptSugar.owns(_site("3[-1:]"))
+    assert SliceSubscriptSugar.owns(_site("3[-1:]"))
+    assert not SliceSubscriptSugar.owns(_site("s[(A | B):]"))

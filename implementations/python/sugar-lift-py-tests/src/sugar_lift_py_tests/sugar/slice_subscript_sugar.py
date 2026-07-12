@@ -31,13 +31,15 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
         if site.observed != "Subscript":
             return False
         index = site.subscript_index()
-        if index.observed != "Slice" or not _liftable_slice_receiver(
-            site.subscript_receiver()
-        ):
+        if index.observed != "Slice":
             return False
-        return all(
-            bound is None or _literal_integer_bound(bound)
-            for bound in (index.slice_lower(), index.slice_upper(), index.slice_step())
+        return not any(
+            _is_bitor_annotation(bound)
+            for bound in (
+                index.slice_lower(),
+                index.slice_upper(),
+                index.slice_step(),
+            )
         )
 
     @classmethod
@@ -112,29 +114,9 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
         return tuple(kids)
 
 
-def _literal_integer_bound(bound) -> bool:
-    if bound.observed == "PrimitiveLiteral":
-        return type(bound.literal_value()) is int
-    if bound.observed == "UnaryOp" and bound.operator_kind() in {"UAdd", "USub"}:
-        operand = bound.unaryop_operand()
-        return (
-            operand.observed == "PrimitiveLiteral"
-            and type(operand.literal_value()) is int
-        )
-    return False
-
-
-def _liftable_slice_receiver(receiver) -> bool:
-    if receiver.observed == "PrimitiveLiteral":
-        return type(receiver.literal_value()) is str
-    return receiver.observed in {
-        "Name",
-        "Attribute",
-        "Call",
-        "Subscript",
-        "BinOp",
-        "JoinedStr",
-        "FormattedValue",
-        "List",
-        "Tuple",
-    }
+def _is_bitor_annotation(bound) -> bool:
+    return (
+        bound is not None
+        and bound.observed == "BinOp"
+        and bound.operator_kind() == "BitOr"
+    )

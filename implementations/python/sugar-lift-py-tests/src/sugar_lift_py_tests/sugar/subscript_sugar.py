@@ -30,10 +30,6 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
         index = site.subscript_index()
         if index.observed == "Slice":
             return False
-        if index.observed == "Tuple" and any(
-            element.observed == "Slice" for element in index.tuple_elts()
-        ):
-            return False
         return True
 
     @classmethod
