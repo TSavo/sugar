@@ -199,6 +199,11 @@ reap_stale_remote_roots() {
 }
 
 exclude_args=(
+  # These are tiny checked-in proof fixtures, not local run products. The
+  # includes must precede the generated-output excludes below so remote
+  # integrity tests see the same trust-root corpus as local cargo.
+  --include='/examples/serde-json-showcase/bad/.sugar/runs/***'
+  --include='/examples/serde-json-showcase/good/.sugar/runs/***'
   --exclude='target/'
   --exclude='.git/'
   --exclude='.jj/'
@@ -222,34 +227,67 @@ exclude_args=(
   # impossible. Only the generated `runs/` and `witnesses/` outputs are skipped.
 )
 
-sync_dir() {
-  local rel_path="$1"
-  local local_path="$repo_root/$rel_path"
-  local remote_path="$remote_repo/$rel_path"
+# The full synced surface, as repo-root-relative paths. One rsync -R
+# (relative) transfer ships all of them: the per-path sync_file/sync_dir
+# helpers this replaced cost ~50 sequential ssh round trips and ~25 separate
+# file-list walks per invocation. -R creates implied parent directories on
+# the remote, and --delete applies within each listed tree.
+#
+# Notes on specific entries:
+# - `.sugar/config.toml`, `.sugar/lift`, `.sugar/realize` are repo-root
+#   workspace config and hand-authored plugin manifests: source inputs for
+#   CLI dispatch. Generated `.sugar/` outputs (runs/, witnesses/, cache/,
+#   baselines/, etc.) stay out via exclude_args, except the fixture includes
+#   noted there.
+# - `.sugar/components` holds checked-in kit component manifests. Component
+#   discovery (component_plan.rs) reads `<project_root>/.sugar/components`
+#   to decide which kit claims a workspace; without this, remote runs hit
+#   "no Sugar <lang> kit component claimed it".
+# - `editors/vscode-sugar/test/fixtures` are the extension's committed lift
+#   fixtures: sugar-cli's bcargo sync-contract test demands they travel.
+sync_paths=(
+  Cargo.toml
+  Cargo.lock
+  Makefile
+  sugar-release.toml
+  bin/bcargo
+  bin/sugarbin
+  package.json
+  pnpm-lock.yaml
+  rust-toolchain
+  rust-toolchain.toml
+  .sugar/config.toml
+  .sugar/lift
+  .sugar/realize
+  .sugar/ir-compilers
+  .sugar/components
+  .github
+  implementations/rust
+  implementations/python
+  implementations/go
+  implementations/java
+  examples
+  editors/vscode-sugar/test/fixtures
+  menagerie/csharp-language-signature/specs
+  menagerie/python-language-signature/specs
+  tools
+  protocol
+  docs/perf
+  docs/self-application
+  scripts
+  bootstrap
+  conformance
+  tests
+)
 
-  [[ -d "$local_path" ]] || return 0
-  run_ssh "mkdir -p $(quote_sh "$(remote_parent "$remote_path")")"
-  "$rsync_bin" -az --delete "${exclude_args[@]}" "$local_path/" "$remote_host:$remote_path/"
-}
-
-sync_fixture_dir() {
-  local rel_path="$1"
-  local local_path="$repo_root/$rel_path"
-  local remote_path="$remote_repo/$rel_path"
-
-  [[ -d "$local_path" ]] || return 0
-  run_ssh "mkdir -p $(quote_sh "$(remote_parent "$remote_path")")"
-  "$rsync_bin" -az --delete "$local_path/" "$remote_host:$remote_path/"
-}
-
-sync_file() {
-  local rel_path="$1"
-  local local_path="$repo_root/$rel_path"
-  local remote_path="$remote_repo/$rel_path"
-
-  [[ -f "$local_path" ]] || return 0
-  run_ssh "mkdir -p $(quote_sh "$(remote_parent "$remote_path")")"
-  "$rsync_bin" -az "$local_path" "$remote_host:$remote_path"
+sync_workspace() {
+  local existing=() rel
+  for rel in "${sync_paths[@]}"; do
+    [[ -e "$repo_root/$rel" ]] && existing+=("$rel")
+  done
+  ((${#existing[@]})) || return 0
+  run_ssh "mkdir -p $(quote_sh "$remote_repo")"
+  (cd "$repo_root" && "$rsync_bin" -azR --delete "${exclude_args[@]}" "${existing[@]}" "$remote_host:$remote_repo/")
 }
 
 remove_remote_dir() {
@@ -298,56 +336,10 @@ warn_foreign_synced_binary() {
 
 reap_stale_remote_roots
 
-sync_file Cargo.toml
-sync_file Cargo.lock
-sync_file Makefile
-sync_file sugar-release.toml
-sync_file bin/bcargo
-sync_file bin/sugarbin
-sync_file package.json
-sync_file pnpm-lock.yaml
-sync_file rust-toolchain
-sync_file rust-toolchain.toml
-# Repo-root workspace config and hand-authored plugin manifests. Generated
-# `.sugar/` outputs (runs/, witnesses/, cache/, baselines/, etc.) stay out
-# of the remote copy, but lift/realize manifests are source inputs for CLI
-# dispatch and must travel with bcargo.
-sync_file .sugar/config.toml
-sync_dir .sugar/lift
-sync_dir .sugar/realize
-sync_dir .sugar/ir-compilers
-# Checked-in kit component manifests. Component discovery (component_plan.rs)
-# reads `<project_root>/.sugar/components` to decide which kit claims a
-# workspace; without this, remote runs hit "no Sugar <lang> kit component
-# claimed it" even though the manifests are committed.
-sync_dir .sugar/components
-sync_dir .github
-
-sync_dir implementations/rust
-sync_dir implementations/python
-sync_dir implementations/go
-sync_dir implementations/java
-sync_dir examples
-# These are tiny checked-in proof fixtures, not local run products. Keep the
-# broad generated-output exclusion above, then put these committed artifacts
-# back so remote integrity tests see the same trust-root corpus as local cargo.
-sync_fixture_dir examples/serde-json-showcase/bad/.sugar/runs
-sync_fixture_dir examples/serde-json-showcase/good/.sugar/runs
+# Only the two menagerie specs dirs travel; clear the rest of the remote
+# menagerie so stale content from older syncs never leaks into remote runs.
 remove_remote_dir menagerie
-# The vscode-sugar extension's committed lift fixtures: sugar-cli's bcargo
-# sync-contract test walks live test artifact classes and demands these
-# travel to the remote copy like every other checked-in fixture dir.
-sync_dir editors/vscode-sugar/test/fixtures
-sync_dir menagerie/csharp-language-signature/specs
-sync_dir menagerie/python-language-signature/specs
-sync_dir tools
-sync_dir protocol
-sync_dir docs/perf
-sync_dir docs/self-application
-sync_dir scripts
-sync_dir bootstrap
-sync_dir conformance
-sync_dir tests
+sync_workspace
 
 remote_cwd="$remote_repo"
 if [[ -n "$rel_cwd" ]]; then
