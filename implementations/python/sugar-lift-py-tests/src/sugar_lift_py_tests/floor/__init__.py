@@ -7,6 +7,7 @@ from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .call_site_value import CallSiteValue
 from .class_value import ClassValue
+from .comprehension_value import ComprehensionValue
 from .dict_literal_value import DictLiteralValue
 
 from .dict_value import DictValue
@@ -58,6 +59,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     Bv32Value,
     CallSiteValue,
     ClassValue,
+    ComprehensionValue,
     DictLiteralValue,
     DictValue,
     EncodedStringValue,
@@ -107,6 +109,7 @@ __all__ = [
     "Bv32Value",
     "CallSiteValue",
     "ClassValue",
+    "ComprehensionValue",
     "DictLiteralValue",
     "DictValue",
     "EncodedStringValue",

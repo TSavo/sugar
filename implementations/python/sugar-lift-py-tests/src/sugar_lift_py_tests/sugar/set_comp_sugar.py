@@ -77,6 +77,10 @@ class SetCompSugar(Sugar, role=SugarRole.TERM):
         )
 
     def _bind_and_collect(self, iterable, ctx: object) -> Outcome:
+        from sugar_lift_py_tests.floor import ListValue, TupleValue
+
+        if not self.condition_bodies and isinstance(iterable, (ListValue, TupleValue)):
+            return self._collect_finite(iterable.elements, (), ctx)
         from sugar_lift_py_tests.floor import ScopeRebind, SymbolicValue
         from sugar_lift_py_tests.ir import ctor
 
@@ -94,6 +98,21 @@ class SetCompSugar(Sugar, role=SugarRole.TERM):
             )
         )
 
+    def _collect_finite(self, remaining, accumulated, ctx):
+        from sugar_lift_py_tests.floor import ScopeRebind, SetValue
+
+        if not remaining:
+            return Complete(SetValue(accumulated))
+        item, *rest = remaining
+        item_ctx = ScopeRebind(self.target_name, item).extend_scope(ctx)
+        return self.elt_body.reduce(item_ctx).and_then(
+            lambda value: self._collect_finite(
+                tuple(rest),
+                accumulated if value in accumulated else (*accumulated, value),
+                ctx,
+            )
+        )
+
     def _collect_conditions(
         self,
         remaining: tuple,
@@ -103,12 +122,12 @@ class SetCompSugar(Sugar, role=SugarRole.TERM):
         bound_ctx: object,
     ) -> Outcome:
         if not remaining:
-            from sugar_lift_py_tests.floor import SymbolicValue
+            from sugar_lift_py_tests.floor import ComprehensionValue
             from sugar_lift_py_tests.ir import ctor
 
             owner = str(self.site)
             return Complete(
-                SymbolicValue(
+                ComprehensionValue(
                     ctor(
                         "py.setcomp",
                         [

@@ -79,6 +79,10 @@ class DictCompSugar(Sugar, role=SugarRole.TERM):
         )
 
     def _bind_and_collect(self, iterable, ctx: object) -> Outcome:
+        from sugar_lift_py_tests.floor import ListValue, TupleValue
+
+        if not self.condition_bodies and isinstance(iterable, (ListValue, TupleValue)):
+            return self._collect_finite(iterable.elements, (), ctx)
         from sugar_lift_py_tests.floor import ScopeRebind, SymbolicValue
         from sugar_lift_py_tests.ir import ctor
 
@@ -100,6 +104,32 @@ class DictCompSugar(Sugar, role=SugarRole.TERM):
             )
         )
 
+    def _collect_finite(self, remaining, accumulated, ctx):
+        from sugar_lift_py_tests.floor import DictValue, ScopeRebind
+
+        if not remaining:
+            return Complete(DictValue(accumulated))
+        item, *rest = remaining
+        item_ctx = ScopeRebind(self.target_name, item).extend_scope(ctx)
+        return self.key_body.reduce(item_ctx).and_then(
+            lambda key: self.value_body.reduce(item_ctx).and_then(
+                lambda value: self._collect_finite(
+                    tuple(rest),
+                    self._dict_set(accumulated, key, value),
+                    ctx,
+                )
+            )
+        )
+
+    @staticmethod
+    def _dict_set(entries, key, value):
+        updated = list(entries)
+        for index, (existing_key, _existing_value) in enumerate(updated):
+            if existing_key == key:
+                updated[index] = (key, value)
+                return tuple(updated)
+        return (*entries, (key, value))
+
     def _collect_conditions(
         self,
         remaining: tuple,
@@ -110,12 +140,12 @@ class DictCompSugar(Sugar, role=SugarRole.TERM):
         bound_ctx: object,
     ) -> Outcome:
         if not remaining:
-            from sugar_lift_py_tests.floor import SymbolicValue
+            from sugar_lift_py_tests.floor import ComprehensionValue
             from sugar_lift_py_tests.ir import ctor
 
             owner = str(self.site)
             return Complete(
-                SymbolicValue(
+                ComprehensionValue(
                     ctor(
                         "py.dictcomp",
                         [

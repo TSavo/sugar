@@ -3,12 +3,15 @@ from __future__ import annotations
 import ast
 from dataclasses import replace
 
+import pytest
+
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import DictLiteralValue, SetLiteralValue, SymbolicValue
 from sugar_lift_py_tests.ir import make_var, num
 from sugar_lift_py_tests.outcome import Incomplete
@@ -50,7 +53,7 @@ def test_comprehension_cardinality_bad_twins_refute(tmp_path) -> None:
     dict_truth = run_source_through_real_solver(
         tmp_path / "dict-truth",
         "def A():\n"
-        "    return len({x: x for x in [1, 2]})\n"
+        "    return len({x: x for x in [1, 1, 2]})\n"
         "\n"
         "def test_a():\n"
         "    assert A() == 2\n",
@@ -58,7 +61,7 @@ def test_comprehension_cardinality_bad_twins_refute(tmp_path) -> None:
     dict_lie = run_source_through_real_solver(
         tmp_path / "dict-lie",
         "def A():\n"
-        "    return len({x: x for x in [1, 2]})\n"
+        "    return len({x: x for x in [1, 1, 2]})\n"
         "\n"
         "def test_a():\n"
         "    assert A() == 3\n",
@@ -102,12 +105,42 @@ def test_comprehension_cardinality_bad_twins_refute(tmp_path) -> None:
     assert set_lie.verdict == "unsat"
     assert set_literal_truth.verdict == "sat"
     assert set_literal_lie.verdict == "unsat"
-    assert "DictCompSugar" in dict_truth.selected_sugars
-    assert "DictCompSugar" in dict_lie.selected_sugars
-    assert "SetCompSugar" in set_truth.selected_sugars
-    assert "SetCompSugar" in set_lie.selected_sugars
-    assert "SetSugar" in set_literal_truth.selected_sugars
-    assert "SetSugar" in set_literal_lie.selected_sugars
+    for result in (
+        dict_truth,
+        dict_lie,
+        set_truth,
+        set_lie,
+        set_literal_truth,
+        set_literal_lie,
+    ):
+        contract = next(row for row in result.lift_doc["ir"] if row["name"] == "A")
+        assert contract["post"]["args"][1]["value"] == 2
+        assert "call:len" not in repr(contract["post"])
+        invocations = result.prove_doc["rows"][0]["verification"][
+            "solverInvocations"
+        ]
+        if invocations:
+            assert invocations[0]["exit"] == {
+                "kind": "ok",
+                "code": 0,
+                "timedOut": False,
+            }
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        "len({x: x for x in items})",
+        "len({x for x in items})",
+        "len([x for x in items])",
+    ),
+)
+def test_symbolic_comprehension_cardinality_stays_loud(expression: str) -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        reduce_value(expression, {"items": SymbolicValue(make_var("items"))})
+
+    assert raised.value.info.observed == "ComprehensionValue"
+    assert raised.value.info.requested == "stand on the length floor"
 
 
 def test_comprehension_runtime_iterables_are_typed_runtime_effects() -> None:

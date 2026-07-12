@@ -122,12 +122,12 @@ class ListCompSugar(Sugar, role=SugarRole.TERM):
         bound_ctx: object,
     ) -> Outcome:
         if not remaining:
-            from sugar_lift_py_tests.floor import SymbolicValue
+            from sugar_lift_py_tests.floor import ComprehensionValue
             from sugar_lift_py_tests.ir import ctor
 
             owner = str(self.site)
             return Complete(
-                SymbolicValue(
+                ComprehensionValue(
                     ctor(
                         "py.listcomp",
                         [
