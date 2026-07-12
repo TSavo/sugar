@@ -51,6 +51,43 @@ def _op_atom(op: str, left_term, right_term):
     raise AssertionError(f"unsupported chain op {op}")
 
 
+def _guarded_op_atom(op: str, left, right, site):
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.ir import and_, implies, not_
+
+    if isinstance(left, GuardedValue):
+        return and_(
+            [
+                implies(
+                    left.guard,
+                    _guarded_op_atom(op, left.when_true, right, site),
+                ),
+                implies(
+                    not_(left.guard),
+                    _guarded_op_atom(op, left.when_false, right, site),
+                ),
+            ]
+        )
+    if isinstance(right, GuardedValue):
+        return and_(
+            [
+                implies(
+                    right.guard,
+                    _guarded_op_atom(op, left, right.when_true, site),
+                ),
+                implies(
+                    not_(right.guard),
+                    _guarded_op_atom(op, left, right.when_false, site),
+                ),
+            ]
+        )
+    return _op_atom(
+        op,
+        left.to_term(owner=str(site)),
+        right.to_term(owner=str(site)),
+    )
+
+
 @dataclass(frozen=True)
 class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
     """Chained comparisons: ``a < b < c`` → conjunction of pairwise atoms.
@@ -126,13 +163,7 @@ class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
         for i, op in enumerate(self.ops):
             left_v = values[i]
             right_v = values[i + 1]
-            atoms.append(
-                _op_atom(
-                    op,
-                    left_v.to_term(owner=str(self.site)),
-                    right_v.to_term(owner=str(self.site)),
-                )
-            )
+            atoms.append(_guarded_op_atom(op, left_v, right_v, self.site))
         formula = and_(atoms) if len(atoms) > 1 else atoms[0]
         return Complete(
             PredicateValue(

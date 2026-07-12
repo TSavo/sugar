@@ -2481,7 +2481,7 @@ fn expected_atomic_arg_sort(name: &str, args: &[Term]) -> Option<String> {
         return Some(BV32_SORT.to_string());
     }
     let smt_name = smt_atomic_name(name);
-    if matches!(smt_name, "=" | "distinct" | "<" | "<=" | ">" | ">=") {
+    if name == "py.eq" || matches!(smt_name, "=" | "distinct" | "<" | "<=" | ">" | ">=") {
         let known: Vec<String> = args.iter().filter_map(known_term_sort).collect();
         for preferred in ["SugarOptionOption", "SugarResultOption"] {
             if known.iter().any(|sort| sort == preferred) {

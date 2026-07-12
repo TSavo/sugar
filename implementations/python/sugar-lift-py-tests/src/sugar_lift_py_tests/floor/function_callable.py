@@ -34,6 +34,10 @@ class FunctionCallable(FloorValue):
     def extend_scope(self, ctx):
         return replace(ctx, temporal=ctx.temporal.bind_value(self.name, self))
 
+    def guarded(self, formula):
+        del formula
+        return self
+
     def callsite(self, arg_values, keyword_names, site):
         from sugar_lift_py_tests.factory import factory_panic_gap
         from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus

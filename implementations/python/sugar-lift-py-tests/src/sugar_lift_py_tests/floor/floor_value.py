@@ -904,9 +904,13 @@ class FloorValue:
         # FOL at all. Vendor `<` is py.lt -- not SMT < -- so the sort universe
         # adjudicates (same NaN/reflexivity split as py.eq). Operand
         # CallSiteValues ride as operand_callsites.
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_lt
         from sugar_lift_py_tests.outcome import Complete
+
+        if isinstance(other, GuardedValue):
+            return other.predicate_from_left("less_than", self, site)
 
         return Complete(
             PredicateValue(

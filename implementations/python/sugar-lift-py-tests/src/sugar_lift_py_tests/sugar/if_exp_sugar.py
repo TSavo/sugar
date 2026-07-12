@@ -88,13 +88,24 @@ def _if_exp_join(cond, true_v, false_v, site) -> Outcome:
     # that guarded value is constructed here, preserve the typed runtime boundary
     # so descendants propagate it instead of minting coordinates about a value
     # that has not been selected.
-    del cond, true_v, false_v
-    from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect
+    del true_v, false_v
+    from sugar_lift_py_tests.effect import (
+        ConditionalExpressionRuntimeEffect,
+        RuntimeEffectWitness,
+    )
+    from sugar_lift_py_tests.ir import ctor
+
+    condition = cond.to_term(owner="IfExpSugar runtime condition")
 
     return Incomplete(
         ConditionalExpressionRuntimeEffect(
             "conditional expression runtime boundary: Python evaluates the "
             "condition at runtime before choosing a branch; keep as typed red "
-            f"until IfExpSugar constructs the guarded value. blame={site}"
+            f"until IfExpSugar constructs the guarded value. blame={site}",
+            witness=RuntimeEffectWitness(
+                operation=ctor("py.ifexp.select", [condition]),
+                operand=condition,
+                locus=str(site),
+            ),
         )
     )

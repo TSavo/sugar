@@ -23,6 +23,20 @@ class GuardedValue(FloorValue):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
+        if args and isinstance(args[0], GuardedValue):
+            other, *rest = args
+            true_outcome = self._map(method, other.when_true, *rest)
+            if isinstance(true_outcome, Incomplete):
+                return true_outcome.guarded(other.guard)
+            false_outcome = self._map(method, other.when_false, *rest)
+            if isinstance(false_outcome, Incomplete):
+                return false_outcome.guarded(not_(other.guard))
+            return Complete(
+                GuardedValue(
+                    other.guard, true_outcome.value, false_outcome.value
+                )
+            )
+
         true_outcome = getattr(self.when_true, method)(*args)
         if isinstance(true_outcome, Incomplete):
             return true_outcome.guarded(self.guard)
@@ -39,6 +53,12 @@ class GuardedValue(FloorValue):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import and_, implies, not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
 
         true_outcome = getattr(self.when_true, method)(*args)
         if isinstance(true_outcome, Incomplete):
@@ -50,25 +70,72 @@ class GuardedValue(FloorValue):
         assert isinstance(false_outcome, Complete)
         true_value = true_outcome.value
         false_value = false_outcome.value
-        if not isinstance(true_value, PredicateValue) or not isinstance(
-            false_value, PredicateValue
-        ):
+
+        def formula(value):
+            if isinstance(value, PredicateValue):
+                return value.formula
+            if type(value) is TrueBoolLiteralSugar:
+                return and_([])
+            if type(value) is FalseBoolLiteralSugar:
+                return not_(and_([]))
+            return None
+
+        true_formula = formula(true_value)
+        false_formula = formula(false_value)
+        if true_formula is None or false_formula is None:
             return super().equals(args[0], args[-1])
         return Complete(
             PredicateValue(
                 and_(
                     [
-                        implies(self.guard, true_value.formula),
-                        implies(not_(self.guard), false_value.formula),
+                        implies(self.guard, true_formula),
+                        implies(not_(self.guard), false_formula),
                     ]
                 ),
                 args[-1],
                 operand_callsites=(
-                    *true_value.operand_callsites,
-                    *false_value.operand_callsites,
+                    *(true_value.operand_callsites if isinstance(true_value, PredicateValue) else ()),
+                    *(false_value.operand_callsites if isinstance(false_value, PredicateValue) else ()),
                 ),
             )
         )
+
+    def predicate_from_left(self, method: str, left, site):
+        """Distribute a binary predicate whose guarded value is the RHS."""
+        return GuardedValue(
+            self.guard, self.when_true, self.when_false
+        )._predicate_from_left(method, left, site)
+
+    def map_from_left(self, method: str, left, site):
+        """Distribute a binary value operation whose guarded value is the RHS."""
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        true_outcome = getattr(left, method)(self.when_true, site)
+        if isinstance(true_outcome, Incomplete):
+            return true_outcome.guarded(self.guard)
+        false_outcome = getattr(left, method)(self.when_false, site)
+        if isinstance(false_outcome, Incomplete):
+            return false_outcome.guarded(not_(self.guard))
+        return Complete(
+            GuardedValue(self.guard, true_outcome.value, false_outcome.value)
+        )
+
+    def _predicate_from_left(self, method: str, left, site):
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        true_outcome = getattr(left, method)(self.when_true, site)
+        if isinstance(true_outcome, Incomplete):
+            return true_outcome.guarded(self.guard)
+        false_outcome = getattr(left, method)(self.when_false, site)
+        if isinstance(false_outcome, Incomplete):
+            from sugar_lift_py_tests.ir import not_
+
+            return false_outcome.guarded(not_(self.guard))
+        assert isinstance(true_outcome, Complete)
+        assert isinstance(false_outcome, Complete)
+        joined = GuardedValue(self.guard, true_outcome.value, false_outcome.value)
+        return joined._predicate("truth", site)
 
     def subscript(self, index, site):
         return self._map("subscript", index, site)
@@ -76,8 +143,20 @@ class GuardedValue(FloorValue):
     def add(self, other, site):
         return self._map("add", other, site)
 
+    def multiply(self, other, site):
+        return self._map("multiply", other, site)
+
+    def absolute(self, site):
+        return self._map("absolute", site)
+
     def equals(self, other, site):
         return self._predicate("equals", other, site)
+
+    def less_than(self, other, site):
+        return self._predicate("less_than", other, site)
+
+    def python_isinstance(self, type_name: str, type_term, site):
+        return self._predicate("python_isinstance", type_name, type_term, site)
 
     def callsites(self):
         return (*self.when_true.callsites(), *self.when_false.callsites())

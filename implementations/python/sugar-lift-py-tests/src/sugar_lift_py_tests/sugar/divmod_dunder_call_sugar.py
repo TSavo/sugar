@@ -34,14 +34,32 @@ class DivmodDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar
         return self.left.reduce(ctx).and_then(lambda left: self.right.reduce(ctx).and_then(lambda right: self._finish(left, right, ctx)))
 
     def _finish(self, left, right, ctx):
+        from sugar_lift_py_tests.floor import GuardedValue
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        for value, replace_left in ((left, True), (right, False)):
+            if isinstance(value, GuardedValue):
+                def finish(branch):
+                    return self._finish(branch, right, ctx) if replace_left else self._finish(left, branch, ctx)
+
+                true_outcome = finish(value.when_true)
+                if isinstance(true_outcome, Incomplete):
+                    return true_outcome.guarded(value.guard)
+                false_outcome = finish(value.when_false)
+                if isinstance(false_outcome, Incomplete):
+                    return false_outcome.guarded(not_(value.guard))
+                return Complete(
+                    GuardedValue(
+                        value.guard, true_outcome.value, false_outcome.value
+                    )
+                )
         if isinstance(left, ObjectValue) and left.has_method("__divmod__"):
             return left.call_method_value("__divmod__", (right,), owner=type(self).__name__, blame=str(self.site), ctx=ctx)
         if isinstance(right, ObjectValue) and right.has_method("__rdivmod__"):
             return right.call_method_value("__rdivmod__", (left,), owner=type(self).__name__, blame=str(self.site), ctx=ctx)
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
         return Complete(
             CallSiteValue(
                 target_name="divmod",
