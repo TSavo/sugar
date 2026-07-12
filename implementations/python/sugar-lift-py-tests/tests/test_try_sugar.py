@@ -78,8 +78,7 @@ def test_handler_type_discriminates_the_except_coordinate() -> None:
     assert term_ve != term_te
 
 
-def test_owns_typed_except_not_bare_else_finally_or_tuple() -> None:
-    """(3) owns simple try/except Type; leaves loud shapes unowned."""
+def test_owns_every_try_parent_shape() -> None:
     assert (
         TrySugar.owns(
             _site("try:\n    pass\nexcept ValueError:\n    pass\n")
@@ -92,7 +91,7 @@ def test_owns_typed_except_not_bare_else_finally_or_tuple() -> None:
         )
         is True
     )
-    assert TrySugar.owns(_site("try:\n    pass\nexcept:\n    pass\n")) is False
+    assert TrySugar.owns(_site("try:\n    pass\nexcept:\n    pass\n")) is True
     assert (
         TrySugar.owns(
             _site("try:\n    pass\nexcept (ValueError, TypeError):\n    pass\n")
@@ -103,7 +102,7 @@ def test_owns_typed_except_not_bare_else_finally_or_tuple() -> None:
         TrySugar.owns(
             _site("try:\n    pass\nexcept ValueError:\n    pass\nelse:\n    pass\n")
         )
-        is False
+        is True
     )
     assert (
         TrySugar.owns(
@@ -111,7 +110,7 @@ def test_owns_typed_except_not_bare_else_finally_or_tuple() -> None:
                 "try:\n    pass\nexcept ValueError:\n    pass\nfinally:\n    pass\n"
             )
         )
-        is False
+        is True
     )
     assert TrySugar.owns(_site("x = 1\n")) is False
 
@@ -122,32 +121,65 @@ def test_owns_typed_except_not_bare_else_finally_or_tuple() -> None:
         c.name == "TrySugar"
         for c in catalog.candidates_for(SugarRole.STATEMENT, simple)
     )
-    assert not list(catalog.candidates_for(SugarRole.STATEMENT, bare))
+    assert [
+        c.name for c in catalog.candidates_for(SugarRole.STATEMENT, bare)
+    ] == ["TrySugar"]
 
 
-def test_bare_except_is_a_loud_factory_gap() -> None:
-    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    node = ast.parse("try:\n    pass\nexcept:\n    pass\n").body[0]
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    assert raised.value.info.observed == "Try"
+def test_bare_except_uses_cited_catch_all_guard() -> None:
+    block = compose_block(
+        "    try:\n        return 1\n    except:\n        return 2\n"
+    )
+
+    from sugar_lift_py_tests.floor import GuardedReturn
+    from sugar_lift_py_tests.ir import atomic
+
+    assert isinstance(block.statements[1], GuardedReturn)
+    assert block.statements[1].guards == (atomic("py.except", []),)
 
 
-def test_try_finally_is_a_loud_factory_gap() -> None:
-    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    node = ast.parse(
-        "try:\n    pass\nexcept ValueError:\n    pass\nfinally:\n    pass\n"
-    ).body[0]
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    assert raised.value.info.observed == "Try"
+def test_try_finally_sequences_final_body_unconditionally() -> None:
+    from sugar_lift_py_tests.floor import InvValue, SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+
+    block = compose_block(
+        "    try:\n        return 1\n    finally:\n        assert cleanup\n",
+        {"cleanup": SymbolicValue(make_var("cleanup"))},
+    )
+
+    assert isinstance(block.statements[0], ReturnValue)
+    assert isinstance(block.statements[1], InvValue)
 
 
-def test_try_else_is_a_loud_factory_gap() -> None:
-    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    node = ast.parse(
-        "try:\n    pass\nexcept ValueError:\n    pass\nelse:\n    pass\n"
-    ).body[0]
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    assert raised.value.info.observed == "Try"
+def test_multiple_handlers_and_else_are_guarded_coordinates() -> None:
+    block = compose_block(
+        "    try:\n"
+        "        value = 1\n"
+        "    except ValueError:\n"
+        "        return 2\n"
+        "    except TypeError:\n"
+        "        return 3\n"
+        "    else:\n"
+        "        return value\n"
+    )
+
+    from sugar_lift_py_tests.floor import GuardedReturn
+
+    assert len(block.statements) == 3
+    assert all(isinstance(entry, GuardedReturn) for entry in block.statements)
+
+
+def test_runtime_selected_handler_type_is_a_named_effect() -> None:
+    from sugar_lift_py_tests.effect import TryHandlerDispatchRuntimeEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = compose_block(
+        "    try:\n        return 1\n    except choose_error():\n        return 2\n"
+    )
+
+    assert isinstance(outcome, BlockValue)
+    assert len(outcome.statements) == 1
+    assert isinstance(outcome.statements[0], Incomplete)
+    assert isinstance(
+        outcome.statements[0].effect, TryHandlerDispatchRuntimeEffect
+    )

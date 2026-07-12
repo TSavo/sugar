@@ -19,6 +19,7 @@ from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
 from .type_error_runtime_effect import TypeErrorRuntimeEffect
+from .try_handler_dispatch_runtime_effect import TryHandlerDispatchRuntimeEffect
 
 __all__ = [
     "AssertionFailedRuntimeEffect",
@@ -40,6 +41,7 @@ __all__ = [
     "SourceOracleEffect",
     "SubscriptStoreRuntimeEffect",
     "TypeErrorRuntimeEffect",
+    "TryHandlerDispatchRuntimeEffect",
     "effect_kind",
     "effect_reason",
     "effect_status",

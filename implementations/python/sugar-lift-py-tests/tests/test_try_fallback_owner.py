@@ -70,14 +70,16 @@ def test_try_except_else_keeps_both_exception_faces_guarded() -> None:
         "try:\n    x = 1\nexcept:\n    x = 2\nelse:\n    x = 3\n",
     ),
 )
-def test_unowned_try_else_shapes_still_panic(source: str) -> None:
-    with pytest.raises(FactoryPanic, match="observed=Try"):
-        build_node(
-            ast.parse(source).body[0],
-            filename="t.py",
-            role=SugarRole.STATEMENT,
-            ctx=FactoryBuildContext(filename="t.py", catalog=default_catalog()),
-        )
+def test_general_try_else_shapes_have_one_structural_owner(source: str) -> None:
+    result = build_node(
+        ast.parse(source).body[0],
+        filename="t.py",
+        role=SugarRole.STATEMENT,
+        ctx=FactoryBuildContext(filename="t.py", catalog=default_catalog()),
+    )
+
+    assert type(result.sugar).__name__ == "TrySugar"
+    assert result.audit_row.candidates == ["TrySugar"]
 
 
 def test_try_else_owner_structurally_carries_every_face() -> None:
