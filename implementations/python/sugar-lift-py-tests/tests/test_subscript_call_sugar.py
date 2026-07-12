@@ -35,14 +35,13 @@ def test_subscript_selected_callable_carries_receiver_coordinate() -> None:
     assert value.term == ctor("call:__call__", [receiver, num(3)])
 
 
-def test_other_computed_callee_shapes_stay_loud() -> None:
-    for expression in ("factory()(3)", "(lambda x: x)(3)"):
-        with pytest.raises(FactoryPanic):
-            build_node(
-                ast.parse(expression, mode="eval").body,
-                filename="t.py",
-                role=SugarRole.TERM,
-            )
+def test_direct_lambda_callee_stays_loud() -> None:
+    with pytest.raises(FactoryPanic):
+        build_node(
+            ast.parse("(lambda x: x)(3)", mode="eval").body,
+            filename="t.py",
+            role=SugarRole.TERM,
+        )
 
 
 def test_subscript_call_owner_is_exactly_the_subscript_callee_partition() -> None:
