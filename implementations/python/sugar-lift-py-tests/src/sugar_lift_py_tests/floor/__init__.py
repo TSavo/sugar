@@ -7,6 +7,7 @@ from .module_bound_var import ModuleBoundVar
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .call_site_value import CallSiteValue
+from .curried_loop_scope import CurriedLoopBody, CurriedLoopScope
 from .class_value import ClassValue
 from .comprehension_value import ComprehensionValue
 from .dict_literal_value import DictLiteralValue
@@ -114,6 +115,8 @@ __all__ = [
     "BuilderState",
     "Bv32Value",
     "CallSiteValue",
+    "CurriedLoopBody",
+    "CurriedLoopScope",
     "ClassValue",
     "ComprehensionValue",
     "DictLiteralValue",

@@ -3,10 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.sugar.while_sugar import (
+    _carried_names,
+    _has_loop_control,
+    _has_unclassified_mutation,
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +33,9 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     target_name: str
     iterable: SugarBody
     body: SugarBody
+    carried: tuple[str, ...]
+    curried: bool
+    unclassified_mutation: bool
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -49,6 +57,11 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             target_name=site.for_target_name(),
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
             body=ctx.build_body(site.for_body_block(), SugarRole.STATEMENT),
+            carried=tuple(
+                name for name in _carried_names(site) if name != site.for_target_name()
+            ),
+            curried=_has_loop_control(site),
+            unclassified_mutation=_has_unclassified_mutation(site),
             site=site,
         )
 
@@ -92,6 +105,44 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             site=self.site,
         )
         body_ctx = ScopeRebind(self.target_name, elem).extend_scope(ctx)
+        if self.curried:
+            from sugar_lift_py_tests.floor import CurriedLoopBody, CurriedLoopScope, FunctionCallable
+            from sugar_lift_py_tests.sugar.install_source_dig import _contextualized_dig_body
+
+            if self.unclassified_mutation:
+                from sugar_lift_py_tests.factory import factory_panic_gap
+
+                factory_panic_gap(
+                    owner="ForSugar", blame=str(self.site), observed="nonlocal mutation",
+                    requested="classifiable loop-carried local state",
+                    fix="rewrite attribute or subscript mutation as explicit carried locals",
+                )
+
+            values = tuple(body_ctx.temporal.value_if_bound(name) for name in self.carried)
+            if all(value is not None for value in values):
+                name = f"loop:{self.site}"
+                body = _contextualized_dig_body(
+                    SugarBody(
+                        sugar=CurriedLoopBody(self.body, self.carried),
+                        role=SugarRole.TERM,
+                    ),
+                    body_ctx,
+                )
+                callable_value = FunctionCallable(
+                    name=name, parameters=self.carried,
+                    parameter_kinds=("positional",) * len(self.carried), body=body,
+                )
+                callsite = callable_value.callsite(values, (), self.site).value
+                return Complete(CurriedLoopScope(callsite, self.carried))
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ForSugar",
+                blame=str(self.site),
+                observed=self.carried,
+                requested="statically bound loop-carried locals",
+                fix="bind every carried local before currying the loop",
+            )
         # Body is a BlockSugar; its BlockValue contribution splices outward.
         return self.body.reduce(body_ctx)
 
