@@ -62,8 +62,30 @@ def test_call_result_subscript_assign_is_a_coordinate_carrying_store_effect() ->
     assert isinstance(incomplete, Incomplete)
     assert isinstance(incomplete.effect, SubscriptStoreRuntimeEffect)
     assert "call:make" in incomplete.effect.reason
-    assert "StringValue(value='k')" in incomplete.effect.reason
-    assert "TermValue(value=9)" in incomplete.effect.reason
+    assert "_ConstStr(value='k'" in incomplete.effect.reason
+    assert "_ConstInt(value=9" in incomplete.effect.reason
+
+
+def test_callsite_store_reason_never_renders_floor_object_graphs() -> None:
+    class CoordinateOnlyValue(TermValue):
+        def __repr__(self) -> str:
+            raise AssertionError("store effects must cite terms, not object repr")
+
+    receiver = CallSiteValue(
+        target_name="make",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:make", []),
+        body=None,
+    )
+
+    outcome = receiver.setitem(
+        CoordinateOnlyValue(1), CoordinateOnlyValue(2), "t.py:1:0"
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert "_ConstInt(value=1" in outcome.reason
+    assert "_ConstInt(value=2" in outcome.reason
 
 
 def test_callsite_setitem_arm_does_not_replace_concrete_list_post_state() -> None:
