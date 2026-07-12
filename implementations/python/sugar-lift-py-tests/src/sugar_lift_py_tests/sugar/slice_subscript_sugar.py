@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import Any
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -14,9 +15,9 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
     """`x[a:b:c]` slice subscript.
 
     Deeper floors: SubscriptSugar leaves Slice indexes unowned. Own them as a
-    ``py.slice_subscript(recv, lower, upper, step)`` coordinate. Omitted bounds
-    are ``None`` terms. No fold of ground slices this PR — coordinate only
-    (fold can come later on StringValue/ArrayLiteral).
+    Build the receiver and literal integer bounds, then ask the receiver's
+    native subscript floor to consume a SliceValue. Concrete strings fold;
+    symbolic receivers emit ``py.subscript(recv, py.slice(...))``.
     """
 
     receiver: SugarBody
@@ -27,9 +28,16 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
 
     @classmethod
     def owns(cls, site) -> bool:
-        return (
-            site.observed == "Subscript"
-            and site.subscript_index().observed == "Slice"
+        if site.observed != "Subscript":
+            return False
+        index = site.subscript_index()
+        if index.observed != "Slice" or not _liftable_slice_receiver(
+            site.subscript_receiver()
+        ):
+            return False
+        return all(
+            bound is None or _literal_integer_bound(bound)
+            for bound in (index.slice_lower(), index.slice_upper(), index.slice_step())
         )
 
     @classmethod
@@ -75,7 +83,7 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
             lying=prefix + "def test_a():\n    assert A(5) is None\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: Any = None) -> Outcome:
         return self.receiver.reduce(ctx).and_then(
             lambda recv: self._reduce_bound(
                 self.lower, ctx, lambda lo: self._reduce_bound(
@@ -88,34 +96,13 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
 
     def _reduce_bound(self, body: SugarBody | None, ctx, cont) -> Outcome:
         if body is None:
-            from sugar_lift_py_tests.floor import SymbolicValue
-            from sugar_lift_py_tests.ir import ctor
-
-            return cont(SymbolicValue(ctor("None", [])))
+            return cont(None)
         return body.reduce(ctx).and_then(cont)
 
     def _emit(self, recv, lo, hi, st) -> Outcome:
-        from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.floor import SliceValue
 
-        return Complete(
-            CallSiteValue(
-                target_name="py.slice_subscript",
-                arg_values=(recv, lo, hi, st),
-                parameters=(),
-                term=ctor(
-                    "py.slice_subscript",
-                    [
-                        recv.to_term(owner=str(self.site)),
-                        lo.to_term(owner=str(self.site)),
-                        hi.to_term(owner=str(self.site)),
-                        st.to_term(owner=str(self.site)),
-                    ],
-                ),
-                body=None,
-                site=self.site,
-            )
-        )
+        return recv.subscript(SliceValue(lo, hi, st), self.site)
 
     def walk_children(self):
         kids = [self.receiver]
@@ -123,3 +110,31 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
             if b is not None:
                 kids.append(b)
         return tuple(kids)
+
+
+def _literal_integer_bound(bound) -> bool:
+    if bound.observed == "PrimitiveLiteral":
+        return type(bound.literal_value()) is int
+    if bound.observed == "UnaryOp" and bound.operator_kind() in {"UAdd", "USub"}:
+        operand = bound.unaryop_operand()
+        return (
+            operand.observed == "PrimitiveLiteral"
+            and type(operand.literal_value()) is int
+        )
+    return False
+
+
+def _liftable_slice_receiver(receiver) -> bool:
+    if receiver.observed == "PrimitiveLiteral":
+        return type(receiver.literal_value()) is str
+    return receiver.observed in {
+        "Name",
+        "Attribute",
+        "Call",
+        "Subscript",
+        "BinOp",
+        "JoinedStr",
+        "FormattedValue",
+        "List",
+        "Tuple",
+    }
