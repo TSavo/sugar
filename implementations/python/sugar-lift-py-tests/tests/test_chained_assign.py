@@ -48,9 +48,39 @@ def test_chained_owner_is_disjoint_from_plain_and_annotated_assign() -> None:
     assert AnnAssignSugar.owns(annotated)
 
 
-@pytest.mark.parametrize("source", ["a, b = pair", "a, *b = values", "box[0] = 5"])
-def test_other_assign_target_shapes_stay_loud(source: str) -> None:
+def _build_statement(source: str):
     node = ast.parse(source).body[0]
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    with pytest.raises(FactoryPanic):
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    return build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["a, *b = values", "(a, b), c = triple", "a = b, c = pair"],
+)
+def test_unowned_assign_target_shapes_stay_loud(source: str) -> None:
+    # Cross-slice gate: when a sibling slice starts OWNING one of these
+    # shapes, this test must fail by NAMING the new owner, so the fixture
+    # moves to a positive test instead of silently rotting red.
+    try:
+        built = _build_statement(source)
+    except FactoryPanic:
+        return
+    pytest.fail(
+        f"{source!r} is now owned by {type(built.sugar).__name__}; "
+        "move this fixture to that owner's positive tests and pick a "
+        "still-unowned shape for the loud-gap arm"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "owner_name"),
+    [
+        ("a, b = pair", "TupleUnpackAssignSugar"),
+        ("box[0] = 5", "SubscriptAssignSugar"),
+        ("obj.attr = 5", "AttributeAssignSugar"),
+    ],
+)
+def test_sibling_slices_own_their_assign_shapes(source: str, owner_name: str) -> None:
+    built = _build_statement(source)
+    assert type(built.sugar).__name__ == owner_name
