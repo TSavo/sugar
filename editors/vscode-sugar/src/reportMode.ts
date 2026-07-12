@@ -38,6 +38,11 @@ export interface ReportModePayload {
     unsat: number;
   };
   ranges: ReportModeRange[];
+  workspaceRanges?: Array<ReportModeRange & { uri: string }>;
+  workspace?: {
+    totals: ReportModePayload["totals"];
+    ranges: Array<ReportModeRange & { uri: string }>;
+  };
 }
 
 function dec(
@@ -112,6 +117,18 @@ export class ReportModePainter {
 
   onPayload(payload: ReportModePayload): void {
     this.byUri.set(payload.uri, payload);
+    // The server already grouped and counted workspace ranges. The host only
+    // projects each ready range list into the matching visible document.
+    for (const wr of payload.workspace?.ranges ?? []) {
+      const existing = this.byUri.get(wr.uri);
+      this.byUri.set(wr.uri, {
+        uri: wr.uri,
+        totals: payload.workspace!.totals,
+        ranges: [...(existing?.ranges ?? []).filter((r) => r.kind !== wr.kind || r.label !== wr.label), wr],
+        workspace: payload.workspace,
+      });
+      this.paintUri(wr.uri);
+    }
     this.paintUri(payload.uri);
     this.refreshStatus();
   }
@@ -131,7 +148,7 @@ export class ReportModePainter {
       this.status.tooltip = "Report mode on — awaiting sugar/reportMode";
       return;
     }
-    const t = p.totals;
+    const t = p.workspace?.totals ?? p.totals;
     const digStop = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "dig_stop").length;
     const digOpen = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "walk_open").length;
     const minorityRanges = (this.byUri.get(key!)?.ranges ?? []).filter((r) => r.kind === "minority").length;
