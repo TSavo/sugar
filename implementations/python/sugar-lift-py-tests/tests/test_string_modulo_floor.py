@@ -69,7 +69,7 @@ def test_percent_format_distributes_over_guarded_tuple_element() -> None:
     )
 
 
-def test_distributed_guarded_format_still_refuses_raw_term_projection() -> None:
+def test_distributed_guarded_format_projects_conditional_term() -> None:
     guard = atomic("choose", [])
     outcome = StringValue("%s").modulo(
         TupleValue((GuardedValue(guard, StringValue("a"), StringValue("b")),)),
@@ -77,10 +77,10 @@ def test_distributed_guarded_format_still_refuses_raw_term_projection() -> None:
     )
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, GuardedValue)
-    assert "ite" not in repr(outcome.value)
-
-    with pytest.raises(FactoryPanic, match="observed=GuardedValue.*to a term"):
-        outcome.value.to_term(owner="no ite escape hatch")
+    term = outcome.value.to_term(owner="guarded format")
+    assert term.name == "py.conditional"
+    assert term.args[1] == str_const("a")
+    assert term.args[2] == str_const("b")
 
 
 def test_string_modulo_accepts_concrete_scalar_and_tuple_floors() -> None:

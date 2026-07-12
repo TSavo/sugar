@@ -178,30 +178,23 @@ class SymbolicValue(FloorValue):
             )
         )
 
-    def floor_divide(self, other, site):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+    def divide(self, other, site):
+        return self._arithmetic_coordinate(other, site, "/")
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "//",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+    def floor_divide(self, other, site):
+        return self._arithmetic_coordinate(other, site, "//")
 
     def modulo(self, other, site):
+        return self._arithmetic_coordinate(other, site, "%")
+
+    def _arithmetic_coordinate(self, other, site, operator):
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
             SymbolicValue(
                 ctor(
-                    "%",
+                    operator,
                     [
                         self.to_term(owner=str(site)),
                         other.to_term(owner=str(site)),
