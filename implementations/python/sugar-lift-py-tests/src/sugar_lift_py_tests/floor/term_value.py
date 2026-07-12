@@ -178,6 +178,12 @@ class TermValue(FloorValue):
 
         return Complete(TermValue(-self.value))
 
+    def absolute(self, site):
+        del site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(TermValue(abs(self.value)))
+
     def unary_plus(self, site):
         # Unary plus: fold to +value (identity for numbers).
         del site
