@@ -73,7 +73,9 @@ def test_owns_single_item_not_multi_or_plain_expr() -> None:
     """(3) owns single-item with; multi-item stays unowned; not Expr."""
     assert WithSugar.owns(_site("with cm as y:\n    pass\n")) is True
     assert WithSugar.owns(_site("with cm:\n    pass\n")) is True
-    assert WithSugar.owns(_site("with a, b:\n    pass\n")) is False
+    assert WithSugar.owns(_site("with a, b:\n    pass\n")) is True
+    assert WithSugar.owns(_site("with a as x, b as y:\n    pass\n")) is True
+    assert WithSugar.owns(_site("with a as (x, y):\n    pass\n")) is False
     assert WithSugar.owns(_site("x = 1\n")) is False
 
     catalog = default_catalog()
@@ -83,7 +85,10 @@ def test_owns_single_item_not_multi_or_plain_expr() -> None:
         c.name == "WithSugar"
         for c in catalog.candidates_for(SugarRole.STATEMENT, single)
     )
-    assert not list(catalog.candidates_for(SugarRole.STATEMENT, multi))
+    assert [
+        candidate.name
+        for candidate in catalog.candidates_for(SugarRole.STATEMENT, multi)
+    ] == ["WithSugar"]
 
 
 def test_multi_item_with_is_a_loud_factory_gap() -> None:

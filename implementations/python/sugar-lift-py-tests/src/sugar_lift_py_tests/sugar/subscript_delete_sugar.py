@@ -28,7 +28,6 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
         return (
             len(targets) == 1
             and targets[0].observed == "Subscript"
-            and targets[0].subscript_index().observed != "Slice"
         )
 
     @classmethod

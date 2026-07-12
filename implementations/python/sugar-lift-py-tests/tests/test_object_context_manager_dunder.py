@@ -139,3 +139,26 @@ def t():
     assert isinstance(block, BlockValue)
     assert block.statements == (ReturnValue(TermValue(20)),)
     assert ("WithSugar", "context_manager_with", "ContextManagerOperation") in operation_log
+
+
+def test_multi_item_with_enters_left_to_right_and_exits_right_to_left() -> None:
+    source = """\
+class Manager:
+    def __enter__(self):
+        return 1
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+def t():
+    with Manager() as left, Manager() as right:
+        return left + right
+"""
+
+    value, operation_log = _returned_value(source, "t")
+
+    assert value == TermValue(2)
+    assert [entry for entry in operation_log if entry[1] == "context_manager_with"] == [
+        ("WithSugar", "context_manager_with", "ContextManagerOperation"),
+        ("WithSugar", "context_manager_with", "ContextManagerOperation"),
+    ]
