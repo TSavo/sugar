@@ -23,3 +23,28 @@ class Bv32Value(FloorValue):
 
     def bitwise_with(self, operation, ctx):
         return operation.bitwise_bv32(self, ctx)
+
+    def bitwise_and(self, other, site):
+        return self._binary_bitwise(other, site, "bv32.and")
+
+    def bitwise_xor(self, other, site):
+        return self._binary_bitwise(other, site, "bv32.xor")
+
+    def left_shift(self, other, site):
+        return self._binary_bitwise(other, site, "bv32.shl")
+
+    def right_shift(self, other, site):
+        return self._binary_bitwise(other, site, "bv32.lshr")
+
+    def _binary_bitwise(self, other, site, operator):
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            Bv32Value(
+                ctor(
+                    operator,
+                    [self.to_term(owner=str(site)), other.to_term(owner=str(site))],
+                )
+            )
+        )

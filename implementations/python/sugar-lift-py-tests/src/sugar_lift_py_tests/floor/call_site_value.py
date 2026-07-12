@@ -46,6 +46,11 @@ class CallSiteValue(FloorValue):
             PredicateValue(py_truthy(self.term), site, operand_callsites=(self,))
         )
 
+    def bitwise_invert(self, site):
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        return SymbolicValue(self.term).bitwise_invert(site)
+
     def test_python_type(self, value, site):
         if self.target_name != "type":
             return super().test_python_type(value, site)
