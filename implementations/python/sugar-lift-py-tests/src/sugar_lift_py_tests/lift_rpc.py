@@ -1123,10 +1123,36 @@ def audit_lift_file(
         # None arm so this audit door can hold and paint the gap red.
         label = f"{filename}:{stmt.line}:{stmt.col}"
         try:
+            lexical_temporal = module_temporal
+            for class_stmt in module.statements():
+                if class_stmt.observed != "ClassDef":
+                    continue
+                body = class_stmt.class_body()
+                if not any(item.node is stmt.node for item in body):
+                    continue
+                for item in body:
+                    if item.node is stmt.node:
+                        break
+                    if item.observed != "Assign" or item.assign_target_name() is None:
+                        continue
+                    seed_ctx = FactoryBuildContext(
+                        filename=filename,
+                        catalog=catalog,
+                        temporal=lexical_temporal,
+                        module_temporal=module_temporal,
+                        import_aliases=import_aliases,
+                        from_imports=from_imports,
+                        name_resolver=name_resolver,
+                    )
+                    seed = build_node(
+                        item, filename=filename, role=SugarRole.STATEMENT, ctx=seed_ctx
+                    ).sugar.desugar(seed_ctx)
+                    lexical_temporal = seed.extend_scope(seed_ctx).temporal
+                break
             ctx = FactoryBuildContext(
                 filename=filename,
                 catalog=catalog,
-                temporal=module_temporal,
+                temporal=lexical_temporal,
                 module_temporal=module_temporal,
                 import_aliases=import_aliases,
                 from_imports=from_imports,

@@ -115,6 +115,11 @@ class PredicateValue(FloorValue):
                 joined_bindings, joined_effects = self._joined_bindings(
                     then_scope, else_scope, ctx
                 )
+            elif then_exits != else_exits:
+                surviving_scope = else_scope if then_exits else then_scope
+                joined_bindings, joined_effects = self._surviving_bindings(
+                    surviving_scope, ctx
+                )
         return Complete(
             GuardedFaces(
                 guard=self.formula,
@@ -167,6 +172,27 @@ class PredicateValue(FloorValue):
                 )
             )
         return tuple(joined), tuple(effects)
+
+    def _surviving_bindings(self, surviving_scope, ctx):
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        before = {binding.name: binding.value for binding in ctx.temporal.bindings}
+        surviving = {
+            binding.name: binding.value
+            for binding in surviving_scope.temporal.bindings
+        }
+        bindings = []
+        effects = []
+        for name, binding in sorted(surviving.items()):
+            if before.get(name) is binding:
+                continue
+            answer = binding.answer(surviving_scope)
+            if isinstance(answer, Incomplete):
+                effects.append(answer)
+                continue
+            assert isinstance(answer, Complete)
+            bindings.append((name, answer.value))
+        return tuple(bindings), tuple(effects)
 
 
 def _conditional_effect(entries: tuple, formula):
