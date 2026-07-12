@@ -775,7 +775,7 @@ def _module_import_temporal(module, catalog) -> "object":
                     mod_term = name
                 temporal = temporal.bind_value(
                     bound,
-                    ImportAliasValue(mod_term, bound),
+                    ImportAliasValue(mod_term, bound, import_target=mod_term),
                 )
         elif observed == "ImportFrom":
             for name, asname in stmt.importfrom_names():
@@ -784,7 +784,15 @@ def _module_import_temporal(module, catalog) -> "object":
                 bound = asname or name
                 temporal = temporal.bind_value(
                     bound,
-                    ImportAliasValue(name, bound),
+                    ImportAliasValue(
+                        name,
+                        bound,
+                        import_target=(
+                            f"{stmt.importfrom_module()}.{name}"
+                            if stmt.importfrom_module()
+                            else name
+                        ),
+                    ),
                 )
         elif observed == "ClassDef":
             name = stmt.class_name()

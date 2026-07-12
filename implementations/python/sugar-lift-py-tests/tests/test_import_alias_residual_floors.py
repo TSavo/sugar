@@ -28,28 +28,27 @@ def _assert_import_effect(outcome, operator: str) -> None:
         ("bitwise_xor", "^"),
     ],
 )
-def test_import_alias_binary_floors_preserve_dynamic_module_effect(
+def test_diggable_import_binary_floor_panics_until_source_dig_is_wired(
     method: str, operator: str
 ) -> None:
     alias = ImportAliasValue("numpy", "np")
     other = TermValue(2)
 
-    _assert_import_effect(getattr(alias, method)(other, "alias.py:1"), operator)
+    with pytest.raises(FactoryPanic, match="dig installed import source"):
+        getattr(alias, method)(other, "alias.py:1")
 
 
 @pytest.mark.parametrize(
     ("method", "operator"),
     [("unary_minus", "-"), ("unary_plus", "+"), ("bitwise_invert", "~")],
 )
-def test_import_alias_unary_floors_preserve_dynamic_module_effect(
+def test_diggable_import_unary_floor_cannot_mint_runtime_effect(
     method: str, operator: str
 ) -> None:
     alias = ImportAliasValue("numpy", "np")
 
-    outcome = getattr(alias, method)("alias.py:1")
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, ImportedModuleRuntimeEffect)
-    assert f"`{operator}np`" in outcome.effect.reason
+    with pytest.raises(FactoryPanic, match="dig installed import source"):
+        getattr(alias, method)("alias.py:1")
 
 
 def test_import_alias_coordinate_remains_the_source_stated_binding() -> None:
@@ -60,13 +59,21 @@ def test_import_alias_coordinate_remains_the_source_stated_binding() -> None:
     assert [arg.value for arg in term.args] == ["np", "numpy"]
 
 
-def test_import_alias_format_floor_preserves_dynamic_module_effect() -> None:
-    alias = ImportAliasValue("numpy", "np")
+def test_unresolvable_native_import_floor_has_operand_witness() -> None:
+    alias = ImportAliasValue("StringIO", "StringIO", import_target="_io.StringIO")
 
-    outcome = alias.format_data_model(StringValue(""), "alias.py:1", None)
+    outcome = alias.add(TermValue(1), "alias.py:1")
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, ImportedModuleRuntimeEffect)
-    assert "`format(np, ...)`" in outcome.effect.reason
+    assert outcome.effect.witness.operand == alias.to_term(owner="test")
+    assert outcome.effect.witness.locus == "alias.py:1"
+
+
+def test_diggable_import_format_floor_panics() -> None:
+    alias = ImportAliasValue("numpy", "np")
+
+    with pytest.raises(FactoryPanic, match="dig installed import source"):
+        alias.format_data_model(StringValue(""), "alias.py:1", None)
 
 
 def test_genuinely_undefined_name_remains_loud() -> None:
