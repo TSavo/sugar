@@ -23,6 +23,30 @@ class SymbolicValue(FloorValue):
 
     term: Term
 
+    def test_python_type(self, value, site):
+        """Dispatch a vendor type test from an existing ``python:type`` term."""
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.ir import _ConstStr, _Ctor
+
+        term = self.term
+        if (
+            type(term) is _Ctor
+            and term.name == "python:type"
+            and len(term.args) == 1
+            and type(term.args[0]) is _ConstStr
+        ):
+            return value.python_isinstance(term.args[0].value, term, site)
+        factory_panic_gap(
+            owner="SymbolicValue.test_python_type",
+            blame=str(site),
+            observed=repr(term),
+            requested="identified python:type coordinate",
+            fix=(
+                "resolve the type name through BuiltinTypeNameSugar; unknown "
+                "local classes and tuple-of-types remain loud"
+            ),
+        )
+
     def to_term(self, *, owner: str):
         del owner
         return self.term

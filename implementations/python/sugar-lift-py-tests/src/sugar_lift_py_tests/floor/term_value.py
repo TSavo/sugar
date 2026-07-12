@@ -13,6 +13,26 @@ class TermValue(FloorValue):
     # The Int/Real SMT sort is an emission-time inference, not a value-level split.
     value: int | float
 
+    def python_isinstance(self, type_name: str, type_term, site):
+        del type_term
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        matches = (
+            (type(self.value) is int and type_name == "int")
+            or (type(self.value) is float and type_name == "float")
+        )
+        return Complete(
+            TrueBoolLiteralSugar(site=site)
+            if matches
+            else FalseBoolLiteralSugar(site=site)
+        )
+
     def add_with(self, operation: Any, ctx: Any) -> Any:
         return operation.add_term(self, ctx)
 
