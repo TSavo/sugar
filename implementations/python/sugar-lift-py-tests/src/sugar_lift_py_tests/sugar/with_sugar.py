@@ -25,8 +25,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
     the body's BlockValue, which splices into the enclosing record.
     """
 
-    context: SugarBody
-    as_name: str | None
+    items: tuple[tuple[SugarBody, str | None], ...]
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -34,22 +33,24 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
     def owns(cls, site) -> bool:
         if site.observed != "With":
             return False
-        # One context manager only; multi-item stays a loud gap.
-        if site.with_item_count() != 1:
-            return False
-        # Optional as-target is either absent or a simple Name.
-        observed = site.with_optional_vars_observed()
-        if observed is not None and site.with_optional_vars_name() is None:
-            return False
-        return True
+        return all(
+            site.with_optional_vars_observed(index) is None
+            or site.with_optional_vars_name(index) is not None
+            for index in range(site.with_item_count())
+        )
 
     @classmethod
     def new(cls, site, ctx) -> "WithSugar":
         # Context expr (TERM), optional as-name, body block (STATEMENT).
         # Never reduce here.
         return cls(
-            context=ctx.build_body(site.with_context_expr(0), SugarRole.TERM),
-            as_name=site.with_optional_vars_name(0),
+            items=tuple(
+                (
+                    ctx.build_body(site.with_context_expr(index), SugarRole.TERM),
+                    site.with_optional_vars_name(index),
+                )
+                for index in range(site.with_item_count())
+            ),
             body=ctx.build_body(site.with_body(), SugarRole.STATEMENT),
             site=site,
         )
@@ -74,11 +75,17 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
 
     def desugar(self, ctx: object = None) -> Outcome:
         # Reduce the context; enter-coordinate + body under optional as-binding.
-        return self.context.reduce(ctx).and_then(
-            lambda cm: self._enter_and_body(cm, ctx)
+        return self._enter_items(self.items, ctx)
+
+    def _enter_items(self, remaining, ctx) -> Outcome:
+        if not remaining:
+            return self.body.reduce(ctx)
+        (context, as_name), *rest = remaining
+        return context.reduce(ctx).and_then(
+            lambda cm: self._enter_one(cm, as_name, tuple(rest), ctx)
         )
 
-    def _enter_and_body(self, cm, ctx: object) -> Outcome:
+    def _enter_one(self, cm, as_name, remaining, ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor import (
             CallSiteValue,
             ObjectValue,
@@ -111,12 +118,11 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         enter = cm.call_method_value("__enter__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx).value
         entered = force_floor(enter, ctx, owner="WithSugar.__enter__")
         body_ctx = ctx
-        if self.as_name is not None:
+        if as_name is not None:
             class BindValueOperation: pass
             ctx.record_operation(owner="WithSugar", method_name="bind_with", operation=BindValueOperation())
-            body_ctx = ScopeRebind(self.as_name, entered).extend_scope(ctx)
-        # Body is a BlockSugar; its BlockValue contribution splices outward.
-        outcome = self.body.reduce(body_ctx)
+            body_ctx = ScopeRebind(as_name, entered).extend_scope(ctx)
+        outcome = self._enter_items(remaining, body_ctx)
         exit_call = cm.call_method_value("__exit__", (entered, entered, entered), owner=type(self).__name__, blame=str(self.site), ctx=ctx).value
         exit_value = force_floor(exit_call, ctx, owner="WithSugar.__exit__", project_callsite=False)
         if isinstance(exit_value, TermValue) and bool(exit_value.value):
@@ -124,4 +130,4 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         return outcome
 
     def walk_children(self):
-        return (self.context, self.body)
+        return (*(context for context, _as_name in self.items), self.body)

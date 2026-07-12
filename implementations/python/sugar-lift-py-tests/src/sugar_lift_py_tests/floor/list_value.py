@@ -137,8 +137,39 @@ class ListValue(FloorValue):
         )
 
     def delitem(self, index, site):
+        from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if isinstance(index, SliceValue):
+            bounds = (index.lower, index.upper, index.step)
+            if all(
+                bound is None
+                or (type(bound) is TermValue and type(bound.value) is int)
+                for bound in bounds
+            ):
+                lower, upper, step = (
+                    bound.value if isinstance(bound, TermValue) else None
+                    for bound in bounds
+                )
+                selected = set(range(len(self.elements))[slice(lower, upper, step)])
+                return Complete(
+                    ListValue(
+                        tuple(
+                            value
+                            for position, value in enumerate(self.elements)
+                            if position not in selected
+                        )
+                    )
+                )
+            from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+
+            return Incomplete(
+                SubscriptStoreRuntimeEffect(
+                    "list slice deletion depends on runtime slice bounds; "
+                    f"owner=ListValue.delitem site={site}"
+                )
+            )
 
         if type(index) is TermValue and type(index.value) is int:
             i = index.value

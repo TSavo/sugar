@@ -12,7 +12,16 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
+from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    OpaqueOpCallsite,
+    ReturnValue,
+    SymbolicValue,
+    TermValue,
+)
+from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
@@ -75,6 +84,35 @@ def test_subscript_delete_reuses_store_post_state_and_negative_index_floor() -> 
 
     built = _build_statement("del xs[-1]")
     assert type(built.sugar).__name__ == "SubscriptDeleteSugar"
+
+
+def test_full_slice_delete_constructs_the_list_post_state() -> None:
+    block = compose_block(
+        "    xs = [1, 2, 3]\n    del xs[:]\n    return len(xs)\n"
+    )
+    returned = block.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, OpaqueOpCallsite)
+    assert returned.value.computed == TermValue(0)
+
+    built = _build_statement("del xs[:]")
+    assert type(built.sugar).__name__ == "SubscriptDeleteSugar"
+
+
+def test_runtime_slice_delete_is_a_named_store_effect() -> None:
+    block = compose_block(
+        "    xs = [1, 2, 3]\n    del xs[start:]\n    return 1\n",
+        binds={"start": SymbolicValue(make_var("start"))},
+    )
+
+    effect = next(statement for statement in block.statements if isinstance(statement, Incomplete))
+    assert isinstance(effect.effect, SubscriptStoreRuntimeEffect)
+    assert "runtime slice bounds" in effect.reason
+
+
+def test_heterogeneous_multi_delete_remains_loud() -> None:
+    with pytest.raises(FactoryPanic):
+        _build_statement("del xs[:], name")
 
 
 def test_full_datetime_delete_is_owned_and_later_assertions_now_lift(cpython_311_datetime_path) -> None:
