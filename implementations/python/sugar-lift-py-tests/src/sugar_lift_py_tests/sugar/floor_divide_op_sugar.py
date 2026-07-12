@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field as dataclass_field
+
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar_body import SugarBody
+
+
+@dataclass(frozen=True)
+class FloorDivideOpSugar(Sugar, role=SugarRole.TERM):
+    """The `//` operator, dispatched through the floor-division floor."""
+
+    left: SugarBody
+    right: SugarBody
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return site.observed == "BinOp" and site.operator_kind() == "FloorDiv"
+
+    @classmethod
+    def new(cls, site, ctx) -> "FloorDivideOpSugar":
+        return cls(
+            left=ctx.build_body(site.binop_left(), SugarRole.TERM),
+            right=ctx.build_body(site.binop_right(), SugarRole.TERM),
+            site=site,
+        )
+
+    @classmethod
+    def witnesses(cls):
+        prefix = "def A(z):\n    return 7 // 2\n\n"
+        return _call_pair(
+            name="floor_divide_return",
+            owner_sugar="FloorDivideOpSugar",
+            truthful=prefix + "def test_a():\n    assert A(5) == 3\n",
+            lying=prefix + "def test_a():\n    assert A(5) == 4\n",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        return self.left.reduce(ctx).and_then(
+            lambda left: self.right.reduce(ctx).and_then(
+                lambda right: left.floor_divide(right, self.site)
+            )
+        )
+
+    def walk_children(self):
+        return (self.left, self.right)
