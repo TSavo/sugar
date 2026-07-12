@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import Any
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
@@ -13,9 +14,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class AbsCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     """The vendor numeric call ``abs(value)``.
 
-    Exactly one positional, non-starred argument to the plain builtin name is
-    owned. Keywords, starred arguments, methods, and malformed arities remain
-    on the existing CallSugar or loud-gap path.
+    Exactly one positional, non-starred numeric-shaped argument to the plain
+    builtin name is owned. Obvious nonnumeric literals, keywords, starred
+    arguments, methods, and malformed arities remain on the loud None arm.
     """
 
     arg: SugarBody
@@ -23,14 +24,16 @@ class AbsCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return (
+        if not (
             site.observed == "Call"
             and site.call_receiver() is None
             and site.call_target_name() == "abs"
             and site.call_arg_count() == 1
             and not site.call_has_keywords()
             and not any(arg.observed == "Starred" for arg in site.call_args())
-        )
+        ):
+            return False
+        return _numeric_operand_shape(site.call_args()[0])
 
     @classmethod
     def new(cls, site, ctx) -> "AbsCallSugar":
@@ -49,8 +52,21 @@ class AbsCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             lying=prefix + "def test_a():\n    assert A(-5) == -5\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: Any = None) -> Outcome:
         return self.arg.reduce(ctx).and_then(lambda value: value.absolute(self.site))
 
     def walk_children(self):
         return (self.arg,)
+
+
+def _numeric_operand_shape(arg) -> bool:
+    if arg.observed == "PrimitiveLiteral":
+        return type(arg.literal_value()) in {int, float}
+    return arg.observed in {
+        "Name",
+        "BinOp",
+        "UnaryOp",
+        "Call",
+        "Attribute",
+        "Subscript",
+    }
