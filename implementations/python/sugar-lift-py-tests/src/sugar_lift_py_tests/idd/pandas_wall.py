@@ -222,11 +222,17 @@ def summarize_pandas_completed_wall(
 def _completed_wall_gap_rows(
     report_json: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], ...]:
-    """factoryWalk rows whose verdict is gap (production structured reds)."""
-    summary = report_json.get("factoryAuditSummary")
-    if not isinstance(summary, Mapping):
-        return ()
-    walk = summary.get("factoryWalk")
+    """factoryWalk rows whose verdict is gap (production structured reds).
+
+    THE REPORT SHAPE (#4102 second fix): `sugar lift --report --json` assembles
+    `factoryWalk` at the TOP LEVEL of report.json -- there is no
+    factoryAuditSummary key in the assembled report (that nesting exists only
+    inside the kit RPC payload). The first fix read the RPC shape, so the
+    selector was always empty and an 11,586-gap production report summarized
+    as ZERO with a green exit. Read the report's real shape; the fixture in
+    the bad-twin test is built from real production rows.
+    """
+    walk = report_json.get("factoryWalk")
     if not isinstance(walk, list):
         return ()
     rows: list[Mapping[str, Any]] = []
