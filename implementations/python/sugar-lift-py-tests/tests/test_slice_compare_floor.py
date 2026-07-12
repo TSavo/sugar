@@ -54,8 +54,8 @@ def test_line_preserving_datetime_slice_unit_fixture_lifts_and_cites() -> None:
     ]
 
 
-def test_full_datetime_artifact_lifts_slice_assertions_after_context_floors() -> None:
-    path = Path.home() / ".cache/sugar/sources/cpython-3.11/datetime.py"
+def test_full_datetime_artifact_lifts_slice_assertions_after_context_floors(cpython_311_datetime_path) -> None:
+    path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
 

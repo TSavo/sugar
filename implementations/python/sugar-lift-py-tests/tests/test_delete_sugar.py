@@ -77,8 +77,8 @@ def test_subscript_delete_reuses_store_post_state_and_negative_index_floor() -> 
     assert type(built.sugar).__name__ == "SubscriptDeleteSugar"
 
 
-def test_full_datetime_delete_is_owned_and_later_assertions_now_lift() -> None:
-    path = Path.home() / ".cache/sugar/sources/cpython-3.11/datetime.py"
+def test_full_datetime_delete_is_owned_and_later_assertions_now_lift(cpython_311_datetime_path) -> None:
+    path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
 
