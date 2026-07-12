@@ -17,9 +17,9 @@ class TemporalContext:
 
     @classmethod
     def empty(cls) -> "TemporalContext":
-        from .builtin_exception_bindings import builtin_exception_temporal
+        from .builtin_name_bindings import builtin_name_temporal
 
-        return builtin_exception_temporal()
+        return builtin_name_temporal()
 
     def value_for(self, name: str) -> FloorValue:
         for binding in reversed(self.bindings):
