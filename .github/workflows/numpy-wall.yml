@@ -7,12 +7,13 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   numpy-wall:
     name: build numpy wall
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 45
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -32,8 +33,30 @@ jobs:
       - name: Install Python wall inputs
         run: python -m pip install --quiet numpy
 
-      - name: Build and check NumPy wall
-        run: make numpy-wall
+      - name: Mint recovered NumPy frontier
+        id: wall
+        shell: bash
+        run: |
+          set +e
+          make numpy-wall
+          wall_exit=$?
+          set -e
+          echo "wall_exit=$wall_exit" >> "$GITHUB_OUTPUT"
+          test -s .sugar/numpy-wall/frontier.json
+
+      - name: Publish NumPy telemetry vector
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python tools/wall_frontier_telemetry.py \
+            --frontier .sugar/numpy-wall/frontier.json \
+            --wall numpy \
+            --run-url "$RUN_URL" \
+            --output .sugar/numpy-wall/telemetry.md \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          gh issue comment 4102 --repo "$GITHUB_REPOSITORY" \
+            --body-file .sugar/numpy-wall/telemetry.md
 
       - name: Upload NumPy wall artifacts
         if: always()
@@ -41,5 +64,4 @@ jobs:
         with:
           name: numpy-wall
           path: .sugar/numpy-wall/
-          if-no-files-found: ignore
-
+          if-no-files-found: error
