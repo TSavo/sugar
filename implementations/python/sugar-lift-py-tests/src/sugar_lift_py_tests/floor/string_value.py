@@ -18,6 +18,22 @@ if TYPE_CHECKING:
 class StringValue(FloorValue):
     value: str
 
+    def python_isinstance(self, type_name: str, type_term, site):
+        del type_term
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(
+            TrueBoolLiteralSugar(site=site)
+            if type_name == "str"
+            else FalseBoolLiteralSugar(site=site)
+        )
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import str_const

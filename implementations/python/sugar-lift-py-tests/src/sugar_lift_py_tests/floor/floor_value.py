@@ -1017,3 +1017,35 @@ class FloorValue:
                 message=info.message,
             ),
         )
+    def test_python_type(self, value, site):
+        """Only a ``python:type`` coordinate may dispatch a vendor type test."""
+        del value
+        from sugar_lift_py_tests.factory import factory_panic_gap
+
+        factory_panic_gap(
+            owner="FloorValue.test_python_type",
+            blame=str(site),
+            observed=type(self).__name__,
+            requested="python:type coordinate dispatch",
+            fix=(
+                "reduce the second isinstance argument through "
+                "BuiltinTypeNameSugar; tuple and unknown local types stay loud"
+            ),
+        )
+
+    def python_isinstance(self, type_name: str, type_term, site):
+        """Emit the reserved tester atom when this value is not ground-known."""
+        del type_name
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import atomic
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "adt.is_python_type",
+                    [self.to_term(owner="FloorValue.python_isinstance"), type_term],
+                ),
+                site,
+            )
+        )
