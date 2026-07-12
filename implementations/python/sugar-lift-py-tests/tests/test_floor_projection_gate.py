@@ -5,9 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.factory import factory_panic
-from sugar_lift_py_tests.floor import BoolValue, FloorValue, TermValue
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.floor import FloorValue, TermValue
 from sugar_lift_py_tests.ir import bool_const, num
+from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
 
@@ -31,15 +35,21 @@ def test_term_value_nonfinite_float_does_not_hard_crash_to_term() -> None:
     assert nan_term == real_lit("NaN") or str(nan_term).lower().find("nan") >= 0
 
 
-def test_bool_value_projects_via_ownership() -> None:
-    assert BoolValue(True).to_term(owner="test") == bool_const(True)
+def test_production_bool_floor_projects_via_ownership() -> None:
+    node = ast.parse("True", mode="eval").body
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+
+    sugar = build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx).sugar
+
+    assert isinstance(sugar, TrueBoolLiteralSugar)
+    assert sugar.to_term(owner="test") == bool_const(True)
 
 
 def test_unprojectable_floor_value_gap_panics() -> None:
     class NewFloor(FloorValue):
         pass
 
-    with pytest.raises(FactoryGap) as exc:
+    with pytest.raises(FactoryPanic) as exc:
         NewFloor().to_term(owner="test")
     assert exc.value.info.to_json()["gap_kind"] == "Floor"
     assert exc.value.info.to_json()["gap_locus"] == "Projection"
@@ -48,7 +58,7 @@ def test_unprojectable_floor_value_gap_panics() -> None:
 _FLOOR_TYPES = {
     "ArrayLiteral",
     "BlockValue",
-    "BoolValue",
+    "FalseBoolLiteralSugar",
     "BoundVar",
     "BuilderState",
     "Bv32Value",
@@ -71,6 +81,7 @@ _FLOOR_TYPES = {
     "SupportValue",
     "SymbolicValue",
     "TermValue",
+    "TrueBoolLiteralSugar",
     "TupleLiteralValue",
 }
 _ALLOWED_DIRS = ("floor/", "operations/")
