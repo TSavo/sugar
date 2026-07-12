@@ -40,3 +40,10 @@ class BoundVar(FloorValue):
     def answer(self, ctx=None):
         # A reference recomposes the source against the DEFINITION scope.
         return self.source.reduce(self.scope if self.scope is not None else ctx)
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.outcome import complete_value
+
+        outcome = self.answer(self.scope)
+        value = complete_value(outcome, owner=f"{owner} bound source")
+        return value.to_term(owner=owner)

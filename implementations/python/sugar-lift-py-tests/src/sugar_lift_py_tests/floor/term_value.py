@@ -116,6 +116,19 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(self.value + other.value))
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        if type(other) in (TrueBoolLiteralSugar, FalseBoolLiteralSugar):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                TermValue(self.value + (1 if type(other) is TrueBoolLiteralSugar else 0))
+            )
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
