@@ -193,6 +193,15 @@ impl ResolvedReportFile {
         }
 
         let normalized = file.replace('\\', "/");
+        let normalized_root = project_root.to_string_lossy().replace('\\', "/");
+        if windows_drive_path(&normalized_root) || posix_absolute_path(&normalized_root) {
+            let joined = format!(
+                "{}/{}",
+                normalized_root.trim_end_matches('/'),
+                normalized.trim_start_matches('/')
+            );
+            return Self::resolve(&joined, Path::new(""));
+        }
         let source_path = project_root.join(normalized);
         let uri = Url::from_file_path(&source_path)
             .map(|url| url.to_string())
@@ -1206,6 +1215,25 @@ mod tests {
             });
             assert_eq!(loaded.as_deref(), Some("producer source"));
         }
+    }
+
+    #[test]
+    fn relative_report_row_with_posix_producer_root_resolves_host_independently() {
+        let row = json!({
+            "file": "tests/test_serializer.py",
+            "line": 29,
+            "name": "coerce_str",
+            "end_line": 34
+        });
+
+        let resolved = ResolvedReportFile::from_row(&row, Path::new("/tmp\\"))
+            .expect("relative row under POSIX producer root resolves on every host");
+
+        assert_eq!(resolved.uri(), "file:///tmp/tests/test_serializer.py");
+        assert_eq!(
+            resolved.source_path().to_string_lossy().replace('\\', "/"),
+            "/tmp/tests/test_serializer.py"
+        );
     }
 
     /// Dig-stop (walk red) is a distinct paint channel from prove UNSAT.
