@@ -5,6 +5,7 @@ from .coverage_gap_effect import CoverageGapEffect
 from .conditional_expression_runtime_effect import ConditionalExpressionRuntimeEffect
 from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .dynamic_format_runtime_effect import DynamicFormatRuntimeEffect
+from .getattr_runtime_effect import GetattrRuntimeEffect
 from .effect import Effect, effect_kind, effect_reason, effect_status, require_effect
 from .index_error_runtime_effect import IndexErrorRuntimeEffect
 from .key_error_runtime_effect import KeyErrorRuntimeEffect
@@ -23,6 +24,7 @@ __all__ = [
     "ConditionalExpressionRuntimeEffect",
     "DivisionByZeroRuntimeEffect",
     "DynamicFormatRuntimeEffect",
+    "GetattrRuntimeEffect",
     "Effect",
     "IndexErrorRuntimeEffect",
     "KeyErrorRuntimeEffect",

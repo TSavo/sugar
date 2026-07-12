@@ -53,7 +53,15 @@ class AbsCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         )
 
     def desugar(self, ctx: Any = None) -> Outcome:
-        return self.arg.reduce(ctx).and_then(lambda value: value.absolute(self.site))
+        from sugar_lift_py_tests.floor import ObjectValue
+
+        return self.arg.reduce(ctx).and_then(
+            lambda value: value.call_method_value(
+                "__abs__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx
+            )
+            if isinstance(value, ObjectValue)
+            else value.absolute(self.site)
+        )
 
     def walk_children(self):
         return (self.arg,)

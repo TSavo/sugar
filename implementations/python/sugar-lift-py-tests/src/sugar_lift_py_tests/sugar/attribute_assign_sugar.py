@@ -21,6 +21,7 @@ class AttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
 
     receiver_name: str
     field_name: str
+    receiver: SugarBody
     value: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -38,6 +39,7 @@ class AttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
         return cls(
             receiver_name=site.assign_target_attribute_receiver_name(),
             field_name=site.assign_target_attribute_name(),
+            receiver=ctx.build_body(site.assign_targets()[0].attr_receiver(), SugarRole.TERM),
             value=ctx.build_body(site.assign_value(), SugarRole.TERM),
             site=site,
         )
@@ -63,9 +65,22 @@ class AttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
 
     def desugar(self, ctx: object = None) -> Outcome:
         key = f"{self.receiver_name}.{self.field_name}"
-        return self.value.reduce(ctx).and_then(
-            lambda val: Complete(ScopeRebind(key, val))
+        return self.receiver.reduce(ctx).and_then(
+            lambda receiver: self.value.reduce(ctx).and_then(
+                lambda val: self._assign(receiver, val, key, ctx)
+            )
         )
 
+    def _assign(self, receiver, value, key, ctx):
+        from sugar_lift_py_tests.floor import ObjectValue, StringValue
+
+        if isinstance(receiver, ObjectValue):
+            descriptor = receiver.class_field_value(self.field_name)
+            if isinstance(descriptor, ObjectValue) and descriptor.has_method("__set__"):
+                return descriptor.call_method_value("__set__", (receiver, value), owner=type(self).__name__, blame=str(self.site), ctx=ctx)
+            if receiver.has_method("__setattr__"):
+                return receiver.call_method_value("__setattr__", (StringValue(self.field_name), value), owner=type(self).__name__, blame=str(self.site), ctx=ctx)
+        return Complete(ScopeRebind(key, value))
+
     def walk_children(self):
-        return (self.value,)
+        return (self.receiver, self.value)

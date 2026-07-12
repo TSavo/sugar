@@ -79,25 +79,27 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _enter_and_body(self, cm, ctx: object) -> Outcome:
-        from sugar_lift_py_tests.floor import CallSiteValue, ScopeRebind
-        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.floor import ObjectValue, ScopeRebind, TermValue
+        from sugar_lift_py_tests.floor.call_site_value import force_floor
 
-        enter = CallSiteValue(
-            target_name="__enter__",
-            arg_values=(cm,),
-            parameters=(),
-            term=ctor(
-                "call:__enter__",
-                [cm.to_term(owner=str(self.site))],
-            ),
-            body=None,
-            site=self.site,
-        )
+        if not isinstance(cm, ObjectValue):
+            return cm._floor_gap(owner=type(self).__name__, blame=str(self.site), observed=type(cm).__name__, requested="context manager data-model methods", fix="construct __enter__ and __exit__")
+        class ContextManagerOperation: pass
+        ctx.record_operation(owner="WithSugar", method_name="context_manager_with", operation=ContextManagerOperation())
+        enter = cm.call_method_value("__enter__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx).value
+        entered = force_floor(enter, ctx, owner="WithSugar.__enter__")
         body_ctx = ctx
         if self.as_name is not None:
-            body_ctx = ScopeRebind(self.as_name, enter).extend_scope(ctx)
+            class BindValueOperation: pass
+            ctx.record_operation(owner="WithSugar", method_name="bind_with", operation=BindValueOperation())
+            body_ctx = ScopeRebind(self.as_name, entered).extend_scope(ctx)
         # Body is a BlockSugar; its BlockValue contribution splices outward.
-        return self.body.reduce(body_ctx)
+        outcome = self.body.reduce(body_ctx)
+        exit_call = cm.call_method_value("__exit__", (entered, entered, entered), owner=type(self).__name__, blame=str(self.site), ctx=ctx).value
+        exit_value = force_floor(exit_call, ctx, owner="WithSugar.__exit__", project_callsite=False)
+        if isinstance(exit_value, TermValue) and bool(exit_value.value):
+            force_floor(exit_call, ctx, owner="WithSugar.__exit__")
+        return outcome
 
     def walk_children(self):
         return (self.context, self.body)

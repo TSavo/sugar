@@ -505,27 +505,9 @@ def _project_callsite_floor(
     target_name: str,
     arg_values: tuple[FloorValue, ...],
 ) -> None:
-    from sugar_lift_py_tests.operations import (
-        CallsiteProjectionOperation,
-        perform_operation,
-    )
-    from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
-    arg_terms = tuple(
-        floor_to_term(arg, owner=f"{owner} callsite argument") for arg in arg_values
-    )
-    perform_operation(
-        owner=owner,
-        blame=target_name,
-        receiver=floor,
-        operation=CallsiteProjectionOperation(
-            callee_name=target_name,
-            arg_terms=arg_terms,
-            owner=owner,
-            blame=target_name,
-        ),
-        ctx=ctx,
-    )
+    # Currying is already recorded by curry_temporal. Projection contributes
+    # proof/callsite state but must not fabricate a second operation event.
+    del floor, ctx, owner, target_name, arg_values
 
 
 def _force_floor_gap(

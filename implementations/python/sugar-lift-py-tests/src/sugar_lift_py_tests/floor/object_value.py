@@ -382,21 +382,12 @@ class ObjectValue(FloorValue):
                 if sink is not None:
                     sink.append(call_value)
             return Complete(call_value)
-        # Method not in the single-return method table (multi-statement /
-        # effectful bodies are not folded into ObjectMethodValue). Typed red —
-        # not factory_panic: the Sugar owns the call; the residual is runtime
-        # method evaluation, not match(None).
-        from sugar_lift_py_tests.effect import RuntimeEffect
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        return Incomplete(
-            RuntimeEffect(
-                "constructor-bound method runtime boundary: "
-                f"`{self.class_name}.{name}` is not a single-return diggable "
-                "method floor (multi-statement/effectful bodies stay red); "
-                f"owner={owner}; define a diggable body or keep as typed red. "
-                f"blame={blame}"
-            )
+        return self._floor_gap(
+            owner=owner,
+            blame=blame,
+            observed=f"{self.class_name}.{name}",
+            requested="constructor-bound method",
+            fix=f"construct a diggable body for `{self.class_name}.{name}`",
         )
 
     def has_method(self, name: str) -> bool:

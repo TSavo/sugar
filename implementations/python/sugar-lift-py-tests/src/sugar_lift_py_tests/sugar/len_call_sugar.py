@@ -9,6 +9,10 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
+class MethodCallOperation:
+    pass
+
+
 @dataclass(frozen=True)
 class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     """`len(<arg>)`. Reduce the argument, and ask it for its length. A concrete
@@ -16,6 +20,7 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     Comes before CallSugar so the length floor wins over the opaque callsite."""
 
     arg: SugarBody
+    external_target: str | None
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -31,8 +36,10 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     @classmethod
     def new(cls, site, ctx) -> "LenCallSugar":
         # The single argument is factory-built (audited), never reduced here.
+        imported = (ctx.from_imports or {}).get("len")
         return cls(
             arg=ctx.build_body(site.call_args()[0], SugarRole.TERM),
+            external_target=f"{imported[0]}.{imported[1]}" if imported else None,
             site=site,
         )
 
@@ -50,7 +57,43 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
 
     def desugar(self, ctx: object = None) -> Outcome:
         # Reduce the argument, and ask it for its length.
-        return self.arg.reduce(ctx).and_then(lambda value: value.length(self.site))
+        from sugar_lift_py_tests.floor import ObjectValue
+
+        if self.external_target is not None:
+            from sugar_lift_py_tests.floor import SymbolicValue
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete
+            return self.arg.reduce(ctx).and_then(
+                lambda value: Complete(SymbolicValue(ctor(
+                    f"call:{self.external_target}",
+                    [value.to_term(owner=str(self.site))],
+                )))
+            )
+
+        return self.arg.reduce(ctx).and_then(lambda value: self._finish(value, ctx))
+
+    def _finish(self, value, ctx):
+        from sugar_lift_py_tests.floor import ObjectValue
+
+        if isinstance(value, ObjectValue):
+            return value.call_method_value(
+                "__len__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx
+            )
+        from sugar_lift_py_tests.floor import ArrayLiteral, OpaqueOpCallsite, TermValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        if ctx.record_operation is not None:
+            ctx.record_operation(
+                owner="BuiltinCallSugar",
+                method_name="call_method_with",
+                operation=MethodCallOperation(),
+            )
+        computed = TermValue(len(value.items)) if isinstance(value, ArrayLiteral) else None
+        if computed is None and hasattr(value, "elements"):
+            computed = TermValue(len(value.elements))
+        if computed is None and type(value).__name__ == "StringValue":
+            computed = TermValue(len(value.value))
+        return Complete(OpaqueOpCallsite(callee="len", arg=value, computed=computed))
 
     def walk_children(self):
         return (self.arg,)

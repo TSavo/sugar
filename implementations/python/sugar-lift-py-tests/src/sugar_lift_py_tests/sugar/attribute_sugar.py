@@ -116,8 +116,11 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
         )
 
     def _project_attribute(self, value, ctx: object) -> Outcome:
-        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue, StringValue
         from sugar_lift_py_tests.ir import ctor
+
+        if isinstance(value, ObjectValue):
+            return project_object_attribute(value, self.attr_name, self.site, ctx)
 
         # ObjectValue / field table: resolve known fields, else coordinate.
         fields = getattr(value, "fields", None)
@@ -127,6 +130,26 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
                     field_val = getattr(field, "value", None)
                     if field_val is not None:
                         return Complete(field_val)
+
+        if isinstance(value, ObjectValue):
+            if value.has_method(self.attr_name):
+                return value._floor_gap(
+                    owner=type(self).__name__, blame=str(self.site),
+                    observed=f"{value.class_name}.{self.attr_name}",
+                    requested="bound method attribute floor",
+                    fix="construct a bound method value before bare attribute access",
+                )
+            if value.has_method("__getattr__"):
+                return value.call_method_value(
+                    "__getattr__", (StringValue(self.attr_name),),
+                    owner=type(self).__name__, blame=str(self.site), ctx=ctx,
+                )
+            return value._floor_gap(
+                owner=type(self).__name__, blame=str(self.site),
+                observed=f"{value.class_name}.{self.attr_name}",
+                requested="constructor-bound field",
+                fix=f"construct field `{value.class_name}.{self.attr_name}` or __getattr__",
+            )
 
         return Complete(
             CallSiteValue(
@@ -144,3 +167,23 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
 
     def walk_children(self):
         return (self.receiver,)
+
+
+def project_object_attribute(value, attr_name: str, site, ctx) -> Outcome:
+    from sugar_lift_py_tests.floor import ObjectValue, StringValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    name = StringValue(attr_name)
+    if value.has_method("__getattribute__"):
+        return value.call_method_value("__getattribute__", (name,), owner="AttributeSugar", blame=str(site), ctx=ctx)
+    descriptor = value.class_field_value(attr_name)
+    if isinstance(descriptor, ObjectValue) and descriptor.has_method("__get__"):
+        return descriptor.call_method_value("__get__", (value, StringValue(value.class_name)), owner="AttributeSugar", blame=str(site), ctx=ctx)
+    for object_field in value.fields:
+        if object_field.name == attr_name:
+            return Complete(object_field.value)
+    if value.has_method(attr_name):
+        return value._floor_gap(owner="AttributeSugar", blame=str(site), observed=f"{value.class_name}.{attr_name}", requested="bound method attribute floor", fix="construct a bound method value before bare attribute access")
+    if value.has_method("__getattr__"):
+        return value.call_method_value("__getattr__", (name,), owner="AttributeSugar", blame=str(site), ctx=ctx)
+    return value._floor_gap(owner="AttributeSugar", blame=str(site), observed=f"{value.class_name}.{attr_name}", requested="constructor-bound field", fix=f"construct field `{value.class_name}.{attr_name}` or __getattr__")

@@ -53,7 +53,11 @@ class ConstructorStrategy:
                     owner=f"{self.class_name} constructor argument",
                 )
             )
-        field_ctx = _ctx_with_curried_args(ctx, self.parameters, tuple(arg_values))
+        field_ctx = (
+            _ctx_with_curried_args(ctx, self.parameters, tuple(arg_values))
+            if self.parameters or arg_values
+            else ctx
+        )
         return Complete(
             ObjectValue(
                 class_name=self.class_name,

@@ -88,7 +88,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
 
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
         if not remaining:
-            from sugar_lift_py_tests.floor import CallSiteValue
+            from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.sugar.install_source_dig import (
                 build_dig_body,
@@ -98,6 +98,16 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
 
             source_values = accumulated[1:] if self.import_target else accumulated
             source_name = self.import_target or self.method_name
+            receiver_floor = accumulated[0] if accumulated else None
+            if (
+                self.import_target == "operator.index"
+                and source_values
+                and isinstance(source_values[0], ObjectValue)
+            ):
+                return source_values[0].call_method_value(
+                    "__index__", (), owner=type(self).__name__,
+                    blame=str(self.site), ctx=ctx,
+                )
             numpy_value = _numpy_literal_call(source_name, source_values)
             if numpy_value is not None:
                 return Complete(numpy_value)
@@ -105,7 +115,6 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             # Method body dig: receiver is accumulated[0]. Resolve class.method
             # from name_resolver / from_imports / install-source. body=None is
             # still lawful coordinate-only when resolve fails.
-            receiver_floor = accumulated[0] if accumulated else None
             fn = resolve_method_funcdef(self.method_name, receiver_floor, ctx)
             body = (
                 build_dig_body(fn, ctx, require_attachable=True)
