@@ -27,6 +27,9 @@ class ClassValue(FloorValue):
 
         return ctor("python:type", [str_const(self.name)])
 
+    def test_python_type(self, value, site):
+        return value.python_isinstance(self.name, self.to_term(owner=self.name), site)
+
     def contribution(self):
         # Splice body entries (methods, assigns) into the enclosing record.
         return self.record.contribution()
