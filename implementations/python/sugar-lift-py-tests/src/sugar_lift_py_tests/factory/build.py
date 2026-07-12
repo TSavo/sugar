@@ -181,7 +181,7 @@ def _raise_ambiguous_candidates(
         blame=site.blame,
         observed=f"{site.observed} candidates=[{', '.join(names)}]",
         requested=role.value,
-        fix="declare comes_before or split the sugar role",
+        fix="declare the missing comes_before edge or split the sugar role",
         gap_kind=GapKind.SUGAR_ORDERING,
         gap_locus=GapLocus.AST,
     )

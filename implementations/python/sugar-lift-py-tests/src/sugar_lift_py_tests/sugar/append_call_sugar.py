@@ -11,7 +11,11 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class AppendCallSugar(Sugar, role=SugarRole.TERM):
+class AppendCallSugar(
+    Sugar,
+    role=SugarRole.TERM,
+    comes_before=("MethodCallSugar",),
+):
     """`xs.append(v)`: mutation is a rebind. Reduce the argument, look up the
     receiver's current binding, ask its floor to append, and rebind the name to
     the updated value. Concrete list history folds; the statement is support
