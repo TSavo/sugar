@@ -34,8 +34,7 @@ def _site(source: str):
 def test_for_body_threads_and_binds_iter_elem_coordinate() -> None:
     """(1) Body contributes; loop target is py.iter_elem(iterable)."""
     block = compose_block(
-        "    for x in z:\n"
-        "        return x\n",
+        "    for x in z:\n" "        return x\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     assert isinstance(block, BlockValue)
@@ -52,13 +51,11 @@ def test_for_body_threads_and_binds_iter_elem_coordinate() -> None:
 def test_iterable_discriminates_the_iter_elem_coordinate() -> None:
     """(2) Different iterable produces a different element coordinate."""
     for_z = compose_block(
-        "    for x in z:\n"
-        "        return x\n",
+        "    for x in z:\n" "        return x\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     for_w = compose_block(
-        "    for x in w:\n"
-        "        return x\n",
+        "    for x in w:\n" "        return x\n",
         binds={"w": SymbolicValue(make_var("w"))},
     )
     term_z = for_z.statements[0].value.term
@@ -75,9 +72,7 @@ def test_owns_simple_name_for_not_tuple_while_or_expr() -> None:
     assert ForSugar.owns(_site("while y:\n    pass\n")) is False
     assert ForSugar.owns(_site("x = 1\n")) is False
     # Non-empty else: not owned this arm.
-    assert (
-        ForSugar.owns(_site("for x in y:\n    pass\nelse:\n    pass\n")) is False
-    )
+    assert ForSugar.owns(_site("for x in y:\n    pass\nelse:\n    pass\n")) is False
 
     catalog = default_catalog()
     simple = _site("for x in y:\n    pass\n")
@@ -86,12 +81,15 @@ def test_owns_simple_name_for_not_tuple_while_or_expr() -> None:
         c.name == "ForSugar"
         for c in catalog.candidates_for(SugarRole.STATEMENT, simple)
     )
-    assert not list(catalog.candidates_for(SugarRole.STATEMENT, tuple_target))
+    assert [
+        candidate.name
+        for candidate in catalog.candidates_for(SugarRole.STATEMENT, tuple_target)
+    ] == ["TupleForSugar"]
 
 
-def test_tuple_target_for_is_a_loud_factory_gap() -> None:
+def test_three_name_tuple_target_for_is_a_loud_factory_gap() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    node = ast.parse("for a, b in y:\n    pass\n").body[0]
+    node = ast.parse("for a, b, c in y:\n    pass\n").body[0]
     with pytest.raises(FactoryPanic) as raised:
         build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
     assert raised.value.info.observed == "For"
