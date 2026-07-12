@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .assertion_failed_runtime_effect import AssertionFailedRuntimeEffect
 from .coverage_gap_effect import CoverageGapEffect
+from .conditional_expression_runtime_effect import ConditionalExpressionRuntimeEffect
 from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .dynamic_format_runtime_effect import DynamicFormatRuntimeEffect
 from .effect import Effect, effect_kind, effect_reason, effect_status, require_effect
@@ -11,6 +12,7 @@ from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .raise_effect import RaiseEffect
 from .runtime_effect import RuntimeEffect
+from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
 from .type_error_runtime_effect import TypeErrorRuntimeEffect
@@ -18,6 +20,7 @@ from .type_error_runtime_effect import TypeErrorRuntimeEffect
 __all__ = [
     "AssertionFailedRuntimeEffect",
     "CoverageGapEffect",
+    "ConditionalExpressionRuntimeEffect",
     "DivisionByZeroRuntimeEffect",
     "DynamicFormatRuntimeEffect",
     "Effect",
@@ -27,6 +30,7 @@ __all__ = [
     "OSExitRuntimeEffect",
     "RaiseEffect",
     "RuntimeEffect",
+    "SequenceRepetitionRuntimeEffect",
     "SourceOracleEffect",
     "SubscriptStoreRuntimeEffect",
     "TypeErrorRuntimeEffect",

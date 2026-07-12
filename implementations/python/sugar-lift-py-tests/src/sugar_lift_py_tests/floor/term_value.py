@@ -23,9 +23,8 @@ class TermValue(FloorValue):
             TrueBoolLiteralSugar,
         )
 
-        matches = (
-            (type(self.value) is int and type_name == "int")
-            or (type(self.value) is float and type_name == "float")
+        matches = (type(self.value) is int and type_name == "int") or (
+            type(self.value) is float and type_name == "float"
         )
         return Complete(
             TrueBoolLiteralSugar(site=site)
@@ -96,6 +95,7 @@ class TermValue(FloorValue):
         from sugar_lift_py_tests.floor.set_value import SetValue
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         if type(other) in (StringValue, NoneValue, ListValue, TupleValue, SetValue):
             from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
@@ -138,10 +138,11 @@ class TermValue(FloorValue):
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
-        if type(other) in (ListValue, StringValue):
+        if type(other) in (ListValue, StringValue, TupleValue):
             if type(self.value) is int:
                 return other.multiply(self, site)
         return super().multiply(other, site)
@@ -150,7 +151,7 @@ class TermValue(FloorValue):
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import Complete
 
-            return Complete(TermValue(self.value ** other.value))
+            return Complete(TermValue(self.value**other.value))
         return super().power(other, site)
 
     def divide(self, other, site):
@@ -364,7 +365,8 @@ def _call_method_gap(
     fix: str,
 ):
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow, factory_panic,
+        FactoryAuditRow,
+        factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,

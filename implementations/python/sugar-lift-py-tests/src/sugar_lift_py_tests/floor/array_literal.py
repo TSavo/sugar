@@ -89,6 +89,33 @@ class ArrayLiteral(FloorValue):
     def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_literal(self, ctx)
 
+    def multiply(self, other, site):
+        if type(other) is TermValue and type(other.value) is int:
+            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            repeated = len(self.items) * max(other.value, 0)
+            if repeated > 65520:
+                return Incomplete(
+                    SequenceRepetitionRuntimeEffect(
+                        "sequence repetition construction boundary: ArrayLiteral "
+                        f"would materialize {repeated} literal floor items; "
+                        f"site={site}"
+                    )
+                )
+            return Complete(ArrayLiteral(self.items * other.value))
+        if type(other) is SymbolicValue:
+            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            return Incomplete(
+                SequenceRepetitionRuntimeEffect(
+                    "sequence repetition by symbolic count: ArrayLiteral depends "
+                    f"on runtime __index__/length semantics; site={site}"
+                )
+            )
+        return super().multiply(other, site)
+
 
 def _call_method_gap(
     *,
@@ -99,7 +126,8 @@ def _call_method_gap(
     fix: str,
 ):
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow, factory_panic,
+        FactoryAuditRow,
+        factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,

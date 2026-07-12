@@ -147,12 +147,10 @@ def test_large_sequence_repetition_is_typed_runtime_boundary():
     outcome, operation_log = _reduce_outcome_with_log("[1] * 65521")
 
     assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "RuntimeEffect"
+    assert type(outcome.effect).__name__ == "SequenceRepetitionRuntimeEffect"
     assert "sequence repetition construction boundary" in outcome.reason
     assert "65521 literal floor items" in outcome.reason
-    assert operation_log == [
-        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
-    ]
+    assert operation_log == []
 
 
 def test_tuple_repetition_by_symbolic_count_is_typed_runtime_effect():
@@ -162,16 +160,9 @@ def test_tuple_repetition_by_symbolic_count_is_typed_runtime_effect():
     )
 
     assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "RuntimeEffect"
+    assert type(outcome.effect).__name__ == "SequenceRepetitionRuntimeEffect"
     assert "sequence repetition by symbolic count" in outcome.reason
-    assert operation_log == [
-        (
-            "TupleLiteralSugar",
-            "construct_sequence_with",
-            "SequenceConstructionOperation",
-        ),
-        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
-    ]
+    assert operation_log == []
 
 
 def test_list_repetition_by_symbolic_count_is_typed_runtime_effect():
@@ -184,8 +175,6 @@ def test_list_repetition_by_symbolic_count_is_typed_runtime_effect():
     )
 
     assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "RuntimeEffect"
+    assert type(outcome.effect).__name__ == "SequenceRepetitionRuntimeEffect"
     assert "sequence repetition by symbolic count" in outcome.reason
-    assert operation_log == [
-        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
-    ]
+    assert operation_log == []
