@@ -528,7 +528,7 @@ def test_build_complete_mode_runs_json_report_and_checks_full_floors(
     assert '"--audit-only"' not in manifest_text
 
 
-def test_complete_mode_retries_production_factory_panic_through_audit_door(
+def test_complete_mode_records_recovered_frontier_without_report_artifact(
     tmp_path: Path,
 ) -> None:
     root = _fake_repo_root(tmp_path)
@@ -545,20 +545,40 @@ def test_complete_mode_retries_production_factory_panic_through_audit_door(
         commands.append(command)
         if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
             return CommandResult(0, str(tmp_path / "sugar") + "\n", "")
-        manifest = Path(command[-1]) / ".sugar/lift/python/manifest.toml"
-        if '"--audit-only"' not in manifest.read_text(encoding="utf-8"):
+        if "--audit-frontier" not in command:
             return CommandResult(
                 2,
                 "",
                 "FactoryPanic: observed=Subscript; lift plugin closed stdout",
             )
-        return CommandResult(
-            2,
-            "",
-            _structured_gap_output(
-                [_gap("Sugar", "python.factory", observed="Subscript", requested="term")]
-            ),
+        frontier_path = Path(command[command.index("-o") + 1])
+        frontier_path.write_text(
+            json.dumps(
+                {
+                    "kind": "recovered-construction-audit",
+                    "recoveryOverride": True,
+                    "status": "recovered-construction-audit",
+                    "panics": [
+                        {
+                            "kind": "factory-panic",
+                            "status": "sugar-gap",
+                            "reason": "missing subscript term construction",
+                            "locus": "pkg.py:2:11",
+                            "gap": {"gap_kind": "Sugar"},
+                        }
+                    ],
+                    "suppressedDescendants": [
+                        {
+                            "locus": "pkg.py:2:18",
+                            "reason": "parent construction already panicked",
+                        }
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
         )
+        return CommandResult(2, "", "RECOVERY OVERRIDE: wrote panic inventory")
 
     result = build_pandas_wall(
         root=root,
@@ -578,10 +598,15 @@ def test_complete_mode_retries_production_factory_panic_through_audit_door(
         run_command=fake_runner,
     )
 
-    assert result.summary.mode == "construction-gaps"
-    assert result.summary.gaps_total == 1
-    assert result.summary.gaps_by_bucket["Sugar"] == 1
-    assert (tmp_path / "wall/wall.audit.txt").is_file()
+    assert result.summary.mode == "frontier"
+    assert result.summary.frontier["independentPanicCount"] == 1
+    assert result.summary.frontier["suppressedDescendantCount"] == 1
+    assert result.breaches
+    assert result.frontier_path == tmp_path / "wall/frontier.json"
+    assert result.frontier_path.is_file()
+    assert not (tmp_path / "wall/report.json").exists()
+    assert commands[-1][1:3] == ["lift", "--audit-frontier"]
+    assert "--continue-on-construction-gaps" in commands[-1]
     assert len(commands) == 3
 
 
@@ -598,8 +623,7 @@ def test_complete_mode_audit_retry_does_not_relabel_unexpected_failure(
     ) -> CommandResult:
         if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
             return CommandResult(0, str(tmp_path / "sugar") + "\n", "")
-        manifest = Path(command[-1]) / ".sugar/lift/python/manifest.toml"
-        if '"--audit-only"' in manifest.read_text(encoding="utf-8"):
+        if "--audit-frontier" in command:
             return CommandResult(7, "", "ordinary RPC framing failure")
         return CommandResult(2, "", "production process exited")
 
