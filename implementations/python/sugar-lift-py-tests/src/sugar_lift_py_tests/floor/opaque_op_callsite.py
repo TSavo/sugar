@@ -98,6 +98,36 @@ class OpaqueOpCallsite(FloorValue):
 
         return SymbolicValue(self.to_term(owner="OpaqueOpCallsite.symbolic"))
 
+    def add(self, other, site):
+        return self._arithmetic("add", other, site)
+
+    def subtract(self, other, site):
+        return self._arithmetic("subtract", other, site)
+
+    def multiply(self, other, site):
+        return self._arithmetic("multiply", other, site)
+
+    def divide(self, other, site):
+        return self._arithmetic("divide", other, site)
+
+    def floor_divide(self, other, site):
+        return self._arithmetic("floor_divide", other, site)
+
+    def modulo(self, other, site):
+        return self._arithmetic("modulo", other, site)
+
+    def left_shift(self, other, site):
+        return self._arithmetic("left_shift", other, site)
+
+    def right_shift(self, other, site):
+        return self._arithmetic("right_shift", other, site)
+
+    def unary_minus(self, site):
+        return self._downstream().unary_minus(site)
+
+    def _arithmetic(self, method: str, other: FloorValue, site):
+        return getattr(self._downstream(), method)(other, site)
+
     def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_literal(self, ctx)
 
