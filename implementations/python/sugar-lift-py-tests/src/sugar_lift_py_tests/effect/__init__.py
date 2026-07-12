@@ -11,6 +11,7 @@ from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .dynamic_format_runtime_effect import DynamicFormatRuntimeEffect
 from .getattr_runtime_effect import GetattrRuntimeEffect
 from .generator_yield_runtime_effect import GeneratorYieldRuntimeEffect
+from .global_scope_runtime_effect import GlobalScopeRuntimeEffect
 from .effect import Effect, effect_kind, effect_reason, effect_status, require_effect
 from .index_error_runtime_effect import IndexErrorRuntimeEffect
 from .imported_module_runtime_effect import ImportedModuleRuntimeEffect
@@ -35,6 +36,7 @@ __all__ = [
     "DynamicFormatRuntimeEffect",
     "GetattrRuntimeEffect",
     "GeneratorYieldRuntimeEffect",
+    "GlobalScopeRuntimeEffect",
     "Effect",
     "IndexErrorRuntimeEffect",
     "ImportedModuleRuntimeEffect",
