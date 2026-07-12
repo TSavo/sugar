@@ -11,10 +11,12 @@ from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     GuardedScopeRebind,
+    ImportAliasValue,
     ScopeRebind,
     StringValue,
     SymbolicValue,
 )
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.ir import atomic, make_var
@@ -120,6 +122,58 @@ def test_joined_binding_is_structurally_guarded_not_an_ite_euf() -> None:
     assert value.when_true.value == "left"
     assert value.when_false.value == "right"
     assert "ite" not in repr(value)
+
+
+def test_real_replace_ifexp_effect_skips_only_its_name_join() -> None:
+    block = compose_block(
+        "    if p:\n"
+        "        op = lambda x: operator.eq(x, b)\n"
+        "        sibling = 'left'\n"
+        "    else:\n"
+        "        op = vectorize(\n"
+        "            lambda x: (\n"
+        "                bool(re.search(b, x))\n"
+        "                if isinstance(x, str) and isinstance(b, (str, Pattern))\n"
+        "                else False\n"
+        "            )\n"
+        "        )\n"
+        "        sibling = 'right'\n",
+        {
+            "b": SymbolicValue(make_var("b")),
+            "p": SymbolicValue(make_var("p")),
+            "Pattern": ImportAliasValue("Pattern", "typing.Pattern"),
+        },
+    )
+
+    joins = [entry for entry in block.statements if isinstance(entry, ScopeRebind)]
+    assert [entry.name for entry in joins] == ["sibling"]
+    effects = [entry for entry in block.statements if isinstance(entry, Incomplete)]
+    assert len(effects) == 1
+    assert type(effects[0].effect).__name__ == "ConditionalExpressionRuntimeEffect"
+    assert "effect occurs under branch condition" in effects[0].reason
+
+
+def test_effect_valued_join_name_stays_unbound_while_sibling_joins() -> None:
+    block = compose_block(
+        "    if p:\n"
+        "        broken = 1 if p else 2\n"
+        "        sibling = 'left'\n"
+        "    else:\n"
+        "        broken = 3\n"
+        "        sibling = 'right'\n",
+        {"p": SymbolicValue(make_var("p"))},
+    )
+    ctx = block.extend_scope(
+        FactoryBuildContext(
+            filename="effect_join.py",
+            catalog=default_catalog(),
+            temporal=TemporalContext.empty(),
+        )
+    )
+
+    assert type(ctx.temporal.value_for("sibling")).__name__ == "GuardedValue"
+    with pytest.raises(FactoryPanic, match="observed=broken requested=value"):
+        ctx.temporal.value_for("broken")
 
 
 def test_real_datetime_repr_assertions_measure_after_join(
