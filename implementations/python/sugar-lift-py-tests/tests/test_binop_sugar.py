@@ -54,29 +54,23 @@ def test_division_by_zero_stays_runtime_effect():
     outcome, operation_log = _reduce_outcome_with_log("1 // 0")
 
     assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "RuntimeEffect"
+    assert type(outcome.effect).__name__ == "DivisionByZeroRuntimeEffect"
     assert "division by zero" in outcome.reason
-    assert operation_log == [
-        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
-    ]
+    assert operation_log == []
 
 
 def test_binop_dispatches_through_floor_operation_log():
     value, operation_log = _reduce_with_log("2 + 3")
 
     assert value.value == 5
-    assert operation_log == [
-        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
-    ]
+    assert operation_log == []
 
 
 def test_expanded_numeric_binary_stays_on_binary_operator_floor():
     value, operation_log = _reduce_with_log("8 // 3")
 
     assert value.value == 2
-    assert operation_log == [
-        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
-    ]
+    assert operation_log == []
 
 
 def test_encoded_string_concat_dispatches_through_left_floor():
@@ -89,14 +83,17 @@ def test_encoded_string_concat_dispatches_through_left_floor():
         },
     )
 
-    assert value == EncodedStringValue(
-        table=(65, 66, 67, 68), indices=(make_var("i"), make_var("j"))
+    assert isinstance(value, SymbolicValue)
+    assert fol(value.term) == fol(
+        ctor(
+            "+",
+            [
+                ctor("py.subscript", [str_const("ABCD"), make_var("i")]),
+                ctor("py.subscript", [str_const("ABCD"), make_var("j")]),
+            ],
+        )
     )
-    assert operation_log[-1] == (
-        "BinOpSugar",
-        "binary_operator_with",
-        "BinaryOperatorOperation",
-    )
+    assert operation_log == []
 
 
 def test_add_on_symbolic_operand_emits_the_operation_sort_silent():
@@ -112,18 +109,12 @@ def test_symbolic_string_equality_emits_predicate_value():
         {"casting": SymbolicValue(make_var("casting"))},
     )
 
-    assert value.formula.name == "="
+    assert value.formula.name == "py.eq"
     assert [fol(arg) for arg in value.formula.args] == [
         fol(make_var("casting")),
         fol(str_const("unsafe")),
     ]
-    assert operation_log == [
-        (
-            "ObjectEqualityTermSugar",
-            "binary_operator_with",
-            "BinaryOperatorOperation",
-        )
-    ]
+    assert operation_log == []
 
 
 def test_symbolic_binary_with_float_operand_is_typed_floor_effect():
@@ -132,15 +123,11 @@ def test_symbolic_binary_with_float_operand_is_typed_floor_effect():
         {"x": SymbolicValue(make_var("x"))},
     )
 
-    assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "FactoryGapEffect"
-    assert outcome.effect.observed == "TermValue+symbolic operand"
-    assert outcome.effect.requested == "integer ProofIR term operand"
-    assert outcome.effect.gap_kind is GapKind.FLOOR
-    assert outcome.effect.gap_locus is GapLocus.CONSTRUCTION
-    assert operation_log == [
-        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
-    ]
+    value = complete_value(outcome, owner="symbolic real addition")
+    assert isinstance(value, SymbolicValue)
+    assert fol(value.term) == fol(ctor("+", [make_var("x"), value.term.args[1]]))
+    assert value.term.args[1].value == "1.5"
+    assert operation_log == []
 
 
 def test_tuple_multiplication_repeats_literal_tuple():
