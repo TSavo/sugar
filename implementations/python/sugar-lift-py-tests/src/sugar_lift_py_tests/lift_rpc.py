@@ -749,9 +749,10 @@ def _module_import_temporal(module, catalog) -> "object":
     must stand when reducing function bodies. Without this, TemporalContext
     panics on unbound import names even though the source stated the import.
     Imports use the same ``ImportAliasValue`` constructed by ``AliasSugar``.
-    A single-name Assign uses the same factory-built ``BoundVar`` representation
-    as ``_ctx_with_module_global_binds``. Each assignment is independent: an
-    unowned or runtime-effect RHS stays unbound without poisoning siblings.
+    A valued single-name Assign or AnnAssign uses the same factory-built
+    ``BoundVar`` representation as ``_ctx_with_module_global_binds``. Each
+    assignment is independent: an unowned or runtime-effect RHS stays unbound
+    without poisoning siblings. Annotation-only declarations bind nothing.
     """
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -791,8 +792,16 @@ def _module_import_temporal(module, catalog) -> "object":
                 name,
                 ClassValue(name=name, bases=(), record=BlockValue(())),
             )
-        elif observed == "Assign":
-            name = stmt.assign_target_name()
+        elif observed in {"Assign", "AnnAssign"}:
+            if observed == "Assign":
+                name = stmt.assign_target_name()
+            else:
+                try:
+                    name = stmt.annassign_target_id()
+                except TypeError:
+                    continue
+                if stmt.annassign_value() is None:
+                    continue
             if name is None:
                 continue
             ctx = FactoryBuildContext(
