@@ -17,6 +17,13 @@ class FunctionCallable(FloorValue):
     decorators: tuple[Any, ...] = ()
     body: Any = dataclass_field(default=None, compare=False)
 
+    def to_term(self, *, owner: str):
+        """Project the callable as the coordinate bound by its def statement."""
+        del owner
+        from sugar_lift_py_tests.ir import make_var
+
+        return make_var(self.name)
+
     def apply(self, value: TermValue) -> TermValue:
         if self.return_name != self.parameter:
             raise ValueError(

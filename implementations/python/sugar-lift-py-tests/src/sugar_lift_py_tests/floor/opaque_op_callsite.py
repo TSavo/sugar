@@ -51,6 +51,20 @@ class OpaqueOpCallsite(FloorValue):
     def callsites(self):
         return (self,)
 
+    def truth(self, site):
+        """Cite Python truth over the already-built operator coordinate."""
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                py_truthy(self.to_term(owner=str(site))),
+                site,
+                operand_callsites=(self,),
+            )
+        )
+
     def equals(self, other, site):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import eq, py_eq

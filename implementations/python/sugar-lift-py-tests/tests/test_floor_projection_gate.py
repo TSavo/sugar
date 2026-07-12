@@ -9,8 +9,8 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import FloorValue, TermValue
-from sugar_lift_py_tests.ir import bool_const, num
+from sugar_lift_py_tests.floor import FloorValue, FunctionCallable, TermValue
+from sugar_lift_py_tests.ir import bool_const, make_var, num
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
@@ -53,6 +53,12 @@ def test_unprojectable_floor_value_gap_panics() -> None:
         NewFloor().to_term(owner="test")
     assert exc.value.info.to_json()["gap_kind"] == "Floor"
     assert exc.value.info.to_json()["gap_locus"] == "Projection"
+
+
+def test_named_function_callable_projects_as_its_binding_coordinate() -> None:
+    assert FunctionCallable(name="helper").to_term(owner="post") == make_var(
+        "helper"
+    )
 
 
 _FLOOR_TYPES = {

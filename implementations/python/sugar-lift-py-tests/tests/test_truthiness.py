@@ -24,7 +24,8 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     UniverseValue,
 )
-from sugar_lift_py_tests.ir import and_, eq, implies, make_var, not_, num
+from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+from sugar_lift_py_tests.ir import and_, eq, implies, make_var, not_, num, py_truthy
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
 
@@ -109,3 +110,12 @@ def test_floor_value_default_truth_panics() -> None:
     # yet; the default construction-gap is the contract.
     with pytest.raises(FactoryPanic, match="stand as a condition"):
         FloorValue().truth(site=None)
+
+
+def test_opaque_operator_callsite_truth_cites_its_existing_coordinate() -> None:
+    callsite = OpaqueOpCallsite("len", SymbolicValue(make_var("items")))
+
+    outcome = callsite.truth(site="t.py:1:3")
+    predicate = complete_value(outcome, owner="test")
+
+    assert predicate.formula == py_truthy(callsite.to_term(owner="test"))

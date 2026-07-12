@@ -62,6 +62,17 @@ def test_symbolic_receiver_is_py_subscript_coordinate() -> None:
     assert value.term == ctor("py.subscript", [make_var("z"), num(0)])
 
 
+def test_callsite_index_rides_the_subscript_coordinate_without_forcing_a_body() -> None:
+    value = reduce_value(
+        "z[indexer()]", binds={"z": SymbolicValue(make_var("z"))}
+    )
+
+    assert type(value) is CallSiteValue
+    assert value.term == ctor(
+        "py.subscript", [make_var("z"), ctor("call:indexer", [])]
+    )
+
+
 def test_literal_slice_index_selects_the_narrow_slice_owner() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("z[1:2]", mode="eval").body

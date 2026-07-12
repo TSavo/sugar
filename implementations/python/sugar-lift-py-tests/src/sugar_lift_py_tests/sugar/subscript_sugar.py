@@ -61,8 +61,7 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
         )
 
     def _subscript(self, receiver, index, ctx):
-        from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue
-        from sugar_lift_py_tests.floor.call_site_value import force_floor
+        from sugar_lift_py_tests.floor import ObjectValue
 
         recorder = getattr(ctx, "record_operation", None)
         if recorder is not None:
@@ -73,8 +72,6 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
                 method_name="subscript_with",
                 operation=SubscriptOperation(),
             )
-        if isinstance(index, CallSiteValue):
-            index = force_floor(index, ctx, owner="SubscriptSugar index")
         if isinstance(receiver, ObjectValue):
             return receiver.call_method_value(
                 "__getitem__",
