@@ -49,6 +49,13 @@ class PredicateValue(FloorValue):
             PredicateValue(not_(self.formula), self.site, self.operand_callsites)
         )
 
+    def truth(self, site):
+        """An already-boolean predicate stands as its existing formula."""
+        del site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self)
+
     def stated(self, site):
         # A symbolic predicate states an inv: the fact the record emits. Operand
         # callsites ride into the InvValue so edges project later.
