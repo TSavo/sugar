@@ -16,6 +16,13 @@ def _carried_names(site) -> tuple[str, ...]:
     for node in ast.walk(site.node):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id not in names:
             names.append(node.id)
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Store)
+            and isinstance(node.value, ast.Name)
+            and node.value.id not in names
+        ):
+            names.append(node.value.id)
     return tuple(names)
 
 
@@ -31,7 +38,14 @@ def _has_unclassified_mutation(site) -> bool:
     for node in ast.walk(site.node):
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
-            if any(not isinstance(target, (ast.Name, ast.Tuple)) for target in targets):
+            for target in targets:
+                if isinstance(target, (ast.Name, ast.Tuple)):
+                    continue
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Name)
+                ):
+                    continue
                 return True
     return False
 
