@@ -41,7 +41,7 @@ class PandasWallSummary:
     gaps_total: int
     gaps_by_bucket: dict[str, int]
     gap_templates: dict[str, int]
-    frontier: dict[str, str]
+    frontier: dict[str, Any]
     green: int
     red_reasoned: int
     red_bare: int
@@ -174,6 +174,48 @@ def summarize_pandas_frontier_error(output_text: str) -> Optional[PandasWallSumm
         gaps_by_bucket={bucket: 0 for bucket in _GAP_BUCKETS},
         gap_templates={},
         frontier=frontier,
+        green=0,
+        red_reasoned=0,
+        red_bare=0,
+        contracts=0,
+        pre_bearing=0,
+        call_edges_resolved=0,
+        implications=0,
+    )
+
+
+def summarize_pandas_recovered_frontier(
+    frontier_json: Mapping[str, Any],
+) -> PandasWallSummary:
+    if frontier_json.get("kind") != "recovered-construction-audit":
+        raise RuntimeError("pandas wall frontier artifact has the wrong kind")
+    if frontier_json.get("recoveryOverride") is not True:
+        raise RuntimeError("pandas wall frontier artifact lacks recovery override")
+    panics = frontier_json.get("panics")
+    suppressed = frontier_json.get("suppressedDescendants")
+    if not isinstance(panics, list) or not all(
+        isinstance(panic, Mapping) for panic in panics
+    ):
+        raise RuntimeError("pandas wall frontier panics must be an array of objects")
+    if not isinstance(suppressed, list) or not all(
+        isinstance(locus, Mapping) for locus in suppressed
+    ):
+        raise RuntimeError(
+            "pandas wall frontier suppressedDescendants must be an array of objects"
+        )
+    return PandasWallSummary(
+        mode="frontier",
+        # A recovered frontier is not a lift report. Keep its two inventory axes
+        # separate instead of relabeling either one as report construction gaps.
+        gaps_total=0,
+        gaps_by_bucket={bucket: 0 for bucket in _GAP_BUCKETS},
+        gap_templates={},
+        frontier={
+            "kind": "recovered-construction-audit",
+            "status": frontier_json.get("status", ""),
+            "independentPanicCount": len(panics),
+            "suppressedDescendantCount": len(suppressed),
+        },
         green=0,
         red_reasoned=0,
         red_bare=0,
@@ -328,34 +370,53 @@ def build_pandas_wall(
         failure_result = visual_result
         summary = summarize_pandas_construction_gaps(_combined_output(failure_result))
         if summary.gaps_total == 0 and floors.mode == "complete":
-            # Complete mode must stay production-loud. When that production door
-            # finds a construction gap, rerun the SAME disposable workspace through
-            # the kit's one audit door so the wall receives the whole structured
-            # frontier instead of one child-process death disguised as transport.
-            # Nothing catches FactoryPanic in production; only the manifest changes
-            # for this diagnostic retry.
-            _prepare_audit_workspace(package_path, root, workspace, audit_only=True)
-            audit_result = runner(
+            # Normal lift remains fail-fast and produces no report. The only lawful
+            # continuation is the CLI's separately typed recovered-audit lane.
+            frontier_path = output_dir / "frontier.json"
+            frontier_result = runner(
                 [
                     os.fspath(sugar_bin),
                     "lift",
-                    "--report",
-                    "--visual",
+                    "--audit-frontier",
+                    "--continue-on-construction-gaps",
+                    "-o",
+                    os.fspath(frontier_path),
                     os.fspath(workspace),
                 ],
                 root,
                 env,
             )
-            audit_path = output_dir / "wall.audit.txt"
-            _write_command_receipt(audit_path, audit_result)
-            audit_summary = summarize_pandas_construction_gaps(
-                _combined_output(audit_result)
+            frontier_receipt = output_dir / "wall.frontier.txt"
+            _write_command_receipt(frontier_receipt, frontier_result)
+            if not frontier_path.is_file():
+                combined = _combined_output(frontier_result)
+                tail = combined[-4000:] if combined else "<no output captured>"
+                raise RuntimeError(
+                    "pandas wall recovered frontier failed without frontier.json "
+                    f"exit={frontier_result.returncode}; last words follow:\n{tail}"
+                ) from None
+            try:
+                frontier_json = json.loads(frontier_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"pandas wall frontier.json was not valid JSON: {exc}"
+                ) from exc
+            if not isinstance(frontier_json, Mapping):
+                raise RuntimeError("pandas wall frontier.json must be a JSON object")
+            frontier_summary = summarize_pandas_recovered_frontier(frontier_json)
+            summary_path = _write_summary(output_dir, frontier_summary)
+            return PandasWallResult(
+                summary=frontier_summary,
+                breaches=tuple(check_pandas_wall_floors(frontier_summary, floors)),
+                visual_path=visual_path,
+                report_path=None,
+                summary_path=summary_path,
+                gaps_path=None,
+                frontier_path=frontier_path,
+                workspace_path=workspace,
+                cache_key=cached.cache_key,
+                cache_hit=cached.hit,
             )
-            # The retry is now the most informed signal even when it exposes an
-            # unrelated RPC failure. Keep its exact output loud; only structured
-            # AuditOnlyGap rows become construction-gap accounting below.
-            failure_result = audit_result
-            summary = audit_summary
         if summary.gaps_total == 0:
             frontier_summary = summarize_pandas_frontier_error(
                 _combined_output(failure_result)
@@ -541,6 +602,12 @@ def _check_frontier_floors(
     summary: PandasWallSummary, floors: PandasWallFloors
 ) -> list[str]:
     breaches: list[str] = []
+    independent_panics = summary.frontier.get("independentPanicCount", 0)
+    if isinstance(independent_panics, int) and independent_panics > 0:
+        breaches.append(
+            "recovered construction audit is red: "
+            f"independent_panics={independent_panics}"
+        )
     if floors.mode != "frontier":
         breaches.append(
             "pandas wall stopped at a named frontier; switch "
