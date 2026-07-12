@@ -64,8 +64,9 @@ def test_symbolic_receiver_is_py_subscript_coordinate() -> None:
     assert value.term == ctor("py.subscript", [make_var("z"), num(0)])
 
 
-def test_slice_index_stays_factory_gap() -> None:
+def test_literal_slice_index_selects_the_narrow_slice_owner() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("z[1:2]", mode="eval").body
-    with pytest.raises(FactoryPanic):
-        ctx.build_body(node, SugarRole.TERM)
+    body = ctx.build_body(node, SugarRole.TERM)
+
+    assert type(body.sugar).__name__ == "SliceSubscriptSugar"

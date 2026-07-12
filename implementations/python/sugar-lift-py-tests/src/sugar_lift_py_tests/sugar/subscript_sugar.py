@@ -15,7 +15,9 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
     """`x[i]` subscript. Reduce the receiver and the index, and ask the receiver
     to subscript by the index. Concrete containers fold; out-of-range / missing
     key is a named runtime effect; symbolic sides stay the py.subscript
-    coordinate. Slice indexes are not owned -- a loud factory gap this PR."""
+    coordinate. Slice indexes remain behind the narrower
+    ``SliceSubscriptSugar`` gate; ``SliceSugar`` owns the Slice node without
+    widening this parent's receiver evaluation semantics."""
 
     receiver: SugarBody
     index: SugarBody
@@ -23,7 +25,6 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def owns(cls, site) -> bool:
-        # Syntactic: Subscript whose index is not a Slice (slice stays unowned).
         if site.observed != "Subscript":
             return False
         index = site.subscript_index()

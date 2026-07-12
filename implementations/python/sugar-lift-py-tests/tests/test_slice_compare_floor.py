@@ -12,7 +12,7 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-from sugar_lift_py_tests.lift_rpc import lift_file_payload
+from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.slice_subscript_sugar import SliceSubscriptSugar
 
@@ -54,26 +54,24 @@ def test_line_preserving_datetime_slice_unit_fixture_lifts_and_cites() -> None:
     ]
 
 
-def test_full_datetime_artifact_lifts_slice_assertions_after_context_floors(cpython_311_datetime_path) -> None:
+def test_full_datetime_artifact_accounts_slice_assertions_and_named_blockers(cpython_311_datetime_path) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
 
-    payload = lift_file_payload(source, str(path)).to_rpc()
+    payload, gaps = audit_lift_file(source, str(path), hold_panic=True)
+    payload = payload.to_rpc()
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload
     ).to_json()["assertions"]
-    lifted_target_lines = {2044, 2047}
-    refused_target_lines = {1507, 1510}
+    lifted_target_lines = {1507, 1510, 2044, 2047}
 
     assert assertions["stated"] == 45
-    assert assertions["lifted_cited"] == 7
+    assert assertions["lifted_cited"] == 14
     assert lifted_target_lines <= {
         locus["line"] for locus in assertions["lifted_loci"]
     }
-    assert refused_target_lines <= {
-        locus["line"] for locus in assertions["refused_loci"]
-    }
+    assert any("_DAYS_BEFORE_MONTH" in gap.message for gap in gaps)
 
 
 @pytest.mark.parametrize(

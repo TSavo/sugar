@@ -46,9 +46,11 @@ def test_symbolic_subscript_assign_is_a_typed_store_effect() -> None:
     assert isinstance(outcome.statements[0].effect, SubscriptStoreRuntimeEffect)
 
 
-def test_slice_subscript_assign_stays_a_loud_factory_gap() -> None:
-    with pytest.raises(FactoryPanic):
-        _build("xs[1:2] = [9]\n")
+def test_slice_subscript_assign_is_owned_and_reaches_store_floor() -> None:
+    sugar = _build("xs[1:2] = [9]\n")
+
+    assert type(sugar).__name__ == "SubscriptAssignSugar"
+    assert type(sugar.index.sugar).__name__ == "SliceSugar"
 
 
 def test_unliftable_subscript_receiver_reaches_none_arm_loudly() -> None:
