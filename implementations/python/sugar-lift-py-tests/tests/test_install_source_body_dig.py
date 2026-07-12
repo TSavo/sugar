@@ -10,6 +10,7 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_covera
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.sugar.install_source_dig import (
+    SequentialDigBody,
     resolve_install_source_funcdef,
     module_sibling_function_nodes,
 )
@@ -89,3 +90,81 @@ def test_nested_external_bridge_default_false() -> None:
 
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     assert ctx.nested_external_bridge is False
+
+
+class _NoReturnOutcome:
+    def extend_scope(self, ctx):
+        return ctx
+
+    def contribution(self):
+        return ()
+
+
+class _NoReturnStatement:
+    def __init__(self) -> None:
+        from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
+
+        self.audit_row = FactoryAuditRow(
+            role="statement",
+            status="selected",
+            observed="If",
+            blame="numpy/_core/repro.py:17:4",
+            selected="IfSugar",
+            candidates=["IfSugar"],
+            message="selected IfSugar",
+        )
+
+    def reduce(self, ctx):
+        del ctx
+        return _NoReturnOutcome()
+
+
+def test_sequential_dig_runtime_selected_return_is_a_named_effect() -> None:
+    from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = SequentialDigBody((_NoReturnStatement(),)).desugar()
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, ConditionalExpressionRuntimeEffect)
+    assert "numpy/_core/repro.py:17:4" in outcome.reason
+    assert "If" in outcome.reason
+    assert "runtime control flow" in outcome.reason
+
+
+def test_sequential_dig_propagates_a_named_runtime_effect() -> None:
+    from sugar_lift_py_tests.effect import DivisionByZeroRuntimeEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    effect = DivisionByZeroRuntimeEffect(
+        "numpy/_core/repro.py:21:8 division denominator is runtime-dependent"
+    )
+
+    class EffectStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Incomplete(effect)
+
+    outcome = SequentialDigBody((EffectStatement(),)).desugar()
+
+    assert isinstance(outcome, Incomplete)
+    assert outcome.effect is effect
+    assert "numpy/_core/repro.py:21:8" in outcome.reason
+
+
+def test_install_source_dig_never_constructs_abstract_runtime_effect() -> None:
+    import ast
+    import inspect
+    import sugar_lift_py_tests.sugar.install_source_dig as subject
+
+    tree = ast.parse(inspect.getsource(subject))
+    direct = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "RuntimeEffect"
+    ]
+    assert direct == []

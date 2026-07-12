@@ -92,12 +92,16 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
         from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        index_term = floor_to_term(index, owner="CallSiteValue.setitem index")
+        value_term = floor_to_term(value, owner="CallSiteValue.setitem value")
 
         return Incomplete(
             SubscriptStoreRuntimeEffect(
                 "subscript assignment runtime boundary: callsite receiver "
                 f"`{self.term!r}` may invoke __setitem__; "
-                f"index={index!r} value={value!r}; site={site}"
+                f"index={index_term!r} value={value_term!r}; site={site}"
             )
         )
 
