@@ -32,15 +32,34 @@ class UniverseValue(FloorValue):
             for formula in entry.post_contribution()
         )
         if not exits:
+            from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
+            from sugar_lift_py_tests.floor.raise_value import RaiseValue
+
+            raises = tuple(
+                entry
+                for entry in self.record.statements
+                if isinstance(entry, (RaiseValue, GuardedRaise))
+            )
+            if not raises:
+                from sugar_lift_py_tests.floor.none_value import NoneValue
+                from sugar_lift_py_tests.ir import eq, make_var
+
+                return eq(
+                    make_var("out"),
+                    NoneValue().to_term(owner="UniverseValue.post"),
+                )
             from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
             from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
 
             factory_panic_gap(
                 owner="UniverseValue",
                 blame=self.name,
-                observed="no exits",
+                observed="raise-only exits",
                 requested="a post slot",
-                fix="write more Universe: a body with no return posts nothing yet",
+                fix=(
+                    "preserve the carried raise effect; do not fabricate an "
+                    "implicit None post for a raise-only body"
+                ),
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
