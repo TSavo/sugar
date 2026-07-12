@@ -10,10 +10,18 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 def _receiver_name_from_body(receiver: SugarBody) -> str | None:
-    """Bare Name spelling of an attribute receiver, if the sugar is NameSugar."""
+    """Dotted source spelling of a Name/Attribute receiver SugarBody."""
     sugar = getattr(receiver, "sugar", None)
     name = getattr(sugar, "name", None)
-    return name if isinstance(name, str) and name else None
+    if isinstance(name, str) and name:
+        return name
+    attr_name = getattr(sugar, "attr_name", None)
+    nested_receiver = getattr(sugar, "receiver", None)
+    if isinstance(attr_name, str) and isinstance(nested_receiver, SugarBody):
+        prefix = _receiver_name_from_body(nested_receiver)
+        if prefix is not None:
+            return f"{prefix}.{attr_name}"
+    return None
 
 
 def _temporal_lookup(ctx: object, name: str):

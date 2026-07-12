@@ -416,6 +416,17 @@ class SourceFragment:
             return targets[0].attr
         return None
 
+    def assign_target_dotted_attribute_path(self) -> "tuple[str, ...] | None":
+        """Return a pure dotted single assignment target as path components."""
+        self._require(ast.Assign)
+        targets = self.node.targets  # type: ignore[attr-defined]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Attribute):
+            return None
+        dotted = _dotted_expr_name(targets[0])
+        if dotted is None:
+            return None
+        return tuple(dotted.split("."))
+
     def assign_value(self) -> "SourceFragment":
         """Return a SourceFragment for Assign.value."""
         self._require(ast.Assign)
