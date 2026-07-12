@@ -6,10 +6,23 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory import FactoryPanic
 from sugar_lift_py_tests.factory.build import build_next, default_catalog
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import ModuleBoundVar, TermValue
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.temporal import TemporalContext
+
+
+def test_global_sugar_witness_keeps_default_catalog_importable() -> None:
+    catalog = default_catalog()
+    root = SourceFragment.from_source(
+        "def assign():\n    global shared\n    shared = 7\n",
+        "global_catalog.py",
+    )
+    global_site = next(site for site in root.walk() if site.observed == "Global")
+
+    candidates = catalog.candidates_for(SugarRole.STATEMENT, global_site)
+    assert [candidate.name for candidate in candidates] == ["GlobalSugar"]
 
 
 def test_global_write_routes_through_module_temporal_and_reads_back() -> None:
