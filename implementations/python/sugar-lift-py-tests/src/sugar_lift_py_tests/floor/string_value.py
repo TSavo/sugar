@@ -179,12 +179,13 @@ class StringValue(FloorValue):
                     )
                 )
 
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.ir import ctor, num, str_const
         from sugar_lift_py_tests.outcome import Complete
 
-        if type(other) in (SymbolicValue, TupleValue):
+        if type(other) in (CallSiteValue, SymbolicValue, TupleValue):
             return Complete(
                 SymbolicValue(
                     ctor(
