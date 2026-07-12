@@ -76,8 +76,5 @@ def test_real_datetime_repr_assertions_measure_after_join(cpython_311_datetime_p
     assert {
         locus["line"] for locus in axis["refused_loci"] if locus["line"] in {1507, 1510}
     } == {1507, 1510}
-    assert any(
-        "observed=StringValue requested=stand on the modulo floor" in gap.message
-        and ":1500:" in gap.message
-        for gap in gaps
-    )
+    repr_gap = next(gap for gap in gaps if gap.label.endswith(":1495:4"))
+    assert "observed=ScopeRebind requested=ride under a guard" in repr_gap.message
