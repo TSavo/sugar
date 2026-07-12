@@ -44,25 +44,15 @@ def test_inequality_condition_folds_to_false_and_emits_nothing() -> None:
     assert out.value.statements == ()
 
 
-def test_unlifted_comparison_panics() -> None:
-    # `<` is not lifted -- CompareOpSugar owns only ==/!= -- so nothing owns the Compare
-    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    node = ast.parse("if 1 < 1:\n    pass").body[0]
-    try:
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    except FactoryPanic as panic:
-        assert panic.info.fix
-        return
-    raise AssertionError("`1 < 1` built cleanly -- `<` is not lifted, it must panic")
+def test_less_than_condition_folds_and_takes_the_false_branch() -> None:
+    sugar, ctx = _if("if 1 < 1:\n    pass")
+
+    outcome = sugar.desugar(ctx)
+    assert isinstance(outcome, Complete)
+    assert outcome.value.statements == ()
 
 
-def test_ordinary_except_does_not_swallow_the_panic() -> None:
-    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    node = ast.parse("if 1 < 1:\n    pass").body[0]
-    try:
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    except Exception:  # noqa: BLE001 -- must never fire; the panic is a BaseException
-        raise AssertionError("except Exception swallowed the panic -- side door!")
-    except FactoryPanic:
-        return
-    raise AssertionError("`1 < 1` built cleanly -- it must panic")
+def test_less_than_true_condition_takes_the_then_branch() -> None:
+    sugar, ctx = _if("if 1 < 2:\n    pass")
+
+    assert isinstance(sugar.desugar(ctx), Complete)

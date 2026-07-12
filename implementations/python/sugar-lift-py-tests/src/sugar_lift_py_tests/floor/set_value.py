@@ -16,6 +16,14 @@ class SetValue(FloorValue):
 
     elements: tuple
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:set",
+            [element.to_term(owner=owner) for element in self.elements],
+        )
+
     def truth(self, site):
         # A set's truth is nonempty.
         from sugar_lift_py_tests.outcome import Complete
