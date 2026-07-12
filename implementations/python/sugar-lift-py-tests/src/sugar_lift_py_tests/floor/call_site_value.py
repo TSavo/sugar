@@ -68,7 +68,7 @@ class CallSiteValue(FloorValue):
         if type_coordinate is None and self.target_name == "type":
             type_coordinate = self.term
         if type_coordinate is None:
-            from sugar_lift_py_tests.effect import CallResultTypeRuntimeEffect
+            from sugar_lift_py_tests.effect import CallResultTypeRuntimeEffect, runtime_effect_witness
             from sugar_lift_py_tests.outcome import Incomplete
 
             return Incomplete(
@@ -76,7 +76,8 @@ class CallSiteValue(FloorValue):
                     "call-result type runtime boundary: "
                     f"`{self.target_name}(...)` has no cited return-type/native "
                     "tester coordinate; Python must execute the call before its "
-                    f"result can serve as an isinstance type operand; site={site}"
+                    f"result can serve as an isinstance type operand; site={site}",
+                    witness=runtime_effect_witness("adt.is_python_type", self, site),
                 )
             )
         from sugar_lift_py_tests.floor.type_tester import native_type_tester
@@ -115,7 +116,7 @@ class CallSiteValue(FloorValue):
         mutated post-state. Preserve those coordinates in the effect fact and
         never fabricate a replacement receiver.
         """
-        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect, runtime_effect_witness
         from sugar_lift_py_tests.outcome import Incomplete
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
@@ -126,7 +127,8 @@ class CallSiteValue(FloorValue):
             SubscriptStoreRuntimeEffect(
                 "subscript assignment runtime boundary: callsite receiver "
                 f"`{self.term!r}` may invoke __setitem__; "
-                f"index={index_term!r} value={value_term!r}; site={site}"
+                f"index={index_term!r} value={value_term!r}; site={site}",
+                witness=runtime_effect_witness("py.setitem", index_term, site),
             )
         )
 
