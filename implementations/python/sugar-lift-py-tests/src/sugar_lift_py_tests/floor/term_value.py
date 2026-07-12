@@ -171,6 +171,22 @@ class TermValue(FloorValue):
             return Complete(TermValue(self.value % other.value))
         return super().modulo(other, site)
 
+    def floor_divide(self, other, site):
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            if other.value == 0:
+                from sugar_lift_py_tests.effect import DivisionByZeroRuntimeEffect
+
+                return Incomplete(
+                    DivisionByZeroRuntimeEffect(
+                        "floor division by zero runtime boundary: the divisor is "
+                        f"concretely 0; owner=TermValue.floor_divide site={site}"
+                    )
+                )
+            return Complete(TermValue(self.value // other.value))
+        return super().floor_divide(other, site)
+
     def unary_minus(self, site):
         # Arithmetic negation: fold to -value.
         del site
