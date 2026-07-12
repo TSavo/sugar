@@ -841,6 +841,97 @@ def _module_import_maps(module) -> "tuple[dict, dict]":
     return import_aliases, from_imports
 
 
+def _retain_stated_call_prefix(stmt, ctx, payload: LiftReportPayloadDto) -> None:
+    """Project call-bearing claims reached before a later function-body gap.
+
+    The per-def audit remains red for the original gap. This replay only retains
+    statements the factory completed before that gap, so an assertion such as
+    ``assert predicate(x)`` keeps its stated call coordinate and call edge even
+    when an unrelated later statement makes the enclosing post unconstructable.
+    If construction or reduction has not reached the assertion, the replay
+    stops at the same loud None arm and emits nothing.
+    """
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        InvValue,
+        SymbolicValue,
+        UniverseValue,
+    )
+    from sugar_lift_py_tests.ir import make_var
+
+    temporal = ctx.temporal
+    formals = tuple(stmt.function_params())
+    for formal in formals:
+        temporal = temporal.bind_value(formal, SymbolicValue(make_var(formal)))
+    replay_ctx = dataclasses.replace(ctx, temporal=temporal)
+    function_name = stmt.function_name()
+    retained_loci: set[tuple[int, int]] = set()
+
+    def reads_rebound_name(assert_site) -> bool:
+        read_names = assert_site.assert_test().loaded_names()
+        rebound: set[str] = set()
+        for fragment in stmt.function_body():
+            if fragment.line == assert_site.line and fragment.col == assert_site.col:
+                break
+            rebound.update(fragment.stored_or_deleted_names())
+        return not read_names.isdisjoint(rebound)
+
+    def retain(entry) -> None:
+        test = entry.site.assert_test()
+        call_result_shape = test.observed == "Call" or (
+            test.observed == "Compare"
+            and (
+                test.compare_left().observed == "Call"
+                or any(
+                    operand.observed == "Call" for operand in test.compare_comparators()
+                )
+            )
+        )
+        if not call_result_shape or reads_rebound_name(entry.site):
+            return
+        locus = (entry.site.line, entry.site.col)
+        if locus in retained_loci:
+            return
+        retained_loci.add(locus)
+        partial = UniverseValue(
+            name=function_name,
+            formals=formals,
+            record=BlockValue((entry,)),
+        )
+        payload.ir.extend(partial.inv_payload_rows())
+        payload.call_edges.extend(entry.edge_contribution(function_name))
+
+    for fragment in stmt.function_body():
+        try:
+            body = replay_ctx.build_body(fragment, SugarRole.STATEMENT)
+            outcome = body.reduce(replay_ctx)
+        except FactoryPanic:
+            break
+        for entry in outcome.contribution():
+            if not isinstance(entry, InvValue) or not entry.operand_callsites:
+                continue
+            retain(entry)
+        replay_ctx = outcome.extend_scope(replay_ctx)
+
+    # A stated assertion over formals needs no derived execution history. Try
+    # direct assertion surfaces that sequential replay could not reach; any
+    # local binding dependency remains unbound and therefore panics loudly.
+    formal_ctx = dataclasses.replace(ctx, temporal=temporal)
+    for fragment in stmt.function_body():
+        if fragment.observed != "Assert":
+            continue
+        try:
+            outcome = formal_ctx.build_body(fragment, SugarRole.STATEMENT).reduce(
+                formal_ctx
+            )
+        except FactoryPanic:
+            continue
+        for entry in outcome.contribution():
+            if isinstance(entry, InvValue) and entry.operand_callsites:
+                retain(entry)
+
+
 def audit_lift_file(
     source: str,
     filename: str,
@@ -941,6 +1032,7 @@ def audit_lift_file(
         except FactoryPanic as panic:
             if not hold_panic:
                 raise
+            _retain_stated_call_prefix(stmt, ctx, payload)
             # ONE door: hold the panic, name the gap, paint it red, keep walking.
             gap = gap_from_factory_panic(label, panic)
             gaps.append(gap)
