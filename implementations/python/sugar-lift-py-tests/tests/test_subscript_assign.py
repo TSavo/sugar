@@ -11,8 +11,15 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import BlockValue, ReturnValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    CallSiteValue,
+    ListValue,
+    ReturnValue,
+    SymbolicValue,
+    TermValue,
+)
+from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -44,6 +51,32 @@ def test_symbolic_subscript_assign_is_a_typed_store_effect() -> None:
     assert len(outcome.statements) == 1
     assert isinstance(outcome.statements[0], Incomplete)
     assert isinstance(outcome.statements[0].effect, SubscriptStoreRuntimeEffect)
+
+
+def test_call_result_subscript_assign_is_a_coordinate_carrying_store_effect() -> None:
+    outcome = compose_block('    make()["k"] = 9\n')
+
+    assert isinstance(outcome, BlockValue)
+    assert len(outcome.statements) == 1
+    incomplete = outcome.statements[0]
+    assert isinstance(incomplete, Incomplete)
+    assert isinstance(incomplete.effect, SubscriptStoreRuntimeEffect)
+    assert "call:make" in incomplete.effect.reason
+    assert "StringValue(value='k')" in incomplete.effect.reason
+    assert "TermValue(value=9)" in incomplete.effect.reason
+
+
+def test_callsite_setitem_arm_does_not_replace_concrete_list_post_state() -> None:
+    receiver = ListValue((TermValue(1), TermValue(2)))
+
+    outcome = receiver.setitem(TermValue(0), TermValue(9), "t.py:1:0")
+
+    assert outcome.value == ListValue((TermValue(9), TermValue(2)))
+
+
+def test_runtime_store_receivers_own_explicit_setitem_arms() -> None:
+    assert "setitem" in CallSiteValue.__dict__
+    assert "setitem" in SymbolicValue.__dict__
 
 
 def test_slice_subscript_assign_is_owned_and_reaches_store_floor() -> None:

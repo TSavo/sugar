@@ -66,6 +66,23 @@ class CallSiteValue(FloorValue):
         # A callsite receiver stays the py.subscript coordinate regardless of index.
         return self.py_subscript_coordinate(index, site)
 
+    def setitem(self, index, value, site):
+        """Record a store into an opaque call result as a typed runtime effect.
+
+        The call, index, and value coordinates are known, but Python owns the
+        mutated post-state. Preserve those coordinates in the effect fact and
+        never fabricate a replacement receiver.
+        """
+        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            SubscriptStoreRuntimeEffect(
+                "subscript assignment runtime boundary: callsite receiver "
+                f"`{self.term!r}` may invoke __setitem__; "
+                f"index={index!r} value={value!r}; site={site}"
+            )
+        )
 
     def callsites(self):
         # A CallSiteValue carries itself -- equals emit collects it so the
