@@ -26,17 +26,23 @@ fn repo_root() -> PathBuf {
 fn bcargo_syncs_ir_compiler_manifests() {
     let root = repo_root();
     let bcargo = fs::read_to_string(root.join("bin").join("bcargo")).expect("read bin/bcargo");
+    let rules = parse_sync_rules(&bcargo);
+    let synced = |path: &str| {
+        rules
+            .iter()
+            .any(|rule| rule.kind == SyncKind::Path && rule.rel_path == path)
+    };
 
     assert!(
-        bcargo.contains("sync_dir .sugar/ir-compilers"),
+        synced(".sugar/ir-compilers"),
         "bcargo must sync .sugar/ir-compilers so remote verifier runs can resolve manifest-backed ProofIR compiler dialects"
     );
     assert!(
-        bcargo.contains("sync_dir docs/perf"),
+        synced("docs/perf"),
         "bcargo must sync docs/perf so remote perf-gate tests see the documented RSS and dhat commands"
     );
     assert!(
-        bcargo.contains("sync_dir .github"),
+        synced(".github"),
         "bcargo must sync .github so remote CI-wiring tests see workflow sources"
     );
 }
@@ -95,7 +101,9 @@ fn planted_unsynced_artifact_class_is_reported() {
     write_bcargo(
         temp.path(),
         r#"
-sync_file Cargo.toml
+sync_paths=(
+  Cargo.toml
+)
 "#,
     );
 
@@ -118,8 +126,10 @@ fn planted_synced_artifact_class_is_legal() {
     write_bcargo(
         temp.path(),
         r#"
-sync_file Cargo.toml
-sync_dir implementations/rust
+sync_paths=(
+  Cargo.toml
+  implementations/rust
+)
 "#,
     );
 
@@ -217,9 +227,12 @@ struct MissingArtifact {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SyncKind {
-    Dir,
-    FixtureDir,
-    File,
+    /// An entry in bcargo's `sync_paths=( ... )` array: shipped by the single
+    /// rsync, subject to the `--exclude` filters.
+    Path,
+    /// An `--include='/path/***'` filter rule: puts a fixture tree back in
+    /// front of the generated-output excludes, so nothing under it is excluded.
+    Include,
 }
 
 #[derive(Debug)]
@@ -246,27 +259,42 @@ fn bcargo_sync_contract_report(root: &Path) -> io::Result<SyncContractReport> {
 }
 
 fn parse_sync_rules(bcargo: &str) -> Vec<SyncRule> {
-    bcargo
-        .lines()
-        .filter_map(|line| {
-            let code = line.split('#').next().unwrap_or("").trim();
-            let (kind, rest) = if let Some(rest) = code.strip_prefix("sync_dir ") {
-                (SyncKind::Dir, rest)
-            } else if let Some(rest) = code.strip_prefix("sync_fixture_dir ") {
-                (SyncKind::FixtureDir, rest)
-            } else if let Some(rest) = code.strip_prefix("sync_file ") {
-                (SyncKind::File, rest)
-            } else {
-                return None;
-            };
-            let rel_path = rest
-                .split_whitespace()
-                .next()?
-                .trim_matches('"')
-                .to_string();
-            Some(SyncRule { kind, rel_path })
-        })
-        .collect()
+    let mut rules = Vec::new();
+    let mut in_sync_paths = false;
+    for line in bcargo.lines() {
+        let code = line.split('#').next().unwrap_or("").trim();
+        if code == "sync_paths=(" {
+            in_sync_paths = true;
+            continue;
+        }
+        if in_sync_paths {
+            if code == ")" {
+                in_sync_paths = false;
+                continue;
+            }
+            if let Some(rel_path) = code.split_whitespace().next() {
+                rules.push(SyncRule {
+                    kind: SyncKind::Path,
+                    rel_path: rel_path.trim_matches('"').to_string(),
+                });
+            }
+            continue;
+        }
+        if let Some((_, pattern)) = code.split_once("--include='") {
+            if let Some((pattern, _)) = pattern.split_once('\'') {
+                let rel_path = pattern
+                    .trim_start_matches('/')
+                    .trim_end_matches('*')
+                    .trim_end_matches('/')
+                    .to_string();
+                rules.push(SyncRule {
+                    kind: SyncKind::Include,
+                    rel_path,
+                });
+            }
+        }
+    }
+    rules
 }
 
 fn parse_sync_excludes(bcargo: &str) -> Vec<String> {
@@ -362,12 +390,11 @@ fn is_covered(artifact: &Artifact, rules: &[SyncRule], excludes: &[String]) -> b
 
 fn rule_covers(rule: &SyncRule, artifact: &Artifact, excludes: &[String]) -> bool {
     match rule.kind {
-        SyncKind::File => artifact.rel_path == rule.rel_path,
-        SyncKind::Dir => {
+        SyncKind::Path => {
             path_is_under(&artifact.rel_path, &rule.rel_path)
                 && !is_excluded_by_sync_dir(&artifact.rel_path, &rule.rel_path, excludes)
         }
-        SyncKind::FixtureDir => path_is_under(&artifact.rel_path, &rule.rel_path),
+        SyncKind::Include => path_is_under(&artifact.rel_path, &rule.rel_path),
     }
 }
 
@@ -396,12 +423,15 @@ fn path_contains_component_sequence(path: &str, needle: &str) -> bool {
 
 fn replacement_for(artifact: &Artifact) -> String {
     if artifact.rel_path.contains("/.sugar/runs") {
-        return format!("add sync_fixture_dir {}", artifact.rel_path);
+        return format!(
+            "add --include='/{}/***' ahead of the excludes in bin/bcargo",
+            artifact.rel_path
+        );
     }
     if let Some(root) = broad_sync_root(&artifact.rel_path) {
-        return format!("add sync_dir {root}");
+        return format!("add {root} to sync_paths in bin/bcargo");
     }
-    format!("add sync_file {}", artifact.rel_path)
+    format!("add {} to sync_paths in bin/bcargo", artifact.rel_path)
 }
 
 fn broad_sync_root(path: &str) -> Option<String> {
