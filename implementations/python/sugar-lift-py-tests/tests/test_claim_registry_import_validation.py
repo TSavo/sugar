@@ -25,8 +25,8 @@ class {name}(Sugar, role=SugarRole.TERM, comes_before={comes_before!r}):
         return False
 
     @classmethod
-    def build(cls, fragment, ctx):
-        raise AssertionError("registry validation planted sugar must not build")
+    def new(cls, fragment, ctx):
+        raise AssertionError("registry validation planted sugar must not construct")
 
     @classmethod
     def witnesses(cls):
@@ -89,7 +89,7 @@ def test_live_claim_registry_imports_cleanly() -> None:
     claims = list(default_catalog().claims)
 
     assert len({claim.name for claim in claims}) == len(claims)
-    assert {"CallSugar", "AddSugar", "ReturnSugar", "TrySugar"} <= {
+    assert {"CallSugar", "AddOpSugar", "ReturnSugar", "TrySugar"} <= {
         claim.name for claim in claims
     }
 
