@@ -111,8 +111,7 @@ class StringValue(FloorValue):
         if type(index) is SliceValue:
             bounds = (index.lower, index.upper, index.step)
             if all(
-                bound is None
-                or (type(bound) is TermValue and type(bound.value) is int)
+                bound is None or (type(bound) is TermValue and type(bound.value) is int)
                 for bound in bounds
             ):
                 lower, upper, step = (
@@ -163,6 +162,10 @@ class StringValue(FloorValue):
         coordinate used by formatted-string construction. Other floor shapes
         stay on the default loud modulo gap.
         """
+        distributed = self._distribute_guarded_modulo(other, site)
+        if distributed is not None:
+            return distributed
+
         ground = _ground_percent_operand(other)
         if ground is not _NOT_GROUND:
             from sugar_lift_py_tests.effect import DynamicFormatRuntimeEffect
@@ -199,6 +202,47 @@ class StringValue(FloorValue):
                 )
             )
         return super().modulo(other, site)
+
+    def _distribute_guarded_modulo(self, other, site):
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.outcome import Complete, complete_value
+
+        if isinstance(other, GuardedValue):
+            return Complete(
+                GuardedValue(
+                    other.guard,
+                    complete_value(
+                        self.modulo(other.when_true, site),
+                        owner="StringValue.modulo guarded true",
+                    ),
+                    complete_value(
+                        self.modulo(other.when_false, site),
+                        owner="StringValue.modulo guarded false",
+                    ),
+                )
+            )
+        if isinstance(other, TupleValue):
+            for index, element in enumerate(other.elements):
+                if not isinstance(element, GuardedValue):
+                    continue
+
+                def branch(value):
+                    elements = list(other.elements)
+                    elements[index] = value
+                    return complete_value(
+                        self.modulo(TupleValue(tuple(elements)), site),
+                        owner="StringValue.modulo guarded tuple element",
+                    )
+
+                return Complete(
+                    GuardedValue(
+                        element.guard,
+                        branch(element.when_true),
+                        branch(element.when_false),
+                    )
+                )
+        return None
 
     def project_callsite_with(self, operation, ctx):
         return operation.project_literal(self, ctx)
@@ -452,9 +496,7 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
         if len(args) == 0:
             return Complete(
                 ArrayLiteral(
-                    tuple(
-                        StringValue(part) for part in receiver.value.splitlines()
-                    )
+                    tuple(StringValue(part) for part in receiver.value.splitlines())
                 )
             )
         if len(args) == 1:
@@ -520,7 +562,8 @@ def _call_method_gap(
     fix: str,
 ) -> NoReturn:
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow, factory_panic,
+        FactoryAuditRow,
+        factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,
