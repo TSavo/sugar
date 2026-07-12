@@ -1037,15 +1037,14 @@ def audit_lift_file(
                 from_imports=from_imports,
                 name_resolver=name_resolver,
             )
-            # Only a column-zero def with a real universe/testimony claimant is
-            # an audit definition root. Nested defs, methods, and root shapes
-            # outside that partition are executable statements that bind a
-            # FunctionCallable. If neither role owns the shape, STATEMENT's
-            # None arm remains the one loud FactoryPanic recorded by the audit.
+            # Every def enumerated by this audit door with a real
+            # universe/testimony claimant is a definition root, including class
+            # methods. Executable defs encountered while reducing a body still
+            # use STATEMENT and bind a FunctionCallable.
             definition_candidates = catalog.candidates_for(SugarRole.DEFINITION, stmt)
             root_role = (
                 SugarRole.DEFINITION
-                if stmt.col == 0 and definition_candidates
+                if definition_candidates
                 else SugarRole.STATEMENT
             )
             result = build_node(stmt, filename=filename, role=root_role, ctx=ctx)
