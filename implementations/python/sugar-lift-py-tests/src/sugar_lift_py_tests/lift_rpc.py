@@ -854,8 +854,6 @@ def audit_lift_file(
     from sugar_lift_py_tests.factory.build import build_node, default_catalog
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import complete_value
-    from sugar_lift_py_tests.sugar.function_def_sugar import FunctionDefSugar
-    from sugar_lift_py_tests.sugar.test_function_def_sugar import TestFunctionDefSugar
     from sugar_lift_py_tests.sugar_body import SugarBody
 
     payload = LiftReportPayloadDto(source_ledger={})
@@ -893,10 +891,9 @@ def audit_lift_file(
                             f"{nested}.{nested_stmt.function_name()}"
                         ] = nested_stmt.node
     for stmt in _iter_liftable_function_defs(module):
-        # Either ordinary FunctionDef or test_* testimony (both owns shapes).
-        # Class methods included (pytest TestCase-style / mixin tests).
-        if not (FunctionDefSugar.owns(stmt) or TestFunctionDefSugar.owns(stmt)):
-            continue
+        # Every discovered def reaches construction. An owned FunctionDef or
+        # test_* testimony takes its Some arm; an unowned shape must reach the
+        # None arm so this audit door can hold and paint the gap red.
         label = f"{filename}:{stmt.line}:{stmt.col}"
         try:
             ctx = FactoryBuildContext(
