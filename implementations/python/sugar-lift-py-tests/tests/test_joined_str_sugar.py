@@ -9,10 +9,13 @@ import pytest
 from factory_reduce import fol, reduce_term, reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.effect import DynamicFormatRuntimeEffect
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import StringValue, SymbolicValue
 from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.joined_str_sugar import JoinedStrSugar
 
 
@@ -92,3 +95,13 @@ def test_format_spec_rides_in_the_coordinate() -> None:
             ],
         )
     )
+
+
+def test_dynamic_format_spec_is_a_named_runtime_effect() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    body = ctx.build_body(_site("f'{x:{width}}'"), SugarRole.TERM)
+
+    outcome = body.reduce(ctx)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, DynamicFormatRuntimeEffect)

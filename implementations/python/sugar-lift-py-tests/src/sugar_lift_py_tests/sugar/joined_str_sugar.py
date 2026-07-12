@@ -229,10 +229,10 @@ def _try_ground_format(value, conversion: int, spec: str, site) -> str | None:
 
 
 def _runtime_format_effect(blame: str, reason: str) -> Incomplete:
-    from sugar_lift_py_tests.effect import RuntimeEffect
+    from sugar_lift_py_tests.effect import DynamicFormatRuntimeEffect
 
     return Incomplete(
-        RuntimeEffect(
+        DynamicFormatRuntimeEffect(
             "formatted string runtime boundary: "
             f"{reason}; keep as typed red until a narrower floor owns this "
             f"shape. blame={blame}"
