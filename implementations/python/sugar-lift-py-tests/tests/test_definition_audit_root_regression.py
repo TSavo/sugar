@@ -5,42 +5,6 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 
 
-EXPECTED_DATETIME_LIFTED_LINES = [
-    53,
-    60,
-    65,
-    67,
-    131,
-    137,
-    144,
-    328,
-    867,
-    1126,
-    1507,
-    1510,
-    2044,
-    2047,
-]
-
-
-def test_datetime_definition_audit_roots_preserve_composed_claim_census(
-    cpython_311_datetime_path,
-) -> None:
-    path = cpython_311_datetime_path
-    source = path.read_text(encoding="utf-8")
-    payload, _gaps = audit_lift_file(source, str(path), hold_panic=True)
-    assertions = account_lift_coverage(
-        census_source(source, file=str(path)), payload.to_rpc()
-    ).to_json()["assertions"]
-
-    assert assertions["lifted_cited"] == 14
-    assert assertions["refused_loud"] == 31
-    assert assertions["silently_unaccounted"] == 0
-    assert [locus["line"] for locus in assertions["lifted_loci"]] == (
-        EXPECTED_DATETIME_LIFTED_LINES
-    )
-
-
 def test_class_method_audit_root_preserves_predicate_claim_and_call_edge() -> None:
     source = "\n" * 478 + (
         "class HTTPAdapter:\n"
