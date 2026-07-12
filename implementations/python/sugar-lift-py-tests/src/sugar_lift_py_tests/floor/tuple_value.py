@@ -50,6 +50,70 @@ class TupleValue(FloorValue):
 
         return Complete(TermValue(len(self.elements)))
 
+    def test_python_type(self, value, site):
+        return self._collect_type_tests(value, site, 0, ())
+
+    def _collect_type_tests(self, value, site, index, predicates):
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+
+        if index >= len(self.elements):
+            if not predicates:
+                return Complete(FalseBoolLiteralSugar(site=site))
+            if len(predicates) == 1:
+                return Complete(predicates[0])
+            from sugar_lift_py_tests.ir import or_
+
+            return Complete(
+                PredicateValue(
+                    or_([predicate.formula for predicate in predicates]),
+                    site,
+                    operand_callsites=tuple(
+                        callsite
+                        for predicate in predicates
+                        for callsite in predicate.operand_callsites
+                    ),
+                )
+            )
+
+        return self.elements[index].test_python_type(value, site).and_then(
+            lambda result: self._continue_type_test(
+                value, site, index, predicates, result
+            )
+        )
+
+    def _continue_type_test(self, value, site, index, predicates, result):
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        if type(result) is TrueBoolLiteralSugar:
+            return Complete(TrueBoolLiteralSugar(site=site))
+        if type(result) is FalseBoolLiteralSugar:
+            return self._collect_type_tests(value, site, index + 1, predicates)
+        if type(result) is PredicateValue:
+            return self._collect_type_tests(
+                value, site, index + 1, (*predicates, result)
+            )
+
+        from sugar_lift_py_tests.factory import factory_panic_gap
+
+        factory_panic_gap(
+            owner="TupleValue.test_python_type",
+            blame=str(site),
+            observed=type(result).__name__,
+            requested="boolean result from per-element python:type tester",
+            fix="implement the element's native python:type tester result",
+        )
+
     def subscript(self, index, site):
         # Concrete tuple + in-range TermValue int folds to the element; out of
         # range is IndexError. Non-concrete index stays the py.subscript coordinate.

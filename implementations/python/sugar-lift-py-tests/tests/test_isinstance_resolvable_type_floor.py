@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
@@ -37,21 +34,25 @@ def test_real_datetime_867_isinstance_assert_lifts_and_cites() -> None:
     assert axis["lifted_loci"][0]["line"] == 867
 
 
-def test_tuple_of_types_isinstance_stays_refused_loud() -> None:
+def test_tuple_of_types_isinstance_lifts_as_native_disjunction() -> None:
     source = _datetime_cmp_source("(timedelta, int)")
     file = "/tmp/cpython-3.11-datetime.py"
 
     _payload, gaps = audit_lift_file(source, file, hold_panic=True)
     axis = _assertion_axis(source)
 
-    assert gaps
-    assert gaps[0].info["observed"] == "TupleValue"
-    assert gaps[0].info["requested"] == "python:type coordinate dispatch"
-    assert axis["lifted_cited"] == 0
-    assert axis["refused_loud"] == 1
+    assert not gaps
+    assert axis["lifted_cited"] == 1
+    assert axis["refused_loud"] == 0
     assert axis["silently_unaccounted"] == 0
-    with pytest.raises(FactoryPanic):
-        lift_file_payload(source, file)
+    payload = lift_file_payload(source, file).to_rpc()
+    assertion = next(row for row in payload["ir"] if row.get("inv"))
+    assert assertion["inv"]["kind"] == "or"
+    assert [operand["name"] for operand in assertion["inv"]["operands"]] == [
+        "adt.is_python_type",
+        "adt.is_python_type",
+    ]
+    assert "call:isinstance" not in repr(assertion["inv"])
 
 
 def test_resolved_class_isinstance_uses_native_tester_atom() -> None:
