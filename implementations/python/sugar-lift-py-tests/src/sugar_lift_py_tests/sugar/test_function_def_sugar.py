@@ -11,7 +11,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class TestFunctionDefSugar(
-    Sugar, role=SugarRole.STATEMENT, comes_before=("FunctionDefSugar",)
+    Sugar, role=SugarRole.DEFINITION, comes_before=("FunctionDefSugar",)
 ):
     """`def test_*(...): body` is TESTIMONY, not a contract. The pytest
     `test_` prefix IS syntax; recognition stays syntactic. Decorators

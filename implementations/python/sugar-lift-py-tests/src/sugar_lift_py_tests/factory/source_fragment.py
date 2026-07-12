@@ -545,6 +545,21 @@ class SourceFragment:
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         return [a.arg for a in self.node.args.args]  # type: ignore[attr-defined]
 
+    def function_binding_signature(self) -> "tuple[tuple[str, str], ...]":
+        """Every formal name and kind, preserved for a bound function value."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        args = self.node.args  # type: ignore[attr-defined]
+        signature = [
+            *((arg.arg, "positional-only") for arg in args.posonlyargs),
+            *((arg.arg, "positional") for arg in args.args),
+        ]
+        if args.vararg is not None:
+            signature.append((args.vararg.arg, "var-positional"))
+        signature.extend((arg.arg, "keyword-only") for arg in args.kwonlyargs)
+        if args.kwarg is not None:
+            signature.append((args.kwarg.arg, "var-keyword"))
+        return tuple(signature)
+
     def function_defaults(self) -> "list[SourceFragment]":
         """Return trailing positional default expressions in formal order."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)

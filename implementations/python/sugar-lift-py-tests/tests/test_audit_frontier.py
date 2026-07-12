@@ -57,8 +57,9 @@ def test_audit_frontier_demand_histogram_buckets_sugar() -> None:
     assert by_observed.get("Match", 0) >= 1
 
 
-def test_audit_frontier_holds_unowned_vararg_def_as_loud_gap() -> None:
-    # default-arg defs became owned (#4169); a vararg def stays unowned.
+def test_audit_frontier_constructs_vararg_def_as_statement_binding() -> None:
+    # Complex signatures are not universe roots, but the executable def still
+    # has one lawful construction as a deferred named callable binding.
     source = "def f(*args):\n    assert args\n    return args\n"
 
     payload, gaps = audit_lift_file(source, "default_def.py")
@@ -68,11 +69,11 @@ def test_audit_frontier_holds_unowned_vararg_def_as_loud_gap() -> None:
         for row in payload.factory_walk
         if row.to_rpc().get("ast_kind") == "FunctionDef"
     ]
-    assert def_rows, "unowned FunctionDef must reach the None arm and speak"
-    assert def_rows[0]["verdict"] == "gap"
-    assert "write more Sugar" in def_rows[0]["reason"]
-    assert "FunctionDef" in def_rows[0]["reason"]
-    assert any(gap.info.get("observed") == "FunctionDef" for gap in gaps)
+    assert def_rows
+    assert def_rows[0]["verdict"] == "complete"
+    assert def_rows[0]["selected"] == "StatementFunctionDefSugar"
+    assert gaps == []
+    assert payload.ir == []
 
 
 def test_audit_frontier_feeds_pandas_wall_construction_gap_scrape() -> None:

@@ -21,7 +21,7 @@ from sugar_lift_py_tests.floor import (
     BlockValue,
     ClassValue,
     SymbolicValue,
-    UniverseValue,
+    FunctionCallable,
 )
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import complete_value
@@ -51,7 +51,7 @@ def _class_value(source: str, *, binds: dict | None = None) -> ClassValue:
 
 
 def test_class_body_method_threads_into_the_record() -> None:
-    """(1) Method FunctionDef in the body becomes a UniverseValue contribution."""
+    """(1) Method FunctionDef in the body becomes a deferred callable."""
     cls = _class_value(
         "class C:\n"
         "    def m(self):\n"
@@ -59,12 +59,12 @@ def test_class_body_method_threads_into_the_record() -> None:
     )
     assert cls.name == "C"
     assert cls.bases == ()
-    # Body contribution is the method universe.
+    # Body contribution is the method callable.
     entries = cls.contribution()
     assert len(entries) == 1
-    assert isinstance(entries[0], UniverseValue)
+    assert isinstance(entries[0], FunctionCallable)
     assert entries[0].name == "m"
-    assert entries[0].formals == ("self",)
+    assert entries[0].parameters == ("self",)
 
 
 def test_class_bases_are_carried_as_coordinates() -> None:
@@ -164,5 +164,5 @@ def test_function_def_is_not_owned_by_class_def_sugar() -> None:
     assert ClassDefSugar.owns(_site("def f():\n    return 1\n")) is False
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("def f():\n    return 1\n").body[0]
-    result = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    result = build_node(node, filename="t.py", role=SugarRole.DEFINITION, ctx=ctx)
     assert result.audit_row.selected == "FunctionDefSugar"

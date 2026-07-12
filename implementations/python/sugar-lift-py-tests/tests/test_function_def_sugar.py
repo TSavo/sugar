@@ -19,7 +19,7 @@ from sugar_lift_py_tests.outcome import complete_value
 def _universe(source: str) -> UniverseValue:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse(source).body[0]
-    result = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    result = build_node(node, filename="t.py", role=SugarRole.DEFINITION, ctx=ctx)
     value = complete_value(result.sugar.desugar(ctx), owner="test")
     assert isinstance(value, UniverseValue)
     return value

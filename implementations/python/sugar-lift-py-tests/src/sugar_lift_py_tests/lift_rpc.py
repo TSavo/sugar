@@ -1037,18 +1037,33 @@ def audit_lift_file(
                 from_imports=from_imports,
                 name_resolver=name_resolver,
             )
-            result = build_node(
-                stmt, filename=filename, role=SugarRole.STATEMENT, ctx=ctx
+            # Only a column-zero def with a real universe/testimony claimant is
+            # an audit definition root. Nested defs, methods, and root shapes
+            # outside that partition are executable statements that bind a
+            # FunctionCallable. If neither role owns the shape, STATEMENT's
+            # None arm remains the one loud FactoryPanic recorded by the audit.
+            definition_candidates = catalog.candidates_for(SugarRole.DEFINITION, stmt)
+            root_role = (
+                SugarRole.DEFINITION
+                if stmt.col == 0 and definition_candidates
+                else SugarRole.STATEMENT
             )
+            result = build_node(stmt, filename=filename, role=root_role, ctx=ctx)
             root = SugarBody(
                 sugar=result.sugar,
-                role=SugarRole.STATEMENT,
+                role=root_role,
                 audit_row=result.audit_row,
             )
             payload.factory_walk.extend(root.factory_walk_rows())
             value = complete_value(
                 result.sugar.desugar(ctx), owner="lift_file_payload"
             )
+            from sugar_lift_py_tests.floor import FunctionCallable
+
+            if isinstance(value, FunctionCallable):
+                # A def statement constructs and binds a callable. It is not a
+                # body universe and therefore mints no function-contract row.
+                continue
             def_memento = dataclasses.replace(
                 stmt.memento(),
                 source_function_name=value.name,
