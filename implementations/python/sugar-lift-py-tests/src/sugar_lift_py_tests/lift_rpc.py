@@ -736,7 +736,7 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
 
 
 def _module_import_temporal(module) -> "object":
-    """Bind module-level Import / ImportFrom names into a TemporalContext.
+    """Bind module-level imports and declared class names into a TemporalContext.
 
     Deeper floors: names introduced by ``import pytest`` / ``from x import Y``
     must stand when reducing function bodies. Without this, TemporalContext
@@ -744,6 +744,7 @@ def _module_import_temporal(module) -> "object":
     Bindings are ``python:module`` / ``python:from_import`` terms — coordinates,
     not fabricated contracts.
     """
+    from sugar_lift_py_tests.floor import BlockValue, ClassValue
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.temporal import TemporalContext
@@ -779,6 +780,12 @@ def _module_import_temporal(module) -> "object":
                         )
                     ),
                 )
+        elif observed == "ClassDef":
+            name = stmt.class_name()
+            temporal = temporal.bind_value(
+                name,
+                ClassValue(name=name, bases=(), record=BlockValue(())),
+            )
     return temporal
 
 
