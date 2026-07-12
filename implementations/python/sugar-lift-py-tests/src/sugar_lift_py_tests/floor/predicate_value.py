@@ -57,6 +57,15 @@ class PredicateValue(FloorValue):
 
         return Complete(self)
 
+    def bitwise_or(self, other, site):
+        if type(other) is not PredicateValue:
+            return super().bitwise_or(other, site)
+        del site
+        from sugar_lift_py_tests.ir import or_
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(PredicateValue(or_([self.formula, other.formula])))
+
     def stated(self, site):
         # A symbolic predicate states an inv: the fact the record emits. Operand
         # callsites ride into the InvValue so edges project later.
