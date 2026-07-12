@@ -279,6 +279,20 @@ sync_workspace() {
   ((${#existing[@]})) || return 0
   run_ssh "mkdir -p $(quote_sh "$remote_repo")"
   (cd "$repo_root" && "$rsync_bin" -azR --delete "${exclude_args[@]}" "${existing[@]}" "$remote_host:$remote_repo/")
+  sync_tracked_manifest
+}
+
+# The remote copy has no .git, but the sync-contract census needs to tell
+# committed fixtures from run products generated on the remote (excluded
+# paths survive --delete, so remote-generated .sugar/runs dirs persist).
+# Ship the tracked-file list so the census can ask VCS-tracked-ness there.
+sync_tracked_manifest() {
+  local manifest
+  manifest="$(mktemp)" || return 0
+  if git -C "$repo_root" ls-files -z >"$manifest" 2>/dev/null; then
+    "$rsync_bin" -az "$manifest" "$remote_host:$remote_repo/.bcargo-tracked-manifest"
+  fi
+  rm -f "$manifest"
 }
 
 remove_remote_dir() {

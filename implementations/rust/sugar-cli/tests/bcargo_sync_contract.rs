@@ -143,6 +143,57 @@ sync_paths=(
 }
 
 #[test]
+fn untracked_run_products_do_not_enter_the_census() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_fixture_tree(temp.path());
+    write_bcargo(
+        temp.path(),
+        r#"
+sync_paths=(
+  Cargo.toml
+)
+"#,
+    );
+    let runs = temp.path().join("examples/planted-showcase/good/.sugar/runs");
+    fs::create_dir_all(&runs).expect("mkdir runs");
+    fs::write(runs.join("blake3-512_planted.proof"), "run product").expect("write run product");
+
+    // Track everything EXCEPT the runs dir, then census. The tracked
+    // tests/fixtures class must still be reported missing; the untracked
+    // run products must not impersonate a fixture.
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(temp.path())
+            .args(args)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    };
+    git(&["init", "-q"]);
+    git(&["add", "implementations", "bin"]);
+
+    let report = bcargo_sync_contract_report(temp.path()).expect("build tracked report");
+
+    assert!(
+        report
+            .missing
+            .iter()
+            .any(|missing| missing.artifact.rel_path.ends_with("tests/fixtures")),
+        "tracked tests/fixtures artifact class should still be missing:\n{}",
+        report.render_missing()
+    );
+    assert!(
+        !report
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.rel_path.contains(".sugar/runs")),
+        "untracked .sugar/runs run products must not enter the census:\n{}",
+        report.render_missing()
+    );
+}
+
+#[test]
 fn bcargo_remote_root_cleanup_contract() {
     let root = repo_root();
     let status = Command::new("bash")
@@ -245,7 +296,7 @@ fn bcargo_sync_contract_report(root: &Path) -> io::Result<SyncContractReport> {
     let bcargo = fs::read_to_string(root.join("bin").join("bcargo"))?;
     let sync_rules = parse_sync_rules(&bcargo);
     let sync_excludes = parse_sync_excludes(&bcargo);
-    let artifacts = collect_artifacts(root)?;
+    let artifacts = collect_artifacts(root, tracked_paths(root).as_ref())?;
     let missing = artifacts
         .iter()
         .filter(|artifact| !is_covered(artifact, &sync_rules, &sync_excludes))
@@ -309,15 +360,74 @@ fn parse_sync_excludes(bcargo: &str) -> Vec<String> {
         .collect()
 }
 
-fn collect_artifacts(root: &Path) -> io::Result<Vec<Artifact>> {
+/// Every path `git ls-files` reports for `root`, or None when `root` is not a
+/// git checkout (the planted tempdir fixtures). The census only wants the
+/// COMMITTED corpus: `.sugar/runs` is also where sugar writes generated run
+/// products, so a filesystem-only walk cannot tell a trust-root fixture from
+/// the residue of the last local example run, and the test's verdict would
+/// depend on working-tree dirt instead of on the repo.
+fn tracked_paths(root: &Path) -> Option<BTreeSet<String>> {
+    if let Some(tracked) = git_tracked_paths(root) {
+        return Some(tracked);
+    }
+    // Remote bcargo checkouts have no .git; bcargo ships the tracked-file
+    // list alongside the sync so the census can still ask VCS-tracked-ness.
+    manifest_tracked_paths(root)
+}
+
+fn git_tracked_paths(root: &Path) -> Option<BTreeSet<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "-z"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(parse_nul_separated_paths(&output.stdout))
+}
+
+fn manifest_tracked_paths(root: &Path) -> Option<BTreeSet<String>> {
+    let bytes = fs::read(root.join(".bcargo-tracked-manifest")).ok()?;
+    Some(parse_nul_separated_paths(&bytes))
+}
+
+fn parse_nul_separated_paths(bytes: &[u8]) -> BTreeSet<String> {
+    String::from_utf8_lossy(bytes)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn is_tracked_file(tracked: Option<&BTreeSet<String>>, rel_path: &str) -> bool {
+    tracked.is_none_or(|tracked| tracked.contains(rel_path))
+}
+
+fn is_tracked_dir(tracked: Option<&BTreeSet<String>>, rel_path: &str) -> bool {
+    tracked.is_none_or(|tracked| {
+        let prefix = format!("{rel_path}/");
+        tracked
+            .range(prefix.clone()..)
+            .next()
+            .is_some_and(|path| path.starts_with(&prefix))
+    })
+}
+
+fn collect_artifacts(
+    root: &Path,
+    tracked: Option<&BTreeSet<String>>,
+) -> io::Result<Vec<Artifact>> {
     let mut artifacts = BTreeSet::new();
-    collect_artifacts_from(root, root, &mut artifacts)?;
+    collect_artifacts_from(root, root, tracked, &mut artifacts)?;
     Ok(artifacts.into_iter().collect())
 }
 
 fn collect_artifacts_from(
     root: &Path,
     dir: &Path,
+    tracked: Option<&BTreeSet<String>>,
     artifacts: &mut BTreeSet<Artifact>,
 ) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
@@ -331,22 +441,29 @@ fn collect_artifacts_from(
             }
             let rel_path = rel_path(root, &path);
             if is_fixture_dir_name(&file_name) {
-                artifacts.insert(Artifact {
-                    rel_path,
-                    class: "fixture-dir",
-                });
+                if is_tracked_dir(tracked, &rel_path) {
+                    artifacts.insert(Artifact {
+                        rel_path,
+                        class: "fixture-dir",
+                    });
+                }
                 continue;
             }
             if is_sugar_runs_dir(&path) {
-                artifacts.insert(Artifact {
-                    rel_path,
-                    class: "sugar-runs-proof-fixtures",
-                });
+                if is_tracked_dir(tracked, &rel_path) {
+                    artifacts.insert(Artifact {
+                        rel_path,
+                        class: "sugar-runs-proof-fixtures",
+                    });
+                }
                 continue;
             }
-            collect_artifacts_from(root, &path, artifacts)?;
+            collect_artifacts_from(root, &path, tracked, artifacts)?;
         } else {
             let rel_path = rel_path(root, &path);
+            if !is_tracked_file(tracked, &rel_path) {
+                continue;
+            }
             if let Some(class) = artifact_file_class(&path) {
                 artifacts.insert(Artifact { rel_path, class });
             }
