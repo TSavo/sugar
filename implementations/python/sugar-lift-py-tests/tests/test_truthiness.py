@@ -5,6 +5,7 @@ wires binary_conditional and stated through truth -- no new forks at the sugar."
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 
 import pytest
 
@@ -80,6 +81,27 @@ def test_symbolic_condition_emits_py_truthy_guard() -> None:
             implies(not_(guard), eq(make_var("out"), num(0))),
         ]
     )
+
+
+def test_symbolic_condition_propagates_named_runtime_effect() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    ctx = replace(
+        ctx,
+        temporal=ctx.temporal.bind_value(
+            "z", SymbolicValue(make_var("z"))
+        ),
+    )
+    node = ast.parse("if z:\n    assert 0\n").body[0]
+    result = build_node(
+        node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx
+    )
+
+    outcome = result.sugar.desugar(ctx)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, AssertionFailedRuntimeEffect)
+    assert "under branch condition" in outcome.reason
+    assert "py.truthy" in outcome.reason
 
 
 def test_floor_value_default_truth_panics() -> None:
