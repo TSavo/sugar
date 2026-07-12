@@ -95,15 +95,26 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         from sugar_lift_py_tests.floor.call_site_value import force_floor
 
         if isinstance(cm, CallSiteValue):
-            # Timeless substitution: ``with manager() as value`` is the body
-            # with the frozen manager call coordinate written for ``value``.
-            # Enter/exit events are ghosts of motion. If the callable has a
-            # contract, ordinary downstream floors may dig it from this same
-            # coordinate; WithSugar does not execute a protocol side door.
+            # Timeless substitution: the as-binding is the next ordinary
+            # method-chain name, manager().__enter__(), never manager().
+            entered = cm.linear_method_call("__enter__", (), self.site)
             body_ctx = ctx
             if as_name is not None:
-                body_ctx = ScopeRebind(as_name, cm).extend_scope(ctx)
-            return self._enter_items(remaining, body_ctx)
+                body_ctx = ScopeRebind(as_name, entered).extend_scope(ctx)
+            outcome = self._enter_items(remaining, body_ctx)
+            if _carries_raise_effect(outcome):
+                from sugar_lift_py_tests.factory import factory_panic_gap
+
+                factory_panic_gap(
+                    owner="WithSugar",
+                    blame=str(self.site),
+                    observed="raise-carrying callsite with-body",
+                    requested="dig manager().__exit__ exception suppression contract",
+                    fix="attach the __exit__ method-chain body before reducing a raising with-body",
+                )
+            # A non-raising body has no exceptional answer for __exit__ to
+            # suppress. Its ordinary result is already the complete rewrite.
+            return outcome
 
         if not isinstance(cm, ObjectValue):
             return cm._floor_gap(owner=type(self).__name__, blame=str(self.site), observed=type(cm).__name__, requested="context manager data-model methods", fix="construct __enter__ and __exit__")
@@ -125,3 +136,18 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
 
     def walk_children(self):
         return (*(context for context, _as_name in self.items), self.body)
+
+
+def _carries_raise_effect(outcome) -> bool:
+    from sugar_lift_py_tests.floor import BlockValue, GuardedRaise, RaiseValue, RaisesWithValue
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    if isinstance(outcome, Incomplete):
+        return True
+    value = getattr(outcome, "value", None)
+    if not isinstance(value, BlockValue):
+        return False
+    return any(
+        isinstance(entry, (Incomplete, GuardedRaise, RaiseValue, RaisesWithValue))
+        for entry in value.statements
+    )

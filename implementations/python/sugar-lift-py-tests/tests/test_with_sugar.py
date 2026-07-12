@@ -129,8 +129,45 @@ def test_callsite_context_manager_substitutes_coordinate_for_as_name() -> None:
 
     returned = outcome.statements[0]
     assert isinstance(returned, ReturnValue)
-    assert returned.value is opaque
-    assert "call:manager" in repr(returned.value)
+    assert returned.value is not opaque
+    assert returned.value.target_name == "__enter__"
+    assert "call:__enter__" in repr(returned.value)
+    assert repr(returned.value.term) != repr(opaque.term)
+
+
+def test_enter_result_twin_cannot_inherit_bare_manager_coordinate() -> None:
+    manager = CallSiteValue(
+        target_name="transaction",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:transaction", []),
+        body=None,
+    )
+    block = compose_block(
+        "    with manager as cursor:\n"
+        "        return cursor\n",
+        binds={"manager": manager},
+    )
+
+    cursor = block.statements[0].value
+    assert cursor.term == ctor("call:__enter__", [manager.term])
+    assert cursor.term != manager.term
+
+
+def test_unresolved_exit_contract_keeps_raise_carrying_body_loud() -> None:
+    manager = CallSiteValue(
+        target_name="manager",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:manager", []),
+        body=None,
+    )
+    with pytest.raises(FactoryPanic, match="__exit__"):
+        compose_block(
+            "    with manager:\n"
+            "        raise ValueError('boom')\n",
+            binds={"manager": manager},
+        )
 
 
 def test_complex_as_target_is_a_loud_factory_gap() -> None:
