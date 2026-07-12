@@ -719,8 +719,10 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     """The RPC door over the collapse. Build each def through the factory,
     slam it, and serve the value's payload_rows: a universe mints a
     function-contract plus inv rows; testimony mints only ::assertion fact
-    rows (no post, no contract). Enumeration is functions by design: module
-    statements no FunctionDefSugar owns are not lifted here.
+    rows (no post, no contract). Enumeration is functions by design: every
+    discovered FunctionDef enters the factory, including shapes no current
+    FunctionDef Sugar owns, so the None arm refuses loud instead of silently
+    dropping the function and its body.
 
     Report path (AGENTS.md match-trace doctrine): holds per-def FactoryPanic
     via `audit_lift_file(hold_panic=True)` and projects each held gap as a
@@ -854,8 +856,6 @@ def audit_lift_file(
     from sugar_lift_py_tests.factory.build import build_node, default_catalog
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import complete_value
-    from sugar_lift_py_tests.sugar.function_def_sugar import FunctionDefSugar
-    from sugar_lift_py_tests.sugar.test_function_def_sugar import TestFunctionDefSugar
     from sugar_lift_py_tests.sugar_body import SugarBody
 
     payload = LiftReportPayloadDto(source_ledger={})
@@ -893,10 +893,9 @@ def audit_lift_file(
                             f"{nested}.{nested_stmt.function_name()}"
                         ] = nested_stmt.node
     for stmt in _iter_liftable_function_defs(module):
-        # Either ordinary FunctionDef or test_* testimony (both owns shapes).
-        # Class methods included (pytest TestCase-style / mixin tests).
-        if not (FunctionDefSugar.owns(stmt) or TestFunctionDefSugar.owns(stmt)):
-            continue
+        # Class methods included (pytest TestCase-style / mixin tests). Do not
+        # pre-filter by a recognizer's owns predicate here: build_node owns the
+        # dispatch, and its None arm is the typed FactoryPanic audit must hear.
         label = f"{filename}:{stmt.line}:{stmt.col}"
         try:
             ctx = FactoryBuildContext(
