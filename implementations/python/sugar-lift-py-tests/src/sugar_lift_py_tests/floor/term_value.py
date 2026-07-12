@@ -152,6 +152,10 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(self.value**other.value))
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) is SymbolicValue:
+            return SymbolicValue(self.to_term(owner=str(site))).power(other, site)
         return super().power(other, site)
 
     def divide(self, other, site):
