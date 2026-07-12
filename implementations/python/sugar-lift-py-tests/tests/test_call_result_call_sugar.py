@@ -35,18 +35,37 @@ def test_call_result_is_the_receiver_first_call_coordinate() -> None:
     assert value.term == ctor("call:__call__", [receiver, make_var("dtype")])
 
 
-def test_keyword_and_expansion_call_result_shapes_stay_loud() -> None:
-    for expression in (
-        "factory()(value=1)",
-        "factory()(*args)",
-        "factory()(**kwargs)",
-    ):
-        with pytest.raises(FactoryPanic):
-            build_node(
-                ast.parse(expression, mode="eval").body,
-                filename="t.py",
-                role=SugarRole.TERM,
-            )
+def test_call_result_carries_star_and_keyword_expansions_as_coordinates() -> None:
+    value = reduce_value(
+        "factory()(*args, named=value, **kwargs)",
+        binds={
+            "args": SymbolicValue(make_var("args")),
+            "value": SymbolicValue(make_var("value")),
+            "kwargs": SymbolicValue(make_var("kwargs")),
+        },
+    )
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "__call__"
+    assert value.parameters == ("named", "**")
+    assert value.term == ctor(
+        "call:__call__",
+        [
+            ctor("call:factory", []),
+            ctor("py.star", [make_var("args")]),
+            make_var("value"),
+            make_var("kwargs"),
+        ],
+    )
+
+
+def test_lambda_call_remains_a_loud_unclassified_dispatch_shape() -> None:
+    with pytest.raises(FactoryPanic):
+        build_node(
+            ast.parse("(lambda x: x)(value)", mode="eval").body,
+            filename="t.py",
+            role=SugarRole.TERM,
+        )
 
 
 def test_call_result_owner_is_exactly_the_positional_call_callee_partition() -> None:
@@ -58,7 +77,13 @@ def test_call_result_owner_is_exactly_the_positional_call_callee_partition() -> 
             SugarRole.TERM, _site("factory()(value)")
         )
     ] == ["CallResultCallSugar"]
-    for expression in ("f(value)", "dispatch[key](value)", "factory()(value=1)"):
+    assert [
+        candidate.name
+        for candidate in catalog.candidates_for(
+            SugarRole.TERM, _site("factory()(*args, value=1, **kwargs)")
+        )
+    ] == ["CallResultCallSugar"]
+    for expression in ("f(value)", "dispatch[key](value)", "(lambda x: x)(value)"):
         assert "CallResultCallSugar" not in [
             candidate.name
             for candidate in catalog.candidates_for(SugarRole.TERM, _site(expression))

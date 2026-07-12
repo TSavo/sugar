@@ -25,6 +25,7 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             site.call_receiver() is None
             and target is not None
             and target[:1].isupper()
+            and not site.call_has_keywords()
         )
 
     @classmethod

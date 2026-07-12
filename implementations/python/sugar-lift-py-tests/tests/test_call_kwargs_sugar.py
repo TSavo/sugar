@@ -18,6 +18,8 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
 from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
 from sugar_lift_py_tests.sugar.call_sugar import CallSugar
+from sugar_lift_py_tests.sugar.constructor_call_sugar import ConstructorCallSugar
+from sugar_lift_py_tests.sugar.keyword_call_sugar import KeywordCallSugar
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
 
@@ -102,16 +104,15 @@ def test_method_keyword_value_discriminates() -> None:
 
 
 def test_owns_keyword_not_positional_or_os_exit() -> None:
-    """CallSugar owns f(x=1); MethodCallSugar owns z.m(a=1); not each other's
-    positional shapes; not os.exit."""
-    assert CallSugar.owns(_site("f(x=1)")) is True
-    assert CallSugar.owns(_site("f(1, y=2)")) is True
+    """KeywordCallSugar owns keyword calls; plain owners keep positionals."""
+    assert CallSugar.owns(_site("f(x=1)")) is False
+    assert CallSugar.owns(_site("f(1, y=2)")) is False
     assert CallSugar.owns(_site("f(1)")) is True  # still owns positional
     assert CallSugar.owns(_site("z.m(a=1)")) is False
     assert CallSugar.owns(_site("os.exit(0)")) is False
 
-    assert MethodCallSugar.owns(_site("z.m(a=1)")) is True
-    assert MethodCallSugar.owns(_site("z.m(1, inplace=True)")) is True
+    assert MethodCallSugar.owns(_site("z.m(a=1)")) is False
+    assert MethodCallSugar.owns(_site("z.m(1, inplace=True)")) is False
     assert MethodCallSugar.owns(_site("z.m(1)")) is True  # still owns positional
     assert MethodCallSugar.owns(_site("f(x=1)")) is False
     assert MethodCallSugar.owns(_site("os.exit(0)")) is False
@@ -128,9 +129,9 @@ def test_owns_keyword_not_positional_or_os_exit() -> None:
     exit_cands = [
         c.name for c in catalog.candidates_for(SugarRole.TERM, _site("os.exit(0)"))
     ]
-    assert "CallSugar" in plain_kw
+    assert plain_kw == ["KeywordCallSugar"]
     assert "MethodCallSugar" not in plain_kw
-    assert "MethodCallSugar" in method_kw
+    assert method_kw == ["KeywordCallSugar"]
     assert "CallSugar" not in method_kw
     assert "CallSugar" in plain_pos
     assert "MethodCallSugar" in method_pos
@@ -138,10 +139,32 @@ def test_owns_keyword_not_positional_or_os_exit() -> None:
     assert "MethodCallSugar" not in exit_cands
 
 
+def test_plain_keyword_method_and_constructor_call_owners_never_overlap() -> None:
+    owners = (CallSugar, ConstructorCallSugar, KeywordCallSugar, MethodCallSugar)
+    shapes = (
+        "f()",
+        "f(value)",
+        "f(named=value)",
+        "f(**values)",
+        "Box()",
+        "Box(value)",
+        "Box(named=value)",
+        "Box(**values)",
+        "receiver.method()",
+        "receiver.method(value)",
+        "receiver.method(named=value)",
+        "receiver.method(**values)",
+    )
+
+    for expression in shapes:
+        matches = [owner.__name__ for owner in owners if owner.owns(_site(expression))]
+        assert len(matches) == 1, (expression, matches)
+
+
 def test_kwargs_expansion_rides_a_distinct_coordinate() -> None:
     """The expansion marker is retained and differs from a positional dict value."""
-    assert CallSugar.owns(_site("f(**k)")) is True
-    assert MethodCallSugar.owns(_site("z.m(**k)")) is True
+    assert KeywordCallSugar.owns(_site("f(**k)")) is True
+    assert KeywordCallSugar.owns(_site("z.m(**k)")) is True
     binds = {"k": SymbolicValue(make_var("k"))}
     plain = reduce_value("f(**k)", binds=binds)
     positional = reduce_value("f(k)", binds=binds)
@@ -149,8 +172,15 @@ def test_kwargs_expansion_rides_a_distinct_coordinate() -> None:
         "z.m(**k)",
         binds={**binds, "z": SymbolicValue(make_var("z"))},
     )
-    assert plain.term == positional.term == ctor("call:f", [make_var("k")])
+    assert plain.term == ctor(
+        "call:f", [ctor("kw", [str_const("**"), make_var("k")])]
+    )
+    assert positional.term == ctor("call:f", [make_var("k")])
+    assert plain.term != positional.term
     assert plain.parameters == ("**",)
     assert positional.parameters == ()
-    assert method.term == ctor("call:m", [make_var("z"), make_var("k")])
+    assert method.term == ctor(
+        "call:m",
+        [make_var("z"), ctor("kw", [str_const("**"), make_var("k")])],
+    )
     assert method.parameters == ("**",)

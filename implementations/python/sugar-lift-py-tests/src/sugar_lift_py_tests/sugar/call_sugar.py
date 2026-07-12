@@ -35,14 +35,18 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         # Plain-name calls (positional and/or keyword). abs is a closed builtin
-        # partition: AbsCallSugar owns its numeric shape and malformed abs calls
+        # partition: KeywordCallSugar owns keyword-bearing shapes,
+        # ConstructorCallSugar owns class-spelled coordinates, and AbsCallSugar
+        # owns its numeric shape. Malformed abs calls
         # stay loud instead of becoming arbitrary call coordinates. os.exit stays
-        # OsSugar's (it has a receiver). **kwargs expansion is unowned -- loud gap.
+        # OsSugar's (it has a receiver).
         return (
             site.observed == "Call"
             and site.call_receiver() is None
             and site.call_target_name() is not None
             and site.call_target_name() != "abs"
+            and not site.call_has_keywords()
+            and not site.call_target_name()[:1].isupper()
             # *args / **kwargs ride as coordinates (StarredSugar / ** param)
         )
 

@@ -11,16 +11,17 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class CallResultCallSugar(Sugar, role=SugarRole.TERM):
-    """A positional call through the value returned by another call.
+    """A call through the value returned by another call.
 
     ``factory()(arg)`` first reduces ``factory()`` through the existing call
     owner. That result is the callable address and rides first in the same
     receiver-first coordinate used by MethodCallSugar and SubscriptCallSugar.
-    Keyword and expansion shapes remain separate loud factory partitions.
+    Positional, keyword, and expansion arguments ride the call coordinate.
     """
 
     receiver: SugarBody
     args: tuple[SugarBody, ...]
+    keyword_names: tuple[str, ...]
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -28,15 +29,25 @@ class CallResultCallSugar(Sugar, role=SugarRole.TERM):
         return (
             site.observed == "Call"
             and site.call_func().observed == "Call"
-            and not site.call_has_keywords()
-            and all(arg.observed != "Starred" for arg in site.call_args())
         )
 
     @classmethod
     def new(cls, site, ctx) -> "CallResultCallSugar":
+        positional = tuple(
+            ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
+        )
+        keyword_names: list[str] = []
+        keyword_bodies: list[SugarBody] = []
+        for keyword in site.call_keywords():
+            name = keyword.keyword_arg_name()
+            keyword_names.append(name if name is not None else "**")
+            keyword_bodies.append(
+                ctx.build_body(keyword.keyword_value(), SugarRole.TERM)
+            )
         return cls(
             receiver=ctx.build_body(site.call_func(), SugarRole.TERM),
-            args=tuple(ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()),
+            args=(*positional, *keyword_bodies),
+            keyword_names=tuple(keyword_names),
             site=site,
         )
 
@@ -78,7 +89,7 @@ class CallResultCallSugar(Sugar, role=SugarRole.TERM):
             CallSiteValue(
                 target_name="__call__",
                 arg_values=accumulated,
-                parameters=(),
+                parameters=self.keyword_names,
                 term=ctor(
                     "call:__call__",
                     [value.to_term(owner=str(self.site)) for value in accumulated],
