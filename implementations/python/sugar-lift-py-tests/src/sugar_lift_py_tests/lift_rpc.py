@@ -25,6 +25,7 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_paths
 from sugar_lift_py_tests.kit_rpc import (
     LiftReportPayloadDto,
     RecoveredAuditDto,
+    RecoveredEffectDto,
     RecoveredFactoryPanicDto,
     SuppressedAuditLocusDto,
 )
@@ -978,6 +979,7 @@ def audit_lift_file(
     payload = LiftReportPayloadDto(source_ledger={})
     gaps: list[AuditOnlyGap] = []
     recovered_panics: list[RecoveredFactoryPanicDto] = []
+    recovered_effects: list[RecoveredEffectDto] = []
     suppressed_descendants: list[SuppressedAuditLocusDto] = []
     if recover_panics:
         hold_panic = True
@@ -1054,9 +1056,32 @@ def audit_lift_file(
                 audit_row=result.audit_row,
             )
             payload.factory_walk.extend(root.factory_walk_rows())
-            value = complete_value(
-                result.sugar.desugar(ctx), owner="lift_file_payload"
-            )
+            outcome = result.sugar.desugar(ctx)
+            if recover_panics:
+                from sugar_lift_py_tests.outcome import Incomplete
+
+                if isinstance(outcome, Incomplete):
+                    # The recovered audit enumerates construction gaps. A typed
+                    # runtime effect is already an honest Some => effect arm,
+                    # so it contributes no FactoryPanic and cannot be projected
+                    # to a completed value. Keep walking independent roots.
+                    from sugar_lift_py_tests.effect import (
+                        effect_kind,
+                        effect_reason,
+                        effect_status,
+                    )
+
+                    recovered_effects.append(
+                        RecoveredEffectDto(
+                            locus=label,
+                            effect=type(outcome.effect).__name__,
+                            category=effect_kind(outcome.effect),
+                            status=effect_status(outcome.effect),
+                            reason=effect_reason(outcome.effect),
+                        )
+                    )
+                    continue
+            value = complete_value(outcome, owner="lift_file_payload")
             from sugar_lift_py_tests.floor import FunctionCallable
 
             if isinstance(value, FunctionCallable):
@@ -1139,6 +1164,7 @@ def audit_lift_file(
     if recover_panics:
         return RecoveredAuditDto(
             panics=recovered_panics,
+            effects=recovered_effects,
             suppressed_descendants=suppressed_descendants,
         )
     return payload, gaps
@@ -1906,6 +1932,7 @@ def _handle_lift_audit_only(
     del contract_bindings  # recovered audits cannot consume contract bindings
     root = Path(workspace_root).resolve()
     panics: list[RecoveredFactoryPanicDto] = []
+    effects: list[RecoveredEffectDto] = []
     suppressed: list[SuppressedAuditLocusDto] = []
     for path in _iter_python_files(workspace_root, source_paths):
         full_path = Path(path)
@@ -1923,10 +1950,12 @@ def _handle_lift_audit_only(
         if not isinstance(recovered, RecoveredAuditDto):
             raise TypeError("audit recovery returned a lift artifact")
         panics.extend(recovered.panics)
+        effects.extend(recovered.effects)
         suppressed.extend(recovered.suppressed_descendants)
 
     audit = RecoveredAuditDto(
         panics=panics,
+        effects=effects,
         suppressed_descendants=suppressed,
     )
     _send({"jsonrpc": "2.0", "id": msg_id, "result": audit.to_rpc()})

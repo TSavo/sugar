@@ -56,6 +56,39 @@ def test_panicked_parent_suppresses_descendants() -> None:
     ]
 
 
+def test_recovered_audit_keeps_typed_effects_out_of_construction_gaps() -> None:
+    source = (
+        "import pytest\n"
+        "import pandas as pd\n"
+        "\n"
+        "@pytest.fixture(\n"
+        "    params=[getattr(pd.offsets, name) for name in pd.offsets.__all__]\n"
+        ")\n"
+        "def runtime_getattr(request):\n"
+        "    pass\n"
+        "\n"
+        "def independent_gap():\n"
+        "    nonlocal missing\n"
+    )
+
+    wire = audit_lift_file(source, "effects.py", recover_panics=True).to_rpc()
+
+    assert [item["locus"] for item in wire["panics"]] == ["effects.py:10:0"]
+    assert wire["panics"][0]["gap"]["observed"] == "Nonlocal"
+    assert wire["effects"] == [
+        {
+            "locus": "effects.py:7:0",
+            "effect": "GetattrRuntimeEffect",
+            "category": "RuntimeEffect",
+            "status": "runtime-effect",
+            "reason": (
+                "getattr runtime boundary: attribute name expression `Name` "
+                "is runtime; blame=effects.py:5:12"
+            ),
+        }
+    ]
+
+
 def test_legacy_audit_only_is_not_a_recovery_backdoor() -> None:
     with pytest.raises(SystemExit, match="continue-on-construction-gaps"):
         main(["--audit-only"])
