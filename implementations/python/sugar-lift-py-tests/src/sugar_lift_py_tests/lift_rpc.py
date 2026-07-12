@@ -747,12 +747,10 @@ def _module_import_temporal(module) -> "object":
     Deeper floors: names introduced by ``import pytest`` / ``from x import Y``
     must stand when reducing function bodies. Without this, TemporalContext
     panics on unbound import names even though the source stated the import.
-    Bindings are ``python:module`` / ``python:from_import`` terms — coordinates,
-    not fabricated contracts.
+    Bindings use the same ``ImportAliasValue`` constructed by ``AliasSugar``.
+    The floor records name binding only and never fabricates module semantics.
     """
-    from sugar_lift_py_tests.floor import BlockValue, ClassValue
-    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.floor import BlockValue, ClassValue, ImportAliasValue
     from sugar_lift_py_tests.temporal import TemporalContext
 
     temporal = TemporalContext.empty()
@@ -769,22 +767,16 @@ def _module_import_temporal(module) -> "object":
                     mod_term = name
                 temporal = temporal.bind_value(
                     bound,
-                    SymbolicValue(ctor("python:module", [str_const(mod_term)])),
+                    ImportAliasValue(mod_term, bound),
                 )
         elif observed == "ImportFrom":
-            mod = stmt.importfrom_module() or ""
             for name, asname in stmt.importfrom_names():
                 if name == "*":
                     continue  # star-import stays loud / unsupported
                 bound = asname or name
                 temporal = temporal.bind_value(
                     bound,
-                    SymbolicValue(
-                        ctor(
-                            "python:from_import",
-                            [str_const(mod), str_const(name)],
-                        )
-                    ),
+                    ImportAliasValue(name, bound),
                 )
         elif observed == "ClassDef":
             name = stmt.class_name()
