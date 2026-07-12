@@ -192,11 +192,16 @@ def summarize_pandas_recovered_frontier(
     if frontier_json.get("recoveryOverride") is not True:
         raise RuntimeError("pandas wall frontier artifact lacks recovery override")
     panics = frontier_json.get("panics")
+    effects = frontier_json.get("effects")
     suppressed = frontier_json.get("suppressedDescendants")
     if not isinstance(panics, list) or not all(
         isinstance(panic, Mapping) for panic in panics
     ):
         raise RuntimeError("pandas wall frontier panics must be an array of objects")
+    if not isinstance(effects, list) or not all(
+        isinstance(effect, Mapping) for effect in effects
+    ):
+        raise RuntimeError("pandas wall frontier effects must be an array of objects")
     if not isinstance(suppressed, list) or not all(
         isinstance(locus, Mapping) for locus in suppressed
     ):
@@ -214,6 +219,7 @@ def summarize_pandas_recovered_frontier(
             "kind": "recovered-construction-audit",
             "status": frontier_json.get("status", ""),
             "independentPanicCount": len(panics),
+            "effectCount": len(effects),
             "suppressedDescendantCount": len(suppressed),
         },
         green=0,

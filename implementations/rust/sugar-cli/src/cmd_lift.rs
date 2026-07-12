@@ -31,7 +31,18 @@ struct RecoveredAudit {
     recovery_override: bool,
     status: String,
     panics: Vec<RecoveredFactoryPanic>,
+    effects: Vec<RecoveredEffect>,
     suppressed_descendants: Vec<SuppressedAuditLocus>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveredEffect {
+    locus: String,
+    effect: String,
+    category: String,
+    status: String,
+    reason: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -7919,6 +7930,38 @@ mod tests {
     use sugar_verifier::{CallSite, MementoCid, ObligationVerdict, Report, ReportRow};
     use syn::spanned::Spanned;
 
+    #[test]
+    fn recovered_audit_effect_rows_round_trip_without_loss() {
+        let fixture = serde_json::json!({
+            "kind": "recovered-construction-audit",
+            "recoveryOverride": true,
+            "status": "failed",
+            "panics": [],
+            "effects": [{
+                "locus": "pkg.py:7:4",
+                "effect": "GetattrRuntimeEffect",
+                "category": "runtime",
+                "status": "boundary",
+                "reason": "attribute access crosses a runtime boundary"
+            }],
+            "suppressedDescendants": []
+        });
+
+        let audit: RecoveredAudit =
+            serde_json::from_value(fixture.clone()).expect("typed recovered audit");
+        assert_eq!(audit.effects.len(), 1);
+        let effect = &audit.effects[0];
+        assert_eq!(effect.locus, "pkg.py:7:4");
+        assert_eq!(effect.effect, "GetattrRuntimeEffect");
+        assert_eq!(effect.category, "runtime");
+        assert_eq!(effect.status, "boundary");
+        assert_eq!(
+            effect.reason,
+            "attribute access crosses a runtime boundary"
+        );
+        assert_eq!(serde_json::to_value(audit).expect("round trip"), fixture);
+    }
+
     fn test_memento_cid(label: &str) -> MementoCid {
         MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(label.as_bytes()))
             .expect("test CID must parse")
@@ -8467,6 +8510,8 @@ mod tests {
             library_bindings: false,
             report: false,
             report_summary: false,
+            audit_frontier: false,
+            continue_on_construction_gaps: false,
             visual: false,
             prove: false,
             z3: "z3".to_string(),
