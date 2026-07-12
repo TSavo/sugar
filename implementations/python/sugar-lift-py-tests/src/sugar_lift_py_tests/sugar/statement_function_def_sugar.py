@@ -56,6 +56,11 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
 
     def _reduce_decorators(self, remaining, accumulated, ctx) -> Outcome:
         from sugar_lift_py_tests.floor import FunctionCallable
+        from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
+        from sugar_lift_py_tests.sugar.install_source_dig import (
+            SequentialDigBody,
+            _contextualized_dig_body,
+        )
 
         if remaining:
             head, *rest = remaining
@@ -64,13 +69,22 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                     tuple(rest), (*accumulated, value), ctx
                 )
             )
+        callable_body = self.body
+        if isinstance(self.body.sugar, BlockSugar):
+            callable_body = _contextualized_dig_body(
+                SugarBody(
+                    sugar=SequentialDigBody(self.body.sugar.statements),
+                    role=SugarRole.TERM,
+                ),
+                ctx,
+            )
         return Complete(
             FunctionCallable(
                 name=self.name,
                 parameters=tuple(name for name, _kind in self.signature),
                 parameter_kinds=tuple(kind for _name, kind in self.signature),
                 decorators=accumulated,
-                body=self.body,
+                body=callable_body,
             )
         )
 
