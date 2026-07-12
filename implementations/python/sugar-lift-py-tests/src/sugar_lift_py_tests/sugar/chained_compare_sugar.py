@@ -122,7 +122,7 @@ class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
         from sugar_lift_py_tests.ir import and_
 
         atoms = []
-        callsites = []
+        callsites = [callsite for value in values for callsite in value.callsites()]
         for i, op in enumerate(self.ops):
             left_v = values[i]
             right_v = values[i + 1]
@@ -133,8 +133,6 @@ class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
                     right_v.to_term(owner=str(self.site)),
                 )
             )
-            callsites.extend(left_v.callsites())
-            callsites.extend(right_v.callsites())
         formula = and_(atoms) if len(atoms) > 1 else atoms[0]
         return Complete(
             PredicateValue(
