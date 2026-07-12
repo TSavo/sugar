@@ -17,6 +17,7 @@ Bridge/dig doctrine:
 from __future__ import annotations
 
 import importlib
+import ast
 import inspect
 import textwrap
 from dataclasses import dataclass
@@ -137,6 +138,56 @@ def resolve_install_source_funcdef(import_target: str):
             child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
             child.node._sugar_bridge_name = import_target  # type: ignore[attr-defined]
             return child
+    return None
+
+
+def resolve_install_source_value(import_target: str, ctx):
+    """Construct a cited module-level imported name from its Python source.
+
+    A source-backed import is statically knowable. Find the defining statement
+    and send its value through the ordinary factory. Any missing Sugar or floor
+    arm propagates its FactoryPanic; this function never converts a dig gap into
+    a runtime effect.
+    """
+    if "." not in import_target:
+        return None
+    module_name, attr = import_target.rsplit(".", 1)
+    try:
+        module = importlib.import_module(module_name)
+        sourcefile = inspect.getsourcefile(module)
+        if sourcefile is None or not sourcefile.endswith((".py", ".pyi")):
+            return None
+        source = Path(sourcefile).read_text(encoding="utf-8")
+        parsed = ast.parse(source, filename=sourcefile)
+    except (ImportError, OSError, SyntaxError, TypeError):
+        return None
+
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.outcome import complete_value
+
+    for statement in parsed.body:
+        value_node = None
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
+            )
+            if any(isinstance(target, ast.Name) and target.id == attr for target in targets):
+                value_node = statement.value
+        elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)) and statement.name == attr:
+            body = ctx.build_body(
+                SourceFragment.from_node(statement, sourcefile, source=source),
+                SugarRole.STATEMENT,
+            )
+            return complete_value(body.reduce(ctx), owner="install-source imported function")
+        if value_node is not None:
+            body = ctx.build_body(
+                SourceFragment.from_node(value_node, sourcefile, source=source),
+                SugarRole.TERM,
+            )
+            return complete_value(body.reduce(ctx), owner="install-source imported value")
     return None
 
 

@@ -782,15 +782,28 @@ def _module_import_temporal(module, catalog) -> "object":
                 if name == "*":
                     continue  # star-import stays loud / unsupported
                 bound = asname or name
+                import_target = (
+                    f"{stmt.importfrom_module()}.{name}"
+                    if stmt.importfrom_module()
+                    else name
+                )
+                from sugar_lift_py_tests.sugar.install_source_dig import (
+                    resolve_install_source_value,
+                )
+                import_ctx = FactoryBuildContext(
+                    filename=stmt.filename,
+                    catalog=catalog,
+                    temporal=temporal,
+                    module_temporal=temporal,
+                )
                 temporal = temporal.bind_value(
                     bound,
                     ImportAliasValue(
                         name,
                         bound,
-                        import_target=(
-                            f"{stmt.importfrom_module()}.{name}"
-                            if stmt.importfrom_module()
-                            else name
+                        import_target=import_target,
+                        resolved_value=resolve_install_source_value(
+                            import_target, import_ctx
                         ),
                     ),
                 )

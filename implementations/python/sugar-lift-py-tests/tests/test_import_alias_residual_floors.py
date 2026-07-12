@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 from sugar_lift_py_tests.effect import ImportedModuleRuntimeEffect
@@ -7,6 +9,10 @@ from sugar_lift_py_tests.factory import FactoryPanic
 from sugar_lift_py_tests.floor import ImportAliasValue, StringValue, TermValue
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from sugar_lift_py_tests.context import FactoryBuildContext
+from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.install_source_dig import resolve_install_source_value
 
 
 def _assert_import_effect(outcome, operator: str) -> None:
@@ -81,3 +87,37 @@ def test_genuinely_undefined_name_remains_loud() -> None:
 
     with pytest.raises(FactoryPanic, match="observed=missing requested=value"):
         audit_lift_file(source, "undefined.py", hold_panic=False)
+
+
+def test_python_source_constant_digs_and_constructs_through_floor_op(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "witnessed_import.py").write_text("ANSWER = 40\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+    resolved = resolve_install_source_value("witnessed_import.ANSWER", ctx)
+    alias = ImportAliasValue(
+        "ANSWER",
+        "ANSWER",
+        import_target="witnessed_import.ANSWER",
+        resolved_value=resolved,
+    )
+
+    outcome = alias.add(TermValue(2), "consumer.py:1")
+
+    assert complete_value(outcome, owner="test") == TermValue(42)
+
+
+def test_python_source_dig_gap_panics_instead_of_becoming_effect(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "gapped_import.py").write_text(
+        "VALUE = lambda *, x: x\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    with pytest.raises(FactoryPanic):
+        resolve_install_source_value("gapped_import.VALUE", ctx)
