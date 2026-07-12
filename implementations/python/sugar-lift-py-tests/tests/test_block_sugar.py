@@ -70,8 +70,7 @@ def test_block_sugar_absorbs_comments_into_an_empty_block():
 
 
 def test_block_sugar_panics_on_a_statement_with_no_sugar_yet():
-    # a delete statement has no statement sugar yet -> the block's composition asks the
-    # catalog, finds nothing, and the factory panics (names the next sugar). Never an
-    # ad-hoc raise, never a silent skip. (`x += 1` used to live here, until AugAssign.)
+    # A non-name delete remains a store-effect gap. The block's composition asks the
+    # catalog, finds nothing, and the factory panics. Never an ad-hoc raise or skip.
     with pytest.raises(FactoryPanic):
-        _compose_block('    "doc"\n    del x\n')
+        _compose_block('    "doc"\n    del obj.attr\n')

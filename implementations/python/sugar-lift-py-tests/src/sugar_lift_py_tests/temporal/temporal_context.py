@@ -51,6 +51,20 @@ class TemporalContext:
     ) -> "TemporalContext":
         return self._bind_value(name, value, blame=blame)
 
+    def unbind_names(self, names: tuple[str, ...]) -> "TemporalContext":
+        """Return a scope with every deleted name absent.
+
+        Deletion removes bindings instead of installing a sentinel or retaining
+        history. A later NameSugar lookup therefore reaches the ordinary loud
+        unbound-name floor rather than observing a stale pre-delete value.
+        """
+        for name in names:
+            self.value_for(name)
+        deleted = frozenset(names)
+        return TemporalContext(
+            tuple(binding for binding in self.bindings if binding.name not in deleted)
+        )
+
     def _bind_value(
         self, name: str, value: FloorValue, *, blame: str | None = None
     ) -> "TemporalContext":
