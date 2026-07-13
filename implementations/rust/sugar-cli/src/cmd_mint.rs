@@ -35,6 +35,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use base64::Engine;
 use clap::Parser;
@@ -4130,6 +4131,16 @@ fn mint_ir_document_with_source_and_plan_mementos(
     };
     let ir = &ir_coalesced;
 
+    let contract_decl_total = ir
+        .iter()
+        .filter(|decl| {
+            matches!(
+                decl.get("kind").and_then(Value::as_str),
+                Some("contract" | "function-contract")
+            )
+        })
+        .count();
+    let mut contract_decl_index = 0usize;
     for decl in ir {
         let kind = decl.get("kind").and_then(|v| v.as_str()).unwrap_or("");
         if kind != "contract" && kind != "function-contract" {
@@ -4144,6 +4155,15 @@ fn mint_ir_document_with_source_and_plan_mementos(
             .and_then(|v| v.as_str())
             .unwrap_or("unnamed")
             .to_string();
+        contract_decl_index += 1;
+        let contract_started = Instant::now();
+        tracing::info!(
+            stage = "mint_ir_document.contract.enter",
+            contract_index = contract_decl_index,
+            contract_total = contract_decl_total,
+            contract_name = %name,
+            "contract mint microscope"
+        );
         let out_binding = decl
             .get("outBinding")
             .or_else(|| decl.get("out_binding"))
@@ -4328,6 +4348,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 .map(|s| s.to_string())
         });
 
+        let register_body_started = Instant::now();
         let contract_body = register_contract_body_graph(
             &mut proof_graph,
             pre.as_ref(),
@@ -4335,6 +4356,14 @@ fn mint_ir_document_with_source_and_plan_mementos(
             inv.as_ref(),
         )
         .map_err(|e| format!("contract `{name}`: {e}"))?;
+        tracing::info!(
+            stage = "mint_ir_document.contract.register_body.exit",
+            contract_index = contract_decl_index,
+            contract_total = contract_decl_total,
+            contract_name = %name,
+            elapsed_ms = register_body_started.elapsed().as_millis(),
+            "contract mint microscope"
+        );
         let body_cid = contract_body.cid().as_str().to_string();
         let proofir_provenance_variants = proofir_provenance_memento_variants(
             decl.get("proofirProvenance")
@@ -4375,17 +4404,36 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 proofir_provenance,
             };
 
+            let identity_started = Instant::now();
             let ccid = contract_cid(&args);
             let pre_hash = args.pre.as_ref().map(formula_hash);
             let post_hash = args.post.as_ref().map(formula_hash);
             let inv_hash = args.inv.as_ref().map(formula_hash);
+            tracing::info!(
+                stage = "mint_ir_document.contract.identity.exit",
+                contract_index = contract_decl_index,
+                contract_total = contract_decl_total,
+                contract_name = %name,
+                elapsed_ms = identity_started.elapsed().as_millis(),
+                "contract mint microscope"
+            );
             if !pushed_content_cid {
                 content_cids.push(ccid.clone());
                 pushed_content_cid = true;
             }
 
+            let envelope_started = Instant::now();
             let m = mint_contract_with_body_cid(&args, Some(&body_cid))
                 .map_err(|e| format!("mint contract: {e}"))?;
+            tracing::info!(
+                stage = "mint_ir_document.contract.envelope.exit",
+                contract_index = contract_decl_index,
+                contract_total = contract_decl_total,
+                contract_name = %name,
+                elapsed_ms = envelope_started.elapsed().as_millis(),
+                canonical_bytes = m.canonical_bytes.len(),
+                "contract mint microscope"
+            );
 
             // Production bridge-writer (#1436/#1440, PR-23): for a body-derived
             // function contract, AUTOMATICALLY mint the bridge that points a
@@ -4461,6 +4509,14 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 m.canonical_bytes
             );
         }
+        tracing::info!(
+            stage = "mint_ir_document.contract.exit",
+            contract_index = contract_decl_index,
+            contract_total = contract_decl_total,
+            contract_name = %name,
+            elapsed_ms = contract_started.elapsed().as_millis(),
+            "contract mint microscope"
+        );
     }
 
     let bridge_decl_with_local_minted_target =
