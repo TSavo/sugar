@@ -58,14 +58,15 @@ def test_matrix_multiply_uses_native_operator_coordinate() -> None:
     ) == SymbolicValue(ctor("@", [make_var("x"), make_var("y")]))
 
 
-def test_bit_or_annotation_union_stays_unowned_and_loud() -> None:
+def test_bit_or_annotation_union_uses_its_annotation_owner() -> None:
     source = "def f(value: int | str):\n    return value\n"
     module = ast.parse(source)
     node = next(node for node in ast.walk(module) if isinstance(node, ast.BinOp))
     site = SourceFragment.from_node(node, "t.py", source=source)
 
-    with pytest.raises(FactoryPanic, match="observed=BinOp requested=term"):
-        build_node(site, filename="t.py", role=SugarRole.TERM)
+    result = build_node(site, filename="t.py", role=SugarRole.TERM)
+
+    assert result.audit_row.selected == "AnnotationUnionSugar"
 
 
 def test_matmult_owner_does_not_claim_an_unowned_operator() -> None:
