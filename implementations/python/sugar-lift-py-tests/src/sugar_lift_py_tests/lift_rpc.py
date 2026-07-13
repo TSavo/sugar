@@ -129,6 +129,8 @@ def _log_enumeration_demand(
             "stage": "enumerate.node",
         },
     )
+
+
 # UTF-16 surrogate code points. Python's json.dumps emits them as \\udxxx;
 # serde_json rejects unpaired surrogates with "unexpected end of hex escape"
 # and aborts the whole lift (pandas wall never writes report.json). Scrub at
@@ -1105,9 +1107,7 @@ class _AuditFileContext:
 _AUDIT_FILE_CONTEXTS: dict[str, _AuditFileContext] = {}
 
 
-def _audit_file_context(
-    source: str, filename: str, file_cid: str
-) -> _AuditFileContext:
+def _audit_file_context(source: str, filename: str, file_cid: str) -> _AuditFileContext:
     started = time.monotonic()
     cached = _AUDIT_FILE_CONTEXTS.get(file_cid)
     if cached is not None:
@@ -1161,9 +1161,9 @@ def _audit_file_context(
                 nested = body_stmt.class_name()
                 for nested_stmt in body_stmt.class_body():
                     if nested_stmt.observed == "FunctionDef":
-                        name_resolver[
-                            f"{nested}.{nested_stmt.function_name()}"
-                        ] = nested_stmt.node
+                        name_resolver[f"{nested}.{nested_stmt.function_name()}"] = (
+                            nested_stmt.node
+                        )
     context = _AuditFileContext(
         source=source,
         filename=filename,
@@ -1345,8 +1345,12 @@ def audit_lift_file(
     seed_panics = audit_context.seed_panics
     module_assertions = audit_context.module_assertions
     module_temporal = audit_context.module_temporal
-    target_is_module = bool(target_memento and target_memento.get("function_name") == "<module>")
-    for label, panic in (seed_panics or ()) if target_memento is None or target_is_module else ():
+    target_is_module = bool(
+        target_memento and target_memento.get("function_name") == "<module>"
+    )
+    for label, panic in (
+        (seed_panics or ()) if target_memento is None or target_is_module else ()
+    ):
         recovered_panics.append(
             RecoveredFactoryPanicDto(
                 locus=label,
@@ -1892,9 +1896,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 except ValueError:
                     rel_path = Path(full_path).name
                 file_bytes = Path(full_path).read_bytes()
-                memento = _degenerate_file_memento(
-                    rel_path, blake3_512_of(file_bytes)
-                )
+                memento = _degenerate_file_memento(rel_path, blake3_512_of(file_bytes))
                 if seek and at is not None and not _memento_matches(memento, at):
                     continue
                 nodes.append({"memento": memento, "audit": None, "payload": None})
@@ -1959,7 +1961,12 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     _send_enumerate_result(
                         msg_id,
                         [],
-                        [{"memento": at, "reason": "source memento CID no longer matches file"}],
+                        [
+                            {
+                                "memento": at,
+                                "reason": "source memento CID no longer matches file",
+                            }
+                        ],
                     )
                     return
                 context_hit = file_cid in _AUDIT_FILE_CONTEXTS
@@ -1994,7 +2001,12 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     _send_enumerate_result(
                         msg_id,
                         [],
-                        [{"memento": at, "reason": "ancestor file CID no longer matches file"}],
+                        [
+                            {
+                                "memento": at,
+                                "reason": "ancestor file CID no longer matches file",
+                            }
+                        ],
                     )
                     return
                 file_cid = actual_file_cid
@@ -2390,7 +2402,16 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
         return
     try:
         if audit_frontier:
-            _send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "auditFrontier is served only by recursive sugar.enumerate leaf requests"}})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {
+                        "code": -32601,
+                        "message": "auditFrontier is served only by recursive sugar.enumerate leaf requests",
+                    },
+                }
+            )
             return
         payload = LiftReportPayloadDto(source_ledger={})
         bindings_backed_pass = bool(contract_bindings)

@@ -34,7 +34,9 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _enumerate(level: str, workspace_root: Path, at=None, seek: bool = False, options=None):
+def _enumerate(
+    level: str, workspace_root: Path, at=None, seek: bool = False, options=None
+):
     """Call `_handle_enumerate` directly and capture its `_send` output by
     monkeypatching the module's `_send` for the duration of one call."""
     captured = []
@@ -131,9 +133,7 @@ def test_audit_context_is_parsed_once_per_file_cid_and_mutation_misses(
         )
     assert parsed.count("mathy.py") == 1
 
-    _enumerate(
-        "functions", project, at=sibling_key, options={"auditFrontier": True}
-    )
+    _enumerate("functions", project, at=sibling_key, options={"auditFrontier": True})
     assert parsed.count("sibling.py") == 1
 
     (project / "mathy.py").write_text(
@@ -150,9 +150,7 @@ def test_audit_context_is_parsed_once_per_file_cid_and_mutation_misses(
         at=changed_nodes["mathy.py"],
         options={"auditFrontier": True},
     )
-    _enumerate(
-        "functions", project, at=sibling_key, options={"auditFrontier": True}
-    )
+    _enumerate("functions", project, at=sibling_key, options={"auditFrontier": True})
 
     assert parsed.count("mathy.py") == 2, "new file CID must parse once"
     assert parsed.count("sibling.py") == 1, "untouched sibling CID must stay warm"
