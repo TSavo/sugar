@@ -18,6 +18,13 @@ class UniverseValue(FloorValue):
     formals: tuple[str, ...]
     record: object  # the body's BlockValue
 
+    def derived_companions(self) -> tuple[Formula, ...]:
+        return tuple(
+            formula
+            for entry in self.record.statements
+            for formula in getattr(entry, "derived_post_contribution", lambda: ())()
+        )
+
     def invs(self) -> tuple[Formula, ...]:
         return tuple(
             formula
@@ -63,11 +70,15 @@ class UniverseValue(FloorValue):
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
-        if len(exits) == 1:
-            return exits[0]
+        post = exits[0] if len(exits) == 1 else None
         from sugar_lift_py_tests.ir import and_
 
-        return and_(list(exits))
+        if post is None:
+            post = and_(list(exits))
+        companions = self.derived_companions()
+        if not companions:
+            return post
+        return and_([post, *companions])
 
     def call_edges(self):
         # The record entries project their own call edges (CallSiteValue direct,
