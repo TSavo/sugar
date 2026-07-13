@@ -874,10 +874,11 @@ def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
 def test_binary_dunder_trace_emits_derived_fact_and_refutes_lie(
     tmp_path: Path,
 ) -> None:
+    # #4395: the live catalog seed must retain explicit EUF residue teeth.
     seed = next(
         item
         for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "binary_dunder_callsite"
+        if item.name == "divmod_dunder_return"
     )
 
     truthful = run_source_through_real_solver(
@@ -904,21 +905,21 @@ def test_binary_dunder_trace_emits_derived_fact_and_refutes_lie(
     }
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert "CallSugar" in truthful.selected_sugars
+    assert "DivmodDunderCallSugar" in truthful.selected_sugars
     assert truthful.verdict == "sat"
     truthful_rows = _binary_dunder_euf_rows(truthful.lift_doc)
     assert len(truthful_rows) == 1
-    assert _euf_rhs_values(truthful_rows) == [20]
+    assert _euf_rhs_values(truthful_rows) == [1]
     assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
 
-    assert "CallSugar" in lying.selected_sugars
+    assert "DivmodDunderCallSugar" in lying.selected_sugars
     assert lying.verdict == "unsat"
     lying_rows = _binary_dunder_euf_rows(lying.lift_doc)
     assert len(lying_rows) == 2
-    assert _euf_rhs_values(lying_rows) == [10, 20]
+    assert _euf_rhs_values(lying_rows) == [1, 2]
     assert {_euf_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
-        10: {"Stated"},
-        20: {"Derived"},
+        1: {"Derived"},
+        2: {"Stated"},
     }
 
 
