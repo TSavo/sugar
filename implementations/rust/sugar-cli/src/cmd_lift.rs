@@ -4543,6 +4543,7 @@ struct VisualFormulaRenderer {
     meta: HashMap<usize, VisualSubtreeMeta>,
     repeats: HashMap<[u8; 32], usize>,
     seen: HashSet<[u8; 32]>,
+    sharing_suppressed: usize,
     inventory_visits: usize,
     unique_fingerprints: HashSet<[u8; 32]>,
     root_meta: VisualSubtreeMeta,
@@ -4559,6 +4560,7 @@ impl VisualFormulaRenderer {
             meta: HashMap::new(),
             repeats: HashMap::new(),
             seen: HashSet::new(),
+            sharing_suppressed: 0,
             inventory_visits: 0,
             unique_fingerprints: HashSet::new(),
             root_meta: VisualSubtreeMeta {
@@ -4655,7 +4657,9 @@ impl VisualFormulaRenderer {
                 meta.nodes
             ));
         }
-        if self.repeats.get(&meta.fingerprint).copied().unwrap_or(0) > 1 {
+        if self.sharing_suppressed == 0
+            && self.repeats.get(&meta.fingerprint).copied().unwrap_or(0) > 1
+        {
             self.cid_computations += 1;
             let cid = sugar_canonicalizer::jcs_cid_of_json(value);
             if !self.seen.insert(meta.fingerprint) {
@@ -4674,7 +4678,13 @@ impl VisualFormulaRenderer {
             }
             VisualRenderPlan::Full(cid) => cid,
         };
+        if shared_cid.is_some() {
+            self.sharing_suppressed += 1;
+        }
         let rendered = self.formula_full(formula, depth);
+        if shared_cid.is_some() {
+            self.sharing_suppressed -= 1;
+        }
         match shared_cid {
             Some(cid) => format!("{rendered} [shared cid={cid}]"),
             None => rendered,
@@ -4820,7 +4830,13 @@ impl VisualFormulaRenderer {
             }
             VisualRenderPlan::Full(cid) => cid,
         };
+        if shared_cid.is_some() {
+            self.sharing_suppressed += 1;
+        }
         let rendered = self.term_full(term, depth);
+        if shared_cid.is_some() {
+            self.sharing_suppressed -= 1;
+        }
         match shared_cid {
             Some(cid) => format!("{rendered} [shared cid={cid}]"),
             None => rendered,
@@ -14830,46 +14846,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "{rendered}"
         );
         assert!(rendered.contains("shared cid=blake3-512:"), "{rendered}");
-    }
-
-    #[test]
-    fn visual_fol_nested_shared_subterms_stay_a_dag_inside_shared_parent() {
-        let rung = serde_json::json!({
-            "kind": "ctor", "name": "call:normalize", "args": [{
-                "kind": "ctor", "name": "call:source", "args": [{
-                    "kind": "ctor", "name": "call:transform", "args": [{
-                        "kind": "var", "name": "x"
-                    }]
-                }]
-            }]
-        });
-        let tower = serde_json::json!({
-            "kind": "ctor", "name": "call:combine", "args": [
-                rung.clone(), rung
-            ]
-        });
-        let formula = serde_json::json!({
-            "kind": "and", "operands": [
-                {"kind": "atomic", "name": "=", "args": [
-                    {"kind": "var", "name": "left"}, tower.clone()
-                ]},
-                {"kind": "atomic", "name": "=", "args": [
-                    {"kind": "var", "name": "right"}, tower
-                ]}
-            ]
-        });
-
-        let rendered = pretty_visual_formula(&formula, false);
-
-        assert_eq!(
-            rendered.matches("transform(x)").count(),
-            1,
-            "the inner rung must be defined once even inside a shared parent:\n{rendered}"
-        );
-        assert!(
-            rendered.matches("as above, cid=blake3-512:").count() >= 2,
-            "the nested rungs and their shared parent need references:\n{rendered}"
-        );
     }
 
     #[test]
