@@ -450,13 +450,13 @@ fn lift_error_from_path(error: PathExecutionError) -> LiftPluginError {
         PathExecutionError::Refused(refusal) => LiftPluginError::Refused(refusal),
         PathExecutionError::Kit(error) => match error {
             libsugar::core::KitError::Transformation(message)
-                if message.starts_with("lift plugin transport: lifter binary `") =>
+                if message.starts_with("lift plugin transport:") =>
             {
                 LiftPluginError::diagnostic(
                     LiftPluginDiagnosticKind::Transport,
                     "lift-plugin.transport",
                     message,
-                    "Install or configure the lifter binary named by the lift manifest; missing binaries are the only transport failure mint may downgrade to an empty-set attestation.",
+                    "Inspect the named transport stage, lifter process, and JSON-RPC framing; transport failures must remain typed and may never become a silent skip.",
                 )
             }
             other => LiftPluginError::diagnostic(
@@ -1043,5 +1043,20 @@ mod tests {
             }
             other => panic!("expected typed diagnostic, got {other:?}"),
         }
+    }
+}
+#[test]
+fn stalled_transport_path_error_stays_a_transport_diagnostic() {
+    let error = PathExecutionError::Kit(libsugar::core::KitError::Transformation(
+            "lift plugin transport: lift plugin transport stalled at stage=read_line.enter message_id=2 deadline_secs=5".to_string(),
+        ));
+
+    match lift_error_from_path(error) {
+        LiftPluginError::Diagnostic(diagnostic) => {
+            assert_eq!(diagnostic.kind, LiftPluginDiagnosticKind::Transport);
+            assert_eq!(diagnostic.path, "lift-plugin.transport");
+            assert!(diagnostic.detail.contains("stage=read_line.enter"));
+        }
+        other => panic!("expected typed transport diagnostic, got {other:?}"),
     }
 }
