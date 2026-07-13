@@ -5,7 +5,7 @@
 // step owned by `sugar mint`.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -4311,109 +4311,389 @@ fn indent_lines(rendered: &str, width: usize) -> String {
 }
 
 fn pretty_visual_formula(formula: &Value, color: bool) -> String {
-    match formula.get("kind").and_then(Value::as_str) {
-        Some("and") => pretty_visual_join(formula, "∧", color),
-        Some("or")
-            if formula_operands(formula)
-                .iter()
-                .all(|operand| operand.get("kind").and_then(Value::as_str) == Some("implies")) =>
+    let mut renderer = VisualFormulaRenderer::new(formula, color);
+    renderer.formula(formula, 0)
+}
+
+const VISUAL_FORMULA_MAX_DEPTH: usize = 24;
+const VISUAL_FORMULA_MAX_SUBTREE_NODES: usize = 512;
+const VISUAL_FORMULA_MAX_SUBTREE_BYTES: usize = 16 * 1024;
+const VISUAL_FORMULA_SHARED_MIN_NODES: usize = 10;
+
+#[derive(Clone, Copy)]
+struct VisualSubtreeMeta {
+    fingerprint: [u8; 32],
+    nodes: usize,
+    bytes: usize,
+}
+
+enum VisualRenderPlan {
+    Full(Option<String>),
+    Reference(String),
+    Elided(String),
+}
+
+struct VisualFormulaRenderer {
+    color: bool,
+    meta: HashMap<usize, VisualSubtreeMeta>,
+    repeats: HashMap<[u8; 32], usize>,
+    seen: HashSet<[u8; 32]>,
+    sharing_suppressed: usize,
+}
+
+impl VisualFormulaRenderer {
+    fn new(root: &Value, color: bool) -> Self {
+        let mut renderer = Self {
+            color,
+            meta: HashMap::new(),
+            repeats: HashMap::new(),
+            seen: HashSet::new(),
+            sharing_suppressed: 0,
+        };
+        renderer.inventory(root);
+        renderer
+    }
+
+    fn inventory(&mut self, value: &Value) -> VisualSubtreeMeta {
+        let mut hasher = blake3::Hasher::new();
+        let mut nodes = 1usize;
+        let mut bytes = 0usize;
+        match value {
+            Value::Null => {
+                hasher.update(b"null");
+            }
+            Value::Bool(boolean) => {
+                hasher.update(if *boolean { b"true" } else { b"false" });
+            }
+            Value::Number(number) => {
+                let rendered = number.to_string();
+                bytes += rendered.len();
+                hasher.update(rendered.as_bytes());
+            }
+            Value::String(string) => {
+                bytes += string.len();
+                hasher.update(string.as_bytes());
+            }
+            Value::Array(values) => {
+                hasher.update(b"[");
+                for child in values {
+                    let child_meta = self.inventory(child);
+                    nodes += child_meta.nodes;
+                    bytes += child_meta.bytes;
+                    hasher.update(&child_meta.fingerprint);
+                }
+                hasher.update(b"]");
+            }
+            Value::Object(fields) => {
+                hasher.update(b"{");
+                let mut names = fields.keys().collect::<Vec<_>>();
+                names.sort_unstable();
+                for name in names {
+                    bytes += name.len();
+                    hasher.update(name.as_bytes());
+                    let child_meta = self.inventory(&fields[name]);
+                    nodes += child_meta.nodes;
+                    bytes += child_meta.bytes;
+                    hasher.update(&child_meta.fingerprint);
+                }
+                hasher.update(b"}");
+            }
+        }
+        let meta = VisualSubtreeMeta {
+            fingerprint: *hasher.finalize().as_bytes(),
+            nodes,
+            bytes,
+        };
+        self.meta.insert(value as *const Value as usize, meta);
+        if is_visual_shareable_term(value) && nodes >= VISUAL_FORMULA_SHARED_MIN_NODES {
+            *self.repeats.entry(meta.fingerprint).or_default() += 1;
+        }
+        meta
+    }
+
+    fn plan(&mut self, value: &Value, depth: usize) -> VisualRenderPlan {
+        let meta = self.meta[&(value as *const Value as usize)];
+        let cid = || sugar_canonicalizer::jcs_cid_of_json(value);
+        if depth >= VISUAL_FORMULA_MAX_DEPTH
+            || ((depth > 0 || !is_visual_formula_shape(value))
+                && (meta.nodes > VISUAL_FORMULA_MAX_SUBTREE_NODES
+                    || meta.bytes > VISUAL_FORMULA_MAX_SUBTREE_BYTES))
         {
-            pretty_visual_cases(formula, color)
+            return VisualRenderPlan::Elided(format!(
+                "<subtree elided, cid={}, nodes={}, see mementos>",
+                cid(),
+                meta.nodes
+            ));
         }
-        Some("or") => pretty_visual_join(formula, "∨", color),
-        Some("implies") => {
-            let operands = formula_operands(formula);
-            match operands.as_slice() {
-                [guard, consequence] => format!(
-                    "{}\n{}\n{}",
-                    indent_lines(&pretty_visual_formula(guard, color), 2),
-                    fol_paint("⇒", FolRegister::Connective, color),
-                    indent_lines(&pretty_visual_formula(consequence, color), 2)
-                ),
-                _ => proofir_formula_to_fol_with_instances(formula),
+        if self.sharing_suppressed == 0
+            && self.repeats.get(&meta.fingerprint).copied().unwrap_or(0) > 1
+        {
+            let cid = cid();
+            if !self.seen.insert(meta.fingerprint) {
+                return VisualRenderPlan::Reference(format!("<as above, cid={cid}>"));
             }
+            return VisualRenderPlan::Full(Some(cid));
         }
-        Some("not") => {
-            let operands = formula_operands(formula);
-            match operands.as_slice() {
-                [operand] => format!(
-                    "{} {}",
-                    fol_paint("¬", FolRegister::Connective, color),
-                    pretty_visual_formula(operand, color)
-                ),
-                _ => proofir_formula_to_fol_with_instances(formula),
+        VisualRenderPlan::Full(None)
+    }
+
+    fn formula(&mut self, formula: &Value, depth: usize) -> String {
+        let shared_cid = match self.plan(formula, depth) {
+            VisualRenderPlan::Reference(reference) | VisualRenderPlan::Elided(reference) => {
+                return reference;
             }
+            VisualRenderPlan::Full(cid) => cid,
+        };
+        if shared_cid.is_some() {
+            self.sharing_suppressed += 1;
         }
-        Some("forall" | "exists") => {
-            let quantifier = if formula["kind"] == "forall" {
-                "∀"
-            } else {
-                "∃"
-            };
-            let name = formula.get("name").and_then(Value::as_str).unwrap_or("?");
-            let sort = formula
-                .get("sort")
-                .map(proofir_sort_to_fol)
-                .unwrap_or_else(|| "?".to_string());
-            let body = formula.get("body").map_or_else(
-                || "<missing body>".to_string(),
-                |body| pretty_visual_formula(body, color),
-            );
+        let rendered = self.formula_full(formula, depth);
+        if shared_cid.is_some() {
+            self.sharing_suppressed -= 1;
+        }
+        match shared_cid {
+            Some(cid) => format!("{rendered} [shared cid={cid}]"),
+            None => rendered,
+        }
+    }
+
+    fn formula_full(&mut self, formula: &Value, depth: usize) -> String {
+        match formula.get("kind").and_then(Value::as_str) {
+            Some("and") => self.join(formula, "∧", depth),
+            Some("or")
+                if visual_formula_operands(formula).iter().all(|operand| {
+                    operand.get("kind").and_then(Value::as_str) == Some("implies")
+                }) =>
+            {
+                self.cases(formula, depth)
+            }
+            Some("or") => self.join(formula, "∨", depth),
+            Some("implies") => {
+                let operands = visual_formula_operands(formula);
+                match operands {
+                    [guard, consequence] => format!(
+                        "{}\n{}\n{}",
+                        indent_lines(&self.formula(guard, depth + 1), 2),
+                        fol_paint("⇒", FolRegister::Connective, self.color),
+                        indent_lines(&self.formula(consequence, depth + 1), 2)
+                    ),
+                    _ => proofir_formula_to_fol_with_instances(formula),
+                }
+            }
+            Some("not") => {
+                let operands = visual_formula_operands(formula);
+                match operands {
+                    [operand] => format!(
+                        "{} {}",
+                        fol_paint("¬", FolRegister::Connective, self.color),
+                        self.formula(operand, depth + 1)
+                    ),
+                    _ => proofir_formula_to_fol_with_instances(formula),
+                }
+            }
+            Some("forall" | "exists") => {
+                let quantifier = if formula["kind"] == "forall" {
+                    "∀"
+                } else {
+                    "∃"
+                };
+                let name = formula.get("name").and_then(Value::as_str).unwrap_or("?");
+                let sort = formula
+                    .get("sort")
+                    .map(proofir_sort_to_fol)
+                    .unwrap_or_else(|| "?".to_string());
+                let body = formula.get("body").map_or_else(
+                    || "<missing body>".to_string(),
+                    |body| self.formula(body, depth + 1),
+                );
+                format!(
+                    "{} {}:{}\n{}",
+                    fol_paint(quantifier, FolRegister::Connective, self.color),
+                    fol_paint(name, FolRegister::Variable, self.color),
+                    sort,
+                    indent_lines(&body, 2)
+                )
+            }
+            Some("atomic" | "Atomic") => self.atomic(formula, depth),
+            Some("true" | "True") => fol_paint("⊤", FolRegister::Literal, self.color),
+            Some("false" | "False") => fol_paint("⊥", FolRegister::Literal, self.color),
+            _ => proofir_formula_to_fol_with_instances(formula),
+        }
+    }
+
+    fn join(&mut self, formula: &Value, connective: &str, depth: usize) -> String {
+        let mut rows = Vec::new();
+        for (index, operand) in visual_formula_operands(formula).iter().enumerate() {
+            if index > 0 {
+                rows.push(fol_paint(connective, FolRegister::Connective, self.color));
+            }
+            rows.push(self.formula(operand, depth + 1));
+        }
+        rows.join("\n")
+    }
+
+    fn cases(&mut self, formula: &Value, depth: usize) -> String {
+        let arms = visual_formula_operands(formula)
+            .iter()
+            .filter_map(|operand| {
+                let pair = visual_formula_operands(operand);
+                match pair {
+                    [guard, consequence] => Some((
+                        self.formula(guard, depth + 1),
+                        self.formula(consequence, depth + 1),
+                    )),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        let guard_width = arms
+            .iter()
+            .map(|(guard, _)| visible_width(guard))
+            .max()
+            .unwrap_or(0);
+        let mut rows = vec![fol_paint("cases", FolRegister::Connective, self.color)];
+        rows.extend(arms.into_iter().map(|(guard, consequence)| {
+            let padding = " ".repeat(guard_width.saturating_sub(visible_width(&guard)));
             format!(
-                "{} {}:{}\n{}",
-                fol_paint(quantifier, FolRegister::Connective, color),
-                fol_paint(name, FolRegister::Variable, color),
-                sort,
-                indent_lines(&body, 2)
+                "  {guard}{padding}  {}  {}",
+                fol_paint("⇒", FolRegister::Connective, self.color),
+                consequence
             )
-        }
-        Some("atomic" | "Atomic") => pretty_visual_atomic(formula, color),
-        Some("true" | "True") => fol_paint("⊤", FolRegister::Literal, color),
-        Some("false" | "False") => fol_paint("⊥", FolRegister::Literal, color),
-        _ => proofir_formula_to_fol_with_instances(formula),
+        }));
+        rows.join("\n")
     }
-}
 
-fn pretty_visual_join(formula: &Value, connective: &str, color: bool) -> String {
-    let mut rows = Vec::new();
-    for (index, operand) in formula_operands(formula).iter().enumerate() {
-        if index > 0 {
-            rows.push(fol_paint(connective, FolRegister::Connective, color));
+    fn atomic(&mut self, formula: &Value, depth: usize) -> String {
+        let name = formula.get("name").and_then(Value::as_str).unwrap_or("?");
+        let args = formula
+            .get("args")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if args.len() == 2 && is_infix_predicate(name) {
+            return format!(
+                "{} {} {}",
+                self.term(&args[0], depth + 1),
+                fol_paint(
+                    fol_predicate_symbol(name),
+                    FolRegister::Connective,
+                    self.color
+                ),
+                self.term(&args[1], depth + 1)
+            );
         }
-        rows.push(pretty_visual_formula(operand, color));
-    }
-    rows.join("\n")
-}
-
-fn pretty_visual_cases(formula: &Value, color: bool) -> String {
-    let arms = formula_operands(formula)
-        .into_iter()
-        .filter_map(|operand| {
-            let pair = formula_operands(&operand);
-            match pair.as_slice() {
-                [guard, consequence] => Some((
-                    pretty_visual_formula(guard, color),
-                    pretty_visual_formula(consequence, color),
-                )),
-                _ => None,
-            }
-        })
-        .collect::<Vec<_>>();
-    let guard_width = arms
-        .iter()
-        .map(|(guard, _)| visible_width(guard))
-        .max()
-        .unwrap_or(0);
-    let mut rows = vec![fol_paint("cases", FolRegister::Connective, color)];
-    rows.extend(arms.into_iter().map(|(guard, consequence)| {
-        let padding = " ".repeat(guard_width.saturating_sub(visible_width(&guard)));
+        let args = args
+            .iter()
+            .map(|term| self.term(term, depth + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
-            "  {guard}{padding}  {}  {}",
-            fol_paint("⇒", FolRegister::Connective, color),
-            consequence
+            "{}({args})",
+            fol_paint(name, FolRegister::Callee, self.color)
         )
-    }));
-    rows.join("\n")
+    }
+
+    fn term(&mut self, term: &Value, depth: usize) -> String {
+        let shared_cid = match self.plan(term, depth) {
+            VisualRenderPlan::Reference(reference) | VisualRenderPlan::Elided(reference) => {
+                return reference
+            }
+            VisualRenderPlan::Full(cid) => cid,
+        };
+        if shared_cid.is_some() {
+            self.sharing_suppressed += 1;
+        }
+        let rendered = self.term_full(term, depth);
+        if shared_cid.is_some() {
+            self.sharing_suppressed -= 1;
+        }
+        match shared_cid {
+            Some(cid) => format!("{rendered} [shared cid={cid}]"),
+            None => rendered,
+        }
+    }
+
+    fn term_full(&mut self, term: &Value, depth: usize) -> String {
+        if let Some(name) = term.get("var").and_then(Value::as_str).or_else(|| {
+            matches!(
+                term.get("kind").and_then(Value::as_str),
+                Some("var" | "Var")
+            )
+            .then(|| term.get("name").and_then(Value::as_str))
+            .flatten()
+        }) {
+            let register = if name == "out" {
+                FolRegister::Out
+            } else {
+                FolRegister::Variable
+            };
+            return fol_paint(name, register, self.color);
+        }
+        if matches!(
+            term.get("kind").and_then(Value::as_str),
+            Some("ctor" | "Ctor")
+        ) {
+            let name = term.get("name").and_then(Value::as_str).unwrap_or("?");
+            let raw_args = term
+                .get("args")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            if let Some(symbolic) = format_symbolic_ctor(name, raw_args) {
+                return fol_paint(&symbolic, FolRegister::Literal, self.color);
+            }
+            let display = name.strip_prefix("call:").unwrap_or(name);
+            let args = raw_args
+                .iter()
+                .map(|arg| self.term(arg, depth + 1))
+                .collect::<Vec<_>>();
+            return if args.is_empty() && !name.starts_with("call:") {
+                fol_paint(display, FolRegister::Literal, self.color)
+            } else {
+                format!(
+                    "{}({})",
+                    fol_paint(display, FolRegister::Callee, self.color),
+                    args.join(", ")
+                )
+            };
+        }
+        fol_paint(&proofir_term_to_fol(term), FolRegister::Literal, self.color)
+    }
+}
+
+fn is_visual_formula_shape(value: &Value) -> bool {
+    matches!(
+        value.get("kind").and_then(Value::as_str),
+        Some(
+            "and"
+                | "or"
+                | "implies"
+                | "not"
+                | "forall"
+                | "exists"
+                | "atomic"
+                | "Atomic"
+                | "true"
+                | "True"
+                | "false"
+                | "False"
+        )
+    )
+}
+
+fn is_visual_shareable_term(value: &Value) -> bool {
+    matches!(
+        value.get("kind").and_then(Value::as_str),
+        Some("ctor" | "Ctor")
+    )
+}
+
+fn visual_formula_operands(formula: &Value) -> &[Value] {
+    formula
+        .get("operands")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
 fn visible_width(rendered: &str) -> usize {
@@ -4434,76 +4714,6 @@ fn visible_width(rendered: &str) -> usize {
             true
         })
         .count()
-}
-
-fn pretty_visual_atomic(formula: &Value, color: bool) -> String {
-    let name = formula.get("name").and_then(Value::as_str).unwrap_or("?");
-    let args = formula
-        .get("args")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    if args.len() == 2 && is_infix_predicate(name) {
-        return format!(
-            "{} {} {}",
-            pretty_visual_term(&args[0], color),
-            fol_paint(fol_predicate_symbol(name), FolRegister::Connective, color),
-            pretty_visual_term(&args[1], color)
-        );
-    }
-    let args = args
-        .iter()
-        .map(|term| pretty_visual_term(term, color))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{}({args})", fol_paint(name, FolRegister::Callee, color))
-}
-
-fn pretty_visual_term(term: &Value, color: bool) -> String {
-    if let Some(name) = term.get("var").and_then(Value::as_str).or_else(|| {
-        matches!(
-            term.get("kind").and_then(Value::as_str),
-            Some("var" | "Var")
-        )
-        .then(|| term.get("name").and_then(Value::as_str))
-        .flatten()
-    }) {
-        let register = if name == "out" {
-            FolRegister::Out
-        } else {
-            FolRegister::Variable
-        };
-        return fol_paint(name, register, color);
-    }
-    if matches!(
-        term.get("kind").and_then(Value::as_str),
-        Some("ctor" | "Ctor")
-    ) {
-        let name = term.get("name").and_then(Value::as_str).unwrap_or("?");
-        let raw_args = term
-            .get("args")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        if let Some(symbolic) = format_symbolic_ctor(name, raw_args) {
-            return fol_paint(&symbolic, FolRegister::Literal, color);
-        }
-        let display = name.strip_prefix("call:").unwrap_or(name);
-        let args = raw_args
-            .iter()
-            .map(|arg| pretty_visual_term(arg, color))
-            .collect::<Vec<_>>();
-        return if args.is_empty() && !name.starts_with("call:") {
-            fol_paint(display, FolRegister::Literal, color)
-        } else {
-            format!(
-                "{}({})",
-                fol_paint(display, FolRegister::Callee, color),
-                args.join(", ")
-            )
-        };
-    }
-    fol_paint(&proofir_term_to_fol(term), FolRegister::Literal, color)
 }
 
 fn render_provenanced_fol_row(
@@ -14201,6 +14411,69 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let colored = pretty_visual_formula(&formula, true);
         assert!(!plain.contains("\u{1b}["), "{plain:?}");
         assert!(colored.contains("\u{1b}["), "{colored:?}");
+    }
+
+    #[test]
+    fn visual_fol_total_shaping_elides_deep_subtree_with_cid_receipt() {
+        let mut term = serde_json::json!({"kind": "var", "name": "x"});
+        for depth in 0..96 {
+            term = serde_json::json!({
+                "kind": "ctor",
+                "name": format!("layer_{depth}"),
+                "args": [term, {"kind": "const", "value": depth}]
+            });
+        }
+        let formula = serde_json::json!({
+            "kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, term
+            ]
+        });
+
+        let rendered = pretty_visual_formula(&formula, false);
+
+        assert!(
+            rendered.contains("subtree elided, cid=blake3-512:") && rendered.contains("nodes="),
+            "deep formulas need a named content-addressed receipt:\n{rendered}"
+        );
+        assert!(
+            rendered.lines().all(|line| line.chars().count() <= 240),
+            "every rendered line must stay bounded:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn visual_fol_repeated_subterm_is_named_once_then_referenced() {
+        let shared = serde_json::json!({
+            "kind": "ctor", "name": "call:normalize", "args": [
+                {"kind": "ctor", "name": "call:source", "args": [
+                    {"kind": "var", "name": "x"}
+                ]}
+            ]
+        });
+        let formula = serde_json::json!({
+            "kind": "and", "operands": [
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "left"}, shared.clone()
+                ]},
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "right"}, shared
+                ]}
+            ]
+        });
+
+        let rendered = pretty_visual_formula(&formula, false);
+
+        assert_eq!(
+            rendered.matches("normalize(source(x))").count(),
+            1,
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered.matches("as above, cid=blake3-512:").count(),
+            1,
+            "{rendered}"
+        );
+        assert!(rendered.contains("shared cid=blake3-512:"), "{rendered}");
     }
 
     #[test]
