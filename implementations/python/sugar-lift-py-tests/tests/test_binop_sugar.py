@@ -162,6 +162,24 @@ def test_tuple_repetition_by_symbolic_count_is_typed_runtime_effect():
     assert isinstance(outcome, Incomplete)
     assert type(outcome.effect).__name__ == "SequenceRepetitionRuntimeEffect"
     assert "sequence repetition by symbolic count" in outcome.reason
+    assert outcome.effect.witness is not None
+    assert outcome.effect.witness.operand == make_var("count")
+    assert outcome.effect.witness.operation == ctor(
+        "py.sequence_repeat", [make_var("count")]
+    )
+    assert operation_log == []
+
+
+def test_large_tuple_repetition_carries_the_concrete_count_witness():
+    outcome, operation_log = _reduce_outcome_with_log("(1,) * 65521")
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "SequenceRepetitionRuntimeEffect"
+    assert outcome.effect.witness is not None
+    assert outcome.effect.witness.operand == num(65521)
+    assert outcome.effect.witness.operation == ctor(
+        "py.sequence_repeat", [num(65521)]
+    )
     assert operation_log == []
 
 
