@@ -823,6 +823,33 @@ def _memento_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
     return True
 
 
+def _call_site_seek_matches(
+    candidate: Dict[str, Any], target: Dict[str, Any]
+) -> bool:
+    """Match a typed call-site cursor by its durable source locus.
+
+    Rust ``SourceMemento`` stores one function spelling. Decoding a call-site
+    wire memento selects its source owner, so the assertion-only
+    ``function_name`` alias is not available when that cursor is emitted again.
+    File + span + source CID remain the complete call-site address.
+    """
+    locus = dict(target)
+    locus.pop("function_name", None)
+    locus.pop("sourceFunctionName", None)
+    locus.pop("source_function_name", None)
+    return _memento_matches(candidate, locus)
+
+
+def _universe_bridge_matches(candidate: Any, call_site_bridge: str) -> bool:
+    """Whether a callable universe is the target of this call-site bridge."""
+    if not isinstance(candidate, str):
+        return False
+    if candidate == call_site_bridge:
+        return True
+    _, separator, spelling = call_site_bridge.partition(":")
+    return bool(separator and spelling and candidate == spelling)
+
+
 def _lift_file_for_enumeration(
     workspace_root: str, root: Path, file_rel: str
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -2278,7 +2305,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         if item.get("kind") != "contract":
                             continue
                         memento = _item_memento(item)
-                        if memento is not None and _memento_matches(memento, at):
+                        if memento is not None and _call_site_seek_matches(memento, at):
                             call_item = item
                             break
                     if call_item is not None:
@@ -2295,7 +2322,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         matched_bridge = None
                         for bridge in candidates:
                             for universe_item in universe_items:
-                                if universe_item.get("bridgeSourceSymbol") == bridge:
+                                if _universe_bridge_matches(
+                                    universe_item.get("bridgeSourceSymbol"), bridge
+                                ):
                                     matched = universe_item
                                     matched_bridge = bridge
                                     break
