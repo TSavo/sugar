@@ -127,6 +127,11 @@ impl ResponseReader {
     }
 }
 
+fn stop_child_after_transport_failure(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn response_deadline() -> Duration {
     std::env::var("SUGAR_LIFT_RESPONSE_TIMEOUT_SECS")
         .ok()
@@ -477,7 +482,13 @@ impl LiftPluginKit {
             stage = "stdin.flush.exit",
             "lift-plugin buffer flush"
         );
-        let initialize_response = read_response(&reader, 1)?;
+        let initialize_response = match read_response(&reader, 1) {
+            Ok(response) => response,
+            Err(error) => {
+                stop_child_after_transport_failure(&mut child);
+                return Err(error);
+            }
+        };
 
         let lift_req = json!({
             "jsonrpc": "2.0",
@@ -508,7 +519,13 @@ impl LiftPluginKit {
             stage = "stdin.flush.exit",
             "lift-plugin buffer flush"
         );
-        let response = read_response(&reader, 2)?;
+        let response = match read_response(&reader, 2) {
+            Ok(response) => response,
+            Err(error) => {
+                stop_child_after_transport_failure(&mut child);
+                return Err(error);
+            }
+        };
 
         Ok((initialize_response, response, child, stdin, reader))
     }
@@ -639,7 +656,11 @@ impl LiftPluginKit {
                 // Resident died or desynced mid-protocol: evict it so the
                 // NEXT call spawns fresh, and answer THIS call via one-shot.
                 guard.remove(&key);
-                Err(ResidentDispatchError::retry_after(error.to_string()))
+                if error.is_transport_stop_the_line() {
+                    Err(ResidentDispatchError::Fatal(error))
+                } else {
+                    Err(ResidentDispatchError::retry_after(error.to_string()))
+                }
             }
         }
     }
@@ -892,6 +913,12 @@ pub enum LiftPluginKitError {
     LegacyResponseUnavailable,
 }
 
+impl LiftPluginKitError {
+    fn is_transport_stop_the_line(&self) -> bool {
+        matches!(self, Self::Failed(message) if message.contains("lift plugin transport stalled") || message.contains("lift plugin transport disconnected"))
+    }
+}
+
 fn lift_request_from_input(input: &Input) -> Result<&Value, LiftPluginKitError> {
     match input {
         Input::Spec(value) => Ok(value),
@@ -975,18 +1002,32 @@ fn read_response_with_deadline(
     );
     let line = match reader.lines.recv_timeout(deadline) {
         Ok(Ok(line)) => line,
-        Ok(Err(error)) => {
-            return Err(LiftPluginKitError::Failed(format!(
-                "lift plugin transport read failed at stage=read_line.enter message_id={id}: {error}"
-            )))
-        }
+        Ok(Err(error)) => return Err(LiftPluginKitError::Failed(format!(
+            "lift plugin transport read failed at stage=read_line.enter message_id={id}: {error}"
+        ))),
         Err(RecvTimeoutError::Timeout) => {
+            tracing::error!(
+                stage = "read_line.enter",
+                message_id = id,
+                deadline_secs = deadline.as_secs(),
+                "lift-plugin transport stalled without a response frame"
+            );
             return Err(LiftPluginKitError::Failed(format!(
                 "lift plugin transport stalled at stage=read_line.enter message_id={id} deadline_secs={}; no response frame arrived",
                 deadline.as_secs()
-            )))
+            )));
         }
-        Err(RecvTimeoutError::Disconnected) => String::new(),
+        Err(RecvTimeoutError::Disconnected) => {
+            tracing::error!(
+                stage = "read_line.disconnected",
+                message_id = id,
+                deadline_secs = deadline.as_secs(),
+                "lift-plugin process ended without responding"
+            );
+            return Err(LiftPluginKitError::Failed(format!(
+                "lift plugin transport disconnected at stage=read_line.disconnected message_id={id}: plugin process ended without responding"
+            )));
+        }
     };
     let n = line.len();
     trace_lift_transport_checkpoint("read_response.after_read_line", &Value::Null, n);
@@ -1143,6 +1184,28 @@ mod tests {
         assert!(detail.contains("stage=read_line.enter"), "{detail}");
         assert!(detail.contains("message_id=2"), "{detail}");
         let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn disconnected_response_is_loud_and_names_plugin_death() {
+        let mut child = Command::new("sh")
+            .args(["-c", "exit 0"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn exiting plugin stub");
+        let reader = ResponseReader::spawn(child.stdout.take().expect("stub stdout"));
+
+        let error = read_response_with_deadline(&reader, 7, Duration::from_secs(1))
+            .expect_err("plugin death must return a transport error");
+        let detail = error.to_string();
+        assert!(detail.contains("transport disconnected"), "{detail}");
+        assert!(detail.contains("stage=read_line.disconnected"), "{detail}");
+        assert!(detail.contains("message_id=7"), "{detail}");
+        assert!(
+            detail.contains("process ended without responding"),
+            "{detail}"
+        );
         let _ = child.wait();
     }
 }

@@ -355,6 +355,60 @@ done
 }
 
 #[test]
+fn allow_failed_components_cannot_absorb_a_stalled_lift_transport() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let manifest_dir = project.join(".sugar/lift/stalled");
+    fs::create_dir_all(&manifest_dir).expect("create manifest dir");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        "[authoring.lift]\nsurface = \"stalled\"\n",
+    )
+    .expect("write config");
+    let plugin = dir.path().join("stalled-plugin.sh");
+    write_executable(
+        &plugin,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+while IFS= read -r line; do
+  if [[ "$line" == *'"method":"initialize"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"stalled","protocol_version":"pep/1.7.0","capabilities":{}}}'
+  elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"stalled-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+  elif [[ "$line" == *'"method":"lift"'* ]]; then
+    sleep 30
+  fi
+done
+"#,
+    );
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!("name = \"stalled\"\ncommand = [\"{}\"]\n", plugin.display()),
+    )
+    .expect("write manifest");
+
+    let output = Command::new(sugar_bin())
+        .args(["lift", "--allow-failed-components"])
+        .arg(&project)
+        .env("SUGAR_LIFT_RESPONSE_TIMEOUT_SECS", "1")
+        .output()
+        .expect("run stalled lift");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "transport stall was absorbed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.contains("kind=transport"), "{stderr}");
+    assert!(stderr.contains("transport stalled"), "{stderr}");
+    assert!(stderr.contains("stage=read_line.enter"), "{stderr}");
+    assert!(
+        !stdout.contains("recovered-construction-audit"),
+        "stall minted a frontier: {stdout}"
+    );
+}
+
+#[test]
 fn lift_library_bindings_delegates_layer_to_lifter() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");
