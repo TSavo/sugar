@@ -82,13 +82,17 @@ class StringValue(FloorValue):
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         if type(other) in (TermValue, NoneValue, ListValue, TupleValue, SetValue):
-            from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+            from sugar_lift_py_tests.effect import (
+                TypeErrorRuntimeEffect,
+                runtime_effect_witness,
+            )
             from sugar_lift_py_tests.outcome import Incomplete
 
             return Incomplete(
                 TypeErrorRuntimeEffect(
                     f"unorderable types runtime boundary: "
-                    f"StringValue and {type(other).__name__}; site={site}"
+                    f"StringValue and {type(other).__name__}; site={site}",
+                    witness=runtime_effect_witness("py.less_than", other, site),
                 )
             )
         return super().less_than(other, site)
@@ -135,12 +139,16 @@ class StringValue(FloorValue):
             n = len(self.value)
             if -n <= i < n:
                 return Complete(StringValue(self.value[i]))
-            from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect
+            from sugar_lift_py_tests.effect import (
+                IndexErrorRuntimeEffect,
+                runtime_effect_witness,
+            )
 
             return Incomplete(
                 IndexErrorRuntimeEffect(
                     f"string index out of range runtime boundary: "
-                    f"index={i} length={n}; owner=StringValue.subscript site={site}"
+                    f"index={i} length={n}; owner=StringValue.subscript site={site}",
+                    witness=runtime_effect_witness("py.subscript", index, site),
                 )
             )
         return self.py_subscript_coordinate(index, site)
@@ -191,7 +199,10 @@ class StringValue(FloorValue):
 
         ground = _ground_percent_operand(other)
         if ground is not _NOT_GROUND:
-            from sugar_lift_py_tests.effect import DynamicFormatRuntimeEffect
+            from sugar_lift_py_tests.effect import (
+                DynamicFormatRuntimeEffect,
+                runtime_effect_witness,
+            )
             from sugar_lift_py_tests.outcome import Complete, Incomplete
 
             try:
@@ -201,7 +212,10 @@ class StringValue(FloorValue):
                     DynamicFormatRuntimeEffect(
                         "percent-format runtime boundary: Python rejected a "
                         "ground format application; "
-                        f"shape={type(exc).__name__}; site={site}"
+                        f"shape={type(exc).__name__}; site={site}",
+                        witness=runtime_effect_witness(
+                            "py.percent_format", other, site
+                        ),
                     )
                 )
 

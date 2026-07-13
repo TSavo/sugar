@@ -136,11 +136,18 @@ def test_sequential_dig_runtime_selected_return_is_a_named_effect() -> None:
 
 
 def test_sequential_dig_propagates_a_named_runtime_effect() -> None:
-    from sugar_lift_py_tests.effect import DivisionByZeroRuntimeEffect
+    from sugar_lift_py_tests.effect import (
+        DivisionByZeroRuntimeEffect,
+        runtime_effect_witness,
+    )
+    from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.outcome import Incomplete
 
     effect = DivisionByZeroRuntimeEffect(
-        "numpy/_core/repro.py:21:8 division denominator is runtime-dependent"
+        "numpy/_core/repro.py:21:8 division denominator is runtime-dependent",
+        witness=runtime_effect_witness(
+            "py.divide", make_var("denominator"), "numpy/_core/repro.py:21:8"
+        ),
     )
 
     class EffectStatement:

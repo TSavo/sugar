@@ -33,7 +33,7 @@ def test_no_runtime_effect_subclass_is_instantiable_without_a_witness() -> None:
     }
     assert subclasses
     for effect_type in subclasses:
-        with pytest.raises(TypeError, match="requires RuntimeEffectWitness"):
+        with pytest.raises(TypeError, match="required positional argument: 'witness'"):
             effect_type("unwitnessed runtime claim")
 
 

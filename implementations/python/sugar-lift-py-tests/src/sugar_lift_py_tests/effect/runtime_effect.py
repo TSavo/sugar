@@ -40,7 +40,7 @@ class RuntimeEffect:
     named subclass (OSExitRuntimeEffect, ...); a generic RuntimeEffect does not exist."""
 
     reason: str
-    witness: RuntimeEffectWitness | None = None
+    witness: RuntimeEffectWitness
 
     def __post_init__(self) -> None:
         if type(self) is RuntimeEffect:
@@ -48,10 +48,4 @@ class RuntimeEffect:
                 "RuntimeEffect is abstract and cannot be constructed directly; build a "
                 "named runtime effect (e.g. OSExitRuntimeEffect). The kind of effect is "
                 "a type, not a reason string."
-            )
-        if self.witness is None:
-            raise TypeError(
-                f"{type(self).__name__} requires RuntimeEffectWitness(operation, "
-                "runtime-dependent operand, locus); without that witness the "
-                "path must construct or FactoryPanic"
             )

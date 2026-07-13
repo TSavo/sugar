@@ -167,12 +167,16 @@ class TupleValue(FloorValue):
             n = len(self.elements)
             if -n <= i < n:
                 return Complete(self.elements[i])
-            from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect
+            from sugar_lift_py_tests.effect import (
+                IndexErrorRuntimeEffect,
+                runtime_effect_witness,
+            )
 
             return Incomplete(
                 IndexErrorRuntimeEffect(
                     f"tuple index out of range runtime boundary: "
-                    f"index={i} length={n}; owner=TupleValue.subscript site={site}"
+                    f"index={i} length={n}; owner=TupleValue.subscript site={site}",
+                    witness=runtime_effect_witness("py.subscript", index, site),
                 )
             )
         return self.py_subscript_coordinate(index, site)
