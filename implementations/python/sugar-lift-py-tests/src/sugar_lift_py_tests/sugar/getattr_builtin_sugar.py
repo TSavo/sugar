@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import GetattrRuntimeEffect
+from sugar_lift_py_tests.effect import GetattrRuntimeEffect, runtime_effect_witness
 from sugar_lift_py_tests.floor import ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.attribute_sugar import project_object_attribute
@@ -16,6 +16,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     receiver: SugarBody
     static_name: str | None
+    dynamic_name: SugarBody | None
     dynamic_observed: str | None
     site: object = field(compare=False)
 
@@ -30,6 +31,7 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
         return cls(
             ctx.build_body(receiver, SugarRole.TERM),
             literal if isinstance(literal, str) else None,
+            None if isinstance(literal, str) else ctx.build_body(name, SugarRole.TERM),
             None if isinstance(literal, str) else name.observed,
             site,
         )
@@ -44,9 +46,26 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
 
     def _finish(self, receiver, ctx):
         if self.static_name is None:
-            return Incomplete(GetattrRuntimeEffect(f"getattr runtime boundary: attribute name expression `{self.dynamic_observed}` is runtime; blame={self.site}"))
+            assert self.dynamic_name is not None
+            return self.dynamic_name.reduce(ctx).and_then(
+                lambda name: Incomplete(
+                    GetattrRuntimeEffect(
+                        f"getattr runtime boundary: attribute name expression `{self.dynamic_observed}` is runtime; blame={self.site}",
+                        witness=runtime_effect_witness(
+                            "py.getattr.dynamic_name", name, self.site
+                        ),
+                    )
+                )
+            )
         if not isinstance(receiver, ObjectValue):
-            return Incomplete(GetattrRuntimeEffect(f"getattr runtime boundary: receiver reduced to {type(receiver).__name__}; Python resolves attributes at runtime; blame={self.site}"))
+            return Incomplete(
+                GetattrRuntimeEffect(
+                    f"getattr runtime boundary: receiver reduced to {type(receiver).__name__}; Python resolves attributes at runtime; blame={self.site}",
+                    witness=runtime_effect_witness(
+                        "py.getattr.receiver", receiver, self.site
+                    ),
+                )
+            )
         return project_object_attribute(receiver, self.static_name, self.site, ctx)
 
     def walk_children(self):
