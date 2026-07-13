@@ -214,6 +214,7 @@ impl ResolvedReportFile {
         Ok(Self { uri, source_path })
     }
 
+    #[cfg(test)]
     fn uri(&self) -> &str {
         &self.uri
     }

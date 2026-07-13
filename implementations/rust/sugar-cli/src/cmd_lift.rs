@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use sugar_claim_envelope::contract_cid_of_ir_decl;
+use sugar_compiler::kit::{Kit, LiftManifest};
 use sugar_proof_envelope::Member;
 use sugar_verifier::MemberKind;
 
@@ -140,7 +141,7 @@ pub fn run(args: LiftArgs) -> u8 {
     )];
 
     if args.audit_frontier {
-        match lift_plugin::dispatch_recovered_audit_tree(&project_root, &surface) {
+        match recovered_audit_tree(&project_root, &surface) {
             Ok(response) => {
                 let audit = match serde_json::from_value::<RecoveredAudit>(response) {
                     Ok(audit) => audit,
@@ -400,6 +401,30 @@ pub fn run(args: LiftArgs) -> u8 {
             EXIT_VERIFY_FAIL
         }
     }
+}
+
+/// The recovered audit is a compiler tree fold, not a lift-plugin response.
+/// Keep its rendezvous at the binary command seam: `cmd_lift` is intentionally
+/// absent from the `sugar-cli` library target, while `lift_plugin` is shared by
+/// both targets. Putting this command-only wrapper in the shared module made it
+/// compiler-proven dead in the library build (#4381).
+fn recovered_audit_tree(project_root: &Path, surface: &str) -> Result<Value, String> {
+    let manifest = lift_plugin::find_manifest_for_surface(project_root, surface).map_err(|error| {
+        format!(
+            "lift-plugin.manifest: {error}; configure a lift manifest whose sugar.enumerate method serves the keyed audit tree"
+        )
+    })?;
+    let kit = Kit::rendezvous(LiftManifest {
+        surface: surface.to_string(),
+        name: manifest.name.clone(),
+        dialect: lift_plugin::dialect_for_surface(surface),
+        command: manifest.command.clone(),
+        working_dir: lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
+        method: manifest.method.clone(),
+    })
+    .map_err(|error| format!("lift.rendezvous: {error}"))?;
+    sugar_compiler::tree::fold_recovered_audit(&kit, project_root)
+        .map_err(|error| format!("lift.path: {error}"))
 }
 
 fn lift_report_graph_plugins(

@@ -374,30 +374,6 @@ pub(crate) fn dispatch_lift_path(
     LiftPluginSession::from_claim(claim)
 }
 
-pub(crate) fn dispatch_recovered_audit_tree(
-    project_root: &Path,
-    surface: &str,
-) -> Result<Value, LiftPluginError> {
-    let manifest = find_manifest(project_root, surface).map_err(|error| {
-        LiftPluginError::diagnostic(
-            LiftPluginDiagnosticKind::ManifestResolution,
-            "lift-plugin.manifest",
-            error,
-            "Configure a lift manifest whose sugar.enumerate method serves the keyed audit tree.",
-        )
-    })?;
-    let kit = Kit::rendezvous(LiftManifest {
-        surface: surface.to_string(),
-        name: manifest.name.clone(),
-        dialect: dialect_for_surface(surface),
-        command: manifest.command.clone(),
-        working_dir: resolved_absolute_working_dir(project_root, &manifest),
-        method: manifest.method.clone(),
-    })
-    .map_err(lift_error_from_rendezvous)?;
-    sugar_compiler::tree::fold_recovered_audit(&kit, project_root).map_err(lift_error_from_kit)
-}
-
 /// Unregistered-dialect fallback: builds the same source/path input the
 /// registered branch would, but against an empty `KitRegistry`, so
 /// `execute_path` itself produces the legacy composition-boundary /
@@ -529,7 +505,7 @@ fn term_shape(term: &Term) -> &'static str {
     }
 }
 
-fn dialect_for_surface(surface: &str) -> Dialect {
+pub(crate) fn dialect_for_surface(surface: &str) -> Dialect {
     match surface {
         "rust" => Dialect::Rust,
         "c" => Dialect::C,
