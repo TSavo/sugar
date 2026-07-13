@@ -57,17 +57,21 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
         import hashlib
         from pathlib import Path
 
-        blame = None
+        if Path(self.site.filename).is_absolute():
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner="RaiseSugar",
+                blame=str(self.site),
+                observed="absolute source locus",
+                requested="workspace-relative source locus",
+                fix="route the source through the workspace-relative lift door",
+            )
+
+        blame = str(self.site)
         source_sha256 = None
-        try:
-            filename = Path(self.site.filename)
-            parts = filename.parts
-            relative = Path(*parts[-3:]) if filename.is_absolute() else filename
-            blame = f"{relative}:{self.site.line}:{self.site.col}"
-            if self.site.source is not None:
-                source_sha256 = hashlib.sha256(self.site.source.encode()).hexdigest()
-        except Exception:
-            blame = str(self.site)
+        if self.site.source is not None:
+            source_sha256 = hashlib.sha256(self.site.source.encode()).hexdigest()
         return Complete(
             RaiseValue(
                 RaiseEffect(self.exception_name, blame, source_sha256),

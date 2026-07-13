@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from sugar_lift_py_tests.ir import Term
 
@@ -16,6 +17,16 @@ class RuntimeEffectWitness:
     def __post_init__(self) -> None:
         if not self.locus:
             raise ValueError("RuntimeEffectWitness requires a stable source locus")
+        if self.locus.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", self.locus):
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner="RuntimeEffectWitness",
+                blame=self.locus,
+                observed="absolute source locus",
+                requested="workspace-relative source locus",
+                fix="construct the witness from a workspace-relative SourceFragment",
+            )
 
 
 def runtime_effect_witness(operation: str, operand, locus) -> RuntimeEffectWitness:

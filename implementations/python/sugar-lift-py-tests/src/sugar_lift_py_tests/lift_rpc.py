@@ -715,7 +715,7 @@ def _lift_file_for_enumeration(
     """
     full_path = (root / file_rel).resolve()
     source = full_path.read_text(encoding="utf-8")
-    file_payload = lift_file_payload(source, str(full_path))
+    file_payload = lift_file_payload(source, file_rel)
     ir_items = [to_rpc_value(item) for item in file_payload.ir]
     call_edges = [to_rpc_value(edge) for edge in file_payload.call_edges]
     return ir_items, call_edges
@@ -2085,7 +2085,7 @@ def _handle_lift(
             except ValueError:
                 rel_path = full_path.name
             with open(path, "r", encoding="utf-8") as handle:
-                file_payload = lift_file_payload(handle.read(), path)
+                file_payload = lift_file_payload(handle.read(), rel_path)
             if bindings_backed_pass:
                 # Implications are not projected from the collapse yet (named
                 # gap). callEdges ride on the source-lifted path below.
