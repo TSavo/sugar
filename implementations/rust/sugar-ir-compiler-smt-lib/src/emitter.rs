@@ -43,6 +43,12 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
             emit_const_value(value, sort_name)
         }
         Term::Ctor { name, args, .. } => {
+            if name == "to_real" && args.len() == 1 {
+                return format!(
+                    "(to_real {})",
+                    emit_term_with_expected(&args[0], Some("Int"))
+                );
+            }
             if name == "str.len" && args.len() == 1 {
                 return format!("(str.len {})", emit_string_term(&args[0]));
             }
@@ -2401,6 +2407,7 @@ fn known_term_sort(term: &Term) -> Option<String> {
         }
         Term::Var { .. } => Some("Int".to_string()),
         Term::Ctor { name, .. } if name == "str.len" => Some("Int".to_string()),
+        Term::Ctor { name, .. } if name == "to_real" => Some("Real".to_string()),
         Term::Ctor { name, .. } if is_bv32_ctor_name(name) && term_renders_as_bv32(term) => {
             Some(BV32_SORT.to_string())
         }
@@ -2590,6 +2597,7 @@ fn is_builtin_term_operator(name: &str) -> bool {
         "+" | "-"
             | "*"
             | "str.len"
+            | "to_real"
             | "str.++"
             // Composable string-theory Ctor terms: emitted inline by
             // emit_term_with_expected, never as declared uninterpreted functions.
@@ -3982,6 +3990,16 @@ mod emit_term_direct_tests {
         };
 
         assert_eq!(emit_term(&term), "(|call:f| x 1)");
+    }
+
+    #[test]
+    fn explicit_int_to_real_bridge_emits_interpreted_operator() {
+        let term = Term::Ctor {
+            name: "to_real".into(),
+            args: vec![int_const(1)],
+        };
+
+        assert_eq!(emit_term(&term), "(to_real 1)");
     }
 }
 

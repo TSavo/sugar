@@ -280,7 +280,7 @@ def test_functions_finds_both_the_contract_owner_and_the_enclosing_test(
         n["memento"].get("function_name") or n["memento"].get("source_function_name")
         for n in result["nodes"]
     )
-    assert names == ["add", "test_add"]
+    assert names == ["mathy.add", "test_add"]
 
 
 def test_call_sites_scoped_to_enclosing_function(project: Path) -> None:
@@ -290,7 +290,9 @@ def test_call_sites_scoped_to_enclosing_function(project: Path) -> None:
         or n["memento"].get("source_function_name"): n["memento"]
         for n in _enumerate("functions", project, at=file_memento)["nodes"]
     }
-    add_call_sites = _enumerate("call_sites", project, at=functions["add"])["nodes"]
+    add_call_sites = _enumerate("call_sites", project, at=functions["mathy.add"])[
+        "nodes"
+    ]
     assert add_call_sites == []
 
     test_add_call_sites = _enumerate("call_sites", project, at=functions["test_add"])[
@@ -320,8 +322,10 @@ def test_assertions_and_facts_carry_the_fol(project: Path) -> None:
     assert len(facts) == 1
     formula = facts[0]["payload"]
     assert formula["kind"] == "atomic"
-    assert formula["name"] == "="
-    # `add(2, 3) == 5`: an EUF call-ctor equated to the literal 5.
+    # The call return has no sort warrant at atom construction, so Python
+    # equality remains stated; enumeration must not resurrect bare `=`.
+    assert formula["name"] == "py.eq"
+    # `add(2, 3) == 5`: an EUF call-ctor compared to the literal 5.
     call_ctor = formula["args"][0]
     assert call_ctor["kind"] == "ctor"
     assert call_ctor["name"] == "call:add"
@@ -439,7 +443,7 @@ def test_universe_scan_lists_function_contract_rows(project: Path) -> None:
         or n["memento"].get("function_name")
         for n in result["nodes"]
     )
-    assert any(n and "add" in n and "callable" in n for n in names), names
+    assert names == ["mathy.add"]
     assert result["gaps"] == []
 
 

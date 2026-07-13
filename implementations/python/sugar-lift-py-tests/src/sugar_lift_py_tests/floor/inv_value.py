@@ -88,14 +88,14 @@ class InvValue(FloorValue):
                     provenance=Provenance(
                         node_class="UniverseMint",
                         construction_site=locus,
-                        warrant=Derived(floor_chain=("OpaqueOpCallsite.computed",)),
+                        warrant=Derived(floor_chain=_derived_floor_chain(formula)),
                     ),
                     role="inv",
                 ),
                 provenance=Provenance(
                     node_class="UniverseMint",
                     construction_site=locus,
-                    warrant=Derived(floor_chain=("OpaqueOpCallsite.computed",)),
+                    warrant=Derived(floor_chain=_derived_floor_chain(formula)),
                 ),
                 source_warrants=(self.site.memento(),),
                 formals=formals,
@@ -103,3 +103,23 @@ class InvValue(FloorValue):
             for formula in self.derived_formulas
         )
         return (*stated, *derived)
+
+
+def _derived_floor_chain(formula: Formula) -> tuple[str, ...]:
+    from sugar_lift_py_tests.ir import _Atomic, _Connective, _Ctor
+
+    if (
+        isinstance(formula, _Connective)
+        and formula.kind == "implies"
+        and len(formula.operands) == 2
+        and isinstance(formula.operands[0], _Atomic)
+        and formula.operands[0].name == "py.eq"
+        and isinstance(formula.operands[1], _Atomic)
+        and formula.operands[1].name == "="
+        and any(
+            isinstance(arg, _Ctor) and arg.name == "to_real"
+            for arg in formula.operands[1].args
+        )
+    ):
+        return ("PythonEqualityPromotionBridge",)
+    return ("OpaqueOpCallsite.computed",)
