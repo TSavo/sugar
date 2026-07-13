@@ -594,6 +594,48 @@ pub struct PinInvariantMementoView {
     pub invariant: String,
 }
 
+impl OpacityMementoLookup for sugar_proof_envelope::MementoPool {
+    fn has_loop_invariant(&self, loop_cid: &str) -> bool {
+        self.loop_cid_to_memento.contains_key(loop_cid)
+    }
+
+    fn has_try_branch(&self, try_cid: &str) -> bool {
+        self.try_cid_to_memento.contains_key(try_cid)
+    }
+
+    fn has_closure_binding(&self, body_fn_cid: &str) -> bool {
+        self.body_fn_cid_to_memento.contains_key(body_fn_cid)
+    }
+
+    fn has_drop_contract(&self, _type_name: &str) -> bool {
+        false
+    }
+
+    fn has_aliasing_memento(&self, formal_a: &str, formal_b: &str) -> bool {
+        let mut pair = (formal_a.to_string(), formal_b.to_string());
+        if pair.0 > pair.1 {
+            pair = (pair.1, pair.0);
+        }
+        self.aliasing_pair_to_memento.contains_key(&pair)
+    }
+
+    fn lookup_pin_invariant(
+        &self,
+        function_cid: &str,
+        target: &str,
+    ) -> Option<PinInvariantMementoView> {
+        let key = format!("{}\x00{}", function_cid, target);
+        let memento_cid = self.pin_invariant_to_memento.get(&key)?;
+        let memento = self.mementos.get(memento_cid)?;
+        let invariant = memento.field("invariant")?.as_str()?.to_string();
+        Some(PinInvariantMementoView {
+            function_cid: function_cid.to_string(),
+            pinned_target: target.to_string(),
+            invariant,
+        })
+    }
+}
+
 /// Error returned when composition is refused because an opacity effect
 /// is not discharged by a memento in the pool.
 #[derive(Debug, Clone, PartialEq, Eq)]

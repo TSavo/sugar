@@ -29,7 +29,7 @@ use std::path::Path;
 use crate::consistency::{verify_consistency, ConsistencyResult};
 use crate::load_all_proofs::{load_bytes_into_pool, ProofBytes};
 use crate::solvers::{SolverHandle, SolverPlan, SolverSeat};
-use crate::types::{LoadError, MemberKind, MementoCid, MementoPool, Speaker, SpeakerRole};
+use crate::types::{LoadError, MemberKind, MementoCid, MementoPool, Speaker};
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 
 /// Which verb an utterance came in through. Recorded on the receipt so a
@@ -245,21 +245,4 @@ pub fn solve(
     project_root: &Path,
 ) -> Vec<ConsistencyResult> {
     verify_consistency(pool, plan, registry, compilers, project_root)
-}
-
-/// Convenience constructors so protocol callers do not hand-build structs.
-impl Speaker {
-    pub fn vendor(id: impl Into<String>) -> Self {
-        Speaker {
-            id: id.into(),
-            role: SpeakerRole::Vendor,
-        }
-    }
-
-    pub fn consumer(id: impl Into<String>) -> Self {
-        Speaker {
-            id: id.into(),
-            role: SpeakerRole::Consumer,
-        }
-    }
 }

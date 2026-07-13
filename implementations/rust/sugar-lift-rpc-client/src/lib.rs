@@ -23,11 +23,71 @@
 // depend on `libsugar`, so the leaf build/lsp crates stay free of the
 // proof/crypto stack their own comments warn against.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
+use sugar_proof_envelope::{compute_formula_cid, MementoCid};
+
+/// Process-window cache for RPC questions. There is deliberately no clear or
+/// eviction method. Dropping the owning RPC client is the only invalidation
+/// operation, so a consistency window can never be half-invalidated.
+#[derive(Debug, Default, Clone)]
+pub struct QuestionCache {
+    answers: BTreeMap<MementoCid, Value>,
+    hits: usize,
+    misses: usize,
+}
+
+impl QuestionCache {
+    pub fn ask<E>(
+        &mut self,
+        question: &Value,
+        wire: impl FnOnce() -> Result<Value, E>,
+    ) -> Result<Value, E> {
+        let identity = json!({
+            "workspace_root": question.get("workspace_root").cloned().unwrap_or(Value::Null),
+            "level": question.get("level").cloned().unwrap_or(Value::Null),
+            "at": question.get("at").cloned().unwrap_or(Value::Null),
+            "seek": question.get("seek").cloned().unwrap_or(Value::Bool(false)),
+            "options": question.get("options").cloned().unwrap_or_else(|| json!({})),
+        });
+        let question_cid = MementoCid::try_parse(compute_formula_cid(&identity))
+            .expect("canonical question hash is a valid memento CID");
+        if let Some(answer) = self.answers.get(&question_cid) {
+            self.hits += 1;
+            tracing::info!(
+                target: "sugar::rpc_cache",
+                event = "rpc_question_cache_hit",
+                question_cid = %question_cid,
+                hits = self.hits,
+                misses = self.misses,
+            );
+            return Ok(answer.clone());
+        }
+        self.misses += 1;
+        tracing::info!(
+            target: "sugar::rpc_cache",
+            event = "rpc_question_cache_miss",
+            question_cid = %question_cid,
+            hits = self.hits,
+            misses = self.misses,
+        );
+        let answer = wire()?;
+        self.answers.entry(question_cid).or_insert(answer.clone());
+        Ok(answer)
+    }
+
+    pub fn hits(&self) -> usize {
+        self.hits
+    }
+
+    pub fn misses(&self) -> usize {
+        self.misses
+    }
+}
 
 /// Environment override for the `contracts_rpc` binary path. When set,
 /// it wins over the `current_exe`-relative search. Mirrors the
@@ -381,5 +441,126 @@ fn read_response<R: BufRead>(reader: &mut R, expect_id: i64) -> Result<Value, Rp
             return Ok(v);
         }
         // Different id (or notification): keep reading.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QuestionCache;
+    use serde_json::json;
+
+    #[test]
+    fn canonical_question_cache_crosses_wire_once_per_distinct_question() {
+        let subscriber = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let mut cache = QuestionCache::default();
+        let facts = json!({
+            "level": "facts",
+            "at": {"source_cid": "blake3-512:abc", "file": "sample.py"},
+            "seek": true,
+            "options": {"auditFrontier": true}
+        });
+        let assertions = json!({
+            "level": "assertions",
+            "at": {"source_cid": "blake3-512:abc", "file": "sample.py"},
+            "seek": true,
+            "options": {"auditFrontier": true}
+        });
+        let mut wire_calls = 0;
+
+        for _ in 0..4 {
+            let answer = cache
+                .ask(&facts, || {
+                    wire_calls += 1;
+                    Ok::<_, ()>(json!({"nodes": ["fact"]}))
+                })
+                .unwrap();
+            assert_eq!(answer, json!({"nodes": ["fact"]}));
+        }
+        let answer = cache
+            .ask(&assertions, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": ["assertion"]}))
+            })
+            .unwrap();
+
+        assert_eq!(answer, json!({"nodes": ["assertion"]}));
+        assert_eq!(wire_calls, 2, "N repeated facts asks must cross once");
+        assert_eq!(cache.hits(), 3);
+        assert_eq!(cache.misses(), 2);
+    }
+
+    #[test]
+    fn canonical_question_identity_ignores_json_object_key_order() {
+        let mut cache = QuestionCache::default();
+        let first = json!({"level":"facts", "seek":true, "at":{"file":"x.py"}});
+        let reordered: serde_json::Value =
+            serde_json::from_str(r#"{"at":{"file":"x.py"},"seek":true,"level":"facts"}"#).unwrap();
+        let mut wire_calls = 0;
+
+        cache
+            .ask(&first, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": []}))
+            })
+            .unwrap();
+        cache
+            .ask(&reordered, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": ["wrong"]}))
+            })
+            .unwrap();
+
+        assert_eq!(wire_calls, 1);
+        assert_eq!(cache.hits(), 1);
+    }
+
+    #[test]
+    fn canonical_question_identity_discriminates_workspace_root() {
+        let mut cache = QuestionCache::default();
+        let first_root = json!({
+            "workspace_root": "/workspace/first",
+            "level": "source_files",
+            "at": null,
+            "seek": false,
+            "options": {"auditFrontier": true}
+        });
+        let second_root = json!({
+            "workspace_root": "/workspace/second",
+            "level": "source_files",
+            "at": null,
+            "seek": false,
+            "options": {"auditFrontier": true}
+        });
+        let mut wire_calls = 0;
+
+        let first = cache
+            .ask(&first_root, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": ["first.py"]}))
+            })
+            .unwrap();
+        let second = cache
+            .ask(&second_root, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": ["second.py"]}))
+            })
+            .unwrap();
+        let first_again = cache
+            .ask(&first_root, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": ["wrong.py"]}))
+            })
+            .unwrap();
+
+        assert_eq!(first, json!({"nodes": ["first.py"]}));
+        assert_eq!(second, json!({"nodes": ["second.py"]}));
+        assert_eq!(first_again, first);
+        assert_eq!(wire_calls, 2);
+        assert_eq!(cache.hits(), 1);
+        assert_eq!(cache.misses(), 2);
     }
 }

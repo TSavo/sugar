@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -96,6 +95,24 @@ pub struct LiftPluginKit {
     command: Vec<String>,
     working_dir: Option<PathBuf>,
     lift_method: String,
+    question_cache: std::sync::Arc<Mutex<sugar_lift_rpc_client::QuestionCache>>,
+    resident: std::sync::Arc<ResidentSlot>,
+}
+
+struct ResidentSlot(Mutex<Option<ResidentLifter>>);
+
+impl std::fmt::Debug for ResidentSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResidentSlot").finish_non_exhaustive()
+    }
+}
+
+impl Drop for ResidentSlot {
+    fn drop(&mut self) {
+        if let Ok(slot) = self.0.get_mut() {
+            drop(slot.take());
+        }
+    }
 }
 
 struct ResponseReader {
@@ -159,6 +176,10 @@ impl LiftPluginKit {
             command,
             working_dir,
             lift_method: "lift".to_string(),
+            question_cache: std::sync::Arc::new(Mutex::new(
+                sugar_lift_rpc_client::QuestionCache::default(),
+            )),
+            resident: std::sync::Arc::new(ResidentSlot(Mutex::new(None))),
         }
     }
 
@@ -205,6 +226,17 @@ impl LiftPluginKit {
             initialize_response,
             legacy_response: response,
             claim,
+        })
+    }
+
+    /// Send one bounded request through the resident JSON-RPC session.
+    pub(crate) fn request(&self, params: &Value) -> Result<Value, LiftPluginKitError> {
+        let mut cache = self
+            .question_cache
+            .lock()
+            .map_err(|_| LiftPluginKitError::Failed("RPC question cache poisoned".to_string()))?;
+        cache.ask(params, || {
+            self.dispatch(params).map(|(_, response)| response)
         })
     }
 
@@ -530,81 +562,45 @@ impl LiftPluginKit {
         Ok((initialize_response, response, child, stdin, reader))
     }
 
-    /// Key identifying a resident slot: the exact command + working dir.
-    /// Two `LiftPluginKit`s with the same command/cwd share one resident
-    /// process (e.g. repeated mints of the same project/kit), matching the
-    /// mission's "keyed by project root + kit" requirement.
-    fn resident_key(&self) -> String {
-        let mut key = self.command.join("\u{1f}");
-        if let Some(dir) = &self.working_dir {
-            key.push('\u{1e}');
-            key.push_str(&dir.display().to_string());
-        }
-        key
-    }
-
     /// Try to serve `lift_params` from a resident (already-warm) child.
     /// Spawns one on first use for this key, keyed by command+cwd, and
     /// keeps it alive across calls so `import pandas` (or any equally
     /// heavy one-time interpreter/module cost) is paid exactly once per
     /// process, not once per mint.
     ///
-    /// STALENESS RULE (named explicitly, not assumed): a resident is
-    /// restarted if it is older than `SUGAR_LIFT_RESIDENT_MAX_AGE_SECS`
-    /// (default 30 minutes) -- long enough that a normal edit/save/mint
-    /// cadence never pays the restart cost, short enough that a stale
-    /// `pip install` / vendor env change during a long dev session is
-    /// bounded, not permanent. The CONSUMER SOURCE is never cached here:
-    /// every call sends a fresh `lift` request; the plugin process reads
-    /// the file from disk each time (this pool caches the warm
-    /// PROCESS/IMPORT, never the file content).
+    /// The resident is valid exactly for this RPC client's lifetime. There
+    /// is no eviction or invalidation path: dropping the client drops the
+    /// process and every coherently cached answer together.
     fn dispatch_resident(
         &self,
         lift_params: &Value,
     ) -> Result<(Value, Value), ResidentDispatchError> {
-        let key = self.resident_key();
-        let pool = resident_pool();
-        let mut guard = pool.lock().map_err(|_| {
+        let mut slot = self.resident.0.lock().map_err(|_| {
             ResidentDispatchError::Fatal(LiftPluginKitError::Failed(
-                "resident lifter pool poisoned".to_string(),
+                "resident lifter slot poisoned".to_string(),
             ))
         })?;
 
-        let max_age = resident_max_age();
-        let needs_fresh = match guard.get(&key) {
-            None => true,
-            Some(entry) => entry.started_at.elapsed() > max_age,
-        };
+        let needs_fresh = slot.is_none();
         if needs_fresh {
-            if let Some(mut old) = guard.remove(&key) {
+            if let Some(mut old) = slot.take() {
                 old.shutdown_best_effort();
             }
             let (initialize_response, child, stdin, reader, first_response) = self
                 .spawn_resident(lift_params)
                 .map_err(ResidentDispatchError::Fatal)?;
-            guard.insert(
-                key.clone(),
-                ResidentLifter {
-                    child,
-                    stdin,
-                    reader,
-                    next_id: 3, // 1=initialize, 2=first lift already consumed below
-                    started_at: Instant::now(),
-                    initialize_response,
-                    first_lift_response: Some(first_response),
-                },
-            );
+            *slot = Some(ResidentLifter {
+                child,
+                stdin,
+                reader,
+                next_id: 3,
+                initialize_response,
+                first_lift_response: Some(first_response),
+            });
         }
 
-        let entry = guard
-            .get_mut(&key)
-            .expect("just inserted or already present");
+        let entry = slot.as_mut().expect("just inserted or already present");
         let initialize_response = entry.initialize_response.clone();
-
-        // On a freshly spawned resident, `spawn_resident` already performed
-        // request id=2's lift as part of establishing the process (mirrors
-        // the one-shot protocol exactly for the FIRST call), so skip
-        // re-sending it here.
         if needs_fresh {
             let response = entry
                 .first_lift_response
@@ -624,7 +620,7 @@ impl LiftPluginKit {
         let lift_frame = format!("{lift_req}\n");
         trace_frame("cli_to_kit", &lift_frame, "write_stdin.enter");
         if let Err(error) = entry.stdin.write_all(lift_frame.as_bytes()) {
-            guard.remove(&key);
+            slot.take();
             return Err(ResidentDispatchError::retry_after(format!(
                 "write lift request to resident: {error}"
             )));
@@ -640,7 +636,7 @@ impl LiftPluginKit {
             "lift-plugin buffer flush"
         );
         if let Err(error) = entry.stdin.flush() {
-            guard.remove(&key);
+            slot.take();
             return Err(ResidentDispatchError::retry_after(format!(
                 "flush lift request to resident: {error}"
             )));
@@ -653,9 +649,7 @@ impl LiftPluginKit {
         match read_response(&entry.reader, id) {
             Ok(response) => Ok((initialize_response, response)),
             Err(error) => {
-                // Resident died or desynced mid-protocol: evict it so the
-                // NEXT call spawns fresh, and answer THIS call via one-shot.
-                guard.remove(&key);
+                slot.take();
                 if error.is_transport_stop_the_line() {
                     Err(ResidentDispatchError::Fatal(error))
                 } else {
@@ -686,7 +680,6 @@ struct ResidentLifter {
     stdin: ChildStdin,
     reader: ResponseReader,
     next_id: i64,
-    started_at: Instant,
     initialize_response: Value,
     /// The first `lift` response, stashed at spawn time (spawning already
     /// drives one full `initialize`+`lift` round trip identical to the
@@ -713,15 +706,6 @@ impl Drop for ResidentLifter {
     }
 }
 
-/// Process-wide resident lifter pool, keyed by `LiftPluginKit::resident_key`
-/// (command + working dir). One entry per (project, kit) pair, matching the
-/// mission's "keyed by project root + kit" requirement -- multiple projects
-/// or multiple distinct lift kits never share a resident process.
-fn resident_pool() -> &'static Mutex<HashMap<String, ResidentLifter>> {
-    static POOL: OnceLock<Mutex<HashMap<String, ResidentLifter>>> = OnceLock::new();
-    POOL.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 /// `SUGAR_LIFT_NO_RESIDENT=1` disables the resident pool entirely (falls
 /// back to spawn-per-call, byte-identical to the pre-#3774 behavior). The
 /// default is resident-ON: the whole point is that a caller which never
@@ -730,22 +714,6 @@ fn resident_enabled() -> bool {
     std::env::var("SUGAR_LIFT_NO_RESIDENT")
         .map(|v| v != "1")
         .unwrap_or(true)
-}
-
-/// Staleness bound: how long a resident process may serve requests before
-/// being restarted. Default 30 minutes, overridable via
-/// `SUGAR_LIFT_RESIDENT_MAX_AGE_SECS`. This is the named staleness rule
-/// (mission requirement): the resident caches the warm IMPORT/process, never
-/// the consumer source (each `lift` call re-reads the file from disk), so
-/// the only staleness risk is an environment change (e.g. `pip install`)
-/// made *after* the process started. Bounding the process age caps how long
-/// such a change can go unpicked-up without requiring an explicit restart.
-fn resident_max_age() -> Duration {
-    std::env::var("SUGAR_LIFT_RESIDENT_MAX_AGE_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(30 * 60))
 }
 
 /// Outcome of a resident-path dispatch attempt.

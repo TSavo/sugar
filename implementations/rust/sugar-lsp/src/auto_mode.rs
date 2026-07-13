@@ -22,9 +22,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
+use sugar_proof_envelope::{MementoPool, Speaker};
 use sugar_verifier::load_all_proofs::{self, ProofBytes};
-use sugar_verifier::types::MementoPool;
-use sugar_verifier::Speaker;
 
 const MAX_VENDOR_PY_FILES: usize = 80;
 const MAX_VENDOR_PY_BYTES: usize = 3_000_000;

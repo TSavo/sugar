@@ -139,43 +139,19 @@ pub fn run(args: LiftArgs) -> u8 {
         lift_options.workspace_override.clone(),
     )];
 
-    match lift_plugin::dispatch_lift_path(&project_root, &surface, lift_options, true) {
-        Ok(session) => {
-            let projection = session.response_projection();
-            let response = match projection.response_value() {
-                Ok(response) => response,
-                Err(error) => {
-                    eprintln!("{}: {error}", "error".red().bold());
-                    return EXIT_VERIFY_FAIL;
-                }
-            };
-            if args.report {
-                trace_lift_report_response("after_lift_plugin_response", response);
-            }
-            if args.audit_frontier {
-                let audit: RecoveredAudit =
-                    match serde_json::from_value::<RecoveredAudit>(response.clone()) {
-                        Ok(audit)
-                            if audit.kind == "recovered-construction-audit"
-                                && audit.recovery_override =>
-                        {
-                            audit
-                        }
-                        Ok(_) => {
-                            eprintln!(
-                                "{}: audit lifter returned the wrong artifact kind",
-                                "error".red().bold()
-                            );
-                            return EXIT_VERIFY_FAIL;
-                        }
-                        Err(error) => {
-                            eprintln!(
-                                "{}: invalid recovered construction audit: {error}",
-                                "error".red().bold()
-                            );
-                            return EXIT_VERIFY_FAIL;
-                        }
-                    };
+    if args.audit_frontier {
+        match lift_plugin::dispatch_recovered_audit_tree(&project_root, &surface) {
+            Ok(response) => {
+                let audit = match serde_json::from_value::<RecoveredAudit>(response) {
+                    Ok(audit) => audit,
+                    Err(error) => {
+                        eprintln!(
+                            "{}: invalid recovered construction audit: {error}",
+                            "error".red().bold()
+                        );
+                        return EXIT_VERIFY_FAIL;
+                    }
+                };
                 let rendered = match serde_json::to_string_pretty(&audit) {
                     Ok(value) => format!("{value}\n"),
                     Err(error) => {
@@ -195,12 +171,31 @@ pub fn run(args: LiftArgs) -> u8 {
                     eprintln!("{}: {error}", "error".red().bold());
                     return EXIT_USER_ERROR;
                 }
-                eprintln!("RECOVERY OVERRIDE: wrote mandatory FactoryPanic inventory to {} (not a lift artifact)", frontier_path.display());
                 return if audit.panics.is_empty() {
                     EXIT_OK
                 } else {
                     EXIT_VERIFY_FAIL
                 };
+            }
+            Err(error) => {
+                eprintln!("{}: {error}", "error".red().bold());
+                return EXIT_VERIFY_FAIL;
+            }
+        }
+    }
+
+    match lift_plugin::dispatch_lift_path(&project_root, &surface, lift_options, true) {
+        Ok(session) => {
+            let projection = session.response_projection();
+            let response = match projection.response_value() {
+                Ok(response) => response,
+                Err(error) => {
+                    eprintln!("{}: {error}", "error".red().bold());
+                    return EXIT_VERIFY_FAIL;
+                }
+            };
+            if args.report {
+                trace_lift_report_response("after_lift_plugin_response", response);
             }
             if response.get("kind").and_then(Value::as_str) == Some("recovered-construction-audit")
             {

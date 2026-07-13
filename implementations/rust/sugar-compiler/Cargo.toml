@@ -8,6 +8,7 @@ description = "Sugar: mint-time proof signing and seal-time manifest assembly (m
 
 [dependencies]
 sugar-proof-envelope = { path = "../sugar-proof-envelope" }
+sugar-lift-rpc-client = { path = "../sugar-lift-rpc-client" }
 sugar-verifier = { path = "../sugar-verifier" }
 libsugar = { path = "../libsugar" }
 sugar-ir-types = { path = "../sugar-ir-types" }

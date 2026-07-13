@@ -1583,6 +1583,7 @@ dependencies = [
  "sugar-ir-compiler",
  "sugar-ir-compiler-smt-lib",
  "sugar-ir-types",
+ "sugar-lift-rpc-client",
  "sugar-linker",
  "sugar-proof-envelope",
  "sugar-verifier",
@@ -1714,6 +1715,9 @@ name = "sugar-lift-rpc-client"
 version = "0.0.1"
 dependencies = [
  "serde_json",
+ "sugar-proof-envelope",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

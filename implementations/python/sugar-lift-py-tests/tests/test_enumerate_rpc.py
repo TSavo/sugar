@@ -34,7 +34,9 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _enumerate(level: str, workspace_root: Path, at=None, seek: bool = False):
+def _enumerate(
+    level: str, workspace_root: Path, at=None, seek: bool = False, options=None
+):
     """Call `_handle_enumerate` directly and capture its `_send` output by
     monkeypatching the module's `_send` for the duration of one call."""
     captured = []
@@ -48,6 +50,7 @@ def _enumerate(level: str, workspace_root: Path, at=None, seek: bool = False):
                 "workspace_root": str(workspace_root),
                 "at": at,
                 "seek": seek,
+                "options": options or {},
             },
         )
     finally:
@@ -56,6 +59,139 @@ def _enumerate(level: str, workspace_root: Path, at=None, seek: bool = False):
     response = captured[0]
     assert "error" not in response, response
     return response["result"]
+
+
+def test_recovered_audit_tree_fold_matches_monolithic_bytes(project) -> None:
+    expected = lift_rpc.audit_lift_file(
+        FIXTURE_SOURCE, "mathy.py", recover_panics=True
+    ).to_rpc()
+    file_key = _enumerate("source_files", project)["nodes"][0]["memento"]
+    definitions = _enumerate(
+        "functions", project, at=file_key, options={"auditFrontier": True}
+    )["nodes"]
+    panics, effects, suppressed = [], [], []
+    for definition in definitions:
+        leaf = _enumerate(
+            "facts",
+            project,
+            at=definition["memento"],
+            seek=True,
+            options={"auditFrontier": True},
+        )["nodes"][0]["audit"]
+        panics.extend(leaf["panics"])
+        effects.extend(leaf["effects"])
+        suppressed.extend(leaf["suppressedDescendants"])
+    actual = {
+        "kind": "recovered-construction-audit",
+        "recoveryOverride": True,
+        "status": "failed" if panics else "clean",
+        "panics": panics,
+        "effects": effects,
+        "suppressedDescendants": suppressed,
+    }
+    assert json.dumps(actual, separators=(",", ":")) == json.dumps(
+        expected, separators=(",", ":")
+    )
+
+
+def test_audit_context_is_parsed_once_per_file_cid_and_mutation_misses(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    sibling = project / "sibling.py"
+    sibling.write_text("def test_sibling():\n    assert 1 == 1\n", encoding="utf-8")
+    lift_rpc._AUDIT_FILE_CONTEXTS.clear()
+    original = SourceFragment.from_source.__func__
+    parsed: list[str] = []
+
+    def counted(cls, source: str, filename: str):
+        parsed.append(filename)
+        return original(cls, source, filename)
+
+    monkeypatch.setattr(SourceFragment, "from_source", classmethod(counted))
+
+    file_nodes = {
+        node["memento"]["file"]: node["memento"]
+        for node in _enumerate("source_files", project)["nodes"]
+    }
+    mathy_key = file_nodes["mathy.py"]
+    sibling_key = file_nodes["sibling.py"]
+    assert mathy_key["source_cid"]
+    assert sibling_key["source_cid"]
+
+    definitions = _enumerate(
+        "functions", project, at=mathy_key, options={"auditFrontier": True}
+    )["nodes"]
+    for definition in definitions:
+        _enumerate(
+            "facts",
+            project,
+            at=definition["memento"],
+            seek=True,
+            options={"auditFrontier": True},
+        )
+    assert parsed.count("mathy.py") == 1
+
+    _enumerate("functions", project, at=sibling_key, options={"auditFrontier": True})
+    assert parsed.count("sibling.py") == 1
+
+    (project / "mathy.py").write_text(
+        FIXTURE_SOURCE + "\ndef test_changed():\n    assert 2 == 2\n", encoding="utf-8"
+    )
+    changed_nodes = {
+        node["memento"]["file"]: node["memento"]
+        for node in _enumerate("source_files", project)["nodes"]
+    }
+    assert changed_nodes["mathy.py"]["source_cid"] != mathy_key["source_cid"]
+    _enumerate(
+        "functions",
+        project,
+        at=changed_nodes["mathy.py"],
+        options={"auditFrontier": True},
+    )
+    _enumerate("functions", project, at=sibling_key, options={"auditFrontier": True})
+
+    assert parsed.count("mathy.py") == 2, "new file CID must parse once"
+    assert parsed.count("sibling.py") == 1, "untouched sibling CID must stay warm"
+
+
+def test_partial_audit_demand_does_not_compute_sibling_definitions(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lift_rpc._AUDIT_FILE_CONTEXTS.clear()
+    demanded: list[str] = []
+    original = lift_rpc.audit_lift_file
+
+    def recording_audit(*args, **kwargs):
+        target = kwargs.get("target_memento") or {}
+        demanded.append(
+            target.get("function_name")
+            or target.get("source_function_name")
+            or "<unknown>"
+        )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(lift_rpc, "audit_lift_file", recording_audit)
+    file_key = _enumerate("source_files", project)["nodes"][0]["memento"]
+    definitions = _enumerate(
+        "functions", project, at=file_key, options={"auditFrontier": True}
+    )["nodes"]
+    target = next(
+        node["memento"]
+        for node in definitions
+        if node["memento"].get("function_name") == "test_add"
+    )
+
+    _enumerate(
+        "facts",
+        project,
+        at=target,
+        seek=True,
+        options={"auditFrontier": True},
+    )
+
+    assert demanded == ["test_add"]
 
 
 def test_source_files_scan_finds_the_fixture_file(project: Path) -> None:

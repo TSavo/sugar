@@ -29,6 +29,7 @@ toml = "0.8"
 # sugar-compiler owns enumerate→fold feed (`fold_project` / `pool_from_graph_with_speaker`);
 # sugar-cli owns project config + lift manifest resolution for kit rendezvous.
 sugar-verifier = { path = "../sugar-verifier" }
+sugar-proof-envelope = { path = "../sugar-proof-envelope" }
 sugar-cli = { path = "../sugar-cli" }
 sugar-compiler = { path = "../sugar-compiler" }
 sugar-ir-compiler = { path = "../sugar-ir-compiler" }
@@ -43,7 +44,6 @@ tempfile = "3.14"
 libc = "0.2"
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
 sugar-claim-envelope = { path = "../sugar-claim-envelope" }
-sugar-proof-envelope = { path = "../sugar-proof-envelope" }
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-cli = { path = "../sugar-cli" }
 sugar-verifier = { path = "../sugar-verifier" }

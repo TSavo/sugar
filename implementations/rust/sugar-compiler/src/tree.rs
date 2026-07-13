@@ -122,13 +122,27 @@ impl Level {
 /// fresh per call against the same manifest, exactly as `resolve_testimony`
 /// and `resolve_source` already do; this is the SAME membrane, not a
 /// second one.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct KitConn {
     pub surface: String,
     pub command: Vec<String>,
     pub working_dir: Option<PathBuf>,
     pub workspace_root: PathBuf,
+    pub audit_frontier: bool,
+    pub transport: crate::kit_path::LiftPluginKit,
 }
+
+impl PartialEq for KitConn {
+    fn eq(&self, other: &Self) -> bool {
+        self.surface == other.surface
+            && self.command == other.command
+            && self.working_dir == other.working_dir
+            && self.workspace_root == other.workspace_root
+            && self.audit_frontier == other.audit_frontier
+    }
+}
+
+impl Eq for KitConn {}
 
 /// Failures from one `sugar.enumerate` RPC step. Folded into `KitError` via
 /// `KitError::Enumerate` (extends the existing enum per the brief, rather
@@ -590,9 +604,6 @@ fn enumerate_rpc(
     at: Option<Value>,
     seek: bool,
 ) -> Result<(Vec<WireNode>, Vec<GapInfo>), EnumerateError> {
-    use std::io::{BufRead, BufReader, Write};
-    use std::process::{Command, Stdio};
-
     let plugin = conn.surface.clone();
     if conn.command.is_empty() {
         return Err(EnumerateError::Unavailable {
@@ -600,91 +611,19 @@ fn enumerate_rpc(
             reason: "empty command".to_string(),
         });
     }
-    let mut cmd = Command::new(&conn.command[0]);
-    if conn.command.len() > 1 {
-        cmd.args(&conn.command[1..]);
-    }
-    if !conn.command.iter().any(|a| a == "--rpc") {
-        cmd.arg("--rpc");
-    }
-    if let Some(wd) = &conn.working_dir {
-        cmd.current_dir(wd);
-    }
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::inherit());
-
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            return Err(EnumerateError::Unavailable {
-                plugin,
-                reason: format!("spawn {:?}: {error}", conn.command),
-            });
-        }
-    };
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| EnumerateError::StdinUnavailable {
-            plugin: plugin.clone(),
-        })?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| EnumerateError::StdoutUnavailable {
-            plugin: plugin.clone(),
-        })?;
-    let mut reader = BufReader::new(stdout);
-
-    let req = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "sugar.enumerate",
-        "params": {
+    let result = conn
+        .transport
+        .request(&json!({
             "level": level.wire(),
             "at": at,
             "seek": seek,
             "workspace_root": conn.workspace_root.display().to_string(),
-        },
-    });
-    writeln!(stdin, "{req}").map_err(|source| EnumerateError::Write {
-        plugin: plugin.clone(),
-        source,
-    })?;
-
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|source| EnumerateError::Read {
+            "options": {"auditFrontier": conn.audit_frontier},
+        }))
+        .map_err(|error| EnumerateError::Unavailable {
             plugin: plugin.clone(),
-            source,
+            reason: error.to_string(),
         })?;
-
-    let shutdown = json!({"jsonrpc": "2.0", "id": 2, "method": "sugar.plugin.shutdown"});
-    let _ = writeln!(stdin, "{shutdown}");
-    drop(stdin);
-    let _ = child.wait();
-
-    if line.trim().is_empty() {
-        return Err(EnumerateError::Unavailable {
-            plugin,
-            reason: "kit closed without a sugar.enumerate response".to_string(),
-        });
-    }
-    let response: Value =
-        serde_json::from_str(line.trim()).map_err(|source| EnumerateError::InvalidJson {
-            plugin: plugin.clone(),
-            source,
-            raw: line.trim().to_string(),
-        })?;
-    if let Some(error) = response.get("error") {
-        return Err(EnumerateError::RpcError {
-            plugin,
-            error: error.clone(),
-        });
-    }
-    let result = response.get("result").cloned().unwrap_or(Value::Null);
     let nodes = result
         .get("nodes")
         .and_then(Value::as_array)
@@ -700,6 +639,50 @@ fn enumerate_rpc(
         .map(|arr| arr.iter().map(decode_gap).collect())
         .unwrap_or_default();
     Ok((nodes, gaps))
+}
+
+/// Consumer fold for recovered construction audit. Every work-producing step
+/// is a `sugar.enumerate` request for exactly one keyed node. The consumer
+/// only follows child mementos returned by the preceding response.
+pub fn fold_recovered_audit(kit: &Kit, workspace_root: &Path) -> Result<Value, KitError> {
+    let mut conn = kit.enumerate_conn(workspace_root);
+    conn.audit_frontier = true;
+    let (files, _) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
+    let mut panics = Vec::new();
+    let mut effects = Vec::new();
+    let mut suppressed = Vec::new();
+    for file in files {
+        let (definitions, _) =
+            enumerate_rpc(&conn, Level::Functions, Some(file.memento.to_json()), false)?;
+        for definition in definitions {
+            let (leaves, _) = enumerate_rpc(
+                &conn,
+                Level::Facts,
+                Some(definition.memento.to_json()),
+                true,
+            )?;
+            for leaf in leaves {
+                let Some(audit) = leaf.audit else { continue };
+                if let Some(items) = audit.get("panics").and_then(Value::as_array) {
+                    panics.extend(items.iter().cloned());
+                }
+                if let Some(items) = audit.get("effects").and_then(Value::as_array) {
+                    effects.extend(items.iter().cloned());
+                }
+                if let Some(items) = audit.get("suppressedDescendants").and_then(Value::as_array) {
+                    suppressed.extend(items.iter().cloned());
+                }
+            }
+        }
+    }
+    Ok(json!({
+        "kind": "recovered-construction-audit",
+        "recoveryOverride": true,
+        "status": if panics.is_empty() { "clean" } else { "failed" },
+        "panics": panics,
+        "effects": effects,
+        "suppressedDescendants": suppressed,
+    }))
 }
 
 impl Kit {
