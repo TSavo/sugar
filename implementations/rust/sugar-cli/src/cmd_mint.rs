@@ -845,7 +845,7 @@ fn assert_oracle_ready_if_requested(surface: &str, lift: &Value) -> Result<(), S
     let oracle = oracle_observation_from_lift(lift);
     if oracle.requested && oracle.attempted > 0 && !oracle.ready {
         return Err(format!(
-            "lift surface `{surface}` requested rust-analyzer oracle and found {} receiver query candidate(s), but sugar-ra-oracle did not report rust-analyzer ready; refusing to mint a syntactic-only proof",
+                "lift surface `{surface}` requested rust-analyzer oracle and found {} receiver query candidate(s), but sugar-ra-oracle did not report rust-analyzer ready; mint aborted rather than emitting a syntactic-only proof",
             oracle.attempted
         ));
     }
@@ -1529,7 +1529,7 @@ pub fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Valu
     // over the same input every time -- recompute once, then serve a CID-
     // keyed cache hit, and only fall through to the real derivation when the
     // import set actually changed (or the cache entry is missing/corrupt:
-    // recompute-or-refuse, never trust an unreadable cache file).
+    // recompute-or-abort, never trust an unreadable cache file).
     let cache_key = contract_bindings_cache_key(project_root);
     if let Some(key) = &cache_key {
         let cache_path = contract_bindings_cache_path(project_root, key);

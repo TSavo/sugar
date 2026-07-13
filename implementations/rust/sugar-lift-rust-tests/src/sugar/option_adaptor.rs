@@ -660,7 +660,7 @@ struct OptionAdaptorSugar {
     // `unwrap_or_else` / `unwrap_or_default` dispatch, which accepts either
     // monadic source syntactically) carries no such fact -- a symbolic
     // receiver under `Carrier::Any` cannot be assigned a family without
-    // guessing, so it stays a named refusal rather than a guarded split.
+    // guessing, so it stays a named typed effect rather than a guarded split.
     carrier: Carrier,
 }
 
@@ -773,7 +773,7 @@ impl Sugar for OptionAdaptorSugar {
                     // No reified default term AND no concrete Some/Ok/Err payload:
                     // neither the family nor the none/err-arm value can be
                     // established from this call's own syntax. Named typed
-                    // refusal, never a guess.
+                    // typed incomplete outcome, never a guess.
                     Outcome::Incomplete(Effect::UnestablishableMonadicFamily {
                         method: "unwrap_or_default".to_string(),
                     })
@@ -817,7 +817,7 @@ impl Sugar for OptionAdaptorSugar {
 // call's own syntax. `Carrier::Any` (the legacy `unwrap_or_else` /
 // `unwrap_or_default` dispatch, which structurally accepts either monadic
 // source) carries no such fact, so it cannot select a tester without
-// guessing -- a named, typed refusal (`Effect::UnestablishableMonadicFamily`),
+// guessing -- a named typed effect (`Effect::UnestablishableMonadicFamily`),
 // never a panic and never a silent default family.
 fn symbolic_unwrap_or_guarded_split(
     carrier: Carrier,
@@ -1658,7 +1658,7 @@ fn monadic_result_expr(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<
 // `option_adaptor` claim's Result arm), so a real Rust fixture can never drive
 // a symbolic RECEIVER through `Carrier::Any` for `unwrap_or` -- every existing
 // symbolic-receiver source shape this crate recognizes (`checked_add` et al.
-// over a runtime operand) refuses upstream as a runtime NUMERIC operand
+    // over a runtime operand) becomes incomplete upstream as a runtime NUMERIC operand
 // before the monadic receiver is even built (`RuntimeNumericOperand`), never
 // reaching a bare symbolic Option/Result term. These receipts therefore
 // exercise `symbolic_unwrap_or_guarded_split` directly against a synthesized
@@ -1797,7 +1797,7 @@ mod symbolic_collapse_family_tests {
     fn structural_unestablishable_family_yields_typed_effect_not_panic() {
         // Carrier::Any (the legacy unwrap_or_else/unwrap_or_default dispatch)
         // carries no static Option-vs-Result fact. A symbolic receiver under
-        // it must refuse by NAME -- never guess a family, never panic.
+        // it must be incomplete by NAME -- never guess a family, never panic.
         let r = make_var("r");
         let default = num(9);
         let outcome =

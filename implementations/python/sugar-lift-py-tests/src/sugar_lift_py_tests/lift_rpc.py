@@ -910,7 +910,7 @@ def _iter_liftable_function_defs(module):
 
     Deeper floors: pytest class-based tests put ``test_*`` methods on classes.
     Without walking ClassDef bodies, those asserts never enter the factory
-    (owned=0) and stay refuse-loud mass. Nested classes included recursively.
+    (owned=0) and stay loud construction gaps. Nested classes included recursively.
     """
     stack = list(module.statements())
     while stack:
@@ -1689,7 +1689,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         {
                             "memento": at,
                             "reason": (
-                                "refused: memento file escapes the workspace root "
+                                "invalid: memento file escapes the workspace root "
                                 f"({file_rel!r})"
                             ),
                         }
@@ -2197,7 +2197,7 @@ def _build_lift_coverage(
         "ir": [to_rpc_value(item) for item in payload.ir],
         "callEdges": [to_rpc_value(edge) for edge in payload.call_edges],
         # Doctrine: factory instrument engagement must be visible to coverage
-        # accounting so unimplemented → refuse-loud, never silent (#4016).
+        # accounting so unimplemented becomes a loud gap, never silent (#4016).
         "factoryAuditSummary": FactoryAuditSummaryDto(rows=payload.factory_walk).to_rpc(),
         "factoryAudits": [to_rpc_value(a) for a in payload.factory_audits],
     }

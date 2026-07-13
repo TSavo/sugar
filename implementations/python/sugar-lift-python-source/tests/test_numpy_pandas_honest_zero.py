@@ -28,8 +28,8 @@ CLOSED_REFUSAL_KINDS = {
     "multi-target-assign-refused",
     "decorator-refused",
     "non-literal-default",
-    "value-pin-refused",
-    "enum-pin-refused",
+    "value-pin-boundary",
+    "enum-pin-boundary",
 }
 
 
@@ -94,7 +94,7 @@ def test_gate_logic_rejects_kind_outside_closed_taxonomy() -> None:
     fixture = {
         "total_files": 1,
         "package_versions": {"numpy": "test", "pandas": "test"},
-        "counts_by_kind": {"value-pin-refused": 1},
+        "counts_by_kind": {"value-pin-boundary": 1},
     }
     scan = CorpusScan(
         total_files=1,
@@ -112,12 +112,12 @@ def test_gate_logic_rejects_stale_pinned_count() -> None:
     fixture = {
         "total_files": 1,
         "package_versions": {"numpy": "test", "pandas": "test"},
-        "counts_by_kind": {"value-pin-refused": 2},
+        "counts_by_kind": {"value-pin-boundary": 2},
     }
     scan = CorpusScan(
         total_files=1,
         package_versions={"numpy": "test", "pandas": "test"},
-        counts_by_kind={"value-pin-refused": 1},
+        counts_by_kind={"value-pin-boundary": 1},
         unhandled_syntax=(),
         opacity_misses=(),
     )

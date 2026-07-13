@@ -12,7 +12,7 @@ if str(PKG_SRC) not in sys.path:
     sys.path.insert(0, str(PKG_SRC))
 
 from sugar_lift_python_source.value_pins import (
-    VALUE_PIN_REFUSAL_KIND,
+    VALUE_PIN_BOUNDARY_KIND,
     _unaccounted_grammar,
     scan_module_value_pins,
 )
@@ -23,7 +23,7 @@ def _scan(source: str):
 
 
 def _refusals(scan):
-    return [r for r in scan.refusals if r["kind"] == VALUE_PIN_REFUSAL_KIND]
+    return [r for r in scan.boundaries if r["kind"] == VALUE_PIN_BOUNDARY_KIND]
 
 
 # --- the floor holds on this interpreter, by exhaustion not by oath ---

@@ -3862,14 +3862,14 @@ def test_enum_member_value_default_lifts_pinned_for_any_enum_flavor() -> None:
 
     assert result.refusals == [
         {
-            "kind": "enum-pin-refused",
+            "kind": "enum-pin-boundary",
             "function": None,
             "line": 4,
             "name": "DisplayModes.stdout",
             "reason": "plain Enum member: use IntEnum or StrEnum for value pinning",
         },
         {
-            "kind": "enum-pin-refused",
+            "kind": "enum-pin-boundary",
             "function": None,
             "line": 5,
             "name": "DisplayModes.binary_file",

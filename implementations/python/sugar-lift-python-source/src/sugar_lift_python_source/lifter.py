@@ -214,7 +214,7 @@ def lift_source(source: str, source_path: str) -> LiftResult:
     module_globals = _module_global_names(tree)
     module_imports = _module_import_aliases(tree)
     pin_scan = scan_module_value_pins(tree)
-    result.refusals.extend(pin_scan.refusals)
+    result.refusals.extend(pin_scan.boundaries)
     result.opacity_report.extend(
         mutable_global_pin_opacity_entry(pin, source_path=source_path)
         for pin in pin_scan.mutable_global_pins
@@ -1307,7 +1307,7 @@ class _Emitter:
                     # flavor, not just IntEnum/StrEnum): `.value` always
                     # extracts the underlying literal by definition, so the
                     # dispatch ambiguity that forces plain-Enum members to
-                    # refuse at the bare member does not apply here.
+            # the bare-member boundary does not apply here.
                     return pin.term
             term = ctor("python:attribute", self.expr(node.value), str_const(node.attr))
             self.effects.add_panics()
@@ -2725,7 +2725,7 @@ def _decorator_kind(decorator: ast.expr) -> str | None:
         # (issue #3262): liftable with the cached-identity noted via this
         # "cached" decoratorKinds marker, distinct from decorators like
         # @contextlib.contextmanager or numpy.errstate that rebind the call
-        # into different runtime-computed behavior and stay refused.
+            # into different runtime-computed behavior and stay incomplete.
         return "cached"
     return None
 
