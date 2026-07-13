@@ -29,9 +29,9 @@ use serde_json::Value as Json;
 use sugar_compiler::feed_from_tree;
 use sugar_compiler::kit::{Kit, LiftManifest};
 use sugar_compiler::orchestrate::pool_from_graph_with_speaker;
+use sugar_proof_envelope::Speaker;
 use sugar_verifier::consistency::ConsistencyIndex;
 use sugar_verifier::solvers::{SolverHandle, SolverPlan, SolverSeat};
-use sugar_proof_envelope::Speaker;
 
 /// Resident context for in-process proving, mirroring
 /// `sugar-linkerd::state::ProveContext` field for field: the SAME

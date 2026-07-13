@@ -36,8 +36,8 @@ use std::process::{Command, Stdio};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 
-use sugar_verifier::load_all_proofs::ProofBytes;
 use sugar_proof_envelope::Speaker;
+use sugar_verifier::load_all_proofs::ProofBytes;
 use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
 
 /// Failure to even hold a conversation with the resolver kit -- distinct

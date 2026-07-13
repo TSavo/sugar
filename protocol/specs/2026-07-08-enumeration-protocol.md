@@ -19,6 +19,13 @@ counterparts) is exactly one `sugar.enumerate` request-response pair. There
 is no second enumeration transport and no per-level wire method: adding a
 level to the tree means adding a `level` value here, not a new RPC method.
 
+Each request is also the only authority to perform work for the node named by
+`at`. The response contains that node's contribution and mementos for its
+immediate children only. It never materializes descendants. Deeper work occurs
+only when the consumer makes another `sugar.enumerate` request using one of
+those returned child mementos. No batch lift or wall-specific traversal may
+perform the same work outside this verb.
+
 ## Section 1. Request
 
 ```json
@@ -99,15 +106,33 @@ level to the tree means adding a `level` value here, not a new RPC method.
 | `facts` | -- (seek only) | an assertion's own memento | the item's `inv` (else `post`) field, as the FOL payload |
 | `universe` | a file memento (`seek=false`: every universe in the file) | a call site's own memento (`seek=true`: the universe linked to that callsite) or a universe node's own memento | `payload.ir` entries, `kind="function-contract"` (body universes + operator builtin universes such as `len::builtin-universe`). Seek from a call site joins via `bridgeSourceSymbol` / FOL `call:`·`method:` ctor identity; missing link is a gap (`no universe sugar for callee <name>`). Node mementos stamp the batch `name` onto `function_name` so member keys survive `SourceMemento` round-trip. |
 
-## Section 4. Granularity landed (report, not hidden)
+## Section 4. Demand-driven granularity
 
-Per the plan's Phase 3 ("it is ACCEPTABLE ... for the first cut to lift the
-WHOLE file server-side ... and slice/serve the requested level from that
-one parse"), this landing is **file-granular, not per-node wire-lazy**:
-every `functions`/`call_sites`/`assertions`/`facts` request re-lifts the
-ONE target file server-side (`lift_source`) and slices the in-memory
-result. `source_files` alone is genuinely workspace-scanned without a
-per-file lift.
+One request performs work for exactly the node named by `at` and returns only
+its immediate child keys. A workspace request discovers file mementos. A file
+request discovers definition mementos without reducing those definitions. A
+definition or lower leaf request performs only that keyed node's construction
+and returns its own contribution. Whole-file and whole-workspace reduction are
+forbidden side doors. Mementos are the only identities; there are no cursors,
+conversation tokens, or invented positional keys.
+
+Demand is memoized for exactly one RPC-client consistency window. The cache
+key is the content address of the JCS-canonical question tuple
+`(level, at, seek, options)`, never the bare node memento. A repeated question
+is answered from the client-owned `MementoPool` without crossing the wire.
+There is no clear, eviction, dirty-bit, or entry-invalidation API. A CLI command
+owns one client for the run. An LSP analysis owns one client for that analysis
+and constructs a new client for the next potentially changed world. Dropping
+the client drops its question cache and resident kit process coherently.
+
+Inside the Python kit, demanded file context is process-resident under the
+whole-file content CID. A file request parses and prepares module temporal
+context once for that CID; distinct demanded descendants reuse it. Changing
+the file changes the CID and therefore misses without a staleness check.
+Undemanded definitions are never reduced. Parsed AST and temporal context are
+ephemeral implementation state: they are not mementos, are never serialized,
+and never cross the wire. Only constructed facts occupy the memento address
+space.
 
 Further facts, flagged rather than silently narrowed:
 

@@ -14,8 +14,8 @@ use sugar_claim_envelope::{
     body_discharge_policy_from_object_with_default, BodyDischargePolicyWarning,
 };
 use sugar_proof_envelope::proof_filename;
-use sugar_verifier::load_all_proofs::{self, ProofBytes};
 use sugar_proof_envelope::{EffectSiteAnnotation, LoadError, MementoPool};
+use sugar_verifier::load_all_proofs::{self, ProofBytes};
 use tracing::{error, info, warn};
 
 use crate::floor_runtime_check::{

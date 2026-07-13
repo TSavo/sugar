@@ -117,22 +117,11 @@ pub enum KitError {
 /// The unforgeable frontend handle. Private fields; the only minter is
 /// `Kit::rendezvous`.
 ///
-/// POOL DUALITY (per the brief's hazard note): `kit_path::lift_plugin` also
-/// keeps a process-wide `static POOL: OnceLock<Mutex<HashMap<String,
-/// ResidentLifter>>>` keyed by command-string (`resident_key`, used by
-/// `LiftKit::lift` for cross-call child reuse within a single process).
-/// This `Kit` does NOT bypass or drain that pool -- other callers of
-/// `kit_path::LiftKit` (if any remain after CLI collapse) still hit it
-/// unchanged. `Kit` instead owns its OWN `LiftKit` value as a struct field;
-/// `LiftKit`'s resident dispatch still resolves through the shared static
-/// pool internally today (the pool lives inside `kit_path::lift_plugin`,
-/// not on this handle), so this Kit does not yet give the child a
-/// `Drop`-scoped, per-handle lifetime distinct from the static pool's own
-/// eviction policy. Making `Kit` truly own (spawn + `Drop`-close) its child
-/// OUTSIDE the static pool is the remaining step flagged for SEAM 7
-/// cleanup, once `sugar-lift-rpc-client` and the other pool consumers are
-/// enumerated and repointed in the same pass (per the plan's SEAM 7 note:
-/// "Do NOT make libsugar depend on it -- ABSORB/DELETE").
+/// The enumeration connection owns its resident child and canonical-question
+/// cache. Their validity window is the handle's lifetime: CLI keeps one for a
+/// command, LSP keeps one for an analysis, and dropping the last clone closes
+/// the child and discards all cached answers coherently. There is no global
+/// resident pool and no entry-level invalidation path.
 pub struct Kit {
     manifest: LiftManifest,
     declaration: KitDeclaration,
@@ -250,6 +239,13 @@ impl Kit {
             command: self.manifest.command.clone(),
             working_dir: self.manifest.working_dir.clone(),
             workspace_root: workspace_root.to_path_buf(),
+            audit_frontier: false,
+            transport: crate::kit_path::LiftPluginKit::new(
+                self.manifest.surface.clone(),
+                self.manifest.command.clone(),
+                self.manifest.working_dir.clone(),
+            )
+            .with_method("sugar.enumerate"),
         }
     }
 

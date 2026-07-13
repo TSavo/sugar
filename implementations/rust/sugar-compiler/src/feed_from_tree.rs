@@ -22,11 +22,11 @@ use sugar_claim_envelope::{
     body_discharge_policy_from_fields_with_default, mint_bridge, mint_contract_with_body_cid,
     Authoring, MintBridgeArgs, MintContractArgs,
 };
+use sugar_proof_envelope::Speaker;
 use sugar_proof_envelope::{
     ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento, ContractBody,
     ContractMementoRef, Ed25519Seed, FlatAtom, ProofGraph, SourceMemento,
 };
-use sugar_proof_envelope::Speaker;
 
 use crate::kit::{Kit, KitError};
 use crate::tree::{Fact, Sourced, Universe};

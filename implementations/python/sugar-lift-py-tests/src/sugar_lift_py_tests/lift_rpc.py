@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import time
 import traceback
 from dataclasses import replace
 from pathlib import Path
@@ -57,7 +58,18 @@ class _StructuredTransportFormatter(logging.Formatter):
             "level": record.levelname,
             "event": record.getMessage(),
         }
-        for field in ("direction", "bytes", "message_id", "method", "stage"):
+        for field in (
+            "direction",
+            "bytes",
+            "message_id",
+            "method",
+            "stage",
+            "cid",
+            "cache",
+            "elapsed_ms",
+            "file",
+            "level_name",
+        ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
         if record.exc_info:
@@ -92,6 +104,31 @@ def _configure_transport_logging() -> None:
     sys.excepthook = log_unhandled
 
 
+def _log_enumeration_demand(
+    level: str,
+    at: Optional[Dict[str, Any]],
+    *,
+    cache: str,
+    started: float,
+) -> None:
+    cid = "workspace"
+    if at is not None:
+        cid = str(
+            at.get("source_cid")
+            or at.get("sourceCid")
+            or at.get("file_cid")
+            or "unaddressed"
+        )
+    _TRANSPORT_LOG.info(
+        "enumeration_node_demand",
+        extra={
+            "cid": cid,
+            "cache": cache,
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            "level_name": level,
+            "stage": "enumerate.node",
+        },
+    )
 # UTF-16 surrogate code points. Python's json.dumps emits them as \\udxxx;
 # serde_json rejects unpaired surrogates with "unexpected end of hex escape"
 # and aborts the whole lift (pandas wall never writes report.json). Scrub at
@@ -667,7 +704,9 @@ def _resolve_source_memento_result(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _degenerate_file_memento(rel_path: str) -> Dict[str, Any]:
+def _degenerate_file_memento(
+    rel_path: str, source_cid: Optional[str] = None
+) -> Dict[str, Any]:
     """The file-level locator (Part 6 Phase 2's "degenerate memento shape"):
     a `source-memento` with only `file` populated -- span/source_cid/
     template_cid absent (`null`), since a whole file has no single body/AST
@@ -679,7 +718,7 @@ def _degenerate_file_memento(rel_path: str) -> Dict[str, Any]:
         "function_name": "",
         "span": None,
         "param_names": [],
-        "source_cid": None,
+        "source_cid": source_cid,
         "template_cid": None,
     }
 
@@ -1042,6 +1081,118 @@ def _module_import_maps(module) -> "tuple[dict, dict]":
     return import_aliases, from_imports
 
 
+@dataclasses.dataclass(frozen=True)
+class _AuditFileContext:
+    source: str
+    filename: str
+    file_cid: str
+    catalog: Any
+    module: Any
+    module_temporal: Any
+    seed_panics: tuple[tuple[str, FactoryPanic], ...]
+    module_assertions: tuple[Any, ...]
+    import_aliases: dict[str, str]
+    from_imports: dict[str, tuple[str, str]]
+    name_resolver: dict[str, Any]
+    definitions: tuple[Any, ...]
+    definitions_by_cid: dict[str, Any]
+
+
+# Passive process-lifetime context for the resident kit. File content CID is
+# the sole key. There is deliberately no invalidation or eviction API: a new
+# file version has a new CID, while dropping the RPC layer drops the kit and
+# this map with it.
+_AUDIT_FILE_CONTEXTS: dict[str, _AuditFileContext] = {}
+
+
+def _audit_file_context(
+    source: str, filename: str, file_cid: str
+) -> _AuditFileContext:
+    started = time.monotonic()
+    cached = _AUDIT_FILE_CONTEXTS.get(file_cid)
+    if cached is not None:
+        _TRANSPORT_LOG.info(
+            "enumeration_file_context",
+            extra={
+                "cid": file_cid,
+                "cache": "hit",
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                "file": filename,
+                "stage": "enumerate.context",
+            },
+        )
+        return cached
+
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    catalog = default_catalog()
+    roots = SourceFragment.from_source(source, filename).statements()
+    if not roots:
+        raise ValueError("empty source has no audit file context")
+    module = roots[0]
+    seed_panics: list[tuple[str, FactoryPanic]] = []
+    module_assertions: list[Any] = []
+    module_temporal = _module_import_temporal(
+        module,
+        catalog,
+        recovered_panics=seed_panics,
+        assertion_sink=module_assertions,
+    )
+    import_aliases, from_imports = _module_import_maps(module)
+    definitions = tuple(_iter_liftable_function_defs(module))
+    definitions_by_cid = {
+        to_rpc_value(definition.memento())["source_cid"]: definition
+        for definition in definitions
+    }
+    name_resolver: dict[str, Any] = {
+        stmt.function_name(): stmt.node
+        for stmt in definitions
+        if stmt.observed == "FunctionDef"
+    }
+    for stmt in module.statements():
+        if stmt.observed != "ClassDef":
+            continue
+        cname = stmt.class_name()
+        for body_stmt in stmt.class_body():
+            if body_stmt.observed == "FunctionDef":
+                name_resolver[f"{cname}.{body_stmt.function_name()}"] = body_stmt.node
+            elif body_stmt.observed == "ClassDef":
+                nested = body_stmt.class_name()
+                for nested_stmt in body_stmt.class_body():
+                    if nested_stmt.observed == "FunctionDef":
+                        name_resolver[
+                            f"{nested}.{nested_stmt.function_name()}"
+                        ] = nested_stmt.node
+    context = _AuditFileContext(
+        source=source,
+        filename=filename,
+        file_cid=file_cid,
+        catalog=catalog,
+        module=module,
+        module_temporal=module_temporal,
+        seed_panics=tuple(seed_panics),
+        module_assertions=tuple(module_assertions),
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        name_resolver=name_resolver,
+        definitions=definitions,
+        definitions_by_cid=definitions_by_cid,
+    )
+    _AUDIT_FILE_CONTEXTS[file_cid] = context
+    _TRANSPORT_LOG.info(
+        "enumeration_file_context",
+        extra={
+            "cid": file_cid,
+            "cache": "miss",
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            "file": filename,
+            "stage": "enumerate.context",
+        },
+    )
+    return context
+
+
 def _retain_stated_call_prefix(stmt, ctx, payload: LiftReportPayloadDto) -> None:
     """Project call-bearing claims reached before a later function-body gap.
 
@@ -1139,6 +1290,8 @@ def audit_lift_file(
     *,
     hold_panic: bool = True,
     recover_panics: bool = False,
+    target_memento: Optional[Dict[str, Any]] = None,
+    audit_context: Optional[_AuditFileContext] = None,
 ) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]] | RecoveredAuditDto:
     """Per-def factory walk -- the ONE door that may hold FactoryPanic.
 
@@ -1151,8 +1304,7 @@ def audit_lift_file(
     """
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-    from sugar_lift_py_tests.factory.build import build_node, default_catalog
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.factory.build import build_node
     from sugar_lift_py_tests.outcome import complete_value
     from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -1163,9 +1315,16 @@ def audit_lift_file(
     suppressed_descendants: list[SuppressedAuditLocusDto] = []
     if recover_panics:
         hold_panic = True
-    catalog = default_catalog()
-    roots = SourceFragment.from_source(source, filename).statements()
-    if not roots:
+    if audit_context is None:
+        from sugar_lift_py_tests.canonicalizer import blake3_512_of
+
+        try:
+            audit_context = _audit_file_context(
+                source, filename, blake3_512_of(source.encode())
+            )
+        except ValueError:
+            audit_context = None
+    if audit_context is None:
         # Empty/comment-only modules have no source site to construct. Their
         # honest audit result is the empty set, not an indexing crash and not a
         # fabricated support row.
@@ -1181,17 +1340,13 @@ def audit_lift_file(
         if recover_panics:
             return RecoveredAuditDto()
         return payload, gaps
-    module = roots[0]
-    # Seed module declarations once for every def in this module (deeper floors).
-    seed_panics: list[tuple[str, FactoryPanic]] | None = [] if recover_panics else None
-    module_assertions: list = []
-    module_temporal = _module_import_temporal(
-        module,
-        catalog,
-        recovered_panics=seed_panics,
-        assertion_sink=module_assertions,
-    )
-    for label, panic in seed_panics or ():
+    catalog = audit_context.catalog
+    module = audit_context.module
+    seed_panics = audit_context.seed_panics
+    module_assertions = audit_context.module_assertions
+    module_temporal = audit_context.module_temporal
+    target_is_module = bool(target_memento and target_memento.get("function_name") == "<module>")
+    for label, panic in (seed_panics or ()) if target_memento is None or target_is_module else ():
         recovered_panics.append(
             RecoveredFactoryPanicDto(
                 locus=label,
@@ -1199,7 +1354,10 @@ def audit_lift_file(
                 gap=panic.info.to_json(),
             )
         )
-    import_aliases, from_imports = _module_import_maps(module)
+    import_aliases = audit_context.import_aliases
+    from_imports = audit_context.from_imports
+    if target_is_module:
+        return RecoveredAuditDto(panics=recovered_panics)
     if module_assertions:
         from sugar_lift_py_tests.floor import BlockValue, TestimonyValue
 
@@ -1211,27 +1369,13 @@ def audit_lift_file(
         payload.ir.extend(module_testimony.payload_rows(None))
         payload.call_edges.extend(module_testimony.call_edges())
     # Same-module name_resolver: bare f() and Class.method dig bodies.
-    name_resolver: dict = {}
-    for stmt in _iter_liftable_function_defs(module):
-        if stmt.observed == "FunctionDef":
-            name_resolver[stmt.function_name()] = stmt.node
-    # Class methods (same module) for method body dig.
-    for stmt in module.statements():
-        if stmt.observed != "ClassDef":
-            continue
-        cname = stmt.class_name()
-        for body_stmt in stmt.class_body():
-            if body_stmt.observed == "FunctionDef":
-                name_resolver[f"{cname}.{body_stmt.function_name()}"] = body_stmt.node
-            elif body_stmt.observed == "ClassDef":
-                # one-level nested class
-                nested = body_stmt.class_name()
-                for nested_stmt in body_stmt.class_body():
-                    if nested_stmt.observed == "FunctionDef":
-                        name_resolver[f"{nested}.{nested_stmt.function_name()}"] = (
-                            nested_stmt.node
-                        )
-    for stmt in _iter_liftable_function_defs(module):
+    name_resolver = audit_context.name_resolver
+    definitions = audit_context.definitions
+    if target_memento is not None:
+        target_cid = target_memento.get("source_cid") or target_memento.get("sourceCid")
+        target_definition = audit_context.definitions_by_cid.get(str(target_cid))
+        definitions = (target_definition,) if target_definition is not None else ()
+    for stmt in definitions:
         # Every discovered def reaches construction. An owned FunctionDef or
         # test_* testimony takes its Some arm; an unowned shape must reach the
         # None arm so this audit door can hold and paint the gap red.
@@ -1362,6 +1506,16 @@ def audit_lift_file(
                             locus=f"{filename}:{descendant.lineno}:{descendant.col_offset}"
                         )
                     )
+    # Conservation is a file-level accounting pass. A keyed leaf contributes
+    # only its recovered audit vector; rerunning whole-file conservation for
+    # every leaf is both semantically duplicate and quadratic.
+    if recover_panics and target_memento is not None:
+        return RecoveredAuditDto(
+            panics=recovered_panics,
+            effects=recovered_effects,
+            suppressed_descendants=suppressed_descendants,
+        )
+
     from sugar_lift_py_tests.idd.lift_coverage_census import reconcile_body_owner_loci
 
     conservation = reconcile_body_owner_loci(
@@ -1718,25 +1872,36 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     memento; `seek=true` asks for exactly the ONE node matching `at` rather
     than every child of it.
     """
+    demand_started = time.monotonic()
     level = params.get("level")
     workspace_root = str(params.get("workspace_root", "."))
     at = params.get("at") if isinstance(params.get("at"), dict) else None
     seek = bool(params.get("seek", False))
+    options = params.get("options") if isinstance(params.get("options"), dict) else {}
+    audit_walk = options.get("auditFrontier") is True
     root = Path(workspace_root).resolve()
 
     try:
         if level == "source_files":
+            from sugar_lift_py_tests.canonicalizer import blake3_512_of
+
             nodes = []
             for full_path in _iter_python_files(workspace_root, ["."]):
                 try:
                     rel_path = Path(full_path).resolve().relative_to(root).as_posix()
                 except ValueError:
                     rel_path = Path(full_path).name
-                memento = _degenerate_file_memento(rel_path)
+                file_bytes = Path(full_path).read_bytes()
+                memento = _degenerate_file_memento(
+                    rel_path, blake3_512_of(file_bytes)
+                )
                 if seek and at is not None and not _memento_matches(memento, at):
                     continue
                 nodes.append({"memento": memento, "audit": None, "payload": None})
             _send_enumerate_result(msg_id, nodes, [])
+            _log_enumeration_demand(
+                str(level), at, cache="miss", started=demand_started
+            )
             return
 
         if level in ("functions", "call_sites", "assertions", "facts", "universe"):
@@ -1782,6 +1947,82 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     msg_id,
                     [],
                     [{"memento": at, "reason": f"no such file: {file_rel}"}],
+                )
+                return
+            if audit_walk and level == "functions":
+                source = full_path.read_text(encoding="utf-8")
+                from sugar_lift_py_tests.canonicalizer import blake3_512_of
+
+                file_cid = blake3_512_of(source.encode())
+                requested_cid = at.get("source_cid") if at else None
+                if requested_cid and requested_cid != file_cid:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [{"memento": at, "reason": "source memento CID no longer matches file"}],
+                    )
+                    return
+                context_hit = file_cid in _AUDIT_FILE_CONTEXTS
+                context = _audit_file_context(source, file_rel, file_cid)
+                nodes = []
+                module_key = _degenerate_file_memento(file_rel, file_cid)
+                module_key["function_name"] = "<module>"
+                module_key["source_function_name"] = "<module>"
+                module_key["file_cid"] = file_cid
+                nodes.append({"memento": module_key, "audit": None, "payload": None})
+                for definition in context.definitions:
+                    key = to_rpc_value(definition.memento())
+                    key["function_name"] = definition.function_name()
+                    key["source_function_name"] = definition.function_name()
+                    key["file_cid"] = file_cid
+                    nodes.append({"memento": key, "audit": None, "payload": None})
+                _send_enumerate_result(msg_id, nodes, [])
+                _log_enumeration_demand(
+                    str(level),
+                    at,
+                    cache="hit" if context_hit else "miss",
+                    started=demand_started,
+                )
+                return
+            if audit_walk and level == "facts":
+                source = full_path.read_text(encoding="utf-8")
+                from sugar_lift_py_tests.canonicalizer import blake3_512_of
+
+                actual_file_cid = blake3_512_of(source.encode())
+                requested_file_cid = at.get("file_cid")
+                if requested_file_cid and requested_file_cid != actual_file_cid:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [{"memento": at, "reason": "ancestor file CID no longer matches file"}],
+                    )
+                    return
+                file_cid = actual_file_cid
+                context_hit = file_cid in _AUDIT_FILE_CONTEXTS
+                context = _audit_file_context(source, file_rel, file_cid)
+                from sugar_lift_py_tests.ir import term_intern_scope
+
+                with term_intern_scope():
+                    recovered = audit_lift_file(
+                        source,
+                        file_rel,
+                        hold_panic=True,
+                        recover_panics=True,
+                        target_memento=at,
+                        audit_context=context,
+                    )
+                if not isinstance(recovered, RecoveredAuditDto):
+                    raise TypeError("audit leaf returned a lift artifact")
+                _send_enumerate_result(
+                    msg_id,
+                    [{"memento": at, "audit": recovered.to_rpc(), "payload": None}],
+                    [],
+                )
+                _log_enumeration_demand(
+                    str(level),
+                    at,
+                    cache="hit" if context_hit else "miss",
+                    started=demand_started,
                 )
                 return
             ir_items, call_edges = _lift_file_for_enumeration(
@@ -2149,12 +2390,7 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
         return
     try:
         if audit_frontier:
-            _handle_lift_audit_only(
-                msg_id,
-                workspace_root=workspace_root,
-                source_paths=source_paths,
-                contract_bindings=contract_bindings,
-            )
+            _send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "auditFrontier is served only by recursive sugar.enumerate leaf requests"}})
             return
         payload = LiftReportPayloadDto(source_ledger={})
         bindings_backed_pass = bool(contract_bindings)
@@ -2202,46 +2438,6 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                 },
             }
         )
-
-
-def _handle_lift_audit_only(
-    msg_id: Any,
-    *,
-    workspace_root: str,
-    source_paths: List[Any],
-    contract_bindings: list,
-) -> None:
-    """Recover mandatory panics for diagnosis; never construct a lift artifact."""
-    del contract_bindings  # recovered audits cannot consume contract bindings
-    root = Path(workspace_root).resolve()
-    panics: list[RecoveredFactoryPanicDto] = []
-    effects: list[RecoveredEffectDto] = []
-    suppressed: list[SuppressedAuditLocusDto] = []
-    for path in _iter_python_files(workspace_root, source_paths):
-        full_path = Path(path)
-        try:
-            rel_path = full_path.resolve().relative_to(root).as_posix()
-        except ValueError:
-            rel_path = full_path.name
-        source = full_path.read_text(encoding="utf-8")
-        recovered = audit_lift_file(
-            source,
-            rel_path,
-            hold_panic=True,
-            recover_panics=True,
-        )
-        if not isinstance(recovered, RecoveredAuditDto):
-            raise TypeError("audit recovery returned a lift artifact")
-        panics.extend(recovered.panics)
-        effects.extend(recovered.effects)
-        suppressed.extend(recovered.suppressed_descendants)
-
-    audit = RecoveredAuditDto(
-        panics=panics,
-        effects=effects,
-        suppressed_descendants=suppressed,
-    )
-    _send({"jsonrpc": "2.0", "id": msg_id, "result": audit.to_rpc()})
 
 
 def _merge_source_ledger(
