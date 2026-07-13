@@ -22,9 +22,9 @@ use sugar_verifier::{
     LegacyZ3Fallback, MementoCid, PlanArtifactInput, ProofRunArtifact, RunnerConfig, SolversConfig,
 };
 
-#[cfg(test)]
-use crate::component_plan::PlannedLiftManifest;
-use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
+use crate::component_plan::{
+    self, ComponentPlan, ComponentPlanOptions, PlanIntent, PlannedLiftManifest,
+};
 use crate::project_config::{read_project_config, ProjectConfig, WitnessEntry};
 use crate::report_fmt;
 use crate::report_witness::{
@@ -297,16 +297,22 @@ fn cli_persist_proof_run(project_root: &Path, mut artifact: ProofRunArtifact) ->
     artifact
 }
 
-/// Build a live `Kit` from the first planned lift manifest, when present.
-/// Returns `None` when the plan has no lift surface or rendezvous fails —
-/// caller falls back to disk `.proof` prove.
+/// Build a live `Kit` when the plan has exactly one lift surface.
+///
+/// A `Kit` is one enumerate connection.  Selecting the first member of a
+/// multi-surface component plan silently drops every sibling surface (for
+/// example Rust assertions, function contracts, implications, and witness
+/// packages).  Until the fold door accepts the composed plan itself, a
+/// multi-surface project must use the already-composed durable `.proof` face.
+/// Returns `None` for that shape, for no lift surface, or when rendezvous
+/// fails, and the caller falls back to disk `.proof` prove.
 fn try_rendezvous_prove_kit(
     project_root: &Path,
     component_plan: &ComponentPlan,
 ) -> Option<sugar_compiler::kit::Kit> {
     use sugar_compiler::kit::LiftManifest;
 
-    let planned = component_plan.lift_manifests.first()?;
+    let planned = single_surface_fold_manifest(component_plan)?;
     if planned.command.is_empty() {
         return None;
     }
@@ -339,6 +345,13 @@ fn try_rendezvous_prove_kit(
             None
         }
     }
+}
+
+fn single_surface_fold_manifest(component_plan: &ComponentPlan) -> Option<&PlannedLiftManifest> {
+    let [planned] = component_plan.lift_manifests.as_slice() else {
+        return None;
+    };
+    Some(planned)
 }
 
 fn check_component_plan_errors(component_plan: &ComponentPlan) -> Result<(), String> {
@@ -791,6 +804,46 @@ mod tests {
         assert!(s.lines().next().unwrap().starts_with('{'));
         let round_tripped: Value = serde_json::from_str(&s).expect("parse back");
         assert_eq!(round_tripped, report);
+    }
+
+    #[test]
+    fn multi_surface_prove_does_not_drop_siblings_into_first_kit() {
+        let mut plan = ComponentPlan::default();
+        plan.lift_manifests = vec![
+            PlannedLiftManifest {
+                surface: "rust-cargo-test-witness".to_string(),
+                name: "witness".to_string(),
+                command: vec!["witness-rpc".to_string()],
+                ..Default::default()
+            },
+            PlannedLiftManifest {
+                surface: "rust-test-assertions".to_string(),
+                name: "assertions".to_string(),
+                command: vec!["assertions-rpc".to_string()],
+                ..Default::default()
+            },
+        ];
+
+        assert!(
+            single_surface_fold_manifest(&plan).is_none(),
+            "one Kit cannot honestly represent a composed component plan"
+        );
+    }
+
+    #[test]
+    fn single_surface_prove_keeps_the_live_fold_path() {
+        let mut plan = ComponentPlan::default();
+        plan.lift_manifests.push(PlannedLiftManifest {
+            surface: "python".to_string(),
+            name: "python-lift".to_string(),
+            command: vec!["python-rpc".to_string()],
+            ..Default::default()
+        });
+
+        assert_eq!(
+            single_surface_fold_manifest(&plan).map(|manifest| manifest.surface.as_str()),
+            Some("python")
+        );
     }
 
     #[test]

@@ -3835,6 +3835,13 @@ pub fn verify_consistency_from_indexes(
     let mut results: Vec<ConsistencyResult> = groups
         .par_iter()
         .flat_map(|(property_name, members)| {
+            // Rayon workers have distinct thread-local storage.  The guard on
+            // the caller thread cannot carry the typed witness context into
+            // this closure, so install the same context for each group solve.
+            // Without this, custom-witness rows nondeterministically see the
+            // default `project_dir: None` and refuse despite a client-fed
+            // context.
+            let _worker_witness_ctx_guard = WitnessCtxGuard::enter(witness);
             process_consistency_group(
                 property_name,
                 members,
@@ -7285,6 +7292,44 @@ mod tests {
 
         drop(_guard);
         std::env::remove_var("SUGAR_WITNESS_DISCHARGE_PYTEST");
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn typed_witness_context_reaches_parallel_consistency_workers() {
+        let package_bytes = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
+        let package_cid = blake3_512_of(package_bytes);
+        let project = unique_temp_dir("parallel-witness-context");
+        write_resolver_manifest(&project, package_bytes);
+
+        let body = package_contract_with_provenance("cargo-test", &package_cid, 1, 1, "Derived");
+        let mut pool = MementoPool::default();
+        insert_package_contract_with_provenance(
+            &mut pool,
+            "blake3-512:parallel-witness-context",
+            body,
+        );
+        let (plan, registry) = z3_plan_and_registry();
+        let typed = typed_ctx_for_project(&project);
+        let thread_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .expect("two-worker pool");
+
+        let results = thread_pool.install(|| {
+            verify_consistency_with_policy(
+                &pool,
+                &plan,
+                &registry,
+                &test_compilers(),
+                std::path::Path::new("."),
+                &typed,
+            )
+        });
+
+        assert_eq!(results.len(), 1, "one witness-package obligation");
+        assert_eq!(results[0].verdict, ObligationVerdict::Discharged);
+        assert!(results[0].witnessed);
         let _ = std::fs::remove_dir_all(&project);
     }
 

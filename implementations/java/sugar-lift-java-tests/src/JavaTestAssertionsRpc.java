@@ -3178,7 +3178,8 @@ public final class JavaTestAssertionsRpc {
         // 5. Emit numeric universe contract if registered
         String bvExprJson = numericRegistry.getBvExprJson(callee);
         if (bvExprJson != null) {
-            ir.add(buildNumericUniverseContract(callee, argValues, bvExprJson));
+            ir.add(buildNumericUniverseContract(
+                    callee, argValues, bvExprJson, numericRegistry.sourceWarrantFor(callee)));
         }
     }
 
@@ -3322,8 +3323,12 @@ public final class JavaTestAssertionsRpc {
             }
             case "equality" -> liftEquality(mit, methodName, scope, vocab, universeRegistry, numericRegistry, patternRegistry, strongRegistry, crcValuePins, mtSeedPins, crcReceiverInputs, mtReceiverDraws, instanceUniverse, ssaBindings, mutatedLocals, factSourceMemento, ir, diagnostics);
             case "inequality" -> liftInequality(mit, methodName, scope, vocab, ir, diagnostics);
-            case "truth" -> liftTruth(mit, methodName, scope, numericRegistry, ir, diagnostics);
-            case "negated_truth" -> liftNegatedTruth(mit, methodName, scope, numericRegistry, ir, diagnostics);
+            case "truth" -> liftTruth(
+                    mit, methodName, scope, numericRegistry,
+                    factSourceMemento, ir, diagnostics);
+            case "negated_truth" -> liftNegatedTruth(
+                    mit, methodName, scope, numericRegistry,
+                    factSourceMemento, ir, diagnostics);
             case "null" -> liftNull(mit, methodName, scope, ir, diagnostics);
             case "not_null" -> liftNotNull(mit, methodName, scope, ir, diagnostics);
         }
@@ -3889,7 +3894,9 @@ public final class JavaTestAssertionsRpc {
             // G2: ALSO emit numeric-universe contract if callee is registered
             String bvExprJson = numericRegistry.getBvExprJson(callee);
             if (bvExprJson != null) {
-                ir.add(buildNumericUniverseContract(callee, intArgValues, bvExprJson));
+                ir.add(buildNumericUniverseContract(
+                        callee, intArgValues, bvExprJson,
+                        numericRegistry.sourceWarrantFor(callee)));
             }
         }
     }
@@ -4274,6 +4281,7 @@ public final class JavaTestAssertionsRpc {
     private static void liftTruth(
             MethodInvocationTree mit, String methodName, String scope,
             NumericUniverseRegistry numericRegistry,
+            JavaSourceOracle.SourceMemento factSourceMemento,
             List<String> ir, List<String> diagnostics) {
 
         List<? extends ExpressionTree> args = mit.getArguments();
@@ -4291,7 +4299,8 @@ public final class JavaTestAssertionsRpc {
         // or assertTrue(intLiteral <op> callExpr). The predicate is read from
         // Tree.Kind; operand order is normalised so the call is always args[0].
         if (condExpr instanceof BinaryTree bt) {
-            liftComparisonBound(bt, methodName, scope, false, numericRegistry, ir, diagnostics);
+            liftComparisonBound(bt, methodName, scope, false, numericRegistry,
+                    factSourceMemento, ir, diagnostics);
             return;
         }
 
@@ -4326,6 +4335,7 @@ public final class JavaTestAssertionsRpc {
     private static void liftNegatedTruth(
             MethodInvocationTree mit, String methodName, String scope,
             NumericUniverseRegistry numericRegistry,
+            JavaSourceOracle.SourceMemento factSourceMemento,
             List<String> ir, List<String> diagnostics) {
 
         List<? extends ExpressionTree> args = mit.getArguments();
@@ -4341,7 +4351,8 @@ public final class JavaTestAssertionsRpc {
 
         // G2b: assertFalse(callExpr <op> intLiteral) → negate the predicate.
         if (condExpr instanceof BinaryTree bt) {
-            liftComparisonBound(bt, methodName, scope, true, numericRegistry, ir, diagnostics);
+            liftComparisonBound(bt, methodName, scope, true, numericRegistry,
+                    factSourceMemento, ir, diagnostics);
             return;
         }
 
@@ -4399,6 +4410,7 @@ public final class JavaTestAssertionsRpc {
             BinaryTree bt, String methodName, String scope,
             boolean negate,
             NumericUniverseRegistry numericRegistry,
+            JavaSourceOracle.SourceMemento factSourceMemento,
             List<String> ir, List<String> diagnostics) {
 
         Tree.Kind kind = bt.getKind();
@@ -4483,7 +4495,8 @@ public final class JavaTestAssertionsRpc {
             argValues.add(val.getAsLong());
         }
 
-        ir.add(buildContractWithRelation(callee, argValues, litVal, predicate, null));
+        ir.add(buildContractWithRelation(
+                callee, argValues, litVal, predicate, factSourceMemento));
         // G2b × G2: also emit the numeric-universe row if the callee is in the
         // registry. The universe row and the comparison-bound row share the SAME
         // #euf# contract name → conjoined at prove time. The bv32 contagion pass
@@ -4491,7 +4504,8 @@ public final class JavaTestAssertionsRpc {
         // reason over both under the bitvector theory.
         String bvExprJson = numericRegistry.getBvExprJson(callee);
         if (bvExprJson != null) {
-            ir.add(buildNumericUniverseContract(callee, argValues, bvExprJson));
+            ir.add(buildNumericUniverseContract(
+                    callee, argValues, bvExprJson, numericRegistry.sourceWarrantFor(callee)));
         }
     }
 
@@ -4931,7 +4945,8 @@ public final class JavaTestAssertionsRpc {
      * The bvExprJson is a JSON string produced by NumericUniverseWalker.
      */
     private static String buildNumericUniverseContract(
-            String callee, List<Long> intArgValues, String bvExprJson) {
+            String callee, List<Long> intArgValues, String bvExprJson,
+            JavaSourceOracle.SourceMemento sourceWarrant) {
 
         String safeName = toSafeName(callee);
         int arity = intArgValues.size();
@@ -4946,6 +4961,8 @@ public final class JavaTestAssertionsRpc {
         return "{\"kind\":\"contract\""
              + ",\"name\":\"" + esc(contractName) + "\""
              + ",\"outBinding\":\"out\""
+             + sourceWarrantsField(
+                    "java.numeric-universe", "int32.eq-bv-expr", callee, sourceWarrant)
              + ",\"inv\":{\"kind\":\"and\",\"operands\":["
              + "{\"kind\":\"atomic\",\"name\":\"int32.eq-bv-expr\",\"args\":["
              + ctorJson + ","
@@ -7583,16 +7600,24 @@ public final class JavaTestAssertionsRpc {
     // ──────────────────────────────────────────────────────────────
 
     static final class NumericUniverseRegistry {
-        static final NumericUniverseRegistry EMPTY = new NumericUniverseRegistry(Map.of());
+        static final NumericUniverseRegistry EMPTY =
+                new NumericUniverseRegistry(Map.of(), Map.of());
 
         private final Map<String, String> bvExprs; // callee simple-name → BV expr JSON
+        private final Map<String, JavaSourceOracle.SourceMemento> sourceWarrants;
 
-        NumericUniverseRegistry(Map<String, String> bvExprs) {
+        NumericUniverseRegistry(
+                Map<String, String> bvExprs,
+                Map<String, JavaSourceOracle.SourceMemento> sourceWarrants) {
             this.bvExprs = Map.copyOf(bvExprs);
+            this.sourceWarrants = Map.copyOf(sourceWarrants);
         }
 
         /** Return the BV expression JSON for a callee, or null if not registered. */
         String getBvExprJson(String callee) { return bvExprs.get(callee); }
+        JavaSourceOracle.SourceMemento sourceWarrantFor(String callee) {
+            return sourceWarrants.get(callee);
+        }
         boolean isEmpty() { return bvExprs.isEmpty(); }
         Map<String, String> all() { return bvExprs; }
     }
@@ -7944,23 +7969,48 @@ public final class JavaTestAssertionsRpc {
             }
 
             Map<String, String> bvExprs = new LinkedHashMap<>();
+            Map<String, JavaSourceOracle.SourceMemento> sourceWarrants =
+                    new LinkedHashMap<>();
+            Map<MethodTree, JavaSourceOracle.SourceMemento> methodSourceMementos =
+                    new IdentityHashMap<>();
+            Trees treePositions = Trees.instance(task);
+            SourcePositions positions = treePositions.getSourcePositions();
             for (CompilationUnitTree cu : trees) {
-                walkCompilationUnit(cu, bvExprs, diagnostics);
+                Path sourcePath = Path.of(cu.getSourceFile().toUri());
+                for (Tree declaration : cu.getTypeDecls()) {
+                    if (declaration instanceof ClassTree cls) {
+                        collectSourceMementos(
+                                workspaceRoot, sourcePath, cu, cls, positions,
+                                methodSourceMementos, diagnostics,
+                                "<numeric-universe-walker>");
+                    }
+                }
+                walkCompilationUnit(
+                        cu, bvExprs, sourceWarrants, methodSourceMementos, diagnostics);
             }
-            return new NumericUniverseRegistry(bvExprs);
+            return new NumericUniverseRegistry(bvExprs, sourceWarrants);
         }
 
         private static void walkCompilationUnit(
-                CompilationUnitTree cu, Map<String, String> bvExprs, List<String> diagnostics) {
+                CompilationUnitTree cu,
+                Map<String, String> bvExprs,
+                Map<String, JavaSourceOracle.SourceMemento> sourceWarrants,
+                Map<MethodTree, JavaSourceOracle.SourceMemento> methodSourceMementos,
+                List<String> diagnostics) {
             for (Tree td : cu.getTypeDecls()) {
                 if (td instanceof ClassTree ct) {
-                    walkClass(ct, bvExprs, diagnostics);
+                    walkClass(
+                            ct, bvExprs, sourceWarrants, methodSourceMementos, diagnostics);
                 }
             }
         }
 
         private static void walkClass(
-                ClassTree ct, Map<String, String> bvExprs, List<String> diagnostics) {
+                ClassTree ct,
+                Map<String, String> bvExprs,
+                Map<String, JavaSourceOracle.SourceMemento> sourceWarrants,
+                Map<MethodTree, JavaSourceOracle.SourceMemento> methodSourceMementos,
+                List<String> diagnostics) {
             String className = ct.getSimpleName().toString();
             for (Tree member : ct.getMembers()) {
                 if (!(member instanceof MethodTree mt)) continue;
@@ -7985,7 +8035,16 @@ public final class JavaTestAssertionsRpc {
 
                 String bvJson = tryBuildBvExpr(retExpr, params, className, methodName, diagnostics);
                 if (bvJson != null) {
+                    JavaSourceOracle.SourceMemento sourceWarrant =
+                            methodSourceMementos.get(mt);
+                    if (sourceWarrant == null) {
+                        diagnostics.add(diagnostic(
+                                "<numeric-universe-walker>", className, methodName,
+                                "numeric universe walk refused: source oracle could not mint SourceMemento"));
+                        continue;
+                    }
                     bvExprs.put(methodName, bvJson);
+                    sourceWarrants.put(methodName, sourceWarrant);
                 }
             }
         }
