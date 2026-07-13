@@ -37,8 +37,10 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sugar_ir_types::IrFormula;
+use sugar_ir_types::{IrFormula, Sort};
+use sugar_linker::LinkerContract;
 use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
 
 use crate::kit::{Kit, KitError};
@@ -99,6 +101,7 @@ pub enum Level {
     Assertions,
     Facts,
     Universe,
+    Exports,
 }
 
 impl Level {
@@ -110,6 +113,7 @@ impl Level {
             Level::Assertions => "assertions",
             Level::Facts => "facts",
             Level::Universe => "universe",
+            Level::Exports => "exports",
         }
     }
 }
@@ -282,6 +286,78 @@ impl Universe {
     /// Wire formula payload when present (inv-else-post reduction).
     pub fn payload(&self) -> Option<&Value> {
         self.payload.as_ref()
+    }
+}
+
+/// ABI signature declared by a native export producer. These are the facts a
+/// caller can check before binding a bridge, not guesses recovered from a
+/// consumer language's call syntax.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AbiSignature {
+    pub formals: Vec<Sort>,
+    pub returns: Sort,
+    pub platform_abi_tag: String,
+}
+
+/// Content-addressed identity of the source/header and object that warrant an
+/// exported symbol contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactProvenance {
+    pub header_or_source_cid: Option<String>,
+    pub object_cid: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WarrantKind {
+    Source,
+    Stub,
+    GeneratedContract,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportMetadata {
+    pub symbol: String,
+    pub abi_signature: AbiSignature,
+    pub artifact: ArtifactProvenance,
+    pub calling_convention: String,
+    pub warrant: WarrantKind,
+}
+
+/// One native producer answer. The metadata and contract cross the same
+/// `sugar.enumerate` membrane as every other tree node; the contract is the
+/// existing linker type, so producer resolution has no parallel join path.
+#[derive(Debug, Clone)]
+pub struct ExportedSymbol {
+    memento: SourceMemento,
+    metadata: ExportMetadata,
+    contract: LinkerContract,
+}
+
+impl Sourced for ExportedSymbol {
+    fn source_memento(&self) -> &SourceMemento {
+        &self.memento
+    }
+}
+
+impl ExportedSymbol {
+    pub fn symbol(&self) -> &str {
+        &self.metadata.symbol
+    }
+
+    pub fn calling_convention(&self) -> &str {
+        &self.metadata.calling_convention
+    }
+
+    pub fn metadata(&self) -> &ExportMetadata {
+        &self.metadata
+    }
+
+    pub fn contract(&self) -> &LinkerContract {
+        &self.contract
     }
 }
 
@@ -570,6 +646,30 @@ fn decode_node(value: &Value) -> Result<WireNode, String> {
     })
 }
 
+fn decode_export_node(node: WireNode) -> Result<ExportedSymbol, String> {
+    let audit = node
+        .audit
+        .ok_or_else(|| "exports node missing typed audit metadata".to_string())?;
+    let metadata: ExportMetadata = serde_json::from_value(audit)
+        .map_err(|error| format!("exports audit does not decode as ExportMetadata: {error}"))?;
+    let payload = node
+        .payload
+        .ok_or_else(|| "exports node missing LinkerContract payload".to_string())?;
+    let contract: LinkerContract = serde_json::from_value(payload)
+        .map_err(|error| format!("exports payload does not decode as LinkerContract: {error}"))?;
+    if contract.kit.is_empty() || contract.name != metadata.symbol {
+        return Err(format!(
+            "exports contract identity must carry producer kit and match symbol: kit={:?} contract={:?} symbol={:?}",
+            contract.kit, contract.name, metadata.symbol
+        ));
+    }
+    Ok(ExportedSymbol {
+        memento: node.memento,
+        metadata,
+        contract,
+    })
+}
+
 fn decode_gap(value: &Value) -> GapInfo {
     let mut decode_note = None;
     let memento =
@@ -686,6 +786,56 @@ pub fn fold_recovered_audit(kit: &Kit, workspace_root: &Path) -> Result<Value, K
 }
 
 impl Kit {
+    /// Scan the producer surface. Export answers reuse the existing linker
+    /// contract type; malformed or identity-mismatched answers are loud wire
+    /// errors, never silently omitted exports.
+    pub fn exports(&self, workspace_root: &Path) -> Result<Vec<ExportedSymbol>, KitError> {
+        let conn = self.enumerate_conn(workspace_root);
+        let (nodes, _gaps) = enumerate_rpc(&conn, Level::Exports, None, false)?;
+        nodes
+            .into_iter()
+            .map(|node| {
+                decode_export_node(node).map_err(|reason| {
+                    KitError::from(EnumerateError::MalformedNode {
+                        plugin: conn.surface.clone(),
+                        reason,
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// Seek a native export by the producer's own ABI symbol. This is the one
+    /// enumeration key a driver may construct: the consumer call edge already
+    /// carries this stable symbol coordinate. A named producer gap is `None`;
+    /// malformed producer data remains an error.
+    pub fn export(
+        &self,
+        workspace_root: &Path,
+        symbol: &str,
+    ) -> Result<Option<ExportedSymbol>, KitError> {
+        let conn = self.enumerate_conn(workspace_root);
+        let (nodes, gaps) =
+            enumerate_rpc(&conn, Level::Exports, Some(json!({"symbol": symbol})), true)?;
+        let Some(node) = nodes.into_iter().next() else {
+            if gaps.is_empty() {
+                return Err(EnumerateError::SeekMiss {
+                    plugin: conn.surface,
+                    level: "exports",
+                }
+                .into());
+            }
+            return Ok(None);
+        };
+        decode_export_node(node)
+            .map(Some)
+            .map_err(|reason| EnumerateError::MalformedNode {
+                plugin: conn.surface,
+                reason,
+            })
+            .map_err(KitError::from)
+    }
+
     /// `sugar.enumerate` at `level="source_files"`. Scan: every python file
     /// the kit's `_iter_python_files` walk finds under `workspace_root`.
     pub fn source_files(&self, workspace_root: &Path) -> Result<Vec<SourceFile>, KitError> {

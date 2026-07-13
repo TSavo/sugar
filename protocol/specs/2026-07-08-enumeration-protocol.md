@@ -34,7 +34,7 @@ perform the same work outside this verb.
   "id": <number>,
   "method": "sugar.enumerate",
   "params": {
-    "level": "source_files" | "functions" | "call_sites" | "assertions" | "facts" | "universe",
+    "level": "source_files" | "functions" | "call_sites" | "assertions" | "facts" | "universe" | "exports",
     "at": <SourceMemento-as-JSON> | null,
     "seek": <boolean>,
     "workspace_root": "<string, absolute or kit-relative project root>"
@@ -103,6 +103,7 @@ perform the same work outside this verb.
 | `functions` | a `source_files` memento | a function's own memento | `payload.ir` entries (`BodyUniverseDto`), `kind="function-contract"`, plus synthesized nodes for functions that merely enclose a `kind="contract"` assertion with no contract of their own (Section 4) |
 | `call_sites` | a `functions` memento | a call site's own memento | `payload.ir` entries, `kind="contract"`, scoped by `source_function_name`. Wire audit stamps first-class `bridgeSourceSymbol` (`call:` / `method:` form, prefix preserved) decoded client-side as `CallSite.bridge_source_symbol` |
 | `assertions` | -- (seek only) | a call site's own memento | same `kind="contract"` item (1:1 with its call site — **factory truth**, Section 4); same `bridgeSourceSymbol` stamp as `call_sites` |
+| `exports` | `null` for scan, or `{"symbol":"<abi-name>"}` for seek | an export's source/artifact memento | typed native export metadata in `audit` and the existing `LinkerContract` in `payload`; a seek miss is a named gap, never an empty success |
 | `facts` | -- (seek only) | an assertion's own memento | the item's `inv` (else `post`) field, as the FOL payload |
 | `universe` | a file memento (`seek=false`: every universe in the file) | a call site's own memento (`seek=true`: the universe linked to that callsite) or a universe node's own memento | `payload.ir` entries, `kind="function-contract"` (body universes + operator builtin universes such as `len::builtin-universe`). Seek from a call site joins via `bridgeSourceSymbol` / FOL `call:`·`method:` ctor identity; missing link is a gap (`no universe sugar for callee <name>`). Node mementos stamp the batch `name` onto `function_name` so member keys survive `SourceMemento` round-trip. |
 
