@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -21,7 +21,25 @@ use sugar_ir_types::{IrFormula, IrTerm, Sort};
 // membrane (a future purification seam), add one.
 use sugar_walk::strip_realize_sidecar_from_lift_term;
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, info_span};
+
+fn transport_millis() -> u128 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis()
+}
+
+fn trace_frame(direction: &'static str, frame: &str, stage: &'static str) {
+    let value: Value = serde_json::from_str(frame.trim()).unwrap_or(Value::Null);
+    info!(
+        direction,
+        bytes = frame.len(),
+        message_id = ?value.get("id"),
+        method = ?value.get("method").and_then(|item| item.as_str()),
+        monotonic_ms = transport_millis(),
+        stage,
+        "lift-plugin transport frame"
+    );
+}
 
 use libsugar::core::primitives::address;
 use libsugar::core::traits::{Kit, KitError};
@@ -277,11 +295,27 @@ impl LiftPluginKit {
         let (initialize_response, response, mut child, mut stdin, _reader) =
             self.spawn_and_run_once(lift_params)?;
         let shutdown_req = json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"});
-        let _ = writeln!(stdin, "{shutdown_req}");
+        let shutdown_frame = format!("{shutdown_req}\n");
+        trace_frame("cli_to_kit", &shutdown_frame, "write_stdin.enter");
+        let _ = stdin.write_all(shutdown_frame.as_bytes());
+        let _ = stdin.flush();
         drop(stdin);
+        info!(
+            pid = child.id(),
+            monotonic_ms = transport_millis(),
+            stage = "wait.enter",
+            "lift-plugin blocking call"
+        );
         let status = child
             .wait()
             .map_err(|error| LiftPluginKitError::Failed(format!("wait lift plugin: {error}")))?;
+        info!(
+            pid = child.id(),
+            ?status,
+            monotonic_ms = transport_millis(),
+            stage = "wait.exit",
+            "lift-plugin process exit"
+        );
         if !status.success() {
             return Err(LiftPluginKitError::Failed(format!(
                 "lift plugin exited {status}"
@@ -320,7 +354,7 @@ impl LiftPluginKit {
         }
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::inherit());
+        cmd.stderr(Stdio::piped());
 
         let mut child = match cmd.spawn() {
             Ok(child) => child,
@@ -336,6 +370,39 @@ impl LiftPluginKit {
                 )));
             }
         };
+        info!(pid = child.id(), command = ?self.command, monotonic_ms = transport_millis(), stage = "spawn", "lift-plugin process spawn");
+        if let Some(stderr) = child.stderr.take() {
+            let pid = child.id();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stderr);
+                let mut buffer = [0_u8; 8192];
+                loop {
+                    match reader.read(&mut buffer) {
+                        Ok(0) => {
+                            info!(
+                                pid,
+                                monotonic_ms = transport_millis(),
+                                bytes = 0,
+                                stage = "stderr.eof",
+                                "lift-plugin child stderr drain"
+                            );
+                            break;
+                        }
+                        Ok(n) => info!(
+                            pid,
+                            monotonic_ms = transport_millis(),
+                            bytes = n,
+                            stage = "stderr.read",
+                            "lift-plugin child stderr drain"
+                        ),
+                        Err(error) => {
+                            info!(pid, %error, monotonic_ms = transport_millis(), stage = "stderr.error", "lift-plugin child stderr drain");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
 
         let mut stdin = child
             .stdin
@@ -358,9 +425,29 @@ impl LiftPluginKit {
                 "config_path": lift_params.get("config_path").cloned().unwrap_or_else(|| json!(".sugar/config.toml"))
             }
         });
-        writeln!(stdin, "{init_req}").map_err(|error| {
+        let init_frame = format!("{init_req}\n");
+        trace_frame("cli_to_kit", &init_frame, "write_stdin.enter");
+        stdin.write_all(init_frame.as_bytes()).map_err(|error| {
             LiftPluginKitError::Failed(format!("write lift initialize: {error}"))
         })?;
+        info!(
+            monotonic_ms = transport_millis(),
+            stage = "write_stdin.exit",
+            "lift-plugin blocking call"
+        );
+        info!(
+            monotonic_ms = transport_millis(),
+            stage = "stdin.flush.enter",
+            "lift-plugin buffer flush"
+        );
+        stdin.flush().map_err(|error| {
+            LiftPluginKitError::Failed(format!("flush lift initialize: {error}"))
+        })?;
+        info!(
+            monotonic_ms = transport_millis(),
+            stage = "stdin.flush.exit",
+            "lift-plugin buffer flush"
+        );
         let initialize_response = read_response(&mut reader, 1)?;
 
         let lift_req = json!({
@@ -369,8 +456,29 @@ impl LiftPluginKit {
             "method": self.lift_method,
             "params": lift_params
         });
-        writeln!(stdin, "{lift_req}")
+        let lift_frame = format!("{lift_req}\n");
+        trace_frame("cli_to_kit", &lift_frame, "write_stdin.enter");
+        stdin
+            .write_all(lift_frame.as_bytes())
             .map_err(|error| LiftPluginKitError::Failed(format!("write lift request: {error}")))?;
+        info!(
+            monotonic_ms = transport_millis(),
+            stage = "write_stdin.exit",
+            "lift-plugin blocking call"
+        );
+        info!(
+            monotonic_ms = transport_millis(),
+            stage = "stdin.flush.enter",
+            "lift-plugin buffer flush"
+        );
+        stdin
+            .flush()
+            .map_err(|error| LiftPluginKitError::Failed(format!("flush lift request: {error}")))?;
+        info!(
+            monotonic_ms = transport_millis(),
+            stage = "stdin.flush.exit",
+            "lift-plugin buffer flush"
+        );
         let response = read_response(&mut reader, 2)?;
 
         Ok((initialize_response, response, child, stdin, reader))
@@ -467,12 +575,35 @@ impl LiftPluginKit {
             "method": self.lift_method,
             "params": lift_params
         });
-        if let Err(error) = writeln!(entry.stdin, "{lift_req}") {
+        let lift_frame = format!("{lift_req}\n");
+        trace_frame("cli_to_kit", &lift_frame, "write_stdin.enter");
+        if let Err(error) = entry.stdin.write_all(lift_frame.as_bytes()) {
             guard.remove(&key);
             return Err(ResidentDispatchError::retry_after(format!(
                 "write lift request to resident: {error}"
             )));
         }
+        info!(
+            monotonic_ms = transport_millis(),
+            stage = "write_stdin.exit",
+            "lift-plugin blocking call"
+        );
+        info!(
+            monotonic_ms = transport_millis(),
+            stage = "stdin.flush.enter",
+            "lift-plugin buffer flush"
+        );
+        if let Err(error) = entry.stdin.flush() {
+            guard.remove(&key);
+            return Err(ResidentDispatchError::retry_after(format!(
+                "flush lift request to resident: {error}"
+            )));
+        }
+        info!(
+            monotonic_ms = transport_millis(),
+            stage = "stdin.flush.exit",
+            "lift-plugin buffer flush"
+        );
         match read_response(&mut entry.reader, id) {
             Ok(response) => Ok((initialize_response, response)),
             Err(error) => {
@@ -805,12 +936,28 @@ fn legacy_response_from_term(term: &Term) -> Result<&Value, LiftPluginKitError> 
 }
 
 fn read_response(reader: &mut impl BufRead, id: i64) -> Result<Value, LiftPluginKitError> {
+    let _span = info_span!("lift_plugin_read_response", message_id = id).entered();
     let mut line = String::new();
     trace_lift_transport_checkpoint("read_response.before_read_line", &Value::Null, 0);
+    info!(
+        direction = "kit_to_cli",
+        message_id = id,
+        monotonic_ms = transport_millis(),
+        stage = "read_line.enter",
+        "lift-plugin blocking call"
+    );
     let n = reader
         .read_line(&mut line)
         .map_err(|error| LiftPluginKitError::Failed(format!("read lift response: {error}")))?;
     trace_lift_transport_checkpoint("read_response.after_read_line", &Value::Null, n);
+    info!(
+        direction = "kit_to_cli",
+        bytes = n,
+        message_id = id,
+        monotonic_ms = transport_millis(),
+        stage = "read_line.exit",
+        "lift-plugin transport frame"
+    );
     if n == 0 {
         return Err(LiftPluginKitError::Failed(
             "lift plugin closed stdout before responding".to_string(),
