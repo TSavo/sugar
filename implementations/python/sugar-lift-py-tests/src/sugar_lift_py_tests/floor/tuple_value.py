@@ -119,7 +119,10 @@ class TupleValue(FloorValue):
         from sugar_lift_py_tests.floor.term_value import TermValue
 
         if type(other) is TermValue and type(other.value) is int:
-            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
+            from sugar_lift_py_tests.effect import (
+                SequenceRepetitionRuntimeEffect,
+                runtime_effect_witness,
+            )
             from sugar_lift_py_tests.outcome import Complete, Incomplete
 
             repeated = len(self.elements) * max(other.value, 0)
@@ -128,18 +131,27 @@ class TupleValue(FloorValue):
                     SequenceRepetitionRuntimeEffect(
                         "sequence repetition construction boundary: TupleValue "
                         f"would materialize {repeated} literal floor items; "
-                        f"site={site}"
+                        f"site={site}",
+                        witness=runtime_effect_witness(
+                            "py.sequence_repeat", other, site
+                        ),
                     )
                 )
             return Complete(TupleValue(self.elements * other.value))
         if type(other) is SymbolicValue:
-            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
+            from sugar_lift_py_tests.effect import (
+                SequenceRepetitionRuntimeEffect,
+                runtime_effect_witness,
+            )
             from sugar_lift_py_tests.outcome import Incomplete
 
             return Incomplete(
                 SequenceRepetitionRuntimeEffect(
                     "sequence repetition by symbolic count: TupleValue depends "
-                    f"on runtime __index__/length semantics; site={site}"
+                    f"on runtime __index__/length semantics; site={site}",
+                    witness=runtime_effect_witness(
+                        "py.sequence_repeat", other, site
+                    ),
                 )
             )
         return super().multiply(other, site)
