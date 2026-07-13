@@ -1043,17 +1043,9 @@ def test_effectful_display_conversion_refuses_without_fabricated_derived_fact(
 @pytest.mark.parametrize(
     ("seed_name", "truthful_rhs", "lying_rhs"),
     [
-        ("builder_ctor_len_return", 1, 2),
-        ("builtin_len_return", 3, 2),
-        ("constant_bytes_return", ("python:bytes", "78"), ("python:bytes", "79")),
-        ("divmod_subscript_return", 2, 3),
-        ("format_int_return", 5, 6),
-        ("object_equality_identity_return", False, True),
-        ("object_equality_return", True, False),
-        ("object_rich_compare_return", True, False),
-        ("to_list_len_return", 2, 3),
-        ("tuple_literal_subscript_return", 2, 3),
-        ("tuple_unpack_assign_return", 2, 1),
+        ("len_return", 3, 4),
+        ("subscript_return", 20, 21),
+        ("tuple_unpack_assign_return", 5, 6),
     ],
 )
 def test_literal_call_residue_rows_emit_derived_fact_and_refute_lie(
@@ -1062,6 +1054,7 @@ def test_literal_call_residue_rows_emit_derived_fact_and_refute_lie(
     truthful_rhs: object,
     lying_rhs: object,
 ) -> None:
+    # #4395: current catalog witnesses must retain explicit EUF residue teeth.
     seed = next(item for item in DEFAULT_SUGAR_WITNESS_SEEDS if item.name == seed_name)
 
     truthful = run_source_through_real_solver(
@@ -1122,7 +1115,7 @@ def test_solver_timeout_is_typed_not_logical_undecidable(
     seed = next(
         item
         for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "tuple_literal_subscript_return"
+        if item.name == "tuple_unpack_assign_return"
     )
     project = tmp_path / "solver-timeout"
     _stage_cli_project(project, seed.truthful.source)
