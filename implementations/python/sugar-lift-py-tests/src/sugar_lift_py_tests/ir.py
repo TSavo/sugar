@@ -119,7 +119,6 @@ class _ConstReal:
 class _Ctor:
     name: str
     args: Tuple["Term", ...]
-    symbol_kind: Optional[str] = None
 
 
 Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
@@ -127,15 +126,20 @@ Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
 _TERM_INTERN_TABLE: ContextVar[dict[Term, Term] | None] = ContextVar(
     "sugar_term_intern_table", default=None
 )
+_CONSTRUCTOR_SYMBOL_KINDS: ContextVar[dict[str, str] | None] = ContextVar(
+    "sugar_constructor_symbol_kinds", default=None
+)
 
 
 @contextmanager
 def term_intern_scope() -> Iterator[None]:
-    token = _TERM_INTERN_TABLE.set({})
+    intern_token = _TERM_INTERN_TABLE.set({})
+    symbols_token = _CONSTRUCTOR_SYMBOL_KINDS.set({})
     try:
         yield
     finally:
-        _TERM_INTERN_TABLE.reset(token)
+        _CONSTRUCTOR_SYMBOL_KINDS.reset(symbols_token)
+        _TERM_INTERN_TABLE.reset(intern_token)
 
 
 def _intern_term(term: Term) -> Term:
@@ -193,7 +197,34 @@ def ctor(
         symbol_kind = _EMITTER_OWNED_SYMBOL_KINDS.get(name)
     if symbol_kind is not None and symbol_kind not in _SYMBOL_KINDS:
         raise ValueError(f"unknown constructor symbol kind: {symbol_kind}")
-    return _intern_term(_Ctor(name, tuple(args), symbol_kind))
+    if symbol_kind is not None:
+        symbol_kinds = _CONSTRUCTOR_SYMBOL_KINDS.get()
+        if symbol_kinds is not None:
+            merge_constructor_symbol_kind(symbol_kinds, name, symbol_kind)
+    return _intern_term(_Ctor(name, tuple(args)))
+
+
+def constructor_symbol_kinds() -> dict[str, str]:
+    return dict(_CONSTRUCTOR_SYMBOL_KINDS.get() or {})
+
+
+def merge_constructor_symbol_kind(
+    symbol_kinds: dict[str, str], symbol: str, kind: str
+) -> None:
+    prior = symbol_kinds.get(symbol)
+    if prior is None or prior == kind:
+        symbol_kinds[symbol] = kind
+        return
+    refinable = {"coordinate", "method-coordinate", "contract-target"}
+    if prior in refinable and kind in refinable:
+        if "contract-target" in {prior, kind}:
+            symbol_kinds[symbol] = "contract-target"
+        elif "method-coordinate" in {prior, kind}:
+            symbol_kinds[symbol] = "method-coordinate"
+        return
+    raise ValueError(
+        f"constructor {symbol!r} has conflicting symbol kinds: {prior!r} and {kind!r}"
+    )
 
 
 def bvand(left: Term, right: Term) -> Term:
@@ -501,14 +532,13 @@ def term_to_value(t: Term) -> Value:
             ]
         )
     if isinstance(t, _Ctor):
-        fields = [
-            ("kind", vstr("ctor")),
-            ("name", vstr(t.name)),
-            ("args", varr([term_to_value(a) for a in t.args])),
-        ]
-        if t.symbol_kind is not None:
-            fields.append(("symbolKind", vstr(t.symbol_kind)))
-        return vobj(fields)
+        return vobj(
+            [
+                ("kind", vstr("ctor")),
+                ("name", vstr(t.name)),
+                ("args", varr([term_to_value(a) for a in t.args])),
+            ]
+        )
     raise TypeError(f"unknown Term: {type(t)!r}")
 
 

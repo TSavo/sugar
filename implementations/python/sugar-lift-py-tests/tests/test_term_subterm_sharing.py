@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sugar_lift_py_tests.canonicalizer import encode_jcs
+from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import (
     _ConstInt,
@@ -14,7 +14,9 @@ from sugar_lift_py_tests.ir import (
     Term,
     atomic,
     ctor,
+    constructor_symbol_kinds,
     term_to_value,
+    term_intern_scope,
 )
 from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
@@ -89,17 +91,68 @@ def test_interned_terms_are_immutable(monkeypatch) -> None:
         term.name = "mutated"  # type: ignore[misc]
 
 
-def test_constructor_symbol_kind_is_emitted_on_the_wire() -> None:
-    value = term_to_value(
-        ctor("call:vendor_open_name", [], symbol_kind="method-coordinate")
-    )
+def test_constructor_symbol_kind_does_not_change_term_identity_or_wire() -> None:
+    with term_intern_scope():
+        coordinate = ctor(
+            "call:vendor_open_name", [], symbol_kind="method-coordinate"
+        )
+    with term_intern_scope():
+        builtin = ctor("call:vendor_open_name", [], symbol_kind="builtin")
 
-    assert value["symbolKind"] == "method-coordinate"
+    assert coordinate == builtin
+    canonical = encode_jcs(term_to_value(coordinate))
+    assert canonical == encode_jcs(term_to_value(builtin))
+    assert canonical == '{"args":[],"kind":"ctor","name":"call:vendor_open_name"}'
+    assert blake3_512_of(canonical.encode()) == blake3_512_of(
+        b'{"args":[],"kind":"ctor","name":"call:vendor_open_name"}'
+    )
 
 
 def test_constructor_rejects_unknown_symbol_kind() -> None:
     with pytest.raises(ValueError, match="unknown constructor symbol kind"):
         ctor("call:anything", [], symbol_kind="guessed")
+
+
+def test_symbol_kind_testimony_is_a_payload_sidecar() -> None:
+    payload = LiftReportPayloadDto(
+        source_ledger={},
+        symbol_kinds={"call:vendor_open_name": "method-coordinate"},
+    )
+
+    assert payload.to_rpc()["symbolKinds"] == {
+        "call:vendor_open_name": "method-coordinate"
+    }
+
+
+def test_lift_collects_constructor_testimony_once_per_spelling(monkeypatch) -> None:
+    def audit_lift_file(source, filename, *, hold_panic):
+        del source, filename, hold_panic
+        ctor("call:vendor_open_name", [], symbol_kind="method-coordinate")
+        ctor("call:vendor_open_name", [], symbol_kind="method-coordinate")
+        return LiftReportPayloadDto(source_ledger={}), []
+
+    monkeypatch.setattr("sugar_lift_py_tests.lift_rpc.audit_lift_file", audit_lift_file)
+
+    payload = lift_file_payload("def f(): pass\n", "sidecar.py")
+
+    assert payload.symbol_kinds == {
+        "call:vendor_open_name": "method-coordinate"
+    }
+
+
+def test_contract_testimony_refines_coordinate_for_one_spelling() -> None:
+    with term_intern_scope():
+        coordinate = ctor(
+            "call:resolved_later", [], symbol_kind="method-coordinate"
+        )
+        contract = ctor(
+            "call:resolved_later", [], symbol_kind="contract-target"
+        )
+
+        assert coordinate is contract
+        assert constructor_symbol_kinds() == {
+            "call:resolved_later": "contract-target"
+        }
 
 
 def test_lift_construction_does_not_expand_the_term_dag_to_wire(monkeypatch) -> None:

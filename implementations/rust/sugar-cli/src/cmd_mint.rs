@@ -410,6 +410,7 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     // (coverage is a workspace census, not a bindings pass). Carry the first
     // non-empty coverage we see -- never clobber a populated report with absence.
     let mut merged_lift_coverage: Option<Value> = None;
+    let mut merged_symbol_kinds: BTreeMap<String, String> = BTreeMap::new();
     // Content-shape dedup keys (NOT names). See `canonical_dedup_key`.
     let mut seen_content: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut seen_implications: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -452,6 +453,20 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
                 let dedup_key = canonical_dedup_key(item);
                 if seen_content.insert(dedup_key) {
                     merged_ir.push(item.clone());
+                }
+            }
+        }
+        if let Some(entries) = entry.response.get("symbolKinds").and_then(Value::as_object) {
+            for (symbol, kind) in entries {
+                let kind = kind
+                    .as_str()
+                    .ok_or_else(|| format!("symbolKinds entry for `{symbol}` must be a string"))?;
+                if let Some(prior) = merged_symbol_kinds.insert(symbol.clone(), kind.to_string()) {
+                    if prior != kind {
+                        return Err(format!(
+                            "conflicting symbolKinds testimony for `{symbol}`: `{prior}` and `{kind}`"
+                        ));
+                    }
                 }
             }
         }
@@ -644,6 +659,10 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     }
     if let Some(coverage) = merged_lift_coverage {
         merged["liftCoverage"] = coverage;
+    }
+    if !merged_symbol_kinds.is_empty() {
+        merged["symbolKinds"] = serde_json::to_value(merged_symbol_kinds)
+            .expect("symbolKinds map is JSON-serializable");
     }
     Ok(merged)
 }

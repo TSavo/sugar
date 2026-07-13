@@ -1255,6 +1255,7 @@ struct LiftSourceReport {
     source_mementos: Vec<Value>,
     plan_mementos: Vec<Value>,
     contracts: Vec<Value>,
+    symbol_kinds: BTreeMap<String, String>,
     call_edges: Vec<Value>,
     vendor_conjoins: Vec<VendorConjoinReport>,
     project_root: Option<PathBuf>,
@@ -1874,6 +1875,21 @@ fn source_report_from_lift_response(
         .get("liftCoverage")
         .or_else(|| response.get("lift_coverage"))
         .cloned();
+    let symbol_kinds = response
+        .get("symbolKinds")
+        .and_then(Value::as_object)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|(symbol, kind)| {
+                    let kind = kind.as_str().unwrap_or_else(|| {
+                        panic!("report symbol kind testimony for `{symbol}` is not a string")
+                    });
+                    (symbol.clone(), kind.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     Ok(LiftSourceReport {
         ledger,
@@ -1886,6 +1902,7 @@ fn source_report_from_lift_response(
         source_mementos,
         plan_mementos,
         contracts,
+        symbol_kinds,
         call_edges,
         vendor_conjoins,
         project_root: None,
@@ -2072,6 +2089,7 @@ fn source_report_from_proof_pool(
         source_mementos,
         plan_mementos,
         contracts,
+        symbol_kinds: BTreeMap::new(),
         call_edges,
         vendor_conjoins: Vec::new(),
         project_root: None,
@@ -3255,6 +3273,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "sourceMementos": report.source_mementos,
         "planMementos": report.plan_mementos,
         "contracts": report.contracts,
+        "symbolKinds": report.symbol_kinds,
         "callEdges": report.call_edges,
         "vendorConjoins": vendor_conjoins_to_json(&report.vendor_conjoins),
         // Lift-side superposition: distinct candidate universes per method.
@@ -4855,7 +4874,7 @@ fn render_provenanced_fol_row(
     out.push_str("    symbols:\n");
     out.push_str("      out -> return\n");
     let formals = contract_formal_names(contract);
-    for (symbol, kind) in contract_formula_symbols(contract) {
+    for (symbol, kind) in contract_formula_symbols(contract, &report.symbol_kinds) {
         if symbol != "out" {
             out.push_str(&format!(
                 "      {symbol} -> {}\n",
@@ -4924,7 +4943,7 @@ fn render_provenanced_vendor_assertion_row(
     }
     out.push_str("    symbols:\n");
     let formals = contract_formal_names(contract);
-    for (symbol, kind) in contract_formula_symbols(contract) {
+    for (symbol, kind) in contract_formula_symbols(contract, &report.symbol_kinds) {
         let target = if symbol == "out" {
             "return".to_string()
         } else {
@@ -5086,7 +5105,10 @@ fn resolve_report_symbol(
     )
 }
 
-fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaSymbolKind> {
+fn contract_formula_symbols(
+    contract: &Value,
+    symbol_kinds: &BTreeMap<String, String>,
+) -> BTreeMap<String, ReportFormulaSymbolKind> {
     fn insert_symbol(
         symbols: &mut BTreeMap<String, ReportFormulaSymbolKind>,
         name: String,
@@ -5100,7 +5122,11 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
         }
     }
 
-    fn visit(value: &Value, symbols: &mut BTreeMap<String, ReportFormulaSymbolKind>) {
+    fn visit(
+        value: &Value,
+        symbols: &mut BTreeMap<String, ReportFormulaSymbolKind>,
+        symbol_kinds: &BTreeMap<String, String>,
+    ) {
         match value {
             Value::Object(object) => {
                 match object.get("kind").and_then(Value::as_str) {
@@ -5124,7 +5150,7 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
                                 || is_report_python_operator_constructor(name)
                             {
                                 for child in object.values() {
-                                    visit(child, symbols);
+                                    visit(child, symbols, symbol_kinds);
                                 }
                                 return;
                             }
@@ -5132,10 +5158,7 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
                                 .strip_prefix("call:")
                                 .or_else(|| name.strip_prefix("method:"))
                                 .unwrap_or(name);
-                            let symbol_kind = match object
-                                .get("symbolKind")
-                                .and_then(Value::as_str)
-                            {
+                            let symbol_kind = match symbol_kinds.get(name).map(String::as_str) {
                                 Some("coordinate") => ReportFormulaSymbolKind::Coordinate,
                                 Some("builtin") => ReportFormulaSymbolKind::Builtin,
                                 Some("contract-target") => ReportFormulaSymbolKind::ContractTarget,
@@ -5153,12 +5176,12 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
                     _ => {}
                 }
                 for child in object.values() {
-                    visit(child, symbols);
+                    visit(child, symbols, symbol_kinds);
                 }
             }
             Value::Array(values) => {
                 for child in values {
-                    visit(child, symbols);
+                    visit(child, symbols, symbol_kinds);
                 }
             }
             _ => {}
@@ -5167,7 +5190,7 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
     let mut symbols = BTreeMap::new();
     for field in ["post", "inv", "pre"] {
         if let Some(formula) = contract.get(field) {
-            visit(formula, &mut symbols);
+            visit(formula, &mut symbols, symbol_kinds);
         }
     }
     symbols
@@ -9398,6 +9421,7 @@ mod tests {
             source_mementos: vec![],
             plan_mementos: vec![],
             contracts: vec![],
+            symbol_kinds: BTreeMap::new(),
             call_edges: vec![],
             vendor_conjoins: vec![],
             project_root: None,
@@ -14334,6 +14358,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             source_mementos: vec![],
             plan_mementos: vec![],
             contracts: vec![],
+            symbol_kinds: BTreeMap::new(),
             call_edges: vec![],
             vendor_conjoins: vec![VendorConjoinReport {
                 call: "call:enc(\"def\")".to_string(),
@@ -15140,20 +15165,36 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "name": "owner", "kind": "function-contract", "formals": [],
             "post": {"kind": "atomic", "name": "=", "args": [
                 {"kind": "var", "name": "out"},
-                {"kind": "ctor", "name": "tuple", "symbolKind": "coordinate", "args": [
+                {"kind": "ctor", "name": "tuple", "args": [
                     {"kind": "ctor", "name": "call:vendor_open_name",
-                     "symbolKind": "method-coordinate", "args": []},
+                     "args": []},
                     {"kind": "ctor", "name": "call:another_open_name",
-                     "symbolKind": "coordinate", "args": []},
+                     "args": []},
                     {"kind": "ctor", "name": "call:external_open_name",
-                     "symbolKind": "builtin", "args": []},
+                     "args": []},
                     {"kind": "ctor", "name": "call:contract_open_name",
-                     "symbolKind": "contract-target", "args": []}
+                     "args": []}
                 ]}
             ]}
         });
         let mut report = minimal_source_report();
         report.contracts = vec![contract];
+        report.symbol_kinds = BTreeMap::from([
+            ("tuple".to_string(), "coordinate".to_string()),
+            (
+                "call:vendor_open_name".to_string(),
+                "method-coordinate".to_string(),
+            ),
+            (
+                "call:another_open_name".to_string(),
+                "coordinate".to_string(),
+            ),
+            ("call:external_open_name".to_string(), "builtin".to_string()),
+            (
+                "call:contract_open_name".to_string(),
+                "contract-target".to_string(),
+            ),
+        ]);
 
         let visual = render_report_visual(&report, None);
 
@@ -15216,7 +15257,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         });
 
         assert_eq!(
-            contract_formula_symbols(&contract),
+            contract_formula_symbols(&contract, &BTreeMap::new()),
             BTreeMap::from([
                 ("factor".to_string(), ReportFormulaSymbolKind::Variable),
                 ("out".to_string(), ReportFormulaSymbolKind::Variable),

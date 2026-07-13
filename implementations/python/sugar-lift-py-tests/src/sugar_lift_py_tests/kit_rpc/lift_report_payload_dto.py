@@ -31,6 +31,9 @@ class LiftReportPayloadDto:
         default_factory=list[SourceMementoDto]
     )
     source_ledger: dict[str, int] | None = None
+    # Presentation testimony about constructor spellings. This sidecar is
+    # deliberately outside `ir`: term bytes remain the CID preimage.
+    symbol_kinds: dict[str, str] = field(default_factory=dict[str, str])
     assertion_surface_audits: list[AssertionSurfaceAuditDto] = field(
         default_factory=list[AssertionSurfaceAuditDto]
     )
@@ -68,6 +71,7 @@ class LiftReportPayloadDto:
         out: dict[str, Any] = {
             "kind": "ir-document",
             "ir": [to_rpc_value(contract) for contract in self.ir],
+            "symbolKinds": to_rpc_value(self.symbol_kinds),
             "sourceLedger": to_rpc_value(source_ledger),
             "sourceAudits": [to_rpc_value(audit) for audit in self.source_audits],
             "sourceMementos": [

@@ -896,11 +896,11 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     walk rows rather than crashing the LSP -- hold_panic=False remains for
     callers that demand the loud abort.
     """
-    from sugar_lift_py_tests.ir import term_intern_scope
+    from sugar_lift_py_tests.ir import constructor_symbol_kinds, term_intern_scope
 
     with term_intern_scope():
         payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
-        return payload
+        return replace(payload, symbol_kinds=constructor_symbol_kinds())
 
 
 def _module_import_temporal(
@@ -2537,6 +2537,7 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                 # gap). callEdges ride on the source-lifted path below.
                 continue
             payload.ir.extend(file_payload.ir)
+            _merge_symbol_kinds(payload.symbol_kinds, file_payload.symbol_kinds)
             payload.call_edges.extend(file_payload.call_edges)
             payload.factory_walk.extend(file_payload.factory_walk)
             payload.factory_audits.extend(file_payload.factory_audits)
@@ -2572,6 +2573,15 @@ def _merge_source_ledger(
         return
     for key, value in incoming.items():
         current[key] = current.get(key, 0) + int(value)
+
+
+def _merge_symbol_kinds(
+    current: Dict[str, str], incoming: Dict[str, str]
+) -> None:
+    from sugar_lift_py_tests.ir import merge_constructor_symbol_kind
+
+    for symbol, kind in incoming.items():
+        merge_constructor_symbol_kind(current, symbol, kind)
 
 
 def _build_lift_coverage(
