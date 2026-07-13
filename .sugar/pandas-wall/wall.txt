@@ -1,0 +1,104 @@
+{"active_depth": 2, "elapsed_ms": 8.14, "error": "FACTORY PANIC: match(Sugar) { Some => cite_or_effect, None => panic!() }\nwrite more Floor for this Projection: owner=SubscriptSugar index blame=py.subscript observed=missing callsite body requested=force callsite floor fix=carry a factory-built body for callsite `py.subscript` or leave the bridge as axiomatic", "error_type": "FactoryPanic", "event": "error", "fingerprint": "SubscriptSugar|term|/home/tsavo/sugar/.sugar/pandas-wall/workspace/pandas/_config/config.py:150:11", "role": "term", "schema": "sugar.engine.log.v1", "sequence": 131, "site": "/home/tsavo/sugar/.sugar/pandas-wall/workspace/pandas/_config/config.py:150:11", "sugar": "SubscriptSugar", "thread_id": 131930592157824}
+{"active_depth": 1, "elapsed_ms": 8.259, "error": "FACTORY PANIC: match(Sugar) { Some => cite_or_effect, None => panic!() }\nwrite more Floor for this Projection: owner=SubscriptSugar index blame=py.subscript observed=missing callsite body requested=force callsite floor fix=carry a factory-built body for callsite `py.subscript` or leave the bridge as axiomatic", "error_type": "FactoryPanic", "event": "error", "fingerprint": "ReturnSugar|statement|/home/tsavo/sugar/.sugar/pandas-wall/workspace/pandas/_config/config.py:150:4", "role": "statement", "schema": "sugar.engine.log.v1", "sequence": 130, "site": "/home/tsavo/sugar/.sugar/pandas-wall/workspace/pandas/_config/config.py:150:4", "sugar": "ReturnSugar", "thread_id": 131930592157824}
+{"active_depth": 0, "elapsed_ms": 8.375, "error": "FACTORY PANIC: match(Sugar) { Some => cite_or_effect, None => panic!() }\nwrite more Floor for this Projection: owner=SubscriptSugar index blame=py.subscript observed=missing callsite body requested=force callsite floor fix=carry a factory-built body for callsite `py.subscript` or leave the bridge as axiomatic", "error_type": "FactoryPanic", "event": "error", "fingerprint": "BlockSugar|statement|/home/tsavo/sugar/.sugar/pandas-wall/workspace/pandas/_config/config.py:146:4", "role": "statement", "schema": "sugar.engine.log.v1", "sequence": 127, "site": "/home/tsavo/sugar/.sugar/pandas-wall/workspace/pandas/_config/config.py:146:4", "sugar": "BlockSugar", "thread_id": 131930592157824}
+Traceback (most recent call last):
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", line 2143, in <module>
+    main(sys.argv[1:])
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", line 2111, in main
+    _handle_lift(
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", line 1892, in _handle_lift
+    file_payload = lift_file_payload(handle.read(), path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", line 740, in lift_file_payload
+    payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", line 1059, in audit_lift_file
+    outcome = result.sugar.desugar(ctx)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/function_def_sugar.py", line 68, in desugar
+    return self._reduce_defaults(self.defaults, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/function_def_sugar.py", line 76, in _reduce_defaults
+    return head.reduce(ctx).and_then(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome/complete.py", line 33, in and_then
+    return step(self.value)
+           ^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/function_def_sugar.py", line 77, in <lambda>
+    lambda _value: self._reduce_defaults(tuple(rest), ctx)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/function_def_sugar.py", line 84, in _reduce_defaults
+    return self.body.reduce(scoped).and_then(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar_body/sugar_body.py", line 69, in reduce
+    return self.sugar.desugar(ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/block_sugar.py", line 53, in desugar
+    return Complete(BlockValue(self._collect(self.statements, ctx)))
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/block_sugar.py", line 94, in _collect
+    *outcome.follow(rest, lambda more: self._collect(more, next_ctx)),
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome/complete.py", line 21, in follow
+    return self.value.follow_rest(rest, reduce)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py", line 226, in follow_rest
+    return reduce(rest)
+           ^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/block_sugar.py", line 94, in <lambda>
+    *outcome.follow(rest, lambda more: self._collect(more, next_ctx)),
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/block_sugar.py", line 94, in _collect
+    *outcome.follow(rest, lambda more: self._collect(more, next_ctx)),
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome/complete.py", line 21, in follow
+    return self.value.follow_rest(rest, reduce)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py", line 226, in follow_rest
+    return reduce(rest)
+           ^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/block_sugar.py", line 94, in <lambda>
+    *outcome.follow(rest, lambda more: self._collect(more, next_ctx)),
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/block_sugar.py", line 87, in _collect
+    outcome = head.reduce(ctx)
+              ^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar_body/sugar_body.py", line 69, in reduce
+    return self.sugar.desugar(ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/return_sugar.py", line 48, in desugar
+    return self.value.reduce(ctx).and_then(
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar_body/sugar_body.py", line 69, in reduce
+    return self.sugar.desugar(ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/subscript_sugar.py", line 57, in desugar
+    return self.receiver.reduce(ctx).and_then(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome/complete.py", line 33, in and_then
+    return step(self.value)
+           ^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/subscript_sugar.py", line 58, in <lambda>
+    lambda receiver: self.index.reduce(ctx).and_then(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome/complete.py", line 33, in and_then
+    return step(self.value)
+           ^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/subscript_sugar.py", line 59, in <lambda>
+    lambda index: self._subscript(receiver, index, ctx)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/subscript_sugar.py", line 77, in _subscript
+    index = force_floor(index, ctx, owner="SubscriptSugar index")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py", line 492, in force_floor
+    return value.force_floor(
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py", line 427, in force_floor
+    _force_floor_gap(
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py", line 559, in _force_floor_gap
+    factory_panic(
+  File "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/factory_gap.py", line 39, in factory_panic
+    raise FactoryPanic(info, audit_row)
+sugar_lift_py_tests.factory.factory_gap.FactoryPanic: FACTORY PANIC: match(Sugar) { Some => cite_or_effect, None => panic!() }
+write more Floor for this Projection: owner=SubscriptSugar index blame=py.subscript observed=missing callsite body requested=force callsite floor fix=carry a factory-built body for callsite `py.subscript` or leave the bridge as axiomatic
+[1m[31merror[39m[0m: lift plugin diagnostic kind=transport frontend=sugar-cli::lift_plugin input_format=lift-plugin-json-rpc-v1 path=lift-plugin.transport: lift plugin closed stdout before responding; fix=Inspect the lifter command, stdout/stderr, and JSON-RPC framing; keep failures as LiftPluginDiagnosticPayload, not a bare string.

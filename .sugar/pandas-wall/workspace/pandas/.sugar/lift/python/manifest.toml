@@ -1,0 +1,11 @@
+name = "python-audit-lift"
+version = "0.1.0"
+protocol_version = "pep/1.7.0"
+kind = "lift"
+command = ["/usr/bin/python3", "/home/tsavo/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", "--rpc"]
+working_dir = "/home/tsavo/sugar"
+
+[capabilities]
+authoring_surfaces = ["python"]
+ir_version = "v1.1.0"
+emits_signed_mementos = false
