@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests import lift_rpc
+from sugar_lift_py_tests.factory import factory_panic_gap
 
 FIXTURE_SOURCE = """\
 def add(a, b):
@@ -92,6 +93,67 @@ def test_recovered_audit_tree_fold_matches_monolithic_bytes(project) -> None:
     assert json.dumps(actual, separators=(",", ":")) == json.dumps(
         expected, separators=(",", ":")
     )
+
+
+def test_file_seed_panic_attaches_once_to_owning_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = """\
+from fixture_module import VALUE
+
+def first():
+    return VALUE
+
+def second():
+    return VALUE
+
+def third():
+    return VALUE
+"""
+    (tmp_path / "seeded.py").write_text(source, encoding="utf-8")
+
+    def panic_resolver(import_target, ctx):
+        del import_target, ctx
+        factory_panic_gap(
+            owner="enumeration-seed-fixture",
+            blame="seeded.py:1:0",
+            observed="VALUE",
+            requested="resolved import value",
+            fix="attach the file seed panic to its owning node exactly once",
+        )
+
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.sugar.install_source_dig.resolve_install_source_value",
+        panic_resolver,
+    )
+    lift_rpc._AUDIT_FILE_CONTEXTS.clear()
+    file_key = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    definitions = _enumerate(
+        "functions", tmp_path, at=file_key, options={"auditFrontier": True}
+    )["nodes"]
+    assert len(definitions) == 4, "one module owner plus three definitions"
+
+    panics = []
+    for definition in definitions:
+        # Rust SourceMemento::to_json preserves the qualified source spelling
+        # but deliberately does not emit the Python-only `function_name` alias.
+        at = dict(definition["memento"])
+        at.pop("function_name", None)
+        leaf = _enumerate(
+            "facts",
+            tmp_path,
+            at=at,
+            seek=True,
+            options={"auditFrontier": True},
+        )["nodes"][0]["audit"]
+        panics.extend(leaf["panics"])
+
+    owned = [
+        panic
+        for panic in panics
+        if panic["gap"]["owner"] == "enumeration-seed-fixture"
+    ]
+    assert len(owned) == 1, owned
 
 
 def test_audit_context_is_parsed_once_per_file_cid_and_mutation_misses(
@@ -381,8 +443,40 @@ def test_universe_scan_lists_function_contract_rows(project: Path) -> None:
     assert result["gaps"] == []
 
 
+def test_callable_universe_identity_uses_content_and_qualified_spelling(
+    tmp_path: Path,
+) -> None:
+    source = "def add(a, b):\n    return a + b\n"
+    (tmp_path / "module_a.py").write_text(source, encoding="utf-8")
+    (tmp_path / "module_b.py").write_text(source, encoding="utf-8")
+    files = {
+        node["memento"]["file"]: node["memento"]
+        for node in _enumerate("source_files", tmp_path)["nodes"]
+    }
+
+    def identity(file_name: str):
+        nodes = _enumerate("universe", tmp_path, at=files[file_name])["nodes"]
+        assert len(nodes) == 1, nodes
+        memento = nodes[0]["memento"]
+        return (
+            memento["source_cid"],
+            memento.get("function_name")
+            or memento.get("source_function_name")
+            or memento.get("sourceFunctionName"),
+        )
+
+    module_a_once = identity("module_a.py")
+    module_b_once = identity("module_b.py")
+    module_a_twice = identity("module_a.py")
+
+    assert module_a_once != module_b_once
+    assert module_a_once == module_a_twice
+    assert module_a_once[1] == "module_a.add"
+    assert module_b_once[1] == "module_b.add"
+
+
 def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
-    """CallSite-style seek: call:add → mathy::add::callable universe."""
+    """CallSite-style seek: call:add → qualified mathy.add universe."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     functions = {
         n["memento"].get("function_name")
@@ -396,6 +490,40 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     assert len(result["nodes"]) == 1
     node = result["nodes"][0]
     name = (node["audit"] or {}).get("name") or node["memento"].get("function_name")
-    assert name and "callable" in name
+    assert name == "mathy.add"
     assert node["memento"].get("function_name") == name
     assert result["gaps"] == []
+
+
+def test_universe_seek_refuses_ambiguous_leaf_bridge(tmp_path: Path) -> None:
+    source = """\
+class A:
+    def add(self, value):
+        return value + 1
+
+class B:
+    def add(self, value):
+        return value + 2
+
+def test_add():
+    assert add(1) == 2
+"""
+    (tmp_path / "ambiguous.py").write_text(source, encoding="utf-8")
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
+        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
+    }
+    call_site_memento = _enumerate(
+        "call_sites", tmp_path, at=functions["test_add"]
+    )["nodes"][0]["memento"]
+
+    result = _enumerate("universe", tmp_path, at=call_site_memento, seek=True)
+
+    assert result["nodes"] == []
+    assert len(result["gaps"]) == 1
+    reason = result["gaps"][0]["reason"]
+    assert "ambiguous universe sugar for callee call:add" in reason
+    assert "ambiguous.A.add" in reason
+    assert "ambiguous.B.add" in reason

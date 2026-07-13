@@ -823,6 +823,37 @@ def _memento_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
     return True
 
 
+def _call_site_seek_matches(
+    candidate: Dict[str, Any], target: Dict[str, Any]
+) -> bool:
+    """Match a typed call-site cursor by its durable source locus.
+
+    Rust ``SourceMemento`` stores one function spelling. Decoding a call-site
+    wire memento selects its source owner, so the assertion-only
+    ``function_name`` alias is not available when that cursor is emitted again.
+    File + span + source CID remain the complete call-site address.
+    """
+    locus = dict(target)
+    locus.pop("function_name", None)
+    locus.pop("sourceFunctionName", None)
+    locus.pop("source_function_name", None)
+    return _memento_matches(candidate, locus)
+
+
+def _universe_bridge_matches(candidate: Any, call_site_bridge: str) -> bool:
+    """Whether a callable universe is the target of this call-site bridge."""
+    if not isinstance(candidate, str):
+        return False
+    if candidate == call_site_bridge:
+        return True
+    _, separator, spelling = call_site_bridge.partition(":")
+    return bool(
+        separator
+        and spelling
+        and (candidate == spelling or candidate.endswith(f".{spelling}"))
+    )
+
+
 def _lift_file_for_enumeration(
     workspace_root: str, root: Path, file_rel: str
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -1081,6 +1112,17 @@ def _module_import_maps(module) -> "tuple[dict, dict]":
                 bound = asname or name
                 from_imports[bound] = (mod, name)
     return import_aliases, from_imports
+
+
+def _qualified_callable_spelling(filename: str, callable_name: str) -> str:
+    """Content-independent callable spelling rooted at its Python module."""
+    module_parts = list(Path(filename).with_suffix("").parts)
+    if module_parts and module_parts[-1] == "__init__":
+        module_parts.pop()
+    module = ".".join(part for part in module_parts if part not in ("", "."))
+    if not module or callable_name == module or callable_name.startswith(f"{module}."):
+        return callable_name
+    return f"{module}.{callable_name}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1345,9 +1387,14 @@ def audit_lift_file(
     seed_panics = audit_context.seed_panics
     module_assertions = audit_context.module_assertions
     module_temporal = audit_context.module_temporal
-    target_is_module = bool(
-        target_memento and target_memento.get("function_name") == "<module>"
+    target_owner = (
+        target_memento.get("function_name")
+        or target_memento.get("sourceFunctionName")
+        or target_memento.get("source_function_name")
+        if target_memento
+        else None
     )
+    target_is_module = target_owner == "<module>"
     for label, panic in (
         (seed_panics or ()) if target_memento is None or target_is_module else ()
     ):
@@ -1472,9 +1519,11 @@ def audit_lift_file(
                 owner = _definition_class_owner(module, stmt)
                 if owner is not None:
                     value = dataclasses.replace(value, name=f"{owner}.{value.name}")
-                    _qualify_factory_walk_owner(
-                        payload.factory_walk, walk_start, value.name
-                    )
+                qualified_name = _qualified_callable_spelling(filename, value.name)
+                value = dataclasses.replace(value, name=qualified_name)
+                _qualify_factory_walk_owner(
+                    payload.factory_walk, walk_start, qualified_name
+                )
             def_memento = dataclasses.replace(
                 stmt.memento(),
                 source_function_name=value.name,
@@ -2273,7 +2322,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         if item.get("kind") != "contract":
                             continue
                         memento = _item_memento(item)
-                        if memento is not None and _memento_matches(memento, at):
+                        if memento is not None and _call_site_seek_matches(memento, at):
                             call_item = item
                             break
                     if call_item is not None:
@@ -2286,28 +2335,48 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         fol_sym = _contract_bridge_identity(call_item)
                         if fol_sym is not None and fol_sym not in candidates:
                             candidates.append(fol_sym)
-                        matched = None
-                        matched_bridge = None
+                        matches: Dict[tuple[Any, Any], Dict[str, Any]] = {}
                         for bridge in candidates:
                             for universe_item in universe_items:
-                                if universe_item.get("bridgeSourceSymbol") == bridge:
-                                    matched = universe_item
-                                    matched_bridge = bridge
-                                    break
-                            if matched is not None:
-                                break
-                        if matched is not None:
+                                if _universe_bridge_matches(
+                                    universe_item.get("bridgeSourceSymbol"), bridge
+                                ):
+                                    memento = _item_memento(universe_item) or {}
+                                    identity = (
+                                        memento.get("source_cid")
+                                        or memento.get("sourceCid"),
+                                        universe_item.get("name")
+                                        or universe_item.get("bridgeSourceSymbol"),
+                                    )
+                                    matches[identity] = universe_item
+                        if len(matches) == 1:
+                            matched = next(iter(matches.values()))
                             _send_enumerate_result(
                                 msg_id,
                                 [_universe_node_from_item(matched, file_rel)],
                                 [],
                             )
                             return
-                        callee = (
-                            matched_bridge
-                            if matched_bridge
-                            else (candidates[0] if candidates else "unknown")
-                        )
+                        callee = candidates[0] if candidates else "unknown"
+                        if len(matches) > 1:
+                            qualified = sorted(
+                                str(item.get("name") or item.get("bridgeSourceSymbol"))
+                                for item in matches.values()
+                            )
+                            _send_enumerate_result(
+                                msg_id,
+                                [],
+                                [
+                                    {
+                                        "memento": at,
+                                        "reason": (
+                                            "ambiguous universe sugar for callee "
+                                            f"{callee}; candidates=[{', '.join(qualified)}]"
+                                        ),
+                                    }
+                                ],
+                            )
+                            return
                         _send_enumerate_result(
                             msg_id,
                             [],

@@ -616,6 +616,39 @@ fn enumerate_callsite_assertion_is_factory_one_to_one() {
 /// Fixture already carries both sides: `call:add` / `call:len` are covered;
 /// `method:count` has no universe sugar (gap names `call:count` via FOL join).
 #[test]
+fn enumerate_seek_from_call_site_memento_returns_exactly_one_universe() {
+    if !python_blake3_available() {
+        eprintln!("python3/blake3 not on PATH: skipping enumerate completeness test");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+
+    let mut matching_sites = 0usize;
+    let mut universes = 0usize;
+    for file in kit.source_files(&project).expect("source_files") {
+        for function in file.functions().expect("functions") {
+            for call_site in function.call_sites().expect("call_sites") {
+                if call_site.bridge_source_symbol() != Some("call:add") {
+                    continue;
+                }
+                matching_sites += 1;
+                universes += usize::from(
+                    call_site
+                        .universe()
+                        .expect("universe seek from call_site memento")
+                        .is_some(),
+                );
+            }
+        }
+    }
+
+    assert_eq!(matching_sites, 1, "fixture ground truth: one call:add site");
+    assert_eq!(universes, 1, "call_site seek must return exactly one universe");
+}
+
+#[test]
 fn enumerate_universe_gap_names_callee_without_coverage() {
     if !python_blake3_available() {
         eprintln!("python3/blake3 not on PATH: skipping enumerate completeness test");
