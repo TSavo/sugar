@@ -27,7 +27,6 @@ class AnnotationUnionSugar(Sugar, role=SugarRole.TERM):
         return (
             site.observed == "BinOp"
             and site.operator_kind() == "BitOr"
-            and site.source is not None
             and site.is_within_annotation()
         )
 

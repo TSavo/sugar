@@ -46,6 +46,57 @@ def test_annotation_union_builds_the_native_union_coordinate() -> None:
     )
 
 
+def test_sourceless_annassign_carries_annotation_position_testimony() -> None:
+    statement = ast.parse("value: int | str").body[0]
+    site = SourceFragment.from_node(statement, "installed.py")
+    annotation = site.annassign_annotation()
+    ctx = FactoryBuildContext(filename="installed.py", catalog=default_catalog())
+
+    result = build_node(
+        annotation, filename="installed.py", role=SugarRole.TERM, ctx=ctx
+    )
+
+    assert result.audit_row.selected == "AnnotationUnionSugar"
+    assert complete_value(result.sugar.desugar(ctx), owner="test") == SymbolicValue(
+        ctor(
+            "|",
+            [
+                ctor("python:type", [str_const("int")]),
+                ctor("python:type", [str_const("str")]),
+            ],
+        )
+    )
+
+
+def test_sourceless_nested_annassign_union_marks_the_whole_annotation_tree() -> None:
+    statement = ast.parse("value: int | str | bytes").body[0]
+    site = SourceFragment.from_node(statement, "installed.py")
+    annotation = site.annassign_annotation()
+    ctx = FactoryBuildContext(filename="installed.py", catalog=default_catalog())
+
+    result = build_node(
+        annotation, filename="installed.py", role=SugarRole.TERM, ctx=ctx
+    )
+
+    assert result.audit_row.selected == "AnnotationUnionSugar"
+    assert result.sugar.left.sugar.__class__.__name__ == "AnnotationUnionSugar"
+    assert complete_value(result.sugar.desugar(ctx), owner="test") == SymbolicValue(
+        ctor(
+            "|",
+            [
+                ctor(
+                    "|",
+                    [
+                        ctor("python:type", [str_const("int")]),
+                        ctor("python:type", [str_const("str")]),
+                    ],
+                ),
+                ctor("python:type", [str_const("bytes")]),
+            ],
+        )
+    )
+
+
 def test_annotation_union_discriminator_runs_both_process_arms() -> None:
     tests_dir = Path(__file__).resolve().parent
     src_dir = tests_dir.parent / "src"
@@ -96,6 +147,50 @@ assert value.term == {expected}
     assert lying.returncode == 1, lying.stderr
 
 
+def test_sourceless_annotation_discriminator_runs_both_process_arms() -> None:
+    tests_dir = Path(__file__).resolve().parent
+    src_dir = tests_dir.parent / "src"
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join((str(tests_dir), str(src_dir))),
+    }
+
+    def run(expected_right: str) -> subprocess.CompletedProcess[str]:
+        script = f"""\
+import ast
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.outcome import complete_value
+
+statement = ast.parse("value: int | str").body[0]
+site = SourceFragment.from_node(statement, "installed.py").annassign_annotation()
+ctx = FactoryBuildContext(filename="installed.py", catalog=default_catalog())
+value = complete_value(
+    build_node(site, filename="installed.py", role=SugarRole.TERM, ctx=ctx).sugar.desugar(ctx),
+    owner="test",
+)
+assert value.term == ctor(
+    "|",
+    [ctor("python:type", [str_const("int")]), ctor("python:type", [str_const({expected_right!r})])],
+)
+"""
+        return subprocess.run(
+            [sys.executable, "-c", script],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+
+    truthful = run("str")
+    lying = run("bytes")
+    assert truthful.returncode == 0, truthful.stderr
+    assert lying.returncode == 1, lying.stderr
+
+
 def test_annotation_and_runtime_bit_or_have_disjoint_factory_owners() -> None:
     catalog = default_catalog()
     annotation = _union_site(
@@ -111,3 +206,13 @@ def test_annotation_and_runtime_bit_or_have_disjoint_factory_owners() -> None:
         candidate.name
         for candidate in catalog.candidates_for(SugarRole.TERM, runtime)
     ] == ["RuntimeBitwiseOpSugar"]
+
+
+def test_sourceless_runtime_bit_or_stays_unowned_and_loud() -> None:
+    catalog = default_catalog()
+    runtime = SourceFragment.from_node(
+        ast.parse("x | y", mode="eval").body,
+        "installed.py",
+    )
+
+    assert catalog.candidates_for(SugarRole.TERM, runtime) == []

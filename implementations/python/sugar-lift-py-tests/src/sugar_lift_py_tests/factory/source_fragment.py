@@ -26,6 +26,13 @@ def _dotted_expr_name(node: ast.AST) -> str | None:
     return None
 
 
+def _mark_annotation_subtree(node: ast.AST) -> ast.AST:
+    """Carry parent-stated annotation context with every descendant node."""
+    for descendant in ast.walk(node):
+        descendant._sugar_annotation_context = True  # type: ignore[attr-defined]
+    return node
+
+
 @dataclass(frozen=True)
 class SourceFragment:
     """A fragment of source -- the one object the factory uses to talk to the AST.
@@ -162,6 +169,8 @@ class SourceFragment:
 
     def is_within_annotation(self) -> bool:
         """Whether this exact source node is nested under a Python annotation."""
+        if getattr(self.node, "_sugar_annotation_context", False):
+            return True
         if self.source is None:
             return False
         try:
@@ -1140,7 +1149,8 @@ class SourceFragment:
     def annassign_annotation(self) -> "SourceFragment":
         """Return a SourceFragment for the annotation of an AnnAssign node."""
         self._require(ast.AnnAssign)
-        return SourceFragment.from_node(self.node.annotation, self.filename, source=self.source)  # type: ignore[attr-defined]
+        annotation = _mark_annotation_subtree(self.node.annotation)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(annotation, self.filename, source=self.source)
 
     def annassign_value(self) -> "SourceFragment | None":
         """Return a SourceFragment for the optional value of an AnnAssign, or None."""
