@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
+import time
 from typing import Any
 
 from .assertion_surface_audit_dto import AssertionSurfaceAuditDto
@@ -20,6 +22,8 @@ from .open_lane_dto import (
 from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
 from sugar_lift_py_tests.idd.lift_coverage_census import SourceFactoryConservation
+
+_TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 
 
 @dataclass(frozen=True)
@@ -68,9 +72,22 @@ class LiftReportPayloadDto:
         source_ledger = self.source_ledger or _default_source_ledger(
             len(self.source_mementos)
         )
+        ir = []
+        for index, contract in enumerate(self.ir):
+            started = time.monotonic()
+            ir.append(to_rpc_value(contract))
+            _TRANSPORT_LOG.info(
+                "payload_to_rpc_row",
+                extra={
+                    "stage": "lift.workspace.to_rpc.ir",
+                    "index": index,
+                    "total": len(self.ir),
+                    "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                },
+            )
         out: dict[str, Any] = {
             "kind": "ir-document",
-            "ir": [to_rpc_value(contract) for contract in self.ir],
+            "ir": ir,
             "symbolKinds": to_rpc_value(self.symbol_kinds),
             "sourceLedger": to_rpc_value(source_ledger),
             "sourceAudits": [to_rpc_value(audit) for audit in self.source_audits],

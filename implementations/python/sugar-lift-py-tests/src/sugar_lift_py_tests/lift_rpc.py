@@ -2787,6 +2787,19 @@ def _build_lift_coverage(
             "contracts": len(payload.ir),
         },
     )
+    projected_ir = []
+    for contract_index, item in enumerate(payload.ir):
+        row_started = time.monotonic()
+        projected_ir.append(to_rpc_value(item))
+        _TRANSPORT_LOG.info(
+            "coverage_projection_row",
+            extra={
+                "stage": "lift.coverage.payload_projection.ir",
+                "index": contract_index,
+                "total": len(payload.ir),
+                "elapsed_ms": round((time.monotonic() - row_started) * 1000, 3),
+            },
+        )
     interim = {
         "sourceAudits": [to_rpc_value(a) for a in payload.source_audits],
         "sourceMementos": [to_rpc_value(m) for m in payload.source_mementos],
@@ -2796,7 +2809,7 @@ def _build_lift_coverage(
         "diagnostics": [to_rpc_value(d) for d in payload.diagnostics],
         "sourceLedger": to_rpc_value(payload.source_ledger or {}),
         # Minority projection joins function-contract rows to call_edges.
-        "ir": [to_rpc_value(item) for item in payload.ir],
+        "ir": projected_ir,
         "callEdges": [to_rpc_value(edge) for edge in payload.call_edges],
         # Doctrine: factory instrument engagement must be visible to coverage
         # accounting so unimplemented becomes a loud gap, never silent (#4016).
