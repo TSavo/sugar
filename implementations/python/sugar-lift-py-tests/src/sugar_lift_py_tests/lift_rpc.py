@@ -1200,6 +1200,7 @@ def audit_lift_file(
                 role=root_role,
                 audit_row=result.audit_row,
             )
+            walk_start = len(payload.factory_walk)
             payload.factory_walk.extend(root.factory_walk_rows())
             outcome = result.sugar.desugar(ctx)
             if recover_panics:
@@ -1227,12 +1228,19 @@ def audit_lift_file(
                     )
                     continue
             value = complete_value(outcome, owner="lift_file_payload")
-            from sugar_lift_py_tests.floor import FunctionCallable
+            from sugar_lift_py_tests.floor import FunctionCallable, UniverseValue
 
             if isinstance(value, FunctionCallable):
                 # A def statement constructs and binds a callable. It is not a
                 # body universe and therefore mints no function-contract row.
                 continue
+            if isinstance(value, UniverseValue):
+                owner = _definition_class_owner(module, stmt)
+                if owner is not None:
+                    value = dataclasses.replace(value, name=f"{owner}.{value.name}")
+                    _qualify_factory_walk_owner(
+                        payload.factory_walk, walk_start, value.name
+                    )
             def_memento = dataclasses.replace(
                 stmt.memento(),
                 source_function_name=value.name,
@@ -1313,6 +1321,49 @@ def audit_lift_file(
             suppressed_descendants=suppressed_descendants,
         )
     return payload, gaps
+
+
+def _definition_class_owner(module, definition) -> str | None:
+    """Qualified lexical class owner for a discovered definition, if any."""
+
+    def search(class_site, prefix: str) -> str | None:
+        qualified = f"{prefix}.{class_site.class_name()}" if prefix else class_site.class_name()
+        for item in class_site.class_body():
+            if item.node is definition.node:
+                return qualified
+            if item.observed == "ClassDef":
+                found = search(item, qualified)
+                if found is not None:
+                    return found
+        return None
+
+    for statement in module.statements():
+        if statement.observed != "ClassDef":
+            continue
+        found = search(statement, "")
+        if found is not None:
+            return found
+    return None
+
+
+def _qualify_factory_walk_owner(rows, start: int, qualified_name: str) -> None:
+    """Stamp the class-qualified definition identity on this root's audit rows."""
+    from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
+
+    for index in range(start, len(rows)):
+        row = rows[index]
+        memento = row.source_memento
+        if isinstance(memento, SourceMementoDto):
+            memento = dataclasses.replace(
+                memento, source_function_name=qualified_name
+            )
+        elif isinstance(memento, dict):
+            memento = {
+                **memento,
+                "source_function_name": qualified_name,
+                "sourceFunctionName": qualified_name,
+            }
+        rows[index] = dataclasses.replace(row, source_memento=memento)
 
 
 def _factory_walk_red_from_gap(gap: AuditOnlyGap):
