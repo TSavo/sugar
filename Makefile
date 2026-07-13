@@ -226,7 +226,7 @@ test-python: build-python
 	(cd implementations/python/sugar-lift-py-tests && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
-		python -m pip install --quiet -e . pytest numpy pandas scikit-learn pyright==1.1.411 && \
+		python -m pip install --quiet -e '.[test]' numpy pandas scikit-learn && \
 		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-py-tests"; \
 	(cd implementations/python/sugar-emit-python-pytest && \
 		python3 -m venv .venv && \
