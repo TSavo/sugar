@@ -847,7 +847,11 @@ def _universe_bridge_matches(candidate: Any, call_site_bridge: str) -> bool:
     if candidate == call_site_bridge:
         return True
     _, separator, spelling = call_site_bridge.partition(":")
-    return bool(separator and spelling and candidate == spelling)
+    return bool(
+        separator
+        and spelling
+        and (candidate == spelling or candidate.endswith(f".{spelling}"))
+    )
 
 
 def _lift_file_for_enumeration(
@@ -1108,6 +1112,17 @@ def _module_import_maps(module) -> "tuple[dict, dict]":
                 bound = asname or name
                 from_imports[bound] = (mod, name)
     return import_aliases, from_imports
+
+
+def _qualified_callable_spelling(filename: str, callable_name: str) -> str:
+    """Content-independent callable spelling rooted at its Python module."""
+    module_parts = list(Path(filename).with_suffix("").parts)
+    if module_parts and module_parts[-1] == "__init__":
+        module_parts.pop()
+    module = ".".join(part for part in module_parts if part not in ("", "."))
+    if not module or callable_name == module or callable_name.startswith(f"{module}."):
+        return callable_name
+    return f"{module}.{callable_name}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1504,9 +1519,11 @@ def audit_lift_file(
                 owner = _definition_class_owner(module, stmt)
                 if owner is not None:
                     value = dataclasses.replace(value, name=f"{owner}.{value.name}")
-                    _qualify_factory_walk_owner(
-                        payload.factory_walk, walk_start, value.name
-                    )
+                qualified_name = _qualified_callable_spelling(filename, value.name)
+                value = dataclasses.replace(value, name=qualified_name)
+                _qualify_factory_walk_owner(
+                    payload.factory_walk, walk_start, qualified_name
+                )
             def_memento = dataclasses.replace(
                 stmt.memento(),
                 source_function_name=value.name,

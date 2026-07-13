@@ -443,8 +443,40 @@ def test_universe_scan_lists_function_contract_rows(project: Path) -> None:
     assert result["gaps"] == []
 
 
+def test_callable_universe_identity_uses_content_and_qualified_spelling(
+    tmp_path: Path,
+) -> None:
+    source = "def add(a, b):\n    return a + b\n"
+    (tmp_path / "module_a.py").write_text(source, encoding="utf-8")
+    (tmp_path / "module_b.py").write_text(source, encoding="utf-8")
+    files = {
+        node["memento"]["file"]: node["memento"]
+        for node in _enumerate("source_files", tmp_path)["nodes"]
+    }
+
+    def identity(file_name: str):
+        nodes = _enumerate("universe", tmp_path, at=files[file_name])["nodes"]
+        assert len(nodes) == 1, nodes
+        memento = nodes[0]["memento"]
+        return (
+            memento["source_cid"],
+            memento.get("function_name")
+            or memento.get("source_function_name")
+            or memento.get("sourceFunctionName"),
+        )
+
+    module_a_once = identity("module_a.py")
+    module_b_once = identity("module_b.py")
+    module_a_twice = identity("module_a.py")
+
+    assert module_a_once != module_b_once
+    assert module_a_once == module_a_twice
+    assert module_a_once[1] == "module_a.add"
+    assert module_b_once[1] == "module_b.add"
+
+
 def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
-    """CallSite-style seek: call:add → mathy::add::callable universe."""
+    """CallSite-style seek: call:add → qualified mathy.add universe."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     functions = {
         n["memento"].get("function_name")
@@ -458,6 +490,6 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     assert len(result["nodes"]) == 1
     node = result["nodes"][0]
     name = (node["audit"] or {}).get("name") or node["memento"].get("function_name")
-    assert name and "callable" in name
+    assert name == "mathy.add"
     assert node["memento"].get("function_name") == name
     assert result["gaps"] == []
