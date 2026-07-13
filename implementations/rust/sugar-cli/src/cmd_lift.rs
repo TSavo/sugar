@@ -3788,6 +3788,25 @@ fn group_contracts_for_universe_visual(contracts: &[Value]) -> Vec<VisualUnivers
             });
         }
     }
+    // Reader order is evidentiary, not declaration order: vendor facts lead,
+    // then warranted body universes, with warrant-less machinery last.
+    groups.sort_by_key(|group| {
+        if group
+            .members
+            .iter()
+            .any(|member| contract_inv_is_observed_fact(member))
+        {
+            0_u8
+        } else if group
+            .members
+            .iter()
+            .any(|member| !contract_source_warrants(member).is_empty())
+        {
+            1_u8
+        } else {
+            2_u8
+        }
+    });
     groups
 }
 
@@ -3862,6 +3881,23 @@ fn render_universe_visual_report(
         } else {
             UniverseVisualMode::BodyComplete
         };
+        if fact_universe
+            && warrants
+                .iter()
+                .any(|warrant| is_module_level_warrant(warrant))
+        {
+            out.push_str(&format!("  vendor assertion (module level) {identity}\n"));
+            for member in &group.members {
+                render_provenanced_vendor_assertion_row(
+                    &mut out,
+                    report,
+                    source_lookup,
+                    member,
+                    identity,
+                );
+            }
+            continue;
+        }
         out.push_str(&format!("  universe {identity}\n"));
         match mode {
             UniverseVisualMode::BodyIncomplete => {
@@ -4243,6 +4279,58 @@ fn render_pretty_fol_with_provenance(out: &mut String, fol: &str, provenance: &s
         } else {
             out.push_str(&format!("         {line}\n"));
         }
+    }
+}
+
+fn render_provenanced_vendor_assertion_row(
+    out: &mut String,
+    report: &LiftSourceReport,
+    source_lookup: VisualSourceLookup<'_>,
+    contract: &Value,
+    identity: &str,
+) {
+    let formula = ["post", "inv", "pre"]
+        .iter()
+        .find_map(|field| contract.get(field));
+    let lifted = formula.map_or_else(
+        || contract_universe_reading(contract),
+        |formula| pretty_visual_formula(formula, std::env::var_os("NO_COLOR").is_none()),
+    );
+    let lifted = normalize_report_fol(&lifted, report.project_root.as_deref());
+    let warrants = contract_visual_warrants(report, contract);
+    if warrants.is_empty() {
+        render_pretty_fol_with_provenance(out, &lifted, "@ <missing provenance> warrant=<missing>");
+        return;
+    }
+    for warrant in warrants {
+        let file = report_relative_path(
+            warrant
+                .get("file")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>"),
+            report.project_root.as_deref(),
+        );
+        let line = warrant
+            .get("span")
+            .and_then(|span| span.get("start_line").or_else(|| span.get("startLine")))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let source_cid = warrant
+            .get("sourceCid")
+            .or_else(|| warrant.get("source_cid"))
+            .and_then(Value::as_str)
+            .unwrap_or("cid-unavailable");
+        let stated = resolve_source_memento_visual_source(source_lookup, warrant);
+        render_pretty_fol_with_provenance(
+            out,
+            &lifted,
+            &format!("@ {file}:{line} warrant={source_cid}"),
+        );
+        out.push_str(&format!("      stated: {}\n", stated.trim()));
+    }
+    out.push_str("    symbols:\n");
+    for symbol in contract_formula_symbols(contract) {
+        out.push_str(&format!("      {symbol} -> {identity}::{symbol}\n"));
     }
 }
 
@@ -5229,6 +5317,12 @@ fn contract_visual_warrants<'a>(
     report: &'a LiftSourceReport,
     contract: &'a Value,
 ) -> Vec<&'a Value> {
+    // The contract's own warrant is the authoritative provenance chain.  A
+    // report-level memento is only a compatibility fallback for older kits.
+    let direct = contract_source_warrants(contract);
+    if !direct.is_empty() {
+        return direct;
+    }
     if let Some(name) = contract_value_name(contract) {
         if let Some(memento) = source_memento_for_contract(report, name) {
             if contract_inv_is_observed_fact(contract) {
@@ -5237,7 +5331,15 @@ fn contract_visual_warrants<'a>(
             return vec![memento];
         }
     }
-    contract_source_warrants(contract)
+    Vec::new()
+}
+
+fn is_module_level_warrant(warrant: &Value) -> bool {
+    warrant
+        .get("sourceFunctionName")
+        .or_else(|| warrant.get("source_function_name"))
+        .and_then(Value::as_str)
+        == Some("<module>")
 }
 
 fn contract_predicate_rows(contract: &Value) -> Vec<String> {
@@ -13065,10 +13167,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
-    fn universe_visual_groups_function_contract_and_inv_by_name() {
-        // Two IR rows, one name: function-contract (post) + contract (inv) merge
-        // into a single visual group; a test assertion with no function-contract
-        // anchor stays standalone.
+    fn universe_visual_keeps_cid_distinct_rows_separate() {
         let contracts = vec![
             serde_json::json!({
                 "kind": "function-contract",
@@ -13107,40 +13206,118 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let groups = group_contracts_for_universe_visual(&contracts);
         assert_eq!(
             groups.len(),
-            2,
-            "expected one merged A + one standalone assert"
+            3,
+            "qualified identity plus CID keeps distinct declarations separate"
         );
-        assert_eq!(groups[0].identity, "A");
-        assert_eq!(groups[0].members.len(), 2);
         assert_eq!(
-            groups[0].anchor.get("kind").and_then(Value::as_str),
-            Some("function-contract")
+            contract_value_name(groups[0].anchor),
+            Some("tests::only_assert::assertion")
         );
-        assert_eq!(groups[1].identity, "tests::only_assert::assertion");
-        assert_eq!(groups[1].members.len(), 1);
+        assert_eq!(groups[0].members.len(), 1);
+        assert_eq!(contract_value_name(groups[1].anchor), Some("A"));
+        assert_eq!(contract_value_name(groups[2].anchor), Some("A"));
 
-        // Full visual: exactly one "universe A" heading; both formulas present.
+        // Full visual retains both declarations and both formulas.
         let mut report = minimal_source_report();
         report.audits = Vec::new();
         report.contracts = contracts;
         let visual = render_visual_source_report(&report);
         let universe_section = visual.split("factory visual:").next().unwrap_or(&visual);
-        assert_eq!(
-            universe_section.matches("  universe A\n").count(),
-            1,
-            "post + inv must not re-print the universe heading:\n{visual}"
-        );
         assert!(
-            universe_section.contains("universe A\n")
-                && universe_section.contains("⊢")
+            universe_section.contains("⊢")
                 && universe_section.contains("out = 1")
                 && universe_section.contains("py.truthy(z)"),
-            "merged block must carry post and inv FOL:\n{visual}"
+            "distinct blocks must retain post and inv FOL:\n{visual}"
+        );
+    }
+
+    #[test]
+    fn universe_visual_orders_vendor_facts_before_warrantless_universes() {
+        let contracts = vec![
+            serde_json::json!({
+                "kind": "function-contract", "name": "body", "formals": [],
+                "post": {"kind": "atomic", "name": "py.truthy", "args": [{"kind": "var", "name": "x"}]}
+            }),
+            serde_json::json!({
+                "kind": "contract", "name": "vendor::assertion",
+                "inv": {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "const", "value": 1, "sort": {"name": "Int"}},
+                    {"kind": "const", "value": 1, "sort": {"name": "Int"}}
+                ]},
+                "sourceWarrants": [{
+                    "kind": "source-memento", "file": "vendor.py",
+                    "sourceFunctionName": "check", "span": {"start_line": 1, "end_line": 1}
+                }]
+            }),
+        ];
+
+        let groups = group_contracts_for_universe_visual(&contracts);
+        assert_eq!(
+            contract_value_name(groups[0].anchor),
+            Some("vendor::assertion")
+        );
+        assert_eq!(contract_value_name(groups[1].anchor), Some("body"));
+    }
+
+    #[test]
+    fn universe_visual_calls_module_fact_a_vendor_assertion_and_renders_it_once() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::write(root.path().join("vendor.py"), "assert 1 == 1\n").expect("fixture");
+        let mut report = minimal_source_report();
+        report.project_root = Some(root.path().to_path_buf());
+        report.contracts = vec![serde_json::json!({
+            "kind": "contract", "name": "vendor.py::<module>::assertion",
+            "inv": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "const", "value": 1, "sort": {"name": "Int"}},
+                {"kind": "const", "value": 1, "sort": {"name": "Int"}}
+            ]},
+            "sourceWarrants": [{
+                "kind": "source-memento", "file": "vendor.py", "role": "assertion",
+                "sourceFunctionName": "<module>", "span": {"start_line": 1, "end_line": 1}
+            }]
+        })];
+
+        let visual = render_universe_visual_report(
+            &report,
+            VisualSourceLookup {
+                project_root: report.project_root.as_deref(),
+            },
         );
         assert!(
-            universe_section.contains("  universe tests::only_assert::assertion\n"),
-            "unanchored test contracts stay standalone:\n{visual}"
+            visual.contains("vendor assertion (module level)"),
+            "{visual}"
         );
+        assert!(visual.contains("assert 1 == 1"), "{visual}");
+        assert!(visual.contains("FOL: 1 = 1"), "{visual}");
+        assert!(visual.contains("warrant=cid-unavailable"), "{visual}");
+        assert!(
+            !visual.contains("universe vendor.py::<module>::assertion"),
+            "{visual}"
+        );
+        assert_eq!(visual.matches("1 = 1").count(), 1, "{visual}");
+    }
+
+    #[test]
+    fn universe_visual_prefers_function_contract_embedded_warrant() {
+        let mut report = minimal_source_report();
+        report.contracts = vec![serde_json::json!({
+            "kind": "function-contract", "name": "datetime._isoweek_to_gregorian",
+            "formals": ["year"],
+            "post": {"kind": "atomic", "name": "<=", "args": [
+                {"kind": "var", "name": "MINYEAR"}, {"kind": "var", "name": "year"}
+            ]},
+            "sourceWarrants": [{
+                "kind": "source-memento", "file": "datetime.py",
+                "sourceFunctionName": "_isoweek_to_gregorian",
+                "span": {"start_line": 2531, "end_line": 2531}
+            }]
+        })];
+
+        let visual =
+            render_universe_visual_report(&report, VisualSourceLookup { project_root: None });
+        assert!(visual.contains("MINYEAR ≤ year"), "{visual}");
+        assert!(!visual.contains("<no source warrants emitted>"), "{visual}");
+        assert!(visual.contains("datetime.py line 2531"), "{visual}");
     }
 
     #[test]
