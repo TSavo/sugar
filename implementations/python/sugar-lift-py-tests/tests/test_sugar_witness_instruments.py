@@ -1393,7 +1393,9 @@ def test_sugar_witness_non_circularity_bad_twin_names_mismatch(
     tmp_path: Path,
 ) -> None:
     slice_seed = next(
-        seed for seed in DEFAULT_SUGAR_WITNESS_SEEDS if seed.name == "slice_callsite"
+        seed
+        for seed in DEFAULT_SUGAR_WITNESS_SEEDS
+        if seed.name == "general_slice_return"
     )
     wrong_owner = replace(
         slice_seed,
@@ -1405,9 +1407,9 @@ def test_sugar_witness_non_circularity_bad_twin_names_mismatch(
     assert report.witness_triples_failing == 1
     assert report.witnesses_not_dispatching_to_owner == 2
     mismatch = report.non_circularity_failures[0]
-    assert mismatch.seed == "slice_callsite"
+    assert mismatch.seed == "general_slice_return"
     assert mismatch.expected_sugar == "TrySugar"
-    assert "CallSugar" in mismatch.selected_sugars
+    assert "SliceSubscriptSugar" in mismatch.selected_sugars
     assert "TrySugar" not in mismatch.selected_sugars
     assert report.triple_failures[0].axis == "sugar-fired"
 
