@@ -159,6 +159,11 @@ def test_getattr_builtin_runtime_name_is_typed_runtime_effect() -> None:
     assert isinstance(outcome.effect, RuntimeEffect)
     assert "getattr runtime boundary" in outcome.effect.reason
     assert "attribute name expression" in outcome.effect.reason
+    witness = outcome.effect.witness
+    assert witness is not None
+    assert witness.operation == ctor("py.getattr.dynamic_name", [witness.operand])
+    assert "sfx" in fol(witness.operand)
+    assert "BinOp" not in fol(witness.operand)
 
 
 def test_getattr_builtin_opaque_receiver_is_typed_runtime_effect() -> None:
@@ -172,6 +177,10 @@ def test_getattr_builtin_opaque_receiver_is_typed_runtime_effect() -> None:
     assert isinstance(outcome.effect, RuntimeEffect)
     assert "getattr runtime boundary" in outcome.effect.reason
     assert "receiver reduced to SymbolicValue" in outcome.effect.reason
+    witness = outcome.effect.witness
+    assert witness is not None
+    assert witness.operand == make_var("obj")
+    assert witness.operation == ctor("py.getattr.receiver", [make_var("obj")])
 
 
 def test_getattr_builtin_as_callee_propagates_runtime_effect() -> None:
