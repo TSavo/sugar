@@ -38,16 +38,12 @@ class Eq(Formula, Generic[S]):
                 requested="typed ProofIR terms",
                 fix="construct Eq from proofir.terms.Term values, never raw ir terms",
             )
-        if not (
-            left.sort == right.sort
-            or left.sort.is_explicitly_coercible_to(right.sort)
-            or right.sort.is_explicitly_coercible_to(left.sort)
-        ):
+        if left.sort != right.sort:
             proofir_construction_gap(
                 owner="proofir.formulas.Eq",
                 observed=f"{left.sort.name} vs {right.sort.name}",
                 requested="matching sorts for Eq",
-                fix="use matching term sorts or insert an explicit coercion before Eq",
+                fix="use matching term sorts; construct an explicit coercion term before Eq",
             )
         object.__setattr__(self, "ir_formula", ir_eq(left.ir_term, right.ir_term))
         object.__setattr__(self, "free_vars", left.free_vars | right.free_vars)

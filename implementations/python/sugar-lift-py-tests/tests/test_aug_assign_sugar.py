@@ -4,9 +4,8 @@ Non-object values preserve the old binary/bitwise floor behavior. Object values 
 through their in-place data-model slot (`__iadd__`, `__isub__`, ...), so the object bridge
 is not accidentally rewritten through the plain binary dunder.
 
-Every augmented operator composes over the COLLAPSED Number (one value type: Int embeds
-in Real losslessly, so 3 and 3.0 are the same number and 3.0 == 3 is reflexively true).
-True division `/=` lifts too. And `x /= 0` is not a value -- it raises -- so it is an
+Every augmented operator composes over Python int/float values while ProofIR retains the
+distinct Int and Real calculus sorts. True division `/=` lifts too. And `x /= 0` is not a value -- it raises -- so it is an
 `Incomplete(DivByZero)` EFFECT: the line after it is unreachable, the account cannot be
 completed, and every sugar bubbles that Incomplete upward unchanged, doing no work past
 it (the Outcome short-circuit).
@@ -54,17 +53,16 @@ def test_aug_mult_assign_equals_the_product():
     assert _block("    x = 5\n    x *= 2\n    return x\n") == _block("    return 10\n")
 
 
-def test_aug_div_assign_lifts_via_the_collapsed_number():
-    # `/` is true division (6/2 == 3.0). The numeric type is COLLAPSED -- Int embeds in
-    # Real losslessly -- so 3.0 == 3 and this lifts. No residual, no false distinctness.
+def test_aug_div_assign_lifts_via_python_numeric_folding():
+    # `/` is true division (6/2 == 3.0); the floor value retains that float.
     assert _block("    x = 6\n    x /= 2\n    return x\n") == _block("    return 3\n")
 
 
-# --- the collapsed Number: float and int are one value (Int embeds in Real losslessly),
-# --- so 3.0 == 3 is REFLEXIVELY true -- nothing to assert, nothing to refuse.
+# --- Python value equality still recognizes the closed literal truth 3.0 == 3;
+# --- emitted symbolic terms retain Real versus Int and require the explicit bridge.
 
 
-def test_float_literal_collapses_three_point_zero_equals_three():
+def test_closed_float_and_int_return_values_compare_by_python_value():
     assert _block("    return 3.0\n") == _block("    return 3\n")
 
 

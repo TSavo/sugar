@@ -8,9 +8,8 @@ from .floor_value import FloorValue
 
 @dataclass(frozen=True)
 class TermValue(FloorValue):
-    # The collapsed Number: an int OR a float. Int embeds in Real losslessly, so they are
-    # one value type -- 3 and 3.0 are the same number, and 3.0 == 3 is reflexively true.
-    # The Int/Real SMT sort is an emission-time inference, not a value-level split.
+    # Python numeric literals share one floor value implementation, but retain
+    # their calculus sort: int -> Int and float -> Real. There is no Number sort.
     value: int | float
 
     def python_isinstance(self, type_name: str, type_term, site):
@@ -114,8 +113,8 @@ class TermValue(FloorValue):
         return super().less_than(other, site)
 
     def add(self, other, site):
-        # The collapsed Number adds: two numbers fold to their sum -- one value type
-        # for int and float. Anything else falls to the honest addition-floor gap.
+        # Python int/float arithmetic folds while retaining the result's concrete
+        # Python type; ProofIR projection later preserves Int versus Real.
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import Complete
 
@@ -156,7 +155,7 @@ class TermValue(FloorValue):
 
     def multiply(self, other, site):
         # A number stands on the multiplication floor: two numbers multiply, and the
-        # product is a TermValue -- the collapsed Number.
+        # The product retains Python's concrete int/float result type.
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import Complete
 
@@ -384,29 +383,6 @@ class TermValue(FloorValue):
 
     def to_term(self, *, owner: str):
         del owner
-        import math
-
-        # Int embeds in Real losslessly (3 and 3.0 are the same number), but the
-        # embedding only goes one way at the term level: an Int-sorted term and
-        # a Real-sorted term are structurally distinct EUF constants even when
-        # the numbers agree, so an INTEGRAL float still projects through the
-        # Int constructor -- matching any plain-int sibling it must agree with
-        # (e.g. `float('3.0') == 3`, `np.divide(6, 3) == 2`). Only a genuinely
-        # fractional float needs the Real ctor, because there is no lossless
-        # Int projection for it.
-        #
-        # Non-finite floats (inf/nan) must NOT take the integral arm:
-        # ``int(float('inf'))`` raises OverflowError and hard-crashes the lift
-        # RPC (pandas wall after #4155 transport scrub). Keep them on the Real
-        # arm so the channel stays structured, never a bare process death.
-        if (
-            type(self.value) is float
-            and math.isfinite(self.value)
-            and self.value == int(self.value)
-        ):
-            from sugar_lift_py_tests.ir import num
-
-            return num(int(self.value))
         if type(self.value) is float:
             from decimal import Decimal
 

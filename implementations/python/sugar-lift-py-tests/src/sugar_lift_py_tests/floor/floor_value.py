@@ -856,21 +856,19 @@ class FloorValue:
         )
 
     def equals(self, other, site):
-        # Default: EMIT an operator-indexed atom. Fold when both sides are
-        # ground (the literal pair overrides); emit when either side stands on
-        # the term floor; panic only inside to_term when a side cannot enter
-        # FOL at all. Vendor `==` is py.eq -- not SMT = -- because Python float
-        # equality is not reflexive (nan == nan is False) and the sort universe
-        # adjudicates later. Operand CallSiteValues ride as operand_callsites.
+        # Equality vocabulary is resolved here, once, from construction-time
+        # sort testimony. Ill-sorted bare equality cannot leave this door.
+        from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import py_eq
         from sugar_lift_py_tests.outcome import Complete
 
+        formula, bridges = resolve_equality_atom(self, other, owner=str(site))
         return Complete(
             PredicateValue(
-                py_eq(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
+                formula,
                 site,
                 operand_callsites=(*self.callsites(), *other.callsites()),
+                derived_formulas=bridges,
             )
         )
 

@@ -656,34 +656,30 @@ mod tests {
     }
 
     #[test]
-    fn python_equality_and_derived_equality_share_real_call_result_sort() {
-        let call = ctor("call:numpy.divide", vec![int_const(7), int_const(2)]);
+    fn mixed_numeric_python_equality_uses_explicit_to_real_bridge() {
+        let integer = int_const(3);
         let real = serde_json::json!({
             "kind": "const",
             "value": "3.5",
             "sort": {"kind": "primitive", "name": "Real"}
         });
-        let inv = serde_json::json!({
-            "kind": "and",
-            "operands": [
-                atomic("py.eq", vec![call.clone(), real.clone()]),
-                eq(call, real),
-            ]
-        });
+        let stated = atomic("py.eq", vec![integer.clone(), real.clone()]);
+        let promoted = ctor("to_real", vec![integer]);
+        let inv = implies(stated.clone(), eq(promoted, real));
         let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         assert!(
-            parts
-                .preamble
-                .contains("(declare-fun |call:numpy.divide| (Int Int) Real)"),
-            "py.eq and = must agree on the Real result sort:\n{}",
+            parts.body.contains("(to_real 3)"),
+            "promotion must be explicit in the emitted bridge:\n{}",
+            parts.body
+        );
+        assert!(
+            !parts.preamble.contains("declare-fun to_real"),
+            "to_real is an interpreted SMT bridge, not an implicit EUF:\n{}",
             parts.preamble
         );
         assert!(
-            !parts
-                .preamble
-                .contains("(declare-fun |call:numpy.divide| (Int Int) Int)"),
-            "the same call coordinate must not also be declared Int:\n{}",
-            parts.preamble
+            parts.body.contains("py.eq"),
+            "stated atom must remain py.eq"
         );
     }
 

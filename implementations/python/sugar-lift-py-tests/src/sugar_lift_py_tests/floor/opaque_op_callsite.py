@@ -87,19 +87,19 @@ class OpaqueOpCallsite(FloorValue):
         )
 
     def equals(self, other, site):
+        from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import eq, py_eq
         from sugar_lift_py_tests.outcome import Complete
 
-        coordinate = self.to_term(owner=str(site))
         companion = self.companion_formula(owner=str(site))
         companions = (companion,) if companion is not None else ()
+        formula, bridges = resolve_equality_atom(self, other, owner=str(site))
         return Complete(
             PredicateValue(
-                py_eq(coordinate, other.to_term(owner=str(site))),
+                formula,
                 site,
                 operand_callsites=(self,),
-                derived_formulas=companions,
+                derived_formulas=(*companions, *bridges),
             )
         )
 
