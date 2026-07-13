@@ -4963,8 +4963,9 @@ fn render_provenanced_fol_row(
     let formals = contract_formal_names(contract);
     for (symbol, kind) in contract_formula_symbols(contract, &report.symbol_kinds) {
         if symbol != "out" {
+            let display = report_symbol_display(&symbol);
             out.push_str(&format!(
-                "      {symbol} -> {}\n",
+                "      {display} -> {}\n",
                 resolve_report_symbol(contract, &symbol, kind, &formals, qualified_contracts)
             ));
         }
@@ -5036,7 +5037,10 @@ fn render_provenanced_vendor_assertion_row(
         } else {
             resolve_report_symbol(contract, &symbol, kind, &formals, qualified_contracts)
         };
-        out.push_str(&format!("      {symbol} -> {target}\n"));
+        out.push_str(&format!(
+            "      {} -> {target}\n",
+            report_symbol_display(&symbol)
+        ));
     }
 }
 
@@ -5149,6 +5153,7 @@ fn resolve_report_symbol(
     formals: &BTreeSet<String>,
     qualified_contracts: &[(String, String)],
 ) -> String {
+    let surface = report_symbol_display(symbol);
     if kind == ReportFormulaSymbolKind::Coordinate {
         return "coordinate".to_string();
     }
@@ -5156,28 +5161,28 @@ fn resolve_report_symbol(
         return "method-coordinate".to_string();
     }
     if kind == ReportFormulaSymbolKind::Builtin {
-        return format!("python:builtin/{symbol}");
+        return format!("python:builtin/{surface}");
     }
     if kind == ReportFormulaSymbolKind::Constructor
-        && REPORT_PYTHON_COORDINATE_CONSTRUCTORS.contains(&symbol)
+        && REPORT_PYTHON_COORDINATE_CONSTRUCTORS.contains(&surface)
     {
         return "coordinate".to_string();
     }
     if kind == ReportFormulaSymbolKind::Constructor
-        && REPORT_PYTHON_EFFECT_CONSTRUCTORS.contains(&symbol)
+        && REPORT_PYTHON_EFFECT_CONSTRUCTORS.contains(&surface)
     {
         return "effect".to_string();
     }
-    if kind == ReportFormulaSymbolKind::Variable && formals.contains(symbol) {
+    if kind == ReportFormulaSymbolKind::Variable && formals.contains(surface) {
         return "formal".to_string();
     }
     let current_cid = contract_cid_of_ir_decl(current);
     if kind == ReportFormulaSymbolKind::ContractTarget {
         if let Some((qualified, cid)) = qualified_contracts.iter().find(|(qualified, _)| {
-            qualified == symbol || qualified.ends_with(&format!(".{symbol}"))
+            qualified == surface || qualified.ends_with(&format!(".{surface}"))
         }) {
             if current_cid.as_deref() != Some(cid.as_str())
-                || qualified.ends_with(&format!(".{symbol}"))
+                || qualified.ends_with(&format!(".{surface}"))
             {
                 return format!("{qualified} [{}]", short_cid(cid));
             }
@@ -5188,8 +5193,15 @@ fn resolve_report_symbol(
         return "local".to_string();
     }
     panic!(
-        "report symbol classification gap: constructor `{symbol}` arrived without emitter kind testimony"
+        "report symbol classification gap: constructor `{surface}` arrived without emitter kind testimony"
     )
+}
+
+fn report_symbol_display(symbol: &str) -> &str {
+    symbol
+        .strip_prefix("call:")
+        .or_else(|| symbol.strip_prefix("method:"))
+        .unwrap_or(symbol)
 }
 
 fn contract_formula_symbols(
@@ -5241,10 +5253,7 @@ fn contract_formula_symbols(
                                 }
                                 return;
                             }
-                            let surface = name
-                                .strip_prefix("call:")
-                                .or_else(|| name.strip_prefix("method:"))
-                                .unwrap_or(name);
+                            let surface = report_symbol_display(name);
                             let symbol_kind = match symbol_kinds.get(name).map(String::as_str) {
                                 Some("coordinate") => ReportFormulaSymbolKind::Coordinate,
                                 Some("builtin") => ReportFormulaSymbolKind::Builtin,
@@ -5257,7 +5266,10 @@ fn contract_formula_symbols(
                                 ),
                                 None => ReportFormulaSymbolKind::Constructor,
                             };
-                            insert_symbol(symbols, surface.to_string(), symbol_kind);
+                            // Preserve the emitter's exact constructor spelling as the
+                            // classification key. `tuple` and `call:tuple` lawfully have
+                            // different testimony even though they share a display name.
+                            insert_symbol(symbols, name.to_string(), symbol_kind);
                         }
                     }
                     _ => {}
@@ -15260,7 +15272,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                     {"kind": "ctor", "name": "call:external_open_name",
                      "args": []},
                     {"kind": "ctor", "name": "call:contract_open_name",
-                     "args": []}
+                     "args": []},
+                    {"kind": "ctor", "name": "call:tuple", "args": []}
                 ]}
             ]}
         });
@@ -15277,6 +15290,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "coordinate".to_string(),
             ),
             ("call:external_open_name".to_string(), "builtin".to_string()),
+            ("call:tuple".to_string(), "builtin".to_string()),
             (
                 "call:contract_open_name".to_string(),
                 "contract-target".to_string(),
@@ -15301,6 +15315,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             visual.contains("contract_open_name -> contract-target"),
             "{visual}"
         );
+        assert!(visual.contains("tuple -> coordinate"), "{visual}");
+        assert!(visual.contains("tuple -> python:builtin/tuple"), "{visual}");
     }
 
     #[test]
