@@ -14,8 +14,6 @@ from .term_value import TermValue
 class SetLiteralValue(FloorValue):
     """A structural Python set literal term with deterministic support order."""
 
-    non_fol_support = True
-
     items: tuple[Term, ...]
 
     def contribution(self):

@@ -188,3 +188,12 @@ class SugarBody(Generic[ReductionT_co]):
         for child in self.sugar.walk_children():
             rows.extend(child.factory_walk_rows())
         return tuple(rows)
+
+    def factory_audit_rows(self):
+        """Carry every construction decision, including term-role children."""
+        rows: list[dict] = []
+        if self.audit_row is not None:
+            rows.append(self.audit_row.to_json())
+        for child in self.sugar.walk_children():
+            rows.extend(child.factory_audit_rows())
+        return tuple(rows)

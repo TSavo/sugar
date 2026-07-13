@@ -1485,6 +1485,7 @@ def audit_lift_file(
             )
             walk_start = len(payload.factory_walk)
             payload.factory_walk.extend(root.factory_walk_rows())
+            payload.factory_audits.extend(root.factory_audit_rows())
             outcome = result.sugar.desugar(ctx)
             if recover_panics:
                 from sugar_lift_py_tests.outcome import Incomplete
@@ -2538,6 +2539,7 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
             payload.ir.extend(file_payload.ir)
             payload.call_edges.extend(file_payload.call_edges)
             payload.factory_walk.extend(file_payload.factory_walk)
+            payload.factory_audits.extend(file_payload.factory_audits)
             payload.source_mementos.extend(file_payload.source_mementos)
         # #4013: dual-axis lift coverage as first-class --report line items.
         # Independent AST census (second computation) vs this payload's accounting.

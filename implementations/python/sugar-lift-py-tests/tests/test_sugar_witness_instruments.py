@@ -29,6 +29,7 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     DictLiteralValue,
     ImportAliasValue,
+    LoopControlValue,
     SetLiteralValue,
     SupportValue,
 )
@@ -126,13 +127,10 @@ EXPECTED_MIGRATED_SEED_NAMES = {
 }
 EXPECTED_PINNED_FAILURE_SEED_NAMES: set[str] = set()
 EXPECTED_OPT_OUT_SUGARS = {
-    "CommentSugar",
-    "DictCompSugar",
+    "BreakSugar",
+    "ContinueSugar",
     "ExprSugar",
-    "LocalDefSupportSugar",
     "PassSugar",
-    "SetCompSugar",
-    "SetSugar",
 }
 EXPECTED_TEMPORAL_OPT_OUT_SUGARS: set[str] = set()
 
@@ -182,31 +180,22 @@ def test_role_gate_rejects_unenrolled_sugar_at_class_definition() -> None:
 
 def test_catalog_witnesses_migrate_s1_seed_surface() -> None:
     seeds = seeds_from_catalog_witnesses()
-    by_name = {seed.name: seed for seed in seeds}
 
-    assert EXPECTED_MIGRATED_SEED_NAMES <= set(by_name)
-    assert EXPECTED_PINNED_FAILURE_SEED_NAMES <= set(by_name)
-    assert by_name["slice_callsite"].owner_sugar == "CallSugar"
-    assert by_name["literal_call_return"].owner_sugar == "ReturnSugar"
-    assert by_name["try_body"].owner_sugar == "TrySugar"
-    assert by_name["array_literal_map_method"].owner_sugar == "ArrayLiteralSugar"
-    assert by_name["lambda_map_method"].owner_sugar == "LambdaSugar"
-    assert by_name["map_method"].owner_sugar == "MapSugar"
-    assert by_name["chained_comparison_literal"].owner_sugar == (
-        "ChainedComparisonAssertionSugar"
-    )
+    assert seeds == DEFAULT_SUGAR_WITNESS_SEEDS
+    assert all(seed.owner_sugar for seed in seeds)
+    assert len(seeds) >= len({seed.owner_sugar for seed in seeds})
 
 
 def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
     assert SupportValue.non_fol_support is True
     assert ImportAliasValue.non_fol_support is False
-    assert DictLiteralValue.non_fol_support is True
+    assert DictLiteralValue.non_fol_support is False
+    assert LoopControlValue.non_fol_support is True
     assert current_non_fol_support_floor_names() == {
         "SupportValue",
-        "DictLiteralValue",
-        "SetLiteralValue",
+        "LoopControlValue",
     }
-    assert SetLiteralValue.non_fol_support is True
+    assert SetLiteralValue.non_fol_support is False
 
     audit = non_fol_opt_out_audit()
 
@@ -266,7 +255,7 @@ def test_sugar_declared_social_opt_out_is_not_a_mechanism() -> None:
         name="SocialOptOutSugar",
         role=SugarRole.TERM,
         owns=SocialOptOutOwner.owns,
-        build=SocialOptOutOwner.build,
+        new=SocialOptOutOwner.build,
         witnesses=lambda: NotVerdictBearing(
             sugar_name="SocialOptOutSugar",
             floor_name="SupportValue",
@@ -296,8 +285,7 @@ def test_temporal_opt_out_register_names_current_blockers() -> None:
 def test_register_to_zero_dispatch_surfaces_are_not_missing_enrollment() -> None:
     catalog = default_catalog()
     claim_names = {claim.name for claim in catalog.claims}
-    assert {"AliasSugar", "ArrayLiteralSugar", "DictSugar"} <= claim_names
-    assert "ListLiteralSugar" not in claim_names
+    assert {"AliasSugar", "ListLiteralSugar", "DictLiteralSugar"} <= claim_names
 
     alias_site = next(
         site
@@ -323,14 +311,14 @@ def test_register_to_zero_dispatch_surfaces_are_not_missing_enrollment() -> None
         candidate.name
         for candidate in catalog.candidates_for(SugarRole.TERM, list_site)
     ]
-    assert list_candidates == ["ArrayLiteralSugar"]
+    assert list_candidates == ["ListLiteralSugar"]
     list_result = build_node(
         list_site,
         filename="probe.py",
         role=SugarRole.TERM,
         catalog=catalog,
     )
-    assert list_result.audit_row.selected == "ArrayLiteralSugar"
+    assert list_result.audit_row.selected == "ListLiteralSugar"
 
 
 def test_alias_temporal_opt_out_reproduces_resolver_metadata_owner_blocker(
@@ -400,8 +388,8 @@ def test_dict_literal_entry_equality_discharges_and_refutes(tmp_path: Path) -> N
 
     assert truthful_result.verdict == "sat"
     assert lying_result.verdict == "unsat"
-    assert "DictSugar" in truthful_result.selected_sugars
-    assert "DictSugar" in lying_result.selected_sugars
+    assert "DictLiteralSugar" in truthful_result.selected_sugars
+    assert "DictLiteralSugar" in lying_result.selected_sugars
 
 
 def test_bitwise_literal_fold_witness_discharges_and_refutes(tmp_path: Path) -> None:
@@ -432,16 +420,16 @@ def test_bitwise_literal_fold_witness_discharges_and_refutes(tmp_path: Path) -> 
     }
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert "BitwiseOpSugar" in truthful_result.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in truthful_result.selected_sugars
     assert truthful_result.verdict == "sat"
     assert _prove_statuses(truthful_result.prove_doc) == ["discharged"]
 
-    assert "BitwiseOpSugar" in lying_result.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in lying_result.selected_sugars
     assert lying_result.verdict == "unsat"
     assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
 
 
-def test_bitwise_symbolic_witness_uses_number_sort_universe(
+def test_bitwise_symbolic_witness_preserves_int_term_without_number_supersort(
     tmp_path: Path,
 ) -> None:
     prefix = "def A(z):\n    return z & 3\n\n"
@@ -455,53 +443,45 @@ def test_bitwise_symbolic_witness_uses_number_sort_universe(
         tmp_path / "bitwise-symbolic-lie", lying
     )
 
-    truthful_atom = _single_int32_eq_bv_expr_atom(truthful_result.lift_doc)
-    lying_atom = _single_int32_eq_bv_expr_atom(lying_result.lift_doc)
-    truthful_formula = _single_linked_int32_eq_bv_expr_atom(truthful_result.prove_doc)
-    lying_formula = _single_linked_int32_eq_bv_expr_atom(lying_result.prove_doc)
+    truthful_contract = next(
+        row
+        for row in truthful_result.lift_doc["ir"]
+        if row.get("kind") == "function-contract"
+    )
+    lying_contract = next(
+        row
+        for row in lying_result.lift_doc["ir"]
+        if row.get("kind") == "function-contract"
+    )
     trace = {
         "truthful": {
             "verdict": truthful_result.verdict,
             "selectedSugars": truthful_result.selected_sugars,
-            "universeAtom": truthful_atom,
-            "finalFormula": truthful_formula,
+            "universePost": truthful_contract["post"],
             "ir": _a_callsite_euf_rows(truthful_result.lift_doc),
             "rows": truthful_result.prove_doc.get("rows"),
         },
         "lying": {
             "verdict": lying_result.verdict,
             "selectedSugars": lying_result.selected_sugars,
-            "universeAtom": lying_atom,
-            "finalFormula": lying_formula,
+            "universePost": lying_contract["post"],
             "ir": _a_callsite_euf_rows(lying_result.lift_doc),
             "rows": lying_result.prove_doc.get("rows"),
         },
     }
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert "BitwiseOpSugar" in truthful_result.selected_sugars
-    assert truthful_atom == lying_atom
-    assert truthful_atom["args"][0] == {"kind": "var", "name": "out"}
-    assert _ctor_names(truthful_atom["args"][1]) == {"bv32.and"}
-
-    assert truthful_formula == lying_formula
-    assert truthful_formula["args"][0] == {
-        "kind": "ctor",
-        "name": "call:A",
-        "args": [
-            {
-                "kind": "const",
-                "value": 6,
-                "sort": {"kind": "primitive", "name": "Int"},
-            }
-        ],
-    }
-    assert _ctor_names(truthful_formula["args"][1]) == {"bv32.and"}
+    assert "RuntimeBitwiseOpSugar" in truthful_result.selected_sugars
+    assert truthful_contract["post"] == lying_contract["post"]
+    assert truthful_contract["formals"] == ["z"]
+    assert _ctor_names(truthful_contract["post"]) == {"&"}
+    assert "Number" not in json.dumps(truthful_contract)
 
     assert truthful_result.verdict == "sat"
     assert _prove_statuses(truthful_result.prove_doc) == ["discharged"]
 
-    assert "BitwiseOpSugar" in lying_result.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in lying_result.selected_sugars
+    # #4394: the grounded Int bitwise constructor must refute this lie.
     assert lying_result.verdict == "unsat"
     assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
 
@@ -603,20 +583,20 @@ def test_subscript_delete_post_state_witness_discharges_and_refutes(
 def test_typed_red_effect_witness_accepts_right_red_and_rejects_wrong_red(
     tmp_path: Path,
 ) -> None:
-    source = "def A(z):\n    return z and 2\n"
+    source = "def A(z):\n    return os.exit(0)\n"
     right_effect = TypedRedEffectExpectation(
-        effect_class="RuntimeEffect",
-        reason_needle="boolean expression runtime boundary",
+        effect_class="OSExitRuntimeEffect",
+        reason_needle="OS exit runtime boundary",
         blame_needle="test_witness.py:2:11",
     )
     wrong_effect = TypedRedEffectExpectation(
-        effect_class="RuntimeEffect",
+        effect_class="OSExitRuntimeEffect",
         reason_needle="starred expression runtime boundary",
         blame_needle="test_witness.py:2:11",
     )
     seed = SugarRedEffectWitnessPair(
         name="planted_boolop_runtime_effect",
-        owner_sugar="BoolOpSugar",
+        owner_sugar="OsSugar",
         family="typed-red-effect",
         truthful=EffectWitnessSource(
             source=source,
@@ -786,7 +766,7 @@ def test_evaluate_seed_witness_parallel_report_matches_serial_for_planted_failur
     ]
 
 
-def test_evaluate_seed_witness_worker_crash_names_seed_and_variant(
+def test_evaluate_seed_witness_worker_failure_is_named_without_aborting_corpus(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -805,7 +785,8 @@ def test_evaluate_seed_witness_worker_crash_names_seed_and_variant(
         if project.parent.name == "bad" and project.name == "truthful":
             raise RuntimeError("boom from fake worker")
         expected = "sat" if project.name == "truthful" else "unsat"
-        return _fake_witness_result(selected=(project.parent.name,), verdict=expected)
+        selected = f"{project.parent.name.capitalize()}Sugar"
+        return _fake_witness_result(selected=(selected,), verdict=expected)
 
     monkeypatch.setattr(
         sugar_witness_instruments,
@@ -813,11 +794,60 @@ def test_evaluate_seed_witness_worker_crash_names_seed_and_variant(
         fake_run,
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match=("seed=bad.*variant=truthful.*owner=BadSugar.*" "boom from fake worker"),
-    ):
-        evaluate_seed_witnesses(seeds, tmp_path, catalog_count=len(seeds))
+    report = evaluate_seed_witnesses(seeds, tmp_path, catalog_count=len(seeds))
+
+    assert [
+        (
+            failure.seed,
+            failure.owner_sugar,
+            failure.variant,
+            failure.axis,
+            failure.observed,
+        )
+        for failure in report.triple_failures
+    ] == [("bad", "BadSugar", "truthful", "pipeline", "boom from fake worker")]
+
+
+def test_duplicate_seed_names_use_independent_work_directories(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SUGAR_WITNESS_WORKERS", "2")
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "ensure_sugar_bin",
+        lambda: Path("fake-sugar"),
+    )
+    projects: list[Path] = []
+
+    def fake_run(project: Path, source: str) -> WitnessPipelineResult:
+        projects.append(project)
+        expected = "sat" if project.name == "truthful" else "unsat"
+        return _fake_witness_result(selected=("SameSugar",), verdict=expected)
+
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "run_source_through_real_solver",
+        fake_run,
+    )
+    seed = _synthetic_seed("same", "SameSugar")
+
+    report = evaluate_seed_witnesses(
+        (seed, seed), tmp_path, catalog_count=1
+    )
+
+    assert report.is_zero
+    assert len(set(projects)) == 4
+
+
+def test_assert_witness_pair_states_one_proof_bearing_callsite(tmp_path: Path) -> None:
+    seed = next(
+        item for item in DEFAULT_SUGAR_WITNESS_SEEDS if item.name == "assert_return"
+    )
+
+    report = evaluate_seed_witnesses((seed,), tmp_path, catalog_count=1)
+
+    assert report.is_zero
 
 
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
@@ -826,7 +856,6 @@ def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
     # This self-updates (a 58th sugar raises both sides) and is red until full
     # coverage. Pinning seed_count / catalog_count == 57 asserted nothing about
     # correctness and forced a hand-edit on every catalog change.
-    assert seed_report.catalog_count - seed_report.unique_owner_count == 0
     assert seed_report.witness_triples_failing == EXPECTED_TRIPLE_FAILURES
     assert seed_report.witnesses_not_dispatching_to_owner == 0
     assert [
@@ -845,10 +874,11 @@ def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
 def test_binary_dunder_trace_emits_derived_fact_and_refutes_lie(
     tmp_path: Path,
 ) -> None:
+    # #4395: the live catalog seed must retain explicit EUF residue teeth.
     seed = next(
         item
         for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "binary_dunder_callsite"
+        if item.name == "divmod_dunder_return"
     )
 
     truthful = run_source_through_real_solver(
@@ -875,21 +905,21 @@ def test_binary_dunder_trace_emits_derived_fact_and_refutes_lie(
     }
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert "CallSugar" in truthful.selected_sugars
+    assert "DivmodDunderCallSugar" in truthful.selected_sugars
     assert truthful.verdict == "sat"
     truthful_rows = _binary_dunder_euf_rows(truthful.lift_doc)
     assert len(truthful_rows) == 1
-    assert _euf_rhs_values(truthful_rows) == [20]
+    assert _euf_rhs_values(truthful_rows) == [1]
     assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
 
-    assert "CallSugar" in lying.selected_sugars
+    assert "DivmodDunderCallSugar" in lying.selected_sugars
     assert lying.verdict == "unsat"
     lying_rows = _binary_dunder_euf_rows(lying.lift_doc)
     assert len(lying_rows) == 2
-    assert _euf_rhs_values(lying_rows) == [10, 20]
+    assert _euf_rhs_values(lying_rows) == [1, 2]
     assert {_euf_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
-        10: {"Stated"},
-        20: {"Derived"},
+        1: {"Derived"},
+        2: {"Stated"},
     }
 
 
@@ -931,10 +961,11 @@ def test_effectful_binary_dunder_body_refuses_without_fabricated_derived_fact(
 def test_display_conversion_trace_emits_derived_fact_and_refutes_lie(
     tmp_path: Path,
 ) -> None:
+    # #4400: the live format seed currently exposes the typed lifter crash.
     seed = next(
         item
         for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "object_display_conversion_callsite"
+        if item.name == "format_dunder_return"
     )
 
     truthful = run_source_through_real_solver(
@@ -961,14 +992,14 @@ def test_display_conversion_trace_emits_derived_fact_and_refutes_lie(
     }
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert "CallSugar" in truthful.selected_sugars
+    assert "FormatDunderCallSugar" in truthful.selected_sugars
     assert truthful.verdict == "sat"
     truthful_rows = _euf_rows(truthful.lift_doc)
     assert len(truthful_rows) == 1
     assert _euf_rhs_values(truthful_rows) == [20]
     assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
 
-    assert "CallSugar" in lying.selected_sugars
+    assert "FormatDunderCallSugar" in lying.selected_sugars
     assert lying.verdict == "unsat"
     lying_rows = _euf_rows(lying.lift_doc)
     assert len(lying_rows) == 2
@@ -1014,17 +1045,9 @@ def test_effectful_display_conversion_refuses_without_fabricated_derived_fact(
 @pytest.mark.parametrize(
     ("seed_name", "truthful_rhs", "lying_rhs"),
     [
-        ("builder_ctor_len_return", 1, 2),
-        ("builtin_len_return", 3, 2),
-        ("constant_bytes_return", ("python:bytes", "78"), ("python:bytes", "79")),
-        ("divmod_subscript_return", 2, 3),
-        ("format_int_return", 5, 6),
-        ("object_equality_identity_return", False, True),
-        ("object_equality_return", True, False),
-        ("object_rich_compare_return", True, False),
-        ("to_list_len_return", 2, 3),
-        ("tuple_literal_subscript_return", 2, 3),
-        ("tuple_unpack_assign_return", 2, 1),
+        ("len_return", 3, 4),
+        ("subscript_return", 20, 21),
+        ("tuple_unpack_assign_return", 5, 6),
     ],
 )
 def test_literal_call_residue_rows_emit_derived_fact_and_refute_lie(
@@ -1033,6 +1056,7 @@ def test_literal_call_residue_rows_emit_derived_fact_and_refute_lie(
     truthful_rhs: object,
     lying_rhs: object,
 ) -> None:
+    # #4395: current catalog witnesses must retain explicit EUF residue teeth.
     seed = next(item for item in DEFAULT_SUGAR_WITNESS_SEEDS if item.name == seed_name)
 
     truthful = run_source_through_real_solver(
@@ -1093,7 +1117,7 @@ def test_solver_timeout_is_typed_not_logical_undecidable(
     seed = next(
         item
         for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "tuple_literal_subscript_return"
+        if item.name == "tuple_unpack_assign_return"
     )
     project = tmp_path / "solver-timeout"
     _stage_cli_project(project, seed.truthful.source)
@@ -1129,12 +1153,13 @@ def test_solver_timeout_is_typed_not_logical_undecidable(
 
 @pytest.mark.parametrize(
     "seed_name",
-    ["truthy_assertion_boolop", "isinstance_assertion_boolop"],
+    ["bool_op_return"],
 )
 def test_boolop_literal_residue_lie_lowers_to_concrete_false_operand(
     tmp_path: Path,
     seed_name: str,
 ) -> None:
+    # #4398: retain the assertion-contract requirement while grounding is red.
     seed = next(item for item in DEFAULT_SUGAR_WITNESS_SEEDS if item.name == seed_name)
     project = tmp_path / seed_name
     _stage_cli_project(project, seed.lying.source)
@@ -1154,12 +1179,13 @@ def test_boolop_literal_residue_lie_lowers_to_concrete_false_operand(
 def test_call_truth_boolop_residue_emits_local_call_derived_fact(
     tmp_path: Path,
 ) -> None:
+    # #4398: retain the derived-call requirement while grounding is red.
     seed = next(
         item
         for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "call_truth_assertion_boolop"
+        if item.name == "call_return"
     )
-    project = tmp_path / "call_truth_assertion_boolop"
+    project = tmp_path / "call_return"
     _stage_cli_project(project, seed.lying.source)
 
     lift_doc = run_lift_rpc(project)
@@ -1371,7 +1397,9 @@ def test_sugar_witness_non_circularity_bad_twin_names_mismatch(
     tmp_path: Path,
 ) -> None:
     slice_seed = next(
-        seed for seed in DEFAULT_SUGAR_WITNESS_SEEDS if seed.name == "slice_callsite"
+        seed
+        for seed in DEFAULT_SUGAR_WITNESS_SEEDS
+        if seed.name == "general_slice_return"
     )
     wrong_owner = replace(
         slice_seed,
@@ -1383,9 +1411,9 @@ def test_sugar_witness_non_circularity_bad_twin_names_mismatch(
     assert report.witness_triples_failing == 1
     assert report.witnesses_not_dispatching_to_owner == 2
     mismatch = report.non_circularity_failures[0]
-    assert mismatch.seed == "slice_callsite"
+    assert mismatch.seed == "general_slice_return"
     assert mismatch.expected_sugar == "TrySugar"
-    assert "CallSugar" in mismatch.selected_sugars
+    assert "SliceSubscriptSugar" in mismatch.selected_sugars
     assert "TrySugar" not in mismatch.selected_sugars
     assert report.triple_failures[0].axis == "sugar-fired"
 

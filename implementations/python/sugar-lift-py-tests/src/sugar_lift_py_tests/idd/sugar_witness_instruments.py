@@ -211,17 +211,14 @@ class SugarWitnessFrontierReport:
 
 EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
     NonFolOptOut(
-        sugar_name="CommentSugar",
-        floor_name="SupportValue",
-        reason="comments are inert source support",
+        sugar_name="BreakSugar",
+        floor_name="LoopControlValue",
+        reason="break cites the enclosing loop exit instead of a function verdict",
     ),
     NonFolOptOut(
-        sugar_name="DictCompSugar",
-        floor_name="DictLiteralValue",
-        reason=(
-            "dict comprehensions reduce to structural dict support; "
-            "dict-constructor equality is not currently a standalone solver verdict"
-        ),
+        sugar_name="ContinueSugar",
+        floor_name="LoopControlValue",
+        reason="continue cites the enclosing loop skip instead of a function verdict",
     ),
     NonFolOptOut(
         sugar_name="ExprSugar",
@@ -229,33 +226,9 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="expression statements evaluate for effects and leave no FOL claim",
     ),
     NonFolOptOut(
-        sugar_name="LocalDefSupportSugar",
-        floor_name="SupportValue",
-        reason=(
-            "nested FunctionDef/AsyncFunctionDef/ClassDef/Import/ImportFrom "
-            "are local definitions, not part of the body return universe"
-        ),
-    ),
-    NonFolOptOut(
         sugar_name="PassSugar",
         floor_name="SupportValue",
         reason="pass is inert control-flow support",
-    ),
-    NonFolOptOut(
-        sugar_name="SetCompSugar",
-        floor_name="SetLiteralValue",
-        reason=(
-            "set comprehensions reduce to structural set support; "
-            "set-constructor equality is not currently a standalone solver verdict"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="SetSugar",
-        floor_name="SetLiteralValue",
-        reason=(
-            "set literals are structural term support; set-constructor equality "
-            "is not currently a standalone solver verdict"
-        ),
     ),
 )
 
@@ -354,7 +327,10 @@ def _evaluate_seed_witnesses_ordered(
     ):
         ensure_sugar_bin()
     if workers == 1 or len(ordered_items) == 1:
-        return tuple(_evaluate_one_seed(seed, work_root) for _, seed in ordered_items)
+        return tuple(
+            _evaluate_one_seed(seed, work_root / str(index))
+            for index, seed in ordered_items
+        )
 
     results: dict[tuple[int, str], SeedWitnessEvaluation] = {}
     with concurrent.futures.ThreadPoolExecutor(
@@ -362,7 +338,10 @@ def _evaluate_seed_witnesses_ordered(
         thread_name_prefix="sugar-witness-seed",
     ) as executor:
         future_by_key = {
-            executor.submit(_evaluate_one_seed, seed, work_root): (index, seed)
+            executor.submit(_evaluate_one_seed, seed, work_root / str(index)): (
+                index,
+                seed,
+            )
             for index, seed in ordered_items
         }
         for future in concurrent.futures.as_completed(future_by_key):
@@ -449,11 +428,17 @@ def _evaluate_one_seed(
                 witness.source,
             )
         except BaseException as exc:
-            raise SeedWitnessEvaluationError(
-                "seed witness worker crashed: "
-                f"seed={seed.name} variant={variant} "
-                f"owner={seed.owner_sugar}: {exc}"
-            ) from exc
+            triple_failures.append(
+                WitnessTripleFailure(
+                    seed=seed.name,
+                    owner_sugar=seed.owner_sugar,
+                    variant=variant,
+                    axis="pipeline",
+                    expected="proof-bearing lift",
+                    observed=str(exc),
+                )
+            )
+            continue
         _check_owner_selected(
             seed=seed,
             variant=variant,
@@ -472,7 +457,9 @@ def _evaluate_one_seed(
                     observed="<empty>",
                 )
             )
-        if result.verdict != witness.expected:
+        try:
+            observed_verdict = result.verdict
+        except BaseException as exc:
             triple_failures.append(
                 WitnessTripleFailure(
                     seed=seed.name,
@@ -480,7 +467,19 @@ def _evaluate_one_seed(
                     variant=variant,
                     axis="verdict",
                     expected=witness.expected,
-                    observed=result.verdict,
+                    observed=f"refused: {exc}",
+                )
+            )
+            continue
+        if observed_verdict != witness.expected:
+            triple_failures.append(
+                WitnessTripleFailure(
+                    seed=seed.name,
+                    owner_sugar=seed.owner_sugar,
+                    variant=variant,
+                    axis="verdict",
+                    expected=witness.expected,
+                    observed=observed_verdict,
                 )
             )
     return SeedWitnessEvaluation(
@@ -564,9 +563,19 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
         role=SugarRole.STATEMENT,
         audit_row=result.audit_row,
     ).reduce(ctx)
+    nested_effect = next(
+        (
+            item
+            for item in getattr(getattr(outcome, "value", None), "statements", ())
+            if isinstance(item, Incomplete)
+        ),
+        None,
+    )
+    if nested_effect is not None:
+        outcome = nested_effect
     if isinstance(outcome, Incomplete):
         return RedEffectObservation(
-            effect_class=effect_kind(outcome.effect),
+            effect_class=type(outcome.effect).__name__,
             reason=effect_reason(outcome.effect),
             selected_sugars=_selected_sugars_from_audit(audit_sink),
         )
@@ -725,7 +734,7 @@ def _seed_coverage_owner_names(
 
 
 def _claim_module(claim) -> str:
-    return getattr(claim.build, "__module__", "<unknown>")
+    return getattr(claim.new, "__module__", "<unknown>")
 
 
 def _claim_witnesses(claim) -> object:
