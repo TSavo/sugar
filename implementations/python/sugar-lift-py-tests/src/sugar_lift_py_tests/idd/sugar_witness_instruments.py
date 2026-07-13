@@ -354,7 +354,10 @@ def _evaluate_seed_witnesses_ordered(
     ):
         ensure_sugar_bin()
     if workers == 1 or len(ordered_items) == 1:
-        return tuple(_evaluate_one_seed(seed, work_root) for _, seed in ordered_items)
+        return tuple(
+            _evaluate_one_seed(seed, work_root / str(index))
+            for index, seed in ordered_items
+        )
 
     results: dict[tuple[int, str], SeedWitnessEvaluation] = {}
     with concurrent.futures.ThreadPoolExecutor(
@@ -362,7 +365,10 @@ def _evaluate_seed_witnesses_ordered(
         thread_name_prefix="sugar-witness-seed",
     ) as executor:
         future_by_key = {
-            executor.submit(_evaluate_one_seed, seed, work_root): (index, seed)
+            executor.submit(_evaluate_one_seed, seed, work_root / str(index)): (
+                index,
+                seed,
+            )
             for index, seed in ordered_items
         }
         for future in concurrent.futures.as_completed(future_by_key):
@@ -449,11 +455,17 @@ def _evaluate_one_seed(
                 witness.source,
             )
         except BaseException as exc:
-            raise SeedWitnessEvaluationError(
-                "seed witness worker crashed: "
-                f"seed={seed.name} variant={variant} "
-                f"owner={seed.owner_sugar}: {exc}"
-            ) from exc
+            triple_failures.append(
+                WitnessTripleFailure(
+                    seed=seed.name,
+                    owner_sugar=seed.owner_sugar,
+                    variant=variant,
+                    axis="pipeline",
+                    expected="proof-bearing lift",
+                    observed=str(exc),
+                )
+            )
+            continue
         _check_owner_selected(
             seed=seed,
             variant=variant,
@@ -472,7 +484,9 @@ def _evaluate_one_seed(
                     observed="<empty>",
                 )
             )
-        if result.verdict != witness.expected:
+        try:
+            observed_verdict = result.verdict
+        except BaseException as exc:
             triple_failures.append(
                 WitnessTripleFailure(
                     seed=seed.name,
@@ -480,7 +494,19 @@ def _evaluate_one_seed(
                     variant=variant,
                     axis="verdict",
                     expected=witness.expected,
-                    observed=result.verdict,
+                    observed=f"refused: {exc}",
+                )
+            )
+            continue
+        if observed_verdict != witness.expected:
+            triple_failures.append(
+                WitnessTripleFailure(
+                    seed=seed.name,
+                    owner_sugar=seed.owner_sugar,
+                    variant=variant,
+                    axis="verdict",
+                    expected=witness.expected,
+                    observed=observed_verdict,
                 )
             )
     return SeedWitnessEvaluation(
