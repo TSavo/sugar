@@ -82,6 +82,7 @@ class LiftReportPayloadDto:
                     "stage": "lift.workspace.to_rpc.ir",
                     "index": index,
                     "total": len(self.ir),
+                    "symbol": getattr(contract, "name", type(contract).__name__),
                     "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
                 },
             )

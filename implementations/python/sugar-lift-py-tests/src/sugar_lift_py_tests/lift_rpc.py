@@ -75,6 +75,7 @@ class _StructuredTransportFormatter(logging.Formatter):
             "rows",
             "rows_added",
             "contracts",
+            "symbol",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
@@ -2797,6 +2798,7 @@ def _build_lift_coverage(
                 "stage": "lift.coverage.payload_projection.ir",
                 "index": contract_index,
                 "total": len(payload.ir),
+                "symbol": getattr(item, "name", type(item).__name__),
                 "elapsed_ms": round((time.monotonic() - row_started) * 1000, 3),
             },
         )
