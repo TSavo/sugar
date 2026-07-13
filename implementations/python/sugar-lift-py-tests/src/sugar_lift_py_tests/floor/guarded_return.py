@@ -33,3 +33,16 @@ class GuardedReturn(FloorValue):
     def guarded(self, formula):
         # A nested guard stacks: the outer condition joins the conjunction.
         return GuardedReturn(guards=(formula, *self.guards), value=self.value)
+
+    def edge_contribution(self, source_contract):
+        return self.value.edge_contribution(source_contract)
+
+    def derived_post_contribution(self):
+        from sugar_lift_py_tests.floor.return_value import ReturnValue
+        from sugar_lift_py_tests.ir import and_, implies
+
+        companions = ReturnValue(self.value).derived_post_contribution()
+        if not companions:
+            return ()
+        guard = self.guards[0] if len(self.guards) == 1 else and_(list(self.guards))
+        return tuple(implies(guard, formula) for formula in companions)

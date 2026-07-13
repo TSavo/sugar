@@ -51,6 +51,27 @@ class OpaqueOpCallsite(FloorValue):
     def callsites(self):
         return (self,)
 
+    def companion_formula(self, *, owner: str):
+        """Return the computed grounding fact without collapsing the coordinate."""
+        if self.computed is None:
+            return None
+        from sugar_lift_py_tests.ir import eq
+
+        return eq(
+            self.to_term(owner=owner),
+            self.computed.to_term(owner=owner),
+        )
+
+    def edge_contribution(self, source_contract):
+        """Project the bridge carried by this builtin-operator coordinate."""
+        return (
+            {
+                "kind": "call-edge",
+                "sourceContract": source_contract,
+                "targetSymbol": f"call:{self.callee}",
+            },
+        )
+
     def truth(self, site):
         """Cite Python truth over the already-built operator coordinate."""
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
@@ -71,11 +92,8 @@ class OpaqueOpCallsite(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         coordinate = self.to_term(owner=str(site))
-        companions = (
-            (eq(coordinate, self.computed.to_term(owner=str(site))),)
-            if self.computed is not None
-            else ()
-        )
+        companion = self.companion_formula(owner=str(site))
+        companions = (companion,) if companion is not None else ()
         return Complete(
             PredicateValue(
                 py_eq(coordinate, other.to_term(owner=str(site))),
