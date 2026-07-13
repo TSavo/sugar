@@ -64,7 +64,7 @@ class VarTerm(Term[S]):
                 fix="construct variables with the verifier-visible binding name",
             )
         object.__setattr__(self, "sort", sort)
-        object.__setattr__(self, "ir_term", _Var(name))
+        object.__setattr__(self, "ir_term", make_var(name))
         object.__setattr__(self, "free_vars", frozenset({name}))
         object.__setattr__(self, "free_var_sorts", {name: sort})
         object.__setattr__(self, "name", name)

@@ -14,6 +14,7 @@ from sugar_lift_py_tests.ir import (
     _ConstReal,
     _ConstStr,
     _Ctor,
+    ctor,
     eq,
     bool_const,
     forall,
@@ -453,9 +454,9 @@ def _normalize_ir_term(term: IrTerm, env: dict[str, IrTerm]) -> IrTerm | None:
         normalized_args = [_normalize_ir_term(arg, env) for arg in term.args]
         if any(arg is None for arg in normalized_args):
             return None
-        return _fold_numeric_ctor(term.name, normalized_args) or _Ctor(
+        return _fold_numeric_ctor(term.name, normalized_args) or ctor(
             term.name,
-            tuple(arg for arg in normalized_args if arg is not None),
+            [arg for arg in normalized_args if arg is not None],
         )
     if hasattr(term, "name"):
         name = getattr(term, "name")
@@ -484,7 +485,7 @@ def _fold_numeric_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
         if right == 0:
             return None
         quotient, remainder = divmod(left, right)
-        return _Ctor("tuple", (num(quotient), num(remainder)))
+        return ctor("tuple", [num(quotient), num(remainder)])
     if (
         name.startswith("py.compare:")
         and len(args) == 2
