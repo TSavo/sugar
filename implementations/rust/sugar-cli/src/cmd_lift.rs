@@ -4491,8 +4491,32 @@ fn indent_lines(rendered: &str, width: usize) -> String {
 }
 
 fn pretty_visual_formula(formula: &Value, color: bool) -> String {
+    let started = Instant::now();
     let mut renderer = VisualFormulaRenderer::new(formula, color);
-    renderer.formula(formula, 0)
+    let rendered = renderer.formula(formula, 0);
+    tracing::info!(
+        stage = "visual_formula.complete",
+        elapsed_ms = started.elapsed().as_millis(),
+        inventory_visits = renderer.inventory_visits,
+        unique_fingerprints = renderer.unique_fingerprints.len(),
+        revisit_count = renderer
+            .inventory_visits
+            .saturating_sub(renderer.unique_fingerprints.len()),
+        root_nodes = renderer.root_meta.nodes,
+        root_bytes = renderer.root_meta.bytes,
+        shareable_repeated_fingerprints = renderer
+            .repeats
+            .values()
+            .filter(|count| **count > 1)
+            .count(),
+        plan_calls = renderer.plan_calls,
+        cid_computations = renderer.cid_computations,
+        reference_returns = renderer.reference_returns,
+        elided_returns = renderer.elided_returns,
+        rendered_bytes = rendered.len(),
+        "visual formula traversal microscope"
+    );
+    rendered
 }
 
 const VISUAL_FORMULA_MAX_DEPTH: usize = 24;
@@ -4520,6 +4544,13 @@ struct VisualFormulaRenderer {
     repeats: HashMap<[u8; 32], usize>,
     seen: HashSet<[u8; 32]>,
     sharing_suppressed: usize,
+    inventory_visits: usize,
+    unique_fingerprints: HashSet<[u8; 32]>,
+    root_meta: VisualSubtreeMeta,
+    plan_calls: usize,
+    cid_computations: usize,
+    reference_returns: usize,
+    elided_returns: usize,
 }
 
 impl VisualFormulaRenderer {
@@ -4530,12 +4561,24 @@ impl VisualFormulaRenderer {
             repeats: HashMap::new(),
             seen: HashSet::new(),
             sharing_suppressed: 0,
+            inventory_visits: 0,
+            unique_fingerprints: HashSet::new(),
+            root_meta: VisualSubtreeMeta {
+                fingerprint: [0; 32],
+                nodes: 0,
+                bytes: 0,
+            },
+            plan_calls: 0,
+            cid_computations: 0,
+            reference_returns: 0,
+            elided_returns: 0,
         };
-        renderer.inventory(root);
+        renderer.root_meta = renderer.inventory(root);
         renderer
     }
 
     fn inventory(&mut self, value: &Value) -> VisualSubtreeMeta {
+        self.inventory_visits += 1;
         let mut hasher = blake3::Hasher::new();
         let mut nodes = 1usize;
         let mut bytes = 0usize;
@@ -4590,6 +4633,7 @@ impl VisualFormulaRenderer {
             nodes,
             bytes,
         };
+        self.unique_fingerprints.insert(meta.fingerprint);
         self.meta.insert(value as *const Value as usize, meta);
         if is_visual_shareable_term(value) && nodes >= VISUAL_FORMULA_SHARED_MIN_NODES {
             *self.repeats.entry(meta.fingerprint).or_default() += 1;
@@ -4598,24 +4642,28 @@ impl VisualFormulaRenderer {
     }
 
     fn plan(&mut self, value: &Value, depth: usize) -> VisualRenderPlan {
+        self.plan_calls += 1;
         let meta = self.meta[&(value as *const Value as usize)];
-        let cid = || sugar_canonicalizer::jcs_cid_of_json(value);
         if depth >= VISUAL_FORMULA_MAX_DEPTH
             || ((depth > 0 || !is_visual_formula_shape(value))
                 && (meta.nodes > VISUAL_FORMULA_MAX_SUBTREE_NODES
                     || meta.bytes > VISUAL_FORMULA_MAX_SUBTREE_BYTES))
         {
+            self.cid_computations += 1;
+            self.elided_returns += 1;
             return VisualRenderPlan::Elided(format!(
                 "<subtree elided, cid={}, nodes={}, see mementos>",
-                cid(),
+                sugar_canonicalizer::jcs_cid_of_json(value),
                 meta.nodes
             ));
         }
         if self.sharing_suppressed == 0
             && self.repeats.get(&meta.fingerprint).copied().unwrap_or(0) > 1
         {
-            let cid = cid();
+            self.cid_computations += 1;
+            let cid = sugar_canonicalizer::jcs_cid_of_json(value);
             if !self.seen.insert(meta.fingerprint) {
+                self.reference_returns += 1;
                 return VisualRenderPlan::Reference(format!("<as above, cid={cid}>"));
             }
             return VisualRenderPlan::Full(Some(cid));
