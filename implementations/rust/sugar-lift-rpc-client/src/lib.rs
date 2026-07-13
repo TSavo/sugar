@@ -23,19 +23,20 @@
 // depend on `libsugar`, so the leaf build/lsp crates stay free of the
 // proof/crypto stack their own comments warn against.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
-use sugar_proof_envelope::{compute_formula_cid, MementoCid, MementoPool};
+use sugar_proof_envelope::{compute_formula_cid, MementoCid};
 
 /// Process-window cache for RPC questions. There is deliberately no clear or
 /// eviction method. Dropping the owning RPC client is the only invalidation
 /// operation, so a consistency window can never be half-invalidated.
 #[derive(Debug, Default, Clone)]
 pub struct QuestionCache {
-    pool: MementoPool,
+    answers: BTreeMap<MementoCid, Value>,
     hits: usize,
     misses: usize,
 }
@@ -55,7 +56,7 @@ impl QuestionCache {
         });
         let question_cid = MementoCid::try_parse(compute_formula_cid(&identity))
             .expect("canonical question hash is a valid memento CID");
-        if let Some(answer) = self.pool.rpc_question(&question_cid) {
+        if let Some(answer) = self.answers.get(&question_cid) {
             self.hits += 1;
             tracing::info!(
                 target: "sugar::rpc_cache",
@@ -75,8 +76,7 @@ impl QuestionCache {
             misses = self.misses,
         );
         let answer = wire()?;
-        self.pool
-            .remember_rpc_question(question_cid, answer.clone());
+        self.answers.entry(question_cid).or_insert(answer.clone());
         Ok(answer)
     }
 

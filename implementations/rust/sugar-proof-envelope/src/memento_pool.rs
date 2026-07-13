@@ -279,10 +279,6 @@ impl<'pool> VerifiedContract<'pool> {
 
 #[derive(Debug, Default, Clone)]
 pub struct MementoPool {
-    /// Canonical sugar.enumerate question CID -> response. This cache has no
-    /// invalidation API: it is valid exactly for the lifetime of the RPC
-    /// client that owns the pool and disappears when that client is dropped.
-    rpc_questions: BTreeMap<MementoCid, Json>,
     /// CID -> normalized typed memento storage.
     /// The memento IS the verification. To verify something is to find
     /// its memento in this map.
@@ -420,14 +416,6 @@ pub struct MementoPool {
 pub struct ImplicationKey(pub String, pub String);
 
 impl MementoPool {
-    pub fn rpc_question(&self, question_cid: &MementoCid) -> Option<&Json> {
-        self.rpc_questions.get(question_cid)
-    }
-
-    pub fn remember_rpc_question(&mut self, question_cid: MementoCid, answer: Json) {
-        self.rpc_questions.entry(question_cid).or_insert(answer);
-    }
-
     /// The fundamental verification operation: look up a formula by its
     /// content hash. The memento IS the verification; if found, the
     /// formula is verified. No solver is invoked.
