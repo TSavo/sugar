@@ -19,11 +19,11 @@ from sugar_lift_python_source.ir import (
 )
 from sugar_lift_python_source.lifter import lift_source
 from sugar_lift_python_source.value_pins import (
-    VALUE_PIN_REFUSAL_KIND,
+    VALUE_PIN_BOUNDARY_KIND,
     scan_module_value_pins,
 )
 
-ENUM_PIN_REFUSAL_KIND = "enum-pin-refused"
+ENUM_PIN_BOUNDARY_KIND = "enum-pin-boundary"
 
 
 def _scan(source: str):
@@ -57,11 +57,11 @@ def _function_contracts(result):
 
 
 def _pin_refusals(refusals):
-    return [r for r in refusals if r.get("kind") == VALUE_PIN_REFUSAL_KIND]
+    return [r for r in refusals if r.get("kind") == VALUE_PIN_BOUNDARY_KIND]
 
 
 def _enum_pin_refusals(refusals):
-    return [r for r in refusals if r.get("kind") == ENUM_PIN_REFUSAL_KIND]
+    return [r for r in refusals if r.get("kind") == ENUM_PIN_BOUNDARY_KIND]
 
 
 def _float_const(value: float):
@@ -105,28 +105,28 @@ def test_str_constant_pins_value_at_use_site():
 def test_float_constant_pins_value_at_use_site():
     scan = _scan("X = 1.5\n")
 
-    assert scan.refusals == []
+    assert scan.boundaries == []
     assert scan.pins["X"].term == _float_const(1.5)
 
 
 def test_bytes_constant_pins_value_at_use_site():
     scan = _scan('X = b"\\x00\\xff"\n')
 
-    assert scan.refusals == []
+    assert scan.boundaries == []
     assert scan.pins["X"].term == _bytes_const(b"\x00\xff")
 
 
 def test_complex_constant_pins_value_at_use_site():
     scan = _scan("X = 2j\n")
 
-    assert scan.refusals == []
+    assert scan.boundaries == []
     assert scan.pins["X"].term == _complex_const(2j)
 
 
 def test_ellipsis_constant_pins_value_at_use_site():
     scan = _scan("X = ...\n")
 
-    assert scan.refusals == []
+    assert scan.boundaries == []
     assert scan.pins["X"].term == _ellipsis_const()
 
 
@@ -172,7 +172,7 @@ def test_plain_annotation_still_pins_as_derived():
 def _assert_single_refusal(source: str, reason_fragment: str, name: str = "X"):
     scan = _scan(source)
     assert name not in scan.pins
-    refusals = _pin_refusals(scan.refusals)
+    refusals = _pin_refusals(scan.boundaries)
     assert len(refusals) == 1, refusals
     assert refusals[0]["name"] == name
     assert reason_fragment in refusals[0]["reason"], refusals[0]["reason"]
@@ -363,7 +363,7 @@ def test_final_then_mutated_refuses_with_contradiction_message():
         X: Final = 5
         X = 6
         """)
-    refusals = _pin_refusals(scan.refusals)
+    refusals = _pin_refusals(scan.boundaries)
     assert len(refusals) == 1
     assert (
         "vendor contradicted their own typing.Final confession" in refusals[0]["reason"]
@@ -375,8 +375,8 @@ def test_final_then_mutated_refuses_with_contradiction_message():
 
 def test_refusal_record_is_structural():
     scan = _scan("X = 1\nX = 2\n")
-    record = _pin_refusals(scan.refusals)[0]
-    assert record["kind"] == VALUE_PIN_REFUSAL_KIND
+    record = _pin_refusals(scan.boundaries)[0]
+    assert record["kind"] == VALUE_PIN_BOUNDARY_KIND
     assert record["name"] == "X"
     assert isinstance(record["line"], int)
     assert isinstance(record["reason"], str) and record["reason"]
@@ -393,7 +393,7 @@ def test_totality_candidates_equal_admitted_plus_refused():
         """)
     assert scan.candidates == 5
     assert len(scan.pins) == 3
-    assert len(_pin_refusals(scan.refusals)) == 2
+    assert len(_pin_refusals(scan.boundaries)) == 2
     assert scan.totality_holds()
 
 
@@ -402,7 +402,7 @@ def test_non_literal_bindings_are_not_candidates():
     scan = _scan("X = f()\nY = X\n")
     assert scan.candidates == 0
     assert not scan.pins
-    assert not scan.refusals
+    assert not scan.boundaries
 
 
 # --- the house's walls: locals shadow pins; refused names stay symbolic ---
@@ -454,7 +454,7 @@ def test_int_enum_member_pins():
         """)
     assert scan.pins["Status.OK"].term == int_const(200)
     assert scan.pins["Status.MISSING"].confession == "enum.value"
-    assert scan.refusals == []
+    assert scan.boundaries == []
     assert scan.totality_holds()
 
 
@@ -466,7 +466,7 @@ def test_str_enum_member_pins():
             RED = "red"
         """)
     assert scan.pins["Color.RED"].term == str_const("red")
-    assert scan.refusals == []
+    assert scan.boundaries == []
 
 
 def test_plain_enum_member_refuses_by_name():
@@ -479,10 +479,10 @@ def test_plain_enum_member_refuses_by_name():
             RED = 1
         """)
     assert "Color.RED" not in scan.pins
-    refusals = _enum_pin_refusals(scan.refusals)
+    refusals = _enum_pin_refusals(scan.boundaries)
     assert len(refusals) == 1
     record = refusals[0]
-    assert record["kind"] == ENUM_PIN_REFUSAL_KIND
+    assert record["kind"] == ENUM_PIN_BOUNDARY_KIND
     assert record["function"] is None
     assert isinstance(record["line"], int)
     assert record["name"] == "Color.RED"
@@ -490,7 +490,7 @@ def test_plain_enum_member_refuses_by_name():
         record["reason"]
         == "plain Enum member: use IntEnum or StrEnum for value pinning"
     )
-    assert _pin_refusals(scan.refusals) == []
+    assert _pin_refusals(scan.boundaries) == []
     assert scan.totality_holds()
 
 
@@ -534,7 +534,7 @@ def test_enum_member_value_pin_refuses_when_member_rebound():
     assert "Color.RED.value" not in scan.pins
     assert any(
         r["name"] == "Color.RED.value" and "attribute write" in r["reason"]
-        for r in scan.refusals
+        for r in scan.boundaries
     )
     assert scan.totality_holds()
 
@@ -549,7 +549,7 @@ def test_enum_member_attr_write_refuses():
         Status.OK = 201
         """)
     assert "Status.OK" not in scan.pins
-    assert any("attribute write" in r["reason"] for r in scan.refusals)
+    assert any("attribute write" in r["reason"] for r in scan.boundaries)
 
 
 def test_enum_pin_substitutes_at_attribute_access():
@@ -595,7 +595,7 @@ def test_decorated_enum_class_refuses_by_name():
             RED = 1
         """)
     assert "Color.RED" not in scan.pins
-    reasons = [r["reason"] for r in scan.refusals]
+    reasons = [r["reason"] for r in scan.boundaries]
     assert any("class decorator" in r for r in reasons)
     assert scan.totality_holds()
 

@@ -15,7 +15,7 @@ class ConstraintUniverse:
     source_memento: dict[str, Any]
     sugar_chain: list[str]
     warranted_by: ConstraintDigRequest
-    dig_refusals: list
+    dig_diagnostics: list
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -26,7 +26,7 @@ class ConstraintUniverse:
             "sourceMemento": dict(self.source_memento),
             "sugarChain": list(self.sugar_chain),
             "warrantedBy": self.warranted_by.to_json(),
-            # dig_refusals used to hold DigBoundary soft rows; that type is deleted.
-            # Any dig refusal panics at the record site, so this list is always empty.
-            "diagnostics": list(self.dig_refusals),
+            # DigBoundary soft rows are deleted. Any dig gap panics at the
+            # record site, so this diagnostic list is always empty.
+            "diagnostics": list(self.dig_diagnostics),
         }

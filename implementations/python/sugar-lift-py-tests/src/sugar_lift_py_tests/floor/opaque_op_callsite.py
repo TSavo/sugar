@@ -288,7 +288,7 @@ def wrap_builtin_operator(
     - **CallSiteValue** (e.g. `hash(Box())` / `repr(Box())` after ObjectValue
       method dispatch): diggable user-method body. Do NOT wrap — dig must still
       see the callsite. Wrapping to ungrounded `call:hash(...)` with
-      `computed=None` is the refuse regression the witness corpus caught.
+        `computed=None` is the panic regression the witness corpus caught.
     - **Already-coordinate** same callee: idempotent pass-through.
     - **Concrete fold** (TermValue/StringValue/BoolValue/…): wrap with
       `computed=result` (companion ground).

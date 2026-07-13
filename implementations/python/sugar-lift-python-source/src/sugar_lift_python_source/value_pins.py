@@ -6,8 +6,8 @@ values do. The pinned term is the value at the use site, byte-identical
 to the same literal written inline; the binding name is provenance only.
 
 Admission, not detection: an inadmissible candidate produces NO pin plus
-a loud refusal record -- never a wrong row, never a silent drop. Totality
-holds by construction: candidates == admitted + refused.
+a loud boundary record -- never a wrong row, never a silent drop. Totality
+holds by construction: candidates == admitted + boundaries.
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ from .ir import (
     str_const,
 )
 
-VALUE_PIN_REFUSAL_KIND = "value-pin-refused"
-ENUM_PIN_REFUSAL_KIND = "enum-pin-refused"
+VALUE_PIN_BOUNDARY_KIND = "value-pin-boundary"
+ENUM_PIN_BOUNDARY_KIND = "enum-pin-boundary"
 FINAL_CONFESSION = "typing.Final"
 
 # Scope boundaries: bindings inside these do not bind module names.
@@ -71,12 +71,12 @@ class MutableGlobalPin:
 @dataclass
 class ValuePinScan:
     pins: dict[str, ValuePin] = field(default_factory=dict)
-    refusals: list[Json] = field(default_factory=list)
+    boundaries: list[Json] = field(default_factory=list)
     mutable_global_pins: list[MutableGlobalPin] = field(default_factory=list)
     candidates: int = 0
 
     def totality_holds(self) -> bool:
-        return self.candidates == len(self.pins) + len(self.refusals)
+        return self.candidates == len(self.pins) + len(self.boundaries)
 
 
 class _NotAdmissible(Exception):
@@ -112,18 +112,18 @@ def scan_module_value_pins(tree: ast.Module) -> ValuePinScan:
 
     scan.candidates = len(candidates)
     for candidate in candidates.values():
-        refusal_reason = _admission_failure(
+        boundary_reason = _admission_failure(
             candidate,
             events_by_name.get(candidate.name, []),
             global_decls.get(candidate.name),
         )
-        if refusal_reason is not None:
-            scan.refusals.append(_pin_refusal(candidate, refusal_reason))
+        if boundary_reason is not None:
+            scan.boundaries.append(_pin_boundary(candidate, boundary_reason))
             continue
         try:
             term = _render_value_term(candidate.value)
         except _NotAdmissible as exc:
-            scan.refusals.append(_pin_refusal(candidate, exc.reason))
+            scan.boundaries.append(_pin_boundary(candidate, exc.reason))
             mutable_kind = _direct_mutable_kind(candidate.value)
             if mutable_kind is not None:
                 scan.mutable_global_pins.append(
@@ -206,9 +206,9 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
                 # binds whatever the decorator returns (caught live
                 # 2026-06-12: a class decorator swapping the enum ran
                 # Color.RED == 99 while the scan pinned 1 — a wrong term
-                # byte-identical to an inline literal). Refuse by name.
-                scan.refusals.append(
-                    _pin_refusal(
+                # byte-identical to an inline literal). Record a named boundary.
+                scan.boundaries.append(
+                    _pin_boundary(
                         candidate,
                         f"class decorator on {stmt.name}: the ClassDef is "
                         "not the runtime class; member values cannot be "
@@ -218,16 +218,16 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
                 continue
             rebound = dotted in attr_writes or f"cls.{member}" in attr_writes
             if kind == "plain":
-                scan.refusals.append(
-                    _pin_refusal(
+                scan.boundaries.append(
+                    _pin_boundary(
                         candidate,
                         "plain Enum member: use IntEnum or StrEnum for value pinning",
-                        kind=ENUM_PIN_REFUSAL_KIND,
+                        kind=ENUM_PIN_BOUNDARY_KIND,
                     )
                 )
             elif rebound:
-                scan.refusals.append(
-                    _pin_refusal(
+                scan.boundaries.append(
+                    _pin_boundary(
                         candidate,
                         f"rebound: attribute write to {dotted} at line "
                         f"{attr_writes.get(dotted, attr_writes.get(f'cls.{member}'))}",
@@ -237,7 +237,7 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
                 try:
                     term = _render_value_term(class_stmt.value)
                 except _NotAdmissible as exc:
-                    scan.refusals.append(_pin_refusal(candidate, exc.reason))
+                    scan.boundaries.append(_pin_boundary(candidate, exc.reason))
                 else:
                     scan.pins[dotted] = ValuePin(
                         name=dotted,
@@ -249,7 +249,7 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
             # regardless of dispatch flavor: it always returns the
             # underlying literal, byte-identical to what was written after
             # `=`. The == dispatch gate that forces plain-Enum members to
-            # refuse at the bare member name does not apply to `.value` --
+            # the bare-member boundary does not apply to `.value` --
             # so this pins even for plain Enum/Flag members, as long as the
             # member itself was not rebound.
             value_dotted = f"{dotted}.value"
@@ -261,8 +261,8 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
             )
             scan.candidates += 1
             if rebound:
-                scan.refusals.append(
-                    _pin_refusal(
+                scan.boundaries.append(
+                    _pin_boundary(
                         value_candidate,
                         f"rebound: attribute write to {dotted} at line "
                         f"{attr_writes.get(dotted, attr_writes.get(f'cls.{member}'))}",
@@ -272,7 +272,7 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
             try:
                 value_term = _render_value_term(class_stmt.value)
             except _NotAdmissible as exc:
-                scan.refusals.append(_pin_refusal(value_candidate, exc.reason))
+                scan.boundaries.append(_pin_boundary(value_candidate, exc.reason))
                 continue
             scan.pins[value_dotted] = ValuePin(
                 name=value_dotted,
@@ -302,8 +302,8 @@ def _class_attr_writes(tree: ast.Module) -> dict:
     return writes
 
 
-def _pin_refusal(
-    candidate: _Candidate, reason: str, *, kind: str = VALUE_PIN_REFUSAL_KIND
+def _pin_boundary(
+    candidate: _Candidate, reason: str, *, kind: str = VALUE_PIN_BOUNDARY_KIND
 ) -> Json:
     if candidate.confession is not None and _is_rebinding_reason(reason):
         reason = (
@@ -392,7 +392,7 @@ def _collect_candidates(tree: ast.Module) -> dict[str, _Candidate]:
             continue
         if not _is_literal_shaped(value):
             # Not constructed from written literals: never a candidate.
-            # No row was ever possible, so no refusal is owed.
+            # No row was ever possible, so no boundary is owed.
             continue
         if name_node.id in candidates:
             duplicate_names.add(name_node.id)

@@ -335,11 +335,11 @@ pub(crate) fn dispatch_lift_path(
     // No manifest resolved for this surface: there is no command to
     // rendezvous with (`Kit::rendezvous` requires a real, spawnable
     // command). Fall through to `execute_path` against an EMPTY registry so
-    // callers still see the path executor's own `composition-refusal` /
+    // callers still see the path executor's legacy composition-boundary /
     // `kit-registry` memento for the unregistered dialect, exactly what
     // pre-SEAM-6b `dispatch_lift_path` produced -- not a bare manifest-
     // resolution diagnostic, which would be a silent behavior change for
-    // `lift_kit_path_integration::lift_cli_refuses_unregistered_dialect_with_composition_refusal_memento`.
+    // kit-registry memento behavior for an unregistered dialect.
     let Ok(manifest) = manifest else {
         return dispatch_lift_path_unregistered(surface, dialect, lift_params);
     };
@@ -376,7 +376,7 @@ pub(crate) fn dispatch_lift_path(
 
 /// Unregistered-dialect fallback: builds the same source/path input the
 /// registered branch would, but against an empty `KitRegistry`, so
-/// `execute_path` itself produces the `composition-refusal` /
+/// `execute_path` itself produces the legacy composition-boundary /
 /// `kit-registry` memento rather than a bespoke diagnostic.
 fn dispatch_lift_path_unregistered(
     surface: &str,
@@ -433,7 +433,7 @@ fn lift_error_from_kit(error: SugarKitError) -> LiftPluginError {
 }
 
 /// `resolved_working_dir`'s output, but guaranteed ABSOLUTE:
-/// `Kit::rendezvous`'s contract refuses a relative `working_dir`
+/// `Kit::rendezvous` rejects a relative `working_dir`
 /// (`RendezvousError::RelativeWorkingDir`) because "relative to what" must be
 /// answered once, at the census, not left for the spawned kit's ambient cwd.
 /// `project_root` itself may be relative (e.g. `sugar lift .`), so canonicalize

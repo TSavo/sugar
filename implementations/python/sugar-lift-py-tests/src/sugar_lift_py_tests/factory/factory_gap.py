@@ -80,7 +80,7 @@ def dig_boundary_panic(
     caught: str,
     reason: str,
 ) -> NoReturn:
-    """Dig refusal is not a soft ledger row. It panics like any other None arm."""
+    """A dig gap is not a soft ledger row. It panics like any other None arm."""
     info = FactoryGapInfo(
         owner="dig",
         blame=blame,

@@ -5931,7 +5931,7 @@ fn plan_role_label(role: &str) -> &'static str {
 /// #3766 named terminal: THE ONE DOOR TEST is a raw `git clone <vendor>; sugar
 /// lift`, and a vendor tree with real source but no test corpus checked out
 /// (or a corpus the kit could not locate) must never read as exit-0-empty.
-/// This is a lift-side TYPED CONDITION -- not `refus*` vocabulary, which is
+/// This is a lift-side TYPED CONDITION, not verifier-status vocabulary, which is
 /// reserved for the verifier's decision-space (see #3632) -- so it names the
 /// missing-corpus shape distinctly: `"kind": "no-vendor-test-corpus"`. It
 /// fires only when the workspace actually carried real source loci (an empty
@@ -13824,7 +13824,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "assertions": {
                 "stated": 2,
                 "lifted_cited": 1,
-                "refused_loud": 0,
                 "silently_unaccounted": 1,
                 "silent_loci": [
                     {"file": "t.py", "line": 10, "preview": "assert not x"}
@@ -13883,7 +13882,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "assertions": {
                 "stated": 1,
                 "lifted_cited": 0,
-                "refused_loud": 0,
                 "silently_unaccounted": 1,
                 "silent_loci": [
                     {"file": path.to_string_lossy(), "line": 5, "preview": "assert not x"}

@@ -43,7 +43,7 @@ class SourceFragment:
     col: int
     # The file's full source text: what the fragment content-addresses its own
     # covered segment against when it emits its memento. None only for bare
-    # nodes constructed without source (their memento() refuses, loudly).
+    # nodes constructed without source (their memento() panics loudly).
     source: str | None = None
 
     @classmethod

@@ -20,7 +20,7 @@ def walk_constraint_universe(
     predicates: list[dict[str, Any]] = []
     proofir: list[dict[str, Any]] = []
     sugar_chain: list[str] = []
-    dig_refusals: list = []
+    dig_diagnostics: list = []
 
     for fragment in [tree, *tree.walk()]:
         if fragment.observed != "AnnAssign":
@@ -32,7 +32,7 @@ def walk_constraint_universe(
                 callee=dig.target_symbol,
                 blame=fragment.blame,
                 caught=type(exc).__name__,
-                reason=f"constraint-universe candidate refused: {exc}",
+                reason=f"constraint-universe candidate is not classifiable: {exc}",
             )
         if target_id != field:
             continue
@@ -64,5 +64,5 @@ def walk_constraint_universe(
         source_memento=dict(source_memento),
         sugar_chain=sugar_chain,
         warranted_by=dig,
-        dig_refusals=dig_refusals,
+        dig_diagnostics=dig_diagnostics,
     )
