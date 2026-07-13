@@ -1003,6 +1003,14 @@ class SourceFragment:
             return None
         return SourceFragment.from_node(spec, self.filename, source=self.source).joined_str_static_text()
 
+    def formatted_value_format_spec(self) -> "SourceFragment":
+        """Return the dynamic format-spec expression of a formatted field."""
+        self._require(ast.FormattedValue)
+        spec = self.node.format_spec  # type: ignore[attr-defined]
+        if spec is None:
+            raise ValueError("formatted value has no format spec")
+        return SourceFragment.from_node(spec, self.filename, source=self.source)
+
     # --- comprehensions ----------------------------------------------------
 
     def listcomp_element(self) -> "SourceFragment":
