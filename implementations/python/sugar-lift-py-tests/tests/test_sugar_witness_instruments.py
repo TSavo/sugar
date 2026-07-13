@@ -388,8 +388,8 @@ def test_dict_literal_entry_equality_discharges_and_refutes(tmp_path: Path) -> N
 
     assert truthful_result.verdict == "sat"
     assert lying_result.verdict == "unsat"
-    assert "DictSugar" in truthful_result.selected_sugars
-    assert "DictSugar" in lying_result.selected_sugars
+    assert "DictLiteralSugar" in truthful_result.selected_sugars
+    assert "DictLiteralSugar" in lying_result.selected_sugars
 
 
 def test_bitwise_literal_fold_witness_discharges_and_refutes(tmp_path: Path) -> None:
