@@ -3960,7 +3960,11 @@ fn render_universe_visual_report(
             {
                 "module level".to_string()
             } else {
-                format!("in {}", contract_qualified_owner(report, contract))
+                format!(
+                    "in {}",
+                    assertion_parent_from_warrants(&warrants)
+                        .unwrap_or_else(|| contract_qualified_owner(report, contract))
+                )
             };
             out.push_str(&format!(
                 "  vendor assertion ({assertion_scope}) {identity}\n"
@@ -4021,6 +4025,17 @@ fn render_universe_visual_report(
     }
     render_contract_mementos_appendix(&mut out, report);
     out
+}
+
+fn assertion_parent_from_warrants(warrants: &[&Value]) -> Option<String> {
+    warrants.iter().find_map(|warrant| {
+        warrant
+            .get("sourceFunctionName")
+            .or_else(|| warrant.get("source_function_name"))
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty() && *name != "<module>")
+            .map(str::to_string)
+    })
 }
 
 fn render_visual_forensic_context(out: &mut String, report: &LiftSourceReport, contract: &Value) {
@@ -13470,11 +13485,16 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             }),
         ];
 
+        let started = std::time::Instant::now();
         let visual = render_universe_visual_report(
             &report,
             VisualSourceLookup {
                 project_root: report.project_root.as_deref(),
             },
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "two-row real datetime envelope must render in bounded time"
         );
         assert!(visual.contains("universe date._cmp ["), "{visual}");
         assert!(
