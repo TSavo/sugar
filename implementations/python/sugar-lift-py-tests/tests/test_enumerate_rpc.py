@@ -493,3 +493,37 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     assert name == "mathy.add"
     assert node["memento"].get("function_name") == name
     assert result["gaps"] == []
+
+
+def test_universe_seek_refuses_ambiguous_leaf_bridge(tmp_path: Path) -> None:
+    source = """\
+class A:
+    def add(self, value):
+        return value + 1
+
+class B:
+    def add(self, value):
+        return value + 2
+
+def test_add():
+    assert add(1) == 2
+"""
+    (tmp_path / "ambiguous.py").write_text(source, encoding="utf-8")
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
+        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
+    }
+    call_site_memento = _enumerate(
+        "call_sites", tmp_path, at=functions["test_add"]
+    )["nodes"][0]["memento"]
+
+    result = _enumerate("universe", tmp_path, at=call_site_memento, seek=True)
+
+    assert result["nodes"] == []
+    assert len(result["gaps"]) == 1
+    reason = result["gaps"][0]["reason"]
+    assert "ambiguous universe sugar for callee call:add" in reason
+    assert "ambiguous.A.add" in reason
+    assert "ambiguous.B.add" in reason

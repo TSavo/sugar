@@ -2335,30 +2335,48 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         fol_sym = _contract_bridge_identity(call_item)
                         if fol_sym is not None and fol_sym not in candidates:
                             candidates.append(fol_sym)
-                        matched = None
-                        matched_bridge = None
+                        matches: Dict[tuple[Any, Any], Dict[str, Any]] = {}
                         for bridge in candidates:
                             for universe_item in universe_items:
                                 if _universe_bridge_matches(
                                     universe_item.get("bridgeSourceSymbol"), bridge
                                 ):
-                                    matched = universe_item
-                                    matched_bridge = bridge
-                                    break
-                            if matched is not None:
-                                break
-                        if matched is not None:
+                                    memento = _item_memento(universe_item) or {}
+                                    identity = (
+                                        memento.get("source_cid")
+                                        or memento.get("sourceCid"),
+                                        universe_item.get("name")
+                                        or universe_item.get("bridgeSourceSymbol"),
+                                    )
+                                    matches[identity] = universe_item
+                        if len(matches) == 1:
+                            matched = next(iter(matches.values()))
                             _send_enumerate_result(
                                 msg_id,
                                 [_universe_node_from_item(matched, file_rel)],
                                 [],
                             )
                             return
-                        callee = (
-                            matched_bridge
-                            if matched_bridge
-                            else (candidates[0] if candidates else "unknown")
-                        )
+                        callee = candidates[0] if candidates else "unknown"
+                        if len(matches) > 1:
+                            qualified = sorted(
+                                str(item.get("name") or item.get("bridgeSourceSymbol"))
+                                for item in matches.values()
+                            )
+                            _send_enumerate_result(
+                                msg_id,
+                                [],
+                                [
+                                    {
+                                        "memento": at,
+                                        "reason": (
+                                            "ambiguous universe sugar for callee "
+                                            f"{callee}; candidates=[{', '.join(qualified)}]"
+                                        ),
+                                    }
+                                ],
+                            )
+                            return
                         _send_enumerate_result(
                             msg_id,
                             [],
