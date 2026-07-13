@@ -26,7 +26,7 @@ use sugar_proof_envelope::{
     ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento, ContractBody,
     ContractMementoRef, Ed25519Seed, FlatAtom, ProofGraph, SourceMemento,
 };
-use sugar_verifier::Speaker;
+use sugar_proof_envelope::Speaker;
 
 use crate::kit::{Kit, KitError};
 use crate::tree::{Fact, Sourced, Universe};

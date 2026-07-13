@@ -74,7 +74,8 @@ use std::collections::HashSet;
 
 use sugar_ir_types::{IrFormula, Sort};
 use sugar_linker::{CallSiteLocus, LinkerCallEdge, LinkerContract, LinkerInputs};
-use sugar_verifier::{enumerate_callsites, MementoPool};
+use sugar_proof_envelope::MementoPool;
+use sugar_verifier::enumerate_callsites;
 
 /// A contract member's body carried a field this derivation could not decode
 /// (sugar#3869). Malformed contract data is a typed load error naming the

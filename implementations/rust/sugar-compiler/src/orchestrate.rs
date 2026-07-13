@@ -60,7 +60,8 @@ use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph}
 use sugar_verifier::consistency::verify_consistency;
 use sugar_verifier::load_all_proofs::{load_proof_bytes_into_pool, ProofBytes};
 use sugar_verifier::runner::{load_pool, ProofRunArtifact, ProofRunArtifactError, Runner};
-use sugar_verifier::{MementoPool, RunnerConfig, SolverHandle, SolverPlan, SolverSeat, Speaker};
+use sugar_proof_envelope::{MementoPool, Speaker};
+use sugar_verifier::{RunnerConfig, SolverHandle, SolverPlan, SolverSeat};
 
 use crate::feed_from_tree::{self, FeedError};
 use crate::kit::Kit;

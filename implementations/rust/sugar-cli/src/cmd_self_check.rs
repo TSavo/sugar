@@ -15,7 +15,7 @@ use sugar_claim_envelope::{
 };
 use sugar_proof_envelope::proof_filename;
 use sugar_verifier::load_all_proofs::{self, ProofBytes};
-use sugar_verifier::types::{EffectSiteAnnotation, LoadError, MementoPool};
+use sugar_proof_envelope::{EffectSiteAnnotation, LoadError, MementoPool};
 use tracing::{error, info, warn};
 
 use crate::floor_runtime_check::{

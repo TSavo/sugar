@@ -7,7 +7,8 @@ use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
 use std::fmt::Write as _;
 use sugar_verifier::superposition::{reports_from_report, Strength, SuperpositionReport};
-use sugar_verifier::{LoadError, ObligationVerdict, Report};
+use sugar_proof_envelope::LoadError;
+use sugar_verifier::{ObligationVerdict, Report};
 
 pub fn report_to_json(r: &Report) -> Json {
     let rows: Vec<Json> = r

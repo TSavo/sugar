@@ -23,6 +23,7 @@ pub mod cbor_decode;
 pub mod cbor_index;
 pub mod filename;
 pub mod manifest;
+pub mod memento_pool;
 pub mod proof;
 pub mod proof_graph;
 pub mod sign;
@@ -43,6 +44,11 @@ pub fn decode_for_conformance(bytes: &[u8]) -> Result<CborValue, CborDecodeError
     crate::cbor_decode::decode(bytes)
 }
 pub use filename::{cid_filename_stem, cid_from_proof_stem, proof_filename};
+pub use memento_pool::{
+    compute_formula_cid, BundleScopedCallsiteKey, EffectSiteAnnotation, ImplicationKey,
+    ImplicationResult, LoadError, MementoPool, ResolvedContractBody, SourceLine, SourcePath,
+    SourceSymbol, Speaker, SpeakerRole, VerifiedContract,
+};
 pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use proof_graph::{
     member_body, member_field, member_kind, member_signature, member_signer, recompute_member_cid,
