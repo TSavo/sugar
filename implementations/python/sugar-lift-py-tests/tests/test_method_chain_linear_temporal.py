@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import ast
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -53,10 +57,63 @@ def test_chained_method_call_is_the_same_linear_temporal_rewrite() -> None:
     assert two_line_contract["inv"] == chained_contract["inv"]
 
 
+@pytest.mark.parametrize(
+    "expression",
+    ["pd_array(values).isin(needles)", "CategoricalDtype().update_dtype(dtype)"],
+)
+def test_plain_call_receiver_method_chain_constructs(expression: str) -> None:
+    node = ast.parse(expression, mode="eval").body
+
+    built = build_node(node, filename="pandas.py", role=SugarRole.TERM)
+
+    assert type(built.sugar).__name__ == "MethodChainSugar"
+
+
 def test_unclassifiable_chained_receiver_stays_loud() -> None:
-    node = ast.parse("unknown().utcoffset()", mode="eval").body
+    node = ast.parse("(lambda: 1)().bit_length()", mode="eval").body
     with pytest.raises(FactoryPanic):
         build_node(node, filename="bad.py", role=SugarRole.TERM)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["pd_array(values).isin(needles)", "CategoricalDtype().update_dtype(dtype)"],
+)
+def test_plain_call_receiver_chain_discriminator_runs_both_process_arms(
+    expression: str,
+) -> None:
+    tests_dir = Path(__file__).resolve().parent
+    src_dir = tests_dir.parent / "src"
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join((str(tests_dir), str(src_dir))),
+    }
+    script = f"""\
+import ast
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.factory.build import build_node
+
+built = build_node(ast.parse({expression!r}, mode="eval").body, filename="pandas.py", role=SugarRole.TERM)
+assert type(built.sugar).__name__ == "{{expected}}"
+"""
+
+    truthful = subprocess.run(
+        [sys.executable, "-c", script.format(expected="MethodChainSugar")],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+    lying = subprocess.run(
+        [sys.executable, "-c", script.format(expected="MethodCallSugar")],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert truthful.returncode == 0, truthful.stderr
+    assert lying.returncode == 1, lying.stderr
 
 
 def test_method_chain_has_one_factory_owner() -> None:
@@ -69,5 +126,32 @@ def test_method_chain_has_one_factory_owner() -> None:
     } == {"MethodChainSugar", "MethodCallSugar"}
     assert (
         type(build_node(node, filename="clock.py", role=SugarRole.TERM).sugar).__name__
+        == "MethodChainSugar"
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["pd_array(values).isin(needles)", "CategoricalDtype().update_dtype(dtype)"],
+)
+def test_plain_call_receiver_chain_keeps_the_method_chain_owner_partition(
+    expression: str,
+) -> None:
+    site = SourceFragment.from_node(
+        ast.parse(expression, mode="eval").body, "pandas.py"
+    )
+
+    assert {
+        candidate.name
+        for candidate in default_catalog().candidates_for(SugarRole.TERM, site)
+    } == {"MethodChainSugar", "MethodCallSugar"}
+    assert (
+        type(
+            build_node(
+                ast.parse(expression, mode="eval").body,
+                filename="pandas.py",
+                role=SugarRole.TERM,
+            ).sugar
+        ).__name__
         == "MethodChainSugar"
     )
