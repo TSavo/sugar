@@ -105,6 +105,7 @@ class UniverseMint(ProofIRNode):
             formals=list(self.formals),
             kind=self.kind,
             bridge_source_symbol=self.bridge_source_symbol,
+            proofir_provenance=self.provenance().to_rpc(),
         )
 
     def to_declaration(self) -> dict[str, Any]:

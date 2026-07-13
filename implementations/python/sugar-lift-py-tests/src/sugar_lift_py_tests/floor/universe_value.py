@@ -17,6 +17,7 @@ class UniverseValue(FloorValue):
     name: str
     formals: tuple[str, ...]
     record: object  # the body's BlockValue
+    bridge_source_symbol: str | None = None
 
     def derived_companions(self) -> tuple[Formula, ...]:
         return tuple(
@@ -162,7 +163,7 @@ class UniverseValue(FloorValue):
                 source_warrants=[def_memento],
                 formals=list(self.formals),
                 kind="function-contract",
-                bridge_source_symbol=self.name,
+                bridge_source_symbol=self.bridge_source_symbol or self.name,
             )
         ]
         rows.extend(self.inv_payload_rows())
@@ -191,6 +192,7 @@ class UniverseValue(FloorValue):
                         ],
                         formals=list(row.formals),
                         kind="contract",
+                        proofir_provenance=row.provenance().to_rpc(),
                     )
                 )
         return rows

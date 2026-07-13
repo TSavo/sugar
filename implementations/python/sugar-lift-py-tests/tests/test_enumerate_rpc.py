@@ -532,6 +532,7 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     name = (node["audit"] or {}).get("name") or node["memento"].get("function_name")
     assert name == "mathy.add"
     assert node["memento"].get("function_name") == name
+    assert node["audit"]["bridgeSourceSymbol"] == "add"
     assert result["gaps"] == []
 
 

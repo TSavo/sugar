@@ -1521,8 +1521,13 @@ def audit_lift_file(
                 owner = _definition_class_owner(module, stmt)
                 if owner is not None:
                     value = dataclasses.replace(value, name=f"{owner}.{value.name}")
+                bridge_source_symbol = value.bridge_source_symbol or value.name
                 qualified_name = _qualified_callable_spelling(filename, value.name)
-                value = dataclasses.replace(value, name=qualified_name)
+                value = dataclasses.replace(
+                    value,
+                    name=qualified_name,
+                    bridge_source_symbol=bridge_source_symbol,
+                )
                 _qualify_factory_walk_owner(
                     payload.factory_walk, walk_start, qualified_name
                 )
@@ -1869,7 +1874,12 @@ def _call_site_node_audit(
     return audit
 
 
-def _universe_node_from_item(item: Dict[str, Any], file_rel: str) -> Dict[str, Any]:
+def _universe_node_from_item(
+    item: Dict[str, Any],
+    file_rel: str,
+    *,
+    resolved_bridge: Optional[str] = None,
+) -> Dict[str, Any]:
     """Build a `level=universe` wire node from a function-contract IR row.
 
     Stamps the batch `name` (e.g. `len::builtin-universe`) onto the memento's
@@ -1898,9 +1908,15 @@ def _universe_node_from_item(item: Dict[str, Any], file_rel: str) -> Dict[str, A
         memento["source_function_name"] = name
         memento["sourceFunctionName"] = name
         memento["name"] = name
+    audit = dict(item)
+    if resolved_bridge is not None:
+        prefix, separator, spelling = resolved_bridge.partition(":")
+        audit["bridgeSourceSymbol"] = (
+            spelling if separator and prefix in {"call", "method"} else resolved_bridge
+        )
     return {
         "memento": memento,
-        "audit": item,
+        "audit": audit,
         "payload": _item_fact_formula(item),
     }
 
@@ -2343,7 +2359,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         fol_sym = _contract_bridge_identity(call_item)
                         if fol_sym is not None and fol_sym not in candidates:
                             candidates.append(fol_sym)
-                        matches: Dict[tuple[Any, Any], Dict[str, Any]] = {}
+                        matches: Dict[
+                            tuple[Any, Any], tuple[Dict[str, Any], str]
+                        ] = {}
                         for bridge in candidates:
                             for universe_item in universe_items:
                                 if _universe_bridge_matches(
@@ -2356,12 +2374,18 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                                         universe_item.get("name")
                                         or universe_item.get("bridgeSourceSymbol"),
                                     )
-                                    matches[identity] = universe_item
+                                    matches.setdefault(identity, (universe_item, bridge))
                         if len(matches) == 1:
-                            matched = next(iter(matches.values()))
+                            matched, resolved_bridge = next(iter(matches.values()))
                             _send_enumerate_result(
                                 msg_id,
-                                [_universe_node_from_item(matched, file_rel)],
+                                [
+                                    _universe_node_from_item(
+                                        matched,
+                                        file_rel,
+                                        resolved_bridge=resolved_bridge,
+                                    )
+                                ],
                                 [],
                             )
                             return
@@ -2369,7 +2393,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         if len(matches) > 1:
                             qualified = sorted(
                                 str(item.get("name") or item.get("bridgeSourceSymbol"))
-                                for item in matches.values()
+                                for item, _ in matches.values()
                             )
                             _send_enumerate_result(
                                 msg_id,

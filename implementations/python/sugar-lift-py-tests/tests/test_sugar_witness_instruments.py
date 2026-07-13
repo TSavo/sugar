@@ -349,10 +349,18 @@ def test_alias_temporal_opt_out_reproduces_resolver_metadata_owner_blocker(
 
     assert truthful_result.verdict == "sat"
     assert lying_result.verdict == "unsat"
-    assert "CallSugar" in truthful_result.selected_sugars
-    assert "PrimitiveLiteralSugar" in truthful_result.selected_sugars
-    assert "AliasSugar" in truthful_result.selected_sugars
-    assert "AliasSugar" in lying_result.selected_sugars
+    assert truthful_result.lift_doc["callEdges"] == [
+        {
+            "kind": "call-edge",
+            "sourceContract": "test_alias_backed_call",
+            "targetSymbol": "call:numpy.add",
+        }
+    ]
+    assertion = next(
+        row for row in truthful_result.lift_doc["ir"] if row["kind"] == "contract"
+    )
+    assert assertion["inv"]["kind"] == "and"
+    assert [atom["name"] for atom in assertion["inv"]["operands"]] == ["=", "="]
 
 
 def test_list_literal_shape_has_one_verdict_bearing_owner(
@@ -372,10 +380,9 @@ def test_list_literal_shape_has_one_verdict_bearing_owner(
 
     assert truthful_result.verdict == "sat"
     assert lying_result.verdict == "unsat"
-    assert "ArrayLiteralSugar" in truthful_result.selected_sugars
-    assert "BuiltinCallSugar" in truthful_result.selected_sugars
-    assert "ListLiteralSugar" not in truthful_result.selected_sugars
-    assert "ListLiteralSugar" not in lying_result.selected_sugars
+    ctor_names = _ctor_names(truthful_result.lift_doc["ir"])
+    assert "array" in ctor_names
+    assert "call:len" in ctor_names
 
 
 def test_dict_literal_entry_equality_discharges_and_refutes(tmp_path: Path) -> None:
