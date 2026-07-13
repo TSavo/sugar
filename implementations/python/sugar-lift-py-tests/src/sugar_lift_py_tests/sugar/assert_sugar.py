@@ -37,12 +37,17 @@ class AssertSugar(Sugar, role=SugarRole.STATEMENT):
     def witnesses(cls):
         # The stated inv IS the discriminator: the truthful twin's assert holds
         # in the body's universe, the lying twin's contradicts it.
-        prefix = "def A(z):\n    assert z == z\n    return z\n\n"
         return _call_pair(
             name="assert_return",
             owner_sugar="AssertSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            truthful=(
+                "def A(z):\n    return z\n\n"
+                "def test_a():\n    assert A(5) == 5\n"
+            ),
+            lying=(
+                "def A(z):\n    return z\n\n"
+                "def test_a():\n    assert A(5) == 6\n"
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
