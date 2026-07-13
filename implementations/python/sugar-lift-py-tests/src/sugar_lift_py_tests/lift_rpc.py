@@ -737,8 +737,11 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     walk rows rather than crashing the LSP -- hold_panic=False remains for
     callers that demand the loud abort.
     """
-    payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
-    return payload
+    from sugar_lift_py_tests.ir import term_intern_scope
+
+    with term_intern_scope():
+        payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
+        return payload
 
 
 

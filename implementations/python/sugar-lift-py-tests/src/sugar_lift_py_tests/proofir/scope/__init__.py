@@ -205,7 +205,7 @@ class ClaimFormula(Mapping[str, Any]):
     provenanced: ProvenancedFormula | None
     _provenance: Provenance
     role: str
-    _rpc: dict[str, Any]
+    _rpc: dict[str, Any] | None
 
     def __init__(self, provenanced: ProvenancedFormula, *, role: str) -> None:
         if not isinstance(provenanced, ProvenancedFormula):
@@ -225,7 +225,7 @@ class ClaimFormula(Mapping[str, Any]):
         object.__setattr__(self, "provenanced", provenanced)
         object.__setattr__(self, "_provenance", provenanced.provenance)
         object.__setattr__(self, "role", role)
-        object.__setattr__(self, "_rpc", formula_to_rpc(provenanced.formula))
+        object.__setattr__(self, "_rpc", None)
 
     @classmethod
     def from_rpc(
@@ -285,27 +285,34 @@ class ClaimFormula(Mapping[str, Any]):
     def provenance(self) -> Provenance:
         return self._provenance
 
+    def _wire_rpc(self) -> dict[str, Any]:
+        rpc = self._rpc
+        if rpc is None:
+            rpc = formula_to_rpc(self.formula)
+            object.__setattr__(self, "_rpc", rpc)
+        return rpc
+
     def __repr__(self) -> str:
-        return repr(self._rpc)
+        return repr(self._wire_rpc())
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, ClaimFormula):
-            return self._rpc == other._rpc
+            return self._wire_rpc() == other._wire_rpc()
         if isinstance(other, Mapping):
-            return self._rpc == dict(other)
+            return self._wire_rpc() == dict(other)
         return False
 
     def __getitem__(self, key: str) -> Any:
-        return self._rpc[key]
+        return self._wire_rpc()[key]
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self._rpc)
+        return iter(self._wire_rpc())
 
     def __len__(self) -> int:
-        return len(self._rpc)
+        return len(self._wire_rpc())
 
     def to_rpc(self) -> dict[str, Any]:
-        return dict(self._rpc)
+        return dict(self._wire_rpc())
 
 
 def claim_formula_from_ir(

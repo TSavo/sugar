@@ -15,8 +15,10 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, Iterator, List, Optional, Tuple, Union
 
 from .canonicalizer import Value, varr, vbool, vint, vobj, vstr, vnull
 
@@ -121,17 +123,37 @@ class _Ctor:
 
 Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
 
+_TERM_INTERN_TABLE: ContextVar[dict[Term, Term] | None] = ContextVar(
+    "sugar_term_intern_table", default=None
+)
+
+
+@contextmanager
+def term_intern_scope() -> Iterator[None]:
+    token = _TERM_INTERN_TABLE.set({})
+    try:
+        yield
+    finally:
+        _TERM_INTERN_TABLE.reset(token)
+
+
+def _intern_term(term: Term) -> Term:
+    table = _TERM_INTERN_TABLE.get()
+    if table is None:
+        return term
+    return table.setdefault(term, term)
+
 
 def make_var(name: str) -> Term:
-    return _Var(name)
+    return _intern_term(_Var(name))
 
 
 def num(n: int) -> Term:
-    return _ConstInt(int(n), Int())
+    return _intern_term(_ConstInt(int(n), Int()))
 
 
 def str_const(s: str) -> Term:
-    return _ConstStr(s, String())
+    return _intern_term(_ConstStr(s, String()))
 
 
 def real_lit(decimal_string: str) -> Term:
@@ -140,15 +162,15 @@ def real_lit(decimal_string: str) -> Term:
     NEVER pass a Python float: the value is hashed into the contract CID and a
     float has no deterministic text form. Build the string exactly (e.g. with
     ``decimal.Decimal``) so every solver compiler reads the same literal."""
-    return _ConstReal(decimal_string, Real())
+    return _intern_term(_ConstReal(decimal_string, Real()))
 
 
 def bool_const(b: bool) -> Term:
-    return _ConstBool(bool(b), Bool())
+    return _intern_term(_ConstBool(bool(b), Bool()))
 
 
 def ctor(name: str, args: List[Term]) -> Term:
-    return _Ctor(name, tuple(args))
+    return _intern_term(_Ctor(name, tuple(args)))
 
 
 def bvand(left: Term, right: Term) -> Term:
@@ -501,8 +523,8 @@ def subst_var_in_term(t: Term, formal: str, actual: Term) -> Term:
     if isinstance(t, _Var):
         return actual if t.name == formal else t
     if isinstance(t, _Ctor):
-        return _Ctor(
-            t.name, tuple(subst_var_in_term(a, formal, actual) for a in t.args)
+        return ctor(
+            t.name, [subst_var_in_term(a, formal, actual) for a in t.args]
         )
     return t  # const variants are inert
 

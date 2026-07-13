@@ -88,3 +88,20 @@ def test_interned_terms_are_immutable(monkeypatch) -> None:
 
     with pytest.raises(FrozenInstanceError):
         term.name = "mutated"  # type: ignore[misc]
+
+
+def test_lift_construction_does_not_expand_the_term_dag_to_wire(monkeypatch) -> None:
+    def premature_wire_expansion(formula):
+        del formula
+        raise AssertionError(
+            "lift construction expanded the term DAG before wire serialization"
+        )
+
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.proofir.scope.formula_to_rpc",
+        premature_wire_expansion,
+    )
+
+    payload = lift_file_payload("def f(value):\n    return value + 1\n", "term-dag.py")
+
+    assert payload.ir
