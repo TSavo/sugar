@@ -4127,6 +4127,12 @@ fn render_universe_visual_report(
     if report.contracts.is_empty() {
         return String::new();
     }
+    let setup_started = Instant::now();
+    tracing::info!(
+        stage = "universe_visual.setup.enter",
+        contracts = report.contracts.len(),
+        "universe visual progress"
+    );
     let boundaries = visual_boundary_rows(&report.factory_walk, source_lookup);
     let factory_predicates =
         index_universe_factory_predicate_rows(&report.factory_walk, source_lookup);
@@ -4149,10 +4155,27 @@ fn render_universe_visual_report(
         .iter()
         .filter_map(|contract| format_contract_asserted_fact(report, contract))
         .collect::<Vec<_>>();
+    tracing::info!(
+        stage = "universe_visual.setup.exit",
+        elapsed_ms = setup_started.elapsed().as_millis(),
+        boundaries = boundaries.len(),
+        asserted_facts = asserted_facts.len(),
+        "universe visual progress"
+    );
     let mut out = String::new();
     let mut breakdown_cache = BTreeMap::<(String, u8), String>::new();
     out.push_str("universe visual:\n");
-    for group in group_contracts_for_universe_visual_with_identities(report, identities) {
+    let grouping_started = Instant::now();
+    let groups = group_contracts_for_universe_visual_with_identities(report, identities);
+    tracing::info!(
+        stage = "universe_visual.grouping.exit",
+        elapsed_ms = grouping_started.elapsed().as_millis(),
+        groups = groups.len(),
+        "universe visual progress"
+    );
+    let total = groups.len();
+    for (index, group) in groups.into_iter().enumerate() {
+        let universe_started = Instant::now();
         let contract = group.anchor;
         let identity = &group.identity;
         let qualified_name = qualified_contract_for(report, contract, &qualified_contracts);
@@ -4165,16 +4188,26 @@ fn render_universe_visual_report(
             cid_prefix = %cid_prefix
         );
         let _universe_guard = universe_span.enter();
-        tracing::info!("universe render started");
+        tracing::info!(index, total, "universe render started");
         // Predicates for line citations: every member's formulas (assert invs
         // pair with their own warrants when factory walk is empty).
+        let predicates_started = Instant::now();
         let predicates: Vec<String> = group
             .members
             .iter()
             .flat_map(|member| contract_predicate_rows(member))
             .collect();
+        tracing::info!(
+            stage = "universe.predicates",
+            index,
+            total,
+            elapsed_ms = predicates_started.elapsed().as_millis(),
+            rows = predicates.len(),
+            "universe render progress"
+        );
         let fact_universe = contract_inv_is_observed_fact(contract);
         // Source walk / mode from the anchor; inv members contribute FOL only.
+        let warrants_started = Instant::now();
         let mut warrants = contract_visual_warrants(report, contract);
         for member in group.members.iter().skip(1) {
             for warrant in contract_visual_warrants(report, member) {
@@ -4186,6 +4219,14 @@ fn render_universe_visual_report(
                 }
             }
         }
+        tracing::info!(
+            stage = "universe.warrants",
+            index,
+            total,
+            elapsed_ms = warrants_started.elapsed().as_millis(),
+            rows = warrants.len(),
+            "universe render progress"
+        );
         let context = warrants
             .first()
             .map(|warrant| source_memento_context_key(warrant));
@@ -4223,7 +4264,12 @@ fn render_universe_visual_report(
                     &qualified_contracts,
                 );
             }
-            tracing::info!("universe render completed");
+            tracing::info!(
+                index,
+                total,
+                elapsed_ms = universe_started.elapsed().as_millis(),
+                "universe render completed"
+            );
             continue;
         }
         out.push_str(&format!("  universe {identity}\n"));
@@ -4236,6 +4282,7 @@ fn render_universe_visual_report(
             }
             UniverseVisualMode::Fact | UniverseVisualMode::BodyComplete => {
                 // One FOL line per member: post from the anchor, then each inv.
+                let fol_started = Instant::now();
                 for member in &group.members {
                     if member.get("post").is_some()
                         || member.get("inv").is_some()
@@ -4251,14 +4298,35 @@ fn render_universe_visual_report(
                         );
                     }
                 }
+                tracing::info!(
+                    stage = "universe.fol",
+                    index,
+                    total,
+                    elapsed_ms = fol_started.elapsed().as_millis(),
+                    rows = group.members.len(),
+                    "universe render progress"
+                );
             }
         }
         if mode == UniverseVisualMode::BodyComplete {
+            let forensic_started = Instant::now();
             render_visual_forensic_context(&mut out, report, contract, &asserted_facts);
+            tracing::info!(
+                stage = "universe.forensic_context",
+                index,
+                total,
+                elapsed_ms = forensic_started.elapsed().as_millis(),
+                "universe render progress"
+            );
         }
         if warrants.is_empty() {
             out.push_str("    <no source warrants emitted>\n");
-            tracing::info!("universe render completed");
+            tracing::info!(
+                index,
+                total,
+                elapsed_ms = universe_started.elapsed().as_millis(),
+                "universe render completed"
+            );
             continue;
         }
         let cache_key = context.as_ref().and_then(|context| {
@@ -4268,8 +4336,15 @@ fn render_universe_visual_report(
                 .then(|| (context.clone(), universe_visual_mode_key(mode)))
         });
         if let Some(cached) = cache_key.as_ref().and_then(|key| breakdown_cache.get(key)) {
+            tracing::info!(
+                stage = "universe.warrant_breakdown.cache_hit",
+                index,
+                total,
+                "universe render progress"
+            );
             out.push_str(cached);
         } else {
+            let breakdown_started = Instant::now();
             let mut breakdown = String::new();
             render_universe_warrant_breakdown(
                 &mut breakdown,
@@ -4284,8 +4359,20 @@ fn render_universe_visual_report(
             if let Some(key) = cache_key {
                 breakdown_cache.insert(key, breakdown);
             }
+            tracing::info!(
+                stage = "universe.warrant_breakdown",
+                index,
+                total,
+                elapsed_ms = breakdown_started.elapsed().as_millis(),
+                "universe render progress"
+            );
         }
-        tracing::info!("universe render completed");
+        tracing::info!(
+            index,
+            total,
+            elapsed_ms = universe_started.elapsed().as_millis(),
+            "universe render completed"
+        );
     }
     render_contract_mementos_appendix(&mut out, report, &qualified_contracts);
     out

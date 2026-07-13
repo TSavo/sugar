@@ -1356,8 +1356,25 @@ fn finalize_toolchain_plan_memento(
 
     let tool_outputs: Vec<Value> = outputs
         .iter()
-        .map(|output| {
+        .enumerate()
+        .map(|(index, output)| {
+            let cid_started = std::time::Instant::now();
+            tracing::info!(
+                stage = "lift_report_graph.plan_memento.output_cid.enter",
+                index,
+                total = outputs.len(),
+                surface = %output.surface,
+                "lift-report graph progress"
+            );
             let output_cid = canonical_json_cid(&output.response);
+            tracing::info!(
+                stage = "lift_report_graph.plan_memento.output_cid.exit",
+                index,
+                total = outputs.len(),
+                surface = %output.surface,
+                elapsed_ms = cid_started.elapsed().as_millis(),
+                "lift-report graph progress"
+            );
             json!({
                 "surface": output.surface,
                 "actualOutputCid": output_cid,
@@ -2174,6 +2191,12 @@ pub fn lift_plugins_response_for_report(
     library_bindings: bool,
     report_summary: bool,
 ) -> Result<Value, String> {
+    let graph_started = std::time::Instant::now();
+    tracing::info!(
+        stage = "lift_report_graph.enter",
+        plugins = plugins.len(),
+        "lift-report graph progress"
+    );
     let mut producer_plugins = Vec::new();
     let mut consumer_plugins = Vec::new();
     for plugin in plugins {
@@ -2188,6 +2211,12 @@ pub fn lift_plugins_response_for_report(
     let mut per_plugin: Vec<PerPluginDispatch> = Vec::with_capacity(plugins.len());
     let mut producer_responses: Vec<PerPluginDispatch> = Vec::with_capacity(producer_plugins.len());
     for plugin in &producer_plugins {
+        let dispatch_started = std::time::Instant::now();
+        tracing::info!(
+            stage = "lift_report_graph.producer.enter",
+            surface = %plugin.surface,
+            "lift-report graph progress"
+        );
         let response = dispatch_report_lift_plugin(
             project_root,
             plugin,
@@ -2195,6 +2224,12 @@ pub fn lift_plugins_response_for_report(
             library_bindings,
             report_summary_for_lift,
         )?;
+        tracing::info!(
+            stage = "lift_report_graph.producer.exit",
+            surface = %plugin.surface,
+            elapsed_ms = dispatch_started.elapsed().as_millis(),
+            "lift-report graph progress"
+        );
         let dispatched = PerPluginDispatch {
             surface: plugin.surface.clone(),
             response,
@@ -2206,13 +2241,30 @@ pub fn lift_plugins_response_for_report(
     let implicit_report_consumer = consumer_plugins.is_empty()
         && producer_plugins.len() == 1
         && producer_responses_have_call_edges(&producer_responses);
+    let bindings_started = std::time::Instant::now();
+    tracing::info!(
+        stage = "lift_report_graph.contract_bindings.enter",
+        "lift-report graph progress"
+    );
     let contract_bindings = if consumer_plugins.is_empty() && !implicit_report_consumer {
         Vec::new()
     } else {
         consumer_contract_bindings_from_producers(&producer_responses, project_root, out_dir, true)?
     };
+    tracing::info!(
+        stage = "lift_report_graph.contract_bindings.exit",
+        elapsed_ms = bindings_started.elapsed().as_millis(),
+        bindings = contract_bindings.len(),
+        "lift-report graph progress"
+    );
     if implicit_report_consumer && !contract_bindings.is_empty() {
         let plugin = producer_plugins[0];
+        let dispatch_started = std::time::Instant::now();
+        tracing::info!(
+            stage = "lift_report_graph.implicit_consumer.enter",
+            surface = %plugin.surface,
+            "lift-report graph progress"
+        );
         let response = dispatch_report_lift_plugin(
             project_root,
             plugin,
@@ -2220,12 +2272,24 @@ pub fn lift_plugins_response_for_report(
             library_bindings,
             false,
         )?;
+        tracing::info!(
+            stage = "lift_report_graph.implicit_consumer.exit",
+            surface = %plugin.surface,
+            elapsed_ms = dispatch_started.elapsed().as_millis(),
+            "lift-report graph progress"
+        );
         per_plugin.push(PerPluginDispatch {
             surface: plugin.surface.clone(),
             response,
         });
     }
     for plugin in consumer_plugins {
+        let dispatch_started = std::time::Instant::now();
+        tracing::info!(
+            stage = "lift_report_graph.consumer.enter",
+            surface = %plugin.surface,
+            "lift-report graph progress"
+        );
         let response = dispatch_report_lift_plugin(
             project_root,
             plugin,
@@ -2233,22 +2297,55 @@ pub fn lift_plugins_response_for_report(
             library_bindings,
             false,
         )?;
+        tracing::info!(
+            stage = "lift_report_graph.consumer.exit",
+            surface = %plugin.surface,
+            elapsed_ms = dispatch_started.elapsed().as_millis(),
+            "lift-report graph progress"
+        );
         per_plugin.push(PerPluginDispatch {
             surface: plugin.surface.clone(),
             response,
         });
     }
 
+    let plan_started = std::time::Instant::now();
+    tracing::info!(
+        stage = "lift_report_graph.plan_memento.enter",
+        responses = per_plugin.len(),
+        "lift-report graph progress"
+    );
     let plan_memento = finalize_toolchain_plan_memento(
         toolchain_plan_seed(project_root, plugins, report_toolchain_plan_steps(plugins)),
         &per_plugin,
     )?;
+    tracing::info!(
+        stage = "lift_report_graph.plan_memento.exit",
+        elapsed_ms = plan_started.elapsed().as_millis(),
+        "lift-report graph progress"
+    );
+    let merge_started = std::time::Instant::now();
+    tracing::info!(
+        stage = "lift_report_graph.merge.enter",
+        responses = per_plugin.len(),
+        "lift-report graph progress"
+    );
     let mut response = match per_plugin.len() {
         0 => Err("lift report graph has no lift plugins".to_string()),
         1 => Ok(per_plugin.into_iter().next().unwrap().response),
         _ => merge_ir_document_responses(per_plugin),
     }?;
+    tracing::info!(
+        stage = "lift_report_graph.merge.exit",
+        elapsed_ms = merge_started.elapsed().as_millis(),
+        "lift-report graph progress"
+    );
     if response.get("kind").and_then(Value::as_str) == Some("ir-document") {
+        let witness_started = std::time::Instant::now();
+        tracing::info!(
+            stage = "lift_report_graph.witness.enter",
+            "lift-report graph progress"
+        );
         let mut plan_mementos = response
             .get("planMementos")
             .or_else(|| response.get("plan_mementos"))
@@ -2258,7 +2355,17 @@ pub fn lift_plugins_response_for_report(
         attach_toolchain_output_witness(&mut response, &plan_memento);
         plan_mementos.push(plan_memento);
         response["planMementos"] = Value::Array(plan_mementos);
+        tracing::info!(
+            stage = "lift_report_graph.witness.exit",
+            elapsed_ms = witness_started.elapsed().as_millis(),
+            "lift-report graph progress"
+        );
     }
+    tracing::info!(
+        stage = "lift_report_graph.exit",
+        elapsed_ms = graph_started.elapsed().as_millis(),
+        "lift-report graph progress"
+    );
     Ok(response)
 }
 

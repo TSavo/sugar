@@ -384,17 +384,23 @@ def exists(name: str, sort: Sort, body: Formula) -> Formula:
 def formula_term(formula: Formula) -> Term:
     """Reify an existing formula as a coordinate for conditional terms."""
     if isinstance(formula, _Atomic):
-        return ctor(f"formula:{formula.name}", list(formula.args))
+        return ctor(
+            f"formula:{formula.name}",
+            list(formula.args),
+            symbol_kind="coordinate",
+        )
     if isinstance(formula, _Connective):
         return ctor(
             f"formula:{formula.kind}",
             [formula_term(operand) for operand in formula.operands],
+            symbol_kind="coordinate",
         )
     if isinstance(formula, _Quantifier):
         sort_name = getattr(formula.sort, "name", type(formula.sort).__name__)
         return ctor(
             f"formula:{formula.kind}",
             [str_const(formula.name), str_const(sort_name), formula_term(formula.body)],
+            symbol_kind="coordinate",
         )
     raise TypeError(f"unknown Formula construction: {type(formula).__name__}")
 

@@ -15,6 +15,8 @@ from sugar_lift_py_tests.ir import (
     atomic,
     ctor,
     constructor_symbol_kinds,
+    formula_term,
+    not_,
     term_to_value,
     term_intern_scope,
 )
@@ -152,6 +154,16 @@ def test_contract_testimony_refines_coordinate_for_one_spelling() -> None:
         assert coordinate is contract
         assert constructor_symbol_kinds() == {
             "call:resolved_later": "contract-target"
+        }
+
+
+def test_reified_formula_constructor_testifies_as_coordinate() -> None:
+    with term_intern_scope():
+        formula_term(not_(atomic("guard", [])))
+
+        assert constructor_symbol_kinds() == {
+            "formula:guard": "coordinate",
+            "formula:not": "coordinate",
         }
 
 
