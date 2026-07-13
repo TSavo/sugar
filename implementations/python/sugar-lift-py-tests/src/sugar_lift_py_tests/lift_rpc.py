@@ -2759,13 +2759,34 @@ def _build_lift_coverage(
     Assertions (default report body): silently_unaccounted is the RED gate.
     Minority (bodies): un_asserted is the VISIBLE scope remainder (not red).
     """
+    started = time.monotonic()
+    _TRANSPORT_LOG.info(
+        "coverage_census_enter",
+        extra={"stage": "lift.coverage.census_paths", "total": len(paths)},
+    )
     disk = census_paths(paths, root=root)
+    _TRANSPORT_LOG.info(
+        "coverage_census_exit",
+        extra={
+            "stage": "lift.coverage.census_paths",
+            "total": len(paths),
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+        },
+    )
     # Account against the same RPC shape the report serializes — built without
     # liftCoverage to avoid self-reference (coverage is the field being filled).
     from sugar_lift_py_tests.kit_rpc.factory_audit_summary_dto import (
         FactoryAuditSummaryDto,
     )
 
+    started = time.monotonic()
+    _TRANSPORT_LOG.info(
+        "coverage_projection_enter",
+        extra={
+            "stage": "lift.coverage.payload_projection",
+            "contracts": len(payload.ir),
+        },
+    )
     interim = {
         "sourceAudits": [to_rpc_value(a) for a in payload.source_audits],
         "sourceMementos": [to_rpc_value(m) for m in payload.source_mementos],
@@ -2784,11 +2805,35 @@ def _build_lift_coverage(
         ).to_rpc(),
         "factoryAudits": [to_rpc_value(a) for a in payload.factory_audits],
     }
+    _TRANSPORT_LOG.info(
+        "coverage_projection_exit",
+        extra={
+            "stage": "lift.coverage.payload_projection",
+            "contracts": len(payload.ir),
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+        },
+    )
+    started = time.monotonic()
+    _TRANSPORT_LOG.info(
+        "coverage_account_enter", extra={"stage": "lift.coverage.account"}
+    )
     coverage = account_lift_coverage(disk, interim)
     body = coverage.to_json()
+    _TRANSPORT_LOG.info(
+        "coverage_account_exit",
+        extra={
+            "stage": "lift.coverage.account",
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+        },
+    )
     # Per-file line paint for --visual consumers.
     paints: Dict[str, Any] = {}
-    for path in paths:
+    paint_started = time.monotonic()
+    _TRANSPORT_LOG.info(
+        "coverage_paint_enter",
+        extra={"stage": "lift.coverage.paint_lines", "total": len(paths)},
+    )
+    for path_index, path in enumerate(paths):
         path = path.resolve()
         try:
             rel = path.relative_to(root).as_posix()
@@ -2799,7 +2844,24 @@ def _build_lift_coverage(
         except OSError:
             continue
         paints[rel] = paint_lines(source, coverage, file=rel)
+        _TRANSPORT_LOG.info(
+            "coverage_paint_file",
+            extra={
+                "stage": "lift.coverage.paint_lines",
+                "file": rel,
+                "index": path_index,
+                "total": len(paths),
+            },
+        )
     body["line_paint"] = paints
+    _TRANSPORT_LOG.info(
+        "coverage_paint_exit",
+        extra={
+            "stage": "lift.coverage.paint_lines",
+            "total": len(paths),
+            "elapsed_ms": round((time.monotonic() - paint_started) * 1000, 3),
+        },
+    )
     return body
 
 
