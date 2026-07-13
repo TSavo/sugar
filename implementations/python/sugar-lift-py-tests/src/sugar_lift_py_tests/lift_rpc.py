@@ -1345,9 +1345,14 @@ def audit_lift_file(
     seed_panics = audit_context.seed_panics
     module_assertions = audit_context.module_assertions
     module_temporal = audit_context.module_temporal
-    target_is_module = bool(
-        target_memento and target_memento.get("function_name") == "<module>"
+    target_owner = (
+        target_memento.get("function_name")
+        or target_memento.get("sourceFunctionName")
+        or target_memento.get("source_function_name")
+        if target_memento
+        else None
     )
+    target_is_module = target_owner == "<module>"
     for label, panic in (
         (seed_panics or ()) if target_memento is None or target_is_module else ()
     ):

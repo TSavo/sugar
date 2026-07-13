@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests import lift_rpc
+from sugar_lift_py_tests.factory import factory_panic_gap
 
 FIXTURE_SOURCE = """\
 def add(a, b):
@@ -92,6 +93,67 @@ def test_recovered_audit_tree_fold_matches_monolithic_bytes(project) -> None:
     assert json.dumps(actual, separators=(",", ":")) == json.dumps(
         expected, separators=(",", ":")
     )
+
+
+def test_file_seed_panic_attaches_once_to_owning_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = """\
+from fixture_module import VALUE
+
+def first():
+    return VALUE
+
+def second():
+    return VALUE
+
+def third():
+    return VALUE
+"""
+    (tmp_path / "seeded.py").write_text(source, encoding="utf-8")
+
+    def panic_resolver(import_target, ctx):
+        del import_target, ctx
+        factory_panic_gap(
+            owner="enumeration-seed-fixture",
+            blame="seeded.py:1:0",
+            observed="VALUE",
+            requested="resolved import value",
+            fix="attach the file seed panic to its owning node exactly once",
+        )
+
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.sugar.install_source_dig.resolve_install_source_value",
+        panic_resolver,
+    )
+    lift_rpc._AUDIT_FILE_CONTEXTS.clear()
+    file_key = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    definitions = _enumerate(
+        "functions", tmp_path, at=file_key, options={"auditFrontier": True}
+    )["nodes"]
+    assert len(definitions) == 4, "one module owner plus three definitions"
+
+    panics = []
+    for definition in definitions:
+        # Rust SourceMemento::to_json preserves the qualified source spelling
+        # but deliberately does not emit the Python-only `function_name` alias.
+        at = dict(definition["memento"])
+        at.pop("function_name", None)
+        leaf = _enumerate(
+            "facts",
+            tmp_path,
+            at=at,
+            seek=True,
+            options={"auditFrontier": True},
+        )["nodes"][0]["audit"]
+        panics.extend(leaf["panics"])
+
+    owned = [
+        panic
+        for panic in panics
+        if panic["gap"]["owner"] == "enumeration-seed-fixture"
+    ]
+    assert len(owned) == 1, owned
 
 
 def test_audit_context_is_parsed_once_per_file_cid_and_mutation_misses(
