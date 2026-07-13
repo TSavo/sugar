@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
@@ -1413,6 +1413,38 @@ fn trace_lift_render_checkpoint(stage: &'static str, rendered_bytes: usize) {
         rendered_bytes = rendered_bytes,
         "lift-report memory checkpoint"
     );
+}
+
+struct RenderHeartbeat {
+    location: &'static str,
+    last: Instant,
+    interval: Duration,
+}
+
+impl RenderHeartbeat {
+    fn new(location: &'static str) -> Self {
+        Self {
+            location,
+            last: Instant::now(),
+            interval: Duration::from_secs(1),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_interval(location: &'static str, interval: Duration) -> Self {
+        Self {
+            location,
+            last: Instant::now(),
+            interval,
+        }
+    }
+
+    fn tick(&mut self, index: usize) {
+        if self.last.elapsed() >= self.interval {
+            tracing::info!(location = self.location, index, "report render heartbeat");
+            self.last = Instant::now();
+        }
+    }
 }
 
 fn clone_matching_report_values(
@@ -3688,38 +3720,69 @@ fn render_report_visual(
 }
 
 fn render_visual_source_report(report: &LiftSourceReport) -> String {
+    let report_span = tracing::info_span!("visual_report_render");
+    let _report_guard = report_span.enter();
     let source_lookup = VisualSourceLookup {
         project_root: report.project_root.as_deref(),
     };
-    let rows = visual_factory_walk_rows(&report.factory_walk, source_lookup);
     let mut out = String::new();
-    out.push_str(&render_report_plan_roll_call(report));
-    out.push_str(&render_universe_visual_report(report, source_lookup));
+    {
+        let span = tracing::info_span!("report_section", section = "plan_roll_call");
+        let _guard = span.enter();
+        tracing::info!("report section started");
+        out.push_str(&render_report_plan_roll_call(report));
+        tracing::info!(rendered_bytes = out.len(), "report section completed");
+    }
+    {
+        let span = tracing::info_span!("report_section", section = "universe_visual");
+        let _guard = span.enter();
+        tracing::info!("report section started");
+        out.push_str(&render_universe_visual_report(report, source_lookup));
+        tracing::info!(rendered_bytes = out.len(), "report section completed");
+    }
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str("factory visual:\n");
-    if rows.is_empty() {
-        out.push_str("  <no factory walk emitted>\n");
-    } else {
-        let mut current_context = String::new();
-        for row in rows {
-            if row.context != current_context {
-                current_context = row.context.clone();
-                out.push_str(&format!("  contract {current_context}\n"));
+    {
+        let span = tracing::info_span!("report_section", section = "factory_visual");
+        let _guard = span.enter();
+        tracing::info!("report section started");
+        let rows = visual_factory_walk_rows(&report.factory_walk, source_lookup);
+        out.push_str("factory visual:\n");
+        if rows.is_empty() {
+            out.push_str("  <no factory walk emitted>\n");
+        } else {
+            let mut current_context = String::new();
+            let mut heartbeat = RenderHeartbeat::new("factory_visual.rows");
+            for (index, row) in rows.into_iter().enumerate() {
+                heartbeat.tick(index);
+                if row.context != current_context {
+                    current_context = row.context.clone();
+                    out.push_str(&format!("  contract {current_context}\n"));
+                }
+                render_visual_source_annotation(&mut out, &row.source, row.tone, &row.label);
             }
-            render_visual_source_annotation(&mut out, &row.source, row.tone, &row.label);
         }
+        tracing::info!(rendered_bytes = out.len(), "report section completed");
     }
     if !report.call_edges.is_empty() {
+        let span = tracing::info_span!("report_section", section = "call_edges");
+        let _guard = span.enter();
+        tracing::info!("report section started");
         out.push_str("call edges observed:\n");
-        for edge in &report.call_edges {
+        let mut heartbeat = RenderHeartbeat::new("call_edges.rows");
+        for (index, edge) in report.call_edges.iter().enumerate() {
+            heartbeat.tick(index);
             out.push_str(&format!("  - {}\n", format_call_edge(edge)));
         }
+        tracing::info!(rendered_bytes = out.len(), "report section completed");
     }
     // The constructed factory/universe report leads. The Minority Report is
     // the complete remainder and renders only after the proven code.
     if let Some(coverage) = &report.lift_coverage {
+        let span = tracing::info_span!("report_section", section = "minority_report");
+        let _guard = span.enter();
+        tracing::info!("report section started");
         out.push_str(&render_lift_coverage_human(
             coverage,
             report.project_root.as_deref(),
@@ -3727,6 +3790,7 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
         if !out.ends_with('\n') {
             out.push('\n');
         }
+        tracing::info!(rendered_bytes = out.len(), "report section completed");
     }
     out
 }
@@ -3759,7 +3823,9 @@ fn group_contracts_for_universe_visual<'a>(
 
     let mut groups = Vec::new();
     let mut emitted_anchored: BTreeSet<String> = BTreeSet::new();
-    for contract in contracts {
+    let mut heartbeat = RenderHeartbeat::new("universe_grouping.contracts");
+    for (index, contract) in contracts.iter().enumerate() {
+        heartbeat.tick(index);
         let identity = contract_visual_identity(report, contract);
         if anchored_names.contains(&identity) {
             if !emitted_anchored.insert(identity.clone()) {
@@ -3839,8 +3905,13 @@ fn contract_qualified_owner(report: &LiftSourceReport, contract: &Value) -> Stri
             .and_then(|w| w.get("span"))
             .and_then(|span| span.get("start_line").or_else(|| span.get("startLine")))
             .and_then(Value::as_u64);
-        let audit_owner = report.factory_walk.iter().find_map(|row| {
-            let memento = row.get("sourceMemento")?;
+        let mut audit_owner = None;
+        let mut heartbeat = RenderHeartbeat::new("contract_qualified_owner.factory_walk");
+        for (index, row) in report.factory_walk.iter().enumerate() {
+            heartbeat.tick(index);
+            let Some(memento) = row.get("sourceMemento") else {
+                continue;
+            };
             let same_file = warrant_file.map_or(true, |file| {
                 memento.get("file").and_then(Value::as_str) == Some(file)
             });
@@ -3852,14 +3923,20 @@ fn contract_qualified_owner(report: &LiftSourceReport, contract: &Value) -> Stri
                     == Some(line)
             });
             if !same_file || !same_line {
-                return None;
+                continue;
             }
-            let function = memento
+            let Some(function) = memento
                 .get("sourceFunctionName")
-                .or_else(|| memento.get("source_function_name"))?
-                .as_str()?;
-            function.ends_with(&format!(".{owner}")).then_some(function)
-        });
+                .or_else(|| memento.get("source_function_name"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            if function.ends_with(&format!(".{owner}")) {
+                audit_owner = Some(function);
+                break;
+            }
+        }
         if let Some(qualified) = audit_owner {
             return qualified.to_string();
         }
@@ -3918,6 +3995,17 @@ fn render_universe_visual_report(
     for group in group_contracts_for_universe_visual(report) {
         let contract = group.anchor;
         let identity = &group.identity;
+        let qualified_name = contract_qualified_owner(report, contract);
+        let cid_prefix = contract_cid_of_ir_decl(contract)
+            .map(|cid| short_cid(&cid))
+            .unwrap_or_else(|| "cid-unavailable".to_string());
+        let universe_span = tracing::info_span!(
+            "report_universe",
+            qualified_name = %qualified_name,
+            cid_prefix = %cid_prefix
+        );
+        let _universe_guard = universe_span.enter();
+        tracing::info!("universe render started");
         // Predicates for line citations: every member's formulas (assert invs
         // pair with their own warrants when factory walk is empty).
         let predicates: Vec<String> = group
@@ -3978,6 +4066,7 @@ fn render_universe_visual_report(
                     identity,
                 );
             }
+            tracing::info!("universe render completed");
             continue;
         }
         out.push_str(&format!("  universe {identity}\n"));
@@ -4011,6 +4100,7 @@ fn render_universe_visual_report(
         }
         if warrants.is_empty() {
             out.push_str("    <no source warrants emitted>\n");
+            tracing::info!("universe render completed");
             continue;
         }
         render_universe_warrant_breakdown(
@@ -4022,6 +4112,7 @@ fn render_universe_visual_report(
             &predicates,
             mode,
         );
+        tracing::info!("universe render completed");
     }
     render_contract_mementos_appendix(&mut out, report);
     out
@@ -8592,8 +8683,35 @@ mod tests {
     use super::*;
     use crate::project_config::PluginEntry;
     use crate::OutputFlags;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
     use sugar_verifier::{CallSite, MementoCid, ObligationVerdict, Report, ReportRow};
     use syn::spanned::Spanned;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct RenderTestLog(Arc<Mutex<Vec<u8>>>);
+
+    struct RenderTestLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for RenderTestLogWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("log lock").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for RenderTestLog {
+        type Writer = RenderTestLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            RenderTestLogWriter(self.0.clone())
+        }
+    }
 
     #[test]
     fn recovered_audit_effect_rows_round_trip_without_loss() {
@@ -13511,6 +13629,33 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             1,
             "{visual}"
         );
+    }
+
+    #[test]
+    fn slow_render_loop_heartbeat_names_its_location() {
+        let log = RenderTestLog::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(log.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let mut heartbeat = RenderHeartbeat::with_interval(
+                "deliberately_slow_fixture.rows",
+                Duration::from_millis(1),
+            );
+            std::thread::sleep(Duration::from_millis(2));
+            heartbeat.tick(7);
+        });
+        let rendered =
+            String::from_utf8(log.0.lock().expect("log lock").clone()).expect("trace is utf8");
+        assert!(rendered.contains("report render heartbeat"), "{rendered}");
+        assert!(
+            rendered.contains("deliberately_slow_fixture.rows"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("index=7"), "{rendered}");
     }
 
     #[test]
